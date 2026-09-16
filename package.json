@@ -1,0 +1,13 @@
+{
+  "name": "jobhelper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome extension that offers a tailored resume on job postings, backed by a local ResumeM-M store.",
+  "type": "module",
+  "scripts": {
+    "test:e2e": "node tests/e2e.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.49.1"
+  }
+}
