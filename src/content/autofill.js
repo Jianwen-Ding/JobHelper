@@ -10,7 +10,7 @@
 const FIELD_PATTERNS = [
   ['first_name', /\b(first[\s_-]?name|given[\s_-]?name|fname)\b/i],
   ['last_name', /\b(last[\s_-]?name|family[\s_-]?name|surname|lname)\b/i],
-  ['full_name', /\b(full[\s_-]?name|your[\s_-]?name|candidate[\s_-]?name|^name$)\b/i],
+  ['full_name', /\b(full[\s_-]?name|your[\s_-]?name|candidate[\s_-]?name|legal[\s_-]?name)\b/i],
   ['email', /\b(e-?mail)\b/i],
   ['phone', /\b(phone|mobile|telephone|cell)\b/i],
   ['linkedin', /\b(linked-?in)\b/i],
@@ -24,8 +24,15 @@ const FIELD_PATTERNS = [
   ['address_state', /\b(state|province|region)\b/i],
   ['address_country', /\b(country)\b/i],
   ['location', /\b(location|where.*based)\b/i],
-  ['work_authorization', /\b(work[\s_-]?authoriz|legally[\s_-]?authorized|right[\s_-]?to[\s_-]?work)\b/i],
-  ['requires_sponsorship', /\b(sponsor|visa[\s_-]?status)\b/i],
+  /*
+   * `\w*` where a stem was truncated. These two read as if they matched
+   * anything starting with the stem, and matched nothing at all: a trailing
+   * \b after "authoriz" demands a word boundary between "z" and "a", so
+   * "work authorization" — the words every form actually uses — never matched,
+   * and neither did "sponsorship".
+   */
+  ['work_authorization', /\b(work[\s_-]?authoriz\w*|legally[\s_-]?authorized|right[\s_-]?to[\s_-]?work)\b/i],
+  ['requires_sponsorship', /\b(sponsor\w*|visa[\s_-]?status)\b/i],
 ];
 
 const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
@@ -96,8 +103,42 @@ function questionFor(input) {
 function isFillable(input) {
   if (input.disabled || input.readOnly) return false;
   if (input.type === 'hidden' || input.type === 'file' || input.type === 'password') return false;
-  if (input.offsetParent === null && input.type !== 'hidden') return false; // not visible
+  // `offsetParent` is null for anything positioned fixed, visible or not, and
+  // forms inside a fixed modal are ordinary. Whether it occupies space on the
+  // page is the question actually being asked.
+  if (input.getClientRects().length === 0) return false;
   return true;
+}
+
+/**
+ * Has this dropdown actually been answered?
+ *
+ * `value` is the wrong question for a select: it is never empty in practice,
+ * because the first option is usually a placeholder with a value of its own —
+ * "none", "-1", "Select an option". Every such field was being skipped as
+ * already filled, which on a real form is most of them.
+ */
+const PLACEHOLDER = /^(|-+|—+|select.*|choose.*|pick.*|please\b.*|none|n\/?a|--.*--)$/i;
+
+function looksLikePlaceholder(option) {
+  return (
+    option.disabled ||
+    PLACEHOLDER.test(String(option.value ?? '').trim()) ||
+    PLACEHOLDER.test((option.textContent ?? '').trim())
+  );
+}
+
+/*
+ * Whether it is answered is a question about what is showing, not about which
+ * index that is. A select with no placeholder shows its first option from the
+ * start — "Canada", say — and overwriting that would be taking a visible
+ * answer away; a select showing "Select a city…" has not been answered
+ * whatever its index says.
+ */
+function selectIsAnswered(select) {
+  const option = select.selectedOptions?.[0];
+  if (!option) return false;
+  return !looksLikePlaceholder(option);
 }
 
 /** Set a value in a way React and friends actually notice. */
@@ -124,13 +165,21 @@ export function fillForm(fields, { overwrite = false } = {}) {
     const description = describeField(input);
     if (!description) continue;
 
-    const match = FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key]);
+    let match = FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key]);
+
+    // A field labelled just "Name" wants the whole name. It cannot be written
+    // as a pattern over the description, because the description also carries
+    // the name and id attributes — so it is asked of the label alone.
+    if (!match && fields.full_name && /^(full\s+)?name$/i.test(clean(labelFor(input)))) {
+      match = ['full_name'];
+    }
     if (!match) continue;
 
     const [key] = match;
     const value = fields[key];
 
-    if (input.value && !overwrite) {
+    const answered = input instanceof HTMLSelectElement ? selectIsAnswered(input) : Boolean(input.value);
+    if (answered && !overwrite) {
       skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
       continue;
     }
@@ -178,12 +227,15 @@ export function findQuestions() {
 
   for (const field of candidates) {
     if (field instanceof HTMLTextAreaElement && !isFillable(field)) continue;
-    if (field.offsetParent === null) continue;
+    if (field.getClientRects().length === 0) continue;
 
     const question = cleanQuestion(questionFor(field));
-    // Anything this short is a label like "Notes", not a question worth
-    // drafting an answer to.
-    if (!question || question.length < 12) continue;
+    // Anything this short is a label like "Notes" rather than a question worth
+    // drafting an answer to — unless it ends in a question mark, which settles
+    // it. "Why us?" is seven characters and is exactly the sort of thing this
+    // is for.
+    if (!question) continue;
+    if (question.length < 12 && !question.endsWith('?')) continue;
 
     let id = field.getAttribute(FIELD_KEY);
     if (!id) {
@@ -245,6 +297,11 @@ function cleanQuestion(raw) {
     .replace(/\(\s*optional\s*\)/gi, '')
     .replace(/\*\s*(required|mandatory)\b/gi, '')
     .replace(/\b(required|optional)\b\s*$/gi, '')
+    // A bare asterisk is the universal "required" marker, and it was surviving
+    // into the question — so the same question stored from two forms, one
+    // marked required and one not, became two questions in the answer bank.
+    .replace(/^\s*\*+\s*/, '')
+    .replace(/\s*\*+\s*$/, '')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 300);

@@ -8,7 +8,8 @@
     "test:e2e": "node tests/e2e.mjs",
     "test:nav": "node tests/navigation.mjs",
     "test:trail": "node --test tests/trail.mjs",
-    "test": "npm run test:trail && npm run test:e2e && npm run test:nav"
+    "test": "npm run test:trail && npm run test:autofill && npm run test:e2e && npm run test:nav",
+    "test:autofill": "node tests/autofill.mjs"
   },
   "devDependencies": {
     "playwright-core": "^1.49.1"
