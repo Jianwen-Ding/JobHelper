@@ -473,17 +473,36 @@ function unfillableChoices(fields, filled) {
  * for, or enough of the form that nothing else would have it.
  */
 const APPLICATION_WORDS =
-  /\b(submit (your )?application|apply for this|cover letter|work authorizat|require sponsorship|equal opportunity employer|voluntary self-identification)\b/i;
+  /\b(submit (your )?application|start your application|cover letter|work authorizat|legally authorized to work|require sponsorship|equal opportunity employer|voluntary self-identification)\b/i;
+
+/*
+ * Fields an advert has no reason to ask for.
+ *
+ * Name, email, phone and town are the four an application opens with, and also
+ * the four a newsletter box asks for — so counting parts of a person cannot
+ * tell the two apart. Degree, work authorization, sponsorship, GPA: these are
+ * asked by something that intends to employ you.
+ */
+/*
+ * Fields an advert has no reason to ask for.
+ *
+ * Name, email, phone and town are the four an application opens with, and also
+ * the four a newsletter box asks for — so counting parts of a person cannot
+ * tell the two apart, which is what the old threshold of four tried to do.
+ * LinkedIn, a degree, a GPA, the right to work: these are asked by something
+ * that intends to employ you.
+ *
+ * Deliberately not `website` (name, email and website is a blog comment box)
+ * and not the address fields (a job search box asks for city and country).
+ */
+const TELLTALE = new Set([
+  'linkedin', 'github', 'school', 'degree', 'major', 'gpa',
+  'work_authorization', 'requires_sponsorship',
+]);
 
 export function looksLikeApplicationForm() {
   const text = deepText();
-  if (APPLICATION_WORDS.test(text)) return true;
 
-  // A file upload beside the word résumé is the clearest sign there is.
-  if (deepQueryAll('input[type=file]').length > 0 && /\b(resum|cv)\b/i.test(text)) return true;
-
-  // Failing that, enough distinct parts of a person that nothing but an
-  // application would be collecting them all at once.
   const keys = new Set();
   for (const input of deepQueryAll('input, textarea, select')) {
     const description = describeField(input);
@@ -494,7 +513,39 @@ export function looksLikeApplicationForm() {
     // and on several systems the only place the name is asked for.
     else if (BARE_NAME.test(clean(labelFor(input)))) keys.add('full_name');
   }
-  return keys.size >= 4;
+
+  let telltales = 0;
+  for (const key of keys) if (TELLTALE.has(key)) telltales++;
+
+  /*
+   * Something only an application would have. Each of the old routes here let
+   * a third party's iframe through, and each was a route on its own:
+   *
+   * "apply for this" is a call to action, not a form — a sponsored "Senior SRE
+   * at Hyperion. Apply for this role" creative with an email-alerts box prints
+   * it, and the user's name and city were typed into the advertiser's input,
+   * where the page's own script read them straight off the input event.
+   *
+   * Counting four parts of a person was worse, because it needed no words at
+   * all: name, email, phone and town is a newsletter box. But it cannot simply
+   * be raised, because iCIMS asks for exactly four and Taleo for five. What
+   * separates them is not how many but which — an employer asks for a legal
+   * first and last name as two fields, where a mailing list asks for "Name".
+   */
+  const evidence =
+    APPLICATION_WORDS.test(text) ||
+    // A file upload beside the word résumé is the clearest sign there is.
+    (deepQueryAll('input[type=file]').length > 0 && /\b(resum|cv)\b/i.test(text)) ||
+    // One field only an employer asks for. The hosted systems serve the form
+    // on its own with no prose to match against — Ashby's frame is six
+    // labelled inputs and nothing else — so there has to be a route that reads
+    // the fields rather than the copy.
+    telltales >= 1 ||
+    (keys.has('first_name') && keys.has('last_name'));
+
+  // And in every case, enough of a form to be one. Evidence alone let a frame
+  // through that merely talked about applying.
+  return evidence && keys.size >= 2;
 }
 
 /** Marks a field so the card can point back at it later. */

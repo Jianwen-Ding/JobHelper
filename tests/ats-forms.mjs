@@ -586,6 +586,36 @@ const NOT_APPLICATIONS = {
   'a support chat widget': `
     <label for="a">Name</label><input id="a" name="name">
     <button type="button">Start chat</button>`,
+  /*
+   * The two that got through, and what they cost.
+   *
+   * With the content script in every frame, these sit on a real posting beside
+   * the real form. Both were filled: the user's name and city were typed into
+   * a third party's inputs, and because setValue dispatches a bubbling `input`
+   * event, the frame's own page script read them straight off it.
+   *
+   * The enquiry box passed by having four parts of a person, which was a route
+   * needing no application-specific evidence at all. The advert passed on the
+   * phrase "apply for this", which is a call to action any creative prints.
+   */
+  'a third party enquiry box': `
+    <h3>Book a class</h3>
+    <label for="a">Name</label><input id="a" name="name">
+    <label for="b">Email</label><input id="b" name="email" type="email">
+    <label for="c">Phone</label><input id="c" name="phone" type="tel">
+    <label for="d">Town</label><input id="d" name="town">
+    <button type="button">Send</button>`,
+  'a sponsored job advert': `
+    <p>Sponsored: Senior SRE at Hyperion. Apply for this role in 60 seconds.</p>
+    <label for="a">Get job alerts by email</label><input id="a" name="email" type="email">
+    <label for="b">Your name</label><input id="b" name="name">
+    <button type="button">Subscribe</button>`,
+  'a blog comment box': `
+    <label for="a">Name</label><input id="a" name="name">
+    <label for="b">Email</label><input id="b" name="email" type="email">
+    <label for="c">Website</label><input id="c" name="url">
+    <label for="d">Comment</label><textarea id="d"></textarea>
+    <button type="button">Post</button>`,
 };
 
 const shell = (body) =>
