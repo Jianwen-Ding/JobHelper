@@ -462,7 +462,9 @@
   function keepWorkSafe() {
     const save = () => {
       const work = cardHandle?.takeWork?.();
-      if (work) send('saveWork', { work }).catch(() => undefined);
+      // The page is sent with it: a card left open on another posting must not
+      // be able to write its work over this application's.
+      if (work) send('saveWork', { work, page: pageIdentity() }).catch(() => undefined);
     };
     setInterval(save, 2000);
     // A navigation is exactly when this matters, and exactly when an interval

@@ -6,6 +6,7 @@
  */
 
 import { DEFAULTS, getSettings } from '../shared/config.js';
+import { sameApplication, summarise } from '../shared/trail.js';
 
 async function serverFetch(path, options = {}) {
   const { serverUrl } = await getSettings();
@@ -57,117 +58,47 @@ const TRAIL_MAX = 5;
 const TRAIL_HTML_MAX = 400_000;
 /** Older than this and it is a different sitting, whatever the host says. */
 const TRAIL_STALE_MS = 2 * 60 * 60 * 1000;
-/** How long a click on "Apply" stands as a promise about the next page. */
-const EXPECTATION_MS = 5 * 60 * 1000;
 
 const session = () => chrome.storage.session ?? chrome.storage.local;
 
-async function readTrail() {
-  const stored = (await session().get(TRAIL_KEY))[TRAIL_KEY];
+/**
+ * One trail per tab.
+ *
+ * It was one trail for the whole browser, and everybody opens several postings
+ * in several tabs. Each tab's card saves its work every couple of seconds, so
+ * two open postings overwrote each other: a tab reading about one company
+ * would, on navigating, come back holding the other company's description and
+ * the other company's resume. A cover letter written from the wrong posting is
+ * precisely the failure this whole feature was built to avoid, and it arrived
+ * through the back door.
+ *
+ * The tab is the application. Nothing else in the browser is.
+ */
+const trailKey = (tabId) => (tabId === undefined ? TRAIL_KEY : `${TRAIL_KEY}:${tabId}`);
+
+async function readTrail(tabId) {
+  const key = trailKey(tabId);
+  const stored = (await session().get(key))[key];
   if (!stored?.pages?.length) return { pages: [] };
   if (Date.now() - (stored.at ?? 0) > TRAIL_STALE_MS) return { pages: [] };
   return stored;
 }
 
-const hostOf = (u) => {
-  try {
-    return new URL(u).hostname.replace(/^www\./, '');
-  } catch {
-    return '';
-  }
-};
-const rootOf = (h) => h.split('.').slice(-2).join('.');
-const pathOf = (u) => {
-  try {
-    return new URL(u).pathname;
-  } catch {
-    return '';
-  }
-};
-
-/** Same host, and plainly the same posting on it rather than another one. */
-function relatedPath(a, b) {
-  const pa = pathOf(a);
-  const pb = pathOf(b);
-  if (!pa || !pb) return false;
-  if (pa === pb || pa.startsWith(pb) || pb.startsWith(pa)) return true;
-
-  // An applicant tracking system hosts thousands of companies under one
-  // domain, so the host says nothing; the first path segment is the company.
-  const first = (p) => p.split('/').filter(Boolean)[0] ?? '';
-  return first(pa) !== '' && first(pa) === first(pb);
-}
+const writeTrail = (tabId, trail) => session().set({ [trailKey(tabId)]: trail });
 
 /**
- * Is this page part of the application already being followed?
- *
- * Getting this wrong in the generous direction is worse than not following at
- * all: a cover letter written from two different companies' postings is
- * nonsense, and nothing about it would look wrong until a human read it. So
- * the company decides wherever it is known, and where it is not, a page has to
- * have been arrived at from the trail — following "Apply" from a careers page
- * to its ATS is the case this exists for, and it is also the only case where
- * two unrelated hosts should ever be joined up.
+ * A tab opened by "Apply" starts empty, and what it needs is in the tab that
+ * opened it. Inherited once, on the new tab's first look: the two tabs are
+ * separate applications from then on, and the one you came from carries on
+ * being whatever it is.
  */
-/** Did the user just click a link to this page, meaning "apply"? */
-function wasExpected(trail, url) {
-  const expecting = trail.expecting;
-  if (!expecting?.to || Date.now() - (expecting.at ?? 0) > EXPECTATION_MS) return false;
-  if (expecting.to === url) return true;
+async function inheritIfNew(tabId, openerTabId) {
+  if (tabId === undefined || openerTabId === undefined) return;
+  const mine = await readTrail(tabId);
+  if (mine.pages.length > 0) return;
 
-  // An apply link routinely lands somewhere near where it pointed: a redirect
-  // to a login, a tracking parameter added, a trailing slash dropped.
-  try {
-    const a = new URL(expecting.to);
-    const b = new URL(url);
-    return a.hostname === b.hostname && (a.pathname.startsWith(b.pathname) || b.pathname.startsWith(a.pathname));
-  } catch {
-    return false;
-  }
-}
-
-function sameApplication(trail, page) {
-  if (trail.pages.length === 0) return true;
-
-  // The click that brought you here is better evidence than anything the page
-  // can show, and it is the only evidence left when the referrer is stripped.
-  if (wasExpected(trail, page.url)) return true;
-
-  const co = (c) => (c ?? '').trim().toLowerCase();
-  const mine = co(page.company);
-  const known = trail.pages.map((p) => co(p.company)).filter(Boolean);
-
-  // A different company is a different application, whatever else matches.
-  if (mine && known.length > 0) return known.includes(mine);
-
-  const here = hostOf(page.url);
-  if (!here) return false;
-
-  for (const p of trail.pages) {
-    const there = hostOf(p.url);
-    if (!there) continue;
-
-    const cameFromHere =
-      page.referrerHost && (page.referrerHost === there || rootOf(page.referrerHost) === rootOf(there));
-
-    // Same site: only if it is the same posting, not merely the same board.
-    if (here === there || rootOf(here) === rootOf(there)) {
-      if (relatedPath(page.url, p.url)) return true;
-      continue;
-    }
-    // Different site: only by having been sent there from the trail.
-    if (cameFromHere) return true;
-  }
-  return false;
-}
-
-/** The trail without the page text, which nothing but the server wants. */
-function summarise(trail) {
-  const { work, expecting, ...rest } = trail;
-  return {
-    ...rest,
-    pages: trail.pages.map(({ html, ...page }) => ({ ...page, chars: (html ?? '').length })),
-  };
+  const theirs = await readTrail(openerTabId);
+  if (theirs.pages.length > 0) await writeTrail(tabId, { ...theirs, at: Date.now() });
 }
 
 /** Message handlers, one per action the content script or popup can request. */
@@ -176,8 +107,9 @@ const handlers = {
    * Add the page to the current application, or start a new one with it.
    * Returns the trail as it now stands, so the card can show it.
    */
-  async rememberPage({ page }) {
-    const trail = await readTrail();
+  async rememberPage({ page }, tab) {
+    await inheritIfNew(tab?.id, tab?.openerTabId);
+    const trail = await readTrail(tab?.id);
     const joins = sameApplication(trail, page);
     const pages = joins ? trail.pages.filter((p) => p.url !== page.url) : [];
 
@@ -190,13 +122,14 @@ const handlers = {
       at: Date.now(),
     });
 
-    const next = { pages: pages.slice(-TRAIL_MAX), at: Date.now() };
-    await session().set({ [TRAIL_KEY]: next });
+    // Keep the expectation: a click can outlive the page that made it.
+    const next = { ...trail, pages: pages.slice(-TRAIL_MAX), at: Date.now() };
+    await writeTrail(tab?.id, next);
     return { ...summarise(next), startedFresh: !joins };
   },
 
-  async getTrail() {
-    return summarise(await readTrail());
+  async getTrail(_payload, tab) {
+    return summarise(await readTrail(tab?.id));
   },
 
   /**
@@ -208,15 +141,19 @@ const handlers = {
    * moment the form appeared to put them in, which made the tool feel like it
    * had forgotten what you were doing — because it had.
    */
-  async saveWork({ work }) {
-    const trail = await readTrail();
-    await session().set({ [TRAIL_KEY]: { ...trail, work, at: Date.now() } });
+  async saveWork({ work, page }, tab) {
+    const trail = await readTrail(tab?.id);
+    // Only the application this tab is actually on. Without this a card left
+    // open on another posting would keep writing its work over this one's.
+    if (page && trail.pages.length > 0 && !sameApplication(trail, page)) return { ok: false };
+    await writeTrail(tab?.id, { ...trail, work });
     return { ok: true };
   },
 
   /** The work from the pages before this one, if this page continues them. */
-  async takeWork({ page }) {
-    const trail = await readTrail();
+  async takeWork({ page }, tab) {
+    await inheritIfNew(tab?.id, tab?.openerTabId);
+    const trail = await readTrail(tab?.id);
     if (page && !sameApplication(trail, page)) return { work: null };
     return { work: trail.work ?? null };
   },
@@ -230,11 +167,11 @@ const handlers = {
    * evidence that two pages belong together can be gone by the time the second
    * one loads. The click is the evidence, and it is available before that.
    */
-  async expectContinuation({ to }) {
-    const trail = await readTrail();
-    await session().set({
-      [TRAIL_KEY]: { ...trail, expecting: { to, at: Date.now() }, at: Date.now() },
-    });
+  async expectContinuation({ to }, tab) {
+    const trail = await readTrail(tab?.id);
+    await writeTrail(tab?.id, { ...trail, expecting: { to, at: Date.now() }, at: Date.now() });
+    // A new tab inherits this tab's trail, expectation and all, so an Apply
+    // button that opens one lands already knowing where it came from.
     return { ok: true };
   },
 
@@ -246,23 +183,24 @@ const handlers = {
    * merge decided its own inputs. Two unrelated postings on one host were
    * quietly written up as one job, and nothing about the result looked wrong.
    */
-  async trailPages({ page }) {
-    const trail = await readTrail();
+  async trailPages({ page }, tab) {
+    await inheritIfNew(tab?.id, tab?.openerTabId);
+    const trail = await readTrail(tab?.id);
     if (page && !sameApplication(trail, page)) return { pages: [] };
     return { pages: trail.pages.map((p) => ({ url: p.url, title: p.title, html: p.html })) };
   },
 
   /** Forget the trail — "this is a different application from the last one". */
-  async clearTrail() {
-    await session().remove(TRAIL_KEY);
+  async clearTrail(_payload, tab) {
+    await session().remove(trailKey(tab?.id));
     return { pages: [] };
   },
 
   /** Drop one page the user says does not belong. */
-  async forgetPage({ url }) {
-    const trail = await readTrail();
-    const next = { pages: trail.pages.filter((p) => p.url !== url), at: Date.now() };
-    await session().set({ [TRAIL_KEY]: next });
+  async forgetPage({ url }, tab) {
+    const trail = await readTrail(tab?.id);
+    const next = { ...trail, pages: trail.pages.filter((p) => p.url !== url), at: Date.now() };
+    await writeTrail(tab?.id, next);
     return summarise(next);
   },
 
@@ -519,17 +457,24 @@ const handlers = {
   },
 };
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const handler = handlers[message?.type];
   if (!handler) {
     sendResponse({ ok: false, error: `Unknown message "${message?.type}"` });
     return false;
   }
-  handler(message.payload ?? {})
+  // Which tab asked. The trail is per tab, and this is the only place that
+  // knows which one — it used to be thrown away.
+  handler(message.payload ?? {}, sender?.tab)
     .then((data) => sendResponse({ ok: true, data }))
     .catch((err) => sendResponse({ ok: false, error: err.message }));
   // Keeps the message channel open for the async response above.
   return true;
+});
+
+// A closed tab cannot come back, and session storage has a quota.
+chrome.tabs?.onRemoved?.addListener((tabId) => {
+  session().remove(trailKey(tabId)).catch(() => undefined);
 });
 
 chrome.runtime.onInstalled.addListener(async () => {

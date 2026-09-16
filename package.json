@@ -6,7 +6,9 @@
   "type": "module",
   "scripts": {
     "test:e2e": "node tests/e2e.mjs",
-    "test:nav": "node tests/navigation.mjs"
+    "test:nav": "node tests/navigation.mjs",
+    "test:trail": "node --test tests/trail.mjs",
+    "test": "npm run test:trail && npm run test:e2e && npm run test:nav"
   },
   "devDependencies": {
     "playwright-core": "^1.49.1"
