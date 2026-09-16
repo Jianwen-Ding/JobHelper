@@ -142,3 +142,47 @@ export function summarise(trail) {
     pages: (trail.pages ?? []).map(({ html, ...page }) => ({ ...page, chars: (html ?? '').length })),
   };
 }
+
+/**
+ * Cut a page down to the part worth keeping.
+ *
+ * Most of a modern page is script: inlined bundles, analytics, state dumps.
+ * None of it is the posting, and session storage is a shared 10MB across every
+ * tab — five tabs holding five pages each fills it exactly, and the sixth tab's
+ * write fails. Since the only thing read back out is the description, the
+ * markup that cannot contain one goes before it is stored.
+ *
+ * JSON-LD survives: it is inside a <script> tag and it is the single most
+ * reliable source of what a posting says.
+ */
+export function trimForStorage(html, limit = 400_000) {
+  const text = String(html ?? '')
+    // Keep ld+json, drop every other script.
+    .replace(/<script\b(?![^>]*application\/ld\+json)[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<svg\b[^>]*>[\s\S]*?<\/svg>/gi, '')
+    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n');
+
+  return text.length > limit ? text.slice(0, limit) : text;
+}
+
+/**
+ * The same trail, carrying less.
+ *
+ * Used when a write is refused for want of room: rather than failing — which
+ * showed up as the trail quietly not working — the oldest pages give up their
+ * text first, since the page you are on and the one before it are the ones
+ * that matter. A trail with no text at all still names its pages, which is
+ * enough for the card to say what it is doing.
+ */
+export function lighten(trail, keepTextFor = 2) {
+  const pages = trail.pages ?? [];
+  const cut = Math.max(pages.length - keepTextFor, 0);
+  return {
+    ...trail,
+    pages: pages.map((p, i) => (i < cut ? { ...p, html: '' } : p)),
+  };
+}

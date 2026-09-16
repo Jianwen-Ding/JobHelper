@@ -6,7 +6,7 @@
  */
 
 import { DEFAULTS, getSettings } from '../shared/config.js';
-import { sameApplication, summarise } from '../shared/trail.js';
+import { lighten, sameApplication, summarise, trimForStorage } from '../shared/trail.js';
 
 async function serverFetch(path, options = {}) {
   const { serverUrl } = await getSettings();
@@ -84,7 +84,25 @@ async function readTrail(tabId) {
   return stored;
 }
 
-const writeTrail = (tabId, trail) => session().set({ [trailKey(tabId)]: trail });
+/**
+ * Store the trail, carrying less rather than failing.
+ *
+ * Session storage is 10MB shared across every tab, and five tabs each holding
+ * five pages fills it exactly — at which point the write throws and the trail
+ * silently stops working, which is the worst of the available outcomes.
+ */
+async function writeTrail(tabId, trail) {
+  const key = trailKey(tabId);
+  for (const attempt of [trail, lighten(trail), lighten(trail, 0)]) {
+    try {
+      await session().set({ [key]: attempt });
+      return attempt;
+    } catch {
+      // Out of room. Drop the oldest pages' text and try again.
+    }
+  }
+  return trail;
+}
 
 /**
  * A tab opened by "Apply" starts empty, and what it needs is in the tab that
@@ -118,7 +136,7 @@ const handlers = {
       title: page.title,
       company: page.company,
       kind: page.kind,
-      html: (page.html ?? '').slice(0, TRAIL_HTML_MAX),
+      html: trimForStorage(page.html, TRAIL_HTML_MAX),
       at: Date.now(),
     });
 

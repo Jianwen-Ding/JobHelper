@@ -12,7 +12,15 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { EXPECTATION_MS, relatedPath, sameApplication, summarise, wasExpected } from '../src/shared/trail.js';
+import {
+  EXPECTATION_MS,
+  lighten,
+  relatedPath,
+  sameApplication,
+  summarise,
+  trimForStorage,
+  wasExpected,
+} from '../src/shared/trail.js';
 
 const trailOf = (...pages) => ({ pages, at: Date.now() });
 const at = (url, company) => ({ url, company });
@@ -138,5 +146,61 @@ describe('what the card is told', () => {
 
   it('is unbothered by a trail with no pages', () => {
     assert.deepEqual(summarise({ pages: [] }).pages, []);
+  });
+});
+
+describe('what is worth keeping of a page', () => {
+  const LD = '<script type="application/ld+json">{"@type":"JobPosting"}</script>';
+
+  it('keeps the structured posting data, which lives in a script tag', () => {
+    assert.ok(trimForStorage(`<html>${LD}</html>`).includes('JobPosting'));
+  });
+
+  it('drops the bundle, which is most of a page and none of the posting', () => {
+    const page = `<html>${LD}<script>${'var x=1;'.repeat(10_000)}</script><p>The role</p></html>`;
+    const kept = trimForStorage(page);
+
+    assert.ok(kept.includes('The role'));
+    assert.ok(kept.includes('JobPosting'));
+    assert.ok(!kept.includes('var x=1'));
+    assert.ok(kept.length < page.length / 10);
+  });
+
+  it('drops styles, inline svg and comments too', () => {
+    const page = '<style>.a{}</style><svg><path/></svg><!-- note --><p>Kept</p>';
+    assert.equal(trimForStorage(page).trim(), '<p>Kept</p>');
+  });
+
+  it('still obeys a hard limit, for a page that is all prose', () => {
+    assert.equal(trimForStorage('<p>' + 'word '.repeat(200_000), 1000).length, 1000);
+  });
+
+  it('is unbothered by nothing at all', () => {
+    assert.equal(trimForStorage(undefined), '');
+  });
+});
+
+describe('carrying less when there is no room', () => {
+  const trail = {
+    pages: [
+      { url: 'a', html: 'aaa' },
+      { url: 'b', html: 'bbb' },
+      { url: 'c', html: 'ccc' },
+    ],
+  };
+
+  it('gives up the oldest pages first, since the newest are the ones in use', () => {
+    const lighter = lighten(trail);
+    assert.deepEqual(lighter.pages.map((p) => p.html), ['', 'bbb', 'ccc']);
+  });
+
+  it('can give up all of it and still name every page', () => {
+    const bare = lighten(trail, 0);
+    assert.deepEqual(bare.pages.map((p) => p.html), ['', '', '']);
+    assert.deepEqual(bare.pages.map((p) => p.url), ['a', 'b', 'c']);
+  });
+
+  it('leaves a short trail alone', () => {
+    assert.deepEqual(lighten({ pages: [{ url: 'a', html: 'aaa' }] }).pages[0].html, 'aaa');
   });
 });
