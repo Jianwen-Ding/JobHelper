@@ -4,26 +4,83 @@
 <meta charset="utf-8">
 <title>JobHelper</title>
 <style>
-  body {
-    width: 320px;
-    margin: 0;
-    padding: 12px;
-    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    color: #1a1a1c;
+  /* Same system as the editor and the card. */
+  :root {
+    --accent: #2f5fd0;
+    --accent-hover: #2650b4;
+    --accent-soft: #eaf0fd;
+    --ink: #17181c;
+    --muted: #676b77;
+    --faint: #969aa6;
+    --line: #e3e5ea;
+    --line-soft: #eef0f3;
+    --panel-sunk: #fafbfc;
+    --good: #146c3f;
+    --good-bg: #ecf7f0;
+    --bad: #a9231c;
+    --bad-bg: #fdeeec;
+    --warn: #7d5700;
+    --warn-bg: #fff9ec;
+    --warn-line: #eddfba;
   }
-  h1 { font-size: 14px; margin: 0 0 10px; }
-  label { display: block; margin-bottom: 10px; }
-  .lbl { font-size: 12px; color: #6b6b73; margin-bottom: 3px; }
-  input[type=text], select { width: 100%; font: inherit; padding: 5px 7px; border: 1px solid #dededf; border-radius: 6px; }
-  .check { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
-  .check label { margin: 0; }
-  button { font: inherit; padding: 6px 10px; border: 1px solid #dededf; border-radius: 6px; background: #fff; cursor: pointer; }
-  button.primary { background: #2f5fd0; border-color: #2f5fd0; color: #fff; }
+  * { box-sizing: border-box; }
+  body {
+    width: 326px;
+    margin: 0;
+    padding: 14px;
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+  h1 {
+    font-size: 13px; margin: 0 0 14px; font-weight: 650; letter-spacing: -.01em;
+    display: flex; align-items: center; gap: 8px;
+  }
+  h1::before {
+    content: ""; width: 17px; height: 17px; border-radius: 5px;
+    background: linear-gradient(145deg, var(--accent), #5b86e8);
+    box-shadow: inset 0 0 0 2px rgba(255,255,255,.55);
+  }
+  label { display: block; margin-bottom: 12px; }
+  .lbl { font-size: 11px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+  input[type=text], select {
+    width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--line);
+    border-radius: 6px; background: #fff; color: var(--ink);
+  }
+  input[type=text]:focus-visible, select:focus-visible {
+    outline: 0; border-color: #c8d8f7; box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .check { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; cursor: pointer; }
+  .check input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+  .check label { margin: 0; cursor: pointer; }
+  /* Whether an AI is actually in play — which this checkbox alone does not
+     decide, since ResumeM-M has its own switch. */
+  .ai {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+  }
+  .ai::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .ai.on { background: var(--accent-soft); color: var(--accent); }
+  .ai.off { background: var(--line-soft); color: var(--muted); }
+  .ai.warn { background: var(--warn-bg); color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn-line); }
+  button {
+    font: inherit; padding: 6px 11px; border: 1px solid var(--line); border-radius: 6px;
+    background: #fff; cursor: pointer; color: var(--ink);
+    box-shadow: 0 1px 2px rgba(20,22,30,.05); transition: background .12s, border-color .12s;
+  }
+  button:hover { border-color: #ccced6; background: var(--panel-sunk); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 550; }
+  button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
   .row { display: flex; gap: 6px; margin-top: 10px; }
-  .status { margin-top: 10px; font-size: 12px; padding: 7px 9px; border-radius: 6px; background: #f6f6f7; color: #6b6b73; }
-  .status.ok { background: #eef6f0; color: #1a7f4b; }
-  .status.err { background: #fdeeed; color: #b4251d; }
-  .hint { font-size: 11px; color: #6b6b73; margin-top: -6px; margin-bottom: 10px; }
+  .row button { flex: 1 1 auto; }
+  .status {
+    margin-top: 12px; font-size: 12px; padding: 8px 10px; border-radius: 6px;
+    background: var(--panel-sunk); color: var(--muted); border: 1px solid var(--line-soft);
+    border-left: 3px solid var(--line); line-height: 1.5;
+  }
+  .status.ok { background: var(--good-bg); color: var(--good); border-color: #c6e3d2; border-left-color: var(--good); }
+  .status.err { background: var(--bad-bg); color: var(--bad); border-color: #f1cbc7; border-left-color: var(--bad); }
+  .hint { font-size: 11px; color: var(--faint); margin: -8px 0 12px; line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -48,8 +105,9 @@
 <div class="check">
   <input type="checkbox" id="useAi">
   <label for="useAi">Also ask the AI CLI to tailor</label>
+  <span id="aiState" class="ai off">AI off</span>
 </div>
-<div class="hint">Off by default — tag matching is instant and free, and usually right.</div>
+<div class="hint" id="aiHint">Off by default — tag matching is instant and free, and usually right.</div>
 
 <div class="row">
   <button id="show" class="primary">Open on this page</button>

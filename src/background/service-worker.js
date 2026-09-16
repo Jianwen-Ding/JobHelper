@@ -37,6 +37,36 @@ const handlers = {
     return res.json();
   },
 
+  /**
+   * Whether AI is actually in play, which two switches decide: this extension's
+   * `useAi`, and `ai.enabled` on the ResumeM-M server. Either one off means
+   * nothing is sent to an AI — and the case where they disagree is the one
+   * worth naming, since flipping the extension's switch alone does nothing.
+   */
+  async aiStatus() {
+    const { useAi, serverUrl } = await getSettings();
+    let server;
+    try {
+      const res = await fetch(`${serverUrl.replace(/\/$/, '')}/health`);
+      server = await res.json();
+    } catch {
+      return { active: false, useAi, reachable: false, serverEnabled: false, state: 'offline' };
+    }
+
+    // Older servers do not report it; treat unknown as off rather than
+    // claiming an AI is running when we cannot tell.
+    const serverEnabled = Boolean(server?.ai?.enabled);
+    const state = !useAi ? 'off' : serverEnabled ? 'on' : 'server-off';
+    return {
+      active: state === 'on',
+      state,
+      useAi,
+      reachable: true,
+      serverEnabled,
+      command: server?.ai?.command,
+    };
+  },
+
   async getSettings() {
     return getSettings();
   },
@@ -50,12 +80,25 @@ const handlers = {
     return serverFetch('/api/resumes');
   },
 
-  /** Analyse a page and get back a proposed tailored resume spec. */
-  async analyze({ url, title, html }) {
-    const { baseResumeId, useAi } = await getSettings();
+  /**
+   * Analyse a page and get back a proposed tailored resume spec.
+   *
+   * `useAi` may be passed per call, which is how the card offers "build from
+   * the base" and "let the AI decide what to change" as two deliberate
+   * choices rather than one hidden setting. Omitted, it falls back to the
+   * stored preference.
+   */
+  async analyze({ url, title, html, useAi }) {
+    const settings = await getSettings();
     return serverFetch('/api/extension/analyze', {
       method: 'POST',
-      body: JSON.stringify({ url, title, html, baseResumeId, useAi }),
+      body: JSON.stringify({
+        url,
+        title,
+        html,
+        baseResumeId: settings.baseResumeId,
+        useAi: typeof useAi === 'boolean' ? useAi : settings.useAi,
+      }),
     });
   },
 

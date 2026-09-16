@@ -74,6 +74,20 @@ async function main() {
     check('role parsed', (await card.locator('.role').innerText()).includes('Data Platform'));
     check('company parsed', (await card.locator('.co').innerText()).includes('Streamly'));
 
+    // Whether an AI is involved must be visible without acting first.
+    const aiChip = card.locator('.ai');
+    await aiChip.waitFor({ timeout: 10_000 });
+    const aiText = await aiChip.innerText();
+    check('the card says whether AI is on', /^AI (on|off)/.test(aiText), aiText);
+
+    const modes = card.locator('button.mode');
+    check('both ways to tailor are offered', (await modes.count()) === 2);
+    check(
+      'the AI option is disabled while AI is off, and says why',
+      (await modes.nth(1).isDisabled()) && Boolean(await modes.nth(1).getAttribute('title')),
+      await modes.nth(1).getAttribute('title'),
+    );
+
     const changes = await card.locator('.change').all();
     check('tailoring proposed changes', changes.length > 0, `${changes.length} changes`);
 
