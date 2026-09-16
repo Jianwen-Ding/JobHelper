@@ -74,6 +74,20 @@ async function main() {
     check('role parsed', (await card.locator('.role').innerText()).includes('Data Platform'));
     check('company parsed', (await card.locator('.co').innerText()).includes('Streamly'));
 
+    // Whether an AI is involved must be visible without acting first.
+    const aiChip = card.locator('.ai');
+    await aiChip.waitFor({ timeout: 10_000 });
+    const aiText = await aiChip.innerText();
+    check('the card says whether AI is on', /^AI (on|off)/.test(aiText), aiText);
+
+    const modes = card.locator('button.mode');
+    check('both ways to tailor are offered', (await modes.count()) === 2);
+    check(
+      'the AI option is disabled while AI is off, and says why',
+      (await modes.nth(1).isDisabled()) && Boolean(await modes.nth(1).getAttribute('title')),
+      await modes.nth(1).getAttribute('title'),
+    );
+
     const changes = await card.locator('.change').all();
     check('tailoring proposed changes', changes.length > 0, `${changes.length} changes`);
 
@@ -81,6 +95,17 @@ async function main() {
     const firstChange = changes.length ? await changes[0].innerText() : '';
     check('changes are described in words, not ids', !/\bb_[a-z_]+\s*→/.test(firstChange), firstChange.split('\n')[0]);
     check('keywords are shown as written', !firstChange.includes('distributedsystems'));
+
+    /* The diff against the base: what the page said, and what it says now. */
+    const diffHead = await card.locator('.diff-head').innerText();
+    check('the diff names what it is comparing', /New grad/.test(diffHead), diffHead.replace(/\n/g, ' '));
+
+    const firstRow = card.locator('.change').first();
+    const wasText = await firstRow.locator('del').innerText();
+    const nowText = await firstRow.locator('ins').innerText();
+    check('each change shows the sentence it replaced', wasText.length > 20, wasText.slice(0, 50));
+    check('each change shows the sentence it chose', nowText.length > 20 && nowText !== wasText, nowText.slice(0, 50));
+    check('the rename to the posting is not shown as a change', !/^New grad$/m.test(wasText));
 
     await card.getByRole('button', { name: 'Build resume' }).click();
     await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 90_000 });

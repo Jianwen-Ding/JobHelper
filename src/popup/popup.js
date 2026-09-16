@@ -33,6 +33,35 @@ async function tellContentScript(type) {
   }
 }
 
+/**
+ * Say whether an AI is actually in play. Ticking the box here does nothing if
+ * ResumeM-M has its own AI switched off, and silently doing nothing is the
+ * worst of the three possible states — so name it.
+ */
+const AI_STATE = {
+  on: ['AI on', 'ai on', 'Your configured AI CLI will be asked to tailor and to draft.'],
+  off: ['AI off', 'ai off', 'Off by default — tag matching is instant and free, and usually right.'],
+  'server-off': [
+    'AI off in ResumeM-M',
+    'ai warn',
+    'ResumeM-M has its AI switched off, so this does nothing yet. Turn it on under Voice & AI.',
+  ],
+  offline: ['AI unknown', 'ai off', 'ResumeM-M is not reachable, so its AI setting could not be read.'],
+};
+
+async function showAiState() {
+  let status;
+  try {
+    status = await send('aiStatus');
+  } catch {
+    status = { state: 'offline' };
+  }
+  const [text, className, hint] = AI_STATE[status.state] ?? AI_STATE.off;
+  $('aiState').textContent = text;
+  $('aiState').className = className;
+  $('aiHint').textContent = hint;
+}
+
 async function boot() {
   const settings = await send('getSettings');
   $('serverUrl').value = settings.serverUrl;
@@ -48,7 +77,11 @@ async function boot() {
     check();
   };
   $('autoPrompt').onchange = () => save({ autoPrompt: $('autoPrompt').checked });
-  $('useAi').onchange = () => save({ useAi: $('useAi').checked });
+  $('useAi').onchange = async () => {
+    await save({ useAi: $('useAi').checked });
+    showAiState();
+  };
+  showAiState();
 
   $('baseResumeId').onchange = () => save({ baseResumeId: $('baseResumeId').value });
 
@@ -64,7 +97,10 @@ async function boot() {
   $('autofill').onclick = async () => {
     try {
       const report = await tellContentScript('autofill');
-      setStatus(`Filled ${report.filled.length} field(s), skipped ${report.skipped.length}.`, 'ok');
+      const f = report.filled.length;
+      const parts = [`Filled ${f} ${f === 1 ? 'field' : 'fields'}`];
+      if (report.skipped.length) parts.push(`left ${report.skipped.length} already filled`);
+      setStatus(`${parts.join(', ')}.`, 'ok');
     } catch (err) {
       setStatus(err.message, 'err');
     }
@@ -102,7 +138,8 @@ async function check() {
         return o;
       }),
     );
-    setStatus(`Connected — ${resumes.length} resume(s) in the store.`, 'ok');
+    const n = resumes.length;
+    setStatus(`Connected — ${n} ${n === 1 ? 'resume' : 'resumes'} in the store.`, 'ok');
   } catch (err) {
     setStatus(err.message, 'err');
   }

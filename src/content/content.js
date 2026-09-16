@@ -153,10 +153,24 @@
 
       case 'setBase': {
         await send('setSettings', { patch: { baseResumeId: payload.baseResumeId } });
-        analysis = await send('analyze', pagePayload());
+        analysis = await send('analyze', { ...pagePayload(), useAi: Boolean(payload.useAi) });
         cardHandle?.update(analysis);
         return analysis;
       }
+
+      /**
+       * Rebuild the proposal from the base, either by tag matching or by
+       * asking the AI what to change. Same endpoint, one deliberate flag —
+       * so the two paths cannot drift apart.
+       */
+      case 'rebuild': {
+        analysis = await send('analyze', { ...pagePayload(), useAi: Boolean(payload.useAi) });
+        cardHandle?.update(analysis);
+        return analysis;
+      }
+
+      case 'aiStatus':
+        return send('aiStatus', {});
 
       default:
         throw new Error(`Unknown card action "${action}"`);
