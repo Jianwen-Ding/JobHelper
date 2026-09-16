@@ -1125,13 +1125,26 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       h('div', { className: 'done-box' }, [
         h('div', { textContent: 'Saved. These files are named and ready to attach:' }),
         ...b.files.map((f) => h('div', { className: 'file', textContent: f })),
-        h('div', { className: 'path', textContent: b.dir }),
+
+        /*
+         * The flat folder, not the archive. Both hold these files, but this is
+         * the moment a file picker is about to open, and the flat folder is
+         * the one that has everything still in flight in it — no folder per
+         * application to navigate with the dialog already up.
+         */
+        h('div', { className: 'path', textContent: b.currentDir ?? b.dir }),
         h('div', { className: 'row gap' }, [
           h('button', {
             className: 'tiny',
             textContent: 'Copy folder path',
-            onclick: () => navigator.clipboard?.writeText(b.dir),
+            onclick: () => navigator.clipboard?.writeText(b.currentDir ?? b.dir),
           }),
+          b.currentDir
+            ? h('span', {
+                className: 'faint',
+                textContent: 'Everything you are sending, in one place. The full record is kept separately.',
+              })
+            : null,
         ]),
       ]),
       h('div', { className: 'row gap' }, [
