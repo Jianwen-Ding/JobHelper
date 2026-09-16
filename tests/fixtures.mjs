@@ -481,6 +481,53 @@ export const LATE_RENDER = {
 };
 
 /**
+ * A posting buried in a page full of somebody else's frames.
+ *
+ * Running in all frames means a page with thirty embeds announces thirty
+ * times and is asked thirty times on every scan. Only one of them is the
+ * application, and finding it among the rest — without the rest costing
+ * anything or contributing anything — is the thing to check.
+ */
+export const CROWDED_PAGE = {
+  name: 'crowded-page',
+  path: '/mensa/roles/platform-engineer',
+  company: 'Mensa Labs',
+  title: 'Platform Engineer',
+  html: `<!doctype html>
+<html><head><title>Platform Engineer at Mensa Labs</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Mensa Labs</h1><div>Platform Engineer</div></div>
+  <div class="wrap">
+    ${ROLE_BODY}
+    ${Array.from(
+      { length: 24 },
+      (_, i) => `<iframe title="Advertisement ${i}" src="/promo/newsletter" width="200" height="90"></iframe>`,
+    ).join('\n    ')}
+    <h2>Apply now</h2>
+    <iframe id="form" title="Application form" src="/mensa/roles/platform-engineer/form"
+            style="width:100%;height:420px"></iframe>
+    ${Array.from(
+      { length: 24 },
+      (_, i) => `<iframe title="Advertisement ${i + 24}" src="/promo/newsletter" width="200" height="90"></iframe>`,
+    ).join('\n    ')}
+  </div>
+</body></html>`,
+};
+
+export const CROWDED_PAGE_FORM = {
+  name: 'crowded-page-form',
+  path: '/mensa/roles/platform-engineer/form',
+  html: `<!doctype html>
+<html><head><meta charset="utf-8"><title>Application</title><style>${CHROME}</style></head>
+<body><div class="wrap"><form>
+  <label for="fn">First Name</label><input id="fn" name="first_name">
+  <label for="em">Email</label><input id="em" name="email" type="email">
+  <label for="q1">What draws you to this team?</label><textarea id="q1"></textarea>
+  <button type="button">Submit Application</button>
+</form></div></body></html>`,
+};
+
+/**
  * Not a job, with a frame that collects the same details anyway.
  *
  * The other side of letting a frame speak up for a page that says nothing: a
@@ -612,6 +659,7 @@ export const CYGNUS_ROLE_B = {
 export const NAVIGATION = [
   CYGNUS_BOARD, CYGNUS_ROLE_A, CYGNUS_ROLE_B, FRAMED_ROLE, FRAMED_FORM, ADVERT_FRAME, ADVERT_CONTENT,
   EMBEDDED_BOARD, EMBEDDED_BOARD_FRAME, BLOG_WITH_FORM, BLOG_ENQUIRY_FRAME, LATE_RENDER,
+  CROWDED_PAGE, CROWDED_PAGE_FORM,
   LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY,
   OWN_SITE, ATS_FORM, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, SPA_BOARD,
 ];

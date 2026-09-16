@@ -25,6 +25,7 @@ import {
   ASHBY_ROLE,
   ADVERT_FRAME,
   ATS_FORM,
+  CROWDED_PAGE,
   CYGNUS_BOARD,
   BLOG_WITH_FORM,
   EMBEDDED_BOARD,
@@ -372,6 +373,79 @@ async function main() {
       await page.close();
     }
 
+    /* ---- Going back, which restores a page rather than loading one ---- */
+    group('Back to the posting before this one');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(LEVER_ROLE), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+
+      await page.goto(fixtures.urlFor(ASHBY_ROLE), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      check('the second posting reads as itself', (await cardOf(page).locator('.co').textContent())?.includes('Lyra'));
+
+      /*
+       * Back does not reload: the browser may restore the page whole, card and
+       * all, without the content script running again. A card that came back
+       * from storage belongs to the posting it was built for — so what must
+       * not happen is Lyra's card sitting on Vega's page, which is the same
+       * mistake as every other stale-state one, arriving by the one route that
+       * reinstates a whole card at once.
+       */
+      await page.goBack();
+      await page.waitForLoadState('domcontentloaded');
+      await page.waitForTimeout(4000);
+
+      const co = (await cardOf(page).locator('.co').textContent()) ?? '';
+      check('and going back does not leave the later card on the earlier page', !co.includes('Lyra'), co);
+      check('the card on the restored page names the posting that is on it', co.includes('Vega'), co);
+      await page.close();
+    }
+
+    /* ---- One application among fifty frames ---- */
+    group('A posting buried in a page full of somebody else\'s frames');
+    {
+      const page = await context.newPage();
+      const startedAt = Date.now();
+      await page.goto(fixtures.urlFor(CROWDED_PAGE), { waitUntil: 'load' });
+      await settled(page);
+      await page.waitForTimeout(3000);
+      const upIn = Date.now() - startedAt;
+
+      const card = cardOf(page);
+      check('the card still appears, with forty-nine frames on the page', (await card.count()) > 0);
+      check('and does not take absurdly long about it', upIn < 30_000, `${upIn}ms`);
+
+      const asked = await card.locator('.q').allTextContents();
+      check(
+        'the one application frame is found among the rest',
+        asked.some((q) => /what draws you to this team/i.test(q)),
+        asked.join(' | ') || '(none)',
+      );
+      check(
+        'and none of the adverts contributed a question',
+        !asked.some((q) => /advertisement/i.test(q)),
+        asked.join(' | '),
+      );
+
+      await card.getByRole('button', { name: 'Autofill this form' }).click();
+      await page.waitForTimeout(6000);
+      const form = page.frames().find((f) => f.url().endsWith('/platform-engineer/form'));
+      const filled = await form?.evaluate(() => document.getElementById('em').value);
+      check('autofill reached the right frame', Boolean(filled), filled);
+
+      const promos = page.frames().filter((f) => f.url().endsWith('/promo/newsletter'));
+      const leaked = await Promise.all(
+        promos.map((f) => f.evaluate(() => document.getElementById('ad-em')?.value ?? '').catch(() => '')),
+      );
+      check(
+        'and none of the other forty-eight',
+        leaked.every((v) => !v),
+        `${leaked.filter(Boolean).length} of ${promos.length} were written to`,
+      );
+      await page.close();
+    }
+
     /* ---- The posting arrives after the page has already been judged ---- */
     group('A posting that is not in the page when the page loads');
     {
@@ -556,7 +630,7 @@ async function main() {
     fixtures.close();
     ats.close();
     fs.rmSync(userDataDir, { recursive: true, force: true });
-    await cleanStore(SERVER, ['Vega', 'Lyra', 'Orion', 'Acme', 'Nova', 'Rigel', 'Altair', 'Cygnus']);
+    await cleanStore(SERVER, ['Vega', 'Lyra', 'Orion', 'Acme', 'Nova', 'Rigel', 'Altair', 'Cygnus', 'Vireo', 'Lyricus', 'Vela', 'Mensa Labs']);
   }
 
   console.log(`\n${passed}/${passed + failed} checks passed`);

@@ -62,6 +62,51 @@ const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 const BARE_NAME = /^(full\s+)?name$/i;
 
 /**
+ * Every document this page is really made of.
+ *
+ * `querySelectorAll` stops at a shadow boundary, so a careers site built out of
+ * web components looked to have no form on it at all — nothing to fill, nothing
+ * to ask, and in a frame, nothing to recognise it as an application by. Open
+ * roots are readable; closed ones are not, and a site using those has decided
+ * nobody may look.
+ */
+function allRoots(root = document, out = [root]) {
+  for (const element of root.querySelectorAll('*')) {
+    if (element.shadowRoot) {
+      out.push(element.shadowRoot);
+      allRoots(element.shadowRoot, out);
+    }
+  }
+  return out;
+}
+
+/** The same query, asked of the page and of everything nested inside it. */
+function deepQueryAll(selector, root = document) {
+  return allRoots(root).flatMap((where) => [...where.querySelectorAll(selector)]);
+}
+
+/**
+ * The text of the page, including what is inside components.
+ *
+ * `document.body.textContent` does not reach into a shadow root, so a form
+ * built that way reads as a blank page.
+ */
+function deepText(limit = 40_000) {
+  let text = document.body?.textContent ?? '';
+  for (const root of allRoots().slice(1)) {
+    if (text.length >= limit) break;
+    text += ` ${root.textContent ?? ''}`;
+  }
+  return text.slice(0, limit);
+}
+
+/** The document or shadow root a field actually lives in. */
+const rootOf = (node) => {
+  const root = node.getRootNode?.();
+  return root?.querySelector ? root : document;
+};
+
+/**
  * Find the label that belongs to a field.
  *
  * Getting this wrong is worse than not filling at all: an earlier version
@@ -73,7 +118,7 @@ const BARE_NAME = /^(full\s+)?name$/i;
  */
 function labelFor(input) {
   if (input.id) {
-    const label = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
+    const label = rootOf(input).querySelector(`label[for="${CSS.escape(input.id)}"]`);
     if (label) return clean(label.textContent);
   }
 
@@ -84,7 +129,11 @@ function labelFor(input) {
   if (describedBy) {
     const text = describedBy
       .split(/\s+/)
-      .map((id) => document.getElementById(id)?.textContent ?? '')
+      // Scoped to this field's own root: ids inside a component are not in the
+      // document's id map, so Workday-style labelling breaks there otherwise.
+      .map((id) => rootOf(input).getElementById?.(id)?.textContent
+        ?? rootOf(input).querySelector(`#${CSS.escape(id)}`)?.textContent
+        ?? '')
       .join(' ');
     if (clean(text)) return clean(text);
   }
@@ -138,12 +187,32 @@ function questionFor(input) {
   return labelFor(input);
 }
 
+/** A choice dressed as something else: a button, or a text box that is a list. */
+function isWidgetChoice(element) {
+  if (element instanceof HTMLSelectElement) return false;
+  const role = element.getAttribute?.('role');
+  return (
+    role === 'combobox' ||
+    role === 'listbox' ||
+    element.getAttribute?.('aria-haspopup') === 'listbox' ||
+    ['list', 'both'].includes(element.getAttribute?.('aria-autocomplete'))
+  );
+}
+
 function isFillable(input) {
   if (input.disabled || input.readOnly) return false;
   if (input.type === 'hidden' || input.type === 'file' || input.type === 'password') return false;
   // Radios are answered as a group, below; checkboxes are consent and are
   // nobody's to tick but the applicant's.
   if (input.type === 'radio' || input.type === 'checkbox') return false;
+  /*
+   * A combobox is a text input that is not a text field. Half these systems
+   * have moved to react-select and its kind, where what the form submits lives
+   * in a hidden field only the widget's own code sets — so typing into the
+   * visible box fills nothing while looking like it filled something, which is
+   * worse than leaving it plainly blank. Reported instead, further down.
+   */
+  if (isWidgetChoice(input)) return false;
   // `offsetParent` is null for anything positioned fixed, visible or not, and
   // forms inside a fixed modal are ordinary. Whether it occupies space on the
   // page is the question actually being asked.
@@ -199,7 +268,7 @@ export function fillForm(fields, { overwrite = false } = {}) {
   const filled = [];
   const skipped = [];
 
-  const inputs = [...document.querySelectorAll('input, textarea, select')];
+  const inputs = deepQueryAll('input, textarea, select');
   for (const input of inputs) {
     if (!isFillable(input)) continue;
 
@@ -284,7 +353,7 @@ function optionLabelFor(radio) {
   const wrapping = radio.closest('label');
   if (wrapping) return clean(wrapping.textContent);
   if (radio.id) {
-    const label = document.querySelector(`label[for="${CSS.escape(radio.id)}"]`);
+    const label = rootOf(radio).querySelector(`label[for="${CSS.escape(radio.id)}"]`);
     if (label) return clean(label.textContent);
   }
   return clean(radio.value);
@@ -309,7 +378,7 @@ function answerRadioGroups(fields, overwrite) {
   const skipped = [];
 
   const groups = new Map();
-  for (const radio of document.querySelectorAll('input[type=radio]')) {
+  for (const radio of deepQueryAll('input[type=radio]')) {
     if (radio.disabled || radio.getClientRects().length === 0) continue;
     const key = radio.name || radio.closest('fieldset');
     if (!key) continue;
@@ -368,10 +437,10 @@ function unfillableChoices(fields, filled) {
   const already = new Set(filled.map((f) => f.key));
   const found = [];
 
-  for (const widget of document.querySelectorAll(
-    '[role="combobox"], [aria-haspopup="listbox"], [role="listbox"]',
+  for (const widget of deepQueryAll(
+    '[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"]',
   )) {
-    if (widget instanceof HTMLSelectElement) continue;
+    if (!isWidgetChoice(widget)) continue;
     if (widget.getClientRects().length === 0) continue;
 
     const description = describeField(widget);
@@ -407,16 +476,16 @@ const APPLICATION_WORDS =
   /\b(submit (your )?application|apply for this|cover letter|work authorizat|require sponsorship|equal opportunity employer|voluntary self-identification)\b/i;
 
 export function looksLikeApplicationForm() {
-  const text = (document.body?.textContent ?? '').slice(0, 40_000);
+  const text = deepText();
   if (APPLICATION_WORDS.test(text)) return true;
 
   // A file upload beside the word résumé is the clearest sign there is.
-  if (document.querySelector('input[type=file]') && /\b(resum|cv)\b/i.test(text)) return true;
+  if (deepQueryAll('input[type=file]').length > 0 && /\b(resum|cv)\b/i.test(text)) return true;
 
   // Failing that, enough distinct parts of a person that nothing but an
   // application would be collecting them all at once.
   const keys = new Set();
-  for (const input of document.querySelectorAll('input, textarea, select')) {
+  for (const input of deepQueryAll('input, textarea, select')) {
     const description = describeField(input);
     if (!description) continue;
     const match = FIELD_PATTERNS.find(([, re]) => re.test(description));
@@ -440,9 +509,9 @@ let fieldCounter = 0;
 export function findQuestions() {
   const found = [];
   const candidates = [
-    ...document.querySelectorAll('textarea'),
+    ...deepQueryAll('textarea'),
     // Some boards use a contenteditable div for long answers.
-    ...document.querySelectorAll('[contenteditable="true"]'),
+    ...deepQueryAll('[contenteditable="true"]'),
   ];
 
   for (const field of candidates) {
@@ -480,7 +549,7 @@ export function findQuestions() {
  * named for one, or a long-answer box that says so.
  */
 export function wantsCoverLetter() {
-  for (const field of document.querySelectorAll('input[type=file], textarea, label, legend')) {
+  for (const field of deepQueryAll('input[type=file], textarea, label, legend')) {
     const text = `${field.getAttribute?.('name') ?? ''} ${field.getAttribute?.('id') ?? ''} ${
       field.textContent ?? ''
     }`.toLowerCase();
@@ -491,7 +560,7 @@ export function wantsCoverLetter() {
 
 /** Whether a question is marked required, by any of the usual conventions. */
 export function isRequired(fieldId) {
-  const field = document.querySelector(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`);
+  const field = deepQueryAll(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`)[0];
   if (!field) return false;
   if (field.required || field.getAttribute('aria-required') === 'true') return true;
 
@@ -502,7 +571,7 @@ export function isRequired(fieldId) {
 
 /** Put text into a field the card previously identified. */
 export function insertAnswer(fieldId, text) {
-  const field = document.querySelector(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`);
+  const field = deepQueryAll(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`)[0];
   if (!field) return false;
   if (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) {
     setValue(field, text);

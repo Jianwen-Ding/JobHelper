@@ -462,6 +462,88 @@ const SYSTEMS = [
   },
 
   {
+    /*
+     * A react-select combobox, which is what half these systems have moved to.
+     * Unlike Workday's button, this one *is* an input — so it can be typed
+     * into, and typing into it does nothing at all: the value the form submits
+     * lives in a hidden field that only the widget's own code sets. A form that
+     * looks filled and is empty is worse than one that is plainly blank.
+     */
+    name: 'A combobox that is a text input',
+    html: `
+      <label for="cb-fn">First Name</label><input id="cb-fn" name="first_name" type="text">
+      <label for="cb-em">Email</label><input id="cb-em" name="email" type="email">
+
+      <label for="cb-country" id="cb-country-label">Country</label>
+      <div class="select__control">
+        <input id="cb-country" role="combobox" aria-autocomplete="list" aria-expanded="false"
+               aria-labelledby="cb-country-label" autocomplete="off">
+        <div class="select__placeholder">Select…</div>
+      </div>
+      <input type="hidden" name="country" id="cb-country-value">
+
+      <label for="cb-school" id="cb-school-label">School</label>
+      <div class="select__control">
+        <input id="cb-school" role="combobox" aria-autocomplete="list"
+               aria-labelledby="cb-school-label" autocomplete="off">
+      </div>
+      <input type="hidden" name="school" id="cb-school-value">`,
+    want: {
+      '#cb-fn': 'Jianwen',
+      '#cb-em': 'ding.jianw@northeastern.edu',
+      // Typing here submits nothing, so nothing is typed here.
+      '#cb-country': '',
+      '#cb-school': '',
+    },
+    reportsUnfillable: ['address_country', 'school'],
+    questions: [],
+    wantsLetter: false,
+  },
+
+  {
+    /*
+     * A form built out of web components, so every field is inside a shadow
+     * root. `document.querySelectorAll` does not cross that boundary, so the
+     * page looks to have no form on it whatsoever — nothing filled, nothing
+     * asked, and in a frame, nothing even recognised as an application.
+     */
+    name: 'A form inside a shadow root',
+    /*
+     * The markup is encoded so that none of it is readable as the script's own
+     * text. Written out in full it sits in `document.body.textContent`, and the
+     * form is then recognised by the words in the source rather than by
+     * anything reaching into the component — which is a passing test measuring
+     * nothing.
+     */
+    html: `
+      <div id="host"></div>
+      <script>
+        document.getElementById('host').attachShadow({ mode: 'open' }).innerHTML =
+          decodeURIComponent(escape(atob(${JSON.stringify(
+            Buffer.from(
+              '<label for="sd-fn">First Name</label><input id="sd-fn" name="first_name">' +
+                '<label for="sd-ln">Last Name</label><input id="sd-ln" name="last_name">' +
+                '<label for="sd-em">Email</label><input id="sd-em" name="email" type="email">' +
+                '<label for="sd-ph">Phone</label><input id="sd-ph" name="phone">' +
+                '<label for="sd-cl">Cover Letter</label><textarea id="sd-cl" name="cover_letter"></textarea>' +
+                '<label for="sd-q1">Why do you want to work here?</label><textarea id="sd-q1"></textarea>' +
+                '<button type="button">Submit Application</button>',
+              'utf8',
+            ).toString('base64'),
+          )})));
+      </script>`,
+    shadowHost: '#host',
+    want: {
+      '#sd-fn': 'Jianwen',
+      '#sd-ln': 'Ding',
+      '#sd-em': 'ding.jianw@northeastern.edu',
+      '#sd-ph': '555-0100',
+    },
+    questions: [/why do you want to work here/i],
+    wantsLetter: true,
+  },
+
+  {
     name: 'iCIMS',
     // The whole form is in an iframe, which is how iCIMS serves it.
     frame: `
@@ -559,12 +641,16 @@ async function main() {
       }
 
       const out = await where.evaluate(
-        async ({ b, profile, wants }) => {
+        async ({ b, profile, wants, host }) => {
           const m = await import(`${b}/autofill.js`);
           const report = m.fillForm(profile);
+          // A form built from web components keeps its fields in a shadow
+          // root, which is the whole point of that fixture.
+          const find = (sel) =>
+            host ? document.querySelector(host)?.shadowRoot?.querySelector(sel) : document.querySelector(sel);
           return {
             values: Object.fromEntries(
-              Object.keys(wants).map((sel) => [sel, document.querySelector(sel)?.value ?? '(no such field)']),
+              Object.keys(wants).map((sel) => [sel, find(sel)?.value ?? '(no such field)']),
             ),
             filled: report.filled.map((f) => f.key),
             skipped: report.skipped.map((s) => ({ key: s.key, reason: s.reason })),
@@ -582,7 +668,7 @@ async function main() {
             ticked: [...document.querySelectorAll('input[type=checkbox]:checked')].map((c) => c.name),
           };
         },
-        { b: base, profile: PROFILE, wants: system.want },
+        { b: base, profile: PROFILE, wants: system.want, host: system.shadowHost ?? null },
       );
 
       const wrong = Object.entries(system.want).filter(([sel, value]) => out.values[sel] !== value);
