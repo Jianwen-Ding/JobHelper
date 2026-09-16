@@ -159,16 +159,189 @@ export const HELIOS_FORM = {
 </body></html>`,
 };
 
-export const ALL = [STREAMLY, NORTHWIND, BLOG, HELIOS_ROLE, HELIOS_FORM];
+
+/* ------------------------------------------------------------------ *
+ * How real systems move you from the description to the form          *
+ * ------------------------------------------------------------------ */
+
+const ROLE_BODY = `
+    <h2>About the role</h2>
+    <p>We are looking for a platform engineer to run our Kafka and Kubernetes
+       estate. You will own the streaming infrastructure end to end, in Go and
+       Python, and the CI/CD that ships it.</p>
+    <h2>Minimum qualifications</h2>
+    <ul><li>Experience with distributed systems</li><li>Years of experience with SQL and AWS</li></ul>
+    <p>Equal opportunity employer. Full-time. Compensation is competitive.</p>`;
+
+const FORM_BODY = `
+    <form>
+      <label for="fn">First Name</label><input id="fn" name="first_name">
+      <label for="ln">Last Name</label><input id="ln" name="last_name">
+      <label for="em">Email</label><input id="em" name="email" type="email">
+      <label for="rs">Resume</label><input id="rs" name="resume" type="file">
+      <label for="cl">Cover Letter</label><textarea id="cl" name="cover_letter"></textarea>
+      <label for="q1">Why do you want to work here?</label><textarea id="q1" name="why_here"></textarea>
+      <button type="button">Submit Application</button>
+    </form>`;
+
+const page = (title, heading, body, extra = '') => `<!doctype html>
+<html><head><title>${title}</title><style>${CHROME}</style></head>
+<body><div class="hdr"><h1>${heading}</h1></div><div class="wrap">${body}</div>${extra}</body></html>`;
+
+/**
+ * Lever: the form is the same URL with /apply on the end. An ordinary link,
+ * an ordinary navigation, same host.
+ */
+export const LEVER_ROLE = {
+  name: 'lever-role',
+  path: '/lever/vega/8f21',
+  company: 'Vega',
+  title: 'Platform Engineer',
+  html: page(
+    'Platform Engineer at Vega',
+    'Vega',
+    `${ROLE_BODY}<p><a href="/lever/vega/8f21/apply">Apply for this job</a></p>`,
+  ),
+};
+export const LEVER_FORM = {
+  name: 'lever-form',
+  path: '/lever/vega/8f21/apply',
+  html: page('Apply — Vega', 'Vega', FORM_BODY),
+};
+
+/**
+ * Ashby: same shape, different suffix, and the link says only "Apply" — the
+ * href is what has to be recognised.
+ */
+export const ASHBY_ROLE = {
+  name: 'ashby-role',
+  path: '/ashby/lyra/role-4c2',
+  company: 'Lyra',
+  title: 'Platform Engineer',
+  html: page(
+    'Platform Engineer at Lyra',
+    'Lyra',
+    `${ROLE_BODY}<p><a href="/ashby/lyra/role-4c2/application">Apply</a></p>`,
+  ),
+};
+export const ASHBY_FORM = {
+  name: 'ashby-form',
+  path: '/ashby/lyra/role-4c2/application',
+  html: page('Application — Lyra', 'Lyra', FORM_BODY),
+};
+
+/**
+ * Workday and its kind: a single-page application. Clicking Apply changes the
+ * url with history.pushState and swaps the DOM — there is no navigation at
+ * all, so nothing re-injects and the card has to notice on its own.
+ */
+export const WORKDAY = {
+  name: 'workday',
+  path: '/workday/orion/job/platform-engineer',
+  company: 'Orion',
+  title: 'Platform Engineer',
+  html: page(
+    'Platform Engineer at Orion',
+    'Orion',
+    `<div id="view">${ROLE_BODY}<p><button id="apply" type="button">Apply</button></p></div>`,
+    `<script>
+       document.getElementById('apply').addEventListener('click', () => {
+         history.pushState({}, '', '/workday/orion/job/platform-engineer/apply');
+         document.title = 'Apply — Orion';
+         document.getElementById('view').innerHTML = ${JSON.stringify(FORM_BODY)};
+       });
+     </script>`,
+  ),
+};
+
+/**
+ * A company's own careers page handing off to an applicant tracking system:
+ * a different host, and the link carries rel="noreferrer", so by the time the
+ * second page loads there is nothing on it that points back.
+ */
+export const OWN_SITE = {
+  name: 'own-site',
+  path: '/acme/careers/platform-engineer',
+  company: 'Acme',
+  title: 'Platform Engineer',
+  html: page(
+    'Platform Engineer at Acme',
+    'Acme',
+    `${ROLE_BODY}<p><a rel="noreferrer" id="apply" href="{{ATS}}">Apply now</a></p>`,
+  ),
+};
+export const ATS_FORM = {
+  name: 'ats-form',
+  path: '/gh/acme/jobs/9910',
+  html: page('Apply — Acme', 'Acme', FORM_BODY),
+};
+
+/** An Apply button that opens the form in a new tab, as plenty do. */
+export const NEW_TAB_ROLE = {
+  name: 'new-tab-role',
+  path: '/nova/roles/platform-engineer',
+  company: 'Nova',
+  title: 'Platform Engineer',
+  html: page(
+    'Platform Engineer at Nova',
+    'Nova',
+    `${ROLE_BODY}<p><a href="/nova/roles/platform-engineer/apply" target="_blank" rel="noreferrer">Apply now</a></p>`,
+  ),
+};
+export const NEW_TAB_FORM = {
+  name: 'new-tab-form',
+  path: '/nova/roles/platform-engineer/apply',
+  html: page('Apply — Nova', 'Nova', FORM_BODY),
+};
+
+/** A form in two steps, which must stay one application rather than two. */
+export const STEP_ONE = {
+  name: 'step-one',
+  path: '/rigel/apply/details',
+  company: 'Rigel',
+  html: page(
+    'Apply — Rigel',
+    'Rigel',
+    `${FORM_BODY}<p><a href="/rigel/apply/questions">Continue to apply</a></p>`,
+  ),
+};
+export const STEP_TWO = {
+  name: 'step-two',
+  path: '/rigel/apply/questions',
+  html: page(
+    'Apply — Rigel',
+    'Rigel',
+    `<form><label for="q9">Why do you want to work here?</label><textarea id="q9"></textarea>
+     <label for="q8">Will you now or in the future require sponsorship?</label><input id="q8">
+     <button type="button">Submit Application</button></form>`,
+  ),
+};
+
+export const NAVIGATION = [
+  LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY,
+  OWN_SITE, ATS_FORM, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO,
+];
+
+export const ALL = [STREAMLY, NORTHWIND, BLOG, HELIOS_ROLE, HELIOS_FORM, ...NAVIGATION];
 
 /**
  * Serve every fixture from one origin. Returns the base url and a `urlFor`
  * helper so callers do not hard-code ports.
  */
-export function serveFixtures(fixtures = ALL) {
+export function serveFixtures(fixtures = ALL, { vars = {}, hostname = '127.0.0.1' } = {}) {
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
-      const match = fixtures.find((f) => req.url.startsWith(f.path));
+      /*
+       * Longest path wins. Matching on the first prefix served the role page
+       * at the form's own address, because /lever/vega/8f21 is a prefix of
+       * /lever/vega/8f21/apply — which is exactly the shape every one of
+       * these systems uses.
+       */
+      const url = req.url.split('?')[0];
+      const match = [...fixtures]
+        .filter((f) => url === f.path || url.startsWith(`${f.path}/`) || url.startsWith(f.path))
+        .sort((a, b) => b.path.length - a.path.length)[0];
+
       if (!match) {
         res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end('<html><body>Not found</body></html>');
@@ -177,10 +350,12 @@ export function serveFixtures(fixtures = ALL) {
       // charset matters: an em dash in a page title came back as mojibake
       // without it, which looks like a bug in the extension rather than here.
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(match.html);
+      // `{{NAME}}` lets one fixture link to another server's origin, which is
+      // how the careers-site-to-ATS hand-off is modelled.
+      res.end(Object.entries(vars).reduce((html, [k, v]) => html.split(`{{${k}}}`).join(v), match.html));
     });
     server.listen(0, '127.0.0.1', () => {
-      const base = `http://127.0.0.1:${server.address().port}`;
+      const base = `http://${hostname}:${server.address().port}`;
       resolve({
         base,
         urlFor: (f) => `${base}${f.path}`,

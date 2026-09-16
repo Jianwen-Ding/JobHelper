@@ -148,6 +148,7 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .trail-row { display: flex; align-items: center; gap: 6px; padding: 3px 0 3px 12px; }
 .trail-row .what { color: var(--faint); white-space: nowrap; }
 .trail-row .where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; }
+.trail-kept { color: var(--good); padding: 3px 0 3px 12px; }
 
 
 /* Each step is a labelled block, so the card reads as a sequence. */
@@ -373,12 +374,76 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     workspaceOpened: false,
     /** Whether an AI is in play at all. Filled in below; never assumed. */
     ai: null,
+    /** Answers typed on an earlier page of this same application. */
+    carriedOver: null,
     /** How the proposal on screen was produced: 'tags' or 'ai'. */
     builtWith: analysis?.aiUsed ? 'ai' : 'tags',
     /** Which compiled PDF is on screen, and the canvases already drawn. */
     shownPdf: null,
     pdfPages: new Map(),
   };
+
+  /**
+   * What is worth keeping when the page changes under you.
+   *
+   * Clicking "Apply" is a navigation, and a navigation tears the card down and
+   * builds a new one — so the resume you just built, the letter you just
+   * drafted and the answers you just typed were gone at exactly the point the
+   * form appeared to put them in. These are the pieces of that work that mean
+   * anything on the next page.
+   *
+   * Not everything: `view` and `bundle` stay behind deliberately, because
+   * landing on an application form already showing the "saved" panel would
+   * hide the form it is standing in front of.
+   */
+  function takeWork() {
+    return {
+      spec: state.spec,
+      builtWith: state.builtWith,
+      render: state.render,
+      letter: state.letter,
+      letterSource: state.letterSource,
+      letterStarted: state.letterStarted,
+      letterSaved: state.letterSaved,
+      letterAutoStarted: state.letterAutoStarted,
+      priorLetters: state.priorLetters,
+      // Keyed by the question, not by the field it was typed into: the field
+      // ids belong to a page that no longer exists.
+      answersByQuestion: Object.fromEntries(
+        (state.questions ?? [])
+          .map((q) => [q.question, state.answers[q.fieldId] ?? q.answer])
+          .filter(([, a]) => a?.trim()),
+      ),
+    };
+  }
+
+  function restoreWork(work) {
+    if (!work) return;
+    if (work.spec) state.spec = work.spec;
+    if (work.builtWith) state.builtWith = work.builtWith;
+    if (work.render) state.render = work.render;
+    if (work.letter != null) state.letter = work.letter;
+    if (work.letterSource) state.letterSource = work.letterSource;
+    state.letterStarted = state.letterStarted || Boolean(work.letterStarted);
+    state.letterSaved = state.letterSaved || Boolean(work.letterSaved);
+    state.letterAutoStarted = state.letterAutoStarted || Boolean(work.letterAutoStarted);
+    if (work.priorLetters?.length) state.priorLetters = work.priorLetters;
+    state.carriedOver = work.answersByQuestion ?? {};
+    applyCarriedAnswers();
+    draw();
+  }
+
+  /** An answer typed on an earlier page, against the same question here. */
+  function applyCarriedAnswers() {
+    const carried = state.carriedOver;
+    if (!carried) return;
+    for (const q of state.questions ?? []) {
+      const had = carried[q.question];
+      if (had && !state.answers[q.fieldId]?.trim() && !q.answer?.trim()) {
+        state.answers[q.fieldId] = had;
+      }
+    }
+  }
 
   // Ask once, on open: the card must be able to say whether an AI is involved
   // before the user acts, not after. Deliberately outside act(), which marks
@@ -554,8 +619,19 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         }),
       ]);
 
+    // Say plainly that the work came too. The resume being still on screen is
+    // evidence, but only if you happened to notice it was ever gone.
+    const brought = [
+      state.spec ? 'the resume' : null,
+      state.letter?.trim() ? 'the letter' : null,
+      Object.keys(state.carriedOver ?? {}).length ? 'your answers' : null,
+    ].filter(Boolean);
+
     return h('details', { className: 'trail' }, [
       h('summary', { textContent: `Writing from ${pages.length} pages of this application` }),
+      brought.length
+        ? h('div', { className: 'trail-kept', textContent: `Carried over: ${brought.join(', ')}.` })
+        : null,
       ...pages.map(row),
       h('button', {
         className: 'link',
@@ -1322,8 +1398,17 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     },
     setQuestions(qs) {
       state.questions = qs;
+      // Questions arrive after the card is built, so anything carried over
+      // from the last page can only be matched to them now.
+      applyCarriedAnswers();
       draw();
     },
+
+    /** Hand back the work worth keeping when this page is replaced. */
+    takeWork,
+
+    /** Put back the work from the page this one continues. */
+    restoreWork,
     setStatus(text) {
       state.error = text;
       draw();

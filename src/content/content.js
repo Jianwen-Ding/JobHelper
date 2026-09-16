@@ -361,6 +361,14 @@
     cardHandle?.update(analysis);
 
     /*
+     * Whatever was built on the page before this one. Restored before the AI
+     * is offered anything to do, so a resume that was already tailored is on
+     * screen rather than being quietly rebuilt from scratch.
+     */
+    const carried = await send('takeWork', { page: pageIdentity() }).catch(() => ({ work: null }));
+    if (carried?.work) cardHandle?.restoreWork(carried.work);
+
+    /*
      * This page is now part of an application. Remembering it is what lets the
      * next page — usually the form, on a different host — be written from the
      * description you read here rather than from the form's own empty prose.
@@ -382,7 +390,14 @@
      * showing. Never before: waiting minutes at a blank page for a guess
      * nobody has seen yet is the behaviour this replaced.
      */
-    if (settings.useAi) {
+    /*
+     * Also when the last page was tailored by the AI, whatever the global
+     * setting says: arriving at the form with more of the posting read than
+     * when the AI last looked is exactly the moment to look again. The carried
+     * proposal stays on screen meanwhile, so nothing appears to be lost while
+     * it thinks.
+     */
+    if (settings.useAi || carried?.work?.builtWith === 'ai') {
       const ai = await send('aiStatus', {}).catch(() => null);
       if (ai?.active) cardHandle?.tailorWithAi();
     }
@@ -394,6 +409,68 @@
     gatherQuestions()
       .then((questions) => cardHandle?.setQuestions(questions))
       .catch(() => undefined);
+  }
+
+  /* ---------------- Keeping the work across a navigation ---------------- */
+
+  /**
+   * A link that plainly means "apply", clicked.
+   *
+   * The referrer is the usual way one page knows it came from another, and it
+   * is absent often enough to be unreliable: rel="noreferrer", a strict
+   * referrer policy, and every Apply button that opens a new tab. The click
+   * itself is better evidence and it is available earlier, so it is what gets
+   * recorded. Capture phase, because a board's own handler may well cancel the
+   * event and route the page itself.
+   */
+  function watchForApplyClicks() {
+    const MEANS_APPLY = /\b(apply|application|start (your )?application|submit (your )?application|continue to apply)\b/i;
+
+    document.addEventListener(
+      'click',
+      (event) => {
+        const link = event.target?.closest?.('a[href], button');
+        if (!link) return;
+
+        const href = link.getAttribute?.('href') ?? '';
+        const label = (link.textContent ?? '').trim().slice(0, 80);
+        if (!MEANS_APPLY.test(href) && !MEANS_APPLY.test(label)) return;
+
+        let to = href;
+        try {
+          to = new URL(href, location.href).href;
+        } catch {
+          to = location.href; // a button, or a href this page will resolve itself
+        }
+        // Best effort by design: if this never arrives, the trail falls back
+        // to the host and path rules, which are right most of the time.
+        send('expectContinuation', { to }).catch(() => undefined);
+      },
+      true,
+    );
+  }
+
+  /**
+   * Keep what has been done here, so the next page of this application starts
+   * where this one left off rather than from nothing.
+   *
+   * On an interval rather than on every change: the card has no change events
+   * to subscribe to, saving is cheap, and the worst case of being a second
+   * stale is losing the last keystroke of an answer — against the previous
+   * behaviour, which was losing all of it.
+   */
+  function keepWorkSafe() {
+    const save = () => {
+      const work = cardHandle?.takeWork?.();
+      if (work) send('saveWork', { work }).catch(() => undefined);
+    };
+    setInterval(save, 2000);
+    // A navigation is exactly when this matters, and exactly when an interval
+    // is least likely to have just run.
+    window.addEventListener('pagehide', save);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') save();
+    });
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -430,6 +507,9 @@
       show().catch(() => {});
     })();
   }, 1000);
+
+  watchForApplyClicks();
+  keepWorkSafe();
 
   show().catch((err) => {
     // A missing server must not spam every page the user opens.

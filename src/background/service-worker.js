@@ -57,6 +57,8 @@ const TRAIL_MAX = 5;
 const TRAIL_HTML_MAX = 400_000;
 /** Older than this and it is a different sitting, whatever the host says. */
 const TRAIL_STALE_MS = 2 * 60 * 60 * 1000;
+/** How long a click on "Apply" stands as a promise about the next page. */
+const EXPECTATION_MS = 5 * 60 * 1000;
 
 const session = () => chrome.storage.session ?? chrome.storage.local;
 
@@ -107,8 +109,29 @@ function relatedPath(a, b) {
  * to its ATS is the case this exists for, and it is also the only case where
  * two unrelated hosts should ever be joined up.
  */
+/** Did the user just click a link to this page, meaning "apply"? */
+function wasExpected(trail, url) {
+  const expecting = trail.expecting;
+  if (!expecting?.to || Date.now() - (expecting.at ?? 0) > EXPECTATION_MS) return false;
+  if (expecting.to === url) return true;
+
+  // An apply link routinely lands somewhere near where it pointed: a redirect
+  // to a login, a tracking parameter added, a trailing slash dropped.
+  try {
+    const a = new URL(expecting.to);
+    const b = new URL(url);
+    return a.hostname === b.hostname && (a.pathname.startsWith(b.pathname) || b.pathname.startsWith(a.pathname));
+  } catch {
+    return false;
+  }
+}
+
 function sameApplication(trail, page) {
   if (trail.pages.length === 0) return true;
+
+  // The click that brought you here is better evidence than anything the page
+  // can show, and it is the only evidence left when the referrer is stripped.
+  if (wasExpected(trail, page.url)) return true;
 
   const co = (c) => (c ?? '').trim().toLowerCase();
   const mine = co(page.company);
@@ -140,9 +163,10 @@ function sameApplication(trail, page) {
 
 /** The trail without the page text, which nothing but the server wants. */
 function summarise(trail) {
+  const { work, expecting, ...rest } = trail;
   return {
-    ...trail,
-    pages: trail.pages.map(({ html, ...rest }) => ({ ...rest, chars: (html ?? '').length })),
+    ...rest,
+    pages: trail.pages.map(({ html, ...page }) => ({ ...page, chars: (html ?? '').length })),
   };
 }
 
@@ -173,6 +197,45 @@ const handlers = {
 
   async getTrail() {
     return summarise(await readTrail());
+  },
+
+  /**
+   * Keep the work done on this page, so the next page of the same application
+   * does not start from nothing.
+   *
+   * Clicking "Apply" is a navigation, and a navigation destroys the card. The
+   * resume you built and the letter you drafted were gone at exactly the
+   * moment the form appeared to put them in, which made the tool feel like it
+   * had forgotten what you were doing — because it had.
+   */
+  async saveWork({ work }) {
+    const trail = await readTrail();
+    await session().set({ [TRAIL_KEY]: { ...trail, work, at: Date.now() } });
+    return { ok: true };
+  },
+
+  /** The work from the pages before this one, if this page continues them. */
+  async takeWork({ page }) {
+    const trail = await readTrail();
+    if (page && !sameApplication(trail, page)) return { work: null };
+    return { work: trail.work ?? null };
+  },
+
+  /**
+   * "The next page is part of this application."
+   *
+   * Said by the content script when a link that plainly means apply is
+   * clicked. Referrers are stripped by plenty of sites and by every
+   * rel="noreferrer" link, and an Apply button often opens a new tab — so the
+   * evidence that two pages belong together can be gone by the time the second
+   * one loads. The click is the evidence, and it is available before that.
+   */
+  async expectContinuation({ to }) {
+    const trail = await readTrail();
+    await session().set({
+      [TRAIL_KEY]: { ...trail, expecting: { to, at: Date.now() }, at: Date.now() },
+    });
+    return { ok: true };
   },
 
   /**
