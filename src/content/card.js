@@ -583,7 +583,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       for (const c of rationale) {
         list.append(
           h('div', { className: 'change' }, [
-            h('div', { className: 'where', textContent: c.where ?? c.key }),
+            h('div', { className: 'where', textContent: c.where ?? 'On the resume' }),
             h('div', { className: 'ba' }, [
               c.fromText ? h('del', { textContent: c.fromText }) : null,
               c.toText ? h('ins', { textContent: c.toText }) : null,
