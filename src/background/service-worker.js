@@ -56,15 +56,38 @@ const handlers = {
     // Older servers do not report it; treat unknown as off rather than
     // claiming an AI is running when we cannot tell.
     const serverEnabled = Boolean(server?.ai?.enabled);
-    const state = !useAi ? 'off' : serverEnabled ? 'on' : 'server-off';
+    // Whether there is anything to switch on. "Switched off" and "never set
+    // up" are different problems with different fixes, and saying "off" for
+    // both is why turning it on was a hunt.
+    const configured = server?.ai?.configured ?? Boolean(server?.ai?.command);
+
+    const state = !configured ? 'unconfigured' : !useAi ? 'off' : serverEnabled ? 'on' : 'server-off';
     return {
       active: state === 'on',
       state,
       useAi,
       reachable: true,
       serverEnabled,
+      configured,
       command: server?.ai?.command,
     };
+  },
+
+  /**
+   * Turn ResumeM-M's own AI switch on or off from here.
+   *
+   * Two switches have to agree before anything is sent to an AI, and until now
+   * only one of them was reachable from the browser: ticking this extension's
+   * box while the server's was off did nothing, and the only clue was a line
+   * of small print naming a tab in another window. The switch that needs
+   * flipping should be under the hand that is reaching for it.
+   */
+  async setAiEnabled({ enabled }) {
+    await serverFetch('/api/config', {
+      method: 'PUT',
+      body: JSON.stringify({ ai: { enabled: Boolean(enabled) } }),
+    });
+    return handlers.aiStatus();
   },
 
   async getSettings() {

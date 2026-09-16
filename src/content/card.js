@@ -89,6 +89,8 @@ const STYLE = `
 .ai.on { background: var(--accent-soft); color: var(--accent); }
 .ai.off { background: var(--line-soft); color: var(--muted); }
 .ai.warn { background: var(--warn-bg); color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn-line); }
+.ai.actionable { cursor: pointer; }
+.ai.actionable:hover { filter: brightness(.96); }
 
 /* Two ways to tailor, side by side, with the one in use marked. */
 .build-modes { gap: 6px; }
@@ -453,7 +455,13 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     'server-off': {
       text: 'AI off in ResumeM-M',
       className: 'ai warn',
-      title: 'The extension is set to use the AI, but ResumeM-M has it switched off. Turn it on under Voice & AI.',
+      title: 'Set to use the AI, but ResumeM-M has it switched off. Click to turn it on.',
+      turnOn: true,
+    },
+    unconfigured: {
+      text: 'No AI set up',
+      className: 'ai off',
+      title: 'ResumeM-M has no AI command configured. Tailoring is keyword matching against your own phrasings.',
     },
     offline: {
       text: 'AI unknown',
@@ -462,10 +470,29 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     },
   };
 
+  /**
+   * The chip says what is true; where one click would make it true, the chip
+   * is that click. "Switched off over there" is the state people got stuck in,
+   * and reading about it in a tooltip is not a way out of it.
+   */
   function drawAiChip() {
     if (!state.ai) return null;
     const look = AI_CHIP[state.ai.state] ?? AI_CHIP.off;
-    return h('span', { className: look.className, title: look.title, textContent: look.text });
+    const chip = h('span', {
+      className: `${look.className}${look.turnOn ? ' actionable' : ''}`,
+      title: look.title,
+      textContent: look.text,
+    });
+
+    if (look.turnOn) {
+      chip.onclick = () => {
+        chip.textContent = 'Turning on…';
+        act('setAiEnabled', { enabled: true }, (ai) => {
+          state.ai = ai ?? state.ai;
+        });
+      };
+    }
+    return chip;
   }
 
   function drawHead() {

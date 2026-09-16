@@ -190,6 +190,12 @@
       case 'aiStatus':
         return send('aiStatus', {});
 
+      // Turning ResumeM-M's own AI switch on, from the chip that reports it
+      // being off. The switch that needs flipping should be under the hand
+      // that is reaching for it.
+      case 'setAiEnabled':
+        return send('setAiEnabled', { enabled: Boolean(payload.enabled) });
+
       default:
         throw new Error(`Unknown card action "${action}"`);
     }
