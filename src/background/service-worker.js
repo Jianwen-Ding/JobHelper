@@ -15,26 +15,64 @@ import {
   worthKeeping,
 } from '../shared/trail.js';
 
+/*
+ * How long to wait before deciding the server is not coming back.
+ *
+ * A wedged server is worse than an absent one. An absent one refuses the
+ * connection and the card says so with a button; one that accepts the socket
+ * and then never answers left the Autofill button spinning with no message and
+ * no way out, because none of these requests carried a deadline.
+ *
+ * Anything that compiles LaTeX or calls a model gets its own, longer, deadline:
+ * those really do take minutes, and cutting them off at twenty seconds would
+ * turn a slow success into a failure.
+ */
+const REQUEST_TIMEOUT_MS = 20_000;
+const SLOW_TIMEOUT_MS = 10 * 60_000;
+
 async function serverFetch(path, options = {}) {
+  const { timeoutMs = REQUEST_TIMEOUT_MS, ...init } = options;
   const { serverUrl } = await getSettings();
   const url = `${serverUrl.replace(/\/$/, '')}${path}`;
 
   let res;
   try {
     res = await fetch(url, {
-      ...options,
-      headers: { 'Content-Type': 'application/json', ...(options.headers ?? {}) },
+      ...init,
+      signal: init.signal ?? AbortSignal.timeout(timeoutMs),
+      headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
     });
   } catch (cause) {
     // Marked, so the card can offer the way out rather than only naming the
     // problem. The text still has to stand on its own: it is what a user sees
     // if anything swallows the marker.
-    const offline = new Error(`ResumeM-M is not open. Start it, then try again.`, { cause });
+    const wedged = cause?.name === 'TimeoutError' || cause?.name === 'AbortError';
+    const offline = new Error(
+      wedged
+        ? 'ResumeM-M did not answer. Check it is still running, then try again.'
+        : 'ResumeM-M is not open. Start it, then try again.',
+      { cause },
+    );
     offline.jobhelper = { fix: 'start-server', serverUrl };
     throw offline;
   }
 
-  const body = await res.json().catch(() => ({}));
+  /*
+   * A reply that is not JSON is a failure, not an empty success. Swallowing
+   * the parse error on a 200 turned a captive portal page, a proxy error page
+   * or a truncated response into `{}`, and the caller then failed somewhere
+   * far away with "resumes.filter is not a function".
+   */
+  let body;
+  try {
+    body = await res.json();
+  } catch (cause) {
+    if (res.ok) {
+      throw new Error(`ResumeM-M sent something that is not JSON (${res.status}).`, { cause });
+    }
+    body = {};
+  }
+
   if (!res.ok) {
     const failed = new Error(body.error ?? `${res.status} ${res.statusText}`);
     // The server says which sort of refusal this is. "No save open" is the one
@@ -91,12 +129,18 @@ const session = () => chrome.storage.session ?? chrome.storage.local;
  */
 const trailKey = (tabId) => (tabId === undefined ? TRAIL_KEY : `${TRAIL_KEY}:${tabId}`);
 
+/*
+ * Whether a trail is still current is a question about when, not about how
+ * many pages it holds. Keyed off `pages.length`, a record with work in it and
+ * no pages yet read as nothing — so `saveWork` could write the resume it had
+ * just built and the next read would hand back an empty trail, every time.
+ */
 async function readTrail(tabId) {
   const key = trailKey(tabId);
   const stored = (await session().get(key))[key];
-  if (!stored?.pages?.length) return { pages: [] };
+  if (!stored) return { pages: [] };
   if (Date.now() - (stored.at ?? 0) > TRAIL_STALE_MS) return { pages: [] };
-  return stored;
+  return { pages: [], ...stored };
 }
 
 /**
@@ -116,7 +160,9 @@ async function writeTrail(tabId, trail) {
       // Out of room. Drop the oldest pages' text and try again.
     }
   }
-  return trail;
+  // Even with every page's text dropped it would not go in. Saying so beats
+  // returning the trail as though it had been stored.
+  return null;
 }
 
 /**
@@ -148,15 +194,38 @@ async function inheritIfNew(tabId, openerTabId) {
  *
  * Asking them needs their frame ids, and there is no way to collect a reply
  * from each of several frames in one broadcast — so each announces itself as it
- * loads. Kept in memory on purpose: a worker that has been asleep and lost this
- * is a worker whose frames have also gone, since a reload re-announces.
+ * loads.
+ *
+ * In session storage rather than in memory. This was a Map, on the reasoning
+ * that a worker which has been asleep and lost it is a worker whose frames have
+ * also gone, since a reload re-announces. That is not how MV3 works: Chrome
+ * stops an idle worker after about thirty seconds while the page carries on
+ * living, and nothing re-announces without a reload. Read a posting, leave the
+ * tab while you think about it, come back and press Autofill — on iCIMS, where
+ * every field is inside the frame, the answer was "Filled 0 fields" and an
+ * untouched form. Scanning and reading the frame's markup failed the same way,
+ * so the questions vanished and the posting was analysed as the empty shell it
+ * looks like from outside.
  */
-const framesByTab = new Map();
+const framesKey = (tabId) => `frames:${tabId}`;
 
-function noteFrame(tabId, frameId) {
+async function noteFrame(tabId, frameId) {
   if (tabId === undefined || !frameId) return;
-  if (!framesByTab.has(tabId)) framesByTab.set(tabId, new Set());
-  framesByTab.get(tabId).add(frameId);
+  const key = framesKey(tabId);
+  const ids = new Set((await session().get(key))[key] ?? []);
+  if (ids.has(frameId)) return;
+  ids.add(frameId);
+  await session()
+    .set({ [key]: [...ids] })
+    .catch(() => undefined);
+}
+
+async function forgetFrame(tabId, frameId) {
+  const key = framesKey(tabId);
+  const ids = ((await session().get(key))[key] ?? []).filter((id) => id !== frameId);
+  await session()
+    .set({ [key]: ids })
+    .catch(() => undefined);
 }
 
 /**
@@ -165,7 +234,8 @@ function noteFrame(tabId, frameId) {
  * does not answer — which is ordinary rather than an error.
  */
 async function askFrames(tabId, message) {
-  const ids = [...(framesByTab.get(tabId) ?? [])];
+  const key = framesKey(tabId);
+  const ids = (await session().get(key))[key] ?? [];
   const replies = await Promise.all(
     ids.map(async (frameId) => {
       try {
@@ -173,7 +243,7 @@ async function askFrames(tabId, message) {
         return reply?.ok ? { frameId, data: reply.data } : null;
       } catch {
         // The frame is gone. Drop it rather than asking again forever.
-        framesByTab.get(tabId)?.delete(frameId);
+        await forgetFrame(tabId, frameId);
         return null;
       }
     }),
@@ -185,7 +255,7 @@ async function askFrames(tabId, message) {
 const handlers = {
   /** "There is a content script in this frame." Sent once, on load. */
   async frameReady(_payload, tab, sender) {
-    noteFrame(tab?.id, sender?.frameId);
+    await noteFrame(tab?.id, sender?.frameId);
     return { ok: true };
   },
 
@@ -202,7 +272,7 @@ const handlers = {
    * top document takes another look.
    */
   async applicationFrameHere(_payload, tab, sender) {
-    noteFrame(tab?.id, sender?.frameId);
+    await noteFrame(tab?.id, sender?.frameId);
     if (tab?.id === undefined) return { ok: false };
     await chrome.tabs
       .sendMessage(tab.id, { type: 'jh-application-frame' }, { frameId: 0 })
@@ -317,8 +387,10 @@ const handlers = {
     // page before.
     if (!worthKeeping(work) && worthKeeping(trail.work)) return { ok: false };
 
-    await writeTrail(tab?.id, { ...trail, work });
-    return { ok: true };
+    // Stamped, because `at` is what says the trail is still current — work
+    // written without it reads back as a trail from another sitting.
+    const written = await writeTrail(tab?.id, { ...trail, work, at: Date.now() });
+    return { ok: written !== null };
   },
 
   /** The work from the pages before this one, if this page continues them. */
@@ -376,9 +448,11 @@ const handlers = {
   },
 
   async ping() {
-    const { serverUrl } = await getSettings();
-    const res = await fetch(`${serverUrl.replace(/\/$/, '')}/health`);
-    return res.json();
+    // Through serverFetch, so a closed server reads as the same sentence the
+    // card gives — with the button that fixes it. The popup is where someone
+    // goes to check the connection, and it was the one place that answered
+    // with a raw browser string: "Failed to fetch".
+    return serverFetch('/health');
   },
 
   /**
@@ -459,6 +533,7 @@ const handlers = {
     const settings = await getSettings();
     return serverFetch('/api/extension/analyze', {
       method: 'POST',
+      timeoutMs: SLOW_TIMEOUT_MS,
       body: JSON.stringify({
         url,
         title,
@@ -477,6 +552,7 @@ const handlers = {
   async render({ spec }) {
     const result = await serverFetch('/api/render', {
       method: 'POST',
+      timeoutMs: SLOW_TIMEOUT_MS,
       body: JSON.stringify({ spec }),
     });
     const { serverUrl } = await getSettings();
@@ -490,6 +566,7 @@ const handlers = {
   async refine({ spec, feedback, job }) {
     return serverFetch('/api/ai/tailor', {
       method: 'POST',
+      timeoutMs: SLOW_TIMEOUT_MS,
       body: JSON.stringify({
         resumeId: spec.extends ?? spec.id,
         job: { ...job, jobDescription: `${job.jobDescription}\n\n## The applicant's instructions\n${feedback}` },
@@ -509,6 +586,7 @@ const handlers = {
   async bundle(payload) {
     return serverFetch('/api/applications/bundle', {
       method: 'POST',
+      timeoutMs: SLOW_TIMEOUT_MS,
       body: JSON.stringify(payload),
     });
   },
@@ -551,6 +629,7 @@ const handlers = {
   async answerQuestion({ question, force }) {
     return serverFetch('/api/ai/answer', {
       method: 'POST',
+      timeoutMs: SLOW_TIMEOUT_MS,
       body: JSON.stringify({ question, force }),
     });
   },
@@ -569,6 +648,7 @@ const handlers = {
   async coverLetter({ spec, job }) {
     return serverFetch('/api/ai/cover-letter', {
       method: 'POST',
+      timeoutMs: SLOW_TIMEOUT_MS,
       body: JSON.stringify({
         resumeId: spec.extends ?? spec.id,
         job: {
@@ -608,6 +688,7 @@ const handlers = {
   async openWorkspace(payload) {
     const result = await serverFetch('/api/workspace', {
       method: 'POST',
+      timeoutMs: SLOW_TIMEOUT_MS,
       body: JSON.stringify(payload),
     });
     const { serverUrl } = await getSettings();
@@ -648,8 +729,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // A closed tab cannot come back, and session storage has a quota.
 chrome.tabs?.onRemoved?.addListener((tabId) => {
-  session().remove(trailKey(tabId)).catch(() => undefined);
-  framesByTab.delete(tabId);
+  session().remove([trailKey(tabId), framesKey(tabId)]).catch(() => undefined);
 });
 
 /*
