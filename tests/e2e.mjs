@@ -96,6 +96,17 @@ async function main() {
     check('changes are described in words, not ids', !/\bb_[a-z_]+\s*→/.test(firstChange), firstChange.split('\n')[0]);
     check('keywords are shown as written', !firstChange.includes('distributedsystems'));
 
+    /* The diff against the base: what the page said, and what it says now. */
+    const diffHead = await card.locator('.diff-head').innerText();
+    check('the diff names what it is comparing', /New grad/.test(diffHead), diffHead.replace(/\n/g, ' '));
+
+    const firstRow = card.locator('.change').first();
+    const wasText = await firstRow.locator('del').innerText();
+    const nowText = await firstRow.locator('ins').innerText();
+    check('each change shows the sentence it replaced', wasText.length > 20, wasText.slice(0, 50));
+    check('each change shows the sentence it chose', nowText.length > 20 && nowText !== wasText, nowText.slice(0, 50));
+    check('the rename to the posting is not shown as a change', !/^New grad$/m.test(wasText));
+
     await card.getByRole('button', { name: 'Build resume' }).click();
     await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 90_000 });
     const fitText = await card.locator('.fit.ok, .fit.bad').innerText();

@@ -161,6 +161,31 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .change .swap { font-size: 12.5px; margin-top: 2px; }
 .change .swap .to { font-weight: 640; }
 .change .swap .arrow { color: var(--faint); padding: 0 4px; }
+
+/* The before/after against the base resume: what the page used to say, and
+   what it says now. Same shape as the editor's version history, so the two
+   read identically. */
+.diff-head {
+  display: flex; align-items: baseline; gap: 6px; margin-bottom: 2px;
+  font-size: 11px; color: var(--muted);
+}
+.diff-head .from-label, .diff-head .to-label { font-weight: 600; color: var(--ink-soft); }
+.diff-head .arrow { color: var(--faint); }
+.diff-head .count { margin-left: auto; color: var(--faint); }
+.change .ba { display: grid; gap: 2px; margin-top: 3px; }
+.change .ba del, .change .ba ins {
+  display: block; font-size: 12px; line-height: 1.45; text-decoration: none;
+  padding: 2px 7px; border-radius: 4px;
+}
+.change .ba del {
+  color: var(--muted); background: var(--bad-bg);
+  text-decoration: line-through; text-decoration-color: #f1cbc7;
+}
+.change .ba ins { color: var(--ink); background: var(--good-bg); }
+.change .ba .plain { font-size: 12px; color: var(--ink-soft); }
+.change.added { border-left: 2px solid #c6e3d2; }
+.change.removed { border-left: 2px solid #f1cbc7; }
+.change.reworded, .change.changed { border-left: 2px solid var(--accent-soft); }
 .change .text { color: var(--ink-soft); font-size: 12px; margin-top: 4px; line-height: 1.5; }
 .change .text strong { font-weight: 640; color: var(--ink); }
 .change .text code, .suggestion code {
@@ -400,34 +425,81 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
   }
 
   /** What the tailoring changed, in words. Never a silent swap, never an id. */
+  /**
+   * What the tailoring did to the document, as a before/after against the base
+   * resume: the sentence that was there, struck through, and the one chosen in
+   * its place. The server computes it by resolving both resumes and comparing
+   * the results, so this is the page as it will print — not a list of variant
+   * ids, which is not something anyone can check at a glance.
+   *
+   * The keywords that drove each pick are kept, collapsed underneath, because
+   * "why did it choose that?" is the next question after "what changed?".
+   */
   function drawChanges() {
-    const changes = analysis.rationale ?? [];
-    if (changes.length === 0) {
+    const diff = analysis.diff ?? [];
+    const rationale = analysis.rationale ?? [];
+
+    if (diff.length === 0 && rationale.length === 0) {
       return h('div', { className: 'no-change' }, 'Nothing needed changing — your base resume already suits this posting.');
     }
 
-    const list = h('div', { className: 'changes' });
-    for (const c of changes) {
+    // Keywords, matched to the diff row they explain by the text they swapped in.
+    const reasonFor = new Map();
+    for (const r of rationale) {
+      if (r.toText && (r.because ?? []).length) reasonFor.set(plainish(r.toText), r.because);
+    }
+
+    const list = h('div', { className: 'changes' }, [
+      h('div', { className: 'diff-head' }, [
+        h('span', { className: 'from-label', textContent: analysis.baseLabel ?? 'Base' }),
+        h('span', { className: 'arrow', textContent: '→' }),
+        h('span', { className: 'to-label', textContent: 'this posting' }),
+        h('span', { className: 'count', textContent: plural(diff.length || rationale.length, 'change') }),
+      ]),
+    ]);
+
+    for (const c of diff) {
+      const because = reasonFor.get(plainish(c.to ?? ''));
       const why = h('div', { className: 'why' });
-      for (const k of c.because ?? []) why.append(h('span', { className: 'kw', textContent: k }));
+      for (const k of because ?? []) why.append(h('span', { className: 'kw', textContent: k }));
 
       list.append(
-        h('div', { className: 'change' }, [
-          h('div', {
-            className: 'where',
-            textContent: [c.where, c.what === 'bullet' ? null : c.what].filter(Boolean).join(' · ') || c.key,
-          }),
-          h('div', { className: 'swap' }, [
-            h('span', { textContent: c.fromLabel ?? c.from }),
-            h('span', { className: 'arrow', textContent: '→' }),
-            h('span', { className: 'to', textContent: c.toLabel ?? c.to }),
+        h('div', { className: `change ${c.kind}` }, [
+          c.where ? h('div', { className: 'where', textContent: c.where }) : null,
+          h('div', { className: 'ba' }, [
+            c.from ? h('del', { textContent: c.from }) : null,
+            c.to ? h('ins', { textContent: c.to }) : null,
+            !c.from && !c.to ? h('span', { className: 'plain', textContent: c.text }) : null,
           ]),
-          c.toText ? h('div', { className: 'text' }, markup(c.toText)) : null,
-          (c.because ?? []).length ? why : null,
+          because?.length ? why : null,
         ]),
       );
     }
+
+    // A proposal the server could not resolve still has something to say.
+    if (diff.length === 0) {
+      for (const c of rationale) {
+        list.append(
+          h('div', { className: 'change' }, [
+            h('div', { className: 'where', textContent: c.where ?? c.key }),
+            h('div', { className: 'ba' }, [
+              c.fromText ? h('del', { textContent: c.fromText }) : null,
+              c.toText ? h('ins', { textContent: c.toText }) : null,
+            ]),
+          ]),
+        );
+      }
+    }
     return list;
+  }
+
+  /** Store markup off, whitespace normalised — for matching two copies of a sentence. */
+  function plainish(text) {
+    return String(text ?? '')
+      .replace(/[*`]/g, '')
+      .replace(/\s*--\s*/g, ' – ')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   /** New phrasings the AI proposed. Opt-in, one at a time, never automatic. */
