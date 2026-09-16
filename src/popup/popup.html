@@ -68,6 +68,31 @@
   .ai.on { background: var(--accent-soft); color: var(--accent); }
   .ai.off { background: var(--line-soft); color: var(--muted); }
   .ai.warn { background: var(--warn-bg); color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn-line); }
+
+  /* The AI switch, grouped so the state and the thing that changes it are
+     plainly one control rather than two neighbours. */
+  .ai-panel {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 9px 10px;
+    margin-top: 10px;
+    background: var(--panel-sunk, #f8f9fa);
+  }
+  .ai-line { display: flex; align-items: center; gap: 7px; }
+  .ai-command {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px; color: var(--faint, #80868b); margin-top: 3px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .ai-command:empty { display: none; }
+  .ai-fix {
+    margin-left: auto; padding: 4px 11px; font-size: 11px; font-weight: 500;
+    border: 1px solid var(--line); border-radius: 999px; background: #fff;
+    color: var(--accent); cursor: pointer; white-space: nowrap;
+  }
+  .ai-fix:hover { background: var(--accent-soft); }
+  .ai-panel .check { margin-top: 8px; }
+  .ai-panel .hint { margin-top: 4px; }
   button {
     font: inherit; font-weight: 500; padding: 7px 16px;
     border: 1px solid var(--line); border-radius: 999px;
@@ -113,12 +138,29 @@
   <label for="autoPrompt">Offer automatically on job pages</label>
 </div>
 
-<div class="check">
-  <input type="checkbox" id="useAi">
-  <label for="useAi">Also ask the AI CLI to tailor</label>
-  <span id="aiState" class="ai off">AI off</span>
+<!--
+  The AI switch, stated in one place.
+
+  Two things have to be true before anything is sent to an AI: ResumeM-M must
+  have an AI command switched on, and this extension must be allowed to use it.
+  Splitting them across two windows meant ticking the box here appeared to do
+  nothing. Both are shown, and whichever one is holding things up has its own
+  button right here.
+-->
+<div class="ai-panel" id="aiPanel">
+  <div class="ai-line">
+    <span id="aiState" class="ai off">AI off</span>
+    <button id="aiFix" class="ai-fix" hidden></button>
+  </div>
+  <div class="check">
+    <input type="checkbox" id="useAi">
+    <label for="useAi">Let it use the AI when tailoring</label>
+  </div>
+  <div class="hint" id="aiHint">Off by default — tag matching is instant and free, and usually right.</div>
+  <!-- Which command would run. Its own line, because a name and a button
+       competing for 360px is how "claude" became "c…". -->
+  <div id="aiCommand" class="ai-command"></div>
 </div>
-<div class="hint" id="aiHint">Off by default — tag matching is instant and free, and usually right.</div>
 
 <div class="row">
   <button id="show" class="primary">Open on this page</button>

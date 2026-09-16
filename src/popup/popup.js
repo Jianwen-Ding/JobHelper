@@ -34,19 +34,43 @@ async function tellContentScript(type) {
 }
 
 /**
- * Say whether an AI is actually in play. Ticking the box here does nothing if
- * ResumeM-M has its own AI switched off, and silently doing nothing is the
- * worst of the three possible states — so name it.
+ * Say whether an AI is actually in play, and offer the thing that changes it.
+ *
+ * Two switches have to agree: this extension's `useAi`, and `ai.enabled` on the
+ * ResumeM-M server. Either one off means nothing is sent to an AI. The failure
+ * that got reported was ticking the box here while the server's switch was off
+ * — nothing happened, and the only clue was a line of small print naming a tab
+ * in another window. So each state now carries the button that fixes it.
  */
 const AI_STATE = {
-  on: ['AI on', 'ai on', 'Your configured AI CLI will be asked to tailor and to draft.'],
-  off: ['AI off', 'ai off', 'Off by default — tag matching is instant and free, and usually right.'],
-  'server-off': [
-    'AI off in ResumeM-M',
-    'ai warn',
-    'ResumeM-M has its AI switched off, so this does nothing yet. Turn it on under Voice & AI.',
-  ],
-  offline: ['AI unknown', 'ai off', 'ResumeM-M is not reachable, so its AI setting could not be read.'],
+  on: {
+    text: 'AI on',
+    className: 'ai on',
+    hint: 'Your AI command will be asked to tailor resumes and draft letters.',
+    fix: 'Turn off',
+  },
+  off: {
+    text: 'AI off',
+    className: 'ai off',
+    hint: 'Off by default — tag matching is instant and free, and usually right.',
+  },
+  'server-off': {
+    text: 'Switched off in ResumeM-M',
+    className: 'ai warn',
+    hint: 'ResumeM-M has its own AI switch, and it is off — so nothing is sent to an AI yet.',
+    fix: 'Turn it on',
+  },
+  unconfigured: {
+    text: 'No AI set up',
+    className: 'ai off',
+    hint: 'ResumeM-M has no AI command configured. Set one up and this switch starts working.',
+    fix: 'Set one up',
+  },
+  offline: {
+    text: 'AI unknown',
+    className: 'ai off',
+    hint: 'ResumeM-M is not reachable, so its AI setting could not be read.',
+  },
 };
 
 async function showAiState() {
@@ -56,10 +80,42 @@ async function showAiState() {
   } catch {
     status = { state: 'offline' };
   }
-  const [text, className, hint] = AI_STATE[status.state] ?? AI_STATE.off;
-  $('aiState').textContent = text;
-  $('aiState').className = className;
-  $('aiHint').textContent = hint;
+
+  const shape = AI_STATE[status.state] ?? AI_STATE.off;
+  $('aiState').textContent = shape.text;
+  $('aiState').className = shape.className;
+  $('aiHint').textContent = shape.hint;
+  $('aiCommand').textContent = status.state === 'unconfigured' || !status.command ? '' : `Runs: ${status.command}`;
+
+  // The checkbox only governs this extension. When the thing standing in the
+  // way is on the other side, the button beside it reaches across.
+  const fix = $('aiFix');
+  fix.hidden = !shape.fix;
+  if (!shape.fix) return;
+
+  fix.textContent = shape.fix;
+  fix.onclick = async () => {
+    if (status.state === 'unconfigured') {
+      const { serverUrl } = await send('getSettings');
+      chrome.tabs.create({ url: `${serverUrl.replace(/\/$/, '')}/#voice` });
+      window.close();
+      return;
+    }
+    fix.disabled = true;
+    try {
+      await send('setAiEnabled', { enabled: status.state !== 'on' });
+      // Turning the server's on is only half of it if this side is still off.
+      if (status.state === 'server-off' && !$('useAi').checked) {
+        $('useAi').checked = true;
+        await send('setSettings', { patch: { useAi: true } });
+      }
+      await showAiState();
+    } catch (err) {
+      setStatus(err.message, 'err');
+    } finally {
+      fix.disabled = false;
+    }
+  };
 }
 
 async function boot() {

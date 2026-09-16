@@ -89,6 +89,8 @@ const STYLE = `
 .ai.on { background: var(--accent-soft); color: var(--accent); }
 .ai.off { background: var(--line-soft); color: var(--muted); }
 .ai.warn { background: var(--warn-bg); color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn-line); }
+.ai.actionable { cursor: pointer; }
+.ai.actionable:hover { filter: brightness(.96); }
 
 /* Two ways to tailor, side by side, with the one in use marked. */
 .build-modes { gap: 6px; }
@@ -138,6 +140,15 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .job { margin-bottom: 12px; }
 .job .role { font-weight: 500; font-size: 16px; line-height: 1.3; }
 .job .co { color: var(--muted); margin-top: 1px; }
+
+/* The pages one application is spread across. */
+.trail { margin-top: 7px; font-size: 12px; }
+.trail summary { cursor: pointer; color: var(--muted); }
+.trail summary:hover { color: var(--ink); }
+.trail-row { display: flex; align-items: center; gap: 6px; padding: 3px 0 3px 12px; }
+.trail-row .what { color: var(--faint); white-space: nowrap; }
+.trail-row .where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; }
+
 
 /* Each step is a labelled block, so the card reads as a sequence. */
 .step { border-top: 1px solid var(--line-soft); padding-top: 11px; margin-top: 12px; }
@@ -334,6 +345,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
 
   const state = {
     spec: analysis?.spec ?? null,
+    /** The pages this application is being written from. See drawTrail. */
+    trail: null,
     render: null,
     busy: null,
     error: null,
@@ -453,7 +466,13 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     'server-off': {
       text: 'AI off in ResumeM-M',
       className: 'ai warn',
-      title: 'The extension is set to use the AI, but ResumeM-M has it switched off. Turn it on under Voice & AI.',
+      title: 'Set to use the AI, but ResumeM-M has it switched off. Click to turn it on.',
+      turnOn: true,
+    },
+    unconfigured: {
+      text: 'No AI set up',
+      className: 'ai off',
+      title: 'ResumeM-M has no AI command configured. Tailoring is keyword matching against your own phrasings.',
     },
     offline: {
       text: 'AI unknown',
@@ -462,10 +481,29 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     },
   };
 
+  /**
+   * The chip says what is true; where one click would make it true, the chip
+   * is that click. "Switched off over there" is the state people got stuck in,
+   * and reading about it in a tooltip is not a way out of it.
+   */
   function drawAiChip() {
     if (!state.ai) return null;
     const look = AI_CHIP[state.ai.state] ?? AI_CHIP.off;
-    return h('span', { className: look.className, title: look.title, textContent: look.text });
+    const chip = h('span', {
+      className: `${look.className}${look.turnOn ? ' actionable' : ''}`,
+      title: look.title,
+      textContent: look.text,
+    });
+
+    if (look.turnOn) {
+      chip.onclick = () => {
+        chip.textContent = 'Turning on…';
+        act('setAiEnabled', { enabled: true }, (ai) => {
+          state.ai = ai ?? state.ai;
+        });
+      };
+    }
+    return chip;
   }
 
   function drawHead() {
@@ -486,6 +524,45 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     return h('div', { className: 'job' }, [
       h('div', { className: 'role', textContent: job.title ?? 'This posting' }),
       h('div', { className: 'co', textContent: [job.company, job.location].filter(Boolean).join(' · ') }),
+      drawTrail(),
+    ]);
+  }
+
+  /**
+   * The pages this application is being written from.
+   *
+   * Shown only once there is more than one, because on a single page it would
+   * be saying "this page" — but the moment there are two, what the letter is
+   * written from stops being obvious, and a tool that quietly merged the wrong
+   * two pages would be worse than one that never merged at all. So it says
+   * which, and both corrections are one click: drop a page, or start over.
+   */
+  function drawTrail() {
+    const pages = state.trail?.pages ?? [];
+    if (pages.length < 2) return null;
+
+    const KIND = { posting: 'the description', application: 'the form', listing: 'a list of roles', discussion: 'a thread' };
+    const row = (p) =>
+      h('div', { className: 'trail-row' }, [
+        h('span', { className: 'what', textContent: KIND[p.kind] ?? 'a page' }),
+        h('span', { className: 'where', textContent: p.title || p.url || '' , title: p.url ?? '' }),
+        h('button', {
+          className: 'link',
+          textContent: 'Not this one',
+          title: 'Leave this page out of what is written',
+          onclick: () => act('forgetPage', { url: p.url }, (trail) => (state.trail = trail)),
+        }),
+      ]);
+
+    return h('details', { className: 'trail' }, [
+      h('summary', { textContent: `Writing from ${pages.length} pages of this application` }),
+      ...pages.map(row),
+      h('button', {
+        className: 'link',
+        textContent: 'Start a new application here',
+        title: 'Forget the earlier pages and use only this one',
+        onclick: () => act('clearTrail', {}, (trail) => (state.trail = trail)),
+      }),
     ]);
   }
 
@@ -1215,6 +1292,12 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         state.letterAutoStarted = true;
         draftLetter();
       }
+    },
+
+    /** The pages this application spans, as the trail grows. */
+    setTrail(trail) {
+      state.trail = trail;
+      draw();
     },
 
     /** The resume list, which arrives on its own. */

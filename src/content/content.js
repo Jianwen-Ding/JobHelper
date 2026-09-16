@@ -26,9 +26,17 @@
   };
 
   /**
-   * Local, cheap confidence that this is a job posting. Mirrors the server's
-   * scorer, but runs without sending anything anywhere — the page only leaves
-   * the browser once this clears the threshold.
+   * Local, cheap confidence that this page has anything to do with applying
+   * for a job. Mirrors the server's classifier, but runs without sending
+   * anything anywhere — the page only leaves the browser once this clears the
+   * threshold.
+   *
+   * Deliberately generous. The cost of offering on a page that turns out not
+   * to be a job is a card in the corner that gets dismissed; the cost of
+   * staying quiet on one that is, is the whole tool not being there when it
+   * was needed. An application form is the case that used to be missed
+   * entirely: it describes nothing, so it scored nothing, and it is exactly
+   * the page where the questions live.
    */
   function localScore() {
     let score = 0;
@@ -44,20 +52,56 @@
         break;
       }
     }
-    if (/\b(greenhouse|lever|workday|myworkdayjobs|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite)\b/i.test(url)) {
+    if (/\b(greenhouse|lever|workday|myworkdayjobs|ashby|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite|bamboohr|rippling|breezy|recruitee|teamtailor|jazzhr|successfactors|brassring)\b/i.test(url)) {
       score += 4;
     }
-    if (/\/(jobs?|careers?|opening|position|apply)(\/|$|\?)/i.test(url)) score += 1;
+    if (/\b(indeed|linkedin|glassdoor|monster|ziprecruiter|dice|wellfound|otta|builtin|simplyhired|seek)\b/i.test(url)) {
+      score += 3;
+    }
+    if (/\/(jobs?|careers?|opening|openings|position|positions|vacanc(y|ies)|apply|application|hiring|req|requisition)(\/|$|[?#])/i.test(url)) {
+      score += 2;
+    }
 
     // `textContent`, not `innerText`: the latter forces a full layout to work
     // out what is visible, which is a lot to pay for a keyword count.
     const text = (document.body?.textContent ?? '').toLowerCase().slice(0, 60_000);
-    const signals = [
+
+    const described = [
       'apply now', 'job description', 'responsibilities', 'qualifications',
-      "what you'll do", 'minimum qualifications', 'preferred qualifications',
+      "what you'll do", 'what you will do', 'minimum qualifications', 'preferred qualifications',
       'equal opportunity employer', 'submit application', 'years of experience',
-    ];
-    for (const s of signals) if (text.includes(s)) score += 1;
+      'about the role', 'we are looking for', "we're looking for", 'join our team',
+      'requirements', 'benefits', 'compensation', 'salary range',
+      'full-time', 'part-time', 'internship', 'new grad', 'employment type', 'requisition',
+    ].filter((w) => text.includes(w)).length;
+    if (described) score += Math.min(described, 5);
+
+    const formish = [
+      'upload your resume', 'attach your resume', 'attach resume', 'upload resume', 'upload cv',
+      'cover letter', 'work authorization', 'require sponsorship',
+      'voluntary self-identification', 'submit application', 'why do you want',
+    ].filter((w) => text.includes(w)).length;
+    if (formish) score += Math.min(formish, 4);
+
+    // A file input beside the word résumé is the clearest sign there is that a
+    // form is in front of you, and it costs one selector.
+    if (document.querySelector('input[type=file]') && /\b(resum|cv)\b/i.test(text)) score += 3;
+
+    const listish = [
+      'open positions', 'open roles', 'all jobs', 'job openings', 'search jobs',
+      'results found', 'jobs found', 'view all openings',
+    ].filter((w) => text.includes(w)).length;
+    if (listish) score += Math.min(listish, 3);
+
+    // A hiring thread on a forum is a job page in the sense that matters.
+    if (/\b(news\.ycombinator|reddit|lobste\.rs|discourse|forum|stackexchange|blind)\b/i.test(url)
+        && /\b(hiring|who is hiring|looking for)\b/.test(text)) {
+      score += 3;
+    }
+
+    const against = ['add to cart', 'checkout', 'page not found', 'sign in to continue']
+      .filter((w) => text.includes(w)).length;
+    if (against) score -= Math.min(against * 2, 6);
 
     return score;
   }
@@ -171,7 +215,7 @@
 
       case 'setBase': {
         await send('setSettings', { patch: { baseResumeId: payload.baseResumeId } });
-        analysis = await send('analyze', { ...pagePayload(), useAi: Boolean(payload.useAi) });
+        analysis = await send('analyze', { ...(await applicationPayload()), useAi: Boolean(payload.useAi) });
         cardHandle?.update(analysis);
         return analysis;
       }
@@ -182,13 +226,26 @@
        * so the two paths cannot drift apart.
        */
       case 'rebuild': {
-        analysis = await send('analyze', { ...pagePayload(), useAi: Boolean(payload.useAi) });
+        analysis = await send('analyze', { ...(await applicationPayload()), useAi: Boolean(payload.useAi) });
         cardHandle?.update(analysis);
         return analysis;
       }
 
       case 'aiStatus':
         return send('aiStatus', {});
+
+      // Turning ResumeM-M's own AI switch on, from the chip that reports it
+      // being off. The switch that needs flipping should be under the hand
+      // that is reaching for it.
+      case 'setAiEnabled':
+        return send('setAiEnabled', { enabled: Boolean(payload.enabled) });
+
+      /** The pages of this application, and the two ways to correct them. */
+      case 'forgetPage':
+        return send('forgetPage', { url: payload.url });
+
+      case 'clearTrail':
+        return send('clearTrail', {});
 
       default:
         throw new Error(`Unknown card action "${action}"`);
@@ -216,6 +273,36 @@
       // posting itself is never in them.
       html: document.documentElement.outerHTML.slice(0, 2_000_000),
     };
+  }
+
+  /**
+   * The same payload, plus every earlier page of this application.
+   *
+   * The description you read and the form you are filling in are usually two
+   * pages on two hosts, and the questions are on the second one. Sending only
+   * the page in front of you is why a cover letter written from an application
+   * form had nothing to say.
+   */
+  async function applicationPayload() {
+    const here = await pagePayloadIdle();
+    // Which pages belong is settled before anything is read, from where this
+    // page is and where it was reached from — never from the merged result,
+    // which would then be deciding its own inputs.
+    const trail = await send('trailPages', { page: pageIdentity() }).catch(() => ({ pages: [] }));
+
+    const earlier = (trail.pages ?? []).filter((p) => p.url !== here.url && p.html);
+    return { ...here, pages: [...earlier, here] };
+  }
+
+  /** Who this page is, as far as belonging to an application goes. */
+  function pageIdentity() {
+    let referrerHost;
+    try {
+      referrerHost = document.referrer ? new URL(document.referrer).hostname.replace(/^www\./, '') : undefined;
+    } catch {
+      referrerHost = undefined;
+    }
+    return { url: location.href, title: document.title, referrerHost };
   }
 
   /**
@@ -260,7 +347,7 @@
      * guess they did not ask for. "Let the AI tailor it" is a button.
      */
     try {
-      analysis = await send('analyze', { ...(await pagePayloadIdle()), useAi: false });
+      analysis = await send('analyze', { ...(await applicationPayload()), useAi: false });
     } catch (err) {
       cardHandle?.setStatus(err.message);
       return;
@@ -272,6 +359,22 @@
       return;
     }
     cardHandle?.update(analysis);
+
+    /*
+     * This page is now part of an application. Remembering it is what lets the
+     * next page — usually the form, on a different host — be written from the
+     * description you read here rather than from the form's own empty prose.
+     */
+    send('rememberPage', {
+      page: {
+        ...pageIdentity(),
+        company: analysis.job?.company,
+        kind: analysis.kind,
+        html: document.documentElement.outerHTML.slice(0, 400_000),
+      },
+    })
+      .then((trail) => cardHandle?.setTrail(trail))
+      .catch(() => undefined);
 
     /*
      * If the user asked for AI tailoring, it runs now — after the

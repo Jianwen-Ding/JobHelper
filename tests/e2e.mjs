@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BLOG, NORTHWIND, STREAMLY, cleanStore, findChromium, serveFixtures } from './fixtures.mjs';
+import { BLOG, HELIOS_ROLE, NORTHWIND, STREAMLY, cleanStore, findChromium, serveFixtures } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
@@ -214,6 +214,56 @@ async function main() {
 
     check('no page errors on the second posting', errors2.length === 0, errors2.join('; '));
     await page2.close();
+
+    /* ---------------- One application, two pages ---------------- */
+
+    /*
+     * The shape most applications actually have: a description on one page,
+     * a form on another. What the form page can say about the role is nothing,
+     * so the description has to travel — and it must travel to this
+     * application only, which is the half that is easy to get silently wrong.
+     */
+    group('One application across two pages');
+    const trailPage = await context.newPage();
+    await trailPage.goto(fixtures.urlFor(HELIOS_ROLE), { waitUntil: 'domcontentloaded' });
+    await trailPage.locator('#jobhelper-card-host').waitFor({ state: 'attached', timeout: 25_000 });
+    await trailPage.waitForTimeout(2500);
+
+    const trailCard = trailPage.locator('#jobhelper-card-host .card');
+    check(
+      'read the role off the description page',
+      (await trailCard.locator('.role').textContent()) === 'Platform Engineer',
+      await trailCard.locator('.role').textContent(),
+    );
+
+    await trailPage.click('a[href*="/helios/apply/"]');
+    await trailPage.waitForLoadState('domcontentloaded');
+    await trailPage.locator('#jobhelper-card-host').waitFor({ state: 'attached', timeout: 25_000 });
+    await trailPage.waitForTimeout(3000);
+
+    const formCard = trailPage.locator('#jobhelper-card-host .card');
+    const roleOnForm = await formCard.locator('.role').textContent();
+    check(
+      'carried the role onto the form, which never mentions it',
+      roleOnForm === 'Platform Engineer',
+      roleOnForm,
+    );
+    check('said it is writing from both pages', (await formCard.locator('.trail-row').count()) === 2);
+
+    // And the half that must not happen: a different posting is not the same
+    // application, however close its address is.
+    await trailPage.goto(fixtures.urlFor(NORTHWIND), { waitUntil: 'domcontentloaded' });
+    await trailPage.locator('#jobhelper-card-host').waitFor({ state: 'attached', timeout: 25_000 });
+    await trailPage.waitForTimeout(2500);
+
+    const elsewhere = trailPage.locator('#jobhelper-card-host .card');
+    const roleElsewhere = await elsewhere.locator('.role').textContent();
+    check(
+      'did not drag one posting into another',
+      roleElsewhere !== 'Platform Engineer' && (await elsewhere.locator('.trail').count()) === 0,
+      roleElsewhere,
+    );
+    await trailPage.close();
 
     /* ---------------- Quiet where it should be ---------------- */
 
