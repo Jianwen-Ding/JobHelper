@@ -32,16 +32,26 @@
    */
   function localScore() {
     let score = 0;
-    const html = document.documentElement.innerHTML;
     const url = location.href;
 
-    if (/"@type"\s*:\s*"?JobPosting/i.test(html)) score += 6;
+    // Deliberately not `documentElement.innerHTML`: serialising a few
+    // megabytes of DOM to regex-test it is the most expensive thing this
+    // script could do, and it runs on every page you visit. The JSON-LD blocks
+    // are the only part that matters, and they can be read directly.
+    for (const tag of document.querySelectorAll('script[type="application/ld+json"]')) {
+      if (/"@type"\s*:\s*"?JobPosting/i.test(tag.textContent ?? '')) {
+        score += 6;
+        break;
+      }
+    }
     if (/\b(greenhouse|lever|workday|myworkdayjobs|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite)\b/i.test(url)) {
       score += 4;
     }
     if (/\/(jobs?|careers?|opening|position|apply)(\/|$|\?)/i.test(url)) score += 1;
 
-    const text = (document.body?.innerText ?? '').toLowerCase().slice(0, 60_000);
+    // `textContent`, not `innerText`: the latter forces a full layout to work
+    // out what is visible, which is a lot to pay for a keyword count.
+    const text = (document.body?.textContent ?? '').toLowerCase().slice(0, 60_000);
     const signals = [
       'apply now', 'job description', 'responsibilities', 'qualifications',
       "what you'll do", 'minimum qualifications', 'preferred qualifications',
@@ -96,6 +106,14 @@
 
       case 'addVariant':
         return send('addVariant', payload);
+
+      /** For a question typed in by hand, when the page did not expose it. */
+      case 'matchAnswers':
+        return send('matchAnswers', payload);
+
+      /** The compiled resume, as bytes, so the card can show it in place. */
+      case 'pdfBytes':
+        return send('pdfBytes', payload);
 
       case 'autofill':
         return runAutofill();
@@ -177,6 +195,19 @@
     }
   }
 
+  /**
+   * The same payload, taken when the browser is idle. Serialising a few
+   * megabytes of DOM is the one genuinely expensive thing this script does,
+   * and doing it during load is what a user feels as a stutter.
+   */
+  function pagePayloadIdle() {
+    return new Promise((resolve) => {
+      const take = () => resolve(pagePayload());
+      if (typeof requestIdleCallback === 'function') requestIdleCallback(take, { timeout: 1500 });
+      else setTimeout(take, 0);
+    });
+  }
+
   function pagePayload() {
     return {
       url: location.href,
@@ -187,6 +218,16 @@
     };
   }
 
+  /**
+   * Put the card up, then fill it in.
+   *
+   * This used to await everything — the analysis, the resume list, the
+   * questions — before anything appeared, so a slow server (or the AI, which
+   * can take minutes) meant a page that sat there looking stuck. Nothing about
+   * that wait belonged in front of the first paint: the local score already
+   * decided this is a posting worth offering, so the card goes up on that,
+   * shows what it is doing, and each answer lands as it arrives.
+   */
   async function show({ force = false } = {}) {
     const settings = await send('getSettings');
     if (!force) {
@@ -195,15 +236,61 @@
       if (localScore() < settings.minScore) return;
     }
 
-    analysis = await send('analyze', pagePayload());
-    if (!analysis.isJobPosting && !force) return;
-
-    const [resumes, questions, { createCard }] = await Promise.all([
-      send('listResumes'),
-      gatherQuestions(),
+    const [{ createCard, removeCard }, { wantsCoverLetter }] = await Promise.all([
       imports.card(),
+      imports.autofill(),
     ]);
-    cardHandle = createCard({ analysis, resumes, settings, questions, onAction });
+
+    // What the page asks for decides what the card offers. Asking the user
+    // "does this need a cover letter?" is asking them to read the form on the
+    // extension's behalf, when the form is right there to be read.
+    cardHandle = createCard({
+      analysis: null,
+      resumes: [],
+      settings,
+      questions: [],
+      needsCoverLetter: wantsCoverLetter(),
+      onAction,
+    });
+
+    /*
+     * The automatic pass is always the deterministic one. Tag matching takes
+     * milliseconds; the AI takes seconds to minutes, and running it before the
+     * user has even seen the posting's proposal is spending their time on a
+     * guess they did not ask for. "Let the AI tailor it" is a button.
+     */
+    try {
+      analysis = await send('analyze', { ...(await pagePayloadIdle()), useAi: false });
+    } catch (err) {
+      cardHandle?.setStatus(err.message);
+      return;
+    }
+
+    if (!analysis.isJobPosting && !force) {
+      removeCard();
+      cardHandle = null;
+      return;
+    }
+    cardHandle?.update(analysis);
+
+    /*
+     * If the user asked for AI tailoring, it runs now — after the
+     * deterministic proposal is on screen, with the card's progress bar
+     * showing. Never before: waiting minutes at a blank page for a guess
+     * nobody has seen yet is the behaviour this replaced.
+     */
+    if (settings.useAi) {
+      const ai = await send('aiStatus', {}).catch(() => null);
+      if (ai?.active) cardHandle?.tailorWithAi();
+    }
+
+    // The rest arrives in its own time, each piece landing as it is ready.
+    send('listResumes')
+      .then((resumes) => cardHandle?.setResumes(resumes))
+      .catch(() => undefined);
+    gatherQuestions()
+      .then((questions) => cardHandle?.setQuestions(questions))
+      .catch(() => undefined);
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -222,10 +309,15 @@
     return false;
   });
 
-  // Single-page job boards swap postings without a navigation, so re-check on
-  // URL change rather than only at load.
+  /*
+   * Single-page job boards swap postings without a navigation, so the card has
+   * to notice the url changing. This used to be a MutationObserver over the
+   * whole document, which wakes on every DOM change a busy board makes — an
+   * enormous number of callbacks to answer one question. Checking the url on a
+   * slow interval costs nothing and answers it exactly as well.
+   */
   let lastUrl = location.href;
-  new MutationObserver(() => {
+  setInterval(() => {
     if (location.href === lastUrl) return;
     lastUrl = location.href;
     (async () => {
@@ -234,7 +326,7 @@
       cardHandle = null;
       show().catch(() => {});
     })();
-  }).observe(document, { subtree: true, childList: true });
+  }, 1000);
 
   show().catch((err) => {
     // A missing server must not spam every page the user opens.

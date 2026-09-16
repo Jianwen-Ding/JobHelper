@@ -56,6 +56,8 @@ export const STREAMLY = {
       <textarea id="q1" name="why_interested"></textarea>
       <label for="q2">Describe a technical project you are proud of.</label>
       <textarea id="q2" name="proud_project"></textarea>
+      <label for="cl">Cover Letter</label>
+      <input id="cl" name="cover_letter" type="file">
       <button type="button">Submit Application</button>
     </form>
   </div>
@@ -167,5 +169,14 @@ export async function cleanStore(server, companies) {
     if (app.resumeId && DELETABLE_RESUME.test(app.resumeId)) {
       await fetch(`${server}/api/resumes/${encodeURIComponent(app.resumeId)}`, { method: 'DELETE' });
     }
+  }
+
+  // Workspace drafts outlive the applications they were opened for, so they
+  // need clearing too — otherwise the next run photographs the last run's
+  // leftovers and calls it the empty state.
+  const drafts = await (await fetch(`${server}/api/workspace`)).json().catch(() => ({ drafts: [] }));
+  for (const draft of drafts.drafts ?? []) {
+    if (!companies.includes(draft.company)) continue;
+    await fetch(`${server}/api/workspace/${encodeURIComponent(draft.id)}`, { method: 'DELETE' });
   }
 }

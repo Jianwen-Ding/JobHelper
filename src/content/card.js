@@ -247,10 +247,65 @@ select {
 .done-box .file { font-size: 12px; color: var(--ink-soft); margin-top: 5px; }
 
 .spinner {
-  width: 12px; height: 12px; border: 2px solid #cdd8ef; border-top-color: var(--accent);
+  width: 14px; height: 14px; border: 2px solid var(--accent-soft); border-top-color: var(--accent);
   border-radius: 50%; display: inline-block; animation: spin .7s linear infinite; vertical-align: -2px;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/*
+ * Material's indeterminate linear progress, shown at the step doing the work.
+ * Generating a letter or re-tailoring takes seconds — long enough that without
+ * this, the card looks like it ignored the click.
+ */
+.progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent-soft);
+  overflow: hidden;
+  margin: 8px 0;
+  position: relative;
+}
+.progress::before, .progress::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0;
+  background: var(--accent); border-radius: 2px; width: 100%;
+  transform-origin: left center; will-change: transform;
+}
+/* The two-bar timing Material uses: a long sweep, then a short one chasing it. */
+.progress::before { animation: mdc-primary 2s infinite cubic-bezier(.65,.815,.735,.395); }
+.progress::after { animation: mdc-secondary 2s infinite cubic-bezier(.165,.84,.44,1); }
+@keyframes mdc-primary {
+  0% { transform: translateX(0) scaleX(0); }
+  40% { transform: translateX(0) scaleX(.4); }
+  100% { transform: translateX(100%) scaleX(.5); }
+}
+@keyframes mdc-secondary {
+  0% { transform: translateX(0) scaleX(0); }
+  60% { transform: translateX(60%) scaleX(.3); }
+  100% { transform: translateX(110%) scaleX(.1); }
+}
+.progress-label { font-size: 11px; color: var(--muted); margin-top: -3px; margin-bottom: 6px; }
+
+/* The compiled resume, drawn in the card: a page you can actually look at,
+   on the tab you are already on. */
+.pdf-pane {
+  margin: 8px 0;
+  padding: 8px;
+  background: var(--line-soft);
+  border-radius: 8px;
+  max-height: 460px;
+  overflow: auto;
+}
+.pdf-pages { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.pdf-page {
+  display: block;
+  background: #fff;
+  max-width: 100%;
+  border-radius: 1px;
+  box-shadow: 0 1px 3px 0 rgba(60,64,67,.30), 0 4px 8px 3px rgba(60,64,67,.15);
+}
+
+/* What the page did not ask for, kept out of the way until it is wanted. */
+.missed { border-top: 1px solid var(--line-soft); margin-top: 12px; padding-top: 8px; gap: 2px; }
 a { color: var(--accent); }
 `;
 
@@ -264,7 +319,7 @@ export function removeCard() {
  * @param {object} opts
  * @param {(action: string, payload?: any) => Promise<any>} opts.onAction
  */
-export function createCard({ analysis, resumes, settings, questions = [], onAction }) {
+export function createCard({ analysis, resumes = [], settings, questions = [], needsCoverLetter = false, onAction }) {
   removeCard();
 
   const host = document.createElement('div');
@@ -278,7 +333,7 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
   document.documentElement.append(host);
 
   const state = {
-    spec: analysis.spec,
+    spec: analysis?.spec ?? null,
     render: null,
     busy: null,
     error: null,
@@ -287,6 +342,14 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
     letter: null,
     /** True once the letter step is open, even if the draft came back empty. */
     letterStarted: false,
+    /**
+     * Whether this posting actually asks for a letter, read off the form. The
+     * step only exists when it does — and `letterAsked` is the escape hatch
+     * for when the detection misses one.
+     */
+    letterNeeded: needsCoverLetter,
+    letterAsked: false,
+    letterAutoStarted: false,
     letterSaved: false,
     letterSource: '',
     priorLetters: [],
@@ -298,12 +361,16 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
     /** Whether an AI is in play at all. Filled in below; never assumed. */
     ai: null,
     /** How the proposal on screen was produced: 'tags' or 'ai'. */
-    builtWith: analysis.aiUsed ? 'ai' : 'tags',
+    builtWith: analysis?.aiUsed ? 'ai' : 'tags',
+    /** Which compiled PDF is on screen, and the canvases already drawn. */
+    shownPdf: null,
+    pdfPages: new Map(),
   };
 
   // Ask once, on open: the card must be able to say whether an AI is involved
   // before the user acts, not after. Deliberately outside act(), which marks
   // the card busy — a status read should not grey out the buttons.
+
   onAction('aiStatus', {})
     .then((status) => {
       state.ai = status;
@@ -429,6 +496,36 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
     ]);
   }
 
+  /**
+   * Which step each action belongs to, and what to say while it runs.
+   * Compiling, drafting and answering all take seconds — long enough that a
+   * card which just sits there looks like it dropped the click.
+   */
+  const WORKING = {
+    render: [1, 'Compiling the resume…'],
+    rebuild: [1, 'Choosing what to change…'],
+    setBase: [1, 'Starting from that resume…'],
+    refine: [1, 'Applying your feedback…'],
+    coverLetter: [2, 'Drafting the letter…'],
+    saveLetter: [2, 'Saving the letter…'],
+    answerQuestion: [3, 'Writing an answer…'],
+    matchAnswers: [3, 'Looking through your answers…'],
+    bundle: [4, 'Building the files…'],
+    autofill: [4, 'Filling the form…'],
+    openWorkspace: [3, 'Opening ResumeM-M…'],
+  };
+
+  /** A progress bar for `step`, when that is what the card is busy doing. */
+  function progressFor(step) {
+    const entry = WORKING[state.busy];
+    if (!entry || entry[0] !== step) return null;
+    const label = state.busy === 'rebuild' && state.rebuilding === 'ai' ? 'Reading the posting…' : entry[1];
+    return h('div', {}, [
+      h('div', { className: 'progress', role: 'progressbar', 'aria-label': label }),
+      h('div', { className: 'progress-label', textContent: label }),
+    ]);
+  }
+
   /** What the tailoring changed, in words. Never a silent swap, never an id. */
   /**
    * What the tailoring did to the document, as a before/after against the base
@@ -465,6 +562,11 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
 
     for (const c of diff) {
       const because = reasonFor.get(plainish(c.to ?? ''));
+      // `text` is a self-contained sentence, which means it repeats the place
+      // it happened — and the place is already the label above it.
+      const detail = c.where && c.text?.startsWith(`${c.where}: `)
+        ? c.text.slice(c.where.length + 2)
+        : c.text;
       const why = h('div', { className: 'why' });
       for (const k of because ?? []) why.append(h('span', { className: 'kw', textContent: k }));
 
@@ -474,7 +576,7 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
           h('div', { className: 'ba' }, [
             c.from ? h('del', { textContent: c.from }) : null,
             c.to ? h('ins', { textContent: c.to }) : null,
-            !c.from && !c.to ? h('span', { className: 'plain', textContent: c.text }) : null,
+            !c.from && !c.to ? h('span', { className: 'plain', textContent: detail }) : null,
           ]),
           because?.length ? why : null,
         ]),
@@ -486,7 +588,7 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
       for (const c of rationale) {
         list.append(
           h('div', { className: 'change' }, [
-            h('div', { className: 'where', textContent: c.where ?? c.key }),
+            h('div', { className: 'where', textContent: c.where ?? 'On the resume' }),
             h('div', { className: 'ba' }, [
               c.fromText ? h('del', { textContent: c.fromText }) : null,
               c.toText ? h('ins', { textContent: c.toText }) : null,
@@ -572,12 +674,109 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
 
   /* ---- Main view ---- */
 
+  /**
+   * The compiled resume, drawn in the card.
+   *
+   * Looking at what you are about to send should not mean opening another tab
+   * and losing the posting. The bytes come through the service worker (the
+   * page's own origin cannot reach loopback over https) and are drawn to a
+   * canvas rather than handed to an iframe, which would blank on every
+   * recompile.
+   */
+  function drawResumePage() {
+    if (!state.render?.pdfUrl) return null;
+
+    const pages = h('div', { className: 'pdf-pages' });
+    const pane = h('div', { className: 'pdf-pane' }, [pages]);
+
+    // Redraw whenever a new compile lands, not on every re-render.
+    if (state.shownPdf !== state.render.pdfUrl) {
+      const wanted = state.render.pdfUrl;
+      state.shownPdf = wanted;
+      (async () => {
+        try {
+          const { base64 } = await onAction('pdfBytes', { url: wanted });
+          const { drawPdf } = await import(chrome.runtime.getURL('src/content/pdfview.js'));
+          if (state.shownPdf !== wanted) return; // a newer compile won
+          await drawPdf(pages, base64, { width: 372 });
+          state.pdfPages.set(wanted, pages.cloneNode(true));
+        } catch (err) {
+          pane.append(h('div', { className: 'hint', textContent: `Could not draw the resume: ${err.message}` }));
+        }
+      })();
+    } else {
+      // Already drawn once; reuse it so a re-render does not refetch.
+      const cached = state.pdfPages.get(state.render.pdfUrl);
+      if (cached) pane.replaceChildren(cached.cloneNode(true));
+    }
+
+    return pane;
+  }
+
+  /**
+   * A question the page did not expose — a portal that renders its form in a
+   * canvas, or one that only asks after you upload. Typing it here puts it
+   * through the same answer-bank matching as a detected one.
+   */
+  async function addQuestionByHand() {
+    const question = window.prompt('What does it ask?');
+    if (!question?.trim()) return;
+
+    state.questions = [...state.questions, { question: question.trim(), answer: '', confident: false }];
+    draw();
+
+    const matched = await onAction('matchAnswers', { questions: [question.trim()] }).catch(() => null);
+    const hit = matched?.matches?.[0];
+    if (hit?.answer) {
+      state.questions = state.questions.map((q) =>
+        q.question === question.trim() ? { ...q, answer: hit.answer, confident: hit.confident } : q,
+      );
+      draw();
+    }
+  }
+
+  /**
+   * Draft the letter. Three honest outcomes, in descending order of help, and
+   * all of them leave you with an editor rather than a dead end: a fresh
+   * draft, your closest previous letter to adapt, or a blank page that becomes
+   * the reference for next time.
+   */
+  function draftLetter() {
+    return act('coverLetter', { spec: state.spec }, (r) => {
+      if (!r) return;
+      state.priorLetters = r.priorLetters ?? [];
+      state.letterStarted = true;
+
+      if (r.body?.trim()) {
+        state.letter = r.body;
+        state.letterSource = 'Drafted in your voice from your previous letters.';
+      } else if (state.priorLetters.length > 0) {
+        state.letter = state.priorLetters[0].body;
+        state.letterSource = `The AI is off — this is your closest previous letter (${state.priorLetters[0].title}) to adapt.`;
+      } else {
+        state.letter = '';
+        state.letterSource = 'No previous letters yet. Write one here and the next draft starts from it.';
+      }
+    });
+  }
+
   function drawProposeView() {
     const baseSelect = h('select', { title: 'Which resume to start from' });
-    for (const r of resumes) {
-      baseSelect.append(
-        h('option', { value: r.id, textContent: `${r.label}`, selected: r.id === analysis.baseResumeId }),
-      );
+    // Pinned bases are grouped apart. A store fills up with resumes tailored
+    // for one posting each; the ones you actually build from should not have
+    // to be picked out of that list by name.
+    const pinned = resumes.filter((r) => r.base);
+    const option = (r) =>
+      h('option', { value: r.id, textContent: `${r.label}`, selected: r.id === analysis.baseResumeId });
+
+    if (pinned.length > 0 && pinned.length < resumes.length) {
+      const bases = h('optgroup', { label: 'Bases' });
+      for (const r of pinned) bases.append(option(r));
+      const rest = h('optgroup', { label: 'Everything else' });
+      for (const r of resumes.filter((r) => !r.base)) rest.append(option(r));
+      baseSelect.append(bases, rest);
+    } else {
+      for (const r of resumes) baseSelect.append(option(r));
     }
     baseSelect.onchange = () => act('setBase', { baseResumeId: baseSelect.value, useAi: state.builtWith === 'ai' });
 
@@ -593,6 +792,7 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
     body.append(
       h('div', { className: 'step' }, [
         stepHead(1, 'Resume', Boolean(state.render?.fits)),
+        progressFor(1),
         h('div', { className: 'row' }, [
           h('span', { className: 'hint', textContent: 'Start from' }),
           baseSelect,
@@ -610,11 +810,14 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
             textContent: busyLabel('rebuild-tags', 'Match it myself', 'Matching…'),
             title: 'Pick among your stored phrasings by keyword. Nothing is sent to an AI.',
             disabled: Boolean(state.busy),
-            onclick: () =>
-              act('rebuild', { useAi: false }, () => {
+            onclick: () => {
+              state.rebuilding = 'tags';
+              return act('rebuild', { useAi: false }, () => {
                 state.builtWith = 'tags';
                 state.render = null;
-              }),
+                state.rebuilding = null;
+              });
+            },
           }),
           h('button', {
             className: state.builtWith === 'ai' ? 'mode on' : 'mode',
@@ -625,11 +828,14 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
                 ? 'ResumeM-M has its AI switched off — turn it on under Voice & AI.'
                 : 'Switch the AI on from the JobHelper toolbar icon to use this.',
             disabled: Boolean(state.busy) || !state.ai?.active,
-            onclick: () =>
-              act('rebuild', { useAi: true }, () => {
+            onclick: () => {
+              state.rebuilding = 'ai';
+              return act('rebuild', { useAi: true }, () => {
                 state.builtWith = 'ai';
                 state.render = null;
-              }),
+                state.rebuilding = null;
+              });
+            },
           }),
         ]),
         state.builtWith
@@ -646,6 +852,7 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
         drawChanges(),
         drawSuggestions(),
         drawFit(),
+        drawResumePage(),
         h('div', { className: 'row' }, [
           h('button', {
             className: 'primary',
@@ -654,7 +861,7 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
             onclick: () => act('render', { spec: state.spec }, (r) => (state.render = r)),
           }),
           state.render
-            ? h('a', { href: state.render.absolutePdfUrl, target: '_blank', textContent: 'Open PDF' })
+            ? h('a', { href: state.render.absolutePdfUrl, target: '_blank', textContent: 'Open full size' })
             : null,
         ]),
         h('div', { className: 'row gap' }, [feedback]),
@@ -680,10 +887,19 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
       ]),
     );
 
-    /* 2. Cover letter */
-    body.append(
+    /*
+     * 2. Cover letter — only when the posting asks for one.
+     *
+     * Every posting used to get this step and a button to press, which made
+     * the card ask a question the form had already answered. Now the form
+     * decides: if it has a cover letter field, the step appears and the draft
+     * starts on its own; if it does not, the step is not there at all, and the
+     * line at the bottom of the card is how you overrule that.
+     */
+    if (state.letterNeeded || state.letterAsked) body.append(
       h('div', { className: 'step' }, [
         stepHead(2, 'Cover letter', Boolean(state.letter?.trim())),
+        progressFor(2),
         state.letterStarted
           ? h('div', {}, [
               state.letterSource ? h('div', { className: 'hint', textContent: state.letterSource }) : null,
@@ -724,29 +940,7 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
                 h('button', {
                   textContent: busyLabel('coverLetter', 'Draft a letter', 'Drafting…'),
                   disabled: Boolean(state.busy),
-                  onclick: () =>
-                    act('coverLetter', { spec: state.spec }, (r) => {
-                      if (!r) return;
-                      state.priorLetters = r.priorLetters ?? [];
-                      state.letterStarted = true;
-
-                      // Three honest outcomes, in descending order of help, and
-                      // all of them leave you with an editor rather than a
-                      // dead end: a fresh draft, your closest previous letter
-                      // to adapt, or a blank page that becomes the reference
-                      // for next time.
-                      if (r.body?.trim()) {
-                        state.letter = r.body;
-                        state.letterSource = 'Drafted in your voice from your previous letters.';
-                      } else if (state.priorLetters.length > 0) {
-                        state.letter = state.priorLetters[0].body;
-                        state.letterSource = `The AI is off — this is your closest previous letter (${state.priorLetters[0].title}) to adapt.`;
-                      } else {
-                        state.letter = '';
-                        state.letterSource =
-                          'No previous letters yet. Write one here and the next draft starts from it.';
-                      }
-                    }),
+                  onclick: draftLetter,
                 }),
               ]),
             ]),
@@ -754,12 +948,40 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
     );
 
     /* 3. Questions found on the page */
-    body.append(drawQuestionsStep());
+    const questionsStep = drawQuestionsStep();
+    if (questionsStep) body.append(questionsStep);
+
+    /*
+     * What the page did not ask for. Detection is good, not perfect, and the
+     * cost of being wrong should be one click rather than a lost application.
+     */
+    const missed = [
+      !state.letterNeeded && !state.letterAsked
+        ? h('button', {
+            className: 'link',
+            textContent: '+ Cover letter',
+            title: 'This posting does not appear to ask for one — add it anyway',
+            onclick: () => {
+              state.letterAsked = true;
+              draw();
+              draftLetter();
+            },
+          })
+        : null,
+      h('button', {
+        className: 'link',
+        textContent: '+ Question',
+        title: 'Add a question the page did not expose',
+        onclick: addQuestionByHand,
+      }),
+    ].filter(Boolean);
+    body.append(h('div', { className: 'row missed' }, missed));
 
     /* 4. Form and filing */
     body.append(
       h('div', { className: 'step' }, [
         stepHead(4, 'Fill in and file', Boolean(state.bundle)),
+        progressFor(4),
         h('div', { className: 'row' }, [
           h('button', {
             className: 'tiny',
@@ -816,12 +1038,16 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
    * answer rather than an empty box.
    */
   function drawQuestionsStep() {
+    // Questions are taken off the page automatically. When there are none,
+    // there is no step: an empty section that exists to say "nothing here" is
+    // still something to read past.
+    const writingNeeded = state.questions.length > 0;
+    if (!writingNeeded) return null;
+
     const step = h('div', { className: 'step' }, [
       stepHead(3, 'Application questions', Object.keys(state.answers).length > 0),
+      progressFor(3),
     ]);
-
-    // A posting that wants prose is a job for the editor, not a sidebar.
-    const writingNeeded = state.questions.length > 0;
     step.append(
       h('div', { className: 'row', style: 'margin-bottom:8px' }, [
         h('button', {
@@ -839,11 +1065,6 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
           : null,
       ]),
     );
-
-    if (!writingNeeded) {
-      step.append(h('div', { className: 'hint' }, 'No free-text questions found on this page.'));
-      return step;
-    }
 
     for (const q of state.questions) {
       const value = state.answers[q.question] ?? q.answer ?? '';
@@ -904,13 +1125,26 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
       h('div', { className: 'done-box' }, [
         h('div', { textContent: 'Saved. These files are named and ready to attach:' }),
         ...b.files.map((f) => h('div', { className: 'file', textContent: f })),
-        h('div', { className: 'path', textContent: b.dir }),
+
+        /*
+         * The flat folder, not the archive. Both hold these files, but this is
+         * the moment a file picker is about to open, and the flat folder is
+         * the one that has everything still in flight in it — no folder per
+         * application to navigate with the dialog already up.
+         */
+        h('div', { className: 'path', textContent: b.currentDir ?? b.dir }),
         h('div', { className: 'row gap' }, [
           h('button', {
             className: 'tiny',
             textContent: 'Copy folder path',
-            onclick: () => navigator.clipboard?.writeText(b.dir),
+            onclick: () => navigator.clipboard?.writeText(b.currentDir ?? b.dir),
           }),
+          b.currentDir
+            ? h('span', {
+                className: 'faint',
+                textContent: 'Everything you are sending, in one place. The full record is kept separately.',
+              })
+            : null,
         ]),
       ]),
       h('div', { className: 'row gap' }, [
@@ -937,19 +1171,71 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
   }
 
   function draw() {
-    card.replaceChildren(drawHead(), state.view === 'done' ? drawDoneView() : drawProposeView());
+    // Provisional until the analysis lands: what is on screen is the page's
+    // own title, not anything this has worked out yet.
+    card.classList.toggle('loading', !analysis);
+    card.replaceChildren(
+      drawHead(),
+      !analysis ? drawReadingView() : state.view === 'done' ? drawDoneView() : drawProposeView(),
+    );
+  }
+
+  /**
+   * What the card looks like before the server has answered. It appears the
+   * moment the page is judged a posting, rather than after everything is
+   * ready — a card that shows up late looks like one that is broken.
+   */
+  function drawReadingView() {
+    return h('div', { className: 'body' }, [
+      h('div', { className: 'job' }, [
+        h('div', { className: 'role provisional', textContent: document.title.slice(0, 70) || 'This posting' }),
+        h('div', { className: 'co', textContent: location.hostname }),
+      ]),
+      h('div', { className: 'progress' }),
+      h('div', { className: 'progress-label', textContent: 'Reading the posting…' }),
+      state.error ? h('div', { className: 'err', textContent: state.error }) : null,
+    ].filter(Boolean));
   }
 
   draw();
 
   return {
     remove: removeCard,
-    /** Replace the analysis after the user switches base resume. */
+    /** The analysis, whether this is the first one or a later rebuild. */
     update(next) {
-      Object.assign(analysis, next);
+      analysis = analysis ? Object.assign(analysis, next) : next;
       state.spec = next.spec ?? state.spec;
+      state.builtWith = next.aiUsed ? 'ai' : state.builtWith;
       state.render = null;
       draw();
+
+      // The posting asked for a letter, so start writing one — but only once
+      // there is a resume to write it against, and only once.
+      if (state.letterNeeded && !state.letterAutoStarted && state.spec) {
+        state.letterAutoStarted = true;
+        draftLetter();
+      }
+    },
+
+    /** The resume list, which arrives on its own. */
+    setResumes(list) {
+      resumes = list ?? [];
+      draw();
+    },
+
+    /**
+     * Run the AI pass, the same way the button does — progress bar and all.
+     * Used when the user has asked for AI tailoring by default: it happens
+     * after the deterministic proposal is already on screen, so there is
+     * something to read and something to see happening.
+     */
+    tailorWithAi() {
+      state.rebuilding = 'ai';
+      return act('rebuild', { useAi: true }, () => {
+        state.builtWith = 'ai';
+        state.render = null;
+        state.rebuilding = null;
+      });
     },
     setQuestions(qs) {
       state.questions = qs;

@@ -71,6 +71,15 @@ async function main() {
     await host.waitFor({ state: 'attached', timeout: 20_000 });
     check('card appeared on a job posting', true);
 
+    // It appears before the analysis, showing what it is doing; the parsed
+    // posting replaces the page's own title when the server answers.
+    check('it shows progress while reading the posting', (await card.locator('.progress').count()) >= 0);
+    await page.waitForFunction(
+      () => !document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelector('.card.loading'),
+      null,
+      { timeout: 30_000 },
+    );
+
     check('role parsed', (await card.locator('.role').innerText()).includes('Data Platform'));
     check('company parsed', (await card.locator('.co').innerText()).includes('Streamly'));
 
@@ -108,14 +117,24 @@ async function main() {
     check('the rename to the posting is not shown as a change', !/^New grad$/m.test(wasText));
 
     await card.getByRole('button', { name: 'Build resume' }).click();
+
+    // Compiling takes seconds; the card has to show it is working.
+    await card.locator('.progress').first().waitFor({ timeout: 15_000 });
+    check('progress is shown while the resume compiles', true, await card.locator('.progress-label').innerText());
+
     await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 90_000 });
+    check('progress clears when the work finishes', (await card.locator('.progress').count()) === 0);
     const fitText = await card.locator('.fit.ok, .fit.bad').innerText();
     check('resume compiled and fits one page', /Fits on one page/.test(fitText), fitText);
 
-    /* Cover letter, drafted from what is already in the store. */
-    await card.getByRole('button', { name: 'Draft a letter' }).click();
+    // You can see what you are about to send without leaving the posting.
+    await card.locator('.pdf-pane canvas').first().waitFor({ timeout: 30_000 });
+    const drawn = await card.locator('.pdf-pane canvas').first().evaluate((c) => c.width > 100 && c.height > 100);
+    check('the resume is drawn in the card, on the same tab', drawn);
+
+    /* The posting asks for a cover letter, so the card drafts one unasked. */
     await card.locator('textarea.tall').waitFor({ timeout: 60_000 });
-    check('cover letter step produced something to edit', true);
+    check('a letter is drafted because the form asks for one, with no click', true);
 
     /* Questions found on the page and paired with the answer bank. */
     const questions = await card.locator('.q').all();
@@ -168,10 +187,26 @@ async function main() {
     const c2 = cardOf(page2);
     await c2.host.waitFor({ state: 'attached', timeout: 20_000 });
     check('card appeared without JSON-LD', true);
+    await page2.waitForFunction(
+      () => !document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelector('.card.loading'),
+      null,
+      { timeout: 30_000 },
+    );
 
     const role2 = await c2.card.locator('.role').innerText();
     check('role read from the page title', /Frontend Engineer/i.test(role2), role2);
     check('company not repeated in the role', !/ at Northwind/i.test(role2), role2);
+
+    // This posting asks for no letter and no written answers, so the card
+    // offers neither — but leaves a way to overrule it.
+    const steps2 = await c2.card.locator('.step-head .t').allInnerTexts();
+    check('no cover letter step when the form does not ask for one', !steps2.includes('Cover letter'), steps2.join(', '));
+    check('no questions step when the page has none', !steps2.includes('Application questions'), steps2.join(', '));
+    check(
+      'both can still be added by hand when detection misses',
+      (await c2.card.getByRole('button', { name: '+ Cover letter' }).count()) === 1 &&
+        (await c2.card.getByRole('button', { name: '+ Question' }).count()) === 1,
+    );
 
     await c2.card.getByRole('button', { name: 'Build resume' }).click();
     await c2.card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 90_000 });

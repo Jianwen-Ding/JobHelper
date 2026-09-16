@@ -142,6 +142,28 @@ const handlers = {
     });
   },
 
+  /**
+   * Fetch a compiled PDF as bytes, so the card can draw it on the page it is
+   * sitting on. The fetch has to happen here: a job board served over https
+   * cannot pull http://127.0.0.1 itself, and the whole point is not to send
+   * the user to another tab to look at their own resume.
+   */
+  async pdfBytes({ url }) {
+    const { serverUrl } = await getSettings();
+    const absolute = url.startsWith('http') ? url : `${serverUrl.replace(/\/$/, '')}${url}`;
+    const res = await fetch(absolute);
+    if (!res.ok) throw new Error(`Could not load the PDF (${res.status})`);
+
+    // Messaging is JSON, so the bytes travel as base64. A one-page resume is
+    // ~30KB, which is nothing; chunked to keep the argument list sane.
+    const buffer = new Uint8Array(await res.arrayBuffer());
+    let binary = '';
+    for (let i = 0; i < buffer.length; i += 8192) {
+      binary += String.fromCharCode(...buffer.subarray(i, i + 8192));
+    }
+    return { base64: btoa(binary) };
+  },
+
   async autofillData() {
     return serverFetch('/api/autofill');
   },

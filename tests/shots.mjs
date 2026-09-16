@@ -29,6 +29,27 @@ async function shot(target, name, opts = {}) {
 const api = (p, init) =>
   fetch(`${SERVER}${p}`, { headers: { 'Content-Type': 'application/json' }, ...init }).then((r) => r.json());
 
+/** One file holding two letters and an answer, to photograph the sorting. */
+const CORPUS_FILE = [
+  'Dear Streamly,',
+  '',
+  'I am writing about the data platform internship. I have spent two years on pipelines that mostly stayed up, and I would like to keep doing that somewhere it matters.',
+  '',
+  'Sincerely,',
+  'Jianwen Ding',
+  '',
+  'Dear Northwind,',
+  '',
+  'Your posting mentions Kafka, which I have run in anger for about eighteen months, including the week it decided to stop working entirely.',
+  '',
+  'Sincerely,',
+  'Jianwen Ding',
+  '',
+  'Why do you want to work here?',
+  '',
+  'Because I have read the code you publish, and it is written the way I like to write: plainly, and with the awkward cases handled rather than ignored.',
+].join('\n');
+
 /** A resume with absurd margins, purely to photograph the overflow state. */
 async function makeOverflowResume() {
   await api('/api/resumes/shot-overflow', {
@@ -75,10 +96,9 @@ async function main() {
     await gui.waitForTimeout(4000);
     await shot(gui, 'rmm-01-build');
 
-    // A pending, uncompiled change — the "changed" chip state.
-    const firstSelect = gui.locator('#editor select').first();
-    await firstSelect.selectOption({ index: 1 });
-    await gui.waitForTimeout(600);
+    // A line stepped off its pinned default — the "changed" chip state.
+    await gui.locator('#editor .stepper button:has-text("›")').first().click();
+    await gui.waitForTimeout(900);
     await shot(gui, 'rmm-02-build-changed');
 
     await gui.locator('#resume-select').selectOption('intern-kafka');
@@ -125,10 +145,19 @@ async function main() {
     await shot(gui, 'rmm-10-modal-confirm-delete');
     await gui.locator('#modal-cancel').click();
 
+    // Feedback runs in the background now, so there is no modal to wait on —
+    // there is a chip that turns up when it has something to say.
     await gui.locator('#btn-feedback').click();
+    await gui.waitForTimeout(1200);
+    await shot(gui, 'rmm-11-feedback-working');
+    await gui.locator('#jobs-chip:not(.hidden)').waitFor({ timeout: 60_000 }).catch(() => {});
     await gui.waitForTimeout(2500);
-    await shot(gui, 'rmm-11-modal-feedback');
-    await gui.locator('#modal-ok').click();
+    await shot(gui, 'rmm-11b-feedback-ready');
+    await gui.locator('#jobs-chip').click();
+    await gui.waitForTimeout(1200);
+    await shot(gui, 'rmm-11c-feedback-open');
+    await gui.locator('#modal-ok').click().catch(() => {});
+    await gui.waitForTimeout(300);
 
     console.log('  (other tabs)');
     await gui.locator('#tabs button[data-tab="master"]').click();
@@ -168,12 +197,79 @@ async function main() {
     await gui.waitForTimeout(500);
     await shot(gui, 'rmm-17-voice');
 
+    // Adding files to the corpus: the drop zone, and the proposals it makes
+    // before anything is saved.
+    await gui.locator('#voice-files').setInputFiles({
+      name: 'old applications.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from(CORPUS_FILE),
+    });
+    await gui.locator('.proposals').waitFor({ timeout: 30_000 });
+    await gui.waitForTimeout(400);
+    await shot(gui, 'rmm-18-voice-proposals');
+    await gui.locator('.proposal').nth(1).locator('input[type=checkbox]').click();
+    await gui.waitForTimeout(300);
+    await shot(gui, 'rmm-19-voice-proposal-dropped');
+    await gui.locator('#modal-cancel').click();
+
+    // The workspace: empty, and holding a draft.
+    await gui.locator('#tabs button[data-tab="workspace"]').click();
+    await gui.waitForTimeout(700);
+    await shot(gui, 'rmm-20-workspace-empty');
+
+    await api('/api/workspace', {
+      method: 'POST',
+      body: JSON.stringify({
+        company: 'Streamly',
+        role: 'SWE Intern, Data Platform',
+        url: 'https://example.com/streamly',
+        resumeId: 'intern-kafka',
+        coverLetterRequired: true,
+        questions: [{ question: 'Why do you want to work here?', required: true }],
+      }),
+    });
+    await gui.locator('#tabs button[data-tab="build"]').click();
+    await gui.locator('#tabs button[data-tab="workspace"]').click();
+    await gui.waitForTimeout(1500);
+    await shot(gui, 'rmm-21-workspace-draft');
+
+    // History: the timeline, and one version opened against the last.
+    await gui.locator('#tabs button[data-tab="history"]').click();
+    await gui.waitForTimeout(250);
+    await shot(gui, 'rmm-22-history-loading');
+    await gui.locator('#resume-timeline .version-card, #resume-timeline .empty').first().waitFor({ timeout: 60_000 });
+    await gui.waitForTimeout(400);
+    await shot(gui, 'rmm-22b-history');
+
+    // The raw git log behind it, and one commit opened.
+    const raw = gui.locator('#btn-raw-history, a:has-text("Show raw git log")');
+    if (await raw.count()) {
+      await raw.first().click();
+      await gui.waitForTimeout(1200);
+      await shot(gui, 'rmm-23-history-raw');
+      const commit = gui.locator('#commits .commit').first();
+      if (await commit.count()) {
+        await commit.click();
+        await gui.waitForTimeout(1500);
+        await shot(gui, 'rmm-23b-history-commit');
+      }
+    }
+
+    // Pinning: a base in the picker, and a wording marked as the default.
+    await gui.locator('#tabs button[data-tab="build"]').click();
+    await gui.waitForTimeout(1200);
+    await gui.locator('#btn-base').click();
+    await gui.waitForTimeout(1200);
+    await shot(gui, 'rmm-24-pinned-base');
+    await gui.locator('#btn-base').click();
+    await gui.waitForTimeout(900);
+
     // Narrow viewport: the editor is used beside a browser window as often as
     // full screen.
     await gui.setViewportSize({ width: 900, height: 940 });
     await gui.locator('#tabs button[data-tab="build"]').click();
     await gui.waitForTimeout(1200);
-    await shot(gui, 'rmm-18-narrow');
+    await shot(gui, 'rmm-25-narrow');
     await gui.setViewportSize({ width: 1440, height: 940 });
     await gui.close();
 
@@ -196,8 +292,11 @@ async function main() {
     await page.waitForTimeout(400);
     await shot(card, 'ext-04-built');
 
-    await card.getByRole('button', { name: 'Draft a letter' }).click();
-    await card.locator('textarea.tall').waitFor({ timeout: 60_000 });
+    // The letter drafts itself once the posting asks for one, so there is
+    // nothing to click — only something to wait for.
+    const draftButton = card.getByRole('button', { name: 'Draft a letter' });
+    if (await draftButton.count()) await draftButton.click();
+    await card.locator('textarea.tall').waitFor({ timeout: 90_000 });
     await page.waitForTimeout(400);
     await shot(card, 'ext-05-letter');
 

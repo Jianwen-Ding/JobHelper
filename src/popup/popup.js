@@ -129,15 +129,33 @@ async function check() {
     const resumes = await send('listResumes');
     const settings = await send('getSettings');
 
-    $('baseResumeId').replaceChildren(
-      ...resumes.map((r) => {
-        const o = document.createElement('option');
-        o.value = r.id;
-        o.textContent = `${r.label} (${r.id})`;
-        o.selected = r.id === settings.baseResumeId;
-        return o;
-      }),
-    );
+    // Labels only. The id is how the store files a resume, not how its owner
+    // thinks of it, and the picker is the owner's view. Pinned bases come
+    // first from the server, and are grouped so that ordering has a reason.
+    const option = (r) => {
+      const o = document.createElement('option');
+      o.value = r.id;
+      o.textContent = r.label;
+      o.selected = r.id === settings.baseResumeId;
+      return o;
+    };
+    const pinned = resumes.filter((r) => r.base);
+    const picker = $('baseResumeId');
+
+    if (pinned.length > 0 && pinned.length < resumes.length) {
+      const group = (label, list) => {
+        const g = document.createElement('optgroup');
+        g.label = label;
+        for (const r of list) g.append(option(r));
+        return g;
+      };
+      picker.replaceChildren(
+        group('Bases', pinned),
+        group('Everything else', resumes.filter((r) => !r.base)),
+      );
+    } else {
+      picker.replaceChildren(...resumes.map(option));
+    }
     const n = resumes.length;
     setStatus(`Connected — ${n} ${n === 1 ? 'resume' : 'resumes'} in the store.`, 'ok');
   } catch (err) {

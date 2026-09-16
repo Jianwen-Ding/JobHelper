@@ -37,7 +37,10 @@
     {
       "resources": [
         "src/content/card.js",
-        "src/content/autofill.js"
+        "src/content/autofill.js",
+        "src/content/pdfview.js",
+        "vendor/pdf.min.mjs",
+        "vendor/pdf.worker.min.mjs"
       ],
       "matches": [
         "<all_urls>"
