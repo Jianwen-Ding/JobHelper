@@ -284,6 +284,9 @@ select {
   100% { transform: translateX(110%) scaleX(.1); }
 }
 .progress-label { font-size: 11px; color: var(--muted); margin-top: -3px; margin-bottom: 6px; }
+
+/* What the page did not ask for, kept out of the way until it is wanted. */
+.missed { border-top: 1px solid var(--line-soft); margin-top: 12px; padding-top: 8px; gap: 2px; }
 a { color: var(--accent); }
 `;
 
@@ -297,7 +300,7 @@ export function removeCard() {
  * @param {object} opts
  * @param {(action: string, payload?: any) => Promise<any>} opts.onAction
  */
-export function createCard({ analysis, resumes, settings, questions = [], onAction }) {
+export function createCard({ analysis, resumes, settings, questions = [], needsCoverLetter = false, onAction }) {
   removeCard();
 
   const host = document.createElement('div');
@@ -320,6 +323,13 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
     letter: null,
     /** True once the letter step is open, even if the draft came back empty. */
     letterStarted: false,
+    /**
+     * Whether this posting actually asks for a letter, read off the form. The
+     * step only exists when it does — and `letterAsked` is the escape hatch
+     * for when the detection misses one.
+     */
+    letterNeeded: needsCoverLetter,
+    letterAsked: false,
     letterSaved: false,
     letterSource: '',
     priorLetters: [],
@@ -337,6 +347,11 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
   // Ask once, on open: the card must be able to say whether an AI is involved
   // before the user acts, not after. Deliberately outside act(), which marks
   // the card busy — a status read should not grey out the buttons.
+  // The posting asked for a letter, so start writing one: there is nothing to
+  // decide, and a step that exists only to hold a button is a step that wastes
+  // a click.
+  if (needsCoverLetter) queueMicrotask(() => draftLetter());
+
   onAction('aiStatus', {})
     .then((status) => {
       state.ai = status;
@@ -635,6 +650,53 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
 
   /* ---- Main view ---- */
 
+  /**
+   * A question the page did not expose — a portal that renders its form in a
+   * canvas, or one that only asks after you upload. Typing it here puts it
+   * through the same answer-bank matching as a detected one.
+   */
+  async function addQuestionByHand() {
+    const question = window.prompt('What does it ask?');
+    if (!question?.trim()) return;
+
+    state.questions = [...state.questions, { question: question.trim(), answer: '', confident: false }];
+    draw();
+
+    const matched = await onAction('matchAnswers', { questions: [question.trim()] }).catch(() => null);
+    const hit = matched?.matches?.[0];
+    if (hit?.answer) {
+      state.questions = state.questions.map((q) =>
+        q.question === question.trim() ? { ...q, answer: hit.answer, confident: hit.confident } : q,
+      );
+      draw();
+    }
+  }
+
+  /**
+   * Draft the letter. Three honest outcomes, in descending order of help, and
+   * all of them leave you with an editor rather than a dead end: a fresh
+   * draft, your closest previous letter to adapt, or a blank page that becomes
+   * the reference for next time.
+   */
+  function draftLetter() {
+    return act('coverLetter', { spec: state.spec }, (r) => {
+      if (!r) return;
+      state.priorLetters = r.priorLetters ?? [];
+      state.letterStarted = true;
+
+      if (r.body?.trim()) {
+        state.letter = r.body;
+        state.letterSource = 'Drafted in your voice from your previous letters.';
+      } else if (state.priorLetters.length > 0) {
+        state.letter = state.priorLetters[0].body;
+        state.letterSource = `The AI is off — this is your closest previous letter (${state.priorLetters[0].title}) to adapt.`;
+      } else {
+        state.letter = '';
+        state.letterSource = 'No previous letters yet. Write one here and the next draft starts from it.';
+      }
+    });
+  }
+
   function drawProposeView() {
     const baseSelect = h('select', { title: 'Which resume to start from' });
     for (const r of resumes) {
@@ -750,8 +812,16 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
       ]),
     );
 
-    /* 2. Cover letter */
-    body.append(
+    /*
+     * 2. Cover letter — only when the posting asks for one.
+     *
+     * Every posting used to get this step and a button to press, which made
+     * the card ask a question the form had already answered. Now the form
+     * decides: if it has a cover letter field, the step appears and the draft
+     * starts on its own; if it does not, the step is not there at all, and the
+     * line at the bottom of the card is how you overrule that.
+     */
+    if (state.letterNeeded || state.letterAsked) body.append(
       h('div', { className: 'step' }, [
         stepHead(2, 'Cover letter', Boolean(state.letter?.trim())),
         progressFor(2),
@@ -795,29 +865,7 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
                 h('button', {
                   textContent: busyLabel('coverLetter', 'Draft a letter', 'Drafting…'),
                   disabled: Boolean(state.busy),
-                  onclick: () =>
-                    act('coverLetter', { spec: state.spec }, (r) => {
-                      if (!r) return;
-                      state.priorLetters = r.priorLetters ?? [];
-                      state.letterStarted = true;
-
-                      // Three honest outcomes, in descending order of help, and
-                      // all of them leave you with an editor rather than a
-                      // dead end: a fresh draft, your closest previous letter
-                      // to adapt, or a blank page that becomes the reference
-                      // for next time.
-                      if (r.body?.trim()) {
-                        state.letter = r.body;
-                        state.letterSource = 'Drafted in your voice from your previous letters.';
-                      } else if (state.priorLetters.length > 0) {
-                        state.letter = state.priorLetters[0].body;
-                        state.letterSource = `The AI is off — this is your closest previous letter (${state.priorLetters[0].title}) to adapt.`;
-                      } else {
-                        state.letter = '';
-                        state.letterSource =
-                          'No previous letters yet. Write one here and the next draft starts from it.';
-                      }
-                    }),
+                  onclick: draftLetter,
                 }),
               ]),
             ]),
@@ -825,7 +873,34 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
     );
 
     /* 3. Questions found on the page */
-    body.append(drawQuestionsStep());
+    const questionsStep = drawQuestionsStep();
+    if (questionsStep) body.append(questionsStep);
+
+    /*
+     * What the page did not ask for. Detection is good, not perfect, and the
+     * cost of being wrong should be one click rather than a lost application.
+     */
+    const missed = [
+      !state.letterNeeded && !state.letterAsked
+        ? h('button', {
+            className: 'link',
+            textContent: '+ Cover letter',
+            title: 'This posting does not appear to ask for one — add it anyway',
+            onclick: () => {
+              state.letterAsked = true;
+              draw();
+              draftLetter();
+            },
+          })
+        : null,
+      h('button', {
+        className: 'link',
+        textContent: '+ Question',
+        title: 'Add a question the page did not expose',
+        onclick: addQuestionByHand,
+      }),
+    ].filter(Boolean);
+    body.append(h('div', { className: 'row missed' }, missed));
 
     /* 4. Form and filing */
     body.append(
@@ -888,13 +963,16 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
    * answer rather than an empty box.
    */
   function drawQuestionsStep() {
+    // Questions are taken off the page automatically. When there are none,
+    // there is no step: an empty section that exists to say "nothing here" is
+    // still something to read past.
+    const writingNeeded = state.questions.length > 0;
+    if (!writingNeeded) return null;
+
     const step = h('div', { className: 'step' }, [
       stepHead(3, 'Application questions', Object.keys(state.answers).length > 0),
       progressFor(3),
     ]);
-
-    // A posting that wants prose is a job for the editor, not a sidebar.
-    const writingNeeded = state.questions.length > 0;
     step.append(
       h('div', { className: 'row', style: 'margin-bottom:8px' }, [
         h('button', {
@@ -912,11 +990,6 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
           : null,
       ]),
     );
-
-    if (!writingNeeded) {
-      step.append(h('div', { className: 'hint' }, 'No free-text questions found on this page.'));
-      return step;
-    }
 
     for (const q of state.questions) {
       const value = state.answers[q.question] ?? q.answer ?? '';

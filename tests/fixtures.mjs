@@ -56,6 +56,8 @@ export const STREAMLY = {
       <textarea id="q1" name="why_interested"></textarea>
       <label for="q2">Describe a technical project you are proud of.</label>
       <textarea id="q2" name="proud_project"></textarea>
+      <label for="cl">Cover Letter</label>
+      <input id="cl" name="cover_letter" type="file">
       <button type="button">Submit Application</button>
     </form>
   </div>

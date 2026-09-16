@@ -118,10 +118,9 @@ async function main() {
     const fitText = await card.locator('.fit.ok, .fit.bad').innerText();
     check('resume compiled and fits one page', /Fits on one page/.test(fitText), fitText);
 
-    /* Cover letter, drafted from what is already in the store. */
-    await card.getByRole('button', { name: 'Draft a letter' }).click();
+    /* The posting asks for a cover letter, so the card drafts one unasked. */
     await card.locator('textarea.tall').waitFor({ timeout: 60_000 });
-    check('cover letter step produced something to edit', true);
+    check('a letter is drafted because the form asks for one, with no click', true);
 
     /* Questions found on the page and paired with the answer bank. */
     const questions = await card.locator('.q').all();
@@ -178,6 +177,17 @@ async function main() {
     const role2 = await c2.card.locator('.role').innerText();
     check('role read from the page title', /Frontend Engineer/i.test(role2), role2);
     check('company not repeated in the role', !/ at Northwind/i.test(role2), role2);
+
+    // This posting asks for no letter and no written answers, so the card
+    // offers neither — but leaves a way to overrule it.
+    const steps2 = await c2.card.locator('.step-head .t').allInnerTexts();
+    check('no cover letter step when the form does not ask for one', !steps2.includes('Cover letter'), steps2.join(', '));
+    check('no questions step when the page has none', !steps2.includes('Application questions'), steps2.join(', '));
+    check(
+      'both can still be added by hand when detection misses',
+      (await c2.card.getByRole('button', { name: '+ Cover letter' }).count()) === 1 &&
+        (await c2.card.getByRole('button', { name: '+ Question' }).count()) === 1,
+    );
 
     await c2.card.getByRole('button', { name: 'Build resume' }).click();
     await c2.card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 90_000 });

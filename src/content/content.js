@@ -97,6 +97,10 @@
       case 'addVariant':
         return send('addVariant', payload);
 
+      /** For a question typed in by hand, when the page did not expose it. */
+      case 'matchAnswers':
+        return send('matchAnswers', payload);
+
       case 'autofill':
         return runAutofill();
 
@@ -198,12 +202,24 @@
     analysis = await send('analyze', pagePayload());
     if (!analysis.isJobPosting && !force) return;
 
-    const [resumes, questions, { createCard }] = await Promise.all([
+    const [resumes, questions, { createCard }, { wantsCoverLetter }] = await Promise.all([
       send('listResumes'),
       gatherQuestions(),
       imports.card(),
+      imports.autofill(),
     ]);
-    cardHandle = createCard({ analysis, resumes, settings, questions, onAction });
+
+    // What the page asks for decides what the card offers. Asking the user
+    // "does this need a cover letter?" is asking them to read the form on the
+    // extension's behalf, when the form is right there to be read.
+    cardHandle = createCard({
+      analysis,
+      resumes,
+      settings,
+      questions,
+      needsCoverLetter: wantsCoverLetter(),
+      onAction,
+    });
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
