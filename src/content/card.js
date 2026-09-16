@@ -319,7 +319,7 @@ export function removeCard() {
  * @param {object} opts
  * @param {(action: string, payload?: any) => Promise<any>} opts.onAction
  */
-export function createCard({ analysis, resumes, settings, questions = [], needsCoverLetter = false, onAction }) {
+export function createCard({ analysis, resumes = [], settings, questions = [], needsCoverLetter = false, onAction }) {
   removeCard();
 
   const host = document.createElement('div');
@@ -333,7 +333,7 @@ export function createCard({ analysis, resumes, settings, questions = [], needsC
   document.documentElement.append(host);
 
   const state = {
-    spec: analysis.spec,
+    spec: analysis?.spec ?? null,
     render: null,
     busy: null,
     error: null,
@@ -349,6 +349,7 @@ export function createCard({ analysis, resumes, settings, questions = [], needsC
      */
     letterNeeded: needsCoverLetter,
     letterAsked: false,
+    letterAutoStarted: false,
     letterSaved: false,
     letterSource: '',
     priorLetters: [],
@@ -360,7 +361,7 @@ export function createCard({ analysis, resumes, settings, questions = [], needsC
     /** Whether an AI is in play at all. Filled in below; never assumed. */
     ai: null,
     /** How the proposal on screen was produced: 'tags' or 'ai'. */
-    builtWith: analysis.aiUsed ? 'ai' : 'tags',
+    builtWith: analysis?.aiUsed ? 'ai' : 'tags',
     /** Which compiled PDF is on screen, and the canvases already drawn. */
     shownPdf: null,
     pdfPages: new Map(),
@@ -369,10 +370,6 @@ export function createCard({ analysis, resumes, settings, questions = [], needsC
   // Ask once, on open: the card must be able to say whether an AI is involved
   // before the user acts, not after. Deliberately outside act(), which marks
   // the card busy — a status read should not grey out the buttons.
-  // The posting asked for a letter, so start writing one: there is nothing to
-  // decide, and a step that exists only to hold a button is a step that wastes
-  // a click.
-  if (needsCoverLetter) queueMicrotask(() => draftLetter());
 
   onAction('aiStatus', {})
     .then((status) => {
@@ -1145,19 +1142,71 @@ export function createCard({ analysis, resumes, settings, questions = [], needsC
   }
 
   function draw() {
-    card.replaceChildren(drawHead(), state.view === 'done' ? drawDoneView() : drawProposeView());
+    // Provisional until the analysis lands: what is on screen is the page's
+    // own title, not anything this has worked out yet.
+    card.classList.toggle('loading', !analysis);
+    card.replaceChildren(
+      drawHead(),
+      !analysis ? drawReadingView() : state.view === 'done' ? drawDoneView() : drawProposeView(),
+    );
+  }
+
+  /**
+   * What the card looks like before the server has answered. It appears the
+   * moment the page is judged a posting, rather than after everything is
+   * ready — a card that shows up late looks like one that is broken.
+   */
+  function drawReadingView() {
+    return h('div', { className: 'body' }, [
+      h('div', { className: 'job' }, [
+        h('div', { className: 'role provisional', textContent: document.title.slice(0, 70) || 'This posting' }),
+        h('div', { className: 'co', textContent: location.hostname }),
+      ]),
+      h('div', { className: 'progress' }),
+      h('div', { className: 'progress-label', textContent: 'Reading the posting…' }),
+      state.error ? h('div', { className: 'err', textContent: state.error }) : null,
+    ].filter(Boolean));
   }
 
   draw();
 
   return {
     remove: removeCard,
-    /** Replace the analysis after the user switches base resume. */
+    /** The analysis, whether this is the first one or a later rebuild. */
     update(next) {
-      Object.assign(analysis, next);
+      analysis = analysis ? Object.assign(analysis, next) : next;
       state.spec = next.spec ?? state.spec;
+      state.builtWith = next.aiUsed ? 'ai' : state.builtWith;
       state.render = null;
       draw();
+
+      // The posting asked for a letter, so start writing one — but only once
+      // there is a resume to write it against, and only once.
+      if (state.letterNeeded && !state.letterAutoStarted && state.spec) {
+        state.letterAutoStarted = true;
+        draftLetter();
+      }
+    },
+
+    /** The resume list, which arrives on its own. */
+    setResumes(list) {
+      resumes = list ?? [];
+      draw();
+    },
+
+    /**
+     * Run the AI pass, the same way the button does — progress bar and all.
+     * Used when the user has asked for AI tailoring by default: it happens
+     * after the deterministic proposal is already on screen, so there is
+     * something to read and something to see happening.
+     */
+    tailorWithAi() {
+      state.rebuilding = 'ai';
+      return act('rebuild', { useAi: true }, () => {
+        state.builtWith = 'ai';
+        state.render = null;
+        state.rebuilding = null;
+      });
     },
     setQuestions(qs) {
       state.questions = qs;

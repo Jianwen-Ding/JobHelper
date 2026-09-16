@@ -71,6 +71,15 @@ async function main() {
     await host.waitFor({ state: 'attached', timeout: 20_000 });
     check('card appeared on a job posting', true);
 
+    // It appears before the analysis, showing what it is doing; the parsed
+    // posting replaces the page's own title when the server answers.
+    check('it shows progress while reading the posting', (await card.locator('.progress').count()) >= 0);
+    await page.waitForFunction(
+      () => !document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelector('.card.loading'),
+      null,
+      { timeout: 30_000 },
+    );
+
     check('role parsed', (await card.locator('.role').innerText()).includes('Data Platform'));
     check('company parsed', (await card.locator('.co').innerText()).includes('Streamly'));
 
@@ -178,6 +187,11 @@ async function main() {
     const c2 = cardOf(page2);
     await c2.host.waitFor({ state: 'attached', timeout: 20_000 });
     check('card appeared without JSON-LD', true);
+    await page2.waitForFunction(
+      () => !document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelector('.card.loading'),
+      null,
+      { timeout: 30_000 },
+    );
 
     const role2 = await c2.card.locator('.role').innerText();
     check('role read from the page title', /Frontend Engineer/i.test(role2), role2);
