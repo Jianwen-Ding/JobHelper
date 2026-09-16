@@ -10,7 +10,8 @@
     "test:trail": "node --test tests/trail.mjs",
     "test:ats": "node --test tests/ats.mjs",
     "test:ats-forms": "node tests/ats-forms.mjs",
-    "test": "npm run test:trail && npm run test:ats && npm run test:autofill && npm run test:ats-forms && npm run test:e2e && npm run test:nav",
+    "test:joins": "node tests/joins.mjs",
+    "test": "npm run test:trail && npm run test:ats && npm run test:autofill && npm run test:ats-forms && npm run test:joins && npm run test:e2e && npm run test:nav",
     "test:autofill": "node tests/autofill.mjs"
   },
   "devDependencies": {

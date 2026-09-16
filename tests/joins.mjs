@@ -1,8 +1,13 @@
 /**
- * PROBE (not part of the suite): a fresh application inherits the previous
- * one's `expecting`, and then uses it to swallow the previous job's form.
+ * Starting a fresh application must not carry anything over from the last one.
  *
- *   node tests/probe-expecting.mjs
+ *   node tests/joins.mjs
+ *
+ * The dangerous case is an expectation left standing. Clicking "Apply" records
+ * "the next page belongs to this application", which deliberately overrides
+ * every host and path rule — so an expectation that outlives the application
+ * that made it can hand a page to the wrong job, and the form comes up holding
+ * another company's resume with nothing on screen looking wrong.
  *
  * 1. On Vega's posting, click "Apply for this job" — the click is recorded as
  *    an expectation. The navigation does not happen (the board's own handler
@@ -33,6 +38,13 @@ const HOST = '#jobhelper-card-host';
 const cardOf = (page) => page.locator(`${HOST} .card`);
 
 const say = (k, v) => console.log(`  ${k}: ${v}`);
+
+let passed = 0;
+let failed = 0;
+const check = (what, ok, detail = '') => {
+  (ok ? passed++ : failed++);
+  console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${what}${detail ? ` — ${detail}` : ''}`);
+};
 
 async function settled(page) {
   await page.locator(HOST).waitFor({ state: 'attached', timeout: 25_000 });
@@ -91,17 +103,21 @@ async function main() {
     say('page 3 (Vega form) company shown', co);
     say('page 3 trail', JSON.stringify(rows));
     say('page 3 resume state', fit);
-    say(
-      'VERDICT',
-      rows.some((r) => /lyra|ashby/i.test(r))
-        ? "WRONG JOIN — Lyra's page is in Vega's application"
-        : 'clean',
+    check(
+      "the second job's pages stay out of the first job's application",
+      !rows.some((r) => /lyra|ashby/i.test(r)),
+      JSON.stringify(rows),
     );
+    check('and its resume does not come with them', !/fits|too long/i.test(fit ?? ''), fit);
+    check('the form is read as its own company', !/lyra/i.test(co ?? ''), co || '(none)');
     await page.close();
   } finally {
     await context.close();
     fixtures.close();
   }
+
+  console.log(`\n${passed}/${passed + failed} checks passed`);
+  if (failed > 0) process.exitCode = 1;
 }
 
 main().catch((e) => {

@@ -272,11 +272,21 @@ const handlers = {
      * The expectation goes once it has been honoured, too: a click means "the
      * next page", and leaving it standing let it vouch for a third page five
      * minutes later.
+     *
+     * `expecting` has to be named in that inheriting, because the spread drops
+     * every key except the ones written below it. Carrying it across a fresh
+     * start was the whole of the rule undone by one line: press Apply on Vega
+     * and have the board cancel the navigation and route the page itself —
+     * which content.js already anticipates, and which `target=_blank` produces
+     * too — then read a different job, and the expectation left over from Vega
+     * vouches for it. Vega's form then comes up holding Lyra's resume and
+     * Lyra's description as the source for the letter, with nothing on screen
+     * looking wrong.
      */
     const honoured = joins && wasExpected(trail, page.url);
     const next = {
       ...(joins ? trail : {}),
-      expecting: honoured ? undefined : trail.expecting,
+      expecting: joins && !honoured ? trail.expecting : undefined,
       pages: pages.slice(-TRAIL_MAX),
       at: Date.now(),
     };
