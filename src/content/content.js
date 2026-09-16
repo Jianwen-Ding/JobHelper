@@ -23,6 +23,7 @@
   const imports = {
     card: () => import(chrome.runtime.getURL('src/content/card.js')),
     autofill: () => import(chrome.runtime.getURL('src/content/autofill.js')),
+    trail: () => import(chrome.runtime.getURL('src/shared/trail.js')),
   };
 
   /**
@@ -259,19 +260,29 @@
    */
   function pagePayloadIdle() {
     return new Promise((resolve) => {
-      const take = () => resolve(pagePayload());
+      const take = () => pagePayload().then(resolve);
       if (typeof requestIdleCallback === 'function') requestIdleCallback(take, { timeout: 1500 });
       else setTimeout(take, 0);
     });
   }
 
-  function pagePayload() {
+  /**
+   * The page, cut down to the part a posting could be in.
+   *
+   * What gets sent is script bundles, analytics payloads and state dumps —
+   * measured at 4.6MB for one page of a board that inlines its bundle, versus
+   * 9KB once the markup that cannot hold a job description is dropped. And
+   * every one of those megabytes is serialised twice: once to cross into the
+   * service worker, once again into the request body. The server strips the
+   * same tags on arrival, so nothing is lost by doing it here, where it is
+   * the difference between a page that stutters and one that does not.
+   */
+  async function pagePayload() {
+    const { trimForStorage } = await imports.trail();
     return {
       url: location.href,
       title: document.title,
-      // Cap the payload: some boards ship enormous inlined bundles, and the
-      // posting itself is never in them.
-      html: document.documentElement.outerHTML.slice(0, 2_000_000),
+      html: trimForStorage(document.documentElement.outerHTML, 2_000_000),
     };
   }
 
@@ -368,6 +379,10 @@
     const carried = await send('takeWork', { page: pageIdentity() }).catch(() => ({ work: null }));
     if (carried?.work) cardHandle?.restoreWork(carried.work);
 
+    // Taken once, and already trimmed: the same page is both what was just
+    // analysed and what the next page will be written from.
+    const trimmed = await pagePayload();
+
     /*
      * This page is now part of an application. Remembering it is what lets the
      * next page — usually the form, on a different host — be written from the
@@ -378,7 +393,7 @@
         ...pageIdentity(),
         company: analysis.job?.company,
         kind: analysis.kind,
-        html: document.documentElement.outerHTML.slice(0, 400_000),
+        html: trimmed.html.slice(0, 400_000),
       },
     })
       .then((trail) => cardHandle?.setTrail(trail))
@@ -460,11 +475,18 @@
    * behaviour, which was losing all of it.
    */
   function keepWorkSafe() {
-    const save = () => {
+    const save = async () => {
       const work = cardHandle?.takeWork?.();
+      if (!work) return;
+
+      // Nothing worth keeping is not worth sending. The worker refuses it too,
+      // but a card with an empty state should not be asking in the first place.
+      const { worthKeeping } = await imports.trail();
+      if (!worthKeeping(work)) return;
+
       // The page is sent with it: a card left open on another posting must not
       // be able to write its work over this application's.
-      if (work) send('saveWork', { work, page: pageIdentity() }).catch(() => undefined);
+      send('saveWork', { work, page: pageIdentity() }).catch(() => undefined);
     };
     setInterval(save, 2000);
     // A navigation is exactly when this matters, and exactly when an interval

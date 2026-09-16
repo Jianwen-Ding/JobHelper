@@ -20,6 +20,7 @@ import {
   summarise,
   trimForStorage,
   wasExpected,
+  worthKeeping,
 } from '../src/shared/trail.js';
 
 const trailOf = (...pages) => ({ pages, at: Date.now() });
@@ -202,5 +203,22 @@ describe('carrying less when there is no room', () => {
 
   it('leaves a short trail alone', () => {
     assert.deepEqual(lighten({ pages: [{ url: 'a', html: 'aaa' }] }).pages[0].html, 'aaa');
+  });
+});
+
+describe('whether there is anything to keep', () => {
+  it('counts a resume, a letter, or an answer', () => {
+    assert.equal(worthKeeping({ spec: { id: 'x' } }), true);
+    assert.equal(worthKeeping({ letter: 'Dear Acme,' }), true);
+    assert.equal(worthKeeping({ answersByQuestion: { 'Why us?': 'Because.' } }), true);
+  });
+
+  it('counts an empty card as nothing, which is what stops it erasing the rest', () => {
+    // A card that could not analyse its page — the server went away — has this
+    // state, and saving it used to throw away the resume built on the page
+    // before.
+    assert.equal(worthKeeping({ spec: null, letter: '', answersByQuestion: {} }), false);
+    assert.equal(worthKeeping({ letter: '   ' }), false);
+    assert.equal(worthKeeping(null), false);
   });
 });

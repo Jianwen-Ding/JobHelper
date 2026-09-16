@@ -186,3 +186,16 @@ export function lighten(trail, keepTextFor = 2) {
     pages: pages.map((p, i) => (i < cut ? { ...p, html: '' } : p)),
   };
 }
+
+/**
+ * Is there anything in this worth keeping?
+ *
+ * The card saves on an interval, and a card that has not managed to analyse
+ * its page — because the server went away, say — has nothing in it. Saving
+ * that over the work from the page before is how a built resume disappeared
+ * while its own tab sat there showing an error it had already recovered from.
+ */
+export function worthKeeping(work) {
+  if (!work) return false;
+  return Boolean(work.spec) || Boolean(work.letter?.trim()) || Object.keys(work.answersByQuestion ?? {}).length > 0;
+}

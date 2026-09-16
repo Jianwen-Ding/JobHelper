@@ -6,7 +6,7 @@
  */
 
 import { DEFAULTS, getSettings } from '../shared/config.js';
-import { lighten, sameApplication, summarise, trimForStorage } from '../shared/trail.js';
+import { lighten, sameApplication, summarise, trimForStorage, worthKeeping } from '../shared/trail.js';
 
 async function serverFetch(path, options = {}) {
   const { serverUrl } = await getSettings();
@@ -164,6 +164,11 @@ const handlers = {
     // Only the application this tab is actually on. Without this a card left
     // open on another posting would keep writing its work over this one's.
     if (page && trail.pages.length > 0 && !sameApplication(trail, page)) return { ok: false };
+    // And never nothing over something: a card that failed to analyse its page
+    // has an empty state, and saving it threw away the resume built on the
+    // page before.
+    if (!worthKeeping(work) && worthKeeping(trail.work)) return { ok: false };
+
     await writeTrail(tab?.id, { ...trail, work });
     return { ok: true };
   },
