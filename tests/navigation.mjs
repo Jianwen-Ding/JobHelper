@@ -26,6 +26,8 @@ import {
   ADVERT_FRAME,
   ATS_FORM,
   CYGNUS_BOARD,
+  BLOG_WITH_FORM,
+  EMBEDDED_BOARD,
   FRAMED_ROLE,
   LEVER_ROLE,
   NEW_TAB_ROLE,
@@ -366,6 +368,48 @@ async function main() {
       const inserted = await frame?.evaluate(() => document.getElementById('q1').value);
       check('an answer written on the card lands in the frame', /read the code/.test(inserted ?? ''), inserted);
 
+      await page.close();
+    }
+
+    /* ---- The posting itself is inside the embed ---- */
+    group('A careers page that is a heading and an embedded board');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(EMBEDDED_BOARD), { waitUntil: 'load' });
+      // No `settled`: the question is whether anything appears at all, so
+      // waiting for the card would be waiting for the thing under test.
+      await page.waitForTimeout(9000);
+
+      const there = (await page.locator(HOST).count()) > 0;
+      check('the card appears even though the page itself says nothing', there);
+      if (there) {
+        const card = cardOf(page);
+        const role = (await card.locator('.role').textContent())?.trim() ?? '';
+        check('and reads the role out of the frame', /platform engineer/i.test(role), role);
+        const asked = await card.locator('.q').allTextContents();
+        check(
+          'and finds the question in there too',
+          asked.some((q) => /why do you want to work here/i.test(q)),
+          asked.join(' | ') || '(none)',
+        );
+      }
+      await page.close();
+    }
+
+    /* ---- And the page that is not a job, whatever its frame collects ---- */
+    group('An article with an enquiry form embedded in it');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(BLOG_WITH_FORM), { waitUntil: 'load' });
+      await page.waitForTimeout(9000);
+
+      // A frame can now make the card appear on a page that says nothing. It
+      // must not be able to make it appear on a page that is not a job: the
+      // frame gets the page looked at, it does not get to decide the answer.
+      check(
+        'no card, though the frame collects four parts of a person',
+        (await page.locator(HOST).count()) === 0,
+      );
       await page.close();
     }
 

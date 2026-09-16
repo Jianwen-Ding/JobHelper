@@ -400,6 +400,91 @@ export const FRAMED_FORM = {
 };
 
 /**
+ * A careers page that is a heading and an embedded board, which is how a great
+ * many companies run theirs: Greenhouse and SuccessFactors both ship an embed,
+ * and the page around it says almost nothing.
+ *
+ * Everything that makes a page look like a job — the description, the
+ * qualifications, the form — is inside the frame. Scored on the page itself
+ * there is nothing here at all, so the card never appears, and the tool is
+ * simply absent on a page where somebody is about to apply.
+ */
+export const EMBEDDED_BOARD = {
+  name: 'embedded-board',
+  path: '/vireo/careers/platform-engineer',
+  company: 'Vireo',
+  title: 'Platform Engineer',
+  html: `<!doctype html>
+<html><head><title>Vireo</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Vireo</h1></div>
+  <div class="wrap">
+    <iframe id="grnhse_iframe" title="Greenhouse Job Board"
+            src="/vireo/embed/job_app?token=4012345"
+            style="width:100%;height:600px;border:0"></iframe>
+  </div>
+</body></html>`,
+};
+
+export const EMBEDDED_BOARD_FRAME = {
+  name: 'embedded-board-frame',
+  path: '/vireo/embed/job_app',
+  html: `<!doctype html>
+<html><head><meta charset="utf-8"><title>Platform Engineer at Vireo</title><style>${CHROME}</style></head>
+<body><div class="wrap">
+  <h1>Platform Engineer</h1>
+  ${ROLE_BODY}
+  <h2>Apply now</h2>
+  <form>
+    <label for="fn">First Name</label><input id="fn" name="first_name">
+    <label for="ln">Last Name</label><input id="ln" name="last_name">
+    <label for="em">Email</label><input id="em" name="email" type="email">
+    <label for="rs">Resume</label><input id="rs" name="resume" type="file">
+    <label for="q1">Why do you want to work here?</label><textarea id="q1"></textarea>
+    <button type="button">Submit Application</button>
+  </form>
+</div></body></html>`,
+};
+
+/**
+ * Not a job, with a frame that collects the same details anyway.
+ *
+ * The other side of letting a frame speak up for a page that says nothing: a
+ * frame is now able to make the card appear where the page alone never would.
+ * An enquiry form embedded in an article asks for a name, an email, a phone
+ * number and a town, which is four parts of a person and enough to be taken
+ * for the top of an application.
+ */
+export const BLOG_WITH_FORM = {
+  name: 'blog-with-form',
+  path: '/notes/sourdough-and-patience',
+  html: `<!doctype html>
+<html><head><title>Notes on sourdough</title><style>${CHROME}</style></head>
+<body><div class="wrap">
+  <h1>Notes on sourdough</h1>
+  <p>A long post about bread, hydration ratios, and patience. Nothing here
+     resembles a job.</p>
+  <iframe id="enquiry" title="Get in touch" src="/notes/enquiry"
+          style="width:420px;height:320px"></iframe>
+</div></body></html>`,
+};
+
+export const BLOG_ENQUIRY_FRAME = {
+  name: 'blog-enquiry-frame',
+  path: '/notes/enquiry',
+  html: `<!doctype html>
+<html><head><meta charset="utf-8"><title>Get in touch</title></head>
+<body><form>
+  <h3>Book a class</h3>
+  <label for="a">Name</label><input id="a" name="name">
+  <label for="b">Email</label><input id="b" name="email" type="email">
+  <label for="c">Phone</label><input id="c" name="phone">
+  <label for="d">Town</label><input id="d" name="town">
+  <button type="button">Send</button>
+</form></body></html>`,
+};
+
+/**
  * A posting with a third party's frame on it, which is every posting.
  *
  * Running in all frames is what reaches the application form on iCIMS. It also
@@ -492,6 +577,7 @@ export const CYGNUS_ROLE_B = {
 
 export const NAVIGATION = [
   CYGNUS_BOARD, CYGNUS_ROLE_A, CYGNUS_ROLE_B, FRAMED_ROLE, FRAMED_FORM, ADVERT_FRAME, ADVERT_CONTENT,
+  EMBEDDED_BOARD, EMBEDDED_BOARD_FRAME, BLOG_WITH_FORM, BLOG_ENQUIRY_FRAME,
   LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY,
   OWN_SITE, ATS_FORM, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, SPA_BOARD,
 ];

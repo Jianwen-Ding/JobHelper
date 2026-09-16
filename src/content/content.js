@@ -360,6 +360,26 @@
   }
 
   /**
+   * Any frame on this page that holds an application form, as a page in its
+   * own right.
+   *
+   * Part of this page however the browser files it — on a careers site that is
+   * a heading and an embedded board it is the whole of the posting. Kept
+   * separate rather than glued onto the page's own markup because the merge
+   * takes the role and the company from the first page that knows them, and
+   * the shell around the embed knows only the company name.
+   *
+   * Only frames already established to be applications answer, so nothing else
+   * on the page is sent anywhere.
+   */
+  async function framePages() {
+    const { frames } = await send('frameHtml', {}).catch(() => ({ frames: [] }));
+    return (frames ?? [])
+      .filter((f) => f.html)
+      .map((f) => ({ url: f.url, title: f.title, html: f.html }));
+  }
+
+  /**
    * The same payload, plus every earlier page of this application.
    *
    * The description you read and the form you are filling in are usually two
@@ -375,7 +395,11 @@
     const trail = await send('trailPages', { page: pageIdentity() }).catch(() => ({ pages: [] }));
 
     const earlier = (trail.pages ?? []).filter((p) => p.url !== here.url && p.html);
-    return { ...here, pages: [...earlier, here] };
+    // Frames go between: after the pages actually walked to get here, which
+    // know the role best, and before the shell they are embedded in, which
+    // often knows only the company.
+    const framed = await framePages();
+    return { ...here, pages: [...earlier, ...framed, here] };
   }
 
   /** Who this page is, as far as belonging to an application goes. */
@@ -399,7 +423,7 @@
    * decided this is a posting worth offering, so the card goes up on that,
    * shows what it is doing, and each answer lands as it arrives.
    */
-  async function show({ force = false } = {}) {
+  async function show({ force = false, viaFrame = false } = {}) {
     const mine = supersede();
     const current = () => pass === mine;
 
@@ -408,7 +432,11 @@
     if (!force) {
       if (!settings.autoPrompt) return;
       if ((settings.mutedHosts ?? []).includes(location.hostname)) return;
-      if (localScore() < settings.minScore) return;
+      // A frame saying it holds an application is worth more than the score of
+      // the page around it, which on those pages is a heading and an iframe.
+      // Everything else still applies: a muted host stays muted, and a page
+      // the server does not think is a posting still loses its card below.
+      if (!viaFrame && localScore() < settings.minScore) return;
     }
 
     const [{ createCard, removeCard }, { wantsCoverLetter }] = await Promise.all([
@@ -469,6 +497,15 @@
     if (!current()) return;
 
     /*
+     * What is remembered has to include the frames, or a page whose posting is
+     * entirely inside an embed is remembered as the empty shell it looks like
+     * — and the next page of the application is written from nothing.
+     */
+    const framed = await framePages();
+    if (!current()) return;
+    const remembered = [trimmed.html, ...framed.map((f) => f.html)].join('\n').slice(0, 400_000);
+
+    /*
      * This page is now part of an application. Remembering it is what lets the
      * next page — usually the form, on a different host — be written from the
      * description you read here rather than from the form's own empty prose.
@@ -478,7 +515,7 @@
         ...pageIdentity(),
         company: analysis.job?.company,
         kind: analysis.kind,
-        html: trimmed.html.slice(0, 400_000),
+        html: remembered,
       },
     })
       .then((trail) => current() && cardHandle?.setTrail(trail))
@@ -635,6 +672,27 @@
           );
           return true;
 
+        /*
+         * The frame's own markup, when the frame is an application. On the
+         * pages this exists for it is the only place the posting is written
+         * down, so without it the page is analysed as the empty shell it looks
+         * like from outside.
+         */
+        case 'jh-frame-html':
+          answer(
+            Promise.all([imports.autofill(), imports.trail()]).then(
+              ([{ looksLikeApplicationForm }, { trimForStorage }]) =>
+                looksLikeApplicationForm()
+                  ? {
+                      url: location.href,
+                      title: document.title,
+                      html: trimForStorage(document.documentElement.outerHTML, 400_000),
+                    }
+                  : { html: '' },
+            ),
+          );
+          return true;
+
         case 'jh-frame-insert':
           answer(
             imports
@@ -650,6 +708,24 @@
 
     // Say so once, so the top document can be told which frames to ask.
     send('frameReady', {}).catch(() => undefined);
+
+    /*
+     * And, if this frame is an application, say that too — because the page
+     * around it may have nothing to go on and may otherwise never offer.
+     *
+     * The count of form controls first, because this runs in every frame of
+     * every page: adverts, embeds, tracking pixels. Almost none of them has
+     * two form fields, and the ones that do are the only ones worth loading
+     * the rest of the code to look at properly.
+     */
+    if (document.querySelectorAll('input, textarea, select').length >= 2) {
+      imports
+        .autofill()
+        .then(({ looksLikeApplicationForm }) => {
+          if (looksLikeApplicationForm()) send('applicationFrameHere', {}).catch(() => undefined);
+        })
+        .catch(() => undefined);
+    }
     return;
   }
 
@@ -659,6 +735,16 @@
         .then(() => sendResponse({ ok: true }))
         .catch((err) => sendResponse({ ok: false, error: err.message }));
       return true;
+    }
+    /*
+     * A frame on this page has found an application form in itself. If there
+     * is already a card, it will pick the frame up on its own; if there is
+     * not, this is the only notice there will ever be.
+     */
+    if (message?.type === 'jh-application-frame') {
+      if (!cardHandle) show({ viaFrame: true }).catch(() => undefined);
+      sendResponse({ ok: true });
+      return false;
     }
     if (message?.type === 'autofill') {
       runAutofill()

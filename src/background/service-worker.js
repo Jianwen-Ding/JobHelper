@@ -181,6 +181,34 @@ const handlers = {
     return { ok: true };
   },
 
+  /**
+   * "The application form is in here, not out there."
+   *
+   * Said by a frame that has found itself holding one. Plenty of careers pages
+   * are a heading and an embedded board — Greenhouse and SuccessFactors both
+   * ship an embed — and scored on the page itself there is nothing there at
+   * all: no description, no qualifications, no form. The card never appeared,
+   * on a page where somebody was about to apply.
+   *
+   * The frame is the only thing in a position to know, so it says so, and the
+   * top document takes another look.
+   */
+  async applicationFrameHere(_payload, tab, sender) {
+    noteFrame(tab?.id, sender?.frameId);
+    if (tab?.id === undefined) return { ok: false };
+    await chrome.tabs
+      .sendMessage(tab.id, { type: 'jh-application-frame' }, { frameId: 0 })
+      .catch(() => undefined);
+    return { ok: true };
+  },
+
+  /** The markup of any frame holding an application, as part of this page. */
+  async frameHtml(_payload, tab) {
+    if (tab?.id === undefined) return { frames: [] };
+    const replies = await askFrames(tab.id, { type: 'jh-frame-html' });
+    return { frames: replies.map(({ frameId, data }) => ({ frameId, ...data })) };
+  },
+
   /** Read the form in every sub-frame: its questions, and what it asks for. */
   async scanFrames(_payload, tab) {
     if (tab?.id === undefined) return { frames: [] };
