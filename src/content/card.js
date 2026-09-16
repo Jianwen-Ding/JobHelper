@@ -141,6 +141,15 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .job .role { font-weight: 500; font-size: 16px; line-height: 1.3; }
 .job .co { color: var(--muted); margin-top: 1px; }
 
+/* The pages one application is spread across. */
+.trail { margin-top: 7px; font-size: 12px; }
+.trail summary { cursor: pointer; color: var(--muted); }
+.trail summary:hover { color: var(--ink); }
+.trail-row { display: flex; align-items: center; gap: 6px; padding: 3px 0 3px 12px; }
+.trail-row .what { color: var(--faint); white-space: nowrap; }
+.trail-row .where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; }
+
+
 /* Each step is a labelled block, so the card reads as a sequence. */
 .step { border-top: 1px solid var(--line-soft); padding-top: 11px; margin-top: 12px; }
 .step:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
@@ -336,6 +345,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
 
   const state = {
     spec: analysis?.spec ?? null,
+    /** The pages this application is being written from. See drawTrail. */
+    trail: null,
     render: null,
     busy: null,
     error: null,
@@ -513,6 +524,45 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     return h('div', { className: 'job' }, [
       h('div', { className: 'role', textContent: job.title ?? 'This posting' }),
       h('div', { className: 'co', textContent: [job.company, job.location].filter(Boolean).join(' · ') }),
+      drawTrail(),
+    ]);
+  }
+
+  /**
+   * The pages this application is being written from.
+   *
+   * Shown only once there is more than one, because on a single page it would
+   * be saying "this page" — but the moment there are two, what the letter is
+   * written from stops being obvious, and a tool that quietly merged the wrong
+   * two pages would be worse than one that never merged at all. So it says
+   * which, and both corrections are one click: drop a page, or start over.
+   */
+  function drawTrail() {
+    const pages = state.trail?.pages ?? [];
+    if (pages.length < 2) return null;
+
+    const KIND = { posting: 'the description', application: 'the form', listing: 'a list of roles', discussion: 'a thread' };
+    const row = (p) =>
+      h('div', { className: 'trail-row' }, [
+        h('span', { className: 'what', textContent: KIND[p.kind] ?? 'a page' }),
+        h('span', { className: 'where', textContent: p.title || p.url || '' , title: p.url ?? '' }),
+        h('button', {
+          className: 'link',
+          textContent: 'Not this one',
+          title: 'Leave this page out of what is written',
+          onclick: () => act('forgetPage', { url: p.url }, (trail) => (state.trail = trail)),
+        }),
+      ]);
+
+    return h('details', { className: 'trail' }, [
+      h('summary', { textContent: `Writing from ${pages.length} pages of this application` }),
+      ...pages.map(row),
+      h('button', {
+        className: 'link',
+        textContent: 'Start a new application here',
+        title: 'Forget the earlier pages and use only this one',
+        onclick: () => act('clearTrail', {}, (trail) => (state.trail = trail)),
+      }),
     ]);
   }
 
@@ -1242,6 +1292,12 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         state.letterAutoStarted = true;
         draftLetter();
       }
+    },
+
+    /** The pages this application spans, as the trail grows. */
+    setTrail(trail) {
+      state.trail = trail;
+      draw();
     },
 
     /** The resume list, which arrives on its own. */

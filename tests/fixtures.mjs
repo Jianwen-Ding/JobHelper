@@ -104,7 +104,62 @@ export const BLOG = {
 <p>A long post about bread, hydration ratios, and patience. Nothing here resembles a job.</p></div></body></html>`,
 };
 
-export const ALL = [STREAMLY, NORTHWIND, BLOG];
+
+/*
+ * One application across two pages, the ordinary shape: a description that
+ * says what the job is and links to "Apply", and a form on its own page that
+ * asks the questions and knows almost nothing about the role. Writing a cover
+ * letter from the second page alone is the case this exists to test.
+ */
+export const HELIOS_ROLE = {
+  name: 'helios-role',
+  path: '/helios/roles/platform-engineer',
+  company: 'Helios',
+  title: 'Platform Engineer',
+  html: `<!doctype html>
+<html><head><title>Platform Engineer at Helios</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Helios</h1><div>Platform Engineer · Remote</div></div>
+  <div class="wrap">
+    <h2>About the role</h2>
+    <p>We are looking for a platform engineer to run our Kafka and Kubernetes
+       estate. You will own the streaming infrastructure end to end, in Go and
+       Python, and the CI/CD that ships it.</p>
+    <h2>Minimum qualifications</h2>
+    <ul><li>Experience with distributed systems</li><li>Years of experience with SQL and AWS</li></ul>
+    <p>Equal opportunity employer. Full-time. Compensation is competitive.</p>
+    <p><a href="/helios/apply/platform-engineer">Apply now</a></p>
+  </div>
+</body></html>`,
+};
+
+export const HELIOS_FORM = {
+  name: 'helios-form',
+  path: '/helios/apply/platform-engineer',
+  company: 'Helios',
+  title: 'Apply — Helios',
+  html: `<!doctype html>
+<html><head><title>Apply — Helios</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Helios</h1><div>Submit application</div></div>
+  <div class="wrap">
+    <form>
+      <label for="fn">First Name</label><input id="fn" name="first_name">
+      <label for="ln">Last Name</label><input id="ln" name="last_name">
+      <label for="em">Email</label><input id="em" name="email" type="email">
+      <label for="rs">Resume</label><input id="rs" name="resume" type="file">
+      <label for="cl">Cover Letter</label><textarea id="cl" name="cover_letter"></textarea>
+      <label for="q1">Why do you want to work here?</label>
+      <textarea id="q1" name="why_here"></textarea>
+      <label for="q2">Will you now or in the future require sponsorship?</label>
+      <input id="q2" name="sponsorship">
+      <button type="button">Submit Application</button>
+    </form>
+  </div>
+</body></html>`,
+};
+
+export const ALL = [STREAMLY, NORTHWIND, BLOG, HELIOS_ROLE, HELIOS_FORM];
 
 /**
  * Serve every fixture from one origin. Returns the base url and a `urlFor`
@@ -115,11 +170,13 @@ export function serveFixtures(fixtures = ALL) {
     const server = http.createServer((req, res) => {
       const match = fixtures.find((f) => req.url.startsWith(f.path));
       if (!match) {
-        res.writeHead(404, { 'Content-Type': 'text/html' });
+        res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end('<html><body>Not found</body></html>');
         return;
       }
-      res.writeHead(200, { 'Content-Type': 'text/html' });
+      // charset matters: an em dash in a page title came back as mojibake
+      // without it, which looks like a bug in the extension rather than here.
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(match.html);
     });
     server.listen(0, '127.0.0.1', () => {

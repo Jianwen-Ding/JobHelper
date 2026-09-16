@@ -29,8 +29,180 @@ async function serverFetch(path, options = {}) {
   return body;
 }
 
+/* ------------------------------------------------------------------ *
+ * The trail: one application, across the pages it is spread over       *
+ * ------------------------------------------------------------------ */
+
+/**
+ * An application is rarely one page. You read the description on a careers
+ * site, follow "Apply" to a form on a different host, and the form is where
+ * the cover letter and the essay questions are — by which point the
+ * description that would answer them is on the page you just left.
+ *
+ * So pages are kept as you walk them. The trail lives in session storage: it
+ * is about this sitting, not a preference, and it should not follow you into
+ * next week. A page joins when the card appears on it and it plausibly belongs
+ * to the same application as the trail so far; anything else starts a new one.
+ */
+const TRAIL_KEY = 'trail';
+const TRAIL_MAX = 5;
+/**
+ * How much of each earlier page to keep.
+ *
+ * The page you are on is sent whole; the ones behind it are kept only so their
+ * description can be read again, and session storage is not a place to put
+ * five copies of a two-megabyte bundle. A posting that does not fit in this is
+ * a posting whose first 400kB is the posting.
+ */
+const TRAIL_HTML_MAX = 400_000;
+/** Older than this and it is a different sitting, whatever the host says. */
+const TRAIL_STALE_MS = 2 * 60 * 60 * 1000;
+
+const session = () => chrome.storage.session ?? chrome.storage.local;
+
+async function readTrail() {
+  const stored = (await session().get(TRAIL_KEY))[TRAIL_KEY];
+  if (!stored?.pages?.length) return { pages: [] };
+  if (Date.now() - (stored.at ?? 0) > TRAIL_STALE_MS) return { pages: [] };
+  return stored;
+}
+
+const hostOf = (u) => {
+  try {
+    return new URL(u).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+};
+const rootOf = (h) => h.split('.').slice(-2).join('.');
+const pathOf = (u) => {
+  try {
+    return new URL(u).pathname;
+  } catch {
+    return '';
+  }
+};
+
+/** Same host, and plainly the same posting on it rather than another one. */
+function relatedPath(a, b) {
+  const pa = pathOf(a);
+  const pb = pathOf(b);
+  if (!pa || !pb) return false;
+  if (pa === pb || pa.startsWith(pb) || pb.startsWith(pa)) return true;
+
+  // An applicant tracking system hosts thousands of companies under one
+  // domain, so the host says nothing; the first path segment is the company.
+  const first = (p) => p.split('/').filter(Boolean)[0] ?? '';
+  return first(pa) !== '' && first(pa) === first(pb);
+}
+
+/**
+ * Is this page part of the application already being followed?
+ *
+ * Getting this wrong in the generous direction is worse than not following at
+ * all: a cover letter written from two different companies' postings is
+ * nonsense, and nothing about it would look wrong until a human read it. So
+ * the company decides wherever it is known, and where it is not, a page has to
+ * have been arrived at from the trail — following "Apply" from a careers page
+ * to its ATS is the case this exists for, and it is also the only case where
+ * two unrelated hosts should ever be joined up.
+ */
+function sameApplication(trail, page) {
+  if (trail.pages.length === 0) return true;
+
+  const co = (c) => (c ?? '').trim().toLowerCase();
+  const mine = co(page.company);
+  const known = trail.pages.map((p) => co(p.company)).filter(Boolean);
+
+  // A different company is a different application, whatever else matches.
+  if (mine && known.length > 0) return known.includes(mine);
+
+  const here = hostOf(page.url);
+  if (!here) return false;
+
+  for (const p of trail.pages) {
+    const there = hostOf(p.url);
+    if (!there) continue;
+
+    const cameFromHere =
+      page.referrerHost && (page.referrerHost === there || rootOf(page.referrerHost) === rootOf(there));
+
+    // Same site: only if it is the same posting, not merely the same board.
+    if (here === there || rootOf(here) === rootOf(there)) {
+      if (relatedPath(page.url, p.url)) return true;
+      continue;
+    }
+    // Different site: only by having been sent there from the trail.
+    if (cameFromHere) return true;
+  }
+  return false;
+}
+
+/** The trail without the page text, which nothing but the server wants. */
+function summarise(trail) {
+  return {
+    ...trail,
+    pages: trail.pages.map(({ html, ...rest }) => ({ ...rest, chars: (html ?? '').length })),
+  };
+}
+
 /** Message handlers, one per action the content script or popup can request. */
 const handlers = {
+  /**
+   * Add the page to the current application, or start a new one with it.
+   * Returns the trail as it now stands, so the card can show it.
+   */
+  async rememberPage({ page }) {
+    const trail = await readTrail();
+    const joins = sameApplication(trail, page);
+    const pages = joins ? trail.pages.filter((p) => p.url !== page.url) : [];
+
+    pages.push({
+      url: page.url,
+      title: page.title,
+      company: page.company,
+      kind: page.kind,
+      html: (page.html ?? '').slice(0, TRAIL_HTML_MAX),
+      at: Date.now(),
+    });
+
+    const next = { pages: pages.slice(-TRAIL_MAX), at: Date.now() };
+    await session().set({ [TRAIL_KEY]: next });
+    return { ...summarise(next), startedFresh: !joins };
+  },
+
+  async getTrail() {
+    return summarise(await readTrail());
+  },
+
+  /**
+   * The earlier pages that belong to the application this page is part of.
+   *
+   * Asked before the page is analysed, not after: whether a page belongs is a
+   * fact about the page, and deciding it from the merged analysis meant the
+   * merge decided its own inputs. Two unrelated postings on one host were
+   * quietly written up as one job, and nothing about the result looked wrong.
+   */
+  async trailPages({ page }) {
+    const trail = await readTrail();
+    if (page && !sameApplication(trail, page)) return { pages: [] };
+    return { pages: trail.pages.map((p) => ({ url: p.url, title: p.title, html: p.html })) };
+  },
+
+  /** Forget the trail — "this is a different application from the last one". */
+  async clearTrail() {
+    await session().remove(TRAIL_KEY);
+    return { pages: [] };
+  },
+
+  /** Drop one page the user says does not belong. */
+  async forgetPage({ url }) {
+    const trail = await readTrail();
+    const next = { pages: trail.pages.filter((p) => p.url !== url), at: Date.now() };
+    await session().set({ [TRAIL_KEY]: next });
+    return summarise(next);
+  },
+
   async ping() {
     const { serverUrl } = await getSettings();
     const res = await fetch(`${serverUrl.replace(/\/$/, '')}/health`);
@@ -111,7 +283,7 @@ const handlers = {
    * choices rather than one hidden setting. Omitted, it falls back to the
    * stored preference.
    */
-  async analyze({ url, title, html, useAi }) {
+  async analyze({ url, title, html, pages, useAi }) {
     const settings = await getSettings();
     return serverFetch('/api/extension/analyze', {
       method: 'POST',
@@ -119,6 +291,10 @@ const handlers = {
         url,
         title,
         html,
+        // Every page of this application, not just the one in front of you.
+        // Forgetting to pass this on is invisible: the analysis still works,
+        // it is just written from the wrong half of what was read.
+        pages,
         baseResumeId: settings.baseResumeId,
         useAi: typeof useAi === 'boolean' ? useAi : settings.useAi,
       }),

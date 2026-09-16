@@ -19,8 +19,13 @@ export const DEFAULTS = {
   /**
    * Minimum local confidence before the card appears. The content script scores
    * a page cheaply before any network call, so ordinary browsing stays quiet.
+   *
+   * Deliberately low, and matched to the server's own floor. Being missed on a
+   * page you were about to apply from costs more than a card you dismiss: an
+   * application form describes nothing and used to score nothing, which is how
+   * the tool managed to be absent at the exact moment it was wanted.
    */
-  minScore: 4,
+  minScore: 3,
   /** Hosts the user has told us to stay quiet on. */
   mutedHosts: [],
 };
