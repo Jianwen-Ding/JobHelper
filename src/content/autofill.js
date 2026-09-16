@@ -28,23 +28,69 @@ const FIELD_PATTERNS = [
   ['requires_sponsorship', /\b(sponsor|visa[\s_-]?status)\b/i],
 ];
 
-/** Everything a field's label might be hiding in. */
-function describeField(input) {
-  const bits = [input.name, input.id, input.getAttribute('aria-label'), input.placeholder];
+const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 
+/**
+ * Find the label that belongs to a field.
+ *
+ * Getting this wrong is worse than not filling at all: an earlier version
+ * appended "the first label found in the enclosing container", which on a form
+ * inside one big <div> meant every field inherited the first field's label and
+ * the email box got filled with a first name. So an explicit association wins
+ * outright, and the positional fallback only looks at what immediately precedes
+ * the field.
+ */
+function labelFor(input) {
   if (input.id) {
     const label = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
-    if (label) bits.push(label.textContent);
+    if (label) return clean(label.textContent);
   }
+
   const wrapping = input.closest('label');
-  if (wrapping) bits.push(wrapping.textContent);
+  if (wrapping) return clean(wrapping.textContent);
 
-  // Many boards put the label in a sibling div rather than a <label>.
-  const group = input.closest('div,fieldset,li');
-  const heading = group?.querySelector('label,legend,.label,[class*="label"]');
-  if (heading && !heading.contains(input)) bits.push(heading.textContent);
+  const describedBy = input.getAttribute('aria-labelledby');
+  if (describedBy) {
+    const text = describedBy
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent ?? '')
+      .join(' ');
+    if (clean(text)) return clean(text);
+  }
 
-  return bits.filter(Boolean).join(' ').replace(/\s+/g, ' ').slice(0, 300);
+  const aria = clean(input.getAttribute('aria-label'));
+  if (aria) return aria;
+
+  // Positional fallback: the nearest preceding element that reads like a label.
+  let node = input.previousElementSibling;
+  for (let i = 0; i < 3 && node; i++, node = node.previousElementSibling) {
+    if (node.querySelector?.('input, textarea, select')) break;
+    const text = clean(node.textContent);
+    if (text && text.length < 160) return text;
+  }
+
+  // Last resort: a container holding this field and nothing else fillable.
+  const group = input.closest('div,fieldset,li,p');
+  if (group && group.querySelectorAll('input, textarea, select').length === 1) {
+    const heading = group.querySelector('label,legend,.label,[class*="label"]');
+    if (heading && !heading.contains(input)) return clean(heading.textContent);
+  }
+  return '';
+}
+
+/**
+ * Everything a field's label might be hiding in. The explicit label leads, so
+ * that a pattern matching on it wins over an incidental match in an attribute.
+ */
+function describeField(input) {
+  const label = labelFor(input);
+  const attrs = [input.name, input.id, input.placeholder].map(clean).filter(Boolean);
+  return clean([label, ...attrs].filter(Boolean).join(' ')).slice(0, 300);
+}
+
+/** The label alone, for cases where attribute noise would mislead. */
+function questionFor(input) {
+  return labelFor(input);
 }
 
 function isFillable(input) {
@@ -113,34 +159,70 @@ export function fillForm(fields, { overwrite = false } = {}) {
   return { filled, skipped };
 }
 
+/** Marks a field so the card can point back at it later. */
+const FIELD_KEY = 'data-jobhelper-field';
+let fieldCounter = 0;
+
 /**
- * Find free-text questions on the page that the stored answer bank can cover.
- * Returned rather than filled: a long-form answer is something to look at
- * before it goes out.
+ * Find the free-text questions on the page — the boxes that want a paragraph,
+ * not a phone number. Returned rather than filled: a long-form answer is
+ * something to read before it goes out under your name.
  */
-export function matchQuestions(answers) {
-  const matches = [];
-  for (const textarea of document.querySelectorAll('textarea')) {
-    if (!isFillable(textarea) || textarea.value) continue;
-    const description = describeField(textarea).toLowerCase();
-    if (!description) continue;
+export function findQuestions() {
+  const found = [];
+  const candidates = [
+    ...document.querySelectorAll('textarea'),
+    // Some boards use a contenteditable div for long answers.
+    ...document.querySelectorAll('[contenteditable="true"]'),
+  ];
 
-    const best = answers
-      .map((a) => ({ a, score: overlap(description, a.question.toLowerCase()) }))
-      .filter((x) => x.score >= 0.5)
-      .sort((x, y) => y.score - x.score)[0];
+  for (const field of candidates) {
+    if (field instanceof HTMLTextAreaElement && !isFillable(field)) continue;
+    if (field.offsetParent === null) continue;
 
-    if (best) matches.push({ element: textarea, answer: best.a, score: best.score });
+    const question = cleanQuestion(questionFor(field));
+    // Anything this short is a label like "Notes", not a question worth
+    // drafting an answer to.
+    if (!question || question.length < 12) continue;
+
+    let id = field.getAttribute(FIELD_KEY);
+    if (!id) {
+      id = `jh-${++fieldCounter}`;
+      field.setAttribute(FIELD_KEY, id);
+    }
+    found.push({ fieldId: id, question, currentValue: field.value ?? field.textContent ?? '' });
   }
-  return matches;
+  return found;
 }
 
-/** Share of the stored question's significant words present in the page text. */
-function overlap(haystack, question) {
-  const stop = new Set(['the', 'a', 'an', 'for', 'to', 'of', 'in', 'you', 'your', 'this', 'are', 'is', 'do', 'what', 'why']);
-  const words = [...new Set(question.split(/\W+/).filter((w) => w.length > 2 && !stop.has(w)))];
-  if (words.length === 0) return 0;
-  return words.filter((w) => haystack.includes(w)).length / words.length;
+/** Put text into a field the card previously identified. */
+export function insertAnswer(fieldId, text) {
+  const field = document.querySelector(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`);
+  if (!field) return false;
+  if (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) {
+    setValue(field, text);
+  } else {
+    field.textContent = text;
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  field.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  return true;
 }
 
-export { describeField };
+/**
+ * Labels arrive with the surrounding furniture attached — character counters,
+ * "(optional)", the word "Required". Strip it so the question matches what was
+ * stored last time.
+ */
+function cleanQuestion(raw) {
+  return String(raw)
+    .replace(/\b\d+\s*(?:of|\/)\s*\d+\s*characters?\b/gi, '')
+    .replace(/\(\s*optional\s*\)/gi, '')
+    .replace(/\*\s*(required|mandatory)\b/gi, '')
+    .replace(/\b(required|optional)\b\s*$/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 300);
+}
+
+export { describeField, questionFor, labelFor };
