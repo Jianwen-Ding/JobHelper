@@ -83,6 +83,11 @@ button:disabled:hover { background: #fff; border-color: #dcdce1; }
 .change .swap .to { font-weight: 600; }
 .change .swap .arrow { color: #9a9aa2; padding: 0 3px; }
 .change .text { color: #4a4a52; font-size: 12px; margin-top: 3px; }
+.change .text strong { font-weight: 650; color: #1a1a1c; }
+.change .text code, .suggestion code {
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .92em;
+  background: #eeeef1; border-radius: 3px; padding: 0 3px;
+}
 .change .why { margin-top: 4px; }
 .kw {
   display: inline-block; background: #eef2fb; color: #2f5fd0; border-radius: 3px;
@@ -178,6 +183,27 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
   const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
   /**
+   * Render the store's inline markup as real nodes. The stored text carries
+   * `**bold**` and `` `code` `` for the LaTeX renderer; showing that source to
+   * the user is showing them the plumbing.
+   */
+  function markup(text) {
+    const frag = document.createDocumentFragment();
+    const re = /\*\*(.+?)\*\*|`(.+?)`|(?:^|(?<=[\s(]))\*([^*]+)\*(?=[\s).,;:]|$)/g;
+    let last = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) frag.append(text.slice(last, m.index));
+      if (m[1] !== undefined) frag.append(h('strong', { textContent: m[1] }));
+      else if (m[2] !== undefined) frag.append(h('code', { textContent: m[2] }));
+      else frag.append(h('em', { textContent: m[3] }));
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) frag.append(text.slice(last));
+    return frag;
+  }
+
+  /**
    * Run an action with the card showing a busy state. `apply` runs before the
    * final redraw: assigning the result in the caller after `await` would always
    * repaint stale state.
@@ -245,13 +271,16 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
 
       list.append(
         h('div', { className: 'change' }, [
-          h('div', { className: 'where', textContent: [c.where, c.what].filter(Boolean).join(' · ') || c.key }),
+          h('div', {
+            className: 'where',
+            textContent: [c.where, c.what === 'bullet' ? null : c.what].filter(Boolean).join(' · ') || c.key,
+          }),
           h('div', { className: 'swap' }, [
             h('span', { textContent: c.fromLabel ?? c.from }),
             h('span', { className: 'arrow', textContent: '→' }),
             h('span', { className: 'to', textContent: c.toLabel ?? c.to }),
           ]),
-          c.toText ? h('div', { className: 'text', textContent: c.toText }) : null,
+          c.toText ? h('div', { className: 'text' }, markup(c.toText)) : null,
           (c.because ?? []).length ? why : null,
         ]),
       );
@@ -270,7 +299,7 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
     for (const s of suggestions) {
       box.append(
         h('div', { className: 'suggestion' }, [
-          h('div', { textContent: s.text }),
+          h('div', {}, markup(s.text)),
           s.why ? h('div', { className: 'why', textContent: s.why }) : null,
           h('div', { className: 'row gap' }, [
             h('button', {
