@@ -108,7 +108,13 @@ async function main() {
     check('the rename to the posting is not shown as a change', !/^New grad$/m.test(wasText));
 
     await card.getByRole('button', { name: 'Build resume' }).click();
+
+    // Compiling takes seconds; the card has to show it is working.
+    await card.locator('.progress').first().waitFor({ timeout: 15_000 });
+    check('progress is shown while the resume compiles', true, await card.locator('.progress-label').innerText());
+
     await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 90_000 });
+    check('progress clears when the work finishes', (await card.locator('.progress').count()) === 0);
     const fitText = await card.locator('.fit.ok, .fit.bad').innerText();
     check('resume compiled and fits one page', /Fits on one page/.test(fitText), fitText);
 

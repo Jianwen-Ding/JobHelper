@@ -247,10 +247,43 @@ select {
 .done-box .file { font-size: 12px; color: var(--ink-soft); margin-top: 5px; }
 
 .spinner {
-  width: 12px; height: 12px; border: 2px solid #cdd8ef; border-top-color: var(--accent);
+  width: 14px; height: 14px; border: 2px solid var(--accent-soft); border-top-color: var(--accent);
   border-radius: 50%; display: inline-block; animation: spin .7s linear infinite; vertical-align: -2px;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/*
+ * Material's indeterminate linear progress, shown at the step doing the work.
+ * Generating a letter or re-tailoring takes seconds — long enough that without
+ * this, the card looks like it ignored the click.
+ */
+.progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent-soft);
+  overflow: hidden;
+  margin: 8px 0;
+  position: relative;
+}
+.progress::before, .progress::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0;
+  background: var(--accent); border-radius: 2px; width: 100%;
+  transform-origin: left center; will-change: transform;
+}
+/* The two-bar timing Material uses: a long sweep, then a short one chasing it. */
+.progress::before { animation: mdc-primary 2s infinite cubic-bezier(.65,.815,.735,.395); }
+.progress::after { animation: mdc-secondary 2s infinite cubic-bezier(.165,.84,.44,1); }
+@keyframes mdc-primary {
+  0% { transform: translateX(0) scaleX(0); }
+  40% { transform: translateX(0) scaleX(.4); }
+  100% { transform: translateX(100%) scaleX(.5); }
+}
+@keyframes mdc-secondary {
+  0% { transform: translateX(0) scaleX(0); }
+  60% { transform: translateX(60%) scaleX(.3); }
+  100% { transform: translateX(110%) scaleX(.1); }
+}
+.progress-label { font-size: 11px; color: var(--muted); margin-top: -3px; margin-bottom: 6px; }
 a { color: var(--accent); }
 `;
 
@@ -429,6 +462,36 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
     ]);
   }
 
+  /**
+   * Which step each action belongs to, and what to say while it runs.
+   * Compiling, drafting and answering all take seconds — long enough that a
+   * card which just sits there looks like it dropped the click.
+   */
+  const WORKING = {
+    render: [1, 'Compiling the resume…'],
+    rebuild: [1, 'Choosing what to change…'],
+    setBase: [1, 'Starting from that resume…'],
+    refine: [1, 'Applying your feedback…'],
+    coverLetter: [2, 'Drafting the letter…'],
+    saveLetter: [2, 'Saving the letter…'],
+    answerQuestion: [3, 'Writing an answer…'],
+    matchAnswers: [3, 'Looking through your answers…'],
+    bundle: [4, 'Building the files…'],
+    autofill: [4, 'Filling the form…'],
+    openWorkspace: [3, 'Opening ResumeM-M…'],
+  };
+
+  /** A progress bar for `step`, when that is what the card is busy doing. */
+  function progressFor(step) {
+    const entry = WORKING[state.busy];
+    if (!entry || entry[0] !== step) return null;
+    const label = state.busy === 'rebuild' && state.rebuilding === 'ai' ? 'Reading the posting…' : entry[1];
+    return h('div', {}, [
+      h('div', { className: 'progress', role: 'progressbar', 'aria-label': label }),
+      h('div', { className: 'progress-label', textContent: label }),
+    ]);
+  }
+
   /** What the tailoring changed, in words. Never a silent swap, never an id. */
   /**
    * What the tailoring did to the document, as a before/after against the base
@@ -593,6 +656,7 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
     body.append(
       h('div', { className: 'step' }, [
         stepHead(1, 'Resume', Boolean(state.render?.fits)),
+        progressFor(1),
         h('div', { className: 'row' }, [
           h('span', { className: 'hint', textContent: 'Start from' }),
           baseSelect,
@@ -610,11 +674,14 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
             textContent: busyLabel('rebuild-tags', 'Match it myself', 'Matching…'),
             title: 'Pick among your stored phrasings by keyword. Nothing is sent to an AI.',
             disabled: Boolean(state.busy),
-            onclick: () =>
-              act('rebuild', { useAi: false }, () => {
+            onclick: () => {
+              state.rebuilding = 'tags';
+              return act('rebuild', { useAi: false }, () => {
                 state.builtWith = 'tags';
                 state.render = null;
-              }),
+                state.rebuilding = null;
+              });
+            },
           }),
           h('button', {
             className: state.builtWith === 'ai' ? 'mode on' : 'mode',
@@ -625,11 +692,14 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
                 ? 'ResumeM-M has its AI switched off — turn it on under Voice & AI.'
                 : 'Switch the AI on from the JobHelper toolbar icon to use this.',
             disabled: Boolean(state.busy) || !state.ai?.active,
-            onclick: () =>
-              act('rebuild', { useAi: true }, () => {
+            onclick: () => {
+              state.rebuilding = 'ai';
+              return act('rebuild', { useAi: true }, () => {
                 state.builtWith = 'ai';
                 state.render = null;
-              }),
+                state.rebuilding = null;
+              });
+            },
           }),
         ]),
         state.builtWith
@@ -684,6 +754,7 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
     body.append(
       h('div', { className: 'step' }, [
         stepHead(2, 'Cover letter', Boolean(state.letter?.trim())),
+        progressFor(2),
         state.letterStarted
           ? h('div', {}, [
               state.letterSource ? h('div', { className: 'hint', textContent: state.letterSource }) : null,
@@ -760,6 +831,7 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
     body.append(
       h('div', { className: 'step' }, [
         stepHead(4, 'Fill in and file', Boolean(state.bundle)),
+        progressFor(4),
         h('div', { className: 'row' }, [
           h('button', {
             className: 'tiny',
@@ -818,6 +890,7 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
   function drawQuestionsStep() {
     const step = h('div', { className: 'step' }, [
       stepHead(3, 'Application questions', Object.keys(state.answers).length > 0),
+      progressFor(3),
     ]);
 
     // A posting that wants prose is a job for the editor, not a sidebar.
