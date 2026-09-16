@@ -285,6 +285,25 @@ select {
 }
 .progress-label { font-size: 11px; color: var(--muted); margin-top: -3px; margin-bottom: 6px; }
 
+/* The compiled resume, drawn in the card: a page you can actually look at,
+   on the tab you are already on. */
+.pdf-pane {
+  margin: 8px 0;
+  padding: 8px;
+  background: var(--line-soft);
+  border-radius: 8px;
+  max-height: 460px;
+  overflow: auto;
+}
+.pdf-pages { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.pdf-page {
+  display: block;
+  background: #fff;
+  max-width: 100%;
+  border-radius: 1px;
+  box-shadow: 0 1px 3px 0 rgba(60,64,67,.30), 0 4px 8px 3px rgba(60,64,67,.15);
+}
+
 /* What the page did not ask for, kept out of the way until it is wanted. */
 .missed { border-top: 1px solid var(--line-soft); margin-top: 12px; padding-top: 8px; gap: 2px; }
 a { color: var(--accent); }
@@ -342,6 +361,9 @@ export function createCard({ analysis, resumes, settings, questions = [], needsC
     ai: null,
     /** How the proposal on screen was produced: 'tags' or 'ai'. */
     builtWith: analysis.aiUsed ? 'ai' : 'tags',
+    /** Which compiled PDF is on screen, and the canvases already drawn. */
+    shownPdf: null,
+    pdfPages: new Map(),
   };
 
   // Ask once, on open: the card must be able to say whether an AI is involved
@@ -651,6 +673,45 @@ export function createCard({ analysis, resumes, settings, questions = [], needsC
   /* ---- Main view ---- */
 
   /**
+   * The compiled resume, drawn in the card.
+   *
+   * Looking at what you are about to send should not mean opening another tab
+   * and losing the posting. The bytes come through the service worker (the
+   * page's own origin cannot reach loopback over https) and are drawn to a
+   * canvas rather than handed to an iframe, which would blank on every
+   * recompile.
+   */
+  function drawResumePage() {
+    if (!state.render?.pdfUrl) return null;
+
+    const pages = h('div', { className: 'pdf-pages' });
+    const pane = h('div', { className: 'pdf-pane' }, [pages]);
+
+    // Redraw whenever a new compile lands, not on every re-render.
+    if (state.shownPdf !== state.render.pdfUrl) {
+      const wanted = state.render.pdfUrl;
+      state.shownPdf = wanted;
+      (async () => {
+        try {
+          const { base64 } = await onAction('pdfBytes', { url: wanted });
+          const { drawPdf } = await import(chrome.runtime.getURL('src/content/pdfview.js'));
+          if (state.shownPdf !== wanted) return; // a newer compile won
+          await drawPdf(pages, base64, { width: 372 });
+          state.pdfPages.set(wanted, pages.cloneNode(true));
+        } catch (err) {
+          pane.append(h('div', { className: 'hint', textContent: `Could not draw the resume: ${err.message}` }));
+        }
+      })();
+    } else {
+      // Already drawn once; reuse it so a re-render does not refetch.
+      const cached = state.pdfPages.get(state.render.pdfUrl);
+      if (cached) pane.replaceChildren(cached.cloneNode(true));
+    }
+
+    return pane;
+  }
+
+  /**
    * A question the page did not expose — a portal that renders its form in a
    * canvas, or one that only asks after you upload. Typing it here puts it
    * through the same answer-bank matching as a detected one.
@@ -778,6 +839,7 @@ export function createCard({ analysis, resumes, settings, questions = [], needsC
         drawChanges(),
         drawSuggestions(),
         drawFit(),
+        drawResumePage(),
         h('div', { className: 'row' }, [
           h('button', {
             className: 'primary',
@@ -786,7 +848,7 @@ export function createCard({ analysis, resumes, settings, questions = [], needsC
             onclick: () => act('render', { spec: state.spec }, (r) => (state.render = r)),
           }),
           state.render
-            ? h('a', { href: state.render.absolutePdfUrl, target: '_blank', textContent: 'Open PDF' })
+            ? h('a', { href: state.render.absolutePdfUrl, target: '_blank', textContent: 'Open full size' })
             : null,
         ]),
         h('div', { className: 'row gap' }, [feedback]),

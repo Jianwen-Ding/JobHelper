@@ -118,6 +118,11 @@ async function main() {
     const fitText = await card.locator('.fit.ok, .fit.bad').innerText();
     check('resume compiled and fits one page', /Fits on one page/.test(fitText), fitText);
 
+    // You can see what you are about to send without leaving the posting.
+    await card.locator('.pdf-pane canvas').first().waitFor({ timeout: 30_000 });
+    const drawn = await card.locator('.pdf-pane canvas').first().evaluate((c) => c.width > 100 && c.height > 100);
+    check('the resume is drawn in the card, on the same tab', drawn);
+
     /* The posting asks for a cover letter, so the card drafts one unasked. */
     await card.locator('textarea.tall').waitFor({ timeout: 60_000 });
     check('a letter is drafted because the form asks for one, with no click', true);

@@ -101,6 +101,10 @@
       case 'matchAnswers':
         return send('matchAnswers', payload);
 
+      /** The compiled resume, as bytes, so the card can show it in place. */
+      case 'pdfBytes':
+        return send('pdfBytes', payload);
+
       case 'autofill':
         return runAutofill();
 
