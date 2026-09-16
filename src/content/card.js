@@ -172,6 +172,7 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
     answers: {},
     feedback: '',
     autofillReport: null,
+    workspaceOpened: false,
   };
 
   const h = (tag, props = {}, kids = []) => {
@@ -555,10 +556,28 @@ export function createCard({ analysis, resumes, settings, questions = [], onActi
       stepHead(3, 'Application questions', Object.keys(state.answers).length > 0),
     ]);
 
-    if (state.questions.length === 0) {
-      step.append(
-        h('div', { className: 'hint' }, 'No free-text questions found on this page.'),
-      );
+    // A posting that wants prose is a job for the editor, not a sidebar.
+    const writingNeeded = state.questions.length > 0;
+    step.append(
+      h('div', { className: 'row', style: 'margin-bottom:8px' }, [
+        h('button', {
+          className: 'tiny',
+          textContent: busyLabel('openWorkspace', 'Write these in ResumeM-M', 'Opening…'),
+          title: 'Hand the posting, the resume, and the questions to the editor, where there is room to write',
+          disabled: Boolean(state.busy),
+          onclick: () =>
+            act('openWorkspace', { spec: state.spec, questions: state.questions }, (r) => {
+              if (r) state.workspaceOpened = true;
+            }),
+        }),
+        state.workspaceOpened
+          ? h('span', { className: 'faint', textContent: 'Opened in the editor.' })
+          : null,
+      ]),
+    );
+
+    if (!writingNeeded) {
+      step.append(h('div', { className: 'hint' }, 'No free-text questions found on this page.'));
       return step;
     }
 

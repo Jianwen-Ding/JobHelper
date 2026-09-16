@@ -164,6 +164,26 @@ const handlers = {
     });
   },
 
+  /**
+   * Hand the application over to ResumeM-M and return a link straight to it.
+   * A browser sidebar is fine for picking a resume and wrong for writing three
+   * paragraphs; this is the door between the two.
+   */
+  async openWorkspace(payload) {
+    const result = await serverFetch('/api/workspace', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    const { serverUrl } = await getSettings();
+    return { ...result, absoluteUrl: `${serverUrl.replace(/\/$/, '')}${result.url}` };
+  },
+
+  /** Open the editor in a new tab, focused on this draft. */
+  async openTab({ url }) {
+    const tab = await chrome.tabs.create({ url });
+    return { id: tab.id };
+  },
+
   async trackStatus({ id, status, note }) {
     return serverFetch(`/api/applications/${encodeURIComponent(id)}/status`, {
       method: 'POST',

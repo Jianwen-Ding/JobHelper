@@ -57,8 +57,8 @@
 
   /** Page questions, paired with whatever the answer bank already holds. */
   async function gatherQuestions() {
-    const { findQuestions } = await imports.autofill();
-    const found = findQuestions();
+    const { findQuestions, isRequired } = await imports.autofill();
+    const found = findQuestions().map((q) => ({ ...q, required: isRequired(q.fieldId) }));
     if (found.length === 0) return [];
 
     try {
@@ -107,6 +107,27 @@
 
       case 'coverLetter':
         return send('coverLetter', { spec: payload.spec, job: analysis.job });
+
+      /**
+       * Hand the whole application to the editor: what the form asks for, the
+       * resume already tailored, and the questions with whatever the bank
+       * covers. Then open it, because the point is to go there and write.
+       */
+      case 'openWorkspace': {
+        const { wantsCoverLetter } = await imports.autofill();
+        const result = await send('openWorkspace', {
+          company: analysis.job.company ?? 'Unknown',
+          role: analysis.job.title ?? 'Unknown role',
+          url: location.href,
+          source: new URL(location.href).hostname,
+          jobDescription: analysis.job.description ?? '',
+          spec: payload.spec,
+          coverLetterRequired: wantsCoverLetter(),
+          questions: (payload.questions ?? []).map((q) => ({ question: q.question, required: q.required })),
+        });
+        await send('openTab', { url: result.absoluteUrl });
+        return result;
+      }
 
       case 'saveLetter':
         return send('saveLetter', { body: payload.body, job: analysis.job });

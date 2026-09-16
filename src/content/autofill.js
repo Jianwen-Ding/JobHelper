@@ -195,6 +195,31 @@ export function findQuestions() {
   return found;
 }
 
+/**
+ * Does this form want a cover letter? Boards signal it with a file upload
+ * named for one, or a long-answer box that says so.
+ */
+export function wantsCoverLetter() {
+  for (const field of document.querySelectorAll('input[type=file], textarea, label, legend')) {
+    const text = `${field.getAttribute?.('name') ?? ''} ${field.getAttribute?.('id') ?? ''} ${
+      field.textContent ?? ''
+    }`.toLowerCase();
+    if (/cover\s*letter/.test(text)) return true;
+  }
+  return false;
+}
+
+/** Whether a question is marked required, by any of the usual conventions. */
+export function isRequired(fieldId) {
+  const field = document.querySelector(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`);
+  if (!field) return false;
+  if (field.required || field.getAttribute('aria-required') === 'true') return true;
+
+  const group = field.closest('div,fieldset,li,p');
+  const label = group?.querySelector('label,legend');
+  return /\*|\brequired\b/i.test(label?.textContent ?? '');
+}
+
 /** Put text into a field the card previously identified. */
 export function insertAnswer(fieldId, text) {
   const field = document.querySelector(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`);
