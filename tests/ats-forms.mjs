@@ -398,6 +398,70 @@ const SYSTEMS = [
   },
 
   {
+    /*
+     * Radio buttons instead of a dropdown, which is how Workable, Teamtailor
+     * and most hand-rolled career sites ask a yes/no question. The label a
+     * human reads belongs to the group, and the label on each button is the
+     * answer — so nothing about an individual field says what is being asked.
+     */
+    name: 'Yes/no questions as radio buttons',
+    html: `
+      <label for="rb-fn">First Name</label><input id="rb-fn" name="first_name" type="text">
+      <label for="rb-ln">Last Name</label><input id="rb-ln" name="last_name" type="text">
+      <label for="rb-em">Email</label><input id="rb-em" name="email" type="email">
+      <label for="rb-ph">Phone</label><input id="rb-ph" name="phone" type="tel">
+
+      <fieldset>
+        <legend>Are you legally authorized to work in the United States? *</legend>
+        <label><input type="radio" name="work_auth" value="Yes"> Yes</label>
+        <label><input type="radio" name="work_auth" value="No"> No</label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Will you now or in the future require sponsorship?</legend>
+        <label><input type="radio" name="sponsorship" value="1"> Yes</label>
+        <label><input type="radio" name="sponsorship" value="0"> No</label>
+      </fieldset>
+
+      <!-- Already answered by hand, and not to be moved. -->
+      <fieldset>
+        <legend>Country</legend>
+        <label><input type="radio" name="country" value="Canada" checked> Canada</label>
+        <label><input type="radio" name="country" value="United States"> United States</label>
+      </fieldset>
+
+      <!-- The same question, worded so that neither option is the stored
+           answer. Getting this one wrong is a false declaration, so it has to
+           be reported rather than reasoned about. -->
+      <fieldset>
+        <legend>Do you require visa sponsorship now or in the future?</legend>
+        <label><input type="radio" name="visa_status" value="a"> I will require sponsorship</label>
+        <label><input type="radio" name="visa_status" value="b"> I will not require sponsorship</label>
+      </fieldset>
+
+      <!-- Consent. Never ours to tick. -->
+      <fieldset>
+        <legend>I agree to the processing of my personal data.</legend>
+        <label><input type="checkbox" name="consent" value="yes"> I agree</label>
+      </fieldset>`,
+    want: {
+      '#rb-fn': 'Jianwen',
+      '#rb-em': 'ding.jianw@northeastern.edu',
+    },
+    radios: {
+      work_auth: 'Yes',
+      sponsorship: '0',
+      country: 'Canada',
+      // Neither option is the stored answer, so neither is chosen.
+      visa_status: '',
+    },
+    unchecked: ['consent'],
+    neverGuesses: 'requires_sponsorship',
+    questions: [],
+    wantsLetter: false,
+  },
+
+  {
     name: 'iCIMS',
     // The whole form is in an iframe, which is how iCIMS serves it.
     frame: `
@@ -507,6 +571,15 @@ async function main() {
             questions: m.findQuestions().map((q) => q.question),
             wantsLetter: m.wantsCoverLetter(),
             isApplication: m.looksLikeApplicationForm(),
+            // Which option of each radio group ended up chosen, and whether
+            // anything ticked a checkbox it had no business ticking.
+            chosen: Object.fromEntries(
+              [...new Set([...document.querySelectorAll('input[type=radio]')].map((r) => r.name))].map((name) => [
+                name,
+                document.querySelector(`input[type=radio][name="${name}"]:checked`)?.value ?? '',
+              ]),
+            ),
+            ticked: [...document.querySelectorAll('input[type=checkbox]:checked')].map((c) => c.name),
           };
         },
         { b: base, profile: PROFILE, wants: system.want },
@@ -518,6 +591,25 @@ async function main() {
         wrong.length === 0,
         wrong.map(([sel, want]) => `${sel} wanted "${want}", got "${out.values[sel]}"`).join('; '),
       );
+
+      if (system.radios) {
+        const wrongRadio = Object.entries(system.radios).filter(([name, v]) => out.chosen[name] !== v);
+        check(
+          `${system.name}: answers the yes/no questions`,
+          wrongRadio.length === 0,
+          wrongRadio.map(([n, want]) => `${n} wanted "${want}", got "${out.chosen[n]}"`).join('; '),
+        );
+      }
+      if (system.neverGuesses) {
+        check(
+          `${system.name}: reports the question it cannot answer instead of reasoning about it`,
+          out.skipped.some((s) => s.key === system.neverGuesses && s.reason === 'no matching option'),
+          out.skipped.map((s) => `${s.key}:${s.reason}`).join(', ') || '(nothing reported)',
+        );
+      }
+      for (const name of system.unchecked ?? []) {
+        check(`${system.name}: does not tick "${name}" on anyone's behalf`, !out.ticked.includes(name));
+      }
 
       for (const re of system.questions ?? []) {
         check(

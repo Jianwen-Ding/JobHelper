@@ -126,6 +126,9 @@
   let pass = 0;
   const supersede = () => ++pass;
 
+  /** The settings as last read, so a second look can be decided without asking. */
+  let lastSettings = null;
+
   /**
    * Whether a form in a sub-frame asked for a cover letter.
    *
@@ -429,6 +432,9 @@
 
     const settings = await send('getSettings');
     if (!current()) return;
+    // Kept so the re-score below can decide locally whether it is worth asking
+    // again, rather than asking the worker once a second.
+    lastSettings = settings;
     if (!force) {
       if (!settings.autoPrompt) return;
       if ((settings.mutedHosts ?? []).includes(location.hostname)) return;
@@ -762,20 +768,57 @@
    * enormous number of callbacks to answer one question. Checking the url on a
    * slow interval costs nothing and answers it exactly as well.
    */
+  /*
+   * And a posting that is not in the page when the page is first read.
+   *
+   * Workday, Ashby and most of the modern boards serve an empty shell and
+   * fetch the posting afterwards. The script runs once, at document idle, and
+   * scored a loading spinner: nothing about the page changed afterwards except
+   * its contents, so there was no second look and the card never appeared at
+   * all — on the systems a great many applications go through.
+   *
+   * The observer only sets a flag; the work happens on the tick below, which
+   * is what keeps this affordable on a board that rewrites its DOM constantly.
+   * It runs while the page is young and no card has been offered, and then
+   * stops: a page that has not turned into a posting within a minute of
+   * loading is not going to.
+   */
+  const RESCORE_WINDOW_MS = 60_000;
+  const loadedAt = Date.now();
+  let pageChanged = false;
+  const watcher = new MutationObserver(() => {
+    pageChanged = true;
+  });
+  watcher.observe(document.documentElement, { childList: true, subtree: true });
+
   let lastUrl = location.href;
   setInterval(() => {
-    if (location.href === lastUrl) return;
-    lastUrl = location.href;
-    // Before the await, not after: the pass still running belongs to the url
-    // that just went away, and it must stop being able to write to the card
-    // from this instant rather than from whenever the import resolves.
-    supersede();
-    (async () => {
-      const { removeCard } = await imports.card();
-      removeCard();
-      cardHandle = null;
-      show().catch(() => {});
-    })();
+    if (location.href !== lastUrl) {
+      lastUrl = location.href;
+      // Before the await, not after: the pass still running belongs to the url
+      // that just went away, and it must stop being able to write to the card
+      // from this instant rather than from whenever the import resolves.
+      supersede();
+      (async () => {
+        const { removeCard } = await imports.card();
+        removeCard();
+        cardHandle = null;
+        show().catch(() => {});
+      })();
+      return;
+    }
+
+    if (Date.now() - loadedAt > RESCORE_WINDOW_MS) {
+      watcher.disconnect();
+      return;
+    }
+    if (cardHandle || !pageChanged) return;
+    pageChanged = false;
+
+    // Scored here rather than inside `show`, so that a page rewriting itself
+    // every second does not send a message every second to be told no.
+    if (lastSettings && localScore() < lastSettings.minScore) return;
+    show().catch(() => undefined);
   }, 1000);
 
   watchForApplyClicks();

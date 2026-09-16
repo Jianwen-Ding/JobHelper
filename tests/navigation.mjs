@@ -29,6 +29,7 @@ import {
   BLOG_WITH_FORM,
   EMBEDDED_BOARD,
   FRAMED_ROLE,
+  LATE_RENDER,
   LEVER_ROLE,
   NEW_TAB_ROLE,
   OWN_SITE,
@@ -368,6 +369,25 @@ async function main() {
       const inserted = await frame?.evaluate(() => document.getElementById('q1').value);
       check('an answer written on the card lands in the frame', /read the code/.test(inserted ?? ''), inserted);
 
+      await page.close();
+    }
+
+    /* ---- The posting arrives after the page has already been judged ---- */
+    group('A posting that is not in the page when the page loads');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(LATE_RENDER), { waitUntil: 'load' });
+      // The fixture fills itself in after four seconds, which is ordinary for
+      // a board that fetches its posting. Nothing else about the page changes:
+      // same url, same tab, no navigation to notice.
+      await page.waitForTimeout(12_000);
+
+      const there = (await page.locator(HOST).count()) > 0;
+      check('the card appears once the posting arrives', there);
+      if (there) {
+        const role = (await cardOf(page).locator('.role').textContent())?.trim() ?? '';
+        check('and reads the role that was rendered in', /platform engineer/i.test(role), role);
+      }
       await page.close();
     }
 

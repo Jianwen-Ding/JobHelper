@@ -141,6 +141,9 @@ function questionFor(input) {
 function isFillable(input) {
   if (input.disabled || input.readOnly) return false;
   if (input.type === 'hidden' || input.type === 'file' || input.type === 'password') return false;
+  // Radios are answered as a group, below; checkboxes are consent and are
+  // nobody's to tick but the applicant's.
+  if (input.type === 'radio' || input.type === 'checkbox') return false;
   // `offsetParent` is null for anything positioned fixed, visible or not, and
   // forms inside a fixed modal are ordinary. Whether it occupies space on the
   // page is the question actually being asked.
@@ -240,7 +243,110 @@ export function fillForm(fields, { overwrite = false } = {}) {
     filled.push({ key, value });
   }
 
-  return { filled, skipped: [...skipped, ...unfillableChoices(fields, filled)] };
+  const radios = answerRadioGroups(fields, overwrite);
+  return {
+    filled: [...filled, ...radios.filled],
+    skipped: [...skipped, ...radios.skipped, ...unfillableChoices(fields, [...filled, ...radios.filled])],
+  };
+}
+
+/* ---------------------------- Radio groups ---------------------------- */
+
+/**
+ * The label a whole group of radios shares.
+ *
+ * Nothing about an individual radio says what is being asked: the question
+ * belongs to the group and each button's label is one of the answers. A
+ * fieldset says so outright; failing that, the smallest ancestor that holds the
+ * whole group and nothing else is the group, and whatever heading it carries is
+ * the question.
+ */
+function groupLabelFor(radios) {
+  const first = radios[0];
+  const legend = first.closest('fieldset')?.querySelector('legend');
+  if (legend) return clean(legend.textContent);
+
+  let group = first.parentElement;
+  for (let i = 0; i < 5 && group; i++, group = group.parentElement) {
+    if (!radios.every((radio) => group.contains(radio))) continue;
+    // Another field in here means this is the form, not this question.
+    if (group.querySelectorAll('input:not([type=radio]):not([type=hidden]), textarea, select').length > 0) break;
+    const heading = [...group.querySelectorAll('label,legend,.label,[class*="label"]')].find(
+      (el) => !el.querySelector('input, textarea, select'),
+    );
+    if (heading) return clean(heading.textContent);
+  }
+  return '';
+}
+
+/** What one button of a group means, which is what a human reads beside it. */
+function optionLabelFor(radio) {
+  const wrapping = radio.closest('label');
+  if (wrapping) return clean(wrapping.textContent);
+  if (radio.id) {
+    const label = document.querySelector(`label[for="${CSS.escape(radio.id)}"]`);
+    if (label) return clean(label.textContent);
+  }
+  return clean(radio.value);
+}
+
+/**
+ * Answer the yes/no questions, which on a great many forms are radios rather
+ * than a dropdown — Workable, Teamtailor, and most hand-rolled career sites.
+ *
+ * These were invisible twice over: skipped by the main pass because a radio
+ * always has a value and so looked answered, and never reported, so the form
+ * came out with its required work-authorization question blank and the card
+ * said everything was done.
+ *
+ * Nothing is inferred. If the stored answer is "Authorized to work in the US"
+ * and the buttons say Yes and No, that is reported rather than guessed:
+ * sponsorship and work authorization are declarations with consequences, and
+ * an extension should not be the one deciding them.
+ */
+function answerRadioGroups(fields, overwrite) {
+  const filled = [];
+  const skipped = [];
+
+  const groups = new Map();
+  for (const radio of document.querySelectorAll('input[type=radio]')) {
+    if (radio.disabled || radio.getClientRects().length === 0) continue;
+    const key = radio.name || radio.closest('fieldset');
+    if (!key) continue;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(radio);
+  }
+
+  for (const radios of groups.values()) {
+    const description = clean([groupLabelFor(radios), radios[0].name].filter(Boolean).join(' '));
+    if (!description) continue;
+
+    const match = FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key]);
+    if (!match) continue;
+
+    const [key] = match;
+    const value = String(fields[key]).toLowerCase();
+
+    if (radios.some((radio) => radio.checked) && !overwrite) {
+      skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
+      continue;
+    }
+
+    const wanted = radios.find(
+      (radio) => optionLabelFor(radio).toLowerCase() === value || String(radio.value).toLowerCase() === value,
+    );
+    if (!wanted) {
+      skipped.push({ key, reason: 'no matching option', description: description.slice(0, 60) });
+      continue;
+    }
+
+    wanted.checked = true;
+    wanted.dispatchEvent(new Event('input', { bubbles: true }));
+    wanted.dispatchEvent(new Event('change', { bubbles: true }));
+    filled.push({ key, value: fields[key] });
+  }
+
+  return { filled, skipped };
 }
 
 /**

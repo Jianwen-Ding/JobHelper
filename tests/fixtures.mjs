@@ -447,6 +447,40 @@ export const EMBEDDED_BOARD_FRAME = {
 };
 
 /**
+ * A posting that is not in the page when the page loads.
+ *
+ * Workday, Ashby and most of the modern boards serve an empty shell and fetch
+ * the posting afterwards. The content script runs once, at document idle, and
+ * scores whatever is there — which on these is a loading spinner. Nothing about
+ * the page changes afterwards except its contents, so there is no second look
+ * and the card never appears at all.
+ */
+export const LATE_RENDER = {
+  name: 'late-render',
+  path: '/lyricus/careers/platform-engineer',
+  company: 'Lyricus',
+  title: 'Platform Engineer',
+  html: `<!doctype html>
+<html><head><title>Lyricus</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Lyricus</h1></div>
+  <div class="wrap"><div id="root">Loading…</div></div>
+  <script>
+    setTimeout(() => {
+      document.title = 'Platform Engineer at Lyricus';
+      document.getElementById('root').innerHTML =
+        '<h1>Platform Engineer</h1>' + ${JSON.stringify(ROLE_BODY)} +
+        '<form>' +
+        '<label for="fn">First Name</label><input id="fn" name="first_name">' +
+        '<label for="em">Email</label><input id="em" name="email" type="email">' +
+        '<label for="q1">Why do you want to work here?</label><textarea id="q1"></textarea>' +
+        '<button type="button">Submit Application</button></form>';
+    }, 4000);
+  </script>
+</body></html>`,
+};
+
+/**
  * Not a job, with a frame that collects the same details anyway.
  *
  * The other side of letting a frame speak up for a page that says nothing: a
@@ -577,7 +611,7 @@ export const CYGNUS_ROLE_B = {
 
 export const NAVIGATION = [
   CYGNUS_BOARD, CYGNUS_ROLE_A, CYGNUS_ROLE_B, FRAMED_ROLE, FRAMED_FORM, ADVERT_FRAME, ADVERT_CONTENT,
-  EMBEDDED_BOARD, EMBEDDED_BOARD_FRAME, BLOG_WITH_FORM, BLOG_ENQUIRY_FRAME,
+  EMBEDDED_BOARD, EMBEDDED_BOARD_FRAME, BLOG_WITH_FORM, BLOG_ENQUIRY_FRAME, LATE_RENDER,
   LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY,
   OWN_SITE, ATS_FORM, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, SPA_BOARD,
 ];
