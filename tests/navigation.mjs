@@ -295,6 +295,32 @@ async function main() {
       await page.close();
     }
 
+    /* ---- Work must not outlive the application it was done for ---- */
+    group('A second job opened in the tab that just finished with the first');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(LEVER_ROLE), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      await buildResume(page);
+
+      // A different company, so this starts a new application — which the card
+      // here gets right.
+      await page.goto(fixtures.urlFor(ASHBY_ROLE), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      const fresh = (await cardOf(page).locator('.fit').textContent())?.trim() ?? '';
+      check('the new posting does not open holding the old resume', /not compiled/i.test(fresh), fresh);
+
+      // The page after it is the one that was given them: a restarted trail
+      // replaced its pages and kept everything else, so the first job's resume
+      // was still sitting there waiting to be handed to the second job's form.
+      await page.click('a[href$="/application"]');
+      await page.waitForLoadState('domcontentloaded');
+      await settled(page);
+      const onForm = (await cardOf(page).locator('.fit').textContent())?.trim() ?? '';
+      check('and neither does its application form', /not compiled/i.test(onForm), onForm);
+      await page.close();
+    }
+
     /*
      * Left for last because it points the extension at a slower server, and
      * nothing after it would be measuring what it thinks it is.

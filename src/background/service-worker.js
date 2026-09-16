@@ -6,7 +6,14 @@
  */
 
 import { DEFAULTS, getSettings } from '../shared/config.js';
-import { lighten, sameApplication, summarise, trimForStorage, worthKeeping } from '../shared/trail.js';
+import {
+  lighten,
+  sameApplication,
+  summarise,
+  trimForStorage,
+  wasExpected,
+  worthKeeping,
+} from '../shared/trail.js';
 
 async function serverFetch(path, options = {}) {
   const { serverUrl } = await getSettings();
@@ -140,8 +147,27 @@ const handlers = {
       at: Date.now(),
     });
 
-    // Keep the expectation: a click can outlive the page that made it.
-    const next = { ...trail, pages: pages.slice(-TRAIL_MAX), at: Date.now() };
+    /*
+     * A fresh application inherits nothing.
+     *
+     * This kept the whole of the old trail and replaced only its pages, so the
+     * previous posting's resume, letter and answers stayed behind under `work`
+     * — invisible, because the page that started fresh is correctly refused
+     * them. It is the page after that which asks and is given them: read one
+     * job, build its resume, open another job in the same tab, follow Apply,
+     * and the form comes up holding the first job's application.
+     *
+     * The expectation goes once it has been honoured, too: a click means "the
+     * next page", and leaving it standing let it vouch for a third page five
+     * minutes later.
+     */
+    const honoured = joins && wasExpected(trail, page.url);
+    const next = {
+      ...(joins ? trail : {}),
+      expecting: honoured ? undefined : trail.expecting,
+      pages: pages.slice(-TRAIL_MAX),
+      at: Date.now(),
+    };
     await writeTrail(tab?.id, next);
     return { ...summarise(next), startedFresh: !joins };
   },
