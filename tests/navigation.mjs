@@ -211,10 +211,27 @@ async function main() {
       const roleOnStepOne = (await cardOf(page).locator('.role').textContent())?.trim();
       await buildResume(page);
 
+      // Type an answer here, because the same question is asked on step two —
+      // and typing it twice is exactly what this is meant to save.
+      const typed = 'Because I have read the code you publish.';
+      const box = cardOf(page).locator('.q textarea').first();
+      check('step one asks a question at all', (await box.count()) === 1);
+      await box.fill(typed);
+      await box.dispatchEvent('input');
+      await page.waitForTimeout(2500);
+
+      check(
+        'the cover letter box is not offered as a question as well',
+        !(await cardOf(page).locator('.q').allTextContents()).some((q) => /cover\s*letter/i.test(q)),
+      );
+
       await page.click('a[href$="/questions"]');
       await page.waitForLoadState('domcontentloaded');
       await settled(page);
       await expectContinuity(page, 'two-step form', { role: roleOnStepOne });
+
+      const carried = await cardOf(page).locator('.q textarea').first().inputValue();
+      check('the answer typed on step one is still there', carried === typed, carried);
       await page.close();
     }
 

@@ -407,11 +407,15 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       letterSaved: state.letterSaved,
       letterAutoStarted: state.letterAutoStarted,
       priorLetters: state.priorLetters,
-      // Keyed by the question, not by the field it was typed into: the field
-      // ids belong to a page that no longer exists.
+      /*
+       * Keyed by the question, which is also how `state.answers` is keyed
+       * everywhere else in this file — reading it by field id looked right and
+       * silently carried nothing, because the field ids belong to a page that
+       * no longer exists and were never the key here in the first place.
+       */
       answersByQuestion: Object.fromEntries(
         (state.questions ?? [])
-          .map((q) => [q.question, state.answers[q.fieldId] ?? q.answer])
+          .map((q) => [q.question, state.answers[q.question] ?? q.answer])
           .filter(([, a]) => a?.trim()),
       ),
     };
@@ -439,8 +443,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     if (!carried) return;
     for (const q of state.questions ?? []) {
       const had = carried[q.question];
-      if (had && !state.answers[q.fieldId]?.trim() && !q.answer?.trim()) {
-        state.answers[q.fieldId] = had;
+      if (had && !state.answers[q.question]?.trim() && !q.answer?.trim()) {
+        state.answers[q.question] = had;
       }
     }
   }
@@ -523,6 +527,15 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   }
 
   const busyLabel = (action, idle, working) => (running.has(action) ? working : idle);
+
+  /*
+   * Both build buttons dispatch the same action, `rebuild`, and differ only by
+   * which mode they asked for. They used to ask busyLabel about "rebuild-tags"
+   * and "rebuild-ai" — actions nothing dispatches — so neither ever said it
+   * was working.
+   */
+  const rebuildLabel = (mode, idle, working) =>
+    running.has('rebuild') && state.rebuilding === mode ? working : idle;
 
   /* ---------------------------------------------------------------- */
 
@@ -975,34 +988,42 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         h('div', { className: 'row build-modes' }, [
           h('button', {
             className: state.builtWith === 'tags' ? 'mode on' : 'mode',
-            textContent: busyLabel('rebuild-tags', 'Match it myself', 'Matching…'),
+            textContent: rebuildLabel('tags', 'Match it myself', 'Matching…'),
             title: 'Pick among your stored phrasings by keyword. Nothing is sent to an AI.',
             disabled: Boolean(state.busy),
-            onclick: () => {
+            onclick: async () => {
               state.rebuilding = 'tags';
-              return act('rebuild', { useAi: false }, () => {
-                state.builtWith = 'tags';
-                state.render = null;
+              try {
+                await act('rebuild', { useAi: false }, () => {
+                  state.builtWith = 'tags';
+                  state.render = null;
+                });
+              } finally {
+                // Cleared however it ended: a failure used to leave the label
+                // for the next run describing the wrong thing.
                 state.rebuilding = null;
-              });
+              }
             },
           }),
           h('button', {
             className: state.builtWith === 'ai' ? 'mode on' : 'mode',
-            textContent: busyLabel('rebuild-ai', 'Let the AI tailor it', 'Reading the posting…'),
+            textContent: rebuildLabel('ai', 'Let the AI tailor it', 'Reading the posting…'),
             title: state.ai?.active
               ? 'The AI reads this posting and decides which phrasings and bullets to use.'
               : state.ai?.state === 'server-off'
                 ? 'ResumeM-M has its AI switched off — turn it on under Voice & AI.'
                 : 'Switch the AI on from the JobHelper toolbar icon to use this.',
             disabled: Boolean(state.busy) || !state.ai?.active,
-            onclick: () => {
+            onclick: async () => {
               state.rebuilding = 'ai';
-              return act('rebuild', { useAi: true }, () => {
-                state.builtWith = 'ai';
-                state.render = null;
+              try {
+                await act('rebuild', { useAi: true }, () => {
+                  state.builtWith = 'ai';
+                  state.render = null;
+                });
+              } finally {
                 state.rebuilding = null;
-              });
+              }
             },
           }),
         ]),
@@ -1403,13 +1424,16 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      * after the deterministic proposal is already on screen, so there is
      * something to read and something to see happening.
      */
-    tailorWithAi() {
+    async tailorWithAi() {
       state.rebuilding = 'ai';
-      return act('rebuild', { useAi: true }, () => {
-        state.builtWith = 'ai';
-        state.render = null;
+      try {
+        return await act('rebuild', { useAi: true }, () => {
+          state.builtWith = 'ai';
+          state.render = null;
+        });
+      } finally {
         state.rebuilding = null;
-      });
+      }
     },
     setQuestions(qs) {
       state.questions = qs;

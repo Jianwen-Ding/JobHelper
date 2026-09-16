@@ -65,6 +65,10 @@ const FORM = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — 
   <label for="dis">LinkedIn Profile</label><input id="dis" name="linkedin" disabled>
   <div style="display:none"><label for="hid">GitHub</label><input id="hid" name="github"></div>
 
+  <!-- The cover letter box: long-form and labelled, but the card has a whole
+       step for it, so it must not also be offered as a question. -->
+  <label for="cl">Cover Letter</label><textarea id="cl" name="cover_letter"></textarea>
+
   <!-- Questions: one short but plainly a question, one that is just a label. -->
   <label for="q1">Why us?</label><textarea id="q1"></textarea>
   <label for="q2">Describe a technical project you are proud of. *</label><textarea id="q2" required></textarea>
@@ -158,11 +162,16 @@ async function main() {
     check('a long one is too', asked.some((q) => q.startsWith('Describe a technical project')));
     check('a bare label is not', !asked.includes('Notes'));
     check(
+      'and the cover letter box is not, since the card has a step for it',
+      !asked.some((q) => /cover\s*letter/i.test(q)),
+      asked.join(' | '),
+    );
+    check(
       'the required marker is read off the label',
       out.questions.find((q) => q.question.startsWith('Describe'))?.required === true,
     );
     check('the asterisk is stripped from the question itself', !asked.some((q) => q.includes('*')));
-    check('and a form with no cover letter box says so', out.wantsLetter === false);
+    check('but the form is still known to want one', out.wantsLetter === true);
   } finally {
     await browser.close();
     server.close();

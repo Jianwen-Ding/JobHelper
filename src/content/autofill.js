@@ -229,6 +229,14 @@ export function findQuestions() {
     if (field instanceof HTMLTextAreaElement && !isFillable(field)) continue;
     if (field.getClientRects().length === 0) continue;
 
+    /*
+     * The cover letter box is not an essay question. It is long-form, it is
+     * labelled, and it passes every test below — so it was being offered as a
+     * question to draft an answer to, on the same card that already has a
+     * cover letter step for it. One box, asked for twice.
+     */
+    if (/cover\s*letter/i.test(describeField(field))) continue;
+
     const question = cleanQuestion(questionFor(field));
     // Anything this short is a label like "Notes" rather than a question worth
     // drafting an answer to — unless it ends in a question mark, which settles
