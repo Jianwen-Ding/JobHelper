@@ -18,25 +18,28 @@ const STYLE = `
 * { box-sizing: border-box; }
 
 .card {
-  --accent: #2f5fd0;
-  --accent-hover: #2650b4;
-  --accent-soft: #eaf0fd;
-  --ink: #17181c;
-  --ink-soft: #3d4049;
-  --muted: #676b77;
-  --faint: #969aa6;
-  --line: #e3e5ea;
-  --line-soft: #eef0f3;
-  --panel-sunk: #fafbfc;
-  --good: #146c3f;
-  --good-bg: #ecf7f0;
-  --good-line: #c6e3d2;
-  --bad: #a9231c;
-  --bad-bg: #fdeeec;
-  --bad-line: #f1cbc7;
-  --warn: #7d5700;
-  --warn-bg: #fff9ec;
-  --warn-line: #eddfba;
+  /* Google's Workspace palette, matching the editor. */
+  --accent: #1a73e8;
+  --accent-hover: #1967d2;
+  --accent-soft: #e8f0fe;
+  --ink: #202124;
+  --ink-soft: #3c4043;
+  --muted: #5f6368;
+  --faint: #80868b;
+  --line: #dadce0;
+  --line-soft: #f1f3f4;
+  --panel-sunk: #f8f9fa;
+  --good: #188038;
+  --good-bg: #e6f4ea;
+  --good-line: #ceead6;
+  --bad: #d93025;
+  --bad-bg: #fce8e6;
+  --bad-line: #f6aea9;
+  --warn: #b06000;
+  --warn-bg: #fef7e0;
+  --warn-line: #feefc3;
+  --state-hover: rgba(60, 64, 67, .08);
+  --accent-hover-layer: rgba(26, 115, 232, .08);
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   position: fixed;
@@ -49,10 +52,10 @@ const STYLE = `
   background: #fff;
   color: var(--ink);
   border: 1px solid var(--line);
-  border-radius: 12px;
-  box-shadow: 0 18px 52px rgba(20, 22, 30, .22);
-  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-        "Helvetica Neue", Arial, sans-serif;
+  border-radius: 8px;
+  box-shadow: 0 4px 4px 0 rgba(60, 64, 67, .30), 0 8px 12px 6px rgba(60, 64, 67, .15);
+  font: 13px/1.5 "Google Sans Text", "Google Sans", Roboto, -apple-system,
+        BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   z-index: 2147483647;
 }
@@ -64,7 +67,7 @@ const STYLE = `
 }
 /* Same mark as the editor, so the two plainly belong together. */
 .head b {
-  font-size: 13px; font-weight: 650; letter-spacing: -.01em;
+  font-size: 14px; font-weight: 500; color: var(--muted);
   display: flex; align-items: center; gap: 8px;
 }
 .head b::before {
@@ -91,33 +94,39 @@ const STYLE = `
 .build-modes { gap: 6px; }
 button.mode { flex: 1 1 0; font-size: 12px; padding: 6px 8px; }
 button.mode.on {
-  border-color: var(--accent); color: var(--accent);
-  background: var(--accent-soft); font-weight: 600;
+  border-color: transparent; color: #174ea6;
+  background: var(--accent-soft); font-weight: 500;
 }
-button.mode.on:hover { background: var(--accent-soft); }
+button.mode.on:hover { background: #d2e3fc; }
 
 button {
-  font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
-  background: #fff; color: var(--ink); cursor: pointer; white-space: nowrap;
-  box-shadow: 0 1px 2px rgba(20,22,30,.05);
-  transition: background .12s, border-color .12s;
+  font: inherit; font-weight: 500; padding: 7px 16px;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: #fff; color: var(--accent); cursor: pointer; white-space: nowrap;
+  transition: background .15s, border-color .15s, box-shadow .15s;
 }
-button:hover { border-color: #ccced6; background: var(--panel-sunk); }
-button:active { transform: translateY(.5px); }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 550; }
-button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+button:hover { background: var(--accent-hover-layer); }
+button.primary {
+  background: var(--accent); border-color: transparent; color: #fff;
+  box-shadow: 0 1px 2px 0 rgba(60,64,67,.30), 0 1px 3px 1px rgba(60,64,67,.15);
+}
+button.primary:hover {
+  background: var(--accent-hover);
+  box-shadow: 0 1px 2px 0 rgba(60,64,67,.30), 0 2px 6px 2px rgba(60,64,67,.15);
+}
 button.icon {
-  border: 0; padding: 3px 7px; color: var(--faint); font-size: 17px; line-height: 1;
-  background: none; box-shadow: none; border-radius: 5px;
+  border: 0; padding: 4px 8px; color: var(--muted); font-size: 17px; line-height: 1;
+  background: none; border-radius: 999px;
 }
 button.icon:hover { color: var(--ink); background: var(--line-soft); }
-button.tiny { padding: 3px 9px; font-size: 12px; box-shadow: none; }
+button.tiny { padding: 4px 11px; font-size: 12px; border-color: transparent; background: none; color: var(--muted); }
+button.tiny:hover { background: var(--state-hover); color: var(--ink); }
 button.link {
   border: 0; background: none; color: var(--accent); padding: 3px 6px; font-size: 12px;
   box-shadow: none; font-weight: 500;
 }
 button.link:hover { background: var(--accent-soft); }
-button:disabled { opacity: .42; cursor: default; }
+button:disabled { opacity: .38; cursor: default; }
 button:disabled:hover { background: #fff; border-color: var(--line); }
 
 .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
@@ -127,7 +136,7 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .faint { color: var(--faint); font-size: 11px; }
 
 .job { margin-bottom: 12px; }
-.job .role { font-weight: 650; font-size: 15px; line-height: 1.3; letter-spacing: -.01em; }
+.job .role { font-weight: 500; font-size: 16px; line-height: 1.3; }
 .job .co { color: var(--muted); margin-top: 1px; }
 
 /* Each step is a labelled block, so the card reads as a sequence. */
@@ -138,23 +147,19 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
   width: 18px; height: 18px; border-radius: 50%; background: var(--accent-soft); color: var(--accent);
   font-size: 11px; font-weight: 700; display: grid; place-items: center; flex: 0 0 auto;
 }
-.step-head .t { font-weight: 620; font-size: 13px; letter-spacing: -.01em; }
+.step-head .t { font-weight: 500; font-size: 14px; }
 .step-head .done { background: var(--good-bg); color: var(--good); }
 
 .fit {
-  padding: 8px 10px; border-radius: 6px; font-size: 12px; margin: 8px 0; font-weight: 500;
-  background: var(--good-bg); border: 1px solid var(--good-line); border-left: 3px solid var(--good);
-  color: var(--good);
+  padding: 9px 12px; border-radius: 8px; font-size: 12px; margin: 8px 0; font-weight: 500;
+  background: var(--good-bg); border: 1px solid transparent; color: #0d652d;
 }
-.fit.bad { background: var(--bad-bg); border-color: var(--bad-line); border-left-color: var(--bad); color: var(--bad); }
-.fit.idle {
-  background: var(--panel-sunk); border: 1px solid var(--line); border-left: 3px solid var(--line);
-  color: var(--muted); font-weight: 400;
-}
+.fit.bad { background: var(--bad-bg); color: #b31412; }
+.fit.idle { background: var(--line-soft); border-color: transparent; color: var(--muted); font-weight: 400; }
 
 /* What the tailoring changed, in words. */
 .changes { display: grid; gap: 6px; margin: 8px 0 2px; }
-.change { background: var(--panel-sunk); border: 1px solid var(--line-soft); border-radius: 7px; padding: 7px 9px; }
+.change { background: var(--panel-sunk); border: 1px solid var(--line-soft); border-radius: 8px; padding: 8px 10px; }
 .change .where {
   font-size: 10px; color: var(--faint); text-transform: uppercase; letter-spacing: .07em; font-weight: 650;
 }
