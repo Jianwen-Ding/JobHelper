@@ -492,7 +492,18 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * final redraw: assigning the result in the caller after `await` would always
    * repaint stale state.
    */
+  /*
+   * More than one thing can be in flight. The card starts work on its own —
+   * the letter drafts itself when the posting asks for one, and the AI pass
+   * runs after the first proposal — so two actions overlap without the user
+   * having clicked twice. A single `busy` flag meant the first to finish
+   * cleared it: the progress bar vanished and every button came back while
+   * the other was still thinking.
+   */
+  const running = new Set();
+
   async function act(action, payload, apply) {
+    running.add(action);
     state.busy = action;
     state.error = null;
     draw();
@@ -504,13 +515,14 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       state.error = err.message;
       return null;
     } finally {
-      state.busy = null;
+      running.delete(action);
+      // Keep showing progress for whatever is still going.
+      state.busy = [...running].pop() ?? null;
       draw();
     }
   }
 
-  const busyLabel = (action, idle, working) =>
-    state.busy === action ? working : idle;
+  const busyLabel = (action, idle, working) => (running.has(action) ? working : idle);
 
   /* ---------------------------------------------------------------- */
 
@@ -672,7 +684,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   function progressFor(step) {
     const entry = WORKING[state.busy];
     if (!entry || entry[0] !== step) return null;
-    const label = state.busy === 'rebuild' && state.rebuilding === 'ai' ? 'Reading the posting…' : entry[1];
+    const label = running.has('rebuild') && state.rebuilding === 'ai' ? 'Reading the posting…' : entry[1];
     return h('div', {}, [
       h('div', { className: 'progress', role: 'progressbar', 'aria-label': label }),
       h('div', { className: 'progress-label', textContent: label }),
@@ -811,7 +823,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     if (!state.render) {
       return h('div', {
         className: 'fit idle',
-        textContent: state.busy === 'render' ? 'Compiling…' : 'Not compiled yet.',
+        textContent: running.has('render') ? 'Compiling…' : 'Not compiled yet.',
       });
     }
     const r = state.render;
@@ -853,6 +865,9 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           if (state.shownPdf !== wanted) return; // a newer compile won
           await drawPdf(pages, base64, { width: 372 });
           state.pdfPages.set(wanted, pages.cloneNode(true));
+          // Each of these is a page-sized bitmap. Keeping one per compile
+          // meant a session of small edits quietly holding a dozen of them.
+          for (const old of [...state.pdfPages.keys()].slice(0, -2)) state.pdfPages.delete(old);
         } catch (err) {
           pane.append(h('div', { className: 'hint', textContent: `Could not draw the resume: ${err.message}` }));
         }
