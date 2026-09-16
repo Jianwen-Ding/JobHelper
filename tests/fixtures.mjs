@@ -356,6 +356,50 @@ export const SPA_BOARD = {
 };
 
 /**
+ * The form in an iframe, which is how iCIMS serves its whole application — and
+ * embedded Greenhouse boards, and several SuccessFactors deployments.
+ *
+ * The outer page is the shape that matters: a heading, and an iframe. Every
+ * question, the cover letter box and every field is inside the frame, so a
+ * card that reads only the page it is sitting on finds a posting and no form
+ * at all — and says so by offering nothing.
+ */
+export const FRAMED_ROLE = {
+  name: 'framed-role',
+  path: '/icims/orion/jobs/4021/platform-engineer/job',
+  company: 'Orion',
+  title: 'Platform Engineer',
+  html: `<!doctype html>
+<html><head><title>Platform Engineer at Orion</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Orion</h1><div>Platform Engineer</div></div>
+  <div class="wrap">
+    ${ROLE_BODY}
+    <h2>Apply now</h2>
+    <iframe id="icims_content_iframe" title="Application form"
+            src="/icims/orion/jobs/4021/platform-engineer/form"
+            style="width:100%;height:520px;border:1px solid #ccc"></iframe>
+  </div>
+</body></html>`,
+};
+
+export const FRAMED_FORM = {
+  name: 'framed-form',
+  path: '/icims/orion/jobs/4021/platform-engineer/form',
+  html: `<!doctype html>
+<html><head><meta charset="utf-8"><title>Application</title><style>${CHROME}</style></head>
+<body><div class="wrap"><form>
+  <label for="fn">First Name</label><input id="fn" name="icims_firstname" type="text">
+  <label for="ln">Last Name</label><input id="ln" name="icims_lastname" type="text">
+  <label for="em">Email Address</label><input id="em" name="icims_email" type="email">
+  <label for="ph">Primary Number</label><input id="ph" name="icims_phone" type="text">
+  <label for="cl">Cover Letter</label><textarea id="cl" name="icims_coverletter"></textarea>
+  <label for="q1">Why do you want to work here?</label><textarea id="q1" name="icims_q1"></textarea>
+  <button type="button">Submit Application</button>
+</form></div></body></html>`,
+};
+
+/**
  * A board: a listing page, and two jobs reached from it.
  *
  * The listing is job-shaped enough to be offered on and remembered, and its
@@ -404,7 +448,7 @@ export const CYGNUS_ROLE_B = {
 };
 
 export const NAVIGATION = [
-  CYGNUS_BOARD, CYGNUS_ROLE_A, CYGNUS_ROLE_B,
+  CYGNUS_BOARD, CYGNUS_ROLE_A, CYGNUS_ROLE_B, FRAMED_ROLE, FRAMED_FORM,
   LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY,
   OWN_SITE, ATS_FORM, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, SPA_BOARD,
 ];

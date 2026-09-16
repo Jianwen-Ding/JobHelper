@@ -126,32 +126,80 @@
   let pass = 0;
   const supersede = () => ++pass;
 
+  /**
+   * Whether a form in a sub-frame asked for a cover letter.
+   *
+   * Remembered because it is learnt from the scan, well after the card has
+   * gone up, and it is wanted again later — when the application is handed to
+   * the editor, which needs to know whether a letter is part of it.
+   */
+  let letterInFrame = false;
+
+  /** The questions on this page, wherever on it they are. */
+  async function findEverywhere() {
+    const { findQuestions, isRequired } = await imports.autofill();
+    const here = findQuestions().map((q) => ({ ...q, required: isRequired(q.fieldId) }));
+
+    const { frames } = await send('scanFrames', {}).catch(() => ({ frames: [] }));
+    const elsewhere = frames.flatMap((frame) =>
+      (frame.questions ?? []).map((q) => ({ ...q, fieldId: inFrameId(frame.frameId, q.fieldId) })),
+    );
+    letterInFrame = letterInFrame || frames.some((f) => f.wantsLetter);
+    return { questions: [...here, ...elsewhere], wantsLetter: letterInFrame };
+  }
+
   /** Page questions, paired with whatever the answer bank already holds. */
   async function gatherQuestions() {
-    const { findQuestions, isRequired } = await imports.autofill();
-    const found = findQuestions().map((q) => ({ ...q, required: isRequired(q.fieldId) }));
-    if (found.length === 0) return [];
+    const { questions: found, wantsLetter } = await findEverywhere();
+    if (found.length === 0) return { questions: [], wantsLetter };
 
     try {
       const { matches } = await send('matchAnswers', { questions: found.map((q) => q.question) });
-      return found.map((q, i) => ({
-        ...q,
-        answer: matches[i]?.answer ?? '',
-        confident: Boolean(matches[i]?.confident),
-        score: matches[i]?.score ?? 0,
-        itemId: matches[i]?.item?.id,
-      }));
+      return {
+        wantsLetter,
+        questions: found.map((q, i) => ({
+          ...q,
+          answer: matches[i]?.answer ?? '',
+          confident: Boolean(matches[i]?.confident),
+          score: matches[i]?.score ?? 0,
+          itemId: matches[i]?.item?.id,
+        })),
+      };
     } catch {
       // A server that is down must not cost us the questions themselves.
-      return found.map((q) => ({ ...q, answer: '', confident: false, score: 0 }));
+      return { wantsLetter, questions: found.map((q) => ({ ...q, answer: '', confident: false, score: 0 })) };
     }
   }
 
+  /**
+   * Fill this document, then every sub-frame, and report the lot as one.
+   *
+   * The form is frequently not in the page the card is sitting on: iCIMS
+   * serves its whole application in an iframe, and so do embedded Greenhouse
+   * boards. Filling only the top document meant the button said it had done
+   * the form and nothing in the form had changed.
+   */
   async function runAutofill() {
     const { fillForm } = await imports.autofill();
     const data = await send('autofillData');
-    return fillForm(data.fields);
+    const here = fillForm(data.fields);
+
+    const { frames } = await send('fillFrames', { fields: data.fields }).catch(() => ({ frames: [] }));
+    return {
+      filled: [...here.filled, ...frames.flatMap((f) => f.filled ?? [])],
+      skipped: [...here.skipped, ...frames.flatMap((f) => f.skipped ?? [])],
+    };
   }
+
+  /**
+   * A field's address, when it may not be in this document.
+   *
+   * The card only ever holds a string, so the frame it lives in travels inside
+   * the id. The top document is left bare, which keeps every existing stored
+   * answer and every field found here exactly as it was.
+   */
+  const IN_FRAME_ID = /^f(\d+)~(.+)$/;
+  const inFrameId = (frameId, fieldId) => `f${frameId}~${fieldId}`;
 
   async function onAction(action, payload = {}) {
     if (action.startsWith('answer:')) {
@@ -180,6 +228,14 @@
         return runAutofill();
 
       case 'insertAnswer': {
+        const inFrame = IN_FRAME_ID.exec(payload.fieldId ?? '');
+        if (inFrame) {
+          return send('insertInFrame', {
+            frameId: Number(inFrame[1]),
+            fieldId: inFrame[2],
+            text: payload.text,
+          });
+        }
         const { insertAnswer } = await imports.autofill();
         return insertAnswer(payload.fieldId, payload.text);
       }
@@ -201,7 +257,8 @@
           source: new URL(location.href).hostname,
           jobDescription: analysis.job.description ?? '',
           spec: payload.spec,
-          coverLetterRequired: wantsCoverLetter(),
+          // Including a letter box that is in a frame rather than this page.
+          coverLetterRequired: wantsCoverLetter() || letterInFrame,
           questions: (payload.questions ?? []).map((q) => ({ question: q.question, required: q.required })),
         });
         await send('openTab', { url: result.absoluteUrl });
@@ -451,7 +508,12 @@
       .then((resumes) => current() && cardHandle?.setResumes(resumes))
       .catch(() => undefined);
     gatherQuestions()
-      .then((questions) => current() && cardHandle?.setQuestions(questions))
+      .then(({ questions, wantsLetter }) => {
+        if (!current()) return;
+        cardHandle?.setQuestions(questions);
+        // A form served in a frame could not be read when the card went up.
+        cardHandle?.setNeedsCoverLetter(wantsLetter);
+      })
       .catch(() => undefined);
   }
 
@@ -524,6 +586,61 @@
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') save();
     });
+  }
+
+  /* ------------------------ Frames other than this one ------------------ */
+
+  /**
+   * In a sub-frame, do nothing until asked.
+   *
+   * The script runs in every frame now, because on several systems — iCIMS
+   * above all — the application form is served in an iframe and the page you
+   * are looking at contains nothing but the iframe. But a frame is not a page:
+   * it gets no card, analyses nothing, sends no page anywhere and remembers no
+   * trail. It reads and fills the form it holds, when the top document asks,
+   * and that is the whole of it.
+   *
+   * Which matters most for the frames that are not application forms. Every
+   * advert and embed on every page now runs this too, and for all of them this
+   * is where it stops.
+   */
+  if (window.top !== window) {
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      const answer = (work) =>
+        work
+          .then((data) => sendResponse({ ok: true, data }))
+          .catch((err) => sendResponse({ ok: false, error: err.message }));
+
+      switch (message?.type) {
+        case 'jh-frame-scan':
+          answer(
+            imports.autofill().then(({ findQuestions, isRequired, wantsCoverLetter }) => ({
+              questions: findQuestions().map((q) => ({ ...q, required: isRequired(q.fieldId) })),
+              wantsLetter: wantsCoverLetter(),
+            })),
+          );
+          return true;
+
+        case 'jh-frame-fill':
+          answer(imports.autofill().then(({ fillForm }) => fillForm(message.payload?.fields ?? {})));
+          return true;
+
+        case 'jh-frame-insert':
+          answer(
+            imports
+              .autofill()
+              .then(({ insertAnswer }) => insertAnswer(message.payload?.fieldId, message.payload?.text)),
+          );
+          return true;
+
+        default:
+          return false;
+      }
+    });
+
+    // Say so once, so the top document can be told which frames to ask.
+    send('frameReady', {}).catch(() => undefined);
+    return;
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

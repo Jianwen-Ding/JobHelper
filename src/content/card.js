@@ -1435,6 +1435,19 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         state.rebuilding = null;
       }
     },
+    /**
+     * The form asks for a cover letter after all.
+     *
+     * Read from the top document when the card goes up, which is the whole of
+     * the form on most systems and none of it on the ones that serve it in an
+     * iframe. Those can only be read once the frames have answered, by which
+     * point the card is already on screen.
+     */
+    setNeedsCoverLetter(needed) {
+      if (!needed || state.letterNeeded) return;
+      state.letterNeeded = true;
+      draw();
+    },
     setQuestions(qs) {
       state.questions = qs;
       // Questions arrive after the card is built, so anything carried over

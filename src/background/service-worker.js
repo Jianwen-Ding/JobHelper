@@ -126,8 +126,84 @@ async function inheritIfNew(tabId, openerTabId) {
   if (theirs.pages.length > 0) await writeTrail(tabId, { ...theirs, at: Date.now() });
 }
 
+/* ------------------------------------------------------------------ *
+ * Frames: the form is often not in the page you are looking at         *
+ * ------------------------------------------------------------------ */
+
+/**
+ * Which sub-frames of which tab have a content script in them.
+ *
+ * Plenty of systems serve the application form in an iframe — iCIMS serves its
+ * whole application that way, and so do embedded Greenhouse boards. The script
+ * now runs in every frame, but only the top one puts up a card; the rest sit
+ * quiet until they are asked to read or fill the form in front of them.
+ *
+ * Asking them needs their frame ids, and there is no way to collect a reply
+ * from each of several frames in one broadcast — so each announces itself as it
+ * loads. Kept in memory on purpose: a worker that has been asleep and lost this
+ * is a worker whose frames have also gone, since a reload re-announces.
+ */
+const framesByTab = new Map();
+
+function noteFrame(tabId, frameId) {
+  if (tabId === undefined || !frameId) return;
+  if (!framesByTab.has(tabId)) framesByTab.set(tabId, new Set());
+  framesByTab.get(tabId).add(frameId);
+}
+
+/**
+ * Put the same question to every sub-frame, and keep the answers that come
+ * back. A frame that has navigated away, or is cross-origin and gone, simply
+ * does not answer — which is ordinary rather than an error.
+ */
+async function askFrames(tabId, message) {
+  const ids = [...(framesByTab.get(tabId) ?? [])];
+  const replies = await Promise.all(
+    ids.map(async (frameId) => {
+      try {
+        const reply = await chrome.tabs.sendMessage(tabId, message, { frameId });
+        return reply?.ok ? { frameId, data: reply.data } : null;
+      } catch {
+        // The frame is gone. Drop it rather than asking again forever.
+        framesByTab.get(tabId)?.delete(frameId);
+        return null;
+      }
+    }),
+  );
+  return replies.filter(Boolean);
+}
+
 /** Message handlers, one per action the content script or popup can request. */
 const handlers = {
+  /** "There is a content script in this frame." Sent once, on load. */
+  async frameReady(_payload, tab, sender) {
+    noteFrame(tab?.id, sender?.frameId);
+    return { ok: true };
+  },
+
+  /** Read the form in every sub-frame: its questions, and what it asks for. */
+  async scanFrames(_payload, tab) {
+    if (tab?.id === undefined) return { frames: [] };
+    const replies = await askFrames(tab.id, { type: 'jh-frame-scan' });
+    return { frames: replies.map(({ frameId, data }) => ({ frameId, ...data })) };
+  },
+
+  /** Fill the form in every sub-frame from the same profile. */
+  async fillFrames({ fields }, tab) {
+    if (tab?.id === undefined) return { frames: [] };
+    const replies = await askFrames(tab.id, { type: 'jh-frame-fill', payload: { fields } });
+    return { frames: replies.map(({ frameId, data }) => ({ frameId, ...data })) };
+  },
+
+  /** Put an answer into a field that lives in one particular frame. */
+  async insertInFrame({ frameId, fieldId, text }, tab) {
+    if (tab?.id === undefined) return false;
+    const reply = await chrome.tabs
+      .sendMessage(tab.id, { type: 'jh-frame-insert', payload: { fieldId, text } }, { frameId })
+      .catch(() => null);
+    return Boolean(reply?.ok && reply.data);
+  },
+
   /**
    * Add the page to the current application, or start a new one with it.
    * Returns the trail as it now stands, so the card can show it.
@@ -513,8 +589,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
   // Which tab asked. The trail is per tab, and this is the only place that
-  // knows which one — it used to be thrown away.
-  handler(message.payload ?? {}, sender?.tab)
+  // knows which one — it used to be thrown away. The frame matters too, now
+  // that the form is often not in the page the card is sitting on.
+  handler(message.payload ?? {}, sender?.tab, sender)
     .then((data) => sendResponse({ ok: true, data }))
     .catch((err) => sendResponse({ ok: false, error: err.message }));
   // Keeps the message channel open for the async response above.
@@ -524,7 +601,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // A closed tab cannot come back, and session storage has a quota.
 chrome.tabs?.onRemoved?.addListener((tabId) => {
   session().remove(trailKey(tabId)).catch(() => undefined);
+  framesByTab.delete(tabId);
 });
+
+/*
+ * Frames left behind by a navigation are pruned the first time they fail to
+ * answer, in `askFrames`. Noticing the navigation itself would be tidier but
+ * costs the `webNavigation` permission, and an extension that reads every page
+ * you visit should ask for as little as it can get away with. The cost of
+ * doing it lazily is one message that goes nowhere, once.
+ */
 
 chrome.runtime.onInstalled.addListener(async () => {
   // Seed defaults so the popup has something to show on first open.

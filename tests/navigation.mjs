@@ -25,6 +25,7 @@ import {
   ASHBY_ROLE,
   ATS_FORM,
   CYGNUS_BOARD,
+  FRAMED_ROLE,
   LEVER_ROLE,
   NEW_TAB_ROLE,
   OWN_SITE,
@@ -292,6 +293,78 @@ async function main() {
       const co = (await card.locator('.co').textContent()) ?? '';
       check('did not carry one company into another', co.includes('Lyra') || !co.includes('Vega'), co);
       check('and did not claim to be writing from both', (await card.locator('.trail').count()) === 0);
+      await page.close();
+    }
+
+    /* ---- The form is in an iframe, as iCIMS serves it ---- */
+    group('The application form is served in a frame of its own');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(FRAMED_ROLE), { waitUntil: 'load' });
+      await settled(page);
+      // The scan crosses a frame boundary and so takes a beat longer than the
+      // rest of the card.
+      await page.waitForTimeout(2500);
+
+      const card = cardOf(page);
+      check('the posting is still read from the page itself', (await card.locator('.role').count()) === 1);
+
+      const asked = await card.locator('.q').allTextContents();
+      check(
+        'the question inside the frame is offered',
+        asked.some((q) => /why do you want to work here/i.test(q)),
+        asked.join(' | ') || '(none)',
+      );
+      check(
+        'and the cover letter box in there is not offered as a question',
+        !asked.some((q) => /cover\s*letter/i.test(q)),
+        asked.join(' | '),
+      );
+      // When the form asks for a letter the card puts up the step; when it does
+      // not, it puts up a "+ Cover letter" link to overrule that. Which of the
+      // two is showing is the whole of what the frame told it.
+      const steps = await card.locator('.step').allTextContents();
+      check(
+        'the cover letter step is offered, which only the frame asked for',
+        steps.some((s) => /cover letter/i.test(s)),
+        steps.map((s) => s.slice(0, 30)).join(' | '),
+      );
+      check(
+        'and it is not still offering to add one, as if none were wanted',
+        (await card.getByRole('button', { name: '+ Cover letter' }).count()) === 0,
+      );
+
+      // Autofill has to reach into the frame, and report what it did there as
+      // part of the same run.
+      await card.getByRole('button', { name: 'Autofill this form' }).click();
+      await page.waitForTimeout(3000);
+      const frame = page.frames().find((f) => f.url().endsWith('/form'));
+      const typed = await frame?.evaluate(() => ({
+        first: document.getElementById('fn').value,
+        email: document.getElementById('em').value,
+        phone: document.getElementById('ph').value,
+      }));
+      check('autofill filled the fields inside the frame', Boolean(typed?.first && typed?.email), JSON.stringify(typed));
+
+      /*
+       * The script runs in every frame of every page now, so the thing that
+       * matters most is what it does *not* do there. A frame is not a page: no
+       * card of its own, however job-shaped its contents — otherwise every
+       * embed and advert on the web gets one.
+       */
+      const cardsInFrame = await frame?.evaluate(() => document.querySelectorAll('#jobhelper-card-host').length);
+      check('the frame did not put up a card of its own', cardsInFrame === 0, `${cardsInFrame} in the frame`);
+      check('and the page has exactly one', (await page.locator(HOST).count()) === 1);
+
+      // Writing an answer has to cross the boundary too — the card only ever
+      // holds a string, so the frame it belongs to travels inside the field id.
+      const q = card.locator('.q').filter({ hasText: /why do you want to work here/i }).first();
+      await q.locator('textarea').first().fill('Because I have read the code you publish.');
+      await q.getByRole('button', { name: /insert into form/i }).click();
+      await page.waitForTimeout(1500);
+      const inserted = await frame?.evaluate(() => document.getElementById('q1').value);
+      check('an answer written on the card lands in the frame', /read the code/.test(inserted ?? ''), inserted);
+
       await page.close();
     }
 
