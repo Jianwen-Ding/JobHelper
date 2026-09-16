@@ -247,6 +247,7 @@ select {
   border: 1px solid var(--bad-line); border-left: 3px solid var(--bad); border-radius: 6px; padding: 8px 10px;
   line-height: 1.5;
 }
+.err-actions { margin-top: 8px; }
 .ok-note { color: var(--good); font-size: 12px; margin-top: 9px; }
 
 .done-box {
@@ -510,6 +511,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     running.add(action);
     state.busy = action;
     state.error = null;
+    state.errorFix = null;
     draw();
     try {
       const result = await onAction(action, payload);
@@ -517,6 +519,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       return result;
     } catch (err) {
       state.error = err.message;
+      // Some failures have a way out. Keep it, so the card can offer it.
+      state.errorFix = err.jobhelper ?? null;
       return null;
     } finally {
       running.delete(action);
@@ -1205,8 +1209,39 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       ]),
     );
 
-    if (state.error) body.append(h('div', { className: 'err', textContent: state.error }));
+    if (state.error) body.append(drawError());
     return body;
+  }
+
+  /**
+   * What went wrong, and the one thing that would put it right.
+   *
+   * The two failures worth acting on both end the same way — nothing works and
+   * the card says so in a sentence the user cannot do anything with. ResumeM-M
+   * not being open, and being open with no save in it, are each one click from
+   * fixed, and the click belongs here rather than in a paragraph describing
+   * where to find it.
+   */
+  function drawError() {
+    const box = h('div', { className: 'err' }, [h('div', { textContent: state.error })]);
+    const fix = state.errorFix;
+    if (!fix) return box;
+
+    box.append(
+      h('div', { className: 'row gap err-actions' }, [
+        h('button', {
+          className: 'tiny',
+          textContent: fix.fix === 'open-save' ? 'Open a save in ResumeM-M' : 'Open ResumeM-M',
+          onclick: () => onAction('openTab', { url: fix.serverUrl }),
+        }),
+        h('button', {
+          className: 'tiny',
+          textContent: busyLabel('retry', 'Try again', 'Trying…'),
+          onclick: () => act('rebuild', { useAi: false }),
+        }),
+      ]),
+    );
+    return box;
   }
 
   function describeAutofill(r) {
@@ -1355,7 +1390,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       ]),
       state.autofillReport ? h('div', { className: 'ok-note', textContent: describeAutofill(state.autofillReport) }) : null,
       h('div', { className: 'hint', style: 'margin-top:8px' }, 'Tracked in ResumeM-M with a copy of exactly what was sent.'),
-      state.error ? h('div', { className: 'err', textContent: state.error }) : null,
+      state.error ? drawError() : null,
     ]);
   }
 
@@ -1382,7 +1417,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       ]),
       h('div', { className: 'progress' }),
       h('div', { className: 'progress-label', textContent: 'Reading the posting…' }),
-      state.error ? h('div', { className: 'err', textContent: state.error }) : null,
+      state.error ? drawError() : null,
     ].filter(Boolean));
   }
 
@@ -1461,8 +1496,11 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
 
     /** Put back the work from the page this one continues. */
     restoreWork,
-    setStatus(text) {
+    setStatus(text, fix = null) {
       state.error = text;
+      // The first pass failing is the commonest way to meet this, and the
+      // commonest reason is that ResumeM-M is not running.
+      state.errorFix = fix;
       draw();
     },
   };

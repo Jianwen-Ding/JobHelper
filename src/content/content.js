@@ -13,7 +13,10 @@
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
         } else if (!response?.ok) {
-          reject(new Error(response?.error ?? 'No response from JobHelper'));
+          const failed = new Error(response?.error ?? 'No response from JobHelper');
+          // What would put this right, when the worker knows.
+          failed.jobhelper = response?.fix;
+          reject(failed);
         } else {
           resolve(response.data);
         }
@@ -311,6 +314,10 @@
       case 'aiStatus':
         return send('aiStatus', {});
 
+      /** Send the user to ResumeM-M, when that is what the card is offering. */
+      case 'openTab':
+        return send('openTab', { url: payload.url });
+
       // Turning ResumeM-M's own AI switch on, from the chip that reports it
       // being off. The switch that needs flipping should be under the hand
       // that is reaching for it.
@@ -475,7 +482,7 @@
       if (!current()) return;
       found = await send('analyze', { ...payload, useAi: false });
     } catch (err) {
-      if (current()) cardHandle?.setStatus(err.message);
+      if (current()) cardHandle?.setStatus(err.message, err.jobhelper ?? null);
       return;
     }
     if (!current()) return;

@@ -26,14 +26,22 @@ async function serverFetch(path, options = {}) {
       headers: { 'Content-Type': 'application/json', ...(options.headers ?? {}) },
     });
   } catch (cause) {
-    throw new Error(
-      `Can't reach ResumeM-M at ${serverUrl}. Start it with \`npm run serve\` in the ResumeM-M folder.`,
-      { cause },
-    );
+    // Marked, so the card can offer the way out rather than only naming the
+    // problem. The text still has to stand on its own: it is what a user sees
+    // if anything swallows the marker.
+    const offline = new Error(`ResumeM-M is not open. Start it, then try again.`, { cause });
+    offline.jobhelper = { fix: 'start-server', serverUrl };
+    throw offline;
   }
 
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    const failed = new Error(body.error ?? `${res.status} ${res.statusText}`);
+    // The server says which sort of refusal this is. "No save open" is the one
+    // worth acting on: there is a button that fixes it, one tab away.
+    if (body.kind === 'no-project') failed.jobhelper = { fix: 'open-save', serverUrl };
+    throw failed;
+  }
   return body;
 }
 
@@ -621,7 +629,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // that the form is often not in the page the card is sitting on.
   handler(message.payload ?? {}, sender?.tab, sender)
     .then((data) => sendResponse({ ok: true, data }))
-    .catch((err) => sendResponse({ ok: false, error: err.message }));
+    // The marker travels with the message: a card on a job page cannot see an
+    // Error object, only what crosses as JSON.
+    .catch((err) => sendResponse({ ok: false, error: err.message, fix: err.jobhelper }));
   // Keeps the message channel open for the async response above.
   return true;
 });
