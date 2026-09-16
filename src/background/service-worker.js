@@ -103,6 +103,87 @@ const handlers = {
     return serverFetch('/api/autofill');
   },
 
+  /** Pair page questions with whatever the answer bank already holds. */
+  async matchAnswers({ questions }) {
+    return serverFetch('/api/answers/match', {
+      method: 'POST',
+      body: JSON.stringify({ questions }),
+    });
+  },
+
+  /** Answer one question, reusing a stored answer unless asked to redraft. */
+  async answerQuestion({ question, force }) {
+    return serverFetch('/api/ai/answer', {
+      method: 'POST',
+      body: JSON.stringify({ question, force }),
+    });
+  },
+
+  async saveAnswer({ question, answer, itemId }) {
+    return serverFetch('/api/answers/save', {
+      method: 'POST',
+      body: JSON.stringify({ question, answer, itemId }),
+    });
+  },
+
+  /**
+   * Draft a cover letter. The server returns the relevant previous letters
+   * whether or not the AI runs, so there is always something to start from.
+   */
+  async coverLetter({ spec, job }) {
+    return serverFetch('/api/ai/cover-letter', {
+      method: 'POST',
+      body: JSON.stringify({
+        resumeId: spec.extends ?? spec.id,
+        job: {
+          jobTitle: job.title,
+          company: job.company,
+          jobDescription: job.description ?? '',
+          url: job.url,
+        },
+      }),
+    });
+  },
+
+  async saveLetter({ body, job }) {
+    const id = `${new Date().toISOString().slice(0, 10)}-${(job.company ?? 'letter')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 30)}`;
+    return serverFetch(`/api/letters/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        id,
+        title: `${job.title ?? 'Role'} — ${job.company ?? 'Unknown'}`,
+        company: job.company,
+        role: job.title,
+        createdAt: new Date().toISOString(),
+        body,
+      }),
+    });
+  },
+
+  /**
+   * Hand the application over to ResumeM-M and return a link straight to it.
+   * A browser sidebar is fine for picking a resume and wrong for writing three
+   * paragraphs; this is the door between the two.
+   */
+  async openWorkspace(payload) {
+    const result = await serverFetch('/api/workspace', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    const { serverUrl } = await getSettings();
+    return { ...result, absoluteUrl: `${serverUrl.replace(/\/$/, '')}${result.url}` };
+  },
+
+  /** Open the editor in a new tab, focused on this draft. */
+  async openTab({ url }) {
+    const tab = await chrome.tabs.create({ url });
+    return { id: tab.id };
+  },
+
   async trackStatus({ id, status, note }) {
     return serverFetch(`/api/applications/${encodeURIComponent(id)}/status`, {
       method: 'POST',

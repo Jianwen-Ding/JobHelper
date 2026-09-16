@@ -3,8 +3,7 @@
  *
  * Runs on every page, so the first job is to be quiet: score the page locally,
  * with no network call at all, and only reach for the server when the page
- * really looks like a job posting. The card is never shown on a page the user
- * has muted.
+ * really looks like a job posting. The card is never shown on a muted host.
  */
 
 (async () => {
@@ -56,33 +55,38 @@
   let cardHandle = null;
   let analysis = null;
 
-  async function runAutofill() {
-    const { fillForm, matchQuestions } = await imports.autofill();
-    const data = await send('autofillData');
-    const report = fillForm(data.fields);
+  /** Page questions, paired with whatever the answer bank already holds. */
+  async function gatherQuestions() {
+    const { findQuestions, isRequired } = await imports.autofill();
+    const found = findQuestions().map((q) => ({ ...q, required: isRequired(q.fieldId) }));
+    if (found.length === 0) return [];
 
-    // Long-form answers are offered, not injected: the user should read one
-    // before it goes out under their name.
-    const questions = matchQuestions(data.answers ?? []);
-    for (const q of questions) {
-      q.element.placeholder = `JobHelper has an answer for this — click to insert.`;
-      q.element.addEventListener(
-        'focus',
-        () => {
-          if (!q.element.value) q.element.value = q.answer.answer;
-        },
-        { once: true },
-      );
+    try {
+      const { matches } = await send('matchAnswers', { questions: found.map((q) => q.question) });
+      return found.map((q, i) => ({
+        ...q,
+        answer: matches[i]?.answer ?? '',
+        confident: Boolean(matches[i]?.confident),
+        score: matches[i]?.score ?? 0,
+        itemId: matches[i]?.item?.id,
+      }));
+    } catch {
+      // A server that is down must not cost us the questions themselves.
+      return found.map((q) => ({ ...q, answer: '', confident: false, score: 0 }));
     }
+  }
 
-    const parts = [`Filled ${report.filled.length} field(s)`];
-    if (report.skipped.length) parts.push(`skipped ${report.skipped.length} already filled`);
-    if (questions.length) parts.push(`${questions.length} question(s) have a saved answer — click to insert`);
-    cardHandle?.setStatus(parts.join('. ') + '.');
-    return report;
+  async function runAutofill() {
+    const { fillForm } = await imports.autofill();
+    const data = await send('autofillData');
+    return fillForm(data.fields);
   }
 
   async function onAction(action, payload = {}) {
+    if (action.startsWith('answer:')) {
+      return send('answerQuestion', payload);
+    }
+
     switch (action) {
       case 'render':
         return send('render', payload);
@@ -96,6 +100,41 @@
       case 'autofill':
         return runAutofill();
 
+      case 'insertAnswer': {
+        const { insertAnswer } = await imports.autofill();
+        return insertAnswer(payload.fieldId, payload.text);
+      }
+
+      case 'coverLetter':
+        return send('coverLetter', { spec: payload.spec, job: analysis.job });
+
+      /**
+       * Hand the whole application to the editor: what the form asks for, the
+       * resume already tailored, and the questions with whatever the bank
+       * covers. Then open it, because the point is to go there and write.
+       */
+      case 'openWorkspace': {
+        const { wantsCoverLetter } = await imports.autofill();
+        const result = await send('openWorkspace', {
+          company: analysis.job.company ?? 'Unknown',
+          role: analysis.job.title ?? 'Unknown role',
+          url: location.href,
+          source: new URL(location.href).hostname,
+          jobDescription: analysis.job.description ?? '',
+          spec: payload.spec,
+          coverLetterRequired: wantsCoverLetter(),
+          questions: (payload.questions ?? []).map((q) => ({ question: q.question, required: q.required })),
+        });
+        await send('openTab', { url: result.absoluteUrl });
+        return result;
+      }
+
+      case 'saveLetter':
+        return send('saveLetter', { body: payload.body, job: analysis.job });
+
+      case 'saveAnswer':
+        return send('saveAnswer', payload);
+
       case 'trackStatus':
         return send('trackStatus', payload);
 
@@ -108,15 +147,13 @@
           url: location.href,
           source: new URL(location.href).hostname,
           status: 'applied',
+          coverLetter: payload.coverLetter,
+          answers: payload.answers,
         });
 
       case 'setBase': {
         await send('setSettings', { patch: { baseResumeId: payload.baseResumeId } });
-        analysis = await send('analyze', {
-          url: location.href,
-          title: document.title,
-          html: document.documentElement.outerHTML.slice(0, 2_000_000),
-        });
+        analysis = await send('analyze', pagePayload());
         cardHandle?.update(analysis);
         return analysis;
       }
@@ -124,6 +161,16 @@
       default:
         throw new Error(`Unknown card action "${action}"`);
     }
+  }
+
+  function pagePayload() {
+    return {
+      url: location.href,
+      title: document.title,
+      // Cap the payload: some boards ship enormous inlined bundles, and the
+      // posting itself is never in them.
+      html: document.documentElement.outerHTML.slice(0, 2_000_000),
+    };
   }
 
   async function show({ force = false } = {}) {
@@ -134,19 +181,15 @@
       if (localScore() < settings.minScore) return;
     }
 
-    analysis = await send('analyze', {
-      url: location.href,
-      title: document.title,
-      // Cap the payload: some boards ship enormous inlined bundles, and the
-      // posting itself is never in them.
-      html: document.documentElement.outerHTML.slice(0, 2_000_000),
-    });
-
+    analysis = await send('analyze', pagePayload());
     if (!analysis.isJobPosting && !force) return;
 
-    const resumes = await send('listResumes');
-    const { createCard } = await imports.card();
-    cardHandle = createCard({ analysis, resumes, settings, onAction });
+    const [resumes, questions, { createCard }] = await Promise.all([
+      send('listResumes'),
+      gatherQuestions(),
+      imports.card(),
+    ]);
+    cardHandle = createCard({ analysis, resumes, settings, questions, onAction });
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
