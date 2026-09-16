@@ -757,10 +757,21 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
 
   function drawProposeView() {
     const baseSelect = h('select', { title: 'Which resume to start from' });
-    for (const r of resumes) {
-      baseSelect.append(
-        h('option', { value: r.id, textContent: `${r.label}`, selected: r.id === analysis.baseResumeId }),
-      );
+    // Pinned bases are grouped apart. A store fills up with resumes tailored
+    // for one posting each; the ones you actually build from should not have
+    // to be picked out of that list by name.
+    const pinned = resumes.filter((r) => r.base);
+    const option = (r) =>
+      h('option', { value: r.id, textContent: `${r.label}`, selected: r.id === analysis.baseResumeId });
+
+    if (pinned.length > 0 && pinned.length < resumes.length) {
+      const bases = h('optgroup', { label: 'Bases' });
+      for (const r of pinned) bases.append(option(r));
+      const rest = h('optgroup', { label: 'Everything else' });
+      for (const r of resumes.filter((r) => !r.base)) rest.append(option(r));
+      baseSelect.append(bases, rest);
+    } else {
+      for (const r of resumes) baseSelect.append(option(r));
     }
     baseSelect.onchange = () => act('setBase', { baseResumeId: baseSelect.value, useAi: state.builtWith === 'ai' });
 
