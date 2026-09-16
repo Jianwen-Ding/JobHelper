@@ -416,6 +416,32 @@ const SYSTEMS = [
   },
 ];
 
+/** The things that look like the top of an application and are not one. */
+const NOT_APPLICATIONS = {
+  'a newsletter box': `
+    <h3>Hiring newsletter</h3>
+    <label for="a">Email</label><input id="a" name="email" type="email">
+    <label for="b">First Name</label><input id="b" name="first_name">
+    <button type="button">Subscribe</button>`,
+  'a sign-in form': `
+    <label for="a">Email</label><input id="a" name="email" type="email">
+    <label for="b">Password</label><input id="b" name="password" type="password">
+    <button type="button">Sign in</button>`,
+  'a job search box': `
+    <label for="a">Search jobs</label><input id="a" name="q">
+    <label for="b">City</label><input id="b" name="city">
+    <label for="c">Country</label><input id="c" name="country">
+    <button type="button">Search</button>`,
+  'a contact-us form': `
+    <label for="a">Your Name</label><input id="a" name="name">
+    <label for="b">Email</label><input id="b" name="email" type="email">
+    <label for="c">How can we help?</label><textarea id="c"></textarea>
+    <button type="button">Send</button>`,
+  'a support chat widget': `
+    <label for="a">Name</label><input id="a" name="name">
+    <button type="button">Start chat</button>`,
+};
+
 const shell = (body) =>
   `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>${body}</form></body></html>`;
 
@@ -426,6 +452,12 @@ async function main() {
     if (url === '/autofill.js') {
       res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
       res.end(source);
+      return;
+    }
+    const negative = url.startsWith('/not/') && NOT_APPLICATIONS[decodeURIComponent(url.slice(5))];
+    if (negative) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(shell(negative));
       return;
     }
     const system = SYSTEMS.find((s) => url === `/${encodeURIComponent(s.name)}`);
@@ -474,6 +506,7 @@ async function main() {
             skipped: report.skipped.map((s) => ({ key: s.key, reason: s.reason })),
             questions: m.findQuestions().map((q) => q.question),
             wantsLetter: m.wantsCoverLetter(),
+            isApplication: m.looksLikeApplicationForm(),
           };
         },
         { b: base, profile: PROFILE, wants: system.want },
@@ -504,6 +537,13 @@ async function main() {
         `got ${out.wantsLetter}`,
       );
 
+      /*
+       * In a frame, this decides whether the form is read or left alone. A
+       * false negative here silently switches the extension off for that
+       * system — so every one of them has to be recognised.
+       */
+      check(`${system.name}: is recognised as an application form`, out.isApplication === true);
+
       for (const key of system.reportsUnfillable ?? []) {
         check(
           `${system.name}: says it could not do "${key}" rather than passing over it`,
@@ -512,6 +552,24 @@ async function main() {
         );
       }
 
+      await page.close();
+    }
+
+    /*
+     * And the other side of it: the things that are not application forms but
+     * collect the same fields. Every one of these turns up in a frame on a job
+     * posting, and the cost of reading one is the user's details typed into
+     * somebody else's form.
+     */
+    console.log('\nNot an application form');
+    for (const [what, body] of Object.entries(NOT_APPLICATIONS)) {
+      const page = await browser.newPage();
+      await page.goto(`${base}/not/${encodeURIComponent(what)}`, { waitUntil: 'load' });
+      const verdict = await page.evaluate(
+        async (b) => (await import(`${b}/autofill.js`)).looksLikeApplicationForm(),
+        base,
+      );
+      check(`${what} is left alone`, verdict === false);
       await page.close();
     }
   } finally {

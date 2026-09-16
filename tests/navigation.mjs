@@ -23,6 +23,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ASHBY_ROLE,
+  ADVERT_FRAME,
   ATS_FORM,
   CYGNUS_BOARD,
   FRAMED_ROLE,
@@ -365,6 +366,48 @@ async function main() {
       const inserted = await frame?.evaluate(() => document.getElementById('q1').value);
       check('an answer written on the card lands in the frame', /read the code/.test(inserted ?? ''), inserted);
 
+      await page.close();
+    }
+
+    /* ---- Somebody else's frame on the same page ---- */
+    group("A third party's frame on the posting");
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(ADVERT_FRAME), { waitUntil: 'load' });
+      await settled(page);
+      await page.waitForTimeout(2500);
+
+      const card = cardOf(page);
+      const asked = await card.locator('.q').allTextContents();
+      check(
+        "the advert's question is not offered as an application question",
+        !asked.some((q) => /think of this advertisement/i.test(q)),
+        asked.join(' | ') || '(none)',
+      );
+      check(
+        "but the posting's own question still is",
+        asked.some((q) => /why do you want to work here/i.test(q)),
+        asked.join(' | ') || '(none)',
+      );
+
+      await card.getByRole('button', { name: 'Autofill this form' }).click();
+      await page.waitForTimeout(3000);
+
+      const promo = page.frames().find((f) => f.url().endsWith('/promo/newsletter'));
+      const leaked = await promo?.evaluate(() => ({
+        email: document.getElementById('ad-em').value,
+        name: document.getElementById('ad-nm').value,
+      }));
+      check(
+        "no personal detail was typed into the advert's form",
+        !leaked?.email && !leaked?.name,
+        JSON.stringify(leaked),
+      );
+      check(
+        "and the posting's own form was still filled",
+        Boolean(await page.locator('#em').inputValue()),
+        await page.locator('#em').inputValue(),
+      );
       await page.close();
     }
 

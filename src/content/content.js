@@ -614,15 +614,25 @@
       switch (message?.type) {
         case 'jh-frame-scan':
           answer(
-            imports.autofill().then(({ findQuestions, isRequired, wantsCoverLetter }) => ({
-              questions: findQuestions().map((q) => ({ ...q, required: isRequired(q.fieldId) })),
-              wantsLetter: wantsCoverLetter(),
-            })),
+            imports.autofill().then((autofill) => {
+              const { findQuestions, isRequired, wantsCoverLetter, looksLikeApplicationForm } = autofill;
+              if (!looksLikeApplicationForm()) return { questions: [], wantsLetter: false };
+              return {
+                questions: findQuestions().map((q) => ({ ...q, required: isRequired(q.fieldId) })),
+                wantsLetter: wantsCoverLetter(),
+              };
+            }),
           );
           return true;
 
         case 'jh-frame-fill':
-          answer(imports.autofill().then(({ fillForm }) => fillForm(message.payload?.fields ?? {})));
+          answer(
+            imports.autofill().then(({ fillForm, looksLikeApplicationForm }) =>
+              // The one that must not be got wrong. Anything else on the page
+              // gets nothing about the person using it.
+              looksLikeApplicationForm() ? fillForm(message.payload?.fields ?? {}) : { filled: [], skipped: [] },
+            ),
+          );
           return true;
 
         case 'jh-frame-insert':

@@ -400,6 +400,49 @@ export const FRAMED_FORM = {
 };
 
 /**
+ * A posting with a third party's frame on it, which is every posting.
+ *
+ * Running in all frames is what reaches the application form on iCIMS. It also
+ * puts the script inside every advert, newsletter box and embedded widget on
+ * every page — and those have fields with the same names. An advert asking for
+ * an email address is not an application form, and typing the user's address
+ * into someone else's iframe is a different and worse kind of wrong than
+ * failing to fill a field.
+ */
+export const ADVERT_FRAME = {
+  name: 'advert-frame',
+  path: '/vela/roles/platform-engineer',
+  company: 'Vela',
+  title: 'Platform Engineer',
+  html: `<!doctype html>
+<html><head><title>Platform Engineer at Vela</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Vela</h1><div>Platform Engineer</div></div>
+  <div class="wrap">
+    ${ROLE_BODY}
+    ${FORM_BODY}
+    <iframe id="promo" title="Advertisement" src="/promo/newsletter"
+            style="width:320px;height:260px"></iframe>
+  </div>
+</body></html>`,
+};
+
+export const ADVERT_CONTENT = {
+  name: 'advert-content',
+  path: '/promo/newsletter',
+  html: `<!doctype html>
+<html><head><meta charset="utf-8"><title>Sponsored</title></head>
+<body><form>
+  <h3>Hiring newsletter</h3>
+  <label for="ad-em">Email</label><input id="ad-em" name="email" type="email">
+  <label for="ad-nm">First Name</label><input id="ad-nm" name="first_name" type="text">
+  <label for="ad-q">Tell us what you think of this advertisement.</label>
+  <textarea id="ad-q" name="feedback"></textarea>
+  <button type="button">Subscribe</button>
+</form></body></html>`,
+};
+
+/**
  * A board: a listing page, and two jobs reached from it.
  *
  * The listing is job-shaped enough to be offered on and remembered, and its
@@ -448,7 +491,7 @@ export const CYGNUS_ROLE_B = {
 };
 
 export const NAVIGATION = [
-  CYGNUS_BOARD, CYGNUS_ROLE_A, CYGNUS_ROLE_B, FRAMED_ROLE, FRAMED_FORM,
+  CYGNUS_BOARD, CYGNUS_ROLE_A, CYGNUS_ROLE_B, FRAMED_ROLE, FRAMED_FORM, ADVERT_FRAME, ADVERT_CONTENT,
   LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY,
   OWN_SITE, ATS_FORM, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, SPA_BOARD,
 ];

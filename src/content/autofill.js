@@ -52,6 +52,16 @@ const FIELD_PATTERNS = [
 const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 
 /**
+ * A label that is just "Name" wants the whole name.
+ *
+ * It cannot be written as a pattern over the description, because the
+ * description also carries the field's name and id attributes — so it is asked
+ * of the label alone, and kept here so that everything asking "which profile
+ * field is this" agrees.
+ */
+const BARE_NAME = /^(full\s+)?name$/i;
+
+/**
  * Find the label that belongs to a field.
  *
  * Getting this wrong is worse than not filling at all: an earlier version
@@ -195,10 +205,7 @@ export function fillForm(fields, { overwrite = false } = {}) {
 
     let match = FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key]);
 
-    // A field labelled just "Name" wants the whole name. It cannot be written
-    // as a pattern over the description, because the description also carries
-    // the name and id attributes — so it is asked of the label alone.
-    if (!match && fields.full_name && /^(full\s+)?name$/i.test(clean(labelFor(input)))) {
+    if (!match && fields.full_name && BARE_NAME.test(clean(labelFor(input)))) {
       match = ['full_name'];
     }
     if (!match) continue;
@@ -274,6 +281,45 @@ function unfillableChoices(fields, filled) {
     already.add(match[0]);
   }
   return found;
+}
+
+/**
+ * Is this document an application form at all?
+ *
+ * Asked only of frames, and only because the script now runs in all of them so
+ * that it can reach the form on the systems that serve it in an iframe. The
+ * other frames on a job posting are adverts, newsletter boxes and embedded
+ * widgets, and they have fields with exactly the same names — an advert asking
+ * for an email address looks, field by field, like the top of an application.
+ *
+ * Typing someone's address and name into a third party's iframe is a different
+ * and worse kind of wrong than leaving a field empty, so the test is for
+ * evidence rather than absence of doubt: something only an application asks
+ * for, or enough of the form that nothing else would have it.
+ */
+const APPLICATION_WORDS =
+  /\b(submit (your )?application|apply for this|cover letter|work authorizat|require sponsorship|equal opportunity employer|voluntary self-identification)\b/i;
+
+export function looksLikeApplicationForm() {
+  const text = (document.body?.textContent ?? '').slice(0, 40_000);
+  if (APPLICATION_WORDS.test(text)) return true;
+
+  // A file upload beside the word résumé is the clearest sign there is.
+  if (document.querySelector('input[type=file]') && /\b(resum|cv)\b/i.test(text)) return true;
+
+  // Failing that, enough distinct parts of a person that nothing but an
+  // application would be collecting them all at once.
+  const keys = new Set();
+  for (const input of document.querySelectorAll('input, textarea, select')) {
+    const description = describeField(input);
+    if (!description) continue;
+    const match = FIELD_PATTERNS.find(([, re]) => re.test(description));
+    if (match) keys.add(match[0]);
+    // The same bare "Name" that `fillForm` fills — a real part of a person,
+    // and on several systems the only place the name is asked for.
+    else if (BARE_NAME.test(clean(labelFor(input)))) keys.add('full_name');
+  }
+  return keys.size >= 4;
 }
 
 /** Marks a field so the card can point back at it later. */
