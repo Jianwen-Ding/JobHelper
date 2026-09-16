@@ -110,6 +110,22 @@
   let cardHandle = null;
   let analysis = null;
 
+  /**
+   * Which pass owns the card.
+   *
+   * A pass is long: the analysis alone can take seconds, and on a single-page
+   * board the url can change three times while one is still in flight. Every
+   * piece of that pass then lands on whatever card happens to exist — a card
+   * built for a different posting — and the page it was reading gets recorded
+   * as part of the new application. Nothing about it looks wrong: the card
+   * shows a role, the trail shows pages, and both belong to the job you left.
+   *
+   * So each pass takes a number, and anything superseded drops what it was
+   * carrying instead of writing it somewhere it no longer belongs.
+   */
+  let pass = 0;
+  const supersede = () => ++pass;
+
   /** Page questions, paired with whatever the answer bank already holds. */
   async function gatherQuestions() {
     const { findQuestions, isRequired } = await imports.autofill();
@@ -327,7 +343,11 @@
    * shows what it is doing, and each answer lands as it arrives.
    */
   async function show({ force = false } = {}) {
+    const mine = supersede();
+    const current = () => pass === mine;
+
     const settings = await send('getSettings');
+    if (!current()) return;
     if (!force) {
       if (!settings.autoPrompt) return;
       if ((settings.mutedHosts ?? []).includes(location.hostname)) return;
@@ -338,6 +358,7 @@
       imports.card(),
       imports.autofill(),
     ]);
+    if (!current()) return;
 
     // What the page asks for decides what the card offers. Asking the user
     // "does this need a cover letter?" is asking them to read the form on the
@@ -357,12 +378,17 @@
      * user has even seen the posting's proposal is spending their time on a
      * guess they did not ask for. "Let the AI tailor it" is a button.
      */
+    let found;
     try {
-      analysis = await send('analyze', { ...(await applicationPayload()), useAi: false });
+      const payload = await applicationPayload();
+      if (!current()) return;
+      found = await send('analyze', { ...payload, useAi: false });
     } catch (err) {
-      cardHandle?.setStatus(err.message);
+      if (current()) cardHandle?.setStatus(err.message);
       return;
     }
+    if (!current()) return;
+    analysis = found;
 
     if (!analysis.isJobPosting && !force) {
       removeCard();
@@ -377,11 +403,13 @@
      * screen rather than being quietly rebuilt from scratch.
      */
     const carried = await send('takeWork', { page: pageIdentity() }).catch(() => ({ work: null }));
+    if (!current()) return;
     if (carried?.work) cardHandle?.restoreWork(carried.work);
 
     // Taken once, and already trimmed: the same page is both what was just
     // analysed and what the next page will be written from.
     const trimmed = await pagePayload();
+    if (!current()) return;
 
     /*
      * This page is now part of an application. Remembering it is what lets the
@@ -396,7 +424,7 @@
         html: trimmed.html.slice(0, 400_000),
       },
     })
-      .then((trail) => cardHandle?.setTrail(trail))
+      .then((trail) => current() && cardHandle?.setTrail(trail))
       .catch(() => undefined);
 
     /*
@@ -414,15 +442,16 @@
      */
     if (settings.useAi || carried?.work?.builtWith === 'ai') {
       const ai = await send('aiStatus', {}).catch(() => null);
+      if (!current()) return;
       if (ai?.active) cardHandle?.tailorWithAi();
     }
 
     // The rest arrives in its own time, each piece landing as it is ready.
     send('listResumes')
-      .then((resumes) => cardHandle?.setResumes(resumes))
+      .then((resumes) => current() && cardHandle?.setResumes(resumes))
       .catch(() => undefined);
     gatherQuestions()
-      .then((questions) => cardHandle?.setQuestions(questions))
+      .then((questions) => current() && cardHandle?.setQuestions(questions))
       .catch(() => undefined);
   }
 
@@ -524,6 +553,10 @@
   setInterval(() => {
     if (location.href === lastUrl) return;
     lastUrl = location.href;
+    // Before the await, not after: the pass still running belongs to the url
+    // that just went away, and it must stop being able to write to the card
+    // from this instant rather than from whenever the import resolves.
+    supersede();
     (async () => {
       const { removeCard } = await imports.card();
       removeCard();

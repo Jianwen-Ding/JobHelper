@@ -64,10 +64,20 @@ export function relatedPath(a, b) {
   // posting this is.
   if (sa.length === 0 || sb.length === 0) return false;
 
-  // One extends the other: /vega/8f21 → /vega/8f21/apply. This is the ordinary
-  // shape, and the one worth being confident about.
+  // One extends the other: /vega/8f21 → /vega/8f21/apply.
+  //
+  // Only when what was added is a step of an application, though. A board's
+  // listing page is a prefix of every posting on it — /acme of /acme/jobs/1,
+  // /jobs of /jobs/view/1 — so accepting any extension joined the listing to
+  // each job opened from it, and then, through the listing, each of those jobs
+  // to the next. Open two roles from one board and the second was written
+  // partly from the first.
   const [shorter, longer] = sa.length <= sb.length ? [sa, sb] : [sb, sa];
-  if (shorter.every((seg, i) => seg === longer[i])) return true;
+  if (shorter.every((seg, i) => seg === longer[i])) {
+    // The first added segment decides; anything after it is that step's own
+    // business, which is how /8f21/apply/12345 stays one application.
+    return STEP_WORDS.test(longer[shorter.length]);
+  }
 
   // Siblings: everything matches but the last segment. Which they are depends
   // on what they are siblings under — steps of a form, or entries in a list.
@@ -112,7 +122,13 @@ export function sameApplication(trail, page, now = Date.now()) {
   const known = trail.pages.map((p) => co(p.company)).filter(Boolean);
 
   // A different company is a different application, whatever else matches.
-  if (mine && known.length > 0) return known.includes(mine);
+  //
+  // A veto, not a grant: this used to return the match either way, so two
+  // postings at the same employer were one application on the strength of the
+  // name alone — no matter that they were plainly two different jobs at two
+  // different addresses. The same name is a necessary condition for joining,
+  // never a sufficient one; where the pages are still has to agree.
+  if (mine && known.length > 0 && !known.includes(mine)) return false;
 
   const here = hostOf(page.url);
   if (!here) return false;

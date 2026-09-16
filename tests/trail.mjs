@@ -57,6 +57,20 @@ describe('two addresses on one site', () => {
     assert.equal(relatedPath('https://boards.greenhouse.io/', 'https://boards.greenhouse.io/acme/jobs/3'), false);
   });
 
+  it('does not join a board listing to the postings on it', () => {
+    // A listing page is a prefix of every job it lists, so accepting any
+    // extension joined it to all of them — and through it, each of them to the
+    // next. Open two roles from one board and the second was written partly
+    // from the first.
+    assert.equal(relatedPath('https://boards.greenhouse.io/acme', 'https://boards.greenhouse.io/acme/jobs/1'), false);
+    assert.equal(relatedPath('https://linkedin.com/jobs', 'https://linkedin.com/jobs/view/1'), false);
+    assert.equal(relatedPath('https://x.com/altair/openings', 'https://x.com/altair/openings/data-scientist'), false);
+  });
+
+  it('still joins an apply page that has an id after it', () => {
+    assert.equal(relatedPath('https://x.com/vega/8f21', 'https://x.com/vega/8f21/apply/12345'), true);
+  });
+
   it('ignores a trailing slash, which means nothing', () => {
     assert.equal(relatedPath('https://x.com/vega/8f21/', 'https://x.com/vega/8f21'), true);
   });
@@ -104,6 +118,35 @@ describe('is this the same application', () => {
     // first one's description.
     const trail = trailOf(at('https://jobs.lever.co/vega/8f21', 'Vega'));
     assert.equal(sameApplication(trail, { url: 'https://jobs.lever.co/lyra/4c2' }), false);
+  });
+
+  it('does not join two jobs merely because one employer posted both', () => {
+    // The company check is a veto, not a grant. Read as a grant, "Cygnus" on
+    // both pages was enough to make two unrelated postings one application.
+    const trail = trailOf(at('https://boards.greenhouse.io/cygnus/jobs/1', 'Cygnus'));
+    assert.equal(
+      sameApplication(trail, { url: 'https://boards.greenhouse.io/cygnus/jobs/2', company: 'Cygnus' }),
+      false,
+    );
+  });
+
+  it('still joins the apply page of a posting that names its company', () => {
+    const trail = trailOf(at('https://jobs.lever.co/vega/8f21', 'Vega'));
+    assert.equal(
+      sameApplication(trail, { url: 'https://jobs.lever.co/vega/8f21/apply', company: 'Vega' }),
+      true,
+    );
+  });
+
+  it('refuses another posting reached through the board that lists both', () => {
+    // The listing sits in the trail between the two jobs, and used to join to
+    // each of them — which joined them to each other.
+    const trail = trailOf(
+      at('https://boards.greenhouse.io/altair', 'Altair'),
+      at('https://boards.greenhouse.io/altair/jobs/1', 'Altair'),
+      at('https://boards.greenhouse.io/altair', 'Altair'),
+    );
+    assert.equal(sameApplication(trail, { url: 'https://boards.greenhouse.io/altair/jobs/2' }), false);
   });
 
   it('refuses a page it merely happens to share a host with', () => {

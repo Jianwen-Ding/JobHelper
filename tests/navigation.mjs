@@ -24,14 +24,18 @@ import { fileURLToPath } from 'node:url';
 import {
   ASHBY_ROLE,
   ATS_FORM,
+  CYGNUS_BOARD,
   LEVER_ROLE,
   NEW_TAB_ROLE,
   OWN_SITE,
+  SPA_BOARD,
   STEP_ONE,
   WORKDAY,
   cleanStore,
   findChromium,
   serveFixtures,
+  serveSlowProxy,
+  useServer,
 } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -235,6 +239,45 @@ async function main() {
       await page.close();
     }
 
+    /* ---- Two jobs opened from one board ---- */
+    group('Two roles reached through the board that lists both');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(CYGNUS_BOARD), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+
+      await page.click('#role-a');
+      await page.waitForLoadState('domcontentloaded');
+      await settled(page);
+      check(
+        'the first role is read as itself',
+        /platform engineer/i.test((await cardOf(page).locator('.role').textContent()) ?? ''),
+      );
+
+      await page.goBack();
+      await page.waitForLoadState('domcontentloaded');
+      await settled(page);
+      await page.click('#role-b');
+      await page.waitForLoadState('domcontentloaded');
+      await settled(page);
+
+      // The listing sits between the two and is a prefix of both, so joining
+      // on the address alone put the first role's description into the
+      // second's application — the failure that reads perfectly until a human
+      // notices the letter is about another job.
+      const card = cardOf(page);
+      const role = (await card.locator('.role').textContent())?.trim() ?? '';
+      check('the second role is read as itself too', /data scientist/i.test(role), role);
+
+      const trail = (await card.locator('.trail-row').allTextContents()).join(' | ');
+      check(
+        'and the other job is not part of this application',
+        !/platform engineer/i.test(trail),
+        trail || '(no trail)',
+      );
+      await page.close();
+    }
+
     /* ---- And the one that must not join ---- */
     group('A different job is a different application');
     {
@@ -251,12 +294,63 @@ async function main() {
       check('and did not claim to be writing from both', (await card.locator('.trail').count()) === 0);
       await page.close();
     }
+
+    /*
+     * Left for last because it points the extension at a slower server, and
+     * nothing after it would be measuring what it thinks it is.
+     */
+    group('Moving on while the analysis of the previous posting is still running');
+    {
+      const slow = await serveSlowProxy(SERVER, { slowRoute: /analyze/, ms: 4000 });
+      await useServer(context, slow.base);
+      try {
+        const page = await context.newPage();
+        await page.goto(fixtures.urlFor(SPA_BOARD), { waitUntil: 'domcontentloaded' });
+
+        // Deliberately not `settled`: the point is to move on while the first
+        // pass is still out, which against a local server is a window of two
+        // hundred milliseconds and in use — with the AI on — is minutes.
+        await page.waitForTimeout(1200);
+        await page.click('#to-b');
+
+        // What the card claimed, in order, once the second role was on screen.
+        // The end state is not enough: the passes finish in the order they
+        // started, so the later one lands last and tidies up after the older
+        // one wrote over it. The damage is the seconds in between, which is
+        // where "Build resume" gets pressed.
+        const roles = [];
+        for (let i = 0; i < 100; i++) {
+          const role = await page.evaluate(() => {
+            const host = document.querySelector('#jobhelper-card-host');
+            return host?.shadowRoot?.querySelector('.card .role')?.textContent?.trim() ?? '';
+          });
+          if (role && roles[roles.length - 1] !== role) roles.push(role);
+          await page.waitForTimeout(60);
+        }
+
+        const afterSwitch = roles.slice(roles.findIndex((r) => /data scientist/i.test(r)) + 1);
+        check(
+          'the abandoned pass does not put its role back on the new card',
+          !afterSwitch.some((r) => /platform engineer/i.test(r)),
+          roles.join(' → '),
+        );
+        check(
+          'and the card ends on the role actually on screen',
+          /data scientist/i.test(roles[roles.length - 1] ?? ''),
+          roles[roles.length - 1],
+        );
+        await page.close();
+      } finally {
+        await useServer(context, SERVER);
+        slow.close();
+      }
+    }
   } finally {
     await context.close();
     fixtures.close();
     ats.close();
     fs.rmSync(userDataDir, { recursive: true, force: true });
-    await cleanStore(SERVER, ['Vega', 'Lyra', 'Orion', 'Acme', 'Nova', 'Rigel']);
+    await cleanStore(SERVER, ['Vega', 'Lyra', 'Orion', 'Acme', 'Nova', 'Rigel', 'Altair', 'Cygnus']);
   }
 
   console.log(`\n${passed}/${passed + failed} checks passed`);

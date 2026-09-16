@@ -317,9 +317,96 @@ export const STEP_TWO = {
   ),
 };
 
+
+/**
+ * A single-page board where two postings live behind two links and neither is
+ * a navigation. Switching quickly between them is how a slow analysis of the
+ * first lands on the card built for the second.
+ */
+export const SPA_BOARD = {
+  name: 'spa-board',
+  // The two roles are siblings under /openings, which the trail rules already
+  // refuse to join — so anything of one showing up while the other is on
+  // screen is the race, not the merge.
+  path: '/altair/openings/platform-engineer',
+  company: 'Altair',
+  html: `<!doctype html>
+<html><head><title>Platform Engineer at Altair</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Altair</h1><div id="sub">Platform Engineer</div></div>
+  <div class="wrap">
+    <p><button id="to-b" type="button">Open Data Scientist</button></p>
+    <div id="view">${ROLE_BODY}</div>
+  </div>
+  <script>
+    document.getElementById('to-b').addEventListener('click', () => {
+      history.pushState({}, '', '/altair/openings/data-scientist');
+      document.title = 'Data Scientist at Altair';
+      document.getElementById('sub').textContent = 'Data Scientist';
+      document.getElementById('view').innerHTML =
+        '<h2>About the role</h2><p>We are looking for a data scientist to own ' +
+        'our forecasting models. Responsibilities include building models in ' +
+        'Python and SQL and shipping them to production.</p>' +
+        '<h2>Minimum qualifications</h2>' +
+        '<ul><li>Years of experience with statistics</li><li>Experience with SQL</li></ul>' +
+        '<p>Equal opportunity employer. Full-time. Compensation is competitive.</p>';
+    });
+  </script>
+</body></html>`,
+};
+
+/**
+ * A board: a listing page, and two jobs reached from it.
+ *
+ * The listing is job-shaped enough to be offered on and remembered, and its
+ * address is a prefix of both postings — which is how one job's description
+ * used to arrive in the other's application, by way of the page between them.
+ */
+export const CYGNUS_BOARD = {
+  name: 'cygnus-board',
+  path: '/cygnus/openings',
+  company: 'Cygnus',
+  html: page(
+    'Open positions at Cygnus',
+    'Cygnus',
+    `<h2>Open positions</h2>
+     <p>View all openings below. We are hiring across the company; every role is full-time.</p>
+     <ul>
+       <li><a id="role-a" href="/cygnus/openings/platform-engineer">Platform Engineer</a></li>
+       <li><a id="role-b" href="/cygnus/openings/data-scientist">Data Scientist</a></li>
+     </ul>`,
+  ),
+};
+
+export const CYGNUS_ROLE_A = {
+  name: 'cygnus-role-a',
+  path: '/cygnus/openings/platform-engineer',
+  company: 'Cygnus',
+  title: 'Platform Engineer',
+  html: page('Platform Engineer at Cygnus', 'Cygnus', ROLE_BODY),
+};
+
+export const CYGNUS_ROLE_B = {
+  name: 'cygnus-role-b',
+  path: '/cygnus/openings/data-scientist',
+  company: 'Cygnus',
+  title: 'Data Scientist',
+  html: page(
+    'Data Scientist at Cygnus',
+    'Cygnus',
+    `<h2>About the role</h2>
+     <p>We are looking for a data scientist to own our forecasting models. You
+        will build them in Python and SQL and ship them to production.</p>
+     <h2>Minimum qualifications</h2>
+     <ul><li>Years of experience with statistics</li><li>Experience with SQL</li></ul>
+     <p>Equal opportunity employer. Full-time. Compensation is competitive.</p>`,
+  ),
+};
+
 export const NAVIGATION = [
+  CYGNUS_BOARD, CYGNUS_ROLE_A, CYGNUS_ROLE_B,
   LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY,
-  OWN_SITE, ATS_FORM, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO,
+  OWN_SITE, ATS_FORM, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, SPA_BOARD,
 ];
 
 export const ALL = [STREAMLY, NORTHWIND, BLOG, HELIOS_ROLE, HELIOS_FORM, ...NAVIGATION];
@@ -363,6 +450,56 @@ export function serveFixtures(fixtures = ALL, { vars = {}, hostname = '127.0.0.1
       });
     });
   });
+}
+
+/**
+ * The real server, with one route made slow.
+ *
+ * Some of the extension's worst behaviour only appears while it is waiting: a
+ * pass that takes longer than it takes the user to move on, and then lands
+ * anyway. Against a local server every call returns in a couple of hundred
+ * milliseconds, so that window never opens and the bug is invisible — while in
+ * use it is the ordinary case, since analysis with the AI enabled takes
+ * minutes. Putting a deliberate delay in front of one route makes it a fact
+ * rather than a matter of timing luck.
+ */
+export function serveSlowProxy(target, { slowRoute = /analyze/, ms = 4000 } = {}) {
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      const forward = async () => {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        if (slowRoute.test(req.url)) await new Promise((r) => setTimeout(r, ms));
+
+        const upstream = await fetch(`${target}${req.url}`, {
+          method: req.method,
+          headers: { 'content-type': req.headers['content-type'] ?? 'application/json' },
+          body: req.method === 'GET' || req.method === 'HEAD' ? undefined : Buffer.concat(chunks),
+        });
+        res.writeHead(upstream.status, {
+          'content-type': upstream.headers.get('content-type') ?? 'application/json',
+          'access-control-allow-origin': '*',
+        });
+        res.end(Buffer.from(await upstream.arrayBuffer()));
+      };
+      forward().catch((err) => {
+        res.writeHead(502);
+        res.end(String(err));
+      });
+    });
+    server.listen(0, '127.0.0.1', () =>
+      resolve({ base: `http://127.0.0.1:${server.address().port}`, close: () => server.close() }),
+    );
+  });
+}
+
+/** Point the extension at a different server, from a page that has `chrome`. */
+export async function useServer(context, serverUrl) {
+  const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+  const page = await context.newPage();
+  await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
+  await page.evaluate((url) => chrome.storage.sync.set({ serverUrl: url }), serverUrl);
+  await page.close();
 }
 
 /** Locate the Chromium this environment provides. */
