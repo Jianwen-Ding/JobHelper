@@ -12,7 +12,14 @@ const FIELD_PATTERNS = [
   ['last_name', /\b(last[\s_-]?name|family[\s_-]?name|surname|lname)\b/i],
   ['full_name', /\b(full[\s_-]?name|your[\s_-]?name|candidate[\s_-]?name|legal[\s_-]?name)\b/i],
   ['email', /\b(e-?mail)\b/i],
-  ['phone', /\b(phone|mobile|telephone|cell)\b/i],
+  /*
+   * "Number" on its own is far too broad — requisition number, employee
+   * number, number of years of experience — but the enterprise systems rarely
+   * say "phone" at all: Taleo asks for a "Primary Number", and its siblings
+   * are "Home Number" and "Mobile Number". So it counts only behind a word
+   * that makes it a telephone.
+   */
+  ['phone', /\b(phone|mobile|telephone|cell)\b|\b(primary|contact|day(?:time)?|home|work|alternate)[\s_-]*number\b/i],
   ['linkedin', /\b(linked-?in)\b/i],
   ['github', /\b(git-?hub)\b/i],
   ['website', /\b(website|portfolio|personal[\s_-]?site|homepage)\b/i],
@@ -21,8 +28,15 @@ const FIELD_PATTERNS = [
   ['major', /\b(major|discipline|field[\s_-]?of[\s_-]?study)\b/i],
   ['gpa', /\bgpa\b/i],
   ['address_city', /\b(city|town)\b/i],
-  ['address_state', /\b(state|province|region)\b/i],
+  /*
+   * Country before state, because the first pattern to match wins and
+   * "Country/Region" — which is what SuccessFactors, Workday and most of the
+   * enterprise systems call the field — matches `region`. It was being filled
+   * with a state, finding no such option, and reporting that the country had
+   * no matching option while leaving a required field empty.
+   */
   ['address_country', /\b(country)\b/i],
+  ['address_state', /\b(state|province|region)\b/i],
   ['location', /\b(location|where.*based)\b/i],
   /*
    * `\w*` where a stem was truncated. These two read as if they matched
@@ -76,10 +90,24 @@ function labelFor(input) {
     if (text && text.length < 160) return text;
   }
 
-  // Last resort: a container holding this field and nothing else fillable.
-  const group = input.closest('div,fieldset,li,p');
-  if (group && group.querySelectorAll('input, textarea, select').length === 1) {
-    const heading = group.querySelector('label,legend,.label,[class*="label"]');
+  /*
+   * Last resort: the nearest ancestor holding this field and nothing else
+   * fillable.
+   *
+   * Climbing is the point. This looked in one container and gave up, which
+   * misses the two shapes that matter most in practice: Lever wraps the field
+   * in its own div and puts the question in a sibling div above it, and Taleo
+   * lays the form out as a table with the label in the cell before. In both,
+   * the label is nowhere near the box the field sits in — it is one level up.
+   *
+   * "Nothing else fillable" is what keeps this safe: the moment an ancestor
+   * holds a second field, it is the form rather than this field's own group,
+   * and whatever label it holds belongs to something else.
+   */
+  let group = input.parentElement;
+  for (let i = 0; i < 4 && group; i++, group = group.parentElement) {
+    if (group.querySelectorAll('input:not([type=hidden]), textarea, select').length !== 1) break;
+    const heading = group.querySelector('label,legend,th,.label,[class*="label"]');
     if (heading && !heading.contains(input)) return clean(heading.textContent);
   }
   return '';
@@ -205,7 +233,47 @@ export function fillForm(fields, { overwrite = false } = {}) {
     filled.push({ key, value });
   }
 
-  return { filled, skipped };
+  return { filled, skipped: [...skipped, ...unfillableChoices(fields, filled)] };
+}
+
+/**
+ * Choices that are not form controls at all.
+ *
+ * Workday's dropdowns — and the react-select widgets half the other systems
+ * have moved to — are a button that opens a listbox. There is nothing to set a
+ * value on, and driving them means synthesising clicks against markup that
+ * changes between releases, which is exactly the kind of guessing that fills a
+ * form wrongly.
+ *
+ * So they are not filled. But they were also not mentioned, which is worse:
+ * the report said everything it could do was done, the form looked handled,
+ * and the required country dropdown was still empty at the bottom of page
+ * three. Naming them costs nothing and is the difference between "done" and
+ * "done silently wrong".
+ */
+function unfillableChoices(fields, filled) {
+  const already = new Set(filled.map((f) => f.key));
+  const found = [];
+
+  for (const widget of document.querySelectorAll(
+    '[role="combobox"], [aria-haspopup="listbox"], [role="listbox"]',
+  )) {
+    if (widget instanceof HTMLSelectElement) continue;
+    if (widget.getClientRects().length === 0) continue;
+
+    const description = describeField(widget);
+    if (!description) continue;
+
+    const match = FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key] && !already.has(key));
+    if (!match) continue;
+    found.push({
+      key: match[0],
+      reason: 'this one has to be picked by hand',
+      description: description.slice(0, 60),
+    });
+    already.add(match[0]);
+  }
+  return found;
 }
 
 /** Marks a field so the card can point back at it later. */

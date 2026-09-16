@@ -46,7 +46,16 @@ describe('two addresses on one site', () => {
 
   it('does not join two different jobs on a board', () => {
     assert.equal(relatedPath('https://linkedin.com/jobs/view/1', 'https://linkedin.com/jobs/view/2'), false);
-    assert.equal(relatedPath('https://indeed.com/viewjob?jk=a', 'https://indeed.com/viewjob?jk=b'), true, 'same path, different query');
+    // Every Indeed posting is /viewjob; which one it is lives entirely in the
+    // query. This asserted `true` — inside a test called "does not join two
+    // different jobs" — so reading one posting and then the next wrote the
+    // second up as the first.
+    assert.equal(relatedPath('https://indeed.com/viewjob?jk=a', 'https://indeed.com/viewjob?jk=b'), false);
+  });
+
+  it('ignores the query when it says nothing about which job this is', () => {
+    assert.equal(relatedPath('https://x.com/acme/8f21', 'https://x.com/acme/8f21?utm_source=board'), true);
+    assert.equal(relatedPath('https://x.com/acme/8f21?gh_jid=9', 'https://x.com/acme/8f21?gh_jid=9&src=ad'), true);
   });
 
   it('joins two steps of one form', () => {

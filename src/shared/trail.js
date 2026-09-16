@@ -42,7 +42,64 @@ const segments = (p) => p.split('/').filter(Boolean);
  * one of many jobs". Two sibling paths under `/apply/` are two steps of one
  * form; two siblings under `/jobs/` are two different jobs.
  */
-const STEP_WORDS = /^(apply|application|applications|form|step|steps|questions|submit|details|profile|review)$/i;
+const STEP_WORDS =
+  /^(apply|applynow|applymanually|application|applications|form|step|steps|questions|submit|details|profile|review)$/i;
+
+/**
+ * Segments that mean a step only at the end of a path that is already a
+ * posting's. `/o/platform-engineer/c/new` is Recruitee's form; `/jobs/new` on
+ * its own is a listing of new jobs, so these never decide a sibling.
+ */
+const STEP_TAIL = /^(new|start|begin|continue|resume|upload|confirm)$/i;
+
+/**
+ * Segments that carry no meaning of their own. Every system seems to have one:
+ * Workable's `/j/`, Breezy's `/p/`, Recruitee's `/o/` and `/c/`.
+ */
+const CONTAINER = /^[a-z]{1,2}$/i;
+
+/**
+ * The segment without its file extension.
+ *
+ * Taleo's steps are files rather than paths — `jobdetail.ftl` becomes
+ * `application.ftl` — so without this the step that submits the application
+ * looked like a different page altogether.
+ */
+const bare = (seg) => String(seg ?? '').replace(/\.(ftl|html?|aspx?|jsp|php|do|cfm)$/i, '');
+
+/**
+ * Query parameters that say which posting this is.
+ *
+ * On plenty of systems the path is the same for every job and the identity is
+ * entirely in the query: every Indeed posting is `/viewjob`, every embedded
+ * Greenhouse board is `/embed/job_app`, every SuccessFactors job is
+ * `/careers`. Comparing paths alone made all of them one application — so
+ * reading one Indeed posting and then another wrote the second up as the
+ * first, which is the exact failure the host rules exist to prevent.
+ */
+const JOB_PARAM =
+  /^(jk|jl|jid|job|jobid|job_id|jobreqid|career_job_req_id|opportunityid|token|gh_jid|jvi|requisitionid|reqid|req|postingid|posting_id|vacancyid|currentjobid|id|oid|pid)$/i;
+
+const jobIds = (u) => {
+  const out = new Map();
+  try {
+    for (const [key, value] of new URL(u).searchParams) {
+      if (JOB_PARAM.test(key)) out.set(key.toLowerCase(), value);
+    }
+  } catch {
+    // Not an address; the caller's other rules will refuse it.
+  }
+  return out;
+};
+
+/** Two addresses that name a job, and name different ones. */
+function namesAnotherJob(a, b) {
+  const theirs = jobIds(b);
+  for (const [key, value] of jobIds(a)) {
+    if (theirs.has(key) && theirs.get(key) !== value) return true;
+  }
+  return false;
+}
 
 /**
  * Same site, and plainly the same posting on it rather than another one.
@@ -53,6 +110,10 @@ const STEP_WORDS = /^(apply|application|applications|form|step|steps|questions|s
  * `/jobs/view/2` both start `/jobs`.
  */
 export function relatedPath(a, b) {
+  // Before anything about paths: an address that names a different job is a
+  // different job, however identical the rest of it looks.
+  if (namesAnotherJob(a, b)) return false;
+
   const pa = pathOf(a);
   const pb = pathOf(b);
   if (!pa || !pb) return false;
@@ -74,16 +135,23 @@ export function relatedPath(a, b) {
   // partly from the first.
   const [shorter, longer] = sa.length <= sb.length ? [sa, sb] : [sb, sa];
   if (shorter.every((seg, i) => seg === longer[i])) {
-    // The first added segment decides; anything after it is that step's own
-    // business, which is how /8f21/apply/12345 stays one application.
-    return STEP_WORDS.test(longer[shorter.length]);
+    // The first added segment decides, once any meaningless container is out
+    // of the way; anything after it is that step's own business, which is how
+    // /8f21/apply/12345 stays one application.
+    const added = longer.slice(shorter.length).map(bare);
+    const first = added.find((seg) => !CONTAINER.test(seg));
+    return Boolean(first) && (STEP_WORDS.test(first) || STEP_TAIL.test(first));
   }
 
   // Siblings: everything matches but the last segment. Which they are depends
   // on what they are siblings under — steps of a form, or entries in a list.
   if (sa.length === sb.length && sa.slice(0, -1).every((seg, i) => seg === sb[i])) {
-    const parent = sa[sa.length - 2] ?? '';
-    return STEP_WORDS.test(parent) || STEP_WORDS.test(sa[sa.length - 1]) || STEP_WORDS.test(sb[sb.length - 1]);
+    const parent = bare(sa[sa.length - 2]);
+    return (
+      STEP_WORDS.test(parent) ||
+      STEP_WORDS.test(bare(sa[sa.length - 1])) ||
+      STEP_WORDS.test(bare(sb[sb.length - 1]))
+    );
   }
   return false;
 }
