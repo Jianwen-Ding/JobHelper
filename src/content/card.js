@@ -562,6 +562,11 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
 
     for (const c of diff) {
       const because = reasonFor.get(plainish(c.to ?? ''));
+      // `text` is a self-contained sentence, which means it repeats the place
+      // it happened — and the place is already the label above it.
+      const detail = c.where && c.text?.startsWith(`${c.where}: `)
+        ? c.text.slice(c.where.length + 2)
+        : c.text;
       const why = h('div', { className: 'why' });
       for (const k of because ?? []) why.append(h('span', { className: 'kw', textContent: k }));
 
@@ -571,7 +576,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           h('div', { className: 'ba' }, [
             c.from ? h('del', { textContent: c.from }) : null,
             c.to ? h('ins', { textContent: c.to }) : null,
-            !c.from && !c.to ? h('span', { className: 'plain', textContent: c.text }) : null,
+            !c.from && !c.to ? h('span', { className: 'plain', textContent: detail }) : null,
           ]),
           because?.length ? why : null,
         ]),

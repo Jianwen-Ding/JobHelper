@@ -170,4 +170,13 @@ export async function cleanStore(server, companies) {
       await fetch(`${server}/api/resumes/${encodeURIComponent(app.resumeId)}`, { method: 'DELETE' });
     }
   }
+
+  // Workspace drafts outlive the applications they were opened for, so they
+  // need clearing too — otherwise the next run photographs the last run's
+  // leftovers and calls it the empty state.
+  const drafts = await (await fetch(`${server}/api/workspace`)).json().catch(() => ({ drafts: [] }));
+  for (const draft of drafts.drafts ?? []) {
+    if (!companies.includes(draft.company)) continue;
+    await fetch(`${server}/api/workspace/${encodeURIComponent(draft.id)}`, { method: 'DELETE' });
+  }
 }
