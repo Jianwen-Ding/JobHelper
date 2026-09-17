@@ -56,6 +56,21 @@ const group = (name) => console.log(`\n${name}`);
 const HOST = '#jobhelper-card-host';
 const cardOf = (page) => page.locator(`${HOST} .card`);
 
+/** How many pages of the compiled resume are actually drawn in the card. */
+const drawnPages = (page) =>
+  page.evaluate(
+    () =>
+      document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelector('.pdf-pages')?.childElementCount ?? 0,
+  );
+
+/** And how tall the pane holding them is, since an empty one is not zero. */
+const paneHeight = (page) =>
+  page.evaluate(
+    () =>
+      document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelector('.pdf-pane')
+        ?.getBoundingClientRect().height ?? 0,
+  );
+
 async function settled(page) {
   await page.locator(HOST).waitFor({ state: 'attached', timeout: 25_000 });
   await page.locator(`${HOST} .card .role`).waitFor({ timeout: 25_000 });
@@ -127,6 +142,13 @@ async function main() {
       const mark = await toolbar(worker, page);
       check('the toolbar says an application is open', mark.text !== '', `badge "${mark.text}"`);
       check('and says whose it is', /helios/i.test(mark.title), mark.title);
+
+      // Built here, so there is a drawn resume to carry as well as writing.
+      const card = cardOf(page);
+      await card.getByRole('button', { name: 'Build resume' }).click();
+      await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
+      await page.waitForTimeout(1200);
+      check('the resume is drawn on the card', (await drawnPages(page)) > 0, `${await drawnPages(page)} pages`);
     }
 
     group('Following Apply to the form, and writing something');
@@ -151,6 +173,18 @@ async function main() {
       const mark = await toolbar(worker, page);
       check('the toolbar counts both pages', mark.text === '2', `badge "${mark.text}"`);
       check('and says the writing is being held', /writing is being held/i.test(mark.title), mark.title);
+
+      /*
+       * And the resume is still on screen, which it was not: drawing is
+       * asynchronous and wrote into a node the next re-render had already
+       * replaced, so the page landed somewhere detached and the guard said
+       * this compile was already shown. Walking from a posting to its form —
+       * the most ordinary step there is — left a sixteen pixel grey strip
+       * where the resume had been, with nothing to say why.
+       */
+      const drawn = await drawnPages(page);
+      check('and the resume you built is still drawn, not an empty strip', drawn > 0, `${drawn} pages`);
+      check('the pane is a page tall, not a sliver', (await paneHeight(page)) > 100, `${await paneHeight(page)}px`);
     }
 
     group('Leaving for a page that has nothing to do with it');

@@ -442,6 +442,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     /** Which compiled PDF is on screen, and the canvases already drawn. */
     shownPdf: null,
     pdfPages: new Map(),
+    /** Why the last one could not be drawn, if it could not. */
+    pdfError: null,
   };
 
   /**
@@ -1067,7 +1069,34 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     const pages = h('div', { className: 'pdf-pages' });
     const pane = h('div', { className: 'pdf-pane' }, [pages]);
 
-    // Redraw whenever a new compile lands, not on every re-render.
+    // Already drawn once: reuse the bitmap so a re-render does not refetch.
+    const cached = state.pdfPages.get(state.render.pdfUrl);
+    if (cached) {
+      pane.replaceChildren(cached.cloneNode(true));
+      return pane;
+    }
+    if (state.pdfError?.url === state.render.pdfUrl) {
+      pane.append(h('div', { className: 'hint', textContent: `Could not draw the resume: ${state.pdfError.message}` }));
+      return pane;
+    }
+
+    /*
+     * Fetch and draw, once per compile.
+     *
+     * `shownPdf` is the guard against a re-render refetching, and it used to
+     * be the only one — which left the pane permanently empty on the most
+     * ordinary step there is. Drawing is asynchronous and writes into the
+     * node captured here; a re-render during the fetch replaces that node,
+     * so the bitmap landed somewhere detached, and the guard then said this
+     * url was already shown and nothing ever drew it again. Walking from the
+     * posting to its application form re-renders several times while the
+     * card restores, so the resume simply vanished on arrival — a sixteen
+     * pixel grey strip where the page had been, with nothing to say why.
+     *
+     * The bitmap cache above is the real test of "already drawn", so what is
+     * left to do here is put it on screen: if the node we drew into is no
+     * longer connected, ask for one more render.
+     */
     if (state.shownPdf !== state.render.pdfUrl) {
       const wanted = state.render.pdfUrl;
       state.shownPdf = wanted;
@@ -1081,14 +1110,15 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           // Each of these is a page-sized bitmap. Keeping one per compile
           // meant a session of small edits quietly holding a dozen of them.
           for (const old of [...state.pdfPages.keys()].slice(0, -2)) state.pdfPages.delete(old);
+          if (!pages.isConnected) draw();
         } catch (err) {
-          pane.append(h('div', { className: 'hint', textContent: `Could not draw the resume: ${err.message}` }));
+          // Kept in state rather than appended: appending to a node a
+          // re-render has already replaced says it to nobody.
+          state.pdfError = { url: wanted, message: err.message };
+          if (!pane.isConnected) draw();
+          else pane.append(h('div', { className: 'hint', textContent: `Could not draw the resume: ${err.message}` }));
         }
       })();
-    } else {
-      // Already drawn once; reuse it so a re-render does not refetch.
-      const cached = state.pdfPages.get(state.render.pdfUrl);
-      if (cached) pane.replaceChildren(cached.cloneNode(true));
     }
 
     return pane;
