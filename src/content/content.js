@@ -427,7 +427,22 @@
           spec: payload.spec,
           // Including a letter box that is in a frame rather than this page.
           coverLetterRequired: wantsCoverLetter() || letterInFrame,
-          questions: (payload.questions ?? []).map((q) => ({ question: q.question, required: q.required })),
+          /*
+           * With what has already been written, not only what was asked.
+           *
+           * The button says it hands over "the posting, the resume, and the
+           * questions", and it did exactly that: the answers and the letter
+           * typed into the card stayed behind. The editor then filled the
+           * boxes from the answer bank or left them empty, so following the
+           * invitation to go and write there meant abandoning what was already
+           * written — while the card on the other tab still held it.
+           */
+          coverLetter: payload.coverLetter ?? undefined,
+          questions: (payload.questions ?? []).map((q) => ({
+            question: q.question,
+            required: q.required,
+            answer: q.answer || undefined,
+          })),
         });
         await send('openTab', { url: result.absoluteUrl });
         return result;

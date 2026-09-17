@@ -451,15 +451,27 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     draw();
   }
 
-  /** An answer typed on an earlier page, against the same question here. */
+  /**
+   * An answer typed on an earlier page, against the same question here.
+   *
+   * The guard used to refuse when the answer bank had matched the question too
+   * — `!q.answer?.trim()` — which is precisely backwards. A question the bank
+   * knows is one you have answered before, so it is exactly the question you
+   * rewrote for this company on page one; and page two would show the bank's
+   * older text instead, while the trail panel said "Carried over: your
+   * answers". Worse, nothing was written into `state.answers`, so the bundle
+   * left the question out altogether.
+   *
+   * What you typed for this application beats what the bank remembers from
+   * another one. It is only not applied over something typed here, on this
+   * page, which is newer still.
+   */
   function applyCarriedAnswers() {
     const carried = state.carriedOver;
     if (!carried) return;
     for (const q of state.questions ?? []) {
       const had = carried[q.question];
-      if (had && !state.answers[q.question]?.trim() && !q.answer?.trim()) {
-        state.answers[q.question] = had;
-      }
+      if (had && !state.answers[q.question]?.trim()) state.answers[q.question] = had;
     }
   }
 
@@ -955,10 +967,38 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * the reference for next time.
    */
   function draftLetter() {
+    /*
+     * What is in the box when the draft was asked for.
+     *
+     * A draft can start itself — the form page wants a letter, so one is
+     * requested the moment the card goes up — and `restoreWork` puts the
+     * letter you wrote on the *previous* page into the box a few lines later.
+     * The reply then landed on top of it unconditionally. With the AI off,
+     * which is the default, that reply is an empty body, so the box went
+     * blank and the card explained that the AI is off: it read as an ordinary
+     * empty state rather than as the deletion it was.
+     *
+     * Nothing the AI produces is worth a paragraph somebody wrote.
+     */
+    const mine = state.letter ?? '';
+
     return act('coverLetter', { spec: state.spec }, (r) => {
       if (!r) return;
       state.priorLetters = r.priorLetters ?? [];
       state.letterStarted = true;
+
+      if (mine.trim() && mine !== (state.letter ?? '')) {
+        // Typed while the draft was out. Theirs is the one that stays.
+        state.letterSource = 'You were writing while this ran, so what you wrote was kept.';
+        return;
+      }
+      if (mine.trim()) {
+        state.letterOffer = r.body?.trim() ? { title: 'the draft', body: r.body } : state.priorLetters[0] ?? null;
+        state.letterSource = state.letterOffer
+          ? 'You had already started one, so this is offered rather than used.'
+          : 'You had already started one, so nothing was replaced.';
+        return;
+      }
 
       if (r.body?.trim()) {
         state.letter = r.body;
@@ -1338,10 +1378,29 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     return `${parts.join(', ')}.`;
   }
 
+  /**
+   * Every answer the card is showing, which is not the same as every answer
+   * the user typed.
+   *
+   * Text matched out of the answer bank lives on the question (`q.answer`) and
+   * is only read at render time, with `state.answers[q] ?? q.answer`. Walking
+   * `state.answers` alone therefore shipped nothing for a question that was
+   * answered from the bank and left as it stood — which is the whole point of
+   * having a bank. Those questions were simply absent from the uploadable
+   * Answers file and from the permanent record of what was sent, while every
+   * box on screen was full.
+   */
   function collectedAnswers() {
-    return Object.entries(state.answers)
-      .filter(([, v]) => v?.trim())
-      .map(([question, answer]) => ({ question, answer }));
+    const out = new Map();
+    for (const q of state.questions ?? []) {
+      const answer = state.answers[q.question] ?? q.answer ?? '';
+      if (answer.trim()) out.set(q.question, answer);
+    }
+    // Questions typed in by hand are in `state.answers` and on no page.
+    for (const [question, answer] of Object.entries(state.answers)) {
+      if (answer?.trim()) out.set(question, answer);
+    }
+    return [...out].map(([question, answer]) => ({ question, answer }));
   }
 
   /**
@@ -1368,9 +1427,22 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           title: 'Hand the posting, the resume, and the questions to the editor, where there is room to write',
           disabled: Boolean(state.busy),
           onclick: () =>
-            act('openWorkspace', { spec: state.spec, questions: state.questions }, (r) => {
-              if (r) state.workspaceOpened = true;
-            }),
+            act(
+              'openWorkspace',
+              {
+                spec: state.spec,
+                // What is on screen, not what the page asked: an answer typed
+                // here and left behind is an answer written twice.
+                questions: (state.questions ?? []).map((q) => ({
+                  ...q,
+                  answer: state.answers[q.question] ?? q.answer ?? '',
+                })),
+                coverLetter: state.letter ?? '',
+              },
+              (r) => {
+                if (r) state.workspaceOpened = true;
+              },
+            ),
         }),
         state.workspaceOpened
           ? h('span', { className: 'faint', textContent: 'Opened in the editor.' })
@@ -1400,30 +1472,49 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             disabled: !q.fieldId,
             onclick: () => onAction('insertAnswer', { fieldId: q.fieldId, text: state.answers[q.question] ?? value }),
           }),
-          aiButton({
-            className: 'tiny',
-            disabled: Boolean(state.busy),
-            onclick: () =>
-              act(`answer:${q.question}`, { question: q.question, force: true }, (r) => {
-                /*
-                 * `executed` first, not `output` first.
-                 *
-                 * When the AI is off the server used to hand back the prompt it
-                 * would have sent, in `output` — always truthy, so the second
-                 * branch was dead and the answer box filled with nine kilobytes
-                 * starting "You are helping with a resume and job-search
-                 * assistant", carrying every cover letter the user had saved
-                 * and their whole writing corpus. One more click put that in
-                 * the employer's form. The server no longer sends it here, and
-                 * this no longer reaches for it either.
-                 */
-                if (r?.executed && r.output) state.answers[q.question] = r.output;
-                else if (r && !r.executed) {
-                  state.error = 'The AI is off, so a new answer cannot be drafted. Anything you type here is saved for next time.';
-                }
+          aiButton(
+            {
+              className: 'tiny',
+              disabled: Boolean(state.busy),
+              onclick: () => {
+                // What is in the box now, so the reply can tell its own work
+                // from anything written during the minutes it takes.
+                const typedBefore = state.answers[q.question] ?? value;
+                return act(`answer:${q.question}`, { question: q.question, force: true }, (r) => {
+                  /*
+                   * `executed` first, not `output` first.
+                   *
+                   * When the AI is off the server used to hand back the prompt
+                   * it would have sent, in `output` — always truthy, so the
+                   * second branch was dead and the answer box filled with nine
+                   * kilobytes starting "You are helping with a resume and
+                   * job-search assistant", carrying every cover letter the user
+                   * had saved and their whole writing corpus. One more click
+                   * put that in the employer's form. The server no longer sends
+                   * it here, and this no longer reaches for it either.
+                   */
+                  if (r?.executed && r.output) {
+                    /*
+                     * And not over what was typed while it ran. The box stays
+                     * enabled on purpose — the obvious thing to do with a wait
+                     * of minutes is write the answer yourself — and the reply
+                     * used to replace it outright, with no merge, no
+                     * confirmation and no copy kept.
+                     */
+                    if ((state.answers[q.question] ?? '') !== typedBefore) {
+                      state.answerNote = 'You were writing while that ran, so what you wrote was kept.';
+                    } else {
+                      state.answers[q.question] = r.output;
+                    }
+                  } else if (r && !r.executed) {
+                    state.error =
+                      'The AI is off, so a new answer cannot be drafted. Anything you type here is saved for next time.';
+                  }
+                });
               },
-            busyLabel(`answer:${q.question}`, q.answer ? 'Rewrite for this role' : 'Draft an answer', 'Writing…')),
-          }),
+            },
+            busyLabel(`answer:${q.question}`, q.answer ? 'Rewrite for this role' : 'Draft an answer', 'Writing…'),
+          ),
           h('button', {
             className: 'link',
             textContent: 'Save for next time',
