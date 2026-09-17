@@ -250,6 +250,76 @@ async function main() {
         slow.close();
       }
     }
+    /* ---------------------------------------------------------------- *
+     * The browser stops the extension's worker, as it does constantly    *
+     * ---------------------------------------------------------------- */
+
+    group('The browser stops the worker mid-application');
+    {
+      /*
+       * Chrome idle-stops an MV3 service worker after about thirty seconds
+       * of no events, and restarts it on the next one. That is not an edge
+       * case, it is the normal life of the worker — and everything this tool
+       * holds between pages lives on that side.
+       *
+       * Session storage survives it; anything kept in a variable does not.
+       * So the question is whether a letter typed before the stop is still
+       * offered after it, and whether the page notices anything at all.
+       *
+       * Forced through CDP because Chrome will not idle-stop a worker while
+       * a debugger is attached, which is exactly the condition a test runs
+       * under.
+       */
+      const page = await context.newPage();
+      const errors = [];
+      page.on('pageerror', (e) => errors.push(String(e).slice(0, 120)));
+      await page.goto(fixtures.urlFor(HELIOS_FORM), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+
+      const letter = cardOf(page).locator('textarea.tall').first();
+      await letter.fill('');
+      await page.waitForTimeout(300);
+      await letter.click();
+      await letter.pressSequentially('Written before the worker was stopped.', { delay: 6 });
+      await page.waitForTimeout(2600);
+
+      /*
+       * Marked first, so the stop can be proved rather than assumed. A
+       * variable set on the worker is gone when the worker is; if
+       * `stopAllWorkers` quietly did nothing, this whole group would pass
+       * while testing nothing at all.
+       */
+      const live = context.serviceWorkers()[0];
+      await live.evaluate(() => {
+        self.__stillTheSameWorker = true;
+      });
+
+      const cdp = await context.newCDPSession(page);
+      await cdp.send('ServiceWorker.enable').catch(() => undefined);
+      await cdp.send('ServiceWorker.stopAllWorkers').catch(() => undefined);
+      await page.waitForTimeout(1500);
+
+      // Something that has to go through the worker, which wakes it again.
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await settled(page);
+      await page.waitForTimeout(1500);
+
+      const revived = context.serviceWorkers()[0];
+      const stillMarked = await revived
+        .evaluate(() => Boolean(self.__stillTheSameWorker))
+        .catch(() => false);
+      check('the worker really was stopped and came back', !stillMarked);
+
+      const after = await cardOf(page).locator('textarea.tall').first().inputValue();
+      check(
+        'the letter survives the worker being killed',
+        /written before the worker was stopped/i.test(after),
+        after.slice(0, 60),
+      );
+      check('the card comes back at all', (await cardOf(page).count()) > 0);
+      check('and the page is told nothing about it', errors.length === 0, errors.join('; '));
+      await page.close();
+    }
   } finally {
     if (doomed) doomed.kill();
     await context.close();
