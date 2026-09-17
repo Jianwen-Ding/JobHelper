@@ -1466,6 +1466,20 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
               ),
           }),
         ]),
+        /*
+         * Why the button beside this is grey.
+         *
+         * The reason was a `title` on the button itself, and a tooltip on a
+         * disabled button is the one place a tooltip cannot be relied on —
+         * browsers differ on whether they show it at all, and it needs
+         * hovering a control that looks like it does nothing. On a posting
+         * the base resume already suits, "Save application folder" sits
+         * there greyed with no visible reason, which reads as broken rather
+         * than as one step out of order.
+         */
+        !state.render && !state.busy
+          ? h('div', { className: 'hint', textContent: 'Build the resume first — then the files can be named and filed.' })
+          : null,
         state.autofillReport
           ? h('div', {
               className: 'ok-note',
