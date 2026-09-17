@@ -365,28 +365,14 @@ async function main() {
     await gui.locator('#modal-cancel').click();
 
     /*
-     * A resume that cannot compile. The message here is the only thing
-     * standing between a broken LaTeX install and "the button does nothing",
-     * and nothing had ever looked at it.
+     * A resume that cannot compile.
+     *
+     * Not by writing a broken one — a made-up field in a resume's layout
+     * compiles perfectly happily, which is its own small reassurance. The way
+     * it actually happens is an engine named in the settings that is not
+     * installed, and that is driven in `tests/fit.test.ts`, which can assert
+     * the sentence rather than photograph it.
      */
-    await api('/api/resumes/shot-broken', {
-      method: 'PUT',
-      body: JSON.stringify({
-        id: 'shot-broken',
-        label: 'Broken demo',
-        extends: 'newgrad',
-        // A control sequence that does not exist, in the one place the
-        // escaping deliberately does not reach.
-        layout: { marginIn: 0.5, preamble: '\\thisCommandDoesNotExist' },
-      }),
-    });
-    await gui.reload({ waitUntil: 'networkidle' });
-    await gui.waitForTimeout(2500);
-    await gui.locator('#resume-select').selectOption('shot-broken').catch(() => undefined);
-    await gui.waitForTimeout(8000);
-    await shot(gui, 'rmm-30-compile-failed');
-    await gui.locator('#resume-select').selectOption('newgrad').catch(() => undefined);
-    await gui.waitForTimeout(3000);
 
     // Narrow viewport: the editor is used beside a browser window as often as
     // full screen.
