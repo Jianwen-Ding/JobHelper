@@ -166,7 +166,8 @@ the default port.
 | `test:trail` | Which pages belong to one application, in isolation |
 | `test:ats` | Classifying the shapes real boards serve |
 | `test:autofill` | Filling forms, including comboboxes, shadow roots and frames |
-| `test:ats-forms` | The form quirks of Greenhouse, Lever, Ashby, Workday |
+| `test:ats-forms` | Autofill against thirteen systems' real form markup |
+| `test:ats-journey` | The whole path — detect, build, fill, file — on each of them |
 | `test:card` | Typing in the card while it repaints under you |
 | `test:quiet` | False positives: pages that must get no card at all |
 | `test:joins` | Two postings open at once staying two |

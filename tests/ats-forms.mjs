@@ -60,7 +60,14 @@ const PROFILE = {
  * field's selector to the value that must end up in it; `questions` is the
  * long-form questions that must be offered.
  */
-const SYSTEMS = [
+/*
+ * Exported so the same thirteen shapes can be walked end to end with the
+ * extension loaded, in `ats-journey.mjs`. This file drives `fillForm`
+ * directly, which answers "does autofill understand this markup"; it does not
+ * answer "does the whole thing work on a Greenhouse form", and those are
+ * different questions.
+ */
+export const SYSTEMS = [
   {
     name: 'Greenhouse',
     html: `
