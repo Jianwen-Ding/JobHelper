@@ -348,6 +348,9 @@ select {
   100% { transform: translateX(110%) scaleX(.1); }
 }
 .progress-label { font-size: 11px; color: var(--muted); margin-top: -3px; margin-bottom: 6px; }
+/* The clock, quieter than the label and only there once there is one. */
+.progress-label .elapsed { margin-left: 6px; font-variant-numeric: tabular-nums; color: var(--faint); }
+.progress-label .elapsed:empty { display: none; }
 
 /* The compiled resume, drawn in the card: a page you can actually look at,
    on the tab you are already on. */
@@ -439,6 +442,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     /** Which compiled PDF is on screen, and the canvases already drawn. */
     shownPdf: null,
     pdfPages: new Map(),
+    /** Why the last one could not be drawn, if it could not. */
+    pdfError: null,
   };
 
   /**
@@ -605,9 +610,12 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * the other was still thinking.
    */
   const running = new Set();
+  /** When each in-flight action started, so the card can say how long. */
+  const startedAt = new Map();
 
   async function act(action, payload, apply) {
     running.add(action);
+    startedAt.set(action, Date.now());
     state.busy = action;
     state.error = null;
     state.errorFix = null;
@@ -623,6 +631,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       return null;
     } finally {
       running.delete(action);
+      startedAt.delete(action);
       // Keep showing progress for whatever is still going.
       state.busy = [...running].pop() ?? null;
       draw();
@@ -818,9 +827,38 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     const entry = WORKING[state.busy];
     if (!entry || entry[0] !== step) return null;
     const label = running.has('rebuild') && state.rebuilding === 'ai' ? 'Reading the posting…' : entry[1];
+
+    /*
+     * And how long it has been going.
+     *
+     * An indeterminate bar animates whether or not anything is happening, so
+     * after the first half-minute of an AI pass it stops being reassurance
+     * and starts being the thing you are trying to decide about. A count of
+     * seconds moves for a real reason, and it answers the actual question:
+     * has this hung, or is it just slow?
+     *
+     * Ticked in place rather than through `draw()`, which rebuilds the whole
+     * subtree and would take the caret out of whatever box is being typed
+     * into once a second — see the repaint case in tests/card.mjs. And held
+     * back for a moment, because a keyword match finishes in a third of a
+     * second and a clock that flashes 0:00 is noise.
+     */
+    const since = startedAt.get(state.busy) ?? Date.now();
+    const clock = h('span', { className: 'elapsed' });
+    const tick = () => {
+      const s = Math.round((Date.now() - since) / 1000);
+      clock.textContent = s < 2 ? '' : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    };
+    tick();
+    const timer = setInterval(() => {
+      // The card redraws often; a bar that has been replaced stops counting.
+      if (!clock.isConnected) clearInterval(timer);
+      else tick();
+    }, 1000);
+
     return h('div', {}, [
       h('div', { className: 'progress', role: 'progressbar', 'aria-label': label }),
-      h('div', { className: 'progress-label', textContent: label }),
+      h('div', { className: 'progress-label' }, [h('span', { textContent: label }), clock]),
     ]);
   }
 
@@ -1031,7 +1069,34 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     const pages = h('div', { className: 'pdf-pages' });
     const pane = h('div', { className: 'pdf-pane' }, [pages]);
 
-    // Redraw whenever a new compile lands, not on every re-render.
+    // Already drawn once: reuse the bitmap so a re-render does not refetch.
+    const cached = state.pdfPages.get(state.render.pdfUrl);
+    if (cached) {
+      pane.replaceChildren(cached.cloneNode(true));
+      return pane;
+    }
+    if (state.pdfError?.url === state.render.pdfUrl) {
+      pane.append(h('div', { className: 'hint', textContent: `Could not draw the resume: ${state.pdfError.message}` }));
+      return pane;
+    }
+
+    /*
+     * Fetch and draw, once per compile.
+     *
+     * `shownPdf` is the guard against a re-render refetching, and it used to
+     * be the only one — which left the pane permanently empty on the most
+     * ordinary step there is. Drawing is asynchronous and writes into the
+     * node captured here; a re-render during the fetch replaces that node,
+     * so the bitmap landed somewhere detached, and the guard then said this
+     * url was already shown and nothing ever drew it again. Walking from the
+     * posting to its application form re-renders several times while the
+     * card restores, so the resume simply vanished on arrival — a sixteen
+     * pixel grey strip where the page had been, with nothing to say why.
+     *
+     * The bitmap cache above is the real test of "already drawn", so what is
+     * left to do here is put it on screen: if the node we drew into is no
+     * longer connected, ask for one more render.
+     */
     if (state.shownPdf !== state.render.pdfUrl) {
       const wanted = state.render.pdfUrl;
       state.shownPdf = wanted;
@@ -1045,14 +1110,15 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           // Each of these is a page-sized bitmap. Keeping one per compile
           // meant a session of small edits quietly holding a dozen of them.
           for (const old of [...state.pdfPages.keys()].slice(0, -2)) state.pdfPages.delete(old);
+          if (!pages.isConnected) draw();
         } catch (err) {
-          pane.append(h('div', { className: 'hint', textContent: `Could not draw the resume: ${err.message}` }));
+          // Kept in state rather than appended: appending to a node a
+          // re-render has already replaced says it to nobody.
+          state.pdfError = { url: wanted, message: err.message };
+          if (!pane.isConnected) draw();
+          else pane.append(h('div', { className: 'hint', textContent: `Could not draw the resume: ${err.message}` }));
         }
       })();
-    } else {
-      // Already drawn once; reuse it so a re-render does not refetch.
-      const cached = state.pdfPages.get(state.render.pdfUrl);
-      if (cached) pane.replaceChildren(cached.cloneNode(true));
     }
 
     return pane;

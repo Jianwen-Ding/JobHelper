@@ -339,6 +339,58 @@ async function askFrames(tabId, message) {
   return replies.filter(Boolean);
 }
 
+/**
+ * Open a space for this application in ResumeM-M, once it is worth one.
+ *
+ * A half-finished application used to exist only here: a resume built, half
+ * a letter typed, and nothing in the editor's Workspace or its tracker to
+ * come back to. You found it again by remembering which tab it was in.
+ *
+ * `worthKeeping` is already the line between an idle card and work — a
+ * built resume, a letter, an answer — so it is the line for this too. Once
+ * per application, because the workspace endpoint merges rather than
+ * overwrites and the person may be writing in the editor at the same time;
+ * pushing the card's version over theirs every two seconds would be a way
+ * of losing their sentence, not of holding their place.
+ */
+const held = new Set();
+async function holdASpace(trail) {
+  const work = trail?.work;
+  if (!worthKeeping(work)) return;
+  /*
+   * Named by the spec, which is the only thing here that knows. A trail page
+   * carries a url, a title and markup; the company and the role are what the
+   * analysis made of them, and they come back on the proposal.
+   */
+  const company = work.spec?.generatedFor?.company;
+  const role = work.spec?.generatedFor?.role;
+  if (!company || !role) return;
+
+  const key = `${company}\u0000${role}`;
+  if (held.has(key)) return;
+  held.add(key);
+  try {
+    await serverFetch('/api/workspace', {
+      method: 'POST',
+      timeoutMs: SLOW_TIMEOUT_MS,
+      body: JSON.stringify({
+        company,
+        role,
+        url: trail.pages?.[0]?.url,
+        source: trail.pages?.[0]?.url ? new URL(trail.pages[0].url).hostname : undefined,
+        resumeId: work.spec?.id,
+        spec: work.spec,
+        coverLetterRequired: Boolean(work.letter?.trim()) || undefined,
+      }),
+    });
+  } catch {
+    // The store may not be running, which is not this save's problem: the
+    // work is already held in the browser either way. Letting it go means
+    // the next application tries again rather than this one failing twice.
+    held.delete(key);
+  }
+}
+
 /** Message handlers, one per action the content script or popup can request. */
 const handlers = {
   /** "There is a content script in this frame." Sent once, on load. */
@@ -490,6 +542,7 @@ const handlers = {
     // So the toolbar starts saying "your writing is being held" the moment it
     // is, rather than at the next page of the application.
     await markTab(tab?.id, next);
+    void holdASpace(next);
     return { ok: written !== null };
   },
 
@@ -863,6 +916,26 @@ const handlers = {
     // something. See `awaitingReturn`.
     if (typeof tab?.id === 'number') awaitingReturn.add(tab.id);
     return { id: opened.id };
+  },
+
+  /**
+   * "The form for this application was just sent."
+   *
+   * Passed straight through: what it is worth to the tracker — whether it
+   * moves anything, and never backwards — is the store's decision, and it is
+   * the only side that knows how an application is named.
+   */
+  async applicationSent({ company, role, url, note }) {
+    try {
+      return await serverFetch('/api/extension/sent', {
+        method: 'POST',
+        body: JSON.stringify({ company, role, url, note }),
+      });
+    } catch (err) {
+      // The store not running is not a reason to interrupt somebody who has
+      // just sent an application. It stays in the tracker as "applying".
+      return { ok: false, error: String(err?.message ?? err) };
+    }
   },
 
   async trackStatus({ id, status, note }) {

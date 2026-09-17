@@ -96,6 +96,58 @@ async function main() {
   check('with what was typed still in it', typing.value === 'Half a sent', String(typing.value));
   check('and the caret where it was, not at the end', typing.caret === 4, String(typing.caret));
 
+  console.log('\nSaying how long the AI has been thinking');
+
+  /*
+   * An indeterminate bar animates whether or not anything is happening, so
+   * after the first half-minute of an AI pass it stops being reassurance and
+   * becomes the thing you are trying to decide about. The clock moves for a
+   * real reason. It is held back for two seconds, because a keyword match
+   * finishes in a third of one and a clock that flashes 0:00 is noise — and
+   * it ticks in place, because redrawing the card once a second would take
+   * the caret out of whatever box is being typed into, which is the bug the
+   * block above exists for.
+   */
+  const timing = await inPage(async (createCard) => {
+    let release;
+    const held = new Promise((r) => (release = r));
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+      },
+      resumes: [{ id: 'base', label: 'New grad', base: true }],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action) => (action === 'rebuild' ? held : {}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+
+    const match = [...root.querySelectorAll('button.mode')].find((b) => /Match by keyword/.test(b.textContent));
+    if (!match) return { error: 'no match button' };
+    match.click();
+
+    const read = () => root.querySelector('.progress-label .elapsed')?.textContent ?? null;
+    await new Promise((r) => setTimeout(r, 400));
+    const early = read();
+    const bar = Boolean(root.querySelector('.progress'));
+    await new Promise((r) => setTimeout(r, 2800));
+    const later = read();
+    // And it stops when the work does, rather than counting forever.
+    release({});
+    await new Promise((r) => setTimeout(r, 1600));
+    const after = Boolean(root.querySelector('.progress'));
+    return { early, later, bar, after };
+  });
+
+  check('a bar goes up the moment the work starts', timing.bar === true, JSON.stringify(timing));
+  check('with no clock on it yet, because most work is quicker than that', timing.early === '', String(timing.early));
+  check('and a clock once it has been a while', /^\d+:\d\d$/.test(timing.later ?? ''), String(timing.later));
+  check('which clears with the work rather than counting on', timing.after === false);
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);

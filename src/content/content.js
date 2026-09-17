@@ -1016,6 +1016,156 @@
    */
   let workRestored = false;
 
+  /**
+   * Notice, roughly, that the application went out.
+   *
+   * The tracker recorded what you remembered to tell it, and nobody tells it
+   * about the last step: by the time the form is submitted the tab is already
+   * on a confirmation page and the application is behind you. So it showed
+   * every application you had started and none of the ones you had finished,
+   * which is the wrong half.
+   *
+   * Rough on purpose. From outside a portal there is no way to know an
+   * application was accepted — only that the form in front of you was sent.
+   * Two things say that, and both are worth taking: a real `submit`, and a
+   * click on a button that says Submit, because plenty of systems never fire
+   * the event at all and post the form themselves. Recorded in capture phase,
+   * since a handler that calls preventDefault and then posts by hand is the
+   * ordinary case rather than the exception.
+   *
+   * It only ever says "this went out". What that is worth to the tracker —
+   * whether it moves anything, and never backwards — is the store's decision.
+   */
+  function watchForSending() {
+    let told = false;
+    /*
+     * The words these systems end an application with.
+     *
+     * Widened against real ones rather than guessed at: Paylocity says
+     * "Submit Resume", Phenom says "Complete application", ADP says "Apply
+     * Now", Personio says "Send application", Paycom says "Submit my
+     * application". A verb and the thing it acts on, close together, covers
+     * all of them — and leaves alone the ones that share half the phrase:
+     * "Submit a question" has the verb and no object, "Apply filters" has an
+     * object and no verb, "Save draft" and "Subscribe" have neither.
+     */
+    const SENDING =
+      /\b(submit|send|complete|finish)\b[^.]{0,24}\b(application|apply|resume|cv|submission|submit)\b|^\s*(submit|apply now|send|finish)\s*$/i;
+    /*
+     * And the words that take it back.
+     *
+     * "Complete application later" is the whole phrase and the opposite act,
+     * offered near the end of every long form; "Apply to another role" and
+     * "Send application by email" are the same trick. A label that says when
+     * or where instead of now and here is not the button that ends this.
+     */
+    const NOT_YET = /\b(later|reminder|another|different|instead|by email|via email|by post|draft)\b/i;
+
+    const tell = (how) => {
+      if (told) return;
+      /*
+       * Only on the page where an application is actually sent.
+       *
+       * "Apply Now" ends the application on ADP and opens it on almost every
+       * description page there is — the same words for the opposite act. Taken
+       * anywhere, it filed every posting you so much as opened as one you had
+       * sent, which is the worst thing this could do: a job marked as done
+       * comes off the list of things to finish.
+       *
+       * `kind` is the analysis's own answer to what sort of page this is, and
+       * `application` means it has the fields and the words of a form rather
+       * than a description of a job.
+       */
+      if (analysis?.kind !== 'application') return;
+
+      const named = analysis?.spec?.generatedFor;
+      // Nothing to file it under. The card knows a posting by what the
+      // analysis made of it, and without that this is just a form.
+      if (!named?.company || !named?.role) return;
+      told = true;
+      send('applicationSent', {
+        company: named.company,
+        role: named.role,
+        url: location.href,
+        note: how,
+      }).catch(() => undefined);
+      cardHandle?.setStatus?.('Recorded as sent.');
+    };
+
+    /**
+     * Is this the application, or the other form on the page?
+     *
+     * An application page is rarely one form. There is a newsletter box, a
+     * question box, a filter panel — all real forms, all submitted, none of
+     * them the application. Listening for any submit at all marked an
+     * application as sent when somebody signed up for job alerts underneath
+     * it, which takes the job off the list of things to finish.
+     *
+     * The button that did it answers this when there is one: a submitter
+     * labelled "Subscribe" is not a submission whatever form it sits in. When
+     * a script submits the form itself there is no submitter, and then the
+     * form's own shape has to answer — an application asks for a file or for
+     * several fields, and a newsletter asks for an address.
+     */
+    const looksLikeTheApplication = (form) => {
+      if (!form || typeof form.querySelectorAll !== 'function') return false;
+      if (form.querySelector('input[type=file]')) return true;
+      const fields = [...form.querySelectorAll('input, select, textarea')].filter(
+        (el) => !['hidden', 'submit', 'button', 'image', 'reset'].includes(el.type),
+      );
+      return fields.length >= 3;
+    };
+
+    const onSubmit = (event) => {
+      const label = (event.submitter?.value || event.submitter?.textContent || '').trim();
+      if (label) {
+        if (SENDING.test(label) && !NOT_YET.test(label)) tell(`"${label.slice(0, 40)}" was pressed on the page`);
+        return;
+      }
+      if (looksLikeTheApplication(event.target)) tell('The form was submitted on the page');
+    };
+    /*
+     * A link to somewhere else is a journey, not a send.
+     *
+     * Two systems here end the application with an anchor, so anchors have to
+     * count — but the similar-jobs rail every portal carries is also anchors,
+     * offering "Apply now" for a different role, and the small print offers
+     * to take the application by email. Both said the right words and went
+     * somewhere else. An anchor that stays on this page is a button wearing
+     * the wrong element; one that leaves is a link.
+     */
+    const leavesThePage = (link) => {
+      const href = link.getAttribute('href') ?? '';
+      if (!href || href.startsWith('#') || /^javascript:/i.test(href)) return false;
+      try {
+        const to = new URL(link.href, location.href);
+        return to.origin !== location.origin || to.pathname !== location.pathname;
+      } catch {
+        // An href this cannot parse — mailto:, tel:, a custom scheme — is not
+        // a control on this form whatever else it is.
+        return true;
+      }
+    };
+
+    const onClick = (event) => {
+      const target = event.target;
+      if (!target || typeof target.closest !== 'function') return;
+      const button = target.closest('button, input[type=submit], [role=button]');
+      if (!button) return;
+      const link = target.closest('a[href]');
+      if (link && leavesThePage(link)) return;
+      const label = (button.value || button.textContent || button.getAttribute('aria-label') || '').trim();
+      if (SENDING.test(label) && !NOT_YET.test(label)) tell(`"${label.slice(0, 40)}" was pressed on the page`);
+    };
+
+    document.addEventListener('submit', onSubmit, true);
+    document.addEventListener('click', onClick, true);
+    teardown.push(() => {
+      document.removeEventListener('submit', onSubmit, true);
+      document.removeEventListener('click', onClick, true);
+    });
+  }
+
   function keepWorkSafe() {
     /*
      * `worthKeeping` is loaded once and kept, rather than awaited each time.
@@ -1321,6 +1471,7 @@
 
   watchForApplyClicks();
   keepWorkSafe();
+  watchForSending();
 
   // And once the card exists, orphaning takes it off the page: a card whose
   // buttons all throw is worse than no card.

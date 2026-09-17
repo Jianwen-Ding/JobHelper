@@ -48,10 +48,31 @@ const check = (what, ok, detail = '') => {
   console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${what}${detail ? ` — ${detail}` : ''}`);
 };
 
+/**
+ * Wait for the card to stop changing, rather than for a number of milliseconds.
+ *
+ * The card fills in as the page is read: the role first, then the company once
+ * it is worked out, then the buttons. A fixed sleep is a bet on how long that
+ * takes, and on a loaded machine it loses — the card still said "127.0.0.1"
+ * where the company goes when the test looked, and the failure read exactly
+ * like the extension getting the company wrong rather than like the test
+ * looking too early.
+ *
+ * Two identical reads half a second apart is the same claim the sleep was
+ * making, checked instead of assumed. It is also quicker when nothing is
+ * loaded, which is most of the time.
+ */
 async function settled(page) {
   await page.locator(HOST).waitFor({ state: 'attached', timeout: 25_000 });
   await page.locator(`${HOST} .card .role`).waitFor({ timeout: 25_000 });
-  await page.waitForTimeout(1800);
+  const read = () => page.locator(`${HOST} .card`).innerText().catch(() => '');
+  let last = await read();
+  for (let i = 0; i < 40; i++) {
+    await page.waitForTimeout(250);
+    const now = await read();
+    if (now && now === last) return;
+    last = now;
+  }
 }
 
 async function main() {

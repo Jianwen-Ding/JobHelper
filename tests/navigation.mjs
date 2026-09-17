@@ -84,10 +84,50 @@ const HOST = '#jobhelper-card-host';
 const cardOf = (page) => page.locator(`${HOST} .card`);
 
 /** Wait for the card to be up and to have finished its first pass. */
+/**
+ * Wait for something to turn up, rather than sleeping long enough that it
+ * probably has.
+ *
+ * A fixed sleep is wrong in both directions at once: too short and the test is
+ * flaky, too long and it is slow, and the number that fixes one makes the
+ * other worse. Waiting for the thing returns the moment it is there and only
+ * spends the whole budget when it never arrives — which is the case that was
+ * going to spend it anyway.
+ *
+ * Deliberately returns a boolean rather than throwing. Several of these
+ * questions are "does it appear at all", and a helper that threw would turn
+ * the answer into a stack trace.
+ */
+async function appears(page, selector, within) {
+  const until = Date.now() + within;
+  for (;;) {
+    if ((await page.locator(selector).count()) > 0) return true;
+    if (Date.now() >= until) return false;
+    await page.waitForTimeout(150);
+  }
+}
+
+/**
+ * Wait for the card to stop changing, rather than for a number of seconds.
+ *
+ * The card fills in as the page is read: the role first, then the company
+ * once it is worked out, then the buttons. This waited 1.8 seconds for that
+ * and then looked — a bet on how long the machine takes, made twenty-six
+ * times, which is forty-seven seconds of a two-minute suite spent sleeping.
+ * Two identical reads half a second apart is the same claim the sleep was
+ * making, checked instead of assumed.
+ */
 async function settled(page) {
   await page.locator(HOST).waitFor({ state: 'attached', timeout: 25_000 });
   await page.locator(`${HOST} .card .role`).waitFor({ timeout: 25_000 });
-  await page.waitForTimeout(1800);
+  const read = () => page.locator(`${HOST} .card`).innerText().catch(() => '');
+  let last = await read();
+  for (let i = 0; i < 40; i++) {
+    await page.waitForTimeout(250);
+    const now = await read();
+    if (now && now === last) return;
+    last = now;
+  }
 }
 
 /** Build the resume, so there is work worth losing. */
@@ -445,13 +485,19 @@ async function main() {
       const page = await context.newPage();
       const startedAt = Date.now();
       await page.goto(fixtures.urlFor(CROWDED_PAGE), { waitUntil: 'load' });
-      await settled(page);
-      await page.waitForTimeout(3000);
+      /*
+       * Measured properly. This slept three seconds first and then reported
+       * how long it had been, so the number it checked against thirty seconds
+       * was mostly its own sleep — the card could have taken twenty-five and
+       * the check would have read the same.
+       */
+      const up = await appears(page, `${HOST} .card .role`, 30_000);
       const upIn = Date.now() - startedAt;
 
       const card = cardOf(page);
-      check('the card still appears, with forty-nine frames on the page', (await card.count()) > 0);
-      check('and does not take absurdly long about it', upIn < 30_000, `${upIn}ms`);
+      check('the card still appears, with forty-nine frames on the page', up && (await card.count()) > 0);
+      check('and does not take absurdly long about it', up && upIn < 30_000, `${upIn}ms`);
+      await settled(page);
 
       const asked = await card.locator('.q').allTextContents();
       check(
@@ -466,8 +512,21 @@ async function main() {
       );
 
       await card.getByRole('button', { name: 'Autofill this form' }).click();
-      await page.waitForTimeout(6000);
-      const form = page.frames().find((f) => f.url().endsWith('/platform-engineer/form'));
+      /*
+       * Until the form has something in it, rather than for six seconds. Same
+       * assertion — the budget is spent in full when nothing happens, which is
+       * the failing case — and a working one returns as soon as it is filled.
+       */
+      const findForm = () => page.frames().find((f) => f.url().endsWith('/platform-engineer/form'));
+      const untilFilled = Date.now() + 6000;
+      while (Date.now() < untilFilled) {
+        const value = await findForm()
+          ?.evaluate(() => document.getElementById('fn')?.value ?? '')
+          .catch(() => '');
+        if (value) break;
+        await page.waitForTimeout(150);
+      }
+      const form = findForm();
       const sel = fillable([
         ['email', '#em'],
         ['first_name', '#fn'],
@@ -496,9 +555,7 @@ async function main() {
       // The fixture fills itself in after four seconds, which is ordinary for
       // a board that fetches its posting. Nothing else about the page changes:
       // same url, same tab, no navigation to notice.
-      await page.waitForTimeout(12_000);
-
-      const there = (await page.locator(HOST).count()) > 0;
+      const there = await appears(page, HOST, 12_000);
       check('the card appears once the posting arrives', there);
       if (there) {
         const role = (await cardOf(page).locator('.role').textContent())?.trim() ?? '';
@@ -512,11 +569,13 @@ async function main() {
     {
       const page = await context.newPage();
       await page.goto(fixtures.urlFor(EMBEDDED_BOARD), { waitUntil: 'load' });
-      // No `settled`: the question is whether anything appears at all, so
-      // waiting for the card would be waiting for the thing under test.
-      await page.waitForTimeout(9000);
-
-      const there = (await page.locator(HOST).count()) > 0;
+      /*
+       * Waited for with a budget rather than slept through. Those are the same
+       * assertion — the budget is spent in full when nothing appears, which is
+       * the failing case — and one of them returns in two seconds when the
+       * extension is working.
+       */
+      const there = await appears(page, HOST, 9000);
       check('the card appears even though the page itself says nothing', there);
       if (there) {
         const card = cardOf(page);
