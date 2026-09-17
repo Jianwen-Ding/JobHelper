@@ -126,8 +126,78 @@ function summarise(out) {
 
 const clock = (ms) => `${(ms / 1000).toFixed(1)}s`;
 
+/**
+ * The two things this whole arrangement assumes, asked out loud.
+ *
+ * Running several suites at once is safe for exactly two reasons: every server
+ * is running the same code, and no two of them are writing to the same store.
+ * Neither was ever checked, and both turned out to be false.
+ *
+ * A server keeps serving whatever it loaded at start: `tsx` compiles once and
+ * `dist/` is a snapshot, so a process left running from this morning answers
+ * the way this morning's code did. A suite failed here for sixty seconds on a
+ * feature that worked, because one server in its pool predated the feature and
+ * quietly did the old thing instead.
+ *
+ * And the store: `rmm serve --data <folder>` accepted the flag and ignored it,
+ * so three servers each given their own copy of a store were in fact three
+ * servers writing to the one real save — the exact collision the pool exists
+ * to avoid, and the user's actual data besides. `/health` says which folder it
+ * opened, so this asks rather than assumes.
+ *
+ * One request each, before anything starts.
+ */
+async function poolAgrees() {
+  const servers = await Promise.all(
+    pool.map(async (server) => {
+      try {
+        const res = await fetch(`${server}/health`);
+        const { build, ok, dataDir } = await res.json();
+        return { server, build: ok ? (build ?? 'unknown') : 'not ok', dataDir: dataDir ?? null };
+      } catch (err) {
+        return { server, build: `unreachable: ${(err && err.message) || err}`, dataDir: null };
+      }
+    }),
+  );
+
+  const builds = [...new Set(servers.map((s) => s.build))];
+  if (builds.length > 1 || /unreachable|not ok|unknown/.test(builds[0])) {
+    return [
+      'The servers in the pool are not all running the same build:',
+      ...servers.map((s) => `  ${s.server}  ${s.build}`),
+      '',
+      'A server keeps serving whatever it loaded at start, so a leftover process',
+      'answers the way its code did when it started. Restart them and try again.',
+      // "unknown" is an older server that predates this check, which is itself
+      // the situation the check exists for.
+      builds.includes('unknown') ? 'One of them is too old to say which build it is, which is its own answer.' : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  const shared = servers.filter((s, i) => s.dataDir && servers.findIndex((o) => o.dataDir === s.dataDir) !== i);
+  if (shared.length) {
+    return [
+      'Two servers in the pool have the same save open:',
+      ...servers.map((s) => `  ${s.server}  ${s.dataDir ?? 'not saying'}`),
+      '',
+      'Suites build resumes and bundles and then check the save was left as they',
+      'found it, so two sharing one do not run slower — they fail each other.',
+      'Give each server its own copy: rmm serve --port N --data /tmp/store-N.',
+    ].join('\n');
+  }
+  return null;
+}
+
 async function main() {
   const started = Date.now();
+
+  const disagreement = await poolAgrees();
+  if (disagreement) {
+    console.error(disagreement);
+    process.exit(2);
+  }
 
   // First, and alone. A syntax error makes every suite below fail
   // identically and none of them says why — see tests/parse.mjs.
