@@ -733,7 +733,13 @@
      */
     const carried = await send('takeWork', { page: pageIdentity() }).catch(() => ({ work: null }));
     if (!current()) return;
-    if (carried?.work) cardHandle?.restoreWork(carried.work);
+    if (carried?.work) {
+      cardHandle?.restoreWork(carried.work);
+      // Say so when it came from a tab that was closed rather than from the
+      // page before: finding your letter back without being told is its own
+      // kind of unsettling.
+      if (carried.recovered) cardHandle?.setStatus('Recovered what you had written before this tab closed.');
+    }
 
     // Taken once, and already trimmed: the same page is both what was just
     // analysed and what the next page will be written from.

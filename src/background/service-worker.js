@@ -129,6 +129,13 @@ const session = () => chrome.storage.session ?? chrome.storage.local;
  */
 const trailKey = (tabId) => (tabId === undefined ? TRAIL_KEY : `${TRAIL_KEY}:${tabId}`);
 
+/**
+ * Where the writing from a closed tab waits, keyed by the page it was on
+ * rather than by the tab it was in — a reopened tab has a new id and would
+ * never find it otherwise.
+ */
+const orphanKey = (url) => `jh-orphan:${String(url).split('#')[0]}`;
+
 /*
  * Whether a trail is still current is a question about when, not about how
  * many pages it holds. Keyed off `pages.length`, a record with work in it and
@@ -397,7 +404,20 @@ const handlers = {
   async takeWork({ page }, tab) {
     await inheritIfNew(tab?.id, tab?.openerTabId);
     const trail = await readTrail(tab?.id);
+    if (page && sameApplication(trail, page) && trail.work) return { work: trail.work };
     if (page && !sameApplication(trail, page)) return { work: null };
+
+    /*
+     * Nothing in this tab. A tab closed on this same page may have left its
+     * writing behind — Ctrl+Shift+T gives the reopened page a new tab id, so
+     * the only thing the two have in common is the address.
+     */
+    const key = orphanKey(page?.url ?? '');
+    const rescued = page?.url ? (await session().get(key))[key] : null;
+    if (rescued?.work && Date.now() - (rescued.at ?? 0) < TRAIL_STALE_MS) {
+      await session().remove(key).catch(() => undefined);
+      return { work: rescued.work, recovered: true };
+    }
     return { work: trail.work ?? null };
   },
 
@@ -766,8 +786,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-// A closed tab cannot come back, and session storage has a quota.
-chrome.tabs?.onRemoved?.addListener((tabId) => {
+/*
+ * A closed tab, and what is worth keeping from it.
+ *
+ * This used to remove the trail outright, on the reasoning that a closed tab
+ * cannot come back. The tab cannot; the work can, and it is the part that took
+ * an hour — a cover letter and three answers, gone because a tab was closed by
+ * accident. Ctrl+Shift+T reopens the page under a *new* tab id, so the trail
+ * keyed by the old one was unreachable even though it was still there.
+ *
+ * The pages are dropped, because they are the bulk and they can be read again
+ * by visiting the page. What was written is kept under the url instead, where
+ * a reopened tab can find it, and it ages out on the same clock as everything
+ * else in session storage — which is emptied when the browser closes anyway.
+ */
+chrome.tabs?.onRemoved?.addListener(async (tabId) => {
+  try {
+    const trail = await readTrail(tabId);
+    const url = trail.pages?.[trail.pages.length - 1]?.url;
+    if (trail.work && url) {
+      await session().set({ [orphanKey(url)]: { work: trail.work, at: Date.now() } });
+    }
+  } catch {
+    // Storage full, or the trail already gone. Losing the rescue copy is not
+    // worth failing the cleanup that follows.
+  }
   session().remove([trailKey(tabId), framesKey(tabId)]).catch(() => undefined);
 });
 
