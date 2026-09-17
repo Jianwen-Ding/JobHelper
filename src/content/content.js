@@ -365,6 +365,28 @@
   const IN_FRAME_ID = /^f(\d+)~(.+)$/;
   const inFrameId = (frameId, fieldId) => `f${frameId}~${fieldId}`;
 
+
+  /**
+   * What to call an application whose employer could not be read.
+   *
+   * "Unknown" is not an answer. It went into the Workspace list as the name
+   * of the application, so a board that never says who is hiring — which is
+   * most of the bare application forms on the web — produced an entry
+   * reading "Unknown / Apply", sitting among the real ones, identifying
+   * nothing. Two of those and you cannot tell them apart at all.
+   *
+   * The host is the one thing always known and always recognisable: you were
+   * just there. It is a placeholder either way, but it is a true one, and it
+   * is the one that tells you which application this is.
+   */
+  const whoIsHiring = () => {
+    try {
+      return new URL(location.href).hostname.replace(/^www\./, '');
+    } catch {
+      return 'Unknown';
+    }
+  };
+
   async function onAction(action, payload = {}) {
     if (action.startsWith('answer:')) {
       // With the job, like every other drafting call. Without it the prompt
@@ -419,7 +441,7 @@
       case 'openWorkspace': {
         const { wantsCoverLetter } = await imports.autofill();
         const result = await send('openWorkspace', {
-          company: analysis.job.company ?? 'Unknown',
+          company: analysis.job.company ?? whoIsHiring(),
           role: analysis.job.title ?? 'Unknown role',
           url: location.href,
           source: new URL(location.href).hostname,
@@ -461,7 +483,7 @@
         return send('bundle', {
           spec: payload.spec,
           resumeId: payload.spec.id,
-          company: analysis.job.company ?? 'Unknown',
+          company: analysis.job.company ?? whoIsHiring(),
           role: analysis.job.title ?? 'Unknown role',
           url: location.href,
           source: new URL(location.href).hostname,

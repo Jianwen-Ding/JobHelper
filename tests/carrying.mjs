@@ -23,6 +23,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  ATS_FORM,
   BLOG,
   CYGNUS_ROLE_A,
   DOCS,
@@ -271,6 +272,49 @@ async function main() {
       check('with its own page count', ours.text === '2', `badge "${ours.text}"`);
       check('not the other one’s', !/cygnus/i.test(ours.title), ours.title);
       await second.close();
+    }
+
+    group('A form that never says who is hiring');
+    {
+      /*
+       * Most bare application forms do not name the employer anywhere. The
+       * placeholder for that went into the Workspace as the application's
+       * name, so the list showed "Unknown / Apply" — which identifies
+       * nothing, and identifies two such applications identically.
+       */
+      /*
+       * Clear out any draft this check has filed before. A draft's id comes
+       * from its company and role, so a second run files the same one — and
+       * "was anything new filed" would then be false however well it worked.
+       */
+      const existing = await fetch(`${SERVER}/api/workspace`).then((r) => r.json());
+      for (const d of existing.drafts) {
+        if (d.company === 'Unknown' || /^127\.0\.0\.1/.test(d.company ?? '')) {
+          await fetch(`${SERVER}/api/workspace/${encodeURIComponent(d.id)}`, { method: 'DELETE' }).catch(() => {});
+        }
+      }
+      const before = await fetch(`${SERVER}/api/workspace`)
+        .then((r) => r.json())
+        .then((r) => new Set(r.drafts.map((d) => d.id)));
+
+      const bare = await context.newPage();
+      await bare.goto(fixtures.urlFor(ATS_FORM), { waitUntil: 'domcontentloaded' });
+      await settled(bare);
+      await cardOf(bare).getByRole('button', { name: 'Write these in ResumeM-M' }).click();
+      await bare.waitForTimeout(4000);
+
+      // Only what this just filed. The store keeps drafts between runs, and an
+      // older one named "Unknown" would answer the question either way.
+      const { drafts } = await fetch(`${SERVER}/api/workspace`).then((r) => r.json());
+      const fresh = drafts.filter((d) => !before.has(d.id)).map((d) => d.company);
+      check('an application was filed', fresh.length > 0, fresh.join(', '));
+      check('and not as "Unknown"', !fresh.includes('Unknown'), fresh.join(', '));
+      check(
+        'but under where it came from',
+        fresh.some((n) => /^127\.0\.0\.1/.test(n ?? '')),
+        fresh.join(', '),
+      );
+      await bare.close();
     }
 
     group('And never on ResumeM-M itself');
