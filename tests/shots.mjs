@@ -320,6 +320,74 @@ async function main() {
     await gui.locator('#btn-base').click();
     await gui.waitForTimeout(900);
 
+    /*
+     * The screens that tell you something you will act on.
+     *
+     * These were never photographed, and that family is where the worst bug
+     * so far lived: a panel announcing "everything you are sending, in one
+     * place" while leaving out the cover letter the form asked for. Anything
+     * that makes a claim about your application is worth looking at.
+     */
+    console.log('  (the screens that make claims)');
+
+    // Save & Files: a whole tab that had never been captured.
+    await gui.locator('#tabs button[data-tab="save"]').click();
+    await gui.waitForTimeout(1500);
+    await shot(gui, 'rmm-26-save-and-files');
+
+    // What was actually sent for one application, which is the record you
+    // would check before a phone screen.
+    await gui.locator('#tabs button[data-tab="applications"]').click();
+    await gui.waitForTimeout(1200);
+    const firstApp = gui.locator('#apps-wrap tbody tr').first();
+    if (await firstApp.count()) {
+      await firstApp.click();
+      await gui.waitForTimeout(1500);
+      await shot(gui, 'rmm-27-application-detail');
+    }
+
+    // A stored letter, and a stored answer, as they are kept for reuse.
+    await gui.locator('#tabs button[data-tab="letters"]').click();
+    await gui.waitForTimeout(1200);
+    const firstLetter = gui.locator('#letters .card-row, #letters .letter-row, #letters li').first();
+    if (await firstLetter.count()) {
+      await firstLetter.click();
+      await gui.waitForTimeout(900);
+      await shot(gui, 'rmm-28-letter-open');
+    }
+
+    // Saving a variation: the modal that decides what a new resume is called.
+    await gui.locator('#tabs button[data-tab="resumes"]').click();
+    await gui.waitForTimeout(1200);
+    await gui.locator('#btn-save-as').click();
+    await gui.waitForTimeout(600);
+    await shot(gui, 'rmm-29-modal-save-as');
+    await gui.locator('#modal-cancel').click();
+
+    /*
+     * A resume that cannot compile. The message here is the only thing
+     * standing between a broken LaTeX install and "the button does nothing",
+     * and nothing had ever looked at it.
+     */
+    await api('/api/resumes/shot-broken', {
+      method: 'PUT',
+      body: JSON.stringify({
+        id: 'shot-broken',
+        label: 'Broken demo',
+        extends: 'newgrad',
+        // A control sequence that does not exist, in the one place the
+        // escaping deliberately does not reach.
+        layout: { marginIn: 0.5, preamble: '\\thisCommandDoesNotExist' },
+      }),
+    });
+    await gui.reload({ waitUntil: 'networkidle' });
+    await gui.waitForTimeout(2500);
+    await gui.locator('#resume-select').selectOption('shot-broken').catch(() => undefined);
+    await gui.waitForTimeout(8000);
+    await shot(gui, 'rmm-30-compile-failed');
+    await gui.locator('#resume-select').selectOption('newgrad').catch(() => undefined);
+    await gui.waitForTimeout(3000);
+
     // Narrow viewport: the editor is used beside a browser window as often as
     // full screen.
     await gui.setViewportSize({ width: 900, height: 940 });

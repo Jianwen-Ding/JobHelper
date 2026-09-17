@@ -184,6 +184,34 @@ const FORM_BODY = `
       <button type="button">Submit Application</button>
     </form>`;
 
+/**
+ * A form asking something no stored profile can answer.
+ *
+ * A country dropdown that does not list the country you live in. Autofill
+ * knows the field and has the answer, tries, finds no option that matches,
+ * and correctly leaves it alone — which is a required field still empty, and
+ * has to be said in a way that does not read as finished.
+ *
+ * Its own fixture rather than a line added to `FORM_BODY`, which half the
+ * harnesses here count the fields of.
+ */
+const FORM_WITH_UNANSWERABLE = `
+    <form>
+      <label for="fn">First Name</label><input id="fn" name="first_name">
+      <label for="ln">Last Name</label><input id="ln" name="last_name">
+      <label for="em">Email</label><input id="em" name="email" type="email">
+      <label for="rs">Resume</label><input id="rs" name="resume" type="file">
+      <label for="cl">Cover Letter</label><textarea id="cl" name="cover_letter"></textarea>
+      <label for="ctry">Country</label>
+      <select id="ctry" name="address_country" required>
+        <option value="">Select One</option>
+        <option>Canada</option>
+        <option>Mexico</option>
+      </select>
+      <label for="q1">Why do you want to work here?</label><textarea id="q1" name="why_here"></textarea>
+      <button type="button">Submit Application</button>
+    </form>`;
+
 const page = (title, heading, body, extra = '') => `<!doctype html>
 <html><head><title>${title}</title><style>${CHROME}</style></head>
 <body><div class="hdr"><h1>${heading}</h1></div><div class="wrap">${body}</div>${extra}</body></html>`;
@@ -274,6 +302,13 @@ export const ATS_FORM = {
   name: 'ats-form',
   path: '/gh/acme/jobs/9910',
   html: page('Apply — Acme', 'Acme', FORM_BODY),
+};
+
+/** The same form, plus one question nothing stored can answer. */
+export const ATS_FORM_UNANSWERABLE = {
+  name: 'ats-form-unanswerable',
+  path: '/gh/acme/jobs/9911',
+  html: page('Apply — Acme', 'Acme', FORM_WITH_UNANSWERABLE),
 };
 
 /** An Apply button that opens the form in a new tab, as plenty do. */
@@ -894,7 +929,7 @@ export const NAVIGATION = [
   EMBEDDED_BOARD, EMBEDDED_BOARD_FRAME, BLOG_WITH_FORM, BLOG_ENQUIRY_FRAME, LATE_RENDER,
   CROWDED_PAGE, CROWDED_PAGE_FORM,
   LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY,
-  OWN_SITE, ATS_FORM, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, SPA_BOARD,
+  OWN_SITE, ATS_FORM, ATS_FORM_UNANSWERABLE, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, SPA_BOARD,
 ];
 
 export const ALL = [STREAMLY, NORTHWIND, HELIOS_ROLE, HELIOS_FORM, HEAVY_POSTING, ...QUIET, ...NAVIGATION];

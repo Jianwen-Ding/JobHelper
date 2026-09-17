@@ -183,6 +183,29 @@ async function main() {
     if (offered.email) check('the email went in as an address', filled.email.includes('@'), filled.email);
 
     /*
+     * And the report is coloured by what it says.
+     *
+     * "Filled 6 fields, 3 fields still for you to answer" was drawn in the
+     * colour that means finished — the same mistake as a folder announcing
+     * itself complete without the letter in it. The popup had always got this
+     * right and the card had not, which is how it went unnoticed: the two
+     * describe the same run in the same words and disagreed only in colour.
+     */
+    const note = card.locator('.ok-note').first();
+    if (await note.count()) {
+      const said = (await note.innerText()).trim();
+      const leftWork = /still for you to answer/.test(said);
+      const looksUrgent = await note.evaluate((n) => n.classList.contains('warn'));
+      check(
+        leftWork
+          ? 'a report naming empty fields is not drawn as success'
+          : 'a report with nothing left is drawn as success',
+        leftWork === looksUrgent,
+        said,
+      );
+    }
+
+    /*
      * The cover letter, with the AI off.
      *
      * Nothing is adopted on the user's behalf. This used to drop the closest

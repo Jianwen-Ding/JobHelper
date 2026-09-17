@@ -24,6 +24,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ATS_FORM,
+  ATS_FORM_UNANSWERABLE,
   BLOG,
   CYGNUS_ROLE_A,
   DOCS,
@@ -315,6 +316,34 @@ async function main() {
         fresh.join(', '),
       );
       await bare.close();
+    }
+
+    group('A report that is not good news');
+    {
+      /*
+       * "Filled 6 fields, 1 field still for you to answer" was drawn in the
+       * colour that means finished — the same mistake as a folder announcing
+       * itself complete without the letter in it. The popup had always got
+       * this right and the card had not, and the two describe the same run in
+       * the same words, so the only difference was the colour.
+       */
+      const form = await context.newPage();
+      await form.goto(fixtures.urlFor(ATS_FORM_UNANSWERABLE), { waitUntil: 'domcontentloaded' });
+      await settled(form);
+      const card = cardOf(form);
+      await card.getByRole('button', { name: 'Autofill this form' }).click();
+      await card.locator('.ok-note').first().waitFor({ timeout: 20_000 });
+      await form.waitForTimeout(600);
+
+      const note = card.locator('.ok-note').first();
+      const said = (await note.innerText()).trim();
+      check('it says a field is still yours to answer', /still for you to answer/.test(said), said);
+      check(
+        'and is not drawn as success',
+        await note.evaluate((n) => n.classList.contains('warn')),
+        said,
+      );
+      await form.close();
     }
 
     group('And never on ResumeM-M itself');

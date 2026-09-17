@@ -276,6 +276,12 @@ select {
 }
 .err-actions { margin-top: 8px; }
 .ok-note { color: var(--good); font-size: 12px; margin-top: 9px; }
+/*
+ * The same sentence when it is not good news. "Filled 6 fields, 3 fields
+ * still for you to answer" is a result to act on, and it was drawn in the
+ * colour that means finished.
+ */
+.ok-note.warn { color: var(--warn); }
 
 .done-box {
   background: var(--good-bg); border: 1px solid var(--good-line); border-radius: 8px; padding: 11px;
@@ -1482,7 +1488,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           : null,
         state.autofillReport
           ? h('div', {
-              className: 'ok-note',
+              // Green only when nothing is left. See `.ok-note.warn`.
+              className: `ok-note${autofillLeftWork(state.autofillReport) ? ' warn' : ''}`,
               textContent: describeAutofill(state.autofillReport),
             })
           : null,
@@ -1522,6 +1529,11 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       ]),
     );
     return box;
+  }
+
+  /** True when the report names fields the form still needs from you. */
+  function autofillLeftWork(r) {
+    return r.skipped.some((skip) => skip.reason !== 'already filled');
   }
 
   function describeAutofill(r) {
@@ -1782,7 +1794,12 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             }),
         }),
       ]),
-      state.autofillReport ? h('div', { className: 'ok-note', textContent: describeAutofill(state.autofillReport) }) : null,
+      state.autofillReport
+        ? h('div', {
+            className: `ok-note${autofillLeftWork(state.autofillReport) ? ' warn' : ''}`,
+            textContent: describeAutofill(state.autofillReport),
+          })
+        : null,
       h('div', { className: 'hint', style: 'margin-top:8px' }, 'Tracked in ResumeM-M with a copy of exactly what was sent.'),
       state.error ? drawError() : null,
     ]);
