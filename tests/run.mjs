@@ -60,7 +60,7 @@ const root = path.resolve(here, '..');
  */
 const SUITES = [
   { name: 'nav', file: 'navigation.mjs', cost: 125 },
-  { name: 'sending', file: 'sending.mjs', cost: 80 },
+  { name: 'sending', file: 'sending.mjs', cost: 90 },
   { name: 'ats-journey', file: 'ats-journey.mjs', cost: 75 },
   { name: 'adverse', file: 'adverse.mjs', cost: 53 },
   { name: 'carrying', file: 'carrying.mjs', cost: 45 },

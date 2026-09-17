@@ -692,6 +692,98 @@ export const BY_EMAIL = form({
       <a href="mailto:jobs@tolworth.example?subject=Application" role="button">Send application by email</a></p>`,
 });
 
+
+/* ------------------------------------------------------------------ *
+ * The form in a frame                                                 *
+ * ------------------------------------------------------------------ */
+
+/**
+ * A careers page that embeds its application form, which is how iCIMS and
+ * every hosted board works: the page you are looking at holds a heading and
+ * an iframe, and the form — with its fields, its button, and the click that
+ * ends the application — is inside.
+ *
+ * Two fixtures, because that is what it really is: a page, and the document
+ * the frame loads.
+ */
+export const EMBEDDED_APPLY = {
+  name: 'embedded-apply',
+  path: '/careers/platform-engineer',
+  company: 'Wexford Marine',
+  title: 'Platform Engineer',
+  sends: 'Submit application',
+  sent: true,
+  inFrame: true,
+  html: page(
+    'Platform Engineer — Wexford Marine',
+    'Wexford Marine',
+    `<h2>Platform Engineer</h2>${FORM_WORDS}
+     <iframe src="/embed/apply/88201" title="Application form" width="720" height="620"
+             style="border:1px solid #ddd"></iframe>`,
+  ),
+};
+
+/** The document inside it: nothing but the form. */
+export const EMBEDDED_APPLY_FRAME = {
+  name: 'embedded-apply-frame',
+  path: '/embed/apply/88201',
+  company: 'Wexford Marine',
+  html: page(
+    'Application form',
+    'Apply',
+    `${FORM_WORDS}
+     <form onsubmit="event.preventDefault();">
+       ${FIELDS}
+       <button type="submit">Submit application</button>
+     </form>`,
+  ),
+};
+
+/**
+ * And the same shape with a control that must not count, because a frame gets
+ * no second opinion: the top document cannot see what was pressed in here, so
+ * whatever the frame decides stands.
+ */
+export const EMBEDDED_SUBSCRIBE = {
+  name: 'embedded-subscribe',
+  path: '/careers/data-engineer',
+  company: 'Kingsmere Foods',
+  title: 'Data Engineer',
+  sends: 'Subscribe',
+  sent: false,
+  inFrame: true,
+  html: page(
+    'Data Engineer — Kingsmere Foods',
+    'Kingsmere Foods',
+    `<h2>Data Engineer</h2>${FORM_WORDS}
+     <iframe src="/embed/apply/88202" title="Application form" width="720" height="700"
+             style="border:1px solid #ddd"></iframe>`,
+  ),
+};
+
+export const EMBEDDED_SUBSCRIBE_FRAME = {
+  name: 'embedded-subscribe-frame',
+  path: '/embed/apply/88202',
+  company: 'Kingsmere Foods',
+  html: page(
+    'Application form',
+    'Apply',
+    `${FORM_WORDS}
+     <form onsubmit="event.preventDefault();">
+       ${FIELDS}
+       <button type="submit">Submit application</button>
+     </form>
+     <h2>Job alerts</h2>
+     <form onsubmit="event.preventDefault();">
+       <label for="nl">Email me new roles</label><input id="nl" type="email">
+       <button type="submit">Subscribe</button>
+     </form>`,
+  ),
+};
+
+/** The frame documents, which are served but never visited directly. */
+export const FRAME_DOCUMENTS = [EMBEDDED_APPLY_FRAME, EMBEDDED_SUBSCRIBE_FRAME];
+
 /** Every form above, in the order the suite walks them. */
 export const SENDS = [
   ORACLE,
@@ -717,6 +809,7 @@ export const SENDS = [
   HOURLY,
   STAFFING,
   GOVERNMENT,
+  EMBEDDED_APPLY,
 ];
 
 /** And the ones that must leave the tracker alone. */
@@ -734,4 +827,5 @@ export const DOES_NOT_SEND = [
   SIMILAR_JOBS,
   FINISH_LATER,
   BY_EMAIL,
+  EMBEDDED_SUBSCRIBE,
 ];

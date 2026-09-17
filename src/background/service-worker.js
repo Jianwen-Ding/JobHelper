@@ -919,6 +919,26 @@ const handlers = {
   },
 
   /**
+   * "The application in this frame was just sent."
+   *
+   * Said by a frame, which has no analysis and no card and so cannot say
+   * which application it is. This side can: the tab has been building a trail
+   * as the person moved through the application, and the resume built for it
+   * carries the company and the role.
+   *
+   * Requiring that resume is a stronger guard than the top document's, not a
+   * weaker one — it means this tab was already being tracked as an
+   * application in flight, so the worst this can do is finish something that
+   * had already started.
+   */
+  async applicationSentHere({ note, url }, tab) {
+    const trail = await readTrail(tab?.id);
+    const named = trail?.work?.spec?.generatedFor;
+    if (!named?.company || !named?.role) return { ok: false };
+    return handlers.applicationSent({ company: named.company, role: named.role, url, note });
+  },
+
+  /**
    * "The form for this application was just sent."
    *
    * Passed straight through: what it is worth to the tracker — whether it

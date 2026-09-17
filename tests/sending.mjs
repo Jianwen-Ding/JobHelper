@@ -23,7 +23,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { serveFixtures, findChromium, pointExtensionAt, requireOpenSave, cleanStore } from './fixtures.mjs';
-import { SENDS, DOES_NOT_SEND } from './ats-web.mjs';
+import { SENDS, DOES_NOT_SEND, FRAME_DOCUMENTS } from './ats-web.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
@@ -70,8 +70,14 @@ async function filed(company) {
  * anything carrying `role=button`, which between them is every shape in these
  * fixtures — including the anchor and the div, which is the point.
  */
-async function press(page, name) {
-  await page.getByRole('button', { name, exact: true }).first().click({ timeout: 10_000 });
+async function press(page, name, { inFrame = false } = {}) {
+  /*
+   * In the frame when the form is in the frame. An embedded board puts the
+   * fields, the button and the click inside an iframe, and Playwright's
+   * page-level locators do not cross into one.
+   */
+  const where = inFrame ? page.frameLocator('iframe') : page;
+  await where.getByRole('button', { name, exact: true }).first().click({ timeout: 10_000 });
 }
 
 /**
@@ -111,7 +117,7 @@ async function walk(context, fixtures, fixture, { build = true } = {}) {
 
     // The keeper writes on an interval, and the space is opened from there.
     const before = await awaitFiled(fixture.company, (f) => f.application?.status === 'applying');
-    await press(page, fixture.sends);
+    await press(page, fixture.sends, { inFrame: fixture.inFrame });
 
     /*
      * A page that should send is waited on until it has; one that should not
@@ -162,7 +168,7 @@ async function* inBatches(list, run) {
 
 async function main() {
   await requireOpenSave(SERVER);
-  const fixtures = await serveFixtures([...SENDS, ...DOES_NOT_SEND]);
+  const fixtures = await serveFixtures([...SENDS, ...DOES_NOT_SEND, ...FRAME_DOCUMENTS]);
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-send-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     executablePath: findChromium(),

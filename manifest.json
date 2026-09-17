@@ -39,6 +39,7 @@
         "src/content/card.js",
         "src/content/autofill.js",
         "src/shared/trail.js",
+        "src/shared/sending.js",
         "src/content/pdfview.js",
         "vendor/pdf.min.mjs",
         "vendor/pdf.worker.min.mjs"
