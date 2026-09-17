@@ -158,9 +158,19 @@ async function main() {
        * `.loading`; after it lands, the posting has been read and belongs to
        * an application. Anything this test waits for beyond that is time a
        * real person would have spent clicking.
+       *
+       * The card has to be there before "it is not loading" means anything.
+       * Asking only about `.card.loading` is answered "true" by a page with
+       * no card on it at all — which is every page for the first fraction of
+       * a second, so the wait returned at once and this navigated away before
+       * the posting had been read by anyone. It then failed for the one
+       * reason that is not a bug: nothing had happened yet.
        */
       await quick.waitForFunction(
-        () => !document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelector('.card.loading'),
+        () => {
+          const root = document.querySelector('#jobhelper-card-host')?.shadowRoot;
+          return Boolean(root?.querySelector('.card')) && !root.querySelector('.card.loading');
+        },
         null,
         { timeout: 30_000 },
       );

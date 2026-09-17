@@ -151,7 +151,9 @@ async function main() {
       await settled(page);
       const mark = await toolbar(worker, page);
       check('the toolbar says an application is open', mark.text !== '', `badge "${mark.text}"`);
-      check('and says whose it is', /helios/i.test(mark.title), mark.title);
+      // Which job, and whose: the hover title is the only place that can say
+      // it while the card is not on screen.
+      check('and says which job it is', /engineer at helios/i.test(mark.title), mark.title);
 
       // Built here, so there is a drawn resume to carry as well as writing.
       const card = cardOf(page);
@@ -297,7 +299,9 @@ async function main() {
 
       check('the panel is showing', !(await popup.locator('#openApplication').isHidden()));
       const who = (await popup.locator('#openWho').textContent())?.trim();
-      check('and names the application', who === 'Helios', who);
+      // The job, not only the employer: "Helios" is not enough to come back to
+      // an hour later, and tells two of their roles apart not at all.
+      check('and names the application', /helios/i.test(who ?? '') && /engineer/i.test(who ?? ''), who);
       const what = (await popup.locator('#openWhat').textContent())?.trim() ?? '';
       check('says how much of it has been read', /2 pages/.test(what), what);
       check('and that the writing is safe', /writing is being held/i.test(what), what);

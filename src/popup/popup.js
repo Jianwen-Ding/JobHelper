@@ -64,7 +64,12 @@ async function showOpenApplication() {
   }
 
   const named = pages.map((p) => p.company).filter(Boolean).pop();
-  $('openWho').textContent = named ?? pages.map((p) => p.title).filter(Boolean).pop() ?? 'An application';
+  const role = pages.map((p) => p.role).filter(Boolean).pop();
+  // The role first, then who it is with: "Helios" alone is not enough to come
+  // back to an hour later, and says nothing at all when two of their jobs are
+  // open in two tabs.
+  const who = named ?? pages.map((p) => p.title).filter(Boolean).pop() ?? 'An application';
+  $('openWho').textContent = role && named ? `${role} — ${named}` : who;
 
   const n = pages.length;
   const what = [`Written from ${n} ${n === 1 ? 'page' : 'pages'} of this application`];

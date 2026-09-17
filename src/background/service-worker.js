@@ -208,7 +208,15 @@ async function markTab(tabId, trail) {
     // form that never names the employer, "the application you are on" is
     // still better said with the words from the page it started on.
     const named = pages.map((p) => p.company).filter(Boolean).pop();
-    const what = named ?? pages.map((p) => p.title).filter(Boolean).pop() ?? 'An application';
+    const role = pages.map((p) => p.role).filter(Boolean).pop();
+    const who = named ?? pages.map((p) => p.title).filter(Boolean).pop() ?? 'An application';
+    /*
+     * "Platform Engineer at Helios", the way the card's own heading says it.
+     * Not with a dash: this line already joins its parts with dashes, and
+     * three of them in "JobHelper — Platform Engineer — Helios — 2 pages
+     * read" is a sentence nobody can find the seams of.
+     */
+    const what = role && named ? `${role} at ${named}` : who;
     const n = pages.length;
     const parts = [`${what} — ${n} ${n === 1 ? 'page' : 'pages'} read`];
     /*
@@ -411,6 +419,16 @@ async function remember(tab, page) {
     url: page.url,
     title: page.title,
     company: page.company,
+    /*
+     * And which job it is, not only who it is with.
+     *
+     * The popup and the toolbar said "Helios" — right, and not enough to come
+     * back to an hour later, or to tell two roles at one employer apart. The
+     * analysis has worked the role out by the time a page is recorded; not
+     * keeping it meant asking the page again later, from a tab that has since
+     * moved on.
+     */
+    role: page.role,
     kind: page.kind,
     html: trimForStorage(page.html, TRAIL_HTML_MAX),
     at: Date.now(),
@@ -760,6 +778,7 @@ const handlers = {
         url,
         title,
         company: result.job?.company,
+        role: result.job?.title,
         kind: result.kind,
         // The frames are part of the page: a posting inside an embed is an
         // empty shell at the top level, and the next page would be written
