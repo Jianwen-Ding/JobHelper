@@ -212,6 +212,43 @@ async function main() {
       await popup.close().catch(() => undefined);
     }
 
+    group('Out to the builder to add a phrasing, and back');
+    {
+      /*
+       * The reason to go is that this posting wants a bullet the store does
+       * not have. Coming back to a proposal built before it existed is the
+       * half of that trip nobody built, and there is nothing on the card to
+       * say the thing you just went and wrote is not in it.
+       */
+      await page.goto(fixtures.urlFor(HELIOS_ROLE), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      const card = cardOf(page);
+
+      const before = (await card.textContent()) ?? '';
+      check('nothing says the store changed, because it has not', !/been editing the store/i.test(before));
+
+      const opened = context.waitForEvent('page');
+      await card.getByRole('button', { name: 'Edit in ResumeM-M' }).click();
+      const editor = await opened;
+      check('the builder opens on this resume', /#resumes\//.test(editor.url()), editor.url());
+
+      // Coming back is what the card is watching for.
+      await page.bringToFront();
+      await page.waitForFunction(
+        () => {
+          const c = document.querySelector('#jobhelper-card-host')?.shadowRoot;
+          return /been editing the store/i.test(c?.textContent ?? '');
+        },
+        undefined,
+        { timeout: 10_000, polling: 100 },
+      ).catch(() => undefined);
+
+      const after = (await card.textContent()) ?? '';
+      check('on returning, the card says the match may be out of date', /been editing the store/i.test(after));
+      check('and offers to redo it rather than doing it', /match it again/i.test(after));
+      await editor.close();
+    }
+
     group('Two applications open at once, each minding its own');
     {
       /*

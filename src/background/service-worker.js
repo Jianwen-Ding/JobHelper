@@ -849,12 +849,15 @@ const handlers = {
   },
 
   /** Open the editor in a new tab, focused on this draft. */
-  async openTab({ url }) {
+  async openTab({ url }, tab) {
     // A path is resolved against the store, so the card can send someone to a
     // page of the editor without knowing where the editor lives.
     const absolute = /^[a-z]+:/i.test(url) ? url : `${(await getSettings()).serverUrl.replace(/\/$/, '')}${url}`;
-    const tab = await chrome.tabs.create({ url: absolute });
-    return { id: tab.id };
+    const opened = await chrome.tabs.create({ url: absolute });
+    // Noted, so that coming back to the tab that sent you here means
+    // something. See `awaitingReturn`.
+    if (typeof tab?.id === 'number') awaitingReturn.add(tab.id);
+    return { id: opened.id };
   },
 
   async trackStatus({ id, status, note }) {
@@ -897,6 +900,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
  * a reopened tab can find it, and it ages out on the same clock as everything
  * else in session storage — which is emptied when the browser closes anyway.
  */
+/**
+ * Tabs that sent someone to the builder and have not had them back yet.
+ *
+ * You press "Edit in ResumeM-M" because this posting wants a phrasing the
+ * store does not have. Whatever you add there cannot be in the proposal on
+ * the card, which was matched before it existed — so the card is told when
+ * you return, and offers to match again.
+ *
+ * Held here rather than worked out in the page from `visibilitychange`: this
+ * side knows the trip was made, and it catches the return made by closing the
+ * builder tab, which is how people actually come back. Plain memory is right
+ * for it — if the worker has been asleep long enough to forget, the trip is
+ * old enough not to be worth mentioning.
+ */
+const awaitingReturn = new Set();
+
+chrome.tabs?.onActivated?.addListener(({ tabId }) => {
+  if (!awaitingReturn.delete(tabId)) return;
+  chrome.tabs.sendMessage(tabId, { type: 'jh-came-back' }).catch(() => undefined);
+});
+
 /*
  * Put the mark back after a navigation.
  *

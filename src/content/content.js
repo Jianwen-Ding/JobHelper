@@ -955,6 +955,8 @@
     // is least likely to have just run.
     const onHide = () => save();
     window.addEventListener('pagehide', onHide);
+    // Coming back is the worker's news to break, not this listener's — see
+    // the `jh-came-back` message. Leaving is all this one is for.
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') onHide();
     };
@@ -1091,6 +1093,23 @@
         .then((report) => sendResponse({ ok: true, data: report }))
         .catch((err) => sendResponse({ ok: false, error: err.message }));
       return true;
+    }
+    /*
+     * This tab is in front again, having sent someone to the builder.
+     *
+     * Said by the worker rather than worked out here from `visibilitychange`,
+     * because the worker is the one that opened the other tab and therefore
+     * knows this return is the end of that trip. It also catches the return
+     * made by closing the builder, which is how people actually come back.
+     */
+    if (message?.type === 'jh-came-back') {
+      try {
+        cardHandle?.cameBack?.();
+      } catch {
+        // An orphaned card. Not worth an error on the page.
+      }
+      sendResponse({ ok: true });
+      return false;
     }
     return false;
   });

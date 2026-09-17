@@ -146,6 +146,22 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .row.gap { margin-top: 10px; }
 .grow { flex: 1 1 auto; }
 .hint { color: var(--muted); font-size: 12px; line-height: 1.55; }
+/* A hint you are meant to act on, rather than one that just explains. */
+.hint.warn {
+  color: var(--warn); background: var(--warn-bg); border: 1px solid var(--warn-line);
+  border-radius: 7px; padding: 7px 9px; margin-top: 8px;
+}
+/*
+ * Underlined standing still, not only on hover. Set in the same amber as the
+ * sentence around it, a bold word is not an affordance — the one thing here
+ * you can press read as emphasis, in a line whose whole purpose is to be
+ * pressed.
+ */
+.hint.warn button.link {
+  color: var(--warn); font-weight: 500; padding: 0;
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.hint.warn button.link:hover { background: transparent; text-decoration-thickness: 2px; }
 .faint { color: var(--faint); font-size: 11px; }
 
 .job { margin-bottom: 12px; }
@@ -390,6 +406,10 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     ai: null,
     /** Answers typed on an earlier page of this same application. */
     carriedOver: null,
+    /** "Edit in ResumeM-M" was pressed, so coming back here means something. */
+    wentToEditor: false,
+    /** And you did come back, so what is on screen may be out of date. */
+    editedElsewhere: false,
     /** How the proposal on screen was produced: 'tags' or 'ai'. */
     builtWith: analysis?.aiUsed ? 'ai' : 'tags',
     /** Which compiled PDF is on screen, and the canvases already drawn. */
@@ -1196,10 +1216,43 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             textContent: 'Edit in ResumeM-M',
             title: 'Open this resume in the builder to add a bullet or another phrasing',
             disabled: Boolean(state.busy) || !state.spec?.id,
-            onclick: () =>
-              onAction('openTab', { url: `/#resumes/${encodeURIComponent(state.spec.id)}` }),
+            onclick: () => {
+              // Remembered so that coming back here means something. See
+              // `cameBack`.
+              state.wentToEditor = true;
+              onAction('openTab', { url: `/#resumes/${encodeURIComponent(state.spec.id)}` });
+            },
           }),
         ]),
+        /*
+         * You went to the builder because this posting wanted a bullet the
+         * store did not have. Coming back to a card still showing the match
+         * made from the store as it was is the half of that journey nobody
+         * built: the new wording exists, and the proposal in front of you
+         * cannot contain it.
+         *
+         * Offered, not done. A rebuild throws away every alternate you
+         * switched by hand on this card, and it is not worth guessing that
+         * the trip to the editor mattered more than those did.
+         */
+        state.editedElsewhere
+          ? h('div', { className: 'hint warn' }, [
+              h('span', { textContent: 'You have been editing the store. ' }),
+              h('button', {
+                className: 'link',
+                textContent: 'Match it again',
+                disabled: Boolean(state.busy),
+                onclick: () => {
+                  state.editedElsewhere = false;
+                  return act('rebuild', { useAi: false }, () => {
+                    state.builtWith = 'match';
+                    state.render = null;
+                  });
+                },
+              }),
+              h('span', { textContent: ' to use anything you added.' }),
+            ])
+          : null,
         state.builtWith
           ? h('div', {
               className: 'hint',
@@ -1727,6 +1780,20 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       state.render = null;
       draw();
       maybeAutoDraft();
+    },
+
+    /**
+     * This tab is in front again.
+     *
+     * Only interesting if the card is the reason it stopped being: the whole
+     * point of "Edit in ResumeM-M" is to go and add the phrasing this posting
+     * wants, and the proposal on screen was made before it existed.
+     */
+    cameBack() {
+      if (!state.wentToEditor || state.editedElsewhere) return;
+      state.wentToEditor = false;
+      state.editedElsewhere = true;
+      draw();
     },
 
     /** The pages this application spans, as the trail grows. */
