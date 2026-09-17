@@ -197,9 +197,56 @@ async function main() {
     {
       // The shared source, which is where a phrasing belongs: written once
       // and inherited by every resume that prints it.
+      /*
+       * Say what went wrong, rather than which selector ran out.
+       *
+       * This step failed three runs in a row with nothing but "waiting for
+       * locator('.master-source-variant')" — true, useless, and identical
+       * whether the editor refused to switch, threw on the way, or simply
+       * had not finished. Switching to the master view runs a save first and
+       * silently declines if anything is unsaved, so the interesting facts
+       * are what the dropdown says afterwards and what the page threw.
+       */
+      const thrown = [];
+      editor.on('pageerror', (e) => thrown.push(String(e.message ?? e).slice(0, 160)));
+      editor.on('console', (m) => {
+        if (m.type() === 'error') thrown.push(`console: ${m.text().slice(0, 160)}`);
+      });
+
+      /*
+       * And what the page was waiting for, if it was waiting.
+       *
+       * Switching runs a save first and awaits it, and `api()` has no
+       * timeout — so a request that never answers leaves the switch half
+       * done for ever, with nothing on screen to say so. These two lists say
+       * whether that is what happened.
+       */
+      const inFlight = new Map();
+      editor.on('request', (r) => inFlight.set(r, `${r.method()} ${new URL(r.url()).pathname}`));
+      editor.on('requestfinished', (r) => inFlight.delete(r));
+      editor.on('requestfailed', (r) => inFlight.set(r, `FAILED ${new URL(r.url()).pathname}`));
+
       await editor.waitForSelector('#resume-select', { timeout: 30_000 });
       await editor.selectOption('#resume-select', '__master__');
-      await editor.waitForSelector('.master-source-variant', { timeout: 30_000 });
+      try {
+        await editor.waitForSelector('.master-source-variant', { timeout: 30_000 });
+      } catch (err) {
+        const showing = await editor.locator('#resume-select').inputValue().catch(() => '(unreadable)');
+        // The save chip is the one that knows: it says saved, saving, unsaved
+        // or failed, and "failed" carries the reason the request gave.
+        const chip = editor.locator('#save-state');
+        const save = await chip.textContent().catch(() => '');
+        const saveClass = await chip.getAttribute('class').catch(() => '');
+        const said = await editor.locator('#status').first().textContent().catch(() => '');
+        const entries = await editor.locator('.entry, .entry-card').count().catch(() => -1);
+        console.log(
+          `  note  the master view never appeared. dropdown=${showing}; entries on screen=${entries}; ` +
+            `save=[${saveClass}] "${(save ?? '').trim().slice(0, 80)}"; ` +
+            `status="${(said ?? '').trim().slice(0, 120)}"; thrown=${thrown.join(' | ') || 'nothing'}; ` +
+            `still in flight=${[...inFlight.values()].join(', ') || 'none'}`,
+        );
+        throw err;
+      }
 
       const line = editor.locator('.master-source-variant .editable', { hasText: 'Kafka' }).first();
       await line.waitFor({ timeout: 20_000 });
@@ -259,7 +306,7 @@ async function main() {
        * store about it before this point is asking the wrong question — which
        * is what the first version of this check did, and it reported "none".
        */
-      await card.getByRole('button', { name: 'Save application folder' }).click();
+      await card.getByRole('button', { name: 'Prepare to submit' }).click();
       await card.locator('.done-box').waitFor({ timeout: 120_000 });
       const done = await card.locator('.done-box').innerText();
       check('the application folder is written', /-Resume\.pdf/.test(done), done.split('\n')[1] ?? done);

@@ -735,6 +735,23 @@ const handlers = {
   },
 
   /**
+   * Typeset the cover letter, so it can be looked at before it is sent.
+   *
+   * Set to match the resume it goes with — same margins, same name at the top
+   * — which is why the resume's id travels with it. A preview compile: the
+   * copy that gets attached is built again when the folder is.
+   */
+  async renderLetter({ body, company, role, resumeId }) {
+    const result = await serverFetch('/api/render/letter', {
+      method: 'POST',
+      timeoutMs: SLOW_TIMEOUT_MS,
+      body: JSON.stringify({ body, company, role, resumeId }),
+    });
+    const { serverUrl } = await getSettings();
+    return { ...result, absolutePdfUrl: `${serverUrl.replace(/\/$/, '')}${result.pdfUrl}` };
+  },
+
+  /**
    * Re-tailor with the user's own words folded in. Feedback goes to the AI
    * path because a sentence of intent is exactly what tag matching cannot use.
    */

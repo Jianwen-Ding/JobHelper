@@ -439,11 +439,15 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     editedElsewhere: false,
     /** How the proposal on screen was produced: 'none', 'match' or 'ai'. */
     builtWith: analysis?.tailor ?? (analysis?.aiUsed ? 'ai' : 'match'),
-    /** Which compiled PDF is on screen, and the canvases already drawn. */
-    shownPdf: null,
+    /** Which compiled PDF is on screen per kind, and the canvases drawn. */
+    shownPdf: { resume: null, letter: null },
     pdfPages: new Map(),
+    /** The typeset cover letter, once it has been asked for. */
+    letterRender: null,
     /** Why the last one could not be drawn, if it could not. */
     pdfError: null,
+    /** Whether the person said afterwards that they did not send it. */
+    unsent: false,
   };
 
   /**
@@ -1063,20 +1067,25 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * canvas rather than handed to an iframe, which would blank on every
    * recompile.
    */
-  function drawResumePage() {
-    if (!state.render?.pdfUrl) return null;
+  /**
+   * @param {string} kind    'resume' or 'letter' — which slot guards the fetch
+   * @param {string|undefined} url
+   * @param {string} what    how to name it if it cannot be drawn
+   */
+  function drawPdfPane(kind, url, what) {
+    if (!url) return null;
 
     const pages = h('div', { className: 'pdf-pages' });
     const pane = h('div', { className: 'pdf-pane' }, [pages]);
 
     // Already drawn once: reuse the bitmap so a re-render does not refetch.
-    const cached = state.pdfPages.get(state.render.pdfUrl);
+    const cached = state.pdfPages.get(url);
     if (cached) {
       pane.replaceChildren(cached.cloneNode(true));
       return pane;
     }
-    if (state.pdfError?.url === state.render.pdfUrl) {
-      pane.append(h('div', { className: 'hint', textContent: `Could not draw the resume: ${state.pdfError.message}` }));
+    if (state.pdfError?.url === url) {
+      pane.append(h('div', { className: 'hint', textContent: `Could not draw the ${what}: ${state.pdfError.message}` }));
       return pane;
     }
 
@@ -1097,32 +1106,43 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      * left to do here is put it on screen: if the node we drew into is no
      * longer connected, ask for one more render.
      */
-    if (state.shownPdf !== state.render.pdfUrl) {
-      const wanted = state.render.pdfUrl;
-      state.shownPdf = wanted;
+    /*
+     * One slot per kind, not one slot.
+     *
+     * This was a single `shownPdf`, which was right while the resume was the
+     * only thing drawn here. The letter is drawn the same way now, and with
+     * one slot each fetch cancelled the other: the letter's arrival made the
+     * resume's "a newer compile won" test true, and the pane it had been
+     * drawing into stayed a grey strip.
+     */
+    if (state.shownPdf[kind] !== url) {
+      const wanted = url;
+      state.shownPdf[kind] = wanted;
       (async () => {
         try {
           const { base64 } = await onAction('pdfBytes', { url: wanted });
           const { drawPdf } = await import(chrome.runtime.getURL('src/content/pdfview.js'));
-          if (state.shownPdf !== wanted) return; // a newer compile won
+          if (state.shownPdf[kind] !== wanted) return; // a newer compile won
           await drawPdf(pages, base64, { width: 372 });
           state.pdfPages.set(wanted, pages.cloneNode(true));
           // Each of these is a page-sized bitmap. Keeping one per compile
           // meant a session of small edits quietly holding a dozen of them.
-          for (const old of [...state.pdfPages.keys()].slice(0, -2)) state.pdfPages.delete(old);
+          for (const old of [...state.pdfPages.keys()].slice(0, -4)) state.pdfPages.delete(old);
           if (!pages.isConnected) draw();
         } catch (err) {
           // Kept in state rather than appended: appending to a node a
           // re-render has already replaced says it to nobody.
           state.pdfError = { url: wanted, message: err.message };
           if (!pane.isConnected) draw();
-          else pane.append(h('div', { className: 'hint', textContent: `Could not draw the resume: ${err.message}` }));
+          else pane.append(h('div', { className: 'hint', textContent: `Could not draw the ${what}: ${err.message}` }));
         }
       })();
     }
 
     return pane;
   }
+
+  const drawResumePage = () => drawPdfPane('resume', state.render?.pdfUrl, 'resume');
 
   /**
    * A question the page did not expose — a portal that renders its form in a
@@ -1248,7 +1268,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
          * Offered, not adopted.
          *
          * This used to put the previous letter straight into `state.letter`,
-         * and `state.letter` is what "Save application folder" ships. So with
+         * and `state.letter` is what "Prepare to submit" ships. So with
          * the AI off — and nobody having clicked anything, because this draft
          * starts itself — a letter that opens "Dear Streamly," was typeset,
          * named "Cover Letter Helios.pdf", and dropped in the folder the card
@@ -1533,11 +1553,52 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                   disabled: !state.letter?.trim(),
                   onclick: () => navigator.clipboard?.writeText(state.letter ?? ''),
                 }),
+                /*
+                 * The letter as it will actually arrive.
+                 *
+                 * It is typeset through the same LaTeX as the resume and sent
+                 * as a PDF — but in here it was a box of plain text, so the
+                 * document nobody saw until after it was sent was the one
+                 * with the name, the address block and the spacing in it. The
+                 * resume has been drawn in the card since the beginning for
+                 * exactly this reason; the letter is half of what goes.
+                 */
+                h('button', {
+                  className: 'tiny',
+                  textContent: busyLabel('renderLetter', state.letterRender ? 'Typeset again' : 'See it typeset', 'Typesetting…'),
+                  disabled: Boolean(state.busy) || !state.letter?.trim(),
+                  title: 'Compile it the way it will be sent',
+                  onclick: () =>
+                    /*
+                     * The base, not the proposal: a tailored spec only exists
+                     * in this card until the folder is prepared, so asking the
+                     * store to set a letter to match it would be asking about
+                     * a resume it has never seen. What the letter borrows is
+                     * the margins and the name at the top, and those come from
+                     * the base either way.
+                     */
+                    act('renderLetter', { body: state.letter, resumeId: state.spec?.extends ?? state.spec?.id }, (r) => {
+                      state.letterRender = r;
+                    }),
+                }),
                 h('span', {
                   className: 'faint',
                   textContent: state.letterSaved ? 'Future drafts will start from this one.' : '',
                 }),
               ]),
+              drawPdfPane('letter', state.letterRender?.pdfUrl, 'letter'),
+              state.letterRender
+                ? h('div', { className: 'row gap' }, [
+                    h('a', {
+                      href: state.letterRender.absolutePdfUrl ?? state.letterRender.pdfUrl,
+                      target: '_blank',
+                      textContent: 'Open full size',
+                    }),
+                    // Not the file that gets attached — that one is compiled
+                    // again, by the trusted engine, when the folder is built.
+                    h('span', { className: 'faint', textContent: 'A preview; the attached copy is compiled when you prepare it.' }),
+                  ])
+                : null,
             ])
           : h('div', {}, [
               h('div', {
@@ -1600,9 +1661,24 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             disabled: Boolean(state.busy),
             onclick: () => act('autofill', {}, (r) => (state.autofillReport = r)),
           }),
+          /*
+           * Named for what pressing it means, not for what it writes.
+           *
+           * It was "Save application folder", which is the implementation
+           * seen from inside: a folder is written, two in fact. From outside
+           * it is unclear what the folder holds — the record, the files to
+           * attach, the tracker row — and "save" suggests filing something
+           * that already exists rather than compiling it.
+           *
+           * This is the step that ends an application, so it is named for
+           * that and it files the application as sent (see `bundle` in
+           * content.js). The explanation of what lands on disk used to live
+           * in a `title`, which is to say nowhere; it is a line under the
+           * button now.
+           */
           h('button', {
             className: 'primary',
-            textContent: busyLabel('bundle', 'Save application folder', 'Saving…'),
+            textContent: busyLabel('bundle', 'Prepare to submit', 'Preparing…'),
             disabled: Boolean(state.busy) || !state.render,
             title: state.render ? 'Compile, name the files properly, and snapshot what was sent' : 'Build the resume first',
             onclick: () =>
@@ -1625,13 +1701,21 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
          * disabled button is the one place a tooltip cannot be relied on —
          * browsers differ on whether they show it at all, and it needs
          * hovering a control that looks like it does nothing. On a posting
-         * the base resume already suits, "Save application folder" sits
+         * the base resume already suits, "Prepare to submit" sits
          * there greyed with no visible reason, which reads as broken rather
          * than as one step out of order.
          */
         !state.render && !state.busy
           ? h('div', { className: 'hint', textContent: 'Build the resume first — then the files can be named and filed.' })
-          : null,
+          : // What the button does, where it can be read without hovering it.
+            !state.bundle && !state.busy
+            ? h('div', {
+                className: 'hint',
+                textContent:
+                  'Typesets the resume and letter as PDFs, names them for this company, puts them in one folder to ' +
+                  'attach, and marks this one as sent.',
+              })
+            : null,
         state.autofillReport
           ? h('div', {
               // Green only when nothing is left. See `.ok-note.warn`.
@@ -1906,9 +1990,27 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
          */
         h('div', { className: 'path', textContent: b.currentDir ?? b.dir }),
         h('div', { className: 'row gap' }, [
+          /*
+           * Open it, not just quote it.
+           *
+           * A path is what the upload dialog wants and nothing else can use:
+           * from a job board, in a browser, it is a string. ResumeM-M serves
+           * the same folder as a page — every file in it, each one opening in
+           * a tab — so "where are my files" is a click from the card that
+           * made them. `file://` would be the obvious link and is the wrong
+           * one: an extension cannot send a tab to it without being granted
+           * access to every file on the machine.
+           */
+          h('button', {
+            className: 'tiny',
+            textContent: 'Open the folder',
+            title: 'See the files in a tab, and open any of them',
+            onclick: () => onAction('openTab', { url: '/current' }),
+          }),
           h('button', {
             className: 'tiny',
             textContent: 'Copy folder path',
+            title: 'Paste it into the upload dialog',
             onclick: () => navigator.clipboard?.writeText(b.currentDir ?? b.dir),
           }),
           // Not claimed when it is not true — see `missing` above.
@@ -1930,23 +2032,59 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           disabled: Boolean(state.busy),
           onclick: () => act('autofill', {}, (r) => (state.autofillReport = r)),
         }),
+        /*
+         * The escape hatch, not the step.
+         *
+         * This was "Mark as submitted", a second press that moved the tracker
+         * on — and the press nobody makes, because by the time the files are
+         * uploaded the tab has gone to a confirmation page and the card with
+         * it. Preparing is what files it now, so what is left here is the one
+         * case that goes the other way: the folder was built and the
+         * application was abandoned. That is rare, so it is not the primary
+         * button, but it has to be reachable or the tracker cannot be
+         * corrected from the page it was wrong about.
+         */
+        h('button', {
+          className: 'tiny',
+          textContent: busyLabel('trackStatus', 'Not sent after all', 'Saving…'),
+          disabled: Boolean(state.busy),
+          title: 'Put this back on the list of applications still to finish',
+          onclick: () =>
+            act(
+              'trackStatus',
+              { id: b.application.id, status: 'applying', note: 'Prepared, then not sent' },
+              () => {
+                state.unsent = true;
+              },
+            ),
+        }),
         h('button', {
           className: 'primary',
-          textContent: busyLabel('trackStatus', 'Mark as submitted', 'Saving…'),
+          textContent: 'Done',
           disabled: Boolean(state.busy),
-          onclick: () =>
-            act('trackStatus', { id: b.application.id, status: 'applied', note: 'Submitted from the browser' }, () => {
-              removeCard();
-            }),
+          onclick: () => removeCard(),
         }),
       ]),
+      state.unsent
+        ? h('div', {
+            className: 'ok-note warn',
+            textContent: 'Put back — it is being worked on again, and the files stay where they are.',
+          })
+        : null,
       state.autofillReport
         ? h('div', {
             className: `ok-note${autofillLeftWork(state.autofillReport) ? ' warn' : ''}`,
             textContent: describeAutofill(state.autofillReport),
           })
         : null,
-      h('div', { className: 'hint', style: 'margin-top:8px' }, 'Tracked in ResumeM-M with a copy of exactly what was sent.'),
+      h(
+        'div',
+        { className: 'hint', style: 'margin-top:8px' },
+        state.unsent
+          ? 'Kept in ResumeM-M with a copy of what was built, back among the ones being worked on.'
+          : 'Marked as sent in ResumeM-M, with a copy of exactly what went out. The Workspace keeps it open ' +
+            'for a fortnight in case anything comes back.',
+      ),
       state.error ? drawError() : null,
     ]);
   }

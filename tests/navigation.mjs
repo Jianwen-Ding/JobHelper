@@ -578,6 +578,17 @@ async function main() {
       const there = await appears(page, HOST, 9000);
       check('the card appears even though the page itself says nothing', there);
       if (there) {
+        /*
+         * And then wait for it to mean something.
+         *
+         * The card appears on the page's own reading — here a heading that
+         * says only the company — and is rewritten when the frame's posting
+         * has been read. Asking the moment the host exists is asking during
+         * that gap: it passed most of the time and read the role as "Vireo"
+         * when the machine was busy. The card marks the gap itself, so this
+         * waits for it to stop changing rather than betting on it.
+         */
+        await settled(page);
         const card = cardOf(page);
         const role = (await card.locator('.role').textContent())?.trim() ?? '';
         check('and reads the role out of the frame', /platform engineer/i.test(role), role);

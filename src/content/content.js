@@ -502,6 +502,17 @@
       case 'saveLetter':
         return send('saveLetter', { body: payload.body, job: analysis.job });
 
+      // Who it is addressed to comes from the page, as it does everywhere
+      // else here — the card sends the words and the resume they are set to
+      // match, not the company it half-remembers.
+      case 'renderLetter':
+        return send('renderLetter', {
+          body: payload.body,
+          resumeId: payload.resumeId,
+          company: analysis.job?.company,
+          role: analysis.job?.title,
+        });
+
 
       case 'saveAnswer':
         return send('saveAnswer', payload);
@@ -518,15 +529,24 @@
           url: location.href,
           source: new URL(location.href).hostname,
           /*
-           * Building the files is not sending them. This said 'applied', so the
-           * tracker recorded a submitted application the moment you pressed
-           * "Save application folder" — before the portal had seen anything —
-           * and "Mark as submitted" afterwards was a no-op that only appended a
-           * history line. Close the tab without submitting and the tracker, and
-           * the response rate it reports, counted an application nobody sent.
-           * `trackStatus` is what moves it on, which is what that button is for.
+           * Pressing "Prepare to submit" is taken as submitting it.
+           *
+           * Strictly this is early: the files exist, the portal has not seen
+           * them, and the upload still has to happen in the dialog this opens.
+           * It was 'applying' for exactly that reason, and the step that moved
+           * it on was a second button pressed afterwards — which is a button
+           * pressed after the interesting part is over, on a tab that by then
+           * shows a confirmation page. Nobody presses it, so the tracker
+           * undercounted instead of overcounting, which is the worse of the
+           * two: an application missing from the list is one you apply for
+           * twice.
+           *
+           * So this is the main path and it files the application as sent. The
+           * two ways of being wrong are both covered: "Not sent after all" in
+           * the card puts it back, and the procedural watcher is the backstop
+           * for an application never prepared here at all.
            */
-          status: 'applying',
+          status: 'applied',
           coverLetter: payload.coverLetter,
           answers: payload.answers,
         });

@@ -243,7 +243,7 @@ async function main() {
      * The cover letter, with the AI off.
      *
      * Nothing is adopted on the user's behalf. This used to drop the closest
-     * previous letter straight into the box, and "Save application folder" then
+     * previous letter straight into the box, and "Prepare to submit" then
      * typeset a letter opening "Dear Streamly," as "Cover Letter Helios.pdf" —
      * so the test could assert a letter in the bundle without anyone having
      * asked for one. Now the previous letter is offered by name and waits.
@@ -263,7 +263,7 @@ async function main() {
        * for a letter, and you would have attached the two files it named and
        * sent it without one.
        */
-      await card.getByRole('button', { name: 'Save application folder' }).click();
+      await card.getByRole('button', { name: 'Prepare to submit' }).click();
       await card.locator('.done-box').waitFor({ timeout: 90_000 });
       const body = await card.innerText();
       check('a folder missing the letter the form wants says so', /Not in this folder: a cover letter/.test(body));
@@ -282,7 +282,7 @@ async function main() {
     }
 
     /* File it. */
-    await card.getByRole('button', { name: 'Save application folder' }).click();
+    await card.getByRole('button', { name: 'Prepare to submit' }).click();
     await card.locator('.done-box').waitFor({ timeout: 90_000 });
     const done = await card.locator('.done-box').innerText();
     /*
@@ -301,6 +301,41 @@ async function main() {
     const tracked = await (await fetch(`${SERVER}/api/applications`)).json();
     const entry = tracked.applications.find((a) => a.company === 'Streamly');
     check('application tracked', Boolean(entry), entry ? `${entry.status}` : 'not found');
+    /*
+     * Preparing the files is what records it as sent. The press that used to
+     * do it came afterwards, on a tab that by then shows a confirmation page
+     * — so it was never pressed, and the tracker undercounted. Being wrong
+     * the other way costs one click of "Not sent after all".
+     */
+    check('and taken as sent, without a second press', entry?.status === 'applied', entry?.status ?? '(none)');
+
+    /*
+     * And the space it was written in is still there, quietly. A portal that
+     * rejects the upload, or a question that comes back next week, wants the
+     * letter rather than a snapshot of it.
+     */
+    const spaces = await (await fetch(`${SERVER}/api/workspace`)).json();
+    const space = spaces.drafts.find((d) => d.company === 'Streamly');
+    check('the workspace keeps it, marked as sent', space?.status === 'submitted', space?.status ?? '(gone)');
+
+    /*
+     * The flat folder as a page: a path answers the upload dialog and nothing
+     * else, and from a job board this is the only clickable way to the files.
+     */
+    const folder = await fetch(`${SERVER}/current`);
+    const listing = await folder.text();
+    check(
+      'the upload folder can be opened rather than only pasted',
+      folder.ok && /-Resume\.pdf/.test(listing),
+      folder.status === 200 ? `${(listing.match(/href="\/current\//g) ?? []).length} files listed` : String(folder.status),
+    );
+
+    /* And the way back, for the application that was prepared and abandoned. */
+    await card.getByRole('button', { name: 'Not sent after all' }).click();
+    await card.locator('.ok-note.warn').waitFor({ timeout: 15_000 });
+    const back = await (await fetch(`${SERVER}/api/applications`)).json();
+    const again = back.applications.find((a) => a.company === 'Streamly');
+    check('and it can be put back if it never went out', again?.status === 'applying', again?.status ?? '(none)');
 
     check('no page errors', errors.length === 0, errors.join('; '));
     await page.close();

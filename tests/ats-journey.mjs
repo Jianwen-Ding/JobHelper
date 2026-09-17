@@ -148,7 +148,7 @@ async function main() {
         check('autofill puts something in the form', filled > 0, report);
 
         /* 4. Filed, with the files a portal would ask for. */
-        await card.getByRole('button', { name: 'Save application folder' }).click();
+        await card.getByRole('button', { name: 'Prepare to submit' }).click();
         await card.locator('.done-box').waitFor({ timeout: 120_000 });
         const done = await card.locator('.done-box').innerText();
         check('an application folder is written', /-Resume\.pdf/.test(done), done.split('\n')[1] ?? '');
