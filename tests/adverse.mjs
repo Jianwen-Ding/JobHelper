@@ -26,6 +26,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import {
+  HEAVY_POSTING,
   HELIOS_FORM,
   HELIOS_ROLE,
   cleanStore,
@@ -319,6 +320,91 @@ async function main() {
       check('the card comes back at all', (await cardOf(page).count()) > 0);
       check('and the page is told nothing about it', errors.length === 0, errors.join('; '));
       await page.close();
+    }
+    /* ---------------------------------------------------------------- *
+     * Session storage is nearly full                                     *
+     * ---------------------------------------------------------------- */
+
+    group('There is almost no room left to remember anything');
+    {
+      /*
+       * Session storage is ten megabytes shared across every tab, and the
+       * code that writes the trail says so: five tabs holding five pages
+       * each fills it exactly, at which point the write throws and "the
+       * trail silently stops working, which is the worst of the available
+       * outcomes". The fallback drops the earlier pages' text and tries
+       * again, keeping what was written.
+       *
+       * This does not reach that fallback, and it is worth saying so rather
+       * than implying otherwise. I tried: a heavy posting first, and the
+       * quota filled to within tens of kilobytes. It still passes with the
+       * fallback removed, because `trimForStorage` strips scripts and styles
+       * before anything is stored and a trail is small by the time it gets
+       * here — which is the real protection, and `lighten` is a second belt
+       * behind it. `lighten` is tested for what it does in `trail.mjs`,
+       * where a pure function belongs.
+       *
+       * What this establishes is the thing a user would notice: with the
+       * cupboard full, nothing breaks and the letter is still there.
+       */
+      const worker2 = context.serviceWorkers()[0];
+      const filled = await worker2.evaluate(async () => {
+        const store = chrome.storage.session ?? chrome.storage.local;
+        const write = async (key, size) => {
+          try {
+            await store.set({ [key]: 'x'.repeat(size) });
+            return true;
+          } catch {
+            return false;
+          }
+        };
+        let bytes = 0;
+        // Coarse first, then fine, so what is left over is tens of kilobytes
+        // rather than most of a megabyte.
+        for (let i = 0; i < 12 && (await write(`jh-ballast-a${i}`, 1024 * 1024)); i++) bytes += 1024 * 1024;
+        for (let i = 0; i < 40 && (await write(`jh-ballast-b${i}`, 32 * 1024)); i++) bytes += 32 * 1024;
+        return bytes;
+      });
+      check('the quota really was filled', filled > 0, `${(filled / 1024 / 1024).toFixed(2)} MB of ballast`);
+
+      try {
+        const page = await context.newPage();
+        const errors = [];
+        page.on('pageerror', (e) => errors.push(String(e).slice(0, 120)));
+
+        // Half a megabyte of posting first, so the trail is too big to store
+        // whole and the fallback is the only way the letter survives.
+        await page.goto(fixtures.urlFor(HEAVY_POSTING), { waitUntil: 'domcontentloaded' });
+        await settled(page);
+        await page.goto(fixtures.urlFor(HELIOS_FORM), { waitUntil: 'domcontentloaded' });
+        await settled(page);
+
+        const letter = cardOf(page).locator('textarea.tall').first();
+        await letter.fill('');
+        await page.waitForTimeout(300);
+        await letter.click();
+        await letter.pressSequentially('Written with the cupboard full.', { delay: 6 });
+        await page.waitForTimeout(2600);
+
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await settled(page);
+        await page.waitForTimeout(1500);
+
+        const after = await cardOf(page).locator('textarea.tall').first().inputValue();
+        check(
+          'the letter is kept even so',
+          /written with the cupboard full/i.test(after),
+          after.slice(0, 60),
+        );
+        check('and nothing is thrown at the page', errors.length === 0, errors.join('; '));
+        await page.close();
+      } finally {
+        await worker2.evaluate(async () => {
+          const store = chrome.storage.session ?? chrome.storage.local;
+          const all = await store.get(null);
+          await store.remove(Object.keys(all).filter((k) => k.startsWith('jh-ballast-')));
+        });
+      }
     }
   } finally {
     if (doomed) doomed.kill();

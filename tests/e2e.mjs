@@ -84,18 +84,29 @@ async function main() {
     const aiText = await aiChip.innerText();
     check('the card says whether AI is on', /^AI (on|off)/.test(aiText), aiText);
 
-    // Two ways to tailor, and a third way out: going to write the sentence
-    // yourself in the builder, which is neither.
+    /*
+     * Three ways to tailor — leave it alone, match by keyword, let the AI
+     * decide — and a fourth way out: going to write the sentence yourself in
+     * the builder, which is none of them.
+     */
     const modes = card.locator('button.mode:not(.ghost)');
-    check('both ways to tailor are offered', (await modes.count()) === 2);
+    check('all three ways to tailor are offered', (await modes.count()) === 3, `${await modes.count()} modes`);
     check(
-      'and a way through to the builder, for what neither can do',
-      (await card.locator('button.mode.ghost').count()) === 1,
+      'including leaving the resume exactly as it is',
+      (await card.locator('button.mode', { hasText: 'Use it unchanged' }).count()) === 1,
     );
     check(
+      'and a way through to the builder, for what none of them can do',
+      (await card.locator('button.mode.ghost').count()) === 1,
+    );
+    // Found by what it is, not by where it sits: adding a mode in front of it
+    // used to point this check at the button next door, which passes for the
+    // wrong reason.
+    const aiMode = card.locator('button.mode.ai-action');
+    check(
       'the AI option is disabled while AI is off, and says why',
-      (await modes.nth(1).isDisabled()) && Boolean(await modes.nth(1).getAttribute('title')),
-      await modes.nth(1).getAttribute('title'),
+      (await aiMode.isDisabled()) && Boolean(await aiMode.getAttribute('title')),
+      await aiMode.getAttribute('title'),
     );
 
     const changes = await card.locator('.change').all();

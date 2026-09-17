@@ -247,7 +247,7 @@ async function main() {
 
       const after = (await card.textContent()) ?? '';
       check('on returning, the card says the match may be out of date', /been editing the store/i.test(after));
-      check('and offers to redo it rather than doing it', /match it again/i.test(after));
+      check('and offers to redo it rather than doing it', /build it again/i.test(after));
       await editor.close();
     }
 
