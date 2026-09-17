@@ -782,6 +782,50 @@ cover letter, most wanted years of experience I do not have.</p>
 
 export const QUIET = [CAREERS_ARTICLE, SHOP, SIGN_IN, DOCS, SPA_SHELL, FORUM_THREAD, BLOG];
 
+/**
+ * A posting on a page the size of a real one.
+ *
+ * Every other fixture here is a few kilobytes, which is right for asking
+ * whether something works and useless for asking how long it takes. A posting
+ * on a modern board arrives inside a megabyte or two of application shell: a
+ * bundle inlined into the markup, a few thousand nodes of chrome, and the
+ * description somewhere in the middle. Reading that page is the most expensive
+ * thing the extension does, and it does it on every page you visit.
+ */
+const FILLER_NODE = (i) =>
+  `<div class="row" data-idx="${i}"><span class="k">field_${i}</span><span class="v">value ${i} ` +
+  `lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod</span></div>`;
+
+const BUNDLE = `
+  window.__APP_STATE__ = ${JSON.stringify({
+    strings: Array.from({ length: 400 }, (_, i) => `string_${i}_lorem_ipsum_dolor_sit_amet_${'x'.repeat(40)}`),
+    routes: Array.from({ length: 200 }, (_, i) => ({ path: `/r/${i}`, chunk: `chunk-${i}-${'y'.repeat(60)}` })),
+  })};
+  function boot(){ /* ${'z'.repeat(20000)} */ }
+`;
+
+export const HEAVY_POSTING = {
+  name: 'heavy-posting',
+  path: '/lumen/careers/staff-platform-engineer',
+  company: 'Lumen',
+  title: 'Staff Platform Engineer',
+  html: `<!doctype html>
+<html><head><title>Staff Platform Engineer at Lumen</title><style>${CHROME}</style>
+<script>${BUNDLE}</script></head>
+<body>
+  <div class="hdr"><h1>Lumen</h1></div>
+  <nav>${Array.from({ length: 300 }, (_, i) => `<a href="/n/${i}">Nav item ${i}</a>`).join('')}</nav>
+  <div class="wrap">
+    <h1>Staff Platform Engineer</h1>
+    ${ROLE_BODY}
+    <p><a href="/lumen/apply/staff-platform-engineer">Apply now</a></p>
+  </div>
+  <aside>${Array.from({ length: 2500 }, (_, i) => FILLER_NODE(i)).join('')}</aside>
+  <script>${BUNDLE}</script>
+</body></html>`,
+};
+
+
 export const NAVIGATION = [
   CYGNUS_BOARD, CYGNUS_ROLE_A, CYGNUS_ROLE_B, FRAMED_ROLE, FRAMED_FORM, ADVERT_FRAME, ADVERT_CONTENT,
   EMBEDDED_BOARD, EMBEDDED_BOARD_FRAME, BLOG_WITH_FORM, BLOG_ENQUIRY_FRAME, LATE_RENDER,
@@ -790,7 +834,7 @@ export const NAVIGATION = [
   OWN_SITE, ATS_FORM, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, SPA_BOARD,
 ];
 
-export const ALL = [STREAMLY, NORTHWIND, HELIOS_ROLE, HELIOS_FORM, ...QUIET, ...NAVIGATION];
+export const ALL = [STREAMLY, NORTHWIND, HELIOS_ROLE, HELIOS_FORM, HEAVY_POSTING, ...QUIET, ...NAVIGATION];
 
 /**
  * Serve every fixture from one origin. Returns the base url and a `urlFor`
