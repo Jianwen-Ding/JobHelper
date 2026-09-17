@@ -9,9 +9,10 @@
  * a job marked as done comes off the list of things to finish, so a false
  * positive costs more than a miss.
  *
- * Fifteen systems, each ending its application differently, and four pages
- * where the obvious-looking button is a draft, a question, a filter or a
- * newsletter.
+ * Twenty-three systems, each ending its application differently, and thirteen
+ * controls that must leave the tracker alone — a draft, a question, a filter,
+ * a newsletter, a referral, a message, a search, a feedback box, and three
+ * that carry the whole phrase: another job's Apply, a deferral, and a mailto.
  *
  *   RMM_SERVER=http://127.0.0.1:4788 node tests/sending.mjs
  */
@@ -74,6 +75,23 @@ async function press(page, name) {
 }
 
 /**
+ * Wait for the store to say something, rather than for a number of seconds.
+ *
+ * Both waits in a walk used to be fixed: long enough for the keeper's
+ * interval, then long enough for a submission to be recorded. Asking until
+ * the answer arrives ends each one when it is true — which for a submission
+ * is a few hundred milliseconds, not two seconds.
+ */
+async function awaitFiled(company, wanted, within = 9000) {
+  const until = Date.now() + within;
+  for (;;) {
+    const now = await filed(company);
+    if (wanted(now) || Date.now() >= until) return now;
+    await new Promise((done) => setTimeout(done, 200));
+  }
+}
+
+/**
  * One application, from arriving on the form to whatever the tracker says
  * afterwards. Returns what was filed so the caller can judge it.
  */
@@ -89,17 +107,56 @@ async function walk(context, fixtures, fixture, { build = true } = {}) {
       const card = cardOf(page);
       await card.getByRole('button', { name: 'Build resume' }).click();
       await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
-      // The keeper writes on an interval, and the space is opened from there.
-      await page.waitForTimeout(2600);
     }
 
-    const before = await filed(fixture.company);
+    // The keeper writes on an interval, and the space is opened from there.
+    const before = await awaitFiled(fixture.company, (f) => f.application?.status === 'applying');
     await press(page, fixture.sends);
-    await page.waitForTimeout(2200);
-    const after = await filed(fixture.company);
+
+    /*
+     * A page that should send is waited on until it has; one that should not
+     * has to be given a window and then read, because there is no event for
+     * something never happening. Two seconds is the same window the positives
+     * take about a tenth of.
+     */
+    /*
+     * Both, not just the application. `filed` reads the two lists at once, so
+     * asking only about the application returned a snapshot whose draft half
+     * had been fetched a moment earlier — a race in the reader rather than in
+     * the server, which writes both in one handler.
+     */
+    const after = fixture.sent
+      ? await awaitFiled(
+          fixture.company,
+          (f) => f.application?.status === 'applied' && f.draft?.status === 'submitted',
+        )
+      : await new Promise((done) => setTimeout(() => done(filed(fixture.company)), 2000));
     return { before, after, errors, page };
   } finally {
     await page.close().catch(() => undefined);
+  }
+}
+
+/**
+ * How many applications to walk at once.
+ *
+ * Thirty-six pages at six seconds each is nearly four minutes, which made
+ * this the longest suite by a factor of three and more than doubled the whole
+ * run's wall clock — and a loaded machine is how a passing suite next door
+ * turns into a thirty-second timeout that reads like a bug. Each page here is
+ * a different company and a different application, so nothing is shared but
+ * the server.
+ *
+ * Three rather than six: every walk compiles a resume, which the false-
+ * positive sweep's pages do not, and six LaTeX runs at once on one server is
+ * how this stops being cheaper.
+ */
+const AT_ONCE = 3;
+
+/** Walk a list in batches, yielding each batch's results as they land. */
+async function* inBatches(list, run) {
+  for (let at = 0; at < list.length; at += AT_ONCE) {
+    yield await Promise.all(list.slice(at, at + AT_ONCE).map(run));
   }
 }
 
@@ -120,54 +177,64 @@ async function main() {
     const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
     await pointExtensionAt(context, worker, SERVER);
 
-    /* ---- The systems, and the many ways they spell "send it" ---- */
-    for (const fixture of SENDS) {
-      group(`${fixture.name} — "${fixture.sends}"`);
+    /*
+     * Walked in batches, reported in order.
+     *
+     * The results are collected before anything is printed so the log reads
+     * as a list of systems rather than as three interleaved ones — a failure
+     * has to be attributable to a system at a glance.
+     */
+    const timed = async (fixture) => {
       const at = Date.now();
-      const { before, after, errors } = await walk(context, fixtures, fixture);
+      const result = await walk(context, fixtures, fixture);
       timings.push({ name: fixture.name, ms: Date.now() - at });
+      return { fixture, ...result };
+    };
 
-      check(
-        'the form is recognised as an application at all',
-        Boolean(before.application),
-        before.application?.id ?? '(nothing filed)',
-      );
-      check(
-        'and held as one being worked on before it is sent',
-        before.application?.status === 'applying',
-        before.application?.status ?? '(none)',
-      );
-      check(
-        'pressing it is taken as the application going out',
-        after.application?.status === 'applied',
-        after.application?.status ?? '(none)',
-      );
-      check(
-        'and the draft stops looking like something to finish',
-        after.draft?.status === 'submitted',
-        after.draft?.status ?? '(none)',
-      );
-      check('nothing was thrown at the page', errors.length === 0, errors.join(' | '));
+    /* ---- The systems, and the many ways they spell "send it" ---- */
+    for await (const batch of inBatches(SENDS, timed)) {
+      for (const { fixture, before, after, errors } of batch) {
+        group(`${fixture.name} — "${fixture.sends}"`);
+        check(
+          'the form is recognised as an application at all',
+          Boolean(before.application),
+          before.application?.id ?? '(nothing filed)',
+        );
+        check(
+          'and held as one being worked on before it is sent',
+          before.application?.status === 'applying',
+          before.application?.status ?? '(none)',
+        );
+        check(
+          'pressing it is taken as the application going out',
+          after.application?.status === 'applied',
+          after.application?.status ?? '(none)',
+        );
+        check(
+          'and the draft stops looking like something to finish',
+          after.draft?.status === 'submitted',
+          after.draft?.status ?? '(none)',
+        );
+        check('nothing was thrown at the page', errors.length === 0, errors.join(' | '));
+      }
     }
 
     /* ---- And the controls that only look like one ---- */
     group('Controls that must leave the tracker alone');
-    for (const fixture of DOES_NOT_SEND) {
-      const at = Date.now();
-      const { before, after, errors } = await walk(context, fixtures, fixture);
-      timings.push({ name: fixture.name, ms: Date.now() - at });
-
-      check(
-        `${fixture.name}: "${fixture.sends}" does not send the application`,
-        after.application?.status === 'applying',
-        `${before.application?.status ?? '(none)'} → ${after.application?.status ?? '(none)'}`,
-      );
-      check(
-        `${fixture.name}: and the draft is still there to finish`,
-        after.draft?.status !== 'submitted',
-        after.draft?.status ?? '(none)',
-      );
-      check(`${fixture.name}: nothing thrown`, errors.length === 0, errors.join(' | '));
+    for await (const batch of inBatches(DOES_NOT_SEND, timed)) {
+      for (const { fixture, before, after, errors } of batch) {
+        check(
+          `${fixture.name}: "${fixture.sends}" does not send the application`,
+          after.application?.status === 'applying',
+          `${before.application?.status ?? '(none)'} → ${after.application?.status ?? '(none)'}`,
+        );
+        check(
+          `${fixture.name}: and the draft is still there to finish`,
+          after.draft?.status !== 'submitted',
+          after.draft?.status ?? '(none)',
+        );
+        check(`${fixture.name}: nothing thrown`, errors.length === 0, errors.join(' | '));
+      }
     }
 
     /*
