@@ -367,6 +367,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     letterAutoStarted: false,
     letterSaved: false,
     letterSource: '',
+    /** A previous letter offered as a starting point, until the user takes it. */
+    letterOffer: null,
     priorLetters: [],
     questions,
     answers: {},
@@ -936,8 +938,24 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         state.letter = r.body;
         state.letterSource = 'Drafted in your voice from your previous letters.';
       } else if (state.priorLetters.length > 0) {
-        state.letter = state.priorLetters[0].body;
-        state.letterSource = `The AI is off — this is your closest previous letter (${state.priorLetters[0].title}) to adapt.`;
+        /*
+         * Offered, not adopted.
+         *
+         * This used to put the previous letter straight into `state.letter`,
+         * and `state.letter` is what "Save application folder" ships. So with
+         * the AI off — and nobody having clicked anything, because this draft
+         * starts itself — a letter that opens "Dear Streamly," was typeset,
+         * named "Cover Letter Helios.pdf", and dropped in the folder the card
+         * tells you to upload from, with Helios in the address block and
+         * Streamly in the salutation. Saving it to the store then filed it
+         * under Helios, so the next Helios letter started from it too.
+         *
+         * A previous letter is a good starting point and a bad submission. It
+         * now waits behind a button.
+         */
+        state.letterOffer = state.priorLetters[0];
+        state.letter = '';
+        state.letterSource = `The AI is off. Your closest previous letter is ${state.priorLetters[0].title} — it is addressed to someone else, so it is not used until you say so.`;
       } else {
         state.letter = '';
         state.letterSource = 'No previous letters yet. Write one here and the next draft starts from it.';
@@ -1096,6 +1114,18 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         state.letterStarted
           ? h('div', {}, [
               state.letterSource ? h('div', { className: 'hint', textContent: state.letterSource }) : null,
+              state.letterOffer && !state.letter?.trim()
+                ? h('button', {
+                    className: 'tiny',
+                    textContent: `Start from "${state.letterOffer.title}"`,
+                    onclick: () => {
+                      state.letter = state.letterOffer.body;
+                      state.letterSource = `Copied from ${state.letterOffer.title}. It is addressed to another company — read it before sending.`;
+                      state.letterOffer = null;
+                      draw();
+                    },
+                  })
+                : null,
               h('textarea', {
                 className: 'tall',
                 value: state.letter ?? '',
@@ -1246,7 +1276,20 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
 
   function describeAutofill(r) {
     const parts = [`Filled ${plural(r.filled.length, 'field')}`];
-    if (r.skipped.length) parts.push(`left ${plural(r.skipped.length, 'field')} that already had a value`);
+
+    /*
+     * Skipped is not one thing. A field left alone because it already had an
+     * answer is finished; one skipped because nothing in its list matched, or
+     * because it is a widget nothing can drive, is a required field still
+     * empty. Calling both "already had a value" told someone their country
+     * dropdown was done when it read "Select One" — and autofill.js calls that
+     * exact distinction the difference between done and done silently wrong,
+     * which is why it records the reasons at all.
+     */
+    const done = r.skipped.filter((s) => s.reason === 'already filled').length;
+    const yours = r.skipped.length - done;
+    if (done) parts.push(`left ${plural(done, 'field')} that already had a value`);
+    if (yours) parts.push(`${plural(yours, 'field')} still for you to answer`);
     return `${parts.join(', ')}.`;
   }
 
@@ -1318,7 +1361,19 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             disabled: Boolean(state.busy),
             onclick: () =>
               act(`answer:${q.question}`, { question: q.question, force: true }, (r) => {
-                if (r?.output) state.answers[q.question] = r.output;
+                /*
+                 * `executed` first, not `output` first.
+                 *
+                 * When the AI is off the server used to hand back the prompt it
+                 * would have sent, in `output` — always truthy, so the second
+                 * branch was dead and the answer box filled with nine kilobytes
+                 * starting "You are helping with a resume and job-search
+                 * assistant", carrying every cover letter the user had saved
+                 * and their whole writing corpus. One more click put that in
+                 * the employer's form. The server no longer sends it here, and
+                 * this no longer reaches for it either.
+                 */
+                if (r?.executed && r.output) state.answers[q.question] = r.output;
                 else if (r && !r.executed) {
                   state.error = 'The AI is off, so a new answer cannot be drafted. Anything you type here is saved for next time.';
                 }

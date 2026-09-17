@@ -564,12 +564,36 @@ const handlers = {
    * path because a sentence of intent is exactly what tag matching cannot use.
    */
   async refine({ spec, feedback, job }) {
+    /*
+     * Mapped into the server's shape, the way `coverLetter` below already does.
+     *
+     * `analyze` returns the job as `{company, description, keywords, title,
+     * source}`; this read `job.jobDescription`, which is not one of those, and
+     * spread the rest straight through. The template literal turned the missing
+     * value into the four characters "undefined", which is non-empty, so the
+     * server's own guard against a blank description passed and the prompt went
+     * out reading:
+     *
+     *     ## Posting
+     *     Company: Helios
+     *     undefined
+     *
+     * The resume then came back re-picked bullet by bullet with no knowledge of
+     * the job at all, and was presented as "your feedback applied".
+     */
+    const description = job?.description ?? '';
     return serverFetch('/api/ai/tailor', {
       method: 'POST',
       timeoutMs: SLOW_TIMEOUT_MS,
       body: JSON.stringify({
         resumeId: spec.extends ?? spec.id,
-        job: { ...job, jobDescription: `${job.jobDescription}\n\n## The applicant's instructions\n${feedback}` },
+        job: {
+          jobTitle: job?.title,
+          company: job?.company,
+          url: job?.url ?? job?.source,
+          keywords: job?.keywords,
+          jobDescription: `${description}\n\n## The applicant's instructions\n${feedback}`,
+        },
       }),
     });
   },
@@ -626,11 +650,23 @@ const handlers = {
   },
 
   /** Answer one question, reusing a stored answer unless asked to redraft. */
-  async answerQuestion({ question, force }) {
+  async answerQuestion({ question, force, job }) {
     return serverFetch('/api/ai/answer', {
       method: 'POST',
       timeoutMs: SLOW_TIMEOUT_MS,
-      body: JSON.stringify({ question, force }),
+      body: JSON.stringify({
+        question,
+        force,
+        // Mapped into the server's shape, as `coverLetter` does below.
+        job: job
+          ? {
+              jobTitle: job.title,
+              company: job.company,
+              jobDescription: job.description ?? '',
+              url: job.url ?? job.source,
+            }
+          : undefined,
+      }),
     });
   },
 

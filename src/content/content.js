@@ -209,7 +209,11 @@
 
   async function onAction(action, payload = {}) {
     if (action.startsWith('answer:')) {
-      return send('answerQuestion', payload);
+      // With the job, like every other drafting call. Without it the prompt
+      // carried no company, role or description at all, so "Why do you want to
+      // work here?" was answered about nothing in particular — while the same
+      // question asked from the editor got the whole posting.
+      return send('answerQuestion', { ...payload, job: analysis?.job });
     }
 
     switch (action) {
@@ -288,7 +292,16 @@
           role: analysis.job.title ?? 'Unknown role',
           url: location.href,
           source: new URL(location.href).hostname,
-          status: 'applied',
+          /*
+           * Building the files is not sending them. This said 'applied', so the
+           * tracker recorded a submitted application the moment you pressed
+           * "Save application folder" — before the portal had seen anything —
+           * and "Mark as submitted" afterwards was a no-op that only appended a
+           * history line. Close the tab without submitting and the tracker, and
+           * the response rate it reports, counted an application nobody sent.
+           * `trackStatus` is what moves it on, which is what that button is for.
+           */
+          status: 'applying',
           coverLetter: payload.coverLetter,
           answers: payload.answers,
         });
