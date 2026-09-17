@@ -112,12 +112,51 @@ async function locate(fragment) {
   return null;
 }
 
+/**
+ * Take out a marker a previous run left behind.
+ *
+ * The run below puts the line back in a `finally`, which covers a failure and
+ * does not cover being killed — and a killed run leaves a sentence of test
+ * debris in the shared source, which is to say on somebody's resume. One was
+ * found there hours later, in a rendered PDF: "…with backpressure-aware
+ * consumer groups mu5oy50d".
+ *
+ * The stem is fixed and only the timestamp varies, so a later run can always
+ * recognise an earlier one's work and undo it. Repairing on the way in is the
+ * only cleanup a process that was killed can get.
+ */
+async function scrubOldMarkers() {
+  const stem = ' with backpressure-aware consumer groups ';
+  let cleaned = 0;
+  for (const entry of await sharedSource()) {
+    let touched = false;
+    for (const bullet of entry.bullets ?? []) {
+      for (const v of bullet.variants ?? []) {
+        const at = (v.text ?? '').indexOf(stem);
+        if (at < 0) continue;
+        v.text = v.text.slice(0, at);
+        touched = true;
+        cleaned++;
+      }
+    }
+    if (!touched) continue;
+    await fetch(`${SERVER}/api/entries/${encodeURIComponent(entry.id)}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(entry),
+    });
+  }
+  if (cleaned) console.log(`  (took ${cleaned} leftover marker${cleaned === 1 ? '' : 's'} out of the shared source first)`);
+}
+
 async function main() {
   try {
     await requireOpenSave(SERVER);
   } catch {
     process.exit(2);
   }
+
+  await scrubOldMarkers();
 
   const fixtures = await serveFixtures();
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-round-'));
