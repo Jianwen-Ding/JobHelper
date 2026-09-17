@@ -255,6 +255,32 @@ async function main() {
       check('a previous letter is offered rather than adopted', before.trim() === '', before.slice(0, 40));
 
       /*
+       * Typing reaches the buttons under the box.
+       *
+       * They are drawn from the letter's text, and nothing redraws the card
+       * while you type — a redraw would replace the box and take the caret
+       * with it. So writing a letter by hand left Save, Copy and "See it
+       * typeset" greyed out under a box that plainly had a letter in it,
+       * until something unrelated happened to redraw. Typed here rather than
+       * filled, because typing is what a person does and `fill` is not.
+       */
+      const box = card.locator('textarea.tall').first();
+      const state = async () =>
+        Promise.all(
+          ['Save to store', 'Copy', 'See it typeset'].map((name) =>
+            card.getByRole('button', { name, exact: true }).isDisabled(),
+          ),
+        );
+      check('with nothing written, there is nothing to save or typeset', (await state()).every(Boolean));
+      await box.click();
+      await box.type('Dear Streamly,');
+      check('and writing one wakes them up', (await state()).every((off) => off === false), (await state()).join(', '));
+      await box.fill('');
+      await box.type(' ');
+      check('while whitespace alone still counts as nothing', (await state()).every(Boolean));
+      await box.fill('');
+
+      /*
        * Filing it in exactly that state — the default one, with the AI off
        * and the offer untaken — used to produce a folder with no letter in
        * it, under the words "Saved. These files are named and ready to

@@ -132,6 +132,63 @@ async function main() {
     check('and its resume does not come with them', !/fits|too long/i.test(fit ?? ''), fit);
     check('the form is read as its own company', !/lyra/i.test(co ?? ''), co || '(none)');
     await page.close();
+
+    /*
+     * And the other way a page gets lost: leaving before it counts.
+     *
+     * Reading a posting used to end with a second pass over the page and
+     * every frame in it, taken after the card was already up — and until
+     * that finished, the page belonged to no application. Pressing Apply
+     * inside that window, which is what people do on a description page,
+     * started a fresh application on the form and threw away the description
+     * that had just been read: the role reverted to whatever the form says
+     * about itself, and the tracker got two rows for one job.
+     *
+     * So this one does not wait for anything it does not have to. The card
+     * showing the role is the moment a person would reach for Apply.
+     */
+    {
+      // Vega's posting and Vega's own form: the pair that should join. Two
+      // companies never join, however fast you walk between them.
+      const quick = await context.newPage();
+      await quick.goto(fixtures.urlFor(LEVER_ROLE), { waitUntil: 'domcontentloaded' });
+      /*
+       * The moment the card stops guessing, and not a step later. Until the
+       * analysis lands the card shows the page's own title and says so with
+       * `.loading`; after it lands, the posting has been read and belongs to
+       * an application. Anything this test waits for beyond that is time a
+       * real person would have spent clicking.
+       */
+      await quick.waitForFunction(
+        () => !document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelector('.card.loading'),
+        null,
+        { timeout: 30_000 },
+      );
+      const first = (await cardOf(quick).locator('.role').textContent())?.trim();
+
+      await quick.goto(fixtures.urlFor(LEVER_FORM), { waitUntil: 'domcontentloaded' });
+      await settled(quick);
+
+      /*
+       * Asked of the worker, which is where the answer lives. The card only
+       * lists the pages it is writing from once there is more than one, so
+       * counting rows in it cannot tell "they did not join" from "the card
+       * has not drawn the list yet".
+       */
+      const held = await worker.evaluate(async (url) => {
+        const [tab] = await chrome.tabs.query({ url });
+        const key = `trail:${tab.id}`;
+        const got = await chrome.storage.session.get(key);
+        return (got[key]?.pages ?? []).map((p) => p.url);
+      }, quick.url());
+      const role = (await cardOf(quick).locator('.role').textContent())?.trim();
+      check(
+        'a posting followed immediately still counts as the page before',
+        held.length >= 2,
+        `${held.length} pages held, role now "${role}", was "${first}"`,
+      );
+      await quick.close();
+    }
   } finally {
     await context.close();
     fixtures.close();

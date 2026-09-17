@@ -448,6 +448,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     pdfError: null,
     /** Whether the person said afterwards that they did not send it. */
     unsent: false,
+    /** The text that was saved to the store, so an edit after it can be saved too. */
+    letterSavedAs: null,
   };
 
   /**
@@ -1038,6 +1040,30 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     return box;
   }
 
+  /**
+   * The controls under the letter box, and how they keep up with it.
+   *
+   * They are drawn from `state.letter`, and the card is not redrawn while
+   * anybody is typing — a redraw replaces the textarea and the caret goes to
+   * the start of it. So the three of them are held here and brought up to
+   * date in place on each keystroke. Rebuilt on every draw, so these always
+   * point at the buttons currently on screen rather than at detached ones.
+   */
+  const letterControls = { save: null, copy: null, typeset: null, note: null };
+
+  function syncLetterControls() {
+    const written = Boolean(state.letter?.trim());
+    if (letterControls.save) {
+      letterControls.save.disabled = Boolean(state.busy) || state.letterSaved || !written;
+      letterControls.save.textContent = busyLabel('saveLetter', state.letterSaved ? 'Saved' : 'Save to store', 'Saving…');
+    }
+    if (letterControls.copy) letterControls.copy.disabled = !written;
+    if (letterControls.typeset) letterControls.typeset.disabled = Boolean(state.busy) || !written;
+    if (letterControls.note) {
+      letterControls.note.textContent = state.letterSaved ? 'Future drafts will start from this one.' : '';
+    }
+  }
+
   function drawFit() {
     if (!state.render) {
       return h('div', {
@@ -1535,24 +1561,43 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 dataset: { field: 'letter' },
                 value: state.letter ?? '',
                 placeholder: 'Write the letter here. Saving it makes it the reference for the next one.',
-                oninput: (e) => (state.letter = e.target.value),
+                /*
+                 * Typing has to reach the buttons under the box.
+                 *
+                 * This only assigned `state.letter`, and every control that
+                 * depends on it — Save to store, Copy, See it typeset — has
+                 * its `disabled` worked out when the card is drawn. Nothing
+                 * draws the card while you type, deliberately: a redraw
+                 * destroys the box you are typing into and takes the caret
+                 * with it. So writing a letter by hand left all three greyed
+                 * out until something unrelated happened to redraw, which
+                 * reads as three broken buttons under a box that works. They
+                 * are updated in place instead.
+                 */
+                oninput: (e) => {
+                  state.letter = e.target.value;
+                  // Editing after saving is a new letter to save.
+                  if (state.letterSaved && state.letter !== state.letterSavedAs) state.letterSaved = false;
+                  syncLetterControls();
+                },
               }),
               h('div', { className: 'row gap' }, [
-                h('button', {
+                (letterControls.save = h('button', {
                   className: 'tiny',
                   textContent: busyLabel('saveLetter', state.letterSaved ? 'Saved' : 'Save to store', 'Saving…'),
                   disabled: Boolean(state.busy) || state.letterSaved || !state.letter?.trim(),
                   onclick: () =>
                     act('saveLetter', { body: state.letter }, () => {
                       state.letterSaved = true;
+                      state.letterSavedAs = state.letter;
                     }),
-                }),
-                h('button', {
+                })),
+                (letterControls.copy = h('button', {
                   className: 'tiny',
                   textContent: 'Copy',
                   disabled: !state.letter?.trim(),
                   onclick: () => navigator.clipboard?.writeText(state.letter ?? ''),
-                }),
+                })),
                 /*
                  * The letter as it will actually arrive.
                  *
@@ -1563,7 +1608,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                  * resume has been drawn in the card since the beginning for
                  * exactly this reason; the letter is half of what goes.
                  */
-                h('button', {
+                (letterControls.typeset = h('button', {
                   className: 'tiny',
                   textContent: busyLabel('renderLetter', state.letterRender ? 'Typeset again' : 'See it typeset', 'Typesetting…'),
                   disabled: Boolean(state.busy) || !state.letter?.trim(),
@@ -1580,11 +1625,11 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                     act('renderLetter', { body: state.letter, resumeId: state.spec?.extends ?? state.spec?.id }, (r) => {
                       state.letterRender = r;
                     }),
-                }),
-                h('span', {
+                })),
+                (letterControls.note = h('span', {
                   className: 'faint',
                   textContent: state.letterSaved ? 'Future drafts will start from this one.' : '',
-                }),
+                })),
               ]),
               drawPdfPane('letter', state.letterRender?.pdfUrl, 'letter'),
               state.letterRender

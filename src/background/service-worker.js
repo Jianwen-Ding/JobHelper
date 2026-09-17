@@ -392,6 +392,66 @@ async function holdASpace(trail) {
 }
 
 /** Message handlers, one per action the content script or popup can request. */
+
+/**
+ * Put a page into this tab's application, or start a new one with it.
+ *
+ * Called from `analyze`, which is the ordinary path — the page is recorded in
+ * the same message that read it, so there is no window in which it has been
+ * read and does not yet belong anywhere — and from the `rememberPage` message
+ * for anything that reads a page without analysing it.
+ */
+async function remember(tab, page) {
+  await inheritIfNew(tab?.id, tab?.openerTabId);
+  const trail = await readTrail(tab?.id);
+  const joins = sameApplication(trail, page);
+  const pages = joins ? trail.pages.filter((p) => p.url !== page.url) : [];
+
+  pages.push({
+    url: page.url,
+    title: page.title,
+    company: page.company,
+    kind: page.kind,
+    html: trimForStorage(page.html, TRAIL_HTML_MAX),
+    at: Date.now(),
+  });
+
+  /*
+   * A fresh application inherits nothing.
+   *
+   * This kept the whole of the old trail and replaced only its pages, so the
+   * previous posting's resume, letter and answers stayed behind under `work`
+   * — invisible, because the page that started fresh is correctly refused
+   * them. It is the page after that which asks and is given them: read one
+   * job, build its resume, open another job in the same tab, follow Apply,
+   * and the form comes up holding the first job's application.
+   *
+   * The expectation goes once it has been honoured, too: a click means "the
+   * next page", and leaving it standing let it vouch for a third page five
+   * minutes later.
+   *
+   * `expecting` has to be named in that inheriting, because the spread drops
+   * every key except the ones written below it. Carrying it across a fresh
+   * start was the whole of the rule undone by one line: press Apply on Vega
+   * and have the board cancel the navigation and route the page itself —
+   * which content.js already anticipates, and which `target=_blank` produces
+   * too — then read a different job, and the expectation left over from Vega
+   * vouches for it. Vega's form then comes up holding Lyra's resume and
+   * Lyra's description as the source for the letter, with nothing on screen
+   * looking wrong.
+   */
+  const honoured = joins && wasExpected(trail, page.url);
+  const next = {
+    ...(joins ? trail : {}),
+    expecting: joins && !honoured ? trail.expecting : undefined,
+    pages: pages.slice(-TRAIL_MAX),
+    at: Date.now(),
+  };
+  await writeTrail(tab?.id, next);
+  await markTab(tab?.id, next);
+return { ...summarise(next), startedFresh: !joins };
+}
+
 const handlers = {
   /** "There is a content script in this frame." Sent once, on load. */
   async frameReady(_payload, tab, sender) {
@@ -452,57 +512,13 @@ const handlers = {
 
   /**
    * Add the page to the current application, or start a new one with it.
-   * Returns the trail as it now stands, so the card can show it.
+   *
+   * Kept as a message of its own for anything that reads a page without
+   * analysing it; the ordinary path goes through `analyze`, which records it
+   * in the same round trip that read it.
    */
   async rememberPage({ page }, tab) {
-    await inheritIfNew(tab?.id, tab?.openerTabId);
-    const trail = await readTrail(tab?.id);
-    const joins = sameApplication(trail, page);
-    const pages = joins ? trail.pages.filter((p) => p.url !== page.url) : [];
-
-    pages.push({
-      url: page.url,
-      title: page.title,
-      company: page.company,
-      kind: page.kind,
-      html: trimForStorage(page.html, TRAIL_HTML_MAX),
-      at: Date.now(),
-    });
-
-    /*
-     * A fresh application inherits nothing.
-     *
-     * This kept the whole of the old trail and replaced only its pages, so the
-     * previous posting's resume, letter and answers stayed behind under `work`
-     * — invisible, because the page that started fresh is correctly refused
-     * them. It is the page after that which asks and is given them: read one
-     * job, build its resume, open another job in the same tab, follow Apply,
-     * and the form comes up holding the first job's application.
-     *
-     * The expectation goes once it has been honoured, too: a click means "the
-     * next page", and leaving it standing let it vouch for a third page five
-     * minutes later.
-     *
-     * `expecting` has to be named in that inheriting, because the spread drops
-     * every key except the ones written below it. Carrying it across a fresh
-     * start was the whole of the rule undone by one line: press Apply on Vega
-     * and have the board cancel the navigation and route the page itself —
-     * which content.js already anticipates, and which `target=_blank` produces
-     * too — then read a different job, and the expectation left over from Vega
-     * vouches for it. Vega's form then comes up holding Lyra's resume and
-     * Lyra's description as the source for the letter, with nothing on screen
-     * looking wrong.
-     */
-    const honoured = joins && wasExpected(trail, page.url);
-    const next = {
-      ...(joins ? trail : {}),
-      expecting: joins && !honoured ? trail.expecting : undefined,
-      pages: pages.slice(-TRAIL_MAX),
-      at: Date.now(),
-    };
-    await writeTrail(tab?.id, next);
-    await markTab(tab?.id, next);
-    return { ...summarise(next), startedFresh: !joins };
+    return remember(tab, page);
   },
 
   /**
@@ -700,11 +716,11 @@ const handlers = {
    * back to the stored preference. `useAi` is the older two-way form of the
    * same question and still works.
    */
-  async analyze({ url, title, html, pages, useAi, tailor }) {
+  async analyze({ url, title, html, pages, framed, useAi, tailor }, tab) {
     const settings = await getSettings();
     const mode =
       tailor ?? (typeof useAi === 'boolean' ? (useAi ? 'ai' : 'match') : settings.useAi ? 'ai' : 'match');
-    return serverFetch('/api/extension/analyze', {
+    const result = await serverFetch('/api/extension/analyze', {
       method: 'POST',
       timeoutMs: SLOW_TIMEOUT_MS,
       body: JSON.stringify({
@@ -721,6 +737,37 @@ const handlers = {
         useAi: mode === 'ai',
       }),
     });
+
+    /*
+     * And the page counts from here, in the same message that read it.
+     *
+     * It used to be a second message, sent by the content script once the
+     * card was up. That is a round trip later, and a page is only part of an
+     * application once it lands — so following Apply in the meantime, which
+     * is exactly what you do on a description page, started a fresh
+     * application on the form and lost the description you had just read: the
+     * role reverted to whatever the form calls itself, and the tracker took
+     * two rows for one job. A message in flight when the tab navigates is not
+     * delivered, so no amount of sending it earlier closes that window; not
+     * sending it at all does.
+     *
+     * Only when it is a posting. Recording every page the extension so much
+     * as looked at would put a salary page, a careers index and a
+     * confirmation page into the application you are writing.
+     */
+    if (result?.isJobPosting) {
+      await remember(tab, {
+        url,
+        title,
+        company: result.job?.company,
+        kind: result.kind,
+        // The frames are part of the page: a posting inside an embed is an
+        // empty shell at the top level, and the next page would be written
+        // from the shell.
+        html: [html, ...(framed ?? []).map((f) => f.html)].join('\n').slice(0, 400_000),
+      });
+    }
+    return { ...result, trail: summarise(await readTrail(tab?.id)) };
   },
 
   /** Compile a proposed spec so the user can look at it before committing. */

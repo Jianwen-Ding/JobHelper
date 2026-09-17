@@ -682,7 +682,15 @@
     // know the role best, and before the shell they are embedded in, which
     // often knows only the company.
     const framed = await framePages();
-    return { ...here, pages: [...earlier, ...framed, here] };
+    /*
+     * `framed` is handed back as well as folded in. Remembering this page
+     * needs exactly these two things — the page and the frames inside it —
+     * and reading them a second time a moment later was both a duplicate walk
+     * of every frame and a window: until the second read finished, this page
+     * was not part of any application, so following Apply quickly enough
+     * started a second one and lost the description you had just read.
+     */
+    return { ...here, framed, pages: [...earlier, ...framed, here] };
   }
 
   /** Who this page is, as far as belonging to an application goes. */
@@ -836,6 +844,8 @@
      * guess they did not ask for. "Let the AI tailor it" is a button.
      */
     let found;
+    /** What this page was when it was read — reused below, not re-read. */
+    let payload;
     // What the page was worth when it was read, not when the answer came back.
     // A board that serves a shell and fetches the posting fills in during the
     // analysis, so the two are different numbers — and recording the later one
@@ -843,7 +853,7 @@
     // had already been ruled out. The card then never appeared at all.
     const judgedScore = localScore();
     try {
-      const payload = await applicationPayload();
+      payload = await applicationPayload();
       if (!current()) return;
       found = await send('analyze', { ...payload, tailor: 'match' });
     } catch (err) {
@@ -875,6 +885,21 @@
     }
     putUpCard();
     cardHandle?.update(analysis);
+
+    /*
+     * The page is already part of an application by the time this line runs.
+     *
+     * It used to be told so by a second message, sent from here once the card
+     * was up — and a page only belongs to an application once that message
+     * lands. Following Apply in the meantime, which is exactly what you do on
+     * a description page, started a fresh application on the form and lost
+     * the description you had just read: the role reverted to whatever the
+     * form calls itself, and the tracker took two rows for one job. A message
+     * in flight when the tab navigates is never delivered, so no amount of
+     * sending it sooner closes that window. `analyze` records the page in the
+     * same round trip that read it, and hands back the trail it made.
+     */
+    if (analysis.trail) cardHandle?.setTrail(analysis.trail);
 
     /*
      * Whatever was built on the page before this one. Restored before the AI
@@ -912,36 +937,6 @@
      * this line too, and a fresh application must not be frozen out of saving.
      */
     workRestored = true;
-
-    // Taken once, and already trimmed: the same page is both what was just
-    // analysed and what the next page will be written from.
-    const trimmed = await pagePayload();
-    if (!current()) return;
-
-    /*
-     * What is remembered has to include the frames, or a page whose posting is
-     * entirely inside an embed is remembered as the empty shell it looks like
-     * — and the next page of the application is written from nothing.
-     */
-    const framed = await framePages();
-    if (!current()) return;
-    const remembered = [trimmed.html, ...framed.map((f) => f.html)].join('\n').slice(0, 400_000);
-
-    /*
-     * This page is now part of an application. Remembering it is what lets the
-     * next page — usually the form, on a different host — be written from the
-     * description you read here rather than from the form's own empty prose.
-     */
-    send('rememberPage', {
-      page: {
-        ...pageIdentity(),
-        company: analysis.job?.company,
-        kind: analysis.kind,
-        html: remembered,
-      },
-    })
-      .then((trail) => current() && cardHandle?.setTrail(trail))
-      .catch(() => undefined);
 
     /*
      * If the user asked for AI tailoring, it runs now — after the
