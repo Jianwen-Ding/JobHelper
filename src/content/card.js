@@ -92,9 +92,14 @@ const STYLE = `
 .ai.actionable { cursor: pointer; }
 .ai.actionable:hover { filter: brightness(.96); }
 
-/* Two ways to tailor, side by side, with the one in use marked. */
-.build-modes { gap: 6px; }
-button.mode { flex: 1 1 0; font-size: 12px; padding: 6px 8px; }
+/*
+ * Three ways to tailor, side by side, with the one in use marked — and a
+ * fourth, quieter, that leaves for the builder. Four does not fit one line of
+ * a 380px card, so the row wraps rather than squeezing every label to an
+ * ellipsis; min-width is what stops flex shrinking them past legibility.
+ */
+.build-modes { gap: 6px; flex-wrap: wrap; }
+button.mode { flex: 1 1 auto; min-width: 104px; font-size: 12px; padding: 6px 8px; }
 button.mode.on {
   border-color: transparent; color: #174ea6;
   background: var(--accent-soft); font-weight: 500;
@@ -216,6 +221,8 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .diff-head .from-label, .diff-head .to-label { font-weight: 600; color: var(--ink-soft); }
 .diff-head .arrow { color: var(--faint); }
 .diff-head .count { margin-left: auto; color: var(--faint); }
+/* The way out of the changes, where the changes are. */
+.diff-head .undo-all { padding: 0 0 0 8px; font-size: 11px; }
 .change .ba { display: grid; gap: 2px; margin-top: 3px; }
 .change .ba del, .change .ba ins {
   display: block; font-size: 12px; line-height: 1.45; text-decoration: none;
@@ -427,8 +434,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     wentToEditor: false,
     /** And you did come back, so what is on screen may be out of date. */
     editedElsewhere: false,
-    /** How the proposal on screen was produced: 'tags' or 'ai'. */
-    builtWith: analysis?.aiUsed ? 'ai' : 'tags',
+    /** How the proposal on screen was produced: 'none', 'match' or 'ai'. */
+    builtWith: analysis?.tailor ?? (analysis?.aiUsed ? 'ai' : 'match'),
     /** Which compiled PDF is on screen, and the canvases already drawn. */
     shownPdf: null,
     pdfPages: new Map(),
@@ -828,12 +835,32 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * The keywords that drove each pick are kept, collapsed underneath, because
    * "why did it choose that?" is the next question after "what changed?".
    */
+  /** One line naming the resume being sent and what, if anything, was done to it. */
+  function builtSummary() {
+    const base = analysis.baseLabel ?? 'your base resume';
+    const copy = ` Your ${base} is untouched — this is a copy, saved under this posting's name.`;
+    if (state.builtWith === 'none') return `${base}, exactly as it is. Nothing was swapped, dropped or added.${copy}`;
+    if (state.builtWith === 'ai' && analysis.aiUsed) {
+      return `${base}, with the changes the AI chose below.${copy}`;
+    }
+    if (state.builtWith === 'ai') {
+      return `The AI returned nothing usable, so this is ${base} with the keyword match applied.${copy}`;
+    }
+    return `${base}, with wordings swapped by keyword match against phrasings you already wrote.${copy}`;
+  }
+
   function drawChanges() {
     const diff = analysis.diff ?? [];
     const rationale = analysis.rationale ?? [];
 
     if (diff.length === 0 && rationale.length === 0) {
-      return h('div', { className: 'no-change' }, 'Nothing needed changing — your base resume already suits this posting.');
+      return h(
+        'div',
+        { className: 'no-change' },
+        state.builtWith === 'none'
+          ? 'Unchanged, as you asked — this is your resume exactly as you keep it.'
+          : 'Nothing needed changing — your base resume already suits this posting.',
+      );
     }
 
     // Keywords, matched to the diff row they explain by the text they swapped in.
@@ -848,6 +875,30 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         h('span', { className: 'arrow', textContent: '→' }),
         h('span', { className: 'to-label', textContent: 'this posting' }),
         h('span', { className: 'count', textContent: plural(diff.length || rationale.length, 'change') }),
+        /*
+         * The way out, beside the list rather than back up among the build
+         * modes. This is where you find out what was changed, so this is where
+         * "actually, none of it" belongs.
+         */
+        state.builtWith === 'none'
+          ? null
+          : h('button', {
+              className: 'link undo-all',
+              textContent: 'Undo all',
+              title: 'Throw these changes away and send the resume exactly as you keep it',
+              disabled: Boolean(state.busy),
+              onclick: async () => {
+                state.rebuilding = 'none';
+                try {
+                  await act('rebuild', { tailor: 'none' }, () => {
+                    state.builtWith = 'none';
+                    state.render = null;
+                  });
+                } finally {
+                  state.rebuilding = null;
+                }
+              },
+            }),
       ]),
     ]);
 
@@ -1170,7 +1221,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     } else {
       for (const r of resumes) baseSelect.append(option(r));
     }
-    baseSelect.onchange = () => act('setBase', { baseResumeId: baseSelect.value, useAi: state.builtWith === 'ai' });
+    baseSelect.onchange = () => act('setBase', { baseResumeId: baseSelect.value, tailor: state.builtWith ?? 'match' });
 
     const feedback = h('textarea', {
       value: state.feedback,
@@ -1191,22 +1242,47 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         ]),
 
         /*
-         * Two ways to get from the base to a tailored resume, chosen
+         * Three ways to get from the base to what you send, chosen
          * deliberately rather than by a setting the user cannot see from here.
-         * Matching is instant, free, and only ever picks among phrasings you
-         * already wrote; the AI reads the posting and decides what to change.
+         * Unchanged does nothing at all; matching is instant, free, and only
+         * ever picks among phrasings you already wrote; the AI reads the
+         * posting and decides what to change.
+         *
+         * The first of those was missing, and its absence was the whole
+         * problem: both buttons altered the resume, so the proposal always
+         * arrived with a list of changes on it and no way to say "none of
+         * these, send what I already have". Tailoring is the feature; it was
+         * never supposed to be compulsory.
          */
         h('div', { className: 'row build-modes' }, [
           h('button', {
-            className: state.builtWith === 'tags' ? 'mode on' : 'mode',
-            textContent: rebuildLabel('tags', 'Match it myself', 'Matching…'),
-            title: 'Pick among your stored phrasings by keyword. Nothing is sent to an AI.',
+            className: state.builtWith === 'none' ? 'mode on' : 'mode',
+            textContent: rebuildLabel('none', 'Use it unchanged', 'Copying…'),
+            title: 'Send this resume exactly as it is. Nothing is swapped, dropped or added.',
             disabled: Boolean(state.busy),
             onclick: async () => {
-              state.rebuilding = 'tags';
+              state.rebuilding = 'none';
               try {
-                await act('rebuild', { useAi: false }, () => {
-                  state.builtWith = 'tags';
+                await act('rebuild', { tailor: 'none' }, () => {
+                  state.builtWith = 'none';
+                  state.render = null;
+                });
+              } finally {
+                state.rebuilding = null;
+              }
+            },
+          }),
+          h('button', {
+            className: state.builtWith === 'match' ? 'mode on' : 'mode',
+            textContent: rebuildLabel('match', 'Match by keyword', 'Matching…'),
+            title:
+              'Swap in phrasings you already wrote, picked by the keywords in this posting. Nothing is sent to an AI, and nothing new is written.',
+            disabled: Boolean(state.busy),
+            onclick: async () => {
+              state.rebuilding = 'match';
+              try {
+                await act('rebuild', { tailor: 'match' }, () => {
+                  state.builtWith = 'match';
                   state.render = null;
                 });
               } finally {
@@ -1227,7 +1303,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             onclick: async () => {
               state.rebuilding = 'ai';
               try {
-                await act('rebuild', { useAi: true }, () => {
+                await act('rebuild', { tailor: 'ai' }, () => {
                   state.builtWith = 'ai';
                   state.render = null;
                 });
@@ -1274,30 +1350,34 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
               h('span', { textContent: 'You have been editing the store. ' }),
               h('button', {
                 className: 'link',
-                textContent: 'Match it again',
+                textContent: 'Build it again',
                 disabled: Boolean(state.busy),
                 onclick: () => {
                   state.editedElsewhere = false;
-                  return act('rebuild', { useAi: false }, () => {
-                    state.builtWith = 'match';
+                  const mode = state.builtWith ?? 'match';
+                  state.rebuilding = mode;
+                  return act('rebuild', { tailor: mode }, () => {
+                    state.builtWith = mode;
                     state.render = null;
+                    state.rebuilding = null;
                   });
                 },
               }),
               h('span', { textContent: ' to use anything you added.' }),
             ])
           : null,
-        state.builtWith
-          ? h('div', {
-              className: 'hint',
-              textContent:
-                state.builtWith === 'ai'
-                  ? analysis.aiUsed
-                    ? 'The AI chose these changes.'
-                    : 'The AI returned nothing usable, so this is the keyword match.'
-                  : 'Chosen by keyword match against your own phrasings.',
-            })
-          : null,
+        /*
+         * Which resume this is, and what was done to it.
+         *
+         * "Chosen by keyword match against your own phrasings" said what the
+         * mechanism was and never what the result was — so the honest question
+         * "which version am I actually sending?" had no answer on the card.
+         * The copy is always named after the posting, and the base it came
+         * from is never touched; both of those are worth saying out loud,
+         * because a tool that silently edits the resume you keep is a tool
+         * nobody should press a button on.
+         */
+        state.builtWith ? h('div', { className: 'hint', textContent: builtSummary() }) : null,
         drawChanges(),
         drawSuggestions(),
         drawFit(),
@@ -1524,7 +1604,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         h('button', {
           className: 'tiny',
           textContent: busyLabel('retry', 'Try again', 'Trying…'),
-          onclick: () => act('rebuild', { useAi: false }),
+          onclick: () => act('rebuild', { tailor: state.builtWith ?? 'match' }),
         }),
       ]),
     );
@@ -1870,7 +1950,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     update(next) {
       analysis = analysis ? Object.assign(analysis, next) : next;
       state.spec = next.spec ?? state.spec;
-      state.builtWith = next.aiUsed ? 'ai' : state.builtWith;
+      state.builtWith = next.tailor ?? (next.aiUsed ? 'ai' : state.builtWith);
       state.render = null;
       draw();
       maybeAutoDraft();
@@ -1911,7 +1991,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     async tailorWithAi() {
       state.rebuilding = 'ai';
       try {
-        return await act('rebuild', { useAi: true }, () => {
+        return await act('rebuild', { tailor: 'ai' }, () => {
           state.builtWith = 'ai';
           state.render = null;
         });

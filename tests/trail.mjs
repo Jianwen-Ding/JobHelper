@@ -256,6 +256,27 @@ describe('carrying less when there is no room', () => {
   it('leaves a short trail alone', () => {
     assert.deepEqual(lighten({ pages: [{ url: 'a', html: 'aaa' }] }).pages[0].html, 'aaa');
   });
+
+  /*
+   * The promise, rather than the mechanism.
+   *
+   * This runs when session storage will not take the trail whole, and what
+   * it gives up has to be the part that can be got back: a page's text can
+   * be read again by visiting the page. A letter and three answers cannot be
+   * got back from anywhere, so they are what the shedding is *for* — and
+   * nothing here said so, which would have let a refactor start trimming
+   * `work` to save room and pass every test above.
+   */
+  it('never gives up what was written, at any pressure', () => {
+    const withWork = {
+      ...trail,
+      work: { letter: 'Dear Acme,', answersByQuestion: { 'Why us?': 'Because.' }, spec: { id: 'x' } },
+    };
+    for (const keep of [2, 1, 0]) {
+      const lighter = lighten(withWork, keep);
+      assert.deepEqual(lighter.work, withWork.work, `work survived lighten(…, ${keep})`);
+    }
+  });
 });
 
 describe('whether there is anything to keep', () => {

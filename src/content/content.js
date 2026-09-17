@@ -501,6 +501,7 @@
       case 'saveLetter':
         return send('saveLetter', { body: payload.body, job: analysis.job });
 
+
       case 'saveAnswer':
         return send('saveAnswer', payload);
 
@@ -531,18 +532,18 @@
 
       case 'setBase': {
         await send('setSettings', { patch: { baseResumeId: payload.baseResumeId } });
-        analysis = await send('analyze', { ...(await applicationPayload()), useAi: Boolean(payload.useAi) });
+        analysis = await send('analyze', { ...(await applicationPayload()), ...tailoring(payload) });
         cardHandle?.update(analysis);
         return analysis;
       }
 
       /**
-       * Rebuild the proposal from the base, either by tag matching or by
-       * asking the AI what to change. Same endpoint, one deliberate flag —
-       * so the two paths cannot drift apart.
+       * Rebuild the proposal from the base: unchanged, by keyword match, or
+       * by asking the AI what to change. Same endpoint, one deliberate flag —
+       * so the three paths cannot drift apart.
        */
       case 'rebuild': {
-        analysis = await send('analyze', { ...(await applicationPayload()), useAi: Boolean(payload.useAi) });
+        analysis = await send('analyze', { ...(await applicationPayload()), ...tailoring(payload) });
         cardHandle?.update(analysis);
         return analysis;
       }
@@ -633,6 +634,21 @@
    * the page in front of you is why a cover letter written from an application
    * form had nothing to say.
    */
+  /**
+   * How much the card asked to have changed, in the form the worker wants.
+   *
+   * `useAi` is still accepted because the popup and older saved work speak it,
+   * but everything the card sends now says `tailor` — the three-way choice
+   * "leave it alone / match by keyword / let the AI decide" cannot be
+   * expressed by a boolean, and the missing third of it was the one people
+   * wanted most.
+   */
+  function tailoring(payload) {
+    if (payload?.tailor) return { tailor: payload.tailor };
+    if (typeof payload?.useAi === 'boolean') return { tailor: payload.useAi ? 'ai' : 'match' };
+    return {};
+  }
+
   async function applicationPayload() {
     const here = await pagePayloadIdle();
     // Which pages belong is settled before anything is read, from where this
@@ -808,7 +824,7 @@
     try {
       const payload = await applicationPayload();
       if (!current()) return;
-      found = await send('analyze', { ...payload, useAi: false });
+      found = await send('analyze', { ...payload, tailor: 'match' });
     } catch (err) {
       /*
        * A server that is down is worth saying on a page that is certainly a

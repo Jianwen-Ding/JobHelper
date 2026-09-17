@@ -641,13 +641,16 @@ const handlers = {
   /**
    * Analyse a page and get back a proposed tailored resume spec.
    *
-   * `useAi` may be passed per call, which is how the card offers "build from
-   * the base" and "let the AI decide what to change" as two deliberate
-   * choices rather than one hidden setting. Omitted, it falls back to the
-   * stored preference.
+   * `tailor` may be passed per call, which is how the card offers "send it
+   * unchanged", "match by keyword" and "let the AI decide what to change" as
+   * three deliberate choices rather than one hidden setting. Omitted, it falls
+   * back to the stored preference. `useAi` is the older two-way form of the
+   * same question and still works.
    */
-  async analyze({ url, title, html, pages, useAi }) {
+  async analyze({ url, title, html, pages, useAi, tailor }) {
     const settings = await getSettings();
+    const mode =
+      tailor ?? (typeof useAi === 'boolean' ? (useAi ? 'ai' : 'match') : settings.useAi ? 'ai' : 'match');
     return serverFetch('/api/extension/analyze', {
       method: 'POST',
       timeoutMs: SLOW_TIMEOUT_MS,
@@ -660,7 +663,9 @@ const handlers = {
         // it is just written from the wrong half of what was read.
         pages,
         baseResumeId: settings.baseResumeId,
-        useAi: typeof useAi === 'boolean' ? useAi : settings.useAi,
+        tailor: mode,
+        // Older servers read this and know nothing of `tailor`.
+        useAi: mode === 'ai',
       }),
     });
   },
