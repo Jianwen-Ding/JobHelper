@@ -279,6 +279,38 @@ async function main() {
       await page.waitForTimeout(300);
       const after = await card.locator('textarea.tall').first().inputValue();
       check('and taking it puts it in the box', after.trim().length > 0, after.slice(0, 40));
+
+      /*
+       * And the letter as a document, not as a box of text.
+       *
+       * It is typeset through the same LaTeX as the resume and attached as a
+       * PDF, so the version with the name, the address block and the spacing
+       * in it was the one nobody saw until after it had been sent.
+       *
+       * The resume is checked again afterwards on purpose: both drawings
+       * share one cache and one "which one is on screen" record, and while
+       * that record was a single slot the letter's arrival cancelled the
+       * resume's draw and left a grey strip where the page had been.
+       */
+      const drawn = () => card.locator('.pdf-pane canvas').count();
+      const resumeBefore = await drawn();
+      await card.getByRole('button', { name: 'See it typeset' }).click();
+      await card.getByRole('button', { name: 'Typeset again' }).waitFor({ timeout: 120_000 });
+      let pages = 0;
+      for (let i = 0; i < 40 && pages <= resumeBefore; i++) {
+        await page.waitForTimeout(250);
+        pages = await drawn();
+      }
+      check('the letter can be seen as it will arrive, typeset', pages > resumeBefore, `${pages} pages drawn in the card`);
+      check(
+        'and drawing it does not take the resume off the screen',
+        (await card.locator('.pdf-pane canvas').count()) >= resumeBefore + 1,
+        `${await drawn()} still drawn`,
+      );
+      check(
+        'the preview says it is a preview, not the copy that gets attached',
+        /the attached copy is compiled when you prepare it/.test(await card.innerText()),
+      );
     }
 
     /* File it. */
@@ -326,9 +358,37 @@ async function main() {
     const listing = await folder.text();
     check(
       'the upload folder can be opened rather than only pasted',
-      folder.ok && /-Resume\.pdf/.test(listing),
+      /*
+       * The name may carry the role: two roles at one company in flight at
+       * once get a file each, which is the flat folder's whole job.
+       */
+      folder.ok && /-Resume(-[\w-]+)?\.pdf/.test(listing),
       folder.status === 200 ? `${(listing.match(/href="\/current\//g) ?? []).length} files listed` : String(folder.status),
     );
+
+    /*
+     * And the button that opens it, from the page it was built on.
+     *
+     * The path beside it is what the upload dialog takes and the only thing
+     * this could offer before; from a job board it is a string you cannot
+     * click. The tab it opens has to be the folder, not the editor's front
+     * page — the point is to be looking at the files while the portal's file
+     * picker is up.
+     */
+    {
+      const opened = context.waitForEvent('page');
+      await card.getByRole('button', { name: 'Open the folder' }).click();
+      const tab = await opened;
+      await tab.waitForLoadState('domcontentloaded');
+      const names = await tab.locator('li a').allTextContents();
+      check('and "Open the folder" opens it', /\/current$/.test(tab.url()), tab.url());
+      check(
+        'with the files in it, each one openable',
+        names.some((n) => /-Resume(-[\w-]+)?\.pdf$/.test(n)),
+        names.join(', ') || '(nothing listed)',
+      );
+      await tab.close();
+    }
 
     /* And the way back, for the application that was prepared and abandoned. */
     await card.getByRole('button', { name: 'Not sent after all' }).click();
