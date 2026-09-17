@@ -1038,10 +1038,37 @@
    */
   function watchForSending() {
     let told = false;
-    const SENDING = /\b(submit|send)\b.{0,20}\b(application|apply)\b|^\s*(submit|apply now|send application)\s*$/i;
+    /*
+     * The words these systems end an application with.
+     *
+     * Widened against real ones rather than guessed at: Paylocity says
+     * "Submit Resume", Phenom says "Complete application", ADP says "Apply
+     * Now", Personio says "Send application", Paycom says "Submit my
+     * application". A verb and the thing it acts on, close together, covers
+     * all of them — and leaves alone the ones that share half the phrase:
+     * "Submit a question" has the verb and no object, "Apply filters" has an
+     * object and no verb, "Save draft" and "Subscribe" have neither.
+     */
+    const SENDING =
+      /\b(submit|send|complete|finish)\b[^.]{0,24}\b(application|apply|resume|cv|submission|submit)\b|^\s*(submit|apply now|send|finish)\s*$/i;
 
     const tell = (how) => {
       if (told) return;
+      /*
+       * Only on the page where an application is actually sent.
+       *
+       * "Apply Now" ends the application on ADP and opens it on almost every
+       * description page there is — the same words for the opposite act. Taken
+       * anywhere, it filed every posting you so much as opened as one you had
+       * sent, which is the worst thing this could do: a job marked as done
+       * comes off the list of things to finish.
+       *
+       * `kind` is the analysis's own answer to what sort of page this is, and
+       * `application` means it has the fields and the words of a form rather
+       * than a description of a job.
+       */
+      if (analysis?.kind !== 'application') return;
+
       const named = analysis?.spec?.generatedFor;
       // Nothing to file it under. The card knows a posting by what the
       // analysis made of it, and without that this is just a form.
@@ -1056,7 +1083,38 @@
       cardHandle?.setStatus?.('Recorded as sent.');
     };
 
-    const onSubmit = () => tell('The form was submitted on the page');
+    /**
+     * Is this the application, or the other form on the page?
+     *
+     * An application page is rarely one form. There is a newsletter box, a
+     * question box, a filter panel — all real forms, all submitted, none of
+     * them the application. Listening for any submit at all marked an
+     * application as sent when somebody signed up for job alerts underneath
+     * it, which takes the job off the list of things to finish.
+     *
+     * The button that did it answers this when there is one: a submitter
+     * labelled "Subscribe" is not a submission whatever form it sits in. When
+     * a script submits the form itself there is no submitter, and then the
+     * form's own shape has to answer — an application asks for a file or for
+     * several fields, and a newsletter asks for an address.
+     */
+    const looksLikeTheApplication = (form) => {
+      if (!form || typeof form.querySelectorAll !== 'function') return false;
+      if (form.querySelector('input[type=file]')) return true;
+      const fields = [...form.querySelectorAll('input, select, textarea')].filter(
+        (el) => !['hidden', 'submit', 'button', 'image', 'reset'].includes(el.type),
+      );
+      return fields.length >= 3;
+    };
+
+    const onSubmit = (event) => {
+      const label = (event.submitter?.value || event.submitter?.textContent || '').trim();
+      if (label) {
+        if (SENDING.test(label)) tell(`"${label.slice(0, 40)}" was pressed on the page`);
+        return;
+      }
+      if (looksLikeTheApplication(event.target)) tell('The form was submitted on the page');
+    };
     const onClick = (event) => {
       const target = event.target;
       if (!target || typeof target.closest !== 'function') return;
