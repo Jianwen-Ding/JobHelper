@@ -991,12 +991,38 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       state.priorLetters = r.priorLetters ?? [];
       state.letterStarted = true;
 
-      if (mine.trim() && mine !== (state.letter ?? '')) {
-        // Typed while the draft was out. Theirs is the one that stays.
-        state.letterSource = 'You were writing while this ran, so what you wrote was kept.';
+      /*
+       * What is in the box *now*, which is the only thing that can be
+       * overwritten — and not the same question as what was in it when this
+       * was asked for.
+       *
+       * Guarding on `mine` alone was a fix for the wrong moment. This draft
+       * starts itself from `update`, and `update` runs a few lines before
+       * `restoreWork`: on landing back on a form you had already written on,
+       * the request goes out with the box empty, the carried letter arrives
+       * while it is in flight, and the reply — an empty body, because the AI
+       * is off by default — then fell through every guard and blanked it.
+       *
+       * Not a near-miss: the emptied card was saved back over the stored
+       * letter two seconds later, so the writing was gone from disk as well
+       * as from the screen, and returning to the page again did not bring it
+       * back. Wandering off to read something mid-application and coming
+       * back was enough to lose a cover letter.
+       */
+      const now = state.letter ?? '';
+
+      if (now.trim() && now !== mine) {
+        /*
+         * It arrived while the draft was out — typed by hand, or carried in
+         * from the page before. Either way it is somebody's writing and this
+         * reply is not.
+         */
+        state.letterSource = mine.trim()
+          ? 'You were writing while this ran, so what you wrote was kept.'
+          : 'What you had written was put back while this was running, so the draft was not used.';
         return;
       }
-      if (mine.trim()) {
+      if (now.trim()) {
         state.letterOffer = r.body?.trim() ? { title: 'the draft', body: r.body } : state.priorLetters[0] ?? null;
         state.letterSource = state.letterOffer
           ? 'You had already started one, so this is offered rather than used.'

@@ -172,6 +172,87 @@ async function writeTrail(tabId, trail) {
   return null;
 }
 
+/* ------------------------------------------------------------------ *
+ * Saying, anywhere you go, that an application is open                 *
+ * ------------------------------------------------------------------ */
+
+/**
+ * Mark the tab that is holding an application.
+ *
+ * An application takes several pages and a while, and in the middle of it
+ * people wander: to the company's About page, to a salary site, to the
+ * documentation for something the posting mentioned. Every one of those is
+ * correctly a page this tool stays quiet on — and quiet was indistinguishable
+ * from forgotten. The description, the resume and the half-written letter were
+ * all still being held, and nothing said so, so the honest thing to assume was
+ * that leaving the form had thrown them away.
+ *
+ * The toolbar is where that belongs. It is per-tab, which is exactly what an
+ * application is; it is visible on every site including the ones with no card;
+ * and it puts nothing on a page that has nothing to do with it — the
+ * alternative, a badge injected into the corner of every page you visit while
+ * applying, is the flicker complaint again wearing a different hat.
+ */
+async function markTab(tabId, trail) {
+  if (tabId === undefined || !chrome.action?.setBadgeText) return;
+  try {
+    const held = trail ?? (await readTrail(tabId));
+    const pages = held.pages ?? [];
+    if (pages.length === 0) {
+      await chrome.action.setBadgeText({ tabId, text: '' });
+      await chrome.action.setTitle({ tabId, title: 'JobHelper' });
+      return;
+    }
+
+    // The company if it is known, and the last page's title if it is not: on a
+    // form that never names the employer, "the application you are on" is
+    // still better said with the words from the page it started on.
+    const named = pages.map((p) => p.company).filter(Boolean).pop();
+    const what = named ?? pages.map((p) => p.title).filter(Boolean).pop() ?? 'An application';
+    const n = pages.length;
+    const parts = [`${what} — ${n} ${n === 1 ? 'page' : 'pages'} read`];
+    /*
+     * Which of the two, said apart.
+     *
+     * `worthKeeping` is true of a built resume with nothing written yet, and
+     * reporting that as "your writing is being held" promises something that
+     * is not there — which is worse than silence, because the whole purpose of
+     * this line is to be believed when it says nothing was lost.
+     */
+    const wrote = Boolean(held.work?.letter?.trim()) || Object.keys(held.work?.answersByQuestion ?? {}).length > 0;
+    if (wrote) parts.push('your writing is being held');
+    else if (held.work?.spec) parts.push('a tailored resume is ready');
+
+    await chrome.action.setBadgeText({ tabId, text: String(n) });
+    await chrome.action.setBadgeBackgroundColor?.({ tabId, color: '#1a73e8' });
+    await chrome.action.setTitle({ tabId, title: `JobHelper — ${parts.join(', ')}` });
+  } catch {
+    // A tab that closed between the read and the write. The badge is a
+    // courtesy; it must never be the thing that fails a save.
+  }
+}
+
+/**
+ * Which tab a request is about.
+ *
+ * Nearly every request is about the tab it came from, and that is the only
+ * answer a content script may have: a page on one site asking to read the
+ * application you are filling in on another is a request with no legitimate
+ * form, whatever tab id it puts in the payload.
+ *
+ * The extension's own pages are the exception, and have to be: the popup is
+ * asking about the tab underneath it, which is by definition not the one it
+ * is running in. Told apart by who is asking, not by whether a tab came with
+ * the message — a popup usually has no tab of its own, but one opened in a
+ * tab (which is how it can be driven by a test at all) does, and "no tab
+ * means trusted" would have quietly excluded exactly that case.
+ */
+function whichTab(tabId, tab, sender) {
+  const ours = sender?.url?.startsWith(chrome.runtime.getURL(''));
+  if (ours && typeof tabId === 'number') return tabId;
+  return tab?.id;
+}
+
 /**
  * A tab opened by "Apply" starts empty, and what it needs is in the tab that
  * opened it. Inherited once, on the new tab's first look: the two tabs are
@@ -368,11 +449,19 @@ const handlers = {
       at: Date.now(),
     };
     await writeTrail(tab?.id, next);
+    await markTab(tab?.id, next);
     return { ...summarise(next), startedFresh: !joins };
   },
 
-  async getTrail(_payload, tab) {
-    return summarise(await readTrail(tab?.id));
+  /**
+   * The application this tab is on.
+   *
+   * The popup has to name a tab, because the tab it cares about is not its
+   * own: usually it has none at all, and the trail key came out as the
+   * browser-wide fallback, so the popup read an application nobody was on.
+   */
+  async getTrail({ tabId } = {}, tab, sender) {
+    return summarise(await readTrail(whichTab(tabId, tab, sender)));
   },
 
   /**
@@ -396,7 +485,11 @@ const handlers = {
 
     // Stamped, because `at` is what says the trail is still current — work
     // written without it reads back as a trail from another sitting.
-    const written = await writeTrail(tab?.id, { ...trail, work, at: Date.now() });
+    const next = { ...trail, work, at: Date.now() };
+    const written = await writeTrail(tab?.id, next);
+    // So the toolbar starts saying "your writing is being held" the moment it
+    // is, rather than at the next page of the application.
+    await markTab(tab?.id, next);
     return { ok: written !== null };
   },
 
@@ -454,8 +547,11 @@ const handlers = {
   },
 
   /** Forget the trail — "this is a different application from the last one". */
-  async clearTrail(_payload, tab) {
-    await session().remove(trailKey(tab?.id));
+  // Named tab honoured on the same terms as `getTrail`.
+  async clearTrail({ tabId } = {}, tab, sender) {
+    const id = whichTab(tabId, tab, sender);
+    await session().remove(trailKey(id));
+    await markTab(id, { pages: [] });
     return { pages: [] };
   },
 
@@ -464,6 +560,7 @@ const handlers = {
     const trail = await readTrail(tab?.id);
     const next = { ...trail, pages: trail.pages.filter((p) => p.url !== url), at: Date.now() };
     await writeTrail(tab?.id, next);
+    await markTab(tab?.id, next);
     return summarise(next);
   },
 
@@ -800,6 +897,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
  * a reopened tab can find it, and it ages out on the same clock as everything
  * else in session storage — which is emptied when the browser closes anyway.
  */
+/*
+ * Put the mark back after a navigation.
+ *
+ * Chrome clears a tab-specific badge when the tab navigates, and navigating is
+ * the entire point of this mark: the moment it is most needed — you have just
+ * left the form to go and read something — is the moment the browser would
+ * take it away. So it is re-applied on every load, from the trail, which is
+ * the thing that actually knows whether an application is open.
+ *
+ * `onUpdated` and not `webNavigation`, because only the tab id is wanted and
+ * the permission for that is already held.
+ */
+chrome.tabs?.onUpdated?.addListener((tabId, changeInfo) => {
+  if (changeInfo.status !== 'loading' && changeInfo.status !== 'complete') return;
+  markTab(tabId).catch(() => undefined);
+});
+
 chrome.tabs?.onRemoved?.addListener(async (tabId) => {
   try {
     const trail = await readTrail(tabId);

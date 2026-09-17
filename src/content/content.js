@@ -769,6 +769,22 @@
       // kind of unsettling.
       if (carried.recovered) cardHandle?.setStatus('Recovered what you had written before this tab closed.');
     }
+    /*
+     * And only now may the keeper write.
+     *
+     * Between the card going up and this line, it holds the analysis and
+     * nothing else: no letter, no answers, and a resume proposal that makes
+     * `worthKeeping` true. The keeper runs every two seconds regardless, so
+     * landing on a page of an application you had already written on was a
+     * race — win it and your letter came back, lose it and the empty card was
+     * saved over the letter before it was ever asked for.
+     *
+     * Losing it was silent and total: the letter was gone from storage, so
+     * going back again did not help either. Set here rather than beside the
+     * restore above because the answer "there was nothing to carry" arrives on
+     * this line too, and a fresh application must not be frozen out of saving.
+     */
+    workRestored = true;
 
     // Taken once, and already trimmed: the same page is both what was just
     // analysed and what the next page will be written from.
@@ -884,6 +900,16 @@
   /** `keepWorkSafe`'s saver, so a route change can call it before tearing down. */
   let saveWorkNow = null;
 
+  /**
+   * False until this page's card has been offered whatever was carried to it.
+   *
+   * The keeper must not write before then — see where this is set, in `show`.
+   * It starts false on every page load and goes false again on a route change,
+   * because a single-page board's navigation is a new page in every sense that
+   * matters here.
+   */
+  let workRestored = false;
+
   function keepWorkSafe() {
     /*
      * `worthKeeping` is loaded once and kept, rather than awaited each time.
@@ -901,6 +927,11 @@
       .catch(() => undefined);
 
     const save = () => {
+      // A card that has not yet been given what was carried to it has nothing
+      // to say about this application, and saying it anyway overwrites the
+      // letter it is about to be handed.
+      if (!workRestored) return;
+
       const work = cardHandle?.takeWork?.();
       if (!work) return;
 
@@ -1115,6 +1146,11 @@
        * answer went with it.
        */
       saveWorkNow?.();
+
+      // Saved, and now shut again until the next page's card has been offered
+      // what that save just put away. Without this a route change kept the
+      // open gate from the page before, which is the race this closes.
+      workRestored = false;
 
       // Before the await, not after: the pass still running belongs to the url
       // that just went away, and it must stop being able to write to the card

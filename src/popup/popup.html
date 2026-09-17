@@ -119,10 +119,39 @@
   .status.warn { background: var(--warn-bg); color: var(--warn); }
   .status.err { background: var(--bad-bg); color: #b31412; }
   .hint { font-size: 11px; color: var(--faint); margin: -8px 0 12px; line-height: 1.5; }
+
+  /*
+   * What is being held right now.
+   *
+   * First in the window, because the badge on the toolbar is what sends people
+   * here: they clicked it to find out what the number means, and the answer
+   * should not be below the settings.
+   */
+  .open-app {
+    margin: 0 0 14px; padding: 10px 12px; border-radius: 8px;
+    background: var(--accent-soft); border: 1px solid transparent;
+  }
+  .open-app .who { font-weight: 500; color: var(--ink); }
+  .open-app .what { font-size: 11px; color: var(--muted); margin-top: 2px; line-height: 1.5; }
+  .open-app .row { margin-top: 9px; }
+  .open-app button { background: #fff; }
 </style>
 </head>
 <body>
 <h1>JobHelper</h1>
+
+<!--
+  Shown only when there is one. An empty panel saying "no application open" is
+  a line of furniture on every visit, and the absence already says it.
+-->
+<div class="open-app" id="openApplication" hidden>
+  <div class="who" id="openWho"></div>
+  <div class="what" id="openWhat"></div>
+  <div class="row">
+    <button id="backToApplication">Back to it</button>
+    <button id="dropApplication">Start fresh</button>
+  </div>
+</div>
 
 <label>
   <div class="lbl">ResumeM-M server</div>

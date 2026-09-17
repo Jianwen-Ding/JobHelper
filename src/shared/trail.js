@@ -223,6 +223,20 @@ export function summarise(trail) {
   const { work, expecting, ...rest } = trail;
   return {
     ...rest,
+    /*
+     * Not the writing itself — the popup has no business holding a copy of the
+     * letter — only whether there is any. It is the difference between "two
+     * pages have been read" and "two pages have been read and your letter is
+     * in here", and the second is the one that answers "did leaving the form
+     * throw my work away".
+     *
+     * The two are reported apart because `worthKeeping` is true of a resume
+     * built with nothing written yet, and telling someone their writing is
+     * safe when they have not written any is the one promise here that must
+     * not be made loosely.
+     */
+    holdingWriting: Boolean(work?.letter?.trim()) || Object.keys(work?.answersByQuestion ?? {}).length > 0,
+    holdingResume: Boolean(work?.spec),
     pages: (trail.pages ?? []).map(({ html, ...page }) => ({ ...page, chars: (html ?? '').length })),
   };
 }
