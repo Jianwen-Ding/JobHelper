@@ -13,25 +13,39 @@ machine.
 ## What it does
 
 1. **Stays quiet.** On every page it computes a cheap local score — JSON-LD
-   `JobPosting`, known board domains, phrases like "minimum qualifications". The
-   page only leaves your browser once that clears a threshold.
+   `JobPosting`, known board domains, phrases like "minimum qualifications" —
+   and then asks whether the page is *about one role*: its title names the
+   post, or it declares itself with structured data, or it is the form itself.
+   Being on an applicant tracking system is not enough on its own; a board's
+   own feed, the page after you press submit, and a careers page with nothing
+   open are all on one, and none of them is a job to apply to. The page only
+   leaves your browser once that clears a threshold, and never on ResumeM-M's
+   own pages.
 2. **Proposes.** On a real posting a card appears top-right with the role, the
-   company, and *what it would change and why*:
-   ```
-   3 change(s):
-     b_edu_coursework → v_systems   (systems, infrastructure, distributed systems)
-     b_ec_pipeline    → v_kafka     (kafka, streaming)
-     b_ec_testing     → v_ci        (infrastructure)
-   ```
-   Every swap names the evidence. Nothing changes invisibly.
+   company, and *what it would change and why* — each swap shown as the
+   sentence you wrote before against the sentence it suggests instead, with the
+   tags that matched underneath. Nothing changes invisibly, and nothing is
+   written for you: it only chooses between wordings already in your store.
 3. **Compiles.** One click builds the real PDF through the local server and
    reports whether it fits on one page.
 4. **Takes redirection.** A text box takes instructions in your own words —
    "lead with the distributed systems work" — and re-tailors.
-5. **Files it.** "Save application folder" writes a folder with the PDF already
-   named `Your Name Resume Company.pdf`, snapshots exactly what was sent, and
-   records the application in the tracker.
-6. **Fills the form.** Autofill from your stored profile, and saved answers
+5. **Keeps the application together.** An application is rarely one page: you
+   read the description on a careers site and follow "Apply" to a form on a
+   different host, which is where the cover letter and the essay questions are.
+   Pages are kept as you walk them, per tab, so the form is written from the
+   description you have already read.
+6. **Says it is holding one.** While an application is open, the toolbar icon
+   carries the number of pages read and names the company. That is the part
+   that survives wandering off — to the company's About page, to what the job
+   pays — where the card correctly does not appear. Clicking it says what is
+   held and offers the way back.
+7. **Files it.** "Save application folder" writes a folder with the files named
+   for you rather than for the posting — `Your-Name-Resume.pdf` — snapshots
+   exactly what was sent, and records the application in the tracker. If the
+   form asked for something the folder does not have, it says so rather than
+   calling it complete.
+8. **Fills the form.** Autofill from your stored profile, and saved answers
    offered on questions it recognises.
 
 ---
@@ -111,7 +125,8 @@ src/content/content.js      Detection, orchestration
 src/content/card.js         The corner card (shadow DOM)
 src/content/autofill.js     Form filling and question matching
 src/popup/                  Settings and connection status
-tests/e2e.mjs               Loads the extension in Chromium, drives the flow
+src/shared/trail.js         What counts as one application across pages
+tests/                      Playwright harnesses; see Tests below
 ```
 
 The card lives in a shadow root, so no job board's stylesheet can reach it and
@@ -127,25 +142,42 @@ that is not running.
 ```bash
 npm install
 cd ../ResumeM-M && npm run serve   # in another terminal
-npm run test:e2e
+npm test
 ```
 
-The test drives a **real** server and cleans up the application and generated
-resume it creates. To keep your own store untouched entirely, point the server
-at a scratch copy first:
+Every harness drives a **real** server and a real Chromium with the unpacked
+extension loaded, and each cleans up the applications and resumes it creates.
+To keep your own store untouched entirely, point a server at a scratch copy and
+tell the tests where it is:
 
 ```bash
-cp -r data /tmp/rmm-test-store
-RMM_DATA=/tmp/rmm-test-store npm run serve
+# in the ResumeM-M checkout
+RMM_DATA=/tmp/rmm-test-store PORT=4788 npm run serve
+# here
+RMM_SERVER=http://127.0.0.1:4788 npm test
 ```
 
-Loads the unpacked extension into Chromium, serves a fake Greenhouse-style
-posting, and drives the whole path: detect → tailor → compile → autofill →
-bundle → track, plus a check that it stays silent on a page about bread.
+`RMM_SERVER` reaches the extension too, not only the harness's own requests, so
+the card under test talks to the scratch store rather than to whatever is on
+the default port.
 
-```
-14/14 checks passed
-```
+| Harness | What it walks |
+| --- | --- |
+| `test:trail` | Which pages belong to one application, in isolation |
+| `test:ats` | Classifying the shapes real boards serve |
+| `test:autofill` | Filling forms, including comboboxes, shadow roots and frames |
+| `test:ats-forms` | The form quirks of Greenhouse, Lever, Ashby, Workday |
+| `test:card` | Typing in the card while it repaints under you |
+| `test:quiet` | False positives: pages that must get no card at all |
+| `test:joins` | Two postings open at once staying two |
+| `test:e2e` | Detect → tailor → compile → autofill → file → track |
+| `test:nav` | Getting to the form, on every route real systems use |
+| `test:carrying` | Wandering off mid-application and coming back |
+| `test:journey` | The same walk on every shape of posting, with timings |
+
+`node tests/shots.mjs` photographs every state of both products into
+`/tmp/shots` — including the empty, busy, error and overflow ones that are easy
+to build and never look at. Looking at that output is how several of the bugs these harnesses now guard against were found in the first place.
 
 ---
 
