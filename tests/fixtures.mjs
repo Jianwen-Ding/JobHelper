@@ -656,6 +656,132 @@ export const CYGNUS_ROLE_B = {
   ),
 };
 
+
+/* ------------------------------------------------------------------ *
+ * Pages that must stay quiet                                          *
+ * ------------------------------------------------------------------ *
+ *
+ * The local score is deliberately generous — the cost of offering on a page
+ * that turns out not to be a job is a card that gets dismissed, and the cost
+ * of staying quiet on one that is, is the whole tool not being there. But
+ * generous is not the same as indiscriminate, and these are the shapes that
+ * actually turn up in a browsing session: prose about careers, a shop, a
+ * sign-in wall, a documentation page full of the word "requirements", and —
+ * the one that used to defeat it entirely — a single-page application whose
+ * bundle mentions everything a posting does while the page itself shows a
+ * spinner.
+ */
+
+/** A news piece *about* hiring. Every posting word, no posting. */
+export const CAREERS_ARTICLE = {
+  name: 'careers-article',
+  path: '/news/tech-hiring-slowdown',
+  html: `<!doctype html><html><head><title>The tech hiring slowdown, explained</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>The tech hiring slowdown, explained</h1>
+<p>Companies that spent 2021 posting every open role they could think of are now quietly
+closing requisitions. We spoke to nine recruiters about what changed.</p>
+<h2>What the job descriptions stopped saying</h2>
+<p>"Minimum qualifications" sections grew by a third. Postings that once said
+"we are looking for" now say "you will need". The phrase "years of experience"
+appeared in 71% of the listings we sampled, up from 44%.</p>
+<h2>Responsibilities, and who carries them</h2>
+<p>Hiring managers describe reviewing four hundred applications for one opening.
+Benefits pages are unchanged; compensation bands are not.</p>
+<p>An equal opportunity employer statement is now standard boilerplate.</p>
+</div></body></html>`,
+};
+
+/** A shop. Full of buttons, none of them Apply. */
+export const SHOP = {
+  name: 'shop',
+  path: '/store/desk-lamp',
+  html: `<!doctype html><html><head><title>Anglepoise desk lamp — Lumen</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Anglepoise desk lamp</h1>
+<p>Full-time companion for your desk. Requirements: one power socket.</p>
+<label for="qty">Quantity</label><input id="qty" name="quantity" value="1">
+<button type="button">Add to cart</button><button type="button">Checkout</button>
+</div></body></html>`,
+};
+
+/** A sign-in wall. Two fields, one of them an email, and nothing behind it. */
+export const SIGN_IN = {
+  name: 'sign-in',
+  path: '/account/login',
+  html: `<!doctype html><html><head><title>Sign in</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Sign in to continue</h1>
+<form><label for="e">Email</label><input id="e" name="email" type="email">
+<label for="p">Password</label><input id="p" name="password" type="password">
+<button type="submit">Sign in</button></form>
+<p>Sign in to continue to your account.</p></div></body></html>`,
+};
+
+/** Documentation. "Requirements" and "qualifications" mean something else here. */
+export const DOCS = {
+  name: 'docs',
+  path: '/docs/install/requirements',
+  html: `<!doctype html><html><head><title>Requirements — Install</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Requirements</h1>
+<p>Before you begin, check the minimum qualifications of your environment.</p>
+<h2>Responsibilities of the operator</h2>
+<p>Full-time processes need at least 2GB. Benefits of the new scheduler include
+lower latency. Compensation for the extra memory is fewer restarts.</p>
+</div></body></html>`,
+};
+
+/**
+ * The one that used to defeat it: an application shell that shows a spinner
+ * and never becomes a posting, whose bundle happens to mention every phrase a
+ * posting uses. `document.body.textContent` includes script contents, so this
+ * scored higher than most real postings while displaying nothing at all.
+ */
+export const SPA_SHELL = {
+  name: 'spa-shell',
+  path: '/app/dashboard',
+  html: `<!doctype html><html><head><title>Dashboard</title><style>${CHROME}</style></head>
+<body><div class="wrap"><div id="root">Loading…</div></div>
+<script>
+  // A bundle, as bundles are.
+  const STRINGS = {
+    apply: 'Apply now',
+    jd: 'Job description',
+    resp: 'Responsibilities',
+    quals: 'Minimum qualifications',
+    prefs: 'Preferred qualifications',
+    eoe: 'Equal opportunity employer',
+    submit: 'Submit application',
+    years: 'years of experience',
+    about: 'About the role',
+    looking: 'we are looking for',
+    reqs: 'Requirements',
+    benefits: 'Benefits',
+    comp: 'Compensation',
+    band: 'salary range',
+    ft: 'full-time',
+    cover: 'cover letter',
+    upload: 'upload your resume',
+    auth: 'work authorization',
+    why: 'why do you want',
+  };
+  setTimeout(() => { document.getElementById('root').textContent = 'Nothing to show.'; }, 300);
+</script>
+</body></html>`,
+};
+
+/** A forum thread that talks about applying without being a posting. */
+export const FORUM_THREAD = {
+  name: 'forum-thread',
+  path: '/r/cscareers/comments/how-many-applications',
+  html: `<!doctype html><html><head><title>How many applications did it take you?</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>How many applications did it take you?</h1>
+<p>I have sent about 200. Most were full-time new grad roles. A few asked for a
+cover letter, most wanted years of experience I do not have.</p>
+<p>Replies: 43</p>
+<label for="c">Add a comment</label><textarea id="c" name="comment"></textarea>
+<button type="button">Reply</button></div></body></html>`,
+};
+
+export const QUIET = [CAREERS_ARTICLE, SHOP, SIGN_IN, DOCS, SPA_SHELL, FORUM_THREAD, BLOG];
+
 export const NAVIGATION = [
   CYGNUS_BOARD, CYGNUS_ROLE_A, CYGNUS_ROLE_B, FRAMED_ROLE, FRAMED_FORM, ADVERT_FRAME, ADVERT_CONTENT,
   EMBEDDED_BOARD, EMBEDDED_BOARD_FRAME, BLOG_WITH_FORM, BLOG_ENQUIRY_FRAME, LATE_RENDER,
@@ -664,7 +790,7 @@ export const NAVIGATION = [
   OWN_SITE, ATS_FORM, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, SPA_BOARD,
 ];
 
-export const ALL = [STREAMLY, NORTHWIND, BLOG, HELIOS_ROLE, HELIOS_FORM, ...NAVIGATION];
+export const ALL = [STREAMLY, NORTHWIND, HELIOS_ROLE, HELIOS_FORM, ...QUIET, ...NAVIGATION];
 
 /**
  * Serve every fixture from one origin. Returns the base url and a `urlFor`
