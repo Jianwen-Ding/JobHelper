@@ -141,10 +141,20 @@ function labelFor(input) {
   const aria = clean(input.getAttribute('aria-label'));
   if (aria) return aria;
 
-  // Positional fallback: the nearest preceding element that reads like a label.
+  /*
+   * Positional fallback: the nearest preceding element that reads like a label.
+   *
+   * Stop at another field, and a bare <input> *is* another field. Testing only
+   * for a descendant field stepped straight over one — it has no descendants —
+   * so `<label for=fn>First Name</label><input id=fn><input name=ref_code>`
+   * gave the unlabelled box the label "First Name", and the user's first name
+   * was typed into it. The same walk put their email address in the unlabelled
+   * box after the email field. That is precisely the failure the note at the
+   * top of this function says was fixed.
+   */
   let node = input.previousElementSibling;
   for (let i = 0; i < 3 && node; i++, node = node.previousElementSibling) {
-    if (node.querySelector?.('input, textarea, select')) break;
+    if (node.matches?.('input, textarea, select') || node.querySelector?.('input, textarea, select')) break;
     const text = clean(node.textContent);
     if (text && text.length < 160) return text;
   }
@@ -228,14 +238,27 @@ function isFillable(input) {
  * "none", "-1", "Select an option". Every such field was being skipped as
  * already filled, which on a real form is most of them.
  */
-const PLACEHOLDER = /^(|-+|—+|select.*|choose.*|pick.*|please\b.*|none|n\/?a|--.*--)$/i;
+const PLACEHOLDER = /^(|-+|—+|select.*|choose.*|pick.*|please\b.*|--.*--)$/i;
 
-function looksLikePlaceholder(option) {
-  return (
-    option.disabled ||
-    PLACEHOLDER.test(String(option.value ?? '').trim()) ||
-    PLACEHOLDER.test((option.textContent ?? '').trim())
-  );
+/*
+ * "None" and "N/A" are two things at once.
+ *
+ * In the slot a browser shows before anyone has chosen, they are a prompt. Two
+ * lines down a list, they are an answer — and a true one. Treated as a prompt
+ * wherever they sat, "Highest degree completed: None" was quietly replaced with
+ * "Bachelor of Science", and a sponsorship question answered "N/A" was
+ * overwritten too: a false statement about the applicant, submitted to an
+ * employer, and reported as a field successfully filled.
+ */
+const NONE = /^(none|n\/?a)$/i;
+
+function looksLikePlaceholder(option, select) {
+  if (option.disabled) return true;
+  const value = String(option.value ?? '').trim();
+  const text = (option.textContent ?? '').trim();
+  if (PLACEHOLDER.test(value) || PLACEHOLDER.test(text)) return true;
+  const first = select?.options?.[0] ?? option.parentElement?.querySelector?.('option');
+  return (NONE.test(value) || NONE.test(text)) && first === option;
 }
 
 /*
@@ -248,7 +271,7 @@ function looksLikePlaceholder(option) {
 function selectIsAnswered(select) {
   const option = select.selectedOptions?.[0];
   if (!option) return false;
-  return !looksLikePlaceholder(option);
+  return !looksLikePlaceholder(option, select);
 }
 
 /** Set a value in a way React and friends actually notice. */
@@ -309,6 +332,18 @@ export function fillForm(fields, { overwrite = false } = {}) {
     }
 
     setValue(input, value);
+    /*
+     * Check it went in. Assigning a value a typed input will not accept — a
+     * phone number to `type=number`, a city to `type=date`, and both are shapes
+     * real forms use — leaves the field empty and raises nothing. Reported as
+     * filled anyway, the card said "Filled 4 fields" while two of them were
+     * blank, and the user submitted a form missing a required phone number
+     * having been told it was done.
+     */
+    if (input.value !== String(value)) {
+      skipped.push({ key, reason: 'the field would not take it', description: description.slice(0, 60) });
+      continue;
+    }
     filled.push({ key, value });
   }
 
@@ -373,14 +408,46 @@ function optionLabelFor(radio) {
  * sponsorship and work authorization are declarations with consequences, and
  * an extension should not be the one deciding them.
  */
+/** The answers a form offers as options rather than asking you to type. */
+const CHOOSABLE = new Set([
+  'work_authorization',
+  'requires_sponsorship',
+  'address_country',
+  'address_state',
+  'degree',
+  'location',
+]);
+
 function answerRadioGroups(fields, overwrite) {
   const filled = [];
   const skipped = [];
 
+  /*
+   * A radio group is scoped to its form, and so is the grouping here.
+   *
+   * Keyed on `name` alone, every radio called "country" on the page became one
+   * group — and pages carry more than one form. A job-alerts box above the
+   * application, both asking "country", merged into a single group that took
+   * its question from the marketing form's legend and ticked the marketing
+   * form's option. The application's own country question stayed blank, and the
+   * card reported it filled. The reverse happened too: an option the user had
+   * already ticked in the unrelated form made the real sponsorship question
+   * report "already filled" and stay empty. Either way an application is
+   * submitted with a required question blank, after being told it was answered.
+   */
+  const formKeys = new WeakMap();
+  let nextForm = 0;
+  const scopeOf = (radio) => {
+    const form = radio.form;
+    if (!form) return 'doc';
+    if (!formKeys.has(form)) formKeys.set(form, `f${nextForm++}`);
+    return formKeys.get(form);
+  };
+
   const groups = new Map();
   for (const radio of deepQueryAll('input[type=radio]')) {
     if (radio.disabled || radio.getClientRects().length === 0) continue;
-    const key = radio.name || radio.closest('fieldset');
+    const key = radio.name ? `${scopeOf(radio)}\u0000${radio.name}` : radio.closest('fieldset');
     if (!key) continue;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(radio);
@@ -390,7 +457,17 @@ function answerRadioGroups(fields, overwrite) {
     const description = clean([groupLabelFor(radios), radios[0].name].filter(Boolean).join(' '));
     if (!description) continue;
 
-    const match = FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key]);
+    /*
+     * Only the keys that are a choice between options. A name, an email address
+     * or a phone number is typed, never picked from two radio buttons, so a
+     * pattern matching one of those against a radio group has matched a word in
+     * a sentence rather than a field: "Marketing: may we email you about
+     * sponsorship webinars?" matched `email` and was reported as a field
+     * waiting for the user.
+     */
+    const match = FIELD_PATTERNS.find(
+      ([key, re]) => CHOOSABLE.has(key) && re.test(description) && fields[key],
+    );
     if (!match) continue;
 
     const [key] = match;
@@ -609,15 +686,37 @@ export function wantsCoverLetter() {
   return false;
 }
 
-/** Whether a question is marked required, by any of the usual conventions. */
+/**
+ * Whether a question is marked required, by any of the usual conventions.
+ *
+ * The field's own label first. Climbing to `closest('div,fieldset,li,p')` and
+ * taking the first label in it usually landed on the wrapper around the whole
+ * form, whose first label is "First Name *" — so every question on the form
+ * came back required, and the workspace told the user that optional ones had to
+ * be answered. Climbing is still useful for the forms that mark the asterisk on
+ * a wrapper rather than the label, but only while the container holds this
+ * field and nothing else fillable, which is the rule `labelFor` already uses.
+ */
 export function isRequired(fieldId) {
   const field = deepQueryAll(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`)[0];
   if (!field) return false;
   if (field.required || field.getAttribute('aria-required') === 'true') return true;
 
-  const group = field.closest('div,fieldset,li,p');
-  const label = group?.querySelector('label,legend');
-  return /\*|\brequired\b/i.test(label?.textContent ?? '');
+  const marked = (text) => /\*|\brequired\b/i.test(text ?? '');
+
+  // The label actually associated with this field.
+  const own =
+    (field.id && rootOf(field).querySelector(`label[for="${CSS.escape(field.id)}"]`)) ||
+    field.closest('label');
+  if (own) return marked(own.textContent);
+
+  let group = field.parentElement;
+  for (let i = 0; i < 3 && group; i++, group = group.parentElement) {
+    if (group.querySelectorAll('input, textarea, select').length > 1) break;
+    const label = group.querySelector('label,legend');
+    if (label) return marked(label.textContent);
+  }
+  return false;
 }
 
 /** Put text into a field the card previously identified. */
