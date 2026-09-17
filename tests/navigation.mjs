@@ -107,10 +107,27 @@ async function appears(page, selector, within) {
   }
 }
 
+/**
+ * Wait for the card to stop changing, rather than for a number of seconds.
+ *
+ * The card fills in as the page is read: the role first, then the company
+ * once it is worked out, then the buttons. This waited 1.8 seconds for that
+ * and then looked — a bet on how long the machine takes, made twenty-six
+ * times, which is forty-seven seconds of a two-minute suite spent sleeping.
+ * Two identical reads half a second apart is the same claim the sleep was
+ * making, checked instead of assumed.
+ */
 async function settled(page) {
   await page.locator(HOST).waitFor({ state: 'attached', timeout: 25_000 });
   await page.locator(`${HOST} .card .role`).waitFor({ timeout: 25_000 });
-  await page.waitForTimeout(1800);
+  const read = () => page.locator(`${HOST} .card`).innerText().catch(() => '');
+  let last = await read();
+  for (let i = 0; i < 40; i++) {
+    await page.waitForTimeout(250);
+    const now = await read();
+    if (now && now === last) return;
+    last = now;
+  }
 }
 
 /** Build the resume, so there is work worth losing. */
