@@ -383,6 +383,315 @@ export const SUBSCRIBE = form({
     </form>`,
 });
 
+
+/* ------------------------------------------------------------------ *
+ * Boards, one-click applies, and the places that are not portals      *
+ * ------------------------------------------------------------------ */
+
+/**
+ * The second half of where people actually apply.
+ *
+ * Everything above is a portal a company runs. These are the places that
+ * apply *on your behalf* — a board with a modal, a university system, a
+ * marketplace — and they behave differently in ways that matter here: the
+ * form is often in a dialog rather than a page, the button is the last step
+ * of several, and the word "apply" appears a dozen times before the one that
+ * counts.
+ */
+
+/** LinkedIn-style Easy Apply: a modal, and a final step among several. */
+export const EASY_APPLY = form({
+  name: 'easy-apply-modal',
+  path: '/jobs/view/3918277401',
+  company: 'Camberwell Robotics',
+  title: 'Platform Engineer',
+  sends: 'Submit application',
+  inner: `<div role="dialog" aria-label="Apply to Camberwell Robotics">
+      <form onsubmit="event.preventDefault();">
+        ${FIELDS}
+        <button type="button" class="quiet">Back</button>
+        <button type="submit">Submit application</button>
+      </form>
+    </div>`,
+});
+
+/** Indeed-style: the board applies for you, and says so on the button. */
+export const BOARD_APPLY = form({
+  name: 'board-apply',
+  path: '/viewjob',
+  query: '?jk=a91f2b77c0d41e55',
+  company: 'Thornbury Logistics',
+  title: 'Platform Engineer',
+  sends: 'Submit your application',
+  inner: `<form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="submit">Submit your application</button>
+    </form>`,
+});
+
+/** A university careers system, where the button is the end of a wizard. */
+export const HANDSHAKE = form({
+  name: 'university-system',
+  path: '/stu/jobs/8812044/applications/new',
+  company: 'Larkspur Institute',
+  title: 'Platform Engineer',
+  sends: 'Submit Application',
+  inner: `<form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <p>Step 3 of 3</p>
+      <button type="submit">Submit Application</button>
+    </form>`,
+});
+
+/** A startup marketplace: "Send" alone, with the object in the heading. */
+export const MARKETPLACE = form({
+  name: 'startup-marketplace',
+  path: '/jobs/2209118-platform-engineer',
+  company: 'Fernhill Labs',
+  title: 'Platform Engineer',
+  sends: 'Send',
+  inner: `<h3>Send your application</h3>
+    <form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="submit">Send</button>
+    </form>`,
+});
+
+/** An academic system, wordier and slower than the rest. */
+export const ACADEMIC = form({
+  name: 'academic-portal',
+  path: '/apply/position/118204/submit',
+  company: 'Ravenscourt College',
+  title: 'Research Engineer',
+  sends: 'Submit my application',
+  inner: `<form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="submit">Submit my application</button>
+    </form>`,
+});
+
+/** Hourly hiring, which asks less and sends faster. */
+export const HOURLY = form({
+  name: 'hourly-hiring',
+  path: '/apply/f/2f81aa',
+  company: 'Redbourne Stores',
+  title: 'Operations Engineer',
+  sends: 'Finish and submit',
+  inner: `<form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="submit">Finish and submit</button>
+    </form>`,
+});
+
+/** A staffing agency's portal, which calls it a submission. */
+export const STAFFING = form({
+  name: 'staffing-portal',
+  path: '/careers/job/40128/submit-candidate',
+  company: 'Ashgrove Partners',
+  title: 'Platform Engineer',
+  sends: 'Complete my submission',
+  inner: `<form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="submit">Complete my submission</button>
+    </form>`,
+});
+
+/** A government portal, which spells everything out. */
+export const GOVERNMENT = form({
+  name: 'government-portal',
+  path: '/GetJob/ViewDetails/781204/apply',
+  company: 'Borough of Milfield',
+  title: 'Platform Engineer',
+  sends: 'Submit Application Package',
+  inner: `<form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="submit">Submit Application Package</button>
+    </form>`,
+});
+
+/* ------------------------------------------------------------------ *
+ * Harder things that are not a submission                             *
+ * ------------------------------------------------------------------ */
+
+/**
+ * The decoys above share a word with a submission. These share the shape as
+ * well: they sit on an application page, they are pressed in the middle of
+ * applying, and two of them submit a real form.
+ */
+
+/** A referral form, which submits and is about somebody else entirely. */
+export const REFER_SOMEONE = form({
+  name: 'refers-someone',
+  path: '/careers/JobDetail/platform-engineer/requisition/4823',
+  company: 'Aldergate Systems',
+  title: 'Platform Engineer',
+  sends: 'Submit referral',
+  sent: false,
+  alsoOffers: 'Submit application',
+  inner: `<form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="submit">Submit application</button>
+    </form>
+    <h2>Know someone else for this role?</h2>
+    <form onsubmit="event.preventDefault();">
+      <label for="rn">Their name</label><input id="rn">
+      <label for="re">Their email</label><input id="re" type="email">
+      <label for="rw">Why them?</label><textarea id="rw"></textarea>
+      <button type="submit">Submit referral</button>
+    </form>`,
+});
+
+/** A message to the recruiter, sent from the application page. */
+export const MESSAGE_RECRUITER = form({
+  name: 'messages-a-recruiter',
+  path: '/Recruiting/Jobs/Details/2891046',
+  company: 'Cranleigh Media',
+  title: 'Platform Engineer',
+  sends: 'Send message',
+  sent: false,
+  alsoOffers: 'Submit Resume',
+  inner: `<form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="submit">Submit Resume</button>
+    </form>
+    <h2>Questions? Message the recruiter</h2>
+    <form onsubmit="event.preventDefault();">
+      <label for="mg">Message</label><textarea id="mg"></textarea>
+      <button type="submit">Send message</button>
+    </form>`,
+});
+
+/** Saving the job for later, which is the opposite of sending it. */
+export const SAVE_JOB = form({
+  name: 'saves-the-job',
+  path: '/hcmUI/CandidateExperience/en/sites/CX_1/job/18844/apply',
+  company: 'Pennington Rail',
+  title: 'Platform Engineer',
+  sends: 'Apply later',
+  sent: false,
+  alsoOffers: 'Submit',
+  inner: `<form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="button" class="quiet">Apply later</button>
+      <button type="submit">Submit</button>
+    </form>`,
+});
+
+/** Uploading the resume, which is a step inside applying and not the end. */
+export const UPLOAD_RESUME = form({
+  name: 'uploads-a-resume',
+  path: '/careers/908813/apply',
+  company: 'Sandhurst Foods',
+  title: 'Platform Engineer',
+  sends: 'Upload resume',
+  sent: false,
+  alsoOffers: 'Submit application',
+  inner: `<form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="button" class="quiet">Upload resume</button>
+      <button type="submit">Submit application</button>
+    </form>`,
+});
+
+/** A search box on a portal that lists other roles beside this one. */
+export const SEARCH_JOBS = form({
+  name: 'searches-jobs',
+  path: '/ta/6100.jobs/search',
+  query: '?ApplyToJob=482993',
+  company: 'Wolverton Freight',
+  title: 'Platform Engineer',
+  sends: 'Submit search',
+  sent: false,
+  alsoOffers: 'Submit Application',
+  inner: `<form onsubmit="event.preventDefault();">
+      <label for="sq">Find another role</label><input id="sq">
+      <button type="submit">Submit search</button>
+    </form>
+    <form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="submit">Submit Application</button>
+    </form>`,
+});
+
+/** Feedback about the site, which every portal now asks for. */
+export const SITE_FEEDBACK = form({
+  name: 'gives-feedback',
+  path: '/CandidatePortal/en-US/meridian/Posting/View/30915',
+  company: 'Elsworth Utilities',
+  title: 'Platform Engineer',
+  sends: 'Submit feedback',
+  sent: false,
+  alsoOffers: 'Send Application',
+  inner: `<form>${FIELDS}</form>
+    <div role="button" tabindex="0" class="btn">Send Application</div>
+    <h2>How was this site?</h2>
+    <form onsubmit="event.preventDefault();">
+      <label for="fb">Tell us</label><textarea id="fb"></textarea>
+      <button type="submit">Submit feedback</button>
+    </form>`,
+});
+
+
+/**
+ * And the three that share the whole phrase, not half of it.
+ *
+ * Everything above is refused because it is missing either the verb or the
+ * thing it acts on. These say "submit" and "application" together and are
+ * still not this application being sent: one belongs to a different job on
+ * the same page, one puts it off, one hands it to a mail client.
+ */
+
+/** The similar-jobs rail, which every portal has, offering another role. */
+export const SIMILAR_JOBS = form({
+  name: 'offers-a-similar-job',
+  path: '/careers/JobDetail/platform-engineer/requisition/4824',
+  company: 'Beckworth Foods',
+  title: 'Platform Engineer',
+  sends: 'Apply now',
+  sent: false,
+  alsoOffers: 'Submit application',
+  inner: `<form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="submit">Submit application</button>
+    </form>
+    <h2>Similar jobs</h2>
+    <ul><li><a href="/careers/JobDetail/data-engineer/requisition/4901" role="button">Apply now</a>
+      — Data Engineer, Beckworth Foods</li></ul>`,
+});
+
+/** Coming back to it, which several long forms offer near the end. */
+export const FINISH_LATER = form({
+  name: 'finishes-later',
+  path: '/Recruiting/Jobs/Details/2891047',
+  company: 'Hartfield Rail',
+  title: 'Platform Engineer',
+  sends: 'Complete application later',
+  sent: false,
+  alsoOffers: 'Submit Resume',
+  inner: `<form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="button" class="quiet">Complete application later</button>
+      <button type="submit">Submit Resume</button>
+    </form>`,
+});
+
+/** The small print offering to take the application by email instead. */
+export const BY_EMAIL = form({
+  name: 'offers-email-instead',
+  path: '/apply/position/118205/submit',
+  company: 'Tolworth Trust',
+  title: 'Platform Engineer',
+  sends: 'Send application by email',
+  sent: false,
+  alsoOffers: 'Submit my application',
+  inner: `<form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="submit">Submit my application</button>
+    </form>
+    <p>Trouble with this form?
+      <a href="mailto:jobs@tolworth.example?subject=Application" role="button">Send application by email</a></p>`,
+});
+
 /** Every form above, in the order the suite walks them. */
 export const SENDS = [
   ORACLE,
@@ -400,7 +709,29 @@ export const SENDS = [
   PINPOINT,
   COMEET,
   BULLHORN,
+  EASY_APPLY,
+  BOARD_APPLY,
+  HANDSHAKE,
+  MARKETPLACE,
+  ACADEMIC,
+  HOURLY,
+  STAFFING,
+  GOVERNMENT,
 ];
 
 /** And the ones that must leave the tracker alone. */
-export const DOES_NOT_SEND = [SAVE_DRAFT, ASK_A_QUESTION, APPLY_FILTERS, SUBSCRIBE];
+export const DOES_NOT_SEND = [
+  SAVE_DRAFT,
+  ASK_A_QUESTION,
+  APPLY_FILTERS,
+  SUBSCRIBE,
+  REFER_SOMEONE,
+  MESSAGE_RECRUITER,
+  SAVE_JOB,
+  UPLOAD_RESUME,
+  SEARCH_JOBS,
+  SITE_FEEDBACK,
+  SIMILAR_JOBS,
+  FINISH_LATER,
+  BY_EMAIL,
+];

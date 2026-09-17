@@ -1051,6 +1051,15 @@
      */
     const SENDING =
       /\b(submit|send|complete|finish)\b[^.]{0,24}\b(application|apply|resume|cv|submission|submit)\b|^\s*(submit|apply now|send|finish)\s*$/i;
+    /*
+     * And the words that take it back.
+     *
+     * "Complete application later" is the whole phrase and the opposite act,
+     * offered near the end of every long form; "Apply to another role" and
+     * "Send application by email" are the same trick. A label that says when
+     * or where instead of now and here is not the button that ends this.
+     */
+    const NOT_YET = /\b(later|reminder|another|different|instead|by email|via email|by post|draft)\b/i;
 
     const tell = (how) => {
       if (told) return;
@@ -1110,18 +1119,43 @@
     const onSubmit = (event) => {
       const label = (event.submitter?.value || event.submitter?.textContent || '').trim();
       if (label) {
-        if (SENDING.test(label)) tell(`"${label.slice(0, 40)}" was pressed on the page`);
+        if (SENDING.test(label) && !NOT_YET.test(label)) tell(`"${label.slice(0, 40)}" was pressed on the page`);
         return;
       }
       if (looksLikeTheApplication(event.target)) tell('The form was submitted on the page');
     };
+    /*
+     * A link to somewhere else is a journey, not a send.
+     *
+     * Two systems here end the application with an anchor, so anchors have to
+     * count — but the similar-jobs rail every portal carries is also anchors,
+     * offering "Apply now" for a different role, and the small print offers
+     * to take the application by email. Both said the right words and went
+     * somewhere else. An anchor that stays on this page is a button wearing
+     * the wrong element; one that leaves is a link.
+     */
+    const leavesThePage = (link) => {
+      const href = link.getAttribute('href') ?? '';
+      if (!href || href.startsWith('#') || /^javascript:/i.test(href)) return false;
+      try {
+        const to = new URL(link.href, location.href);
+        return to.origin !== location.origin || to.pathname !== location.pathname;
+      } catch {
+        // An href this cannot parse — mailto:, tel:, a custom scheme — is not
+        // a control on this form whatever else it is.
+        return true;
+      }
+    };
+
     const onClick = (event) => {
       const target = event.target;
       if (!target || typeof target.closest !== 'function') return;
       const button = target.closest('button, input[type=submit], [role=button]');
       if (!button) return;
+      const link = target.closest('a[href]');
+      if (link && leavesThePage(link)) return;
       const label = (button.value || button.textContent || button.getAttribute('aria-label') || '').trim();
-      if (SENDING.test(label)) tell(`"${label.slice(0, 40)}" was pressed on the page`);
+      if (SENDING.test(label) && !NOT_YET.test(label)) tell(`"${label.slice(0, 40)}" was pressed on the page`);
     };
 
     document.addEventListener('submit', onSubmit, true);
