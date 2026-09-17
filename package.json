@@ -5,7 +5,14 @@
   "description": "Chrome extension that offers a tailored resume on job postings, backed by a local ResumeM-M store.",
   "type": "module",
   "scripts": {
-    "test:e2e": "node tests/e2e.mjs"
+    "test:e2e": "node tests/e2e.mjs",
+    "test:nav": "node tests/navigation.mjs",
+    "test:trail": "node --test tests/trail.mjs",
+    "test:ats": "node --test tests/ats.mjs",
+    "test:ats-forms": "node tests/ats-forms.mjs",
+    "test:joins": "node tests/joins.mjs",
+    "test": "npm run test:trail && npm run test:ats && npm run test:autofill && npm run test:ats-forms && npm run test:joins && npm run test:e2e && npm run test:nav",
+    "test:autofill": "node tests/autofill.mjs"
   },
   "devDependencies": {
     "playwright-core": "^1.49.1"

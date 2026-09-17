@@ -159,16 +159,531 @@ export const HELIOS_FORM = {
 </body></html>`,
 };
 
-export const ALL = [STREAMLY, NORTHWIND, BLOG, HELIOS_ROLE, HELIOS_FORM];
+
+/* ------------------------------------------------------------------ *
+ * How real systems move you from the description to the form          *
+ * ------------------------------------------------------------------ */
+
+const ROLE_BODY = `
+    <h2>About the role</h2>
+    <p>We are looking for a platform engineer to run our Kafka and Kubernetes
+       estate. You will own the streaming infrastructure end to end, in Go and
+       Python, and the CI/CD that ships it.</p>
+    <h2>Minimum qualifications</h2>
+    <ul><li>Experience with distributed systems</li><li>Years of experience with SQL and AWS</li></ul>
+    <p>Equal opportunity employer. Full-time. Compensation is competitive.</p>`;
+
+const FORM_BODY = `
+    <form>
+      <label for="fn">First Name</label><input id="fn" name="first_name">
+      <label for="ln">Last Name</label><input id="ln" name="last_name">
+      <label for="em">Email</label><input id="em" name="email" type="email">
+      <label for="rs">Resume</label><input id="rs" name="resume" type="file">
+      <label for="cl">Cover Letter</label><textarea id="cl" name="cover_letter"></textarea>
+      <label for="q1">Why do you want to work here?</label><textarea id="q1" name="why_here"></textarea>
+      <button type="button">Submit Application</button>
+    </form>`;
+
+const page = (title, heading, body, extra = '') => `<!doctype html>
+<html><head><title>${title}</title><style>${CHROME}</style></head>
+<body><div class="hdr"><h1>${heading}</h1></div><div class="wrap">${body}</div>${extra}</body></html>`;
+
+/**
+ * Lever: the form is the same URL with /apply on the end. An ordinary link,
+ * an ordinary navigation, same host.
+ */
+export const LEVER_ROLE = {
+  name: 'lever-role',
+  path: '/lever/vega/8f21',
+  company: 'Vega',
+  title: 'Platform Engineer',
+  html: page(
+    'Platform Engineer at Vega',
+    'Vega',
+    `${ROLE_BODY}<p><a href="/lever/vega/8f21/apply">Apply for this job</a></p>`,
+  ),
+};
+export const LEVER_FORM = {
+  name: 'lever-form',
+  path: '/lever/vega/8f21/apply',
+  html: page('Apply — Vega', 'Vega', FORM_BODY),
+};
+
+/**
+ * Ashby: same shape, different suffix, and the link says only "Apply" — the
+ * href is what has to be recognised.
+ */
+export const ASHBY_ROLE = {
+  name: 'ashby-role',
+  path: '/ashby/lyra/role-4c2',
+  company: 'Lyra',
+  title: 'Platform Engineer',
+  html: page(
+    'Platform Engineer at Lyra',
+    'Lyra',
+    `${ROLE_BODY}<p><a href="/ashby/lyra/role-4c2/application">Apply</a></p>`,
+  ),
+};
+export const ASHBY_FORM = {
+  name: 'ashby-form',
+  path: '/ashby/lyra/role-4c2/application',
+  html: page('Application — Lyra', 'Lyra', FORM_BODY),
+};
+
+/**
+ * Workday and its kind: a single-page application. Clicking Apply changes the
+ * url with history.pushState and swaps the DOM — there is no navigation at
+ * all, so nothing re-injects and the card has to notice on its own.
+ */
+export const WORKDAY = {
+  name: 'workday',
+  path: '/workday/orion/job/platform-engineer',
+  company: 'Orion',
+  title: 'Platform Engineer',
+  html: page(
+    'Platform Engineer at Orion',
+    'Orion',
+    `<div id="view">${ROLE_BODY}<p><button id="apply" type="button">Apply</button></p></div>`,
+    `<script>
+       document.getElementById('apply').addEventListener('click', () => {
+         history.pushState({}, '', '/workday/orion/job/platform-engineer/apply');
+         document.title = 'Apply — Orion';
+         document.getElementById('view').innerHTML = ${JSON.stringify(FORM_BODY)};
+       });
+     </script>`,
+  ),
+};
+
+/**
+ * A company's own careers page handing off to an applicant tracking system:
+ * a different host, and the link carries rel="noreferrer", so by the time the
+ * second page loads there is nothing on it that points back.
+ */
+export const OWN_SITE = {
+  name: 'own-site',
+  path: '/acme/careers/platform-engineer',
+  company: 'Acme',
+  title: 'Platform Engineer',
+  html: page(
+    'Platform Engineer at Acme',
+    'Acme',
+    `${ROLE_BODY}<p><a rel="noreferrer" id="apply" href="{{ATS}}">Apply now</a></p>`,
+  ),
+};
+export const ATS_FORM = {
+  name: 'ats-form',
+  path: '/gh/acme/jobs/9910',
+  html: page('Apply — Acme', 'Acme', FORM_BODY),
+};
+
+/** An Apply button that opens the form in a new tab, as plenty do. */
+export const NEW_TAB_ROLE = {
+  name: 'new-tab-role',
+  path: '/nova/roles/platform-engineer',
+  company: 'Nova',
+  title: 'Platform Engineer',
+  html: page(
+    'Platform Engineer at Nova',
+    'Nova',
+    `${ROLE_BODY}<p><a href="/nova/roles/platform-engineer/apply" target="_blank" rel="noreferrer">Apply now</a></p>`,
+  ),
+};
+export const NEW_TAB_FORM = {
+  name: 'new-tab-form',
+  path: '/nova/roles/platform-engineer/apply',
+  html: page('Apply — Nova', 'Nova', FORM_BODY),
+};
+
+/** A form in two steps, which must stay one application rather than two. */
+export const STEP_ONE = {
+  name: 'step-one',
+  path: '/rigel/apply/details',
+  company: 'Rigel',
+  html: page(
+    'Apply — Rigel',
+    'Rigel',
+    `${FORM_BODY}<p><a href="/rigel/apply/questions">Continue to apply</a></p>`,
+  ),
+};
+export const STEP_TWO = {
+  name: 'step-two',
+  path: '/rigel/apply/questions',
+  html: page(
+    'Apply — Rigel',
+    'Rigel',
+    `<form><label for="q9">Why do you want to work here?</label><textarea id="q9"></textarea>
+     <label for="q8">Will you now or in the future require sponsorship?</label><input id="q8">
+     <button type="button">Submit Application</button></form>`,
+  ),
+};
+
+
+/**
+ * A single-page board where two postings live behind two links and neither is
+ * a navigation. Switching quickly between them is how a slow analysis of the
+ * first lands on the card built for the second.
+ */
+export const SPA_BOARD = {
+  name: 'spa-board',
+  // The two roles are siblings under /openings, which the trail rules already
+  // refuse to join — so anything of one showing up while the other is on
+  // screen is the race, not the merge.
+  path: '/altair/openings/platform-engineer',
+  company: 'Altair',
+  html: `<!doctype html>
+<html><head><title>Platform Engineer at Altair</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Altair</h1><div id="sub">Platform Engineer</div></div>
+  <div class="wrap">
+    <p><button id="to-b" type="button">Open Data Scientist</button></p>
+    <div id="view">${ROLE_BODY}</div>
+  </div>
+  <script>
+    document.getElementById('to-b').addEventListener('click', () => {
+      history.pushState({}, '', '/altair/openings/data-scientist');
+      document.title = 'Data Scientist at Altair';
+      document.getElementById('sub').textContent = 'Data Scientist';
+      document.getElementById('view').innerHTML =
+        '<h2>About the role</h2><p>We are looking for a data scientist to own ' +
+        'our forecasting models. Responsibilities include building models in ' +
+        'Python and SQL and shipping them to production.</p>' +
+        '<h2>Minimum qualifications</h2>' +
+        '<ul><li>Years of experience with statistics</li><li>Experience with SQL</li></ul>' +
+        '<p>Equal opportunity employer. Full-time. Compensation is competitive.</p>';
+    });
+  </script>
+</body></html>`,
+};
+
+/**
+ * The form in an iframe, which is how iCIMS serves its whole application — and
+ * embedded Greenhouse boards, and several SuccessFactors deployments.
+ *
+ * The outer page is the shape that matters: a heading, and an iframe. Every
+ * question, the cover letter box and every field is inside the frame, so a
+ * card that reads only the page it is sitting on finds a posting and no form
+ * at all — and says so by offering nothing.
+ */
+export const FRAMED_ROLE = {
+  name: 'framed-role',
+  path: '/icims/orion/jobs/4021/platform-engineer/job',
+  company: 'Orion',
+  title: 'Platform Engineer',
+  html: `<!doctype html>
+<html><head><title>Platform Engineer at Orion</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Orion</h1><div>Platform Engineer</div></div>
+  <div class="wrap">
+    ${ROLE_BODY}
+    <h2>Apply now</h2>
+    <iframe id="icims_content_iframe" title="Application form"
+            src="/icims/orion/jobs/4021/platform-engineer/form"
+            style="width:100%;height:520px;border:1px solid #ccc"></iframe>
+  </div>
+</body></html>`,
+};
+
+export const FRAMED_FORM = {
+  name: 'framed-form',
+  path: '/icims/orion/jobs/4021/platform-engineer/form',
+  html: `<!doctype html>
+<html><head><meta charset="utf-8"><title>Application</title><style>${CHROME}</style></head>
+<body><div class="wrap"><form>
+  <label for="fn">First Name</label><input id="fn" name="icims_firstname" type="text">
+  <label for="ln">Last Name</label><input id="ln" name="icims_lastname" type="text">
+  <label for="em">Email Address</label><input id="em" name="icims_email" type="email">
+  <label for="ph">Primary Number</label><input id="ph" name="icims_phone" type="text">
+  <label for="cl">Cover Letter</label><textarea id="cl" name="icims_coverletter"></textarea>
+  <label for="q1">Why do you want to work here?</label><textarea id="q1" name="icims_q1"></textarea>
+  <button type="button">Submit Application</button>
+</form></div></body></html>`,
+};
+
+/**
+ * A careers page that is a heading and an embedded board, which is how a great
+ * many companies run theirs: Greenhouse and SuccessFactors both ship an embed,
+ * and the page around it says almost nothing.
+ *
+ * Everything that makes a page look like a job — the description, the
+ * qualifications, the form — is inside the frame. Scored on the page itself
+ * there is nothing here at all, so the card never appears, and the tool is
+ * simply absent on a page where somebody is about to apply.
+ */
+export const EMBEDDED_BOARD = {
+  name: 'embedded-board',
+  path: '/vireo/careers/platform-engineer',
+  company: 'Vireo',
+  title: 'Platform Engineer',
+  html: `<!doctype html>
+<html><head><title>Vireo</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Vireo</h1></div>
+  <div class="wrap">
+    <iframe id="grnhse_iframe" title="Greenhouse Job Board"
+            src="/vireo/embed/job_app?token=4012345"
+            style="width:100%;height:600px;border:0"></iframe>
+  </div>
+</body></html>`,
+};
+
+export const EMBEDDED_BOARD_FRAME = {
+  name: 'embedded-board-frame',
+  path: '/vireo/embed/job_app',
+  html: `<!doctype html>
+<html><head><meta charset="utf-8"><title>Platform Engineer at Vireo</title><style>${CHROME}</style></head>
+<body><div class="wrap">
+  <h1>Platform Engineer</h1>
+  ${ROLE_BODY}
+  <h2>Apply now</h2>
+  <form>
+    <label for="fn">First Name</label><input id="fn" name="first_name">
+    <label for="ln">Last Name</label><input id="ln" name="last_name">
+    <label for="em">Email</label><input id="em" name="email" type="email">
+    <label for="rs">Resume</label><input id="rs" name="resume" type="file">
+    <label for="q1">Why do you want to work here?</label><textarea id="q1"></textarea>
+    <button type="button">Submit Application</button>
+  </form>
+</div></body></html>`,
+};
+
+/**
+ * A posting that is not in the page when the page loads.
+ *
+ * Workday, Ashby and most of the modern boards serve an empty shell and fetch
+ * the posting afterwards. The content script runs once, at document idle, and
+ * scores whatever is there — which on these is a loading spinner. Nothing about
+ * the page changes afterwards except its contents, so there is no second look
+ * and the card never appears at all.
+ */
+export const LATE_RENDER = {
+  name: 'late-render',
+  path: '/lyricus/careers/platform-engineer',
+  company: 'Lyricus',
+  title: 'Platform Engineer',
+  html: `<!doctype html>
+<html><head><title>Lyricus</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Lyricus</h1></div>
+  <div class="wrap"><div id="root">Loading…</div></div>
+  <script>
+    setTimeout(() => {
+      document.title = 'Platform Engineer at Lyricus';
+      document.getElementById('root').innerHTML =
+        '<h1>Platform Engineer</h1>' + ${JSON.stringify(ROLE_BODY)} +
+        '<form>' +
+        '<label for="fn">First Name</label><input id="fn" name="first_name">' +
+        '<label for="em">Email</label><input id="em" name="email" type="email">' +
+        '<label for="q1">Why do you want to work here?</label><textarea id="q1"></textarea>' +
+        '<button type="button">Submit Application</button></form>';
+    }, 4000);
+  </script>
+</body></html>`,
+};
+
+/**
+ * A posting buried in a page full of somebody else's frames.
+ *
+ * Running in all frames means a page with thirty embeds announces thirty
+ * times and is asked thirty times on every scan. Only one of them is the
+ * application, and finding it among the rest — without the rest costing
+ * anything or contributing anything — is the thing to check.
+ */
+export const CROWDED_PAGE = {
+  name: 'crowded-page',
+  path: '/mensa/roles/platform-engineer',
+  company: 'Mensa Labs',
+  title: 'Platform Engineer',
+  html: `<!doctype html>
+<html><head><title>Platform Engineer at Mensa Labs</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Mensa Labs</h1><div>Platform Engineer</div></div>
+  <div class="wrap">
+    ${ROLE_BODY}
+    ${Array.from(
+      { length: 24 },
+      (_, i) => `<iframe title="Advertisement ${i}" src="/promo/newsletter" width="200" height="90"></iframe>`,
+    ).join('\n    ')}
+    <h2>Apply now</h2>
+    <iframe id="form" title="Application form" src="/mensa/roles/platform-engineer/form"
+            style="width:100%;height:420px"></iframe>
+    ${Array.from(
+      { length: 24 },
+      (_, i) => `<iframe title="Advertisement ${i + 24}" src="/promo/newsletter" width="200" height="90"></iframe>`,
+    ).join('\n    ')}
+  </div>
+</body></html>`,
+};
+
+export const CROWDED_PAGE_FORM = {
+  name: 'crowded-page-form',
+  path: '/mensa/roles/platform-engineer/form',
+  html: `<!doctype html>
+<html><head><meta charset="utf-8"><title>Application</title><style>${CHROME}</style></head>
+<body><div class="wrap"><form>
+  <label for="fn">First Name</label><input id="fn" name="first_name">
+  <label for="em">Email</label><input id="em" name="email" type="email">
+  <label for="q1">What draws you to this team?</label><textarea id="q1"></textarea>
+  <button type="button">Submit Application</button>
+</form></div></body></html>`,
+};
+
+/**
+ * Not a job, with a frame that collects the same details anyway.
+ *
+ * The other side of letting a frame speak up for a page that says nothing: a
+ * frame is now able to make the card appear where the page alone never would.
+ * An enquiry form embedded in an article asks for a name, an email, a phone
+ * number and a town, which is four parts of a person and enough to be taken
+ * for the top of an application.
+ */
+export const BLOG_WITH_FORM = {
+  name: 'blog-with-form',
+  path: '/notes/sourdough-and-patience',
+  html: `<!doctype html>
+<html><head><title>Notes on sourdough</title><style>${CHROME}</style></head>
+<body><div class="wrap">
+  <h1>Notes on sourdough</h1>
+  <p>A long post about bread, hydration ratios, and patience. Nothing here
+     resembles a job.</p>
+  <iframe id="enquiry" title="Get in touch" src="/notes/enquiry"
+          style="width:420px;height:320px"></iframe>
+</div></body></html>`,
+};
+
+export const BLOG_ENQUIRY_FRAME = {
+  name: 'blog-enquiry-frame',
+  path: '/notes/enquiry',
+  html: `<!doctype html>
+<html><head><meta charset="utf-8"><title>Get in touch</title></head>
+<body><form>
+  <h3>Book a class</h3>
+  <label for="a">Name</label><input id="a" name="name">
+  <label for="b">Email</label><input id="b" name="email" type="email">
+  <label for="c">Phone</label><input id="c" name="phone">
+  <label for="d">Town</label><input id="d" name="town">
+  <button type="button">Send</button>
+</form></body></html>`,
+};
+
+/**
+ * A posting with a third party's frame on it, which is every posting.
+ *
+ * Running in all frames is what reaches the application form on iCIMS. It also
+ * puts the script inside every advert, newsletter box and embedded widget on
+ * every page — and those have fields with the same names. An advert asking for
+ * an email address is not an application form, and typing the user's address
+ * into someone else's iframe is a different and worse kind of wrong than
+ * failing to fill a field.
+ */
+export const ADVERT_FRAME = {
+  name: 'advert-frame',
+  path: '/vela/roles/platform-engineer',
+  company: 'Vela',
+  title: 'Platform Engineer',
+  html: `<!doctype html>
+<html><head><title>Platform Engineer at Vela</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Vela</h1><div>Platform Engineer</div></div>
+  <div class="wrap">
+    ${ROLE_BODY}
+    ${FORM_BODY}
+    <iframe id="promo" title="Advertisement" src="/promo/newsletter"
+            style="width:320px;height:260px"></iframe>
+  </div>
+</body></html>`,
+};
+
+export const ADVERT_CONTENT = {
+  name: 'advert-content',
+  path: '/promo/newsletter',
+  html: `<!doctype html>
+<html><head><meta charset="utf-8"><title>Sponsored</title></head>
+<body><form>
+  <h3>Hiring newsletter</h3>
+  <label for="ad-em">Email</label><input id="ad-em" name="email" type="email">
+  <label for="ad-nm">First Name</label><input id="ad-nm" name="first_name" type="text">
+  <label for="ad-q">Tell us what you think of this advertisement.</label>
+  <textarea id="ad-q" name="feedback"></textarea>
+  <button type="button">Subscribe</button>
+</form></body></html>`,
+};
+
+/**
+ * A board: a listing page, and two jobs reached from it.
+ *
+ * The listing is job-shaped enough to be offered on and remembered, and its
+ * address is a prefix of both postings — which is how one job's description
+ * used to arrive in the other's application, by way of the page between them.
+ */
+export const CYGNUS_BOARD = {
+  name: 'cygnus-board',
+  path: '/cygnus/openings',
+  company: 'Cygnus',
+  html: page(
+    'Open positions at Cygnus',
+    'Cygnus',
+    `<h2>Open positions</h2>
+     <p>View all openings below. We are hiring across the company; every role is full-time.</p>
+     <ul>
+       <li><a id="role-a" href="/cygnus/openings/platform-engineer">Platform Engineer</a></li>
+       <li><a id="role-b" href="/cygnus/openings/data-scientist">Data Scientist</a></li>
+     </ul>`,
+  ),
+};
+
+export const CYGNUS_ROLE_A = {
+  name: 'cygnus-role-a',
+  path: '/cygnus/openings/platform-engineer',
+  company: 'Cygnus',
+  title: 'Platform Engineer',
+  html: page('Platform Engineer at Cygnus', 'Cygnus', ROLE_BODY),
+};
+
+export const CYGNUS_ROLE_B = {
+  name: 'cygnus-role-b',
+  path: '/cygnus/openings/data-scientist',
+  company: 'Cygnus',
+  title: 'Data Scientist',
+  html: page(
+    'Data Scientist at Cygnus',
+    'Cygnus',
+    `<h2>About the role</h2>
+     <p>We are looking for a data scientist to own our forecasting models. You
+        will build them in Python and SQL and ship them to production.</p>
+     <h2>Minimum qualifications</h2>
+     <ul><li>Years of experience with statistics</li><li>Experience with SQL</li></ul>
+     <p>Equal opportunity employer. Full-time. Compensation is competitive.</p>`,
+  ),
+};
+
+export const NAVIGATION = [
+  CYGNUS_BOARD, CYGNUS_ROLE_A, CYGNUS_ROLE_B, FRAMED_ROLE, FRAMED_FORM, ADVERT_FRAME, ADVERT_CONTENT,
+  EMBEDDED_BOARD, EMBEDDED_BOARD_FRAME, BLOG_WITH_FORM, BLOG_ENQUIRY_FRAME, LATE_RENDER,
+  CROWDED_PAGE, CROWDED_PAGE_FORM,
+  LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY,
+  OWN_SITE, ATS_FORM, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, SPA_BOARD,
+];
+
+export const ALL = [STREAMLY, NORTHWIND, BLOG, HELIOS_ROLE, HELIOS_FORM, ...NAVIGATION];
 
 /**
  * Serve every fixture from one origin. Returns the base url and a `urlFor`
  * helper so callers do not hard-code ports.
  */
-export function serveFixtures(fixtures = ALL) {
+export function serveFixtures(fixtures = ALL, { vars = {}, hostname = '127.0.0.1' } = {}) {
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
-      const match = fixtures.find((f) => req.url.startsWith(f.path));
+      /*
+       * Longest path wins. Matching on the first prefix served the role page
+       * at the form's own address, because /lever/vega/8f21 is a prefix of
+       * /lever/vega/8f21/apply — which is exactly the shape every one of
+       * these systems uses.
+       */
+      const url = req.url.split('?')[0];
+      const match = [...fixtures]
+        .filter((f) => url === f.path || url.startsWith(`${f.path}/`) || url.startsWith(f.path))
+        .sort((a, b) => b.path.length - a.path.length)[0];
+
       if (!match) {
         res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end('<html><body>Not found</body></html>');
@@ -177,10 +692,12 @@ export function serveFixtures(fixtures = ALL) {
       // charset matters: an em dash in a page title came back as mojibake
       // without it, which looks like a bug in the extension rather than here.
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(match.html);
+      // `{{NAME}}` lets one fixture link to another server's origin, which is
+      // how the careers-site-to-ATS hand-off is modelled.
+      res.end(Object.entries(vars).reduce((html, [k, v]) => html.split(`{{${k}}}`).join(v), match.html));
     });
     server.listen(0, '127.0.0.1', () => {
-      const base = `http://127.0.0.1:${server.address().port}`;
+      const base = `http://${hostname}:${server.address().port}`;
       resolve({
         base,
         urlFor: (f) => `${base}${f.path}`,
@@ -188,6 +705,56 @@ export function serveFixtures(fixtures = ALL) {
       });
     });
   });
+}
+
+/**
+ * The real server, with one route made slow.
+ *
+ * Some of the extension's worst behaviour only appears while it is waiting: a
+ * pass that takes longer than it takes the user to move on, and then lands
+ * anyway. Against a local server every call returns in a couple of hundred
+ * milliseconds, so that window never opens and the bug is invisible — while in
+ * use it is the ordinary case, since analysis with the AI enabled takes
+ * minutes. Putting a deliberate delay in front of one route makes it a fact
+ * rather than a matter of timing luck.
+ */
+export function serveSlowProxy(target, { slowRoute = /analyze/, ms = 4000 } = {}) {
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      const forward = async () => {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        if (slowRoute.test(req.url)) await new Promise((r) => setTimeout(r, ms));
+
+        const upstream = await fetch(`${target}${req.url}`, {
+          method: req.method,
+          headers: { 'content-type': req.headers['content-type'] ?? 'application/json' },
+          body: req.method === 'GET' || req.method === 'HEAD' ? undefined : Buffer.concat(chunks),
+        });
+        res.writeHead(upstream.status, {
+          'content-type': upstream.headers.get('content-type') ?? 'application/json',
+          'access-control-allow-origin': '*',
+        });
+        res.end(Buffer.from(await upstream.arrayBuffer()));
+      };
+      forward().catch((err) => {
+        res.writeHead(502);
+        res.end(String(err));
+      });
+    });
+    server.listen(0, '127.0.0.1', () =>
+      resolve({ base: `http://127.0.0.1:${server.address().port}`, close: () => server.close() }),
+    );
+  });
+}
+
+/** Point the extension at a different server, from a page that has `chrome`. */
+export async function useServer(context, serverUrl) {
+  const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+  const page = await context.newPage();
+  await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
+  await page.evaluate((url) => chrome.storage.sync.set({ serverUrl: url }), serverUrl);
+  await page.close();
 }
 
 /** Locate the Chromium this environment provides. */

@@ -155,8 +155,25 @@ async function boot() {
       const report = await tellContentScript('autofill');
       const f = report.filled.length;
       const parts = [`Filled ${f} ${f === 1 ? 'field' : 'fields'}`];
-      if (report.skipped.length) parts.push(`left ${report.skipped.length} already filled`);
-      setStatus(`${parts.join(', ')}.`, 'ok');
+
+      /*
+       * Skipped is not one thing. A field left alone because it already had an
+       * answer is finished; one skipped because nothing in the list matched, or
+       * because it is a widget nothing can drive, is a required field still
+       * empty. Reporting both as "already filled" told someone their country
+       * dropdown was done when it was blank — which is the difference between
+       * done and done wrong, and the reason the reasons are recorded at all.
+       */
+      const byReason = new Map();
+      for (const s of report.skipped) {
+        byReason.set(s.reason, (byReason.get(s.reason) ?? 0) + 1);
+      }
+      const done = byReason.get('already filled') ?? 0;
+      const yours = report.skipped.length - done;
+      if (done) parts.push(`left ${done} already filled`);
+      if (yours) parts.push(`${yours} still need${yours === 1 ? 's' : ''} you`);
+
+      setStatus(`${parts.join(', ')}.`, yours ? 'warn' : 'ok');
     } catch (err) {
       setStatus(err.message, 'err');
     }

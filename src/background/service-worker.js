@@ -6,26 +6,80 @@
  */
 
 import { DEFAULTS, getSettings } from '../shared/config.js';
+import {
+  lighten,
+  sameApplication,
+  summarise,
+  trimForStorage,
+  wasExpected,
+  worthKeeping,
+} from '../shared/trail.js';
+
+/*
+ * How long to wait before deciding the server is not coming back.
+ *
+ * A wedged server is worse than an absent one. An absent one refuses the
+ * connection and the card says so with a button; one that accepts the socket
+ * and then never answers left the Autofill button spinning with no message and
+ * no way out, because none of these requests carried a deadline.
+ *
+ * Anything that compiles LaTeX or calls a model gets its own, longer, deadline:
+ * those really do take minutes, and cutting them off at twenty seconds would
+ * turn a slow success into a failure.
+ */
+const REQUEST_TIMEOUT_MS = 20_000;
+const SLOW_TIMEOUT_MS = 10 * 60_000;
 
 async function serverFetch(path, options = {}) {
+  const { timeoutMs = REQUEST_TIMEOUT_MS, ...init } = options;
   const { serverUrl } = await getSettings();
   const url = `${serverUrl.replace(/\/$/, '')}${path}`;
 
   let res;
   try {
     res = await fetch(url, {
-      ...options,
-      headers: { 'Content-Type': 'application/json', ...(options.headers ?? {}) },
+      ...init,
+      signal: init.signal ?? AbortSignal.timeout(timeoutMs),
+      headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
     });
   } catch (cause) {
-    throw new Error(
-      `Can't reach ResumeM-M at ${serverUrl}. Start it with \`npm run serve\` in the ResumeM-M folder.`,
+    // Marked, so the card can offer the way out rather than only naming the
+    // problem. The text still has to stand on its own: it is what a user sees
+    // if anything swallows the marker.
+    const wedged = cause?.name === 'TimeoutError' || cause?.name === 'AbortError';
+    const offline = new Error(
+      wedged
+        ? 'ResumeM-M did not answer. Check it is still running, then try again.'
+        : 'ResumeM-M is not open. Start it, then try again.',
       { cause },
     );
+    offline.jobhelper = { fix: 'start-server', serverUrl };
+    throw offline;
   }
 
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
+  /*
+   * A reply that is not JSON is a failure, not an empty success. Swallowing
+   * the parse error on a 200 turned a captive portal page, a proxy error page
+   * or a truncated response into `{}`, and the caller then failed somewhere
+   * far away with "resumes.filter is not a function".
+   */
+  let body;
+  try {
+    body = await res.json();
+  } catch (cause) {
+    if (res.ok) {
+      throw new Error(`ResumeM-M sent something that is not JSON (${res.status}).`, { cause });
+    }
+    body = {};
+  }
+
+  if (!res.ok) {
+    const failed = new Error(body.error ?? `${res.status} ${res.statusText}`);
+    // The server says which sort of refusal this is. "No save open" is the one
+    // worth acting on: there is a button that fixes it, one tab away.
+    if (body.kind === 'no-project') failed.jobhelper = { fix: 'open-save', serverUrl };
+    throw failed;
+  }
   return body;
 }
 
@@ -60,100 +114,209 @@ const TRAIL_STALE_MS = 2 * 60 * 60 * 1000;
 
 const session = () => chrome.storage.session ?? chrome.storage.local;
 
-async function readTrail() {
-  const stored = (await session().get(TRAIL_KEY))[TRAIL_KEY];
-  if (!stored?.pages?.length) return { pages: [] };
+/**
+ * One trail per tab.
+ *
+ * It was one trail for the whole browser, and everybody opens several postings
+ * in several tabs. Each tab's card saves its work every couple of seconds, so
+ * two open postings overwrote each other: a tab reading about one company
+ * would, on navigating, come back holding the other company's description and
+ * the other company's resume. A cover letter written from the wrong posting is
+ * precisely the failure this whole feature was built to avoid, and it arrived
+ * through the back door.
+ *
+ * The tab is the application. Nothing else in the browser is.
+ */
+const trailKey = (tabId) => (tabId === undefined ? TRAIL_KEY : `${TRAIL_KEY}:${tabId}`);
+
+/*
+ * Whether a trail is still current is a question about when, not about how
+ * many pages it holds. Keyed off `pages.length`, a record with work in it and
+ * no pages yet read as nothing — so `saveWork` could write the resume it had
+ * just built and the next read would hand back an empty trail, every time.
+ */
+async function readTrail(tabId) {
+  const key = trailKey(tabId);
+  const stored = (await session().get(key))[key];
+  if (!stored) return { pages: [] };
   if (Date.now() - (stored.at ?? 0) > TRAIL_STALE_MS) return { pages: [] };
-  return stored;
-}
-
-const hostOf = (u) => {
-  try {
-    return new URL(u).hostname.replace(/^www\./, '');
-  } catch {
-    return '';
-  }
-};
-const rootOf = (h) => h.split('.').slice(-2).join('.');
-const pathOf = (u) => {
-  try {
-    return new URL(u).pathname;
-  } catch {
-    return '';
-  }
-};
-
-/** Same host, and plainly the same posting on it rather than another one. */
-function relatedPath(a, b) {
-  const pa = pathOf(a);
-  const pb = pathOf(b);
-  if (!pa || !pb) return false;
-  if (pa === pb || pa.startsWith(pb) || pb.startsWith(pa)) return true;
-
-  // An applicant tracking system hosts thousands of companies under one
-  // domain, so the host says nothing; the first path segment is the company.
-  const first = (p) => p.split('/').filter(Boolean)[0] ?? '';
-  return first(pa) !== '' && first(pa) === first(pb);
+  return { pages: [], ...stored };
 }
 
 /**
- * Is this page part of the application already being followed?
+ * Store the trail, carrying less rather than failing.
  *
- * Getting this wrong in the generous direction is worse than not following at
- * all: a cover letter written from two different companies' postings is
- * nonsense, and nothing about it would look wrong until a human read it. So
- * the company decides wherever it is known, and where it is not, a page has to
- * have been arrived at from the trail — following "Apply" from a careers page
- * to its ATS is the case this exists for, and it is also the only case where
- * two unrelated hosts should ever be joined up.
+ * Session storage is 10MB shared across every tab, and five tabs each holding
+ * five pages fills it exactly — at which point the write throws and the trail
+ * silently stops working, which is the worst of the available outcomes.
  */
-function sameApplication(trail, page) {
-  if (trail.pages.length === 0) return true;
-
-  const co = (c) => (c ?? '').trim().toLowerCase();
-  const mine = co(page.company);
-  const known = trail.pages.map((p) => co(p.company)).filter(Boolean);
-
-  // A different company is a different application, whatever else matches.
-  if (mine && known.length > 0) return known.includes(mine);
-
-  const here = hostOf(page.url);
-  if (!here) return false;
-
-  for (const p of trail.pages) {
-    const there = hostOf(p.url);
-    if (!there) continue;
-
-    const cameFromHere =
-      page.referrerHost && (page.referrerHost === there || rootOf(page.referrerHost) === rootOf(there));
-
-    // Same site: only if it is the same posting, not merely the same board.
-    if (here === there || rootOf(here) === rootOf(there)) {
-      if (relatedPath(page.url, p.url)) return true;
-      continue;
+async function writeTrail(tabId, trail) {
+  const key = trailKey(tabId);
+  for (const attempt of [trail, lighten(trail), lighten(trail, 0)]) {
+    try {
+      await session().set({ [key]: attempt });
+      return attempt;
+    } catch {
+      // Out of room. Drop the oldest pages' text and try again.
     }
-    // Different site: only by having been sent there from the trail.
-    if (cameFromHere) return true;
   }
-  return false;
+  // Even with every page's text dropped it would not go in. Saying so beats
+  // returning the trail as though it had been stored.
+  return null;
 }
 
-/** The trail without the page text, which nothing but the server wants. */
-function summarise(trail) {
-  return {
-    ...trail,
-    pages: trail.pages.map(({ html, ...rest }) => ({ ...rest, chars: (html ?? '').length })),
-  };
+/**
+ * A tab opened by "Apply" starts empty, and what it needs is in the tab that
+ * opened it. Inherited once, on the new tab's first look: the two tabs are
+ * separate applications from then on, and the one you came from carries on
+ * being whatever it is.
+ */
+async function inheritIfNew(tabId, openerTabId) {
+  if (tabId === undefined || openerTabId === undefined) return;
+  const mine = await readTrail(tabId);
+  if (mine.pages.length > 0) return;
+
+  const theirs = await readTrail(openerTabId);
+  if (theirs.pages.length > 0) await writeTrail(tabId, { ...theirs, at: Date.now() });
+}
+
+/* ------------------------------------------------------------------ *
+ * Frames: the form is often not in the page you are looking at         *
+ * ------------------------------------------------------------------ */
+
+/**
+ * Which sub-frames of which tab have a content script in them.
+ *
+ * Plenty of systems serve the application form in an iframe — iCIMS serves its
+ * whole application that way, and so do embedded Greenhouse boards. The script
+ * now runs in every frame, but only the top one puts up a card; the rest sit
+ * quiet until they are asked to read or fill the form in front of them.
+ *
+ * Asking them needs their frame ids, and there is no way to collect a reply
+ * from each of several frames in one broadcast — so each announces itself as it
+ * loads.
+ *
+ * In session storage rather than in memory. This was a Map, on the reasoning
+ * that a worker which has been asleep and lost it is a worker whose frames have
+ * also gone, since a reload re-announces. That is not how MV3 works: Chrome
+ * stops an idle worker after about thirty seconds while the page carries on
+ * living, and nothing re-announces without a reload. Read a posting, leave the
+ * tab while you think about it, come back and press Autofill — on iCIMS, where
+ * every field is inside the frame, the answer was "Filled 0 fields" and an
+ * untouched form. Scanning and reading the frame's markup failed the same way,
+ * so the questions vanished and the posting was analysed as the empty shell it
+ * looks like from outside.
+ */
+const framesKey = (tabId) => `frames:${tabId}`;
+
+async function noteFrame(tabId, frameId) {
+  if (tabId === undefined || !frameId) return;
+  const key = framesKey(tabId);
+  const ids = new Set((await session().get(key))[key] ?? []);
+  if (ids.has(frameId)) return;
+  ids.add(frameId);
+  await session()
+    .set({ [key]: [...ids] })
+    .catch(() => undefined);
+}
+
+async function forgetFrame(tabId, frameId) {
+  const key = framesKey(tabId);
+  const ids = ((await session().get(key))[key] ?? []).filter((id) => id !== frameId);
+  await session()
+    .set({ [key]: ids })
+    .catch(() => undefined);
+}
+
+/**
+ * Put the same question to every sub-frame, and keep the answers that come
+ * back. A frame that has navigated away, or is cross-origin and gone, simply
+ * does not answer — which is ordinary rather than an error.
+ */
+async function askFrames(tabId, message) {
+  const key = framesKey(tabId);
+  const ids = (await session().get(key))[key] ?? [];
+  const replies = await Promise.all(
+    ids.map(async (frameId) => {
+      try {
+        const reply = await chrome.tabs.sendMessage(tabId, message, { frameId });
+        return reply?.ok ? { frameId, data: reply.data } : null;
+      } catch {
+        // The frame is gone. Drop it rather than asking again forever.
+        await forgetFrame(tabId, frameId);
+        return null;
+      }
+    }),
+  );
+  return replies.filter(Boolean);
 }
 
 /** Message handlers, one per action the content script or popup can request. */
 const handlers = {
+  /** "There is a content script in this frame." Sent once, on load. */
+  async frameReady(_payload, tab, sender) {
+    await noteFrame(tab?.id, sender?.frameId);
+    return { ok: true };
+  },
+
+  /**
+   * "The application form is in here, not out there."
+   *
+   * Said by a frame that has found itself holding one. Plenty of careers pages
+   * are a heading and an embedded board — Greenhouse and SuccessFactors both
+   * ship an embed — and scored on the page itself there is nothing there at
+   * all: no description, no qualifications, no form. The card never appeared,
+   * on a page where somebody was about to apply.
+   *
+   * The frame is the only thing in a position to know, so it says so, and the
+   * top document takes another look.
+   */
+  async applicationFrameHere(_payload, tab, sender) {
+    await noteFrame(tab?.id, sender?.frameId);
+    if (tab?.id === undefined) return { ok: false };
+    await chrome.tabs
+      .sendMessage(tab.id, { type: 'jh-application-frame' }, { frameId: 0 })
+      .catch(() => undefined);
+    return { ok: true };
+  },
+
+  /** The markup of any frame holding an application, as part of this page. */
+  async frameHtml(_payload, tab) {
+    if (tab?.id === undefined) return { frames: [] };
+    const replies = await askFrames(tab.id, { type: 'jh-frame-html' });
+    return { frames: replies.map(({ frameId, data }) => ({ frameId, ...data })) };
+  },
+
+  /** Read the form in every sub-frame: its questions, and what it asks for. */
+  async scanFrames(_payload, tab) {
+    if (tab?.id === undefined) return { frames: [] };
+    const replies = await askFrames(tab.id, { type: 'jh-frame-scan' });
+    return { frames: replies.map(({ frameId, data }) => ({ frameId, ...data })) };
+  },
+
+  /** Fill the form in every sub-frame from the same profile. */
+  async fillFrames({ fields }, tab) {
+    if (tab?.id === undefined) return { frames: [] };
+    const replies = await askFrames(tab.id, { type: 'jh-frame-fill', payload: { fields } });
+    return { frames: replies.map(({ frameId, data }) => ({ frameId, ...data })) };
+  },
+
+  /** Put an answer into a field that lives in one particular frame. */
+  async insertInFrame({ frameId, fieldId, text }, tab) {
+    if (tab?.id === undefined) return false;
+    const reply = await chrome.tabs
+      .sendMessage(tab.id, { type: 'jh-frame-insert', payload: { fieldId, text } }, { frameId })
+      .catch(() => null);
+    return Boolean(reply?.ok && reply.data);
+  },
+
   /**
    * Add the page to the current application, or start a new one with it.
    * Returns the trail as it now stands, so the card can show it.
    */
-  async rememberPage({ page }) {
-    const trail = await readTrail();
+  async rememberPage({ page }, tab) {
+    await inheritIfNew(tab?.id, tab?.openerTabId);
+    const trail = await readTrail(tab?.id);
     const joins = sameApplication(trail, page);
     const pages = joins ? trail.pages.filter((p) => p.url !== page.url) : [];
 
@@ -162,17 +325,97 @@ const handlers = {
       title: page.title,
       company: page.company,
       kind: page.kind,
-      html: (page.html ?? '').slice(0, TRAIL_HTML_MAX),
+      html: trimForStorage(page.html, TRAIL_HTML_MAX),
       at: Date.now(),
     });
 
-    const next = { pages: pages.slice(-TRAIL_MAX), at: Date.now() };
-    await session().set({ [TRAIL_KEY]: next });
+    /*
+     * A fresh application inherits nothing.
+     *
+     * This kept the whole of the old trail and replaced only its pages, so the
+     * previous posting's resume, letter and answers stayed behind under `work`
+     * — invisible, because the page that started fresh is correctly refused
+     * them. It is the page after that which asks and is given them: read one
+     * job, build its resume, open another job in the same tab, follow Apply,
+     * and the form comes up holding the first job's application.
+     *
+     * The expectation goes once it has been honoured, too: a click means "the
+     * next page", and leaving it standing let it vouch for a third page five
+     * minutes later.
+     *
+     * `expecting` has to be named in that inheriting, because the spread drops
+     * every key except the ones written below it. Carrying it across a fresh
+     * start was the whole of the rule undone by one line: press Apply on Vega
+     * and have the board cancel the navigation and route the page itself —
+     * which content.js already anticipates, and which `target=_blank` produces
+     * too — then read a different job, and the expectation left over from Vega
+     * vouches for it. Vega's form then comes up holding Lyra's resume and
+     * Lyra's description as the source for the letter, with nothing on screen
+     * looking wrong.
+     */
+    const honoured = joins && wasExpected(trail, page.url);
+    const next = {
+      ...(joins ? trail : {}),
+      expecting: joins && !honoured ? trail.expecting : undefined,
+      pages: pages.slice(-TRAIL_MAX),
+      at: Date.now(),
+    };
+    await writeTrail(tab?.id, next);
     return { ...summarise(next), startedFresh: !joins };
   },
 
-  async getTrail() {
-    return summarise(await readTrail());
+  async getTrail(_payload, tab) {
+    return summarise(await readTrail(tab?.id));
+  },
+
+  /**
+   * Keep the work done on this page, so the next page of the same application
+   * does not start from nothing.
+   *
+   * Clicking "Apply" is a navigation, and a navigation destroys the card. The
+   * resume you built and the letter you drafted were gone at exactly the
+   * moment the form appeared to put them in, which made the tool feel like it
+   * had forgotten what you were doing — because it had.
+   */
+  async saveWork({ work, page }, tab) {
+    const trail = await readTrail(tab?.id);
+    // Only the application this tab is actually on. Without this a card left
+    // open on another posting would keep writing its work over this one's.
+    if (page && trail.pages.length > 0 && !sameApplication(trail, page)) return { ok: false };
+    // And never nothing over something: a card that failed to analyse its page
+    // has an empty state, and saving it threw away the resume built on the
+    // page before.
+    if (!worthKeeping(work) && worthKeeping(trail.work)) return { ok: false };
+
+    // Stamped, because `at` is what says the trail is still current — work
+    // written without it reads back as a trail from another sitting.
+    const written = await writeTrail(tab?.id, { ...trail, work, at: Date.now() });
+    return { ok: written !== null };
+  },
+
+  /** The work from the pages before this one, if this page continues them. */
+  async takeWork({ page }, tab) {
+    await inheritIfNew(tab?.id, tab?.openerTabId);
+    const trail = await readTrail(tab?.id);
+    if (page && !sameApplication(trail, page)) return { work: null };
+    return { work: trail.work ?? null };
+  },
+
+  /**
+   * "The next page is part of this application."
+   *
+   * Said by the content script when a link that plainly means apply is
+   * clicked. Referrers are stripped by plenty of sites and by every
+   * rel="noreferrer" link, and an Apply button often opens a new tab — so the
+   * evidence that two pages belong together can be gone by the time the second
+   * one loads. The click is the evidence, and it is available before that.
+   */
+  async expectContinuation({ to }, tab) {
+    const trail = await readTrail(tab?.id);
+    await writeTrail(tab?.id, { ...trail, expecting: { to, at: Date.now() }, at: Date.now() });
+    // A new tab inherits this tab's trail, expectation and all, so an Apply
+    // button that opens one lands already knowing where it came from.
+    return { ok: true };
   },
 
   /**
@@ -183,30 +426,33 @@ const handlers = {
    * merge decided its own inputs. Two unrelated postings on one host were
    * quietly written up as one job, and nothing about the result looked wrong.
    */
-  async trailPages({ page }) {
-    const trail = await readTrail();
+  async trailPages({ page }, tab) {
+    await inheritIfNew(tab?.id, tab?.openerTabId);
+    const trail = await readTrail(tab?.id);
     if (page && !sameApplication(trail, page)) return { pages: [] };
     return { pages: trail.pages.map((p) => ({ url: p.url, title: p.title, html: p.html })) };
   },
 
   /** Forget the trail — "this is a different application from the last one". */
-  async clearTrail() {
-    await session().remove(TRAIL_KEY);
+  async clearTrail(_payload, tab) {
+    await session().remove(trailKey(tab?.id));
     return { pages: [] };
   },
 
   /** Drop one page the user says does not belong. */
-  async forgetPage({ url }) {
-    const trail = await readTrail();
-    const next = { pages: trail.pages.filter((p) => p.url !== url), at: Date.now() };
-    await session().set({ [TRAIL_KEY]: next });
+  async forgetPage({ url }, tab) {
+    const trail = await readTrail(tab?.id);
+    const next = { ...trail, pages: trail.pages.filter((p) => p.url !== url), at: Date.now() };
+    await writeTrail(tab?.id, next);
     return summarise(next);
   },
 
   async ping() {
-    const { serverUrl } = await getSettings();
-    const res = await fetch(`${serverUrl.replace(/\/$/, '')}/health`);
-    return res.json();
+    // Through serverFetch, so a closed server reads as the same sentence the
+    // card gives — with the button that fixes it. The popup is where someone
+    // goes to check the connection, and it was the one place that answered
+    // with a raw browser string: "Failed to fetch".
+    return serverFetch('/health');
   },
 
   /**
@@ -287,6 +533,7 @@ const handlers = {
     const settings = await getSettings();
     return serverFetch('/api/extension/analyze', {
       method: 'POST',
+      timeoutMs: SLOW_TIMEOUT_MS,
       body: JSON.stringify({
         url,
         title,
@@ -305,6 +552,7 @@ const handlers = {
   async render({ spec }) {
     const result = await serverFetch('/api/render', {
       method: 'POST',
+      timeoutMs: SLOW_TIMEOUT_MS,
       body: JSON.stringify({ spec }),
     });
     const { serverUrl } = await getSettings();
@@ -316,11 +564,36 @@ const handlers = {
    * path because a sentence of intent is exactly what tag matching cannot use.
    */
   async refine({ spec, feedback, job }) {
+    /*
+     * Mapped into the server's shape, the way `coverLetter` below already does.
+     *
+     * `analyze` returns the job as `{company, description, keywords, title,
+     * source}`; this read `job.jobDescription`, which is not one of those, and
+     * spread the rest straight through. The template literal turned the missing
+     * value into the four characters "undefined", which is non-empty, so the
+     * server's own guard against a blank description passed and the prompt went
+     * out reading:
+     *
+     *     ## Posting
+     *     Company: Helios
+     *     undefined
+     *
+     * The resume then came back re-picked bullet by bullet with no knowledge of
+     * the job at all, and was presented as "your feedback applied".
+     */
+    const description = job?.description ?? '';
     return serverFetch('/api/ai/tailor', {
       method: 'POST',
+      timeoutMs: SLOW_TIMEOUT_MS,
       body: JSON.stringify({
         resumeId: spec.extends ?? spec.id,
-        job: { ...job, jobDescription: `${job.jobDescription}\n\n## The applicant's instructions\n${feedback}` },
+        job: {
+          jobTitle: job?.title,
+          company: job?.company,
+          url: job?.url ?? job?.source,
+          keywords: job?.keywords,
+          jobDescription: `${description}\n\n## The applicant's instructions\n${feedback}`,
+        },
       }),
     });
   },
@@ -337,6 +610,7 @@ const handlers = {
   async bundle(payload) {
     return serverFetch('/api/applications/bundle', {
       method: 'POST',
+      timeoutMs: SLOW_TIMEOUT_MS,
       body: JSON.stringify(payload),
     });
   },
@@ -376,10 +650,23 @@ const handlers = {
   },
 
   /** Answer one question, reusing a stored answer unless asked to redraft. */
-  async answerQuestion({ question, force }) {
+  async answerQuestion({ question, force, job }) {
     return serverFetch('/api/ai/answer', {
       method: 'POST',
-      body: JSON.stringify({ question, force }),
+      timeoutMs: SLOW_TIMEOUT_MS,
+      body: JSON.stringify({
+        question,
+        force,
+        // Mapped into the server's shape, as `coverLetter` does below.
+        job: job
+          ? {
+              jobTitle: job.title,
+              company: job.company,
+              jobDescription: job.description ?? '',
+              url: job.url ?? job.source,
+            }
+          : undefined,
+      }),
     });
   },
 
@@ -397,6 +684,7 @@ const handlers = {
   async coverLetter({ spec, job }) {
     return serverFetch('/api/ai/cover-letter', {
       method: 'POST',
+      timeoutMs: SLOW_TIMEOUT_MS,
       body: JSON.stringify({
         resumeId: spec.extends ?? spec.id,
         job: {
@@ -436,6 +724,7 @@ const handlers = {
   async openWorkspace(payload) {
     const result = await serverFetch('/api/workspace', {
       method: 'POST',
+      timeoutMs: SLOW_TIMEOUT_MS,
       body: JSON.stringify(payload),
     });
     const { serverUrl } = await getSettings();
@@ -456,18 +745,36 @@ const handlers = {
   },
 };
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const handler = handlers[message?.type];
   if (!handler) {
     sendResponse({ ok: false, error: `Unknown message "${message?.type}"` });
     return false;
   }
-  handler(message.payload ?? {})
+  // Which tab asked. The trail is per tab, and this is the only place that
+  // knows which one — it used to be thrown away. The frame matters too, now
+  // that the form is often not in the page the card is sitting on.
+  handler(message.payload ?? {}, sender?.tab, sender)
     .then((data) => sendResponse({ ok: true, data }))
-    .catch((err) => sendResponse({ ok: false, error: err.message }));
+    // The marker travels with the message: a card on a job page cannot see an
+    // Error object, only what crosses as JSON.
+    .catch((err) => sendResponse({ ok: false, error: err.message, fix: err.jobhelper }));
   // Keeps the message channel open for the async response above.
   return true;
 });
+
+// A closed tab cannot come back, and session storage has a quota.
+chrome.tabs?.onRemoved?.addListener((tabId) => {
+  session().remove([trailKey(tabId), framesKey(tabId)]).catch(() => undefined);
+});
+
+/*
+ * Frames left behind by a navigation are pruned the first time they fail to
+ * answer, in `askFrames`. Noticing the navigation itself would be tidier but
+ * costs the `webNavigation` permission, and an extension that reads every page
+ * you visit should ask for as little as it can get away with. The cost of
+ * doing it lazily is one message that goes nowhere, once.
+ */
 
 chrome.runtime.onInstalled.addListener(async () => {
   // Seed defaults so the popup has something to show on first open.

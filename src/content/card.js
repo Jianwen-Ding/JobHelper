@@ -148,6 +148,7 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .trail-row { display: flex; align-items: center; gap: 6px; padding: 3px 0 3px 12px; }
 .trail-row .what { color: var(--faint); white-space: nowrap; }
 .trail-row .where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; }
+.trail-kept { color: var(--good); padding: 3px 0 3px 12px; }
 
 
 /* Each step is a labelled block, so the card reads as a sequence. */
@@ -246,6 +247,7 @@ select {
   border: 1px solid var(--bad-line); border-left: 3px solid var(--bad); border-radius: 6px; padding: 8px 10px;
   line-height: 1.5;
 }
+.err-actions { margin-top: 8px; }
 .ok-note { color: var(--good); font-size: 12px; margin-top: 9px; }
 
 .done-box {
@@ -365,6 +367,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     letterAutoStarted: false,
     letterSaved: false,
     letterSource: '',
+    /** A previous letter offered as a starting point, until the user takes it. */
+    letterOffer: null,
     priorLetters: [],
     questions,
     answers: {},
@@ -373,12 +377,80 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     workspaceOpened: false,
     /** Whether an AI is in play at all. Filled in below; never assumed. */
     ai: null,
+    /** Answers typed on an earlier page of this same application. */
+    carriedOver: null,
     /** How the proposal on screen was produced: 'tags' or 'ai'. */
     builtWith: analysis?.aiUsed ? 'ai' : 'tags',
     /** Which compiled PDF is on screen, and the canvases already drawn. */
     shownPdf: null,
     pdfPages: new Map(),
   };
+
+  /**
+   * What is worth keeping when the page changes under you.
+   *
+   * Clicking "Apply" is a navigation, and a navigation tears the card down and
+   * builds a new one — so the resume you just built, the letter you just
+   * drafted and the answers you just typed were gone at exactly the point the
+   * form appeared to put them in. These are the pieces of that work that mean
+   * anything on the next page.
+   *
+   * Not everything: `view` and `bundle` stay behind deliberately, because
+   * landing on an application form already showing the "saved" panel would
+   * hide the form it is standing in front of.
+   */
+  function takeWork() {
+    return {
+      spec: state.spec,
+      builtWith: state.builtWith,
+      render: state.render,
+      letter: state.letter,
+      letterSource: state.letterSource,
+      letterStarted: state.letterStarted,
+      letterSaved: state.letterSaved,
+      letterAutoStarted: state.letterAutoStarted,
+      priorLetters: state.priorLetters,
+      /*
+       * Keyed by the question, which is also how `state.answers` is keyed
+       * everywhere else in this file — reading it by field id looked right and
+       * silently carried nothing, because the field ids belong to a page that
+       * no longer exists and were never the key here in the first place.
+       */
+      answersByQuestion: Object.fromEntries(
+        (state.questions ?? [])
+          .map((q) => [q.question, state.answers[q.question] ?? q.answer])
+          .filter(([, a]) => a?.trim()),
+      ),
+    };
+  }
+
+  function restoreWork(work) {
+    if (!work) return;
+    if (work.spec) state.spec = work.spec;
+    if (work.builtWith) state.builtWith = work.builtWith;
+    if (work.render) state.render = work.render;
+    if (work.letter != null) state.letter = work.letter;
+    if (work.letterSource) state.letterSource = work.letterSource;
+    state.letterStarted = state.letterStarted || Boolean(work.letterStarted);
+    state.letterSaved = state.letterSaved || Boolean(work.letterSaved);
+    state.letterAutoStarted = state.letterAutoStarted || Boolean(work.letterAutoStarted);
+    if (work.priorLetters?.length) state.priorLetters = work.priorLetters;
+    state.carriedOver = work.answersByQuestion ?? {};
+    applyCarriedAnswers();
+    draw();
+  }
+
+  /** An answer typed on an earlier page, against the same question here. */
+  function applyCarriedAnswers() {
+    const carried = state.carriedOver;
+    if (!carried) return;
+    for (const q of state.questions ?? []) {
+      const had = carried[q.question];
+      if (had && !state.answers[q.question]?.trim() && !q.answer?.trim()) {
+        state.answers[q.question] = had;
+      }
+    }
+  }
 
   // Ask once, on open: the card must be able to say whether an AI is involved
   // before the user acts, not after. Deliberately outside act(), which marks
@@ -427,9 +499,21 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * final redraw: assigning the result in the caller after `await` would always
    * repaint stale state.
    */
+  /*
+   * More than one thing can be in flight. The card starts work on its own —
+   * the letter drafts itself when the posting asks for one, and the AI pass
+   * runs after the first proposal — so two actions overlap without the user
+   * having clicked twice. A single `busy` flag meant the first to finish
+   * cleared it: the progress bar vanished and every button came back while
+   * the other was still thinking.
+   */
+  const running = new Set();
+
   async function act(action, payload, apply) {
+    running.add(action);
     state.busy = action;
     state.error = null;
+    state.errorFix = null;
     draw();
     try {
       const result = await onAction(action, payload);
@@ -437,15 +521,27 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       return result;
     } catch (err) {
       state.error = err.message;
+      // Some failures have a way out. Keep it, so the card can offer it.
+      state.errorFix = err.jobhelper ?? null;
       return null;
     } finally {
-      state.busy = null;
+      running.delete(action);
+      // Keep showing progress for whatever is still going.
+      state.busy = [...running].pop() ?? null;
       draw();
     }
   }
 
-  const busyLabel = (action, idle, working) =>
-    state.busy === action ? working : idle;
+  const busyLabel = (action, idle, working) => (running.has(action) ? working : idle);
+
+  /*
+   * Both build buttons dispatch the same action, `rebuild`, and differ only by
+   * which mode they asked for. They used to ask busyLabel about "rebuild-tags"
+   * and "rebuild-ai" — actions nothing dispatches — so neither ever said it
+   * was working.
+   */
+  const rebuildLabel = (mode, idle, working) =>
+    running.has('rebuild') && state.rebuilding === mode ? working : idle;
 
   /* ---------------------------------------------------------------- */
 
@@ -554,8 +650,19 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         }),
       ]);
 
+    // Say plainly that the work came too. The resume being still on screen is
+    // evidence, but only if you happened to notice it was ever gone.
+    const brought = [
+      state.spec ? 'the resume' : null,
+      state.letter?.trim() ? 'the letter' : null,
+      Object.keys(state.carriedOver ?? {}).length ? 'your answers' : null,
+    ].filter(Boolean);
+
     return h('details', { className: 'trail' }, [
       h('summary', { textContent: `Writing from ${pages.length} pages of this application` }),
+      brought.length
+        ? h('div', { className: 'trail-kept', textContent: `Carried over: ${brought.join(', ')}.` })
+        : null,
       ...pages.map(row),
       h('button', {
         className: 'link',
@@ -596,7 +703,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   function progressFor(step) {
     const entry = WORKING[state.busy];
     if (!entry || entry[0] !== step) return null;
-    const label = state.busy === 'rebuild' && state.rebuilding === 'ai' ? 'Reading the posting…' : entry[1];
+    const label = running.has('rebuild') && state.rebuilding === 'ai' ? 'Reading the posting…' : entry[1];
     return h('div', {}, [
       h('div', { className: 'progress', role: 'progressbar', 'aria-label': label }),
       h('div', { className: 'progress-label', textContent: label }),
@@ -735,7 +842,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     if (!state.render) {
       return h('div', {
         className: 'fit idle',
-        textContent: state.busy === 'render' ? 'Compiling…' : 'Not compiled yet.',
+        textContent: running.has('render') ? 'Compiling…' : 'Not compiled yet.',
       });
     }
     const r = state.render;
@@ -777,6 +884,9 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           if (state.shownPdf !== wanted) return; // a newer compile won
           await drawPdf(pages, base64, { width: 372 });
           state.pdfPages.set(wanted, pages.cloneNode(true));
+          // Each of these is a page-sized bitmap. Keeping one per compile
+          // meant a session of small edits quietly holding a dozen of them.
+          for (const old of [...state.pdfPages.keys()].slice(0, -2)) state.pdfPages.delete(old);
         } catch (err) {
           pane.append(h('div', { className: 'hint', textContent: `Could not draw the resume: ${err.message}` }));
         }
@@ -828,8 +938,24 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         state.letter = r.body;
         state.letterSource = 'Drafted in your voice from your previous letters.';
       } else if (state.priorLetters.length > 0) {
-        state.letter = state.priorLetters[0].body;
-        state.letterSource = `The AI is off — this is your closest previous letter (${state.priorLetters[0].title}) to adapt.`;
+        /*
+         * Offered, not adopted.
+         *
+         * This used to put the previous letter straight into `state.letter`,
+         * and `state.letter` is what "Save application folder" ships. So with
+         * the AI off — and nobody having clicked anything, because this draft
+         * starts itself — a letter that opens "Dear Streamly," was typeset,
+         * named "Cover Letter Helios.pdf", and dropped in the folder the card
+         * tells you to upload from, with Helios in the address block and
+         * Streamly in the salutation. Saving it to the store then filed it
+         * under Helios, so the next Helios letter started from it too.
+         *
+         * A previous letter is a good starting point and a bad submission. It
+         * now waits behind a button.
+         */
+        state.letterOffer = state.priorLetters[0];
+        state.letter = '';
+        state.letterSource = `The AI is off. Your closest previous letter is ${state.priorLetters[0].title} — it is addressed to someone else, so it is not used until you say so.`;
       } else {
         state.letter = '';
         state.letterSource = 'No previous letters yet. Write one here and the next draft starts from it.';
@@ -884,34 +1010,42 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         h('div', { className: 'row build-modes' }, [
           h('button', {
             className: state.builtWith === 'tags' ? 'mode on' : 'mode',
-            textContent: busyLabel('rebuild-tags', 'Match it myself', 'Matching…'),
+            textContent: rebuildLabel('tags', 'Match it myself', 'Matching…'),
             title: 'Pick among your stored phrasings by keyword. Nothing is sent to an AI.',
             disabled: Boolean(state.busy),
-            onclick: () => {
+            onclick: async () => {
               state.rebuilding = 'tags';
-              return act('rebuild', { useAi: false }, () => {
-                state.builtWith = 'tags';
-                state.render = null;
+              try {
+                await act('rebuild', { useAi: false }, () => {
+                  state.builtWith = 'tags';
+                  state.render = null;
+                });
+              } finally {
+                // Cleared however it ended: a failure used to leave the label
+                // for the next run describing the wrong thing.
                 state.rebuilding = null;
-              });
+              }
             },
           }),
           h('button', {
             className: state.builtWith === 'ai' ? 'mode on' : 'mode',
-            textContent: busyLabel('rebuild-ai', 'Let the AI tailor it', 'Reading the posting…'),
+            textContent: rebuildLabel('ai', 'Let the AI tailor it', 'Reading the posting…'),
             title: state.ai?.active
               ? 'The AI reads this posting and decides which phrasings and bullets to use.'
               : state.ai?.state === 'server-off'
                 ? 'ResumeM-M has its AI switched off — turn it on under Voice & AI.'
                 : 'Switch the AI on from the JobHelper toolbar icon to use this.',
             disabled: Boolean(state.busy) || !state.ai?.active,
-            onclick: () => {
+            onclick: async () => {
               state.rebuilding = 'ai';
-              return act('rebuild', { useAi: true }, () => {
-                state.builtWith = 'ai';
-                state.render = null;
+              try {
+                await act('rebuild', { useAi: true }, () => {
+                  state.builtWith = 'ai';
+                  state.render = null;
+                });
+              } finally {
                 state.rebuilding = null;
-              });
+              }
             },
           }),
         ]),
@@ -980,6 +1114,18 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         state.letterStarted
           ? h('div', {}, [
               state.letterSource ? h('div', { className: 'hint', textContent: state.letterSource }) : null,
+              state.letterOffer && !state.letter?.trim()
+                ? h('button', {
+                    className: 'tiny',
+                    textContent: `Start from "${state.letterOffer.title}"`,
+                    onclick: () => {
+                      state.letter = state.letterOffer.body;
+                      state.letterSource = `Copied from ${state.letterOffer.title}. It is addressed to another company — read it before sending.`;
+                      state.letterOffer = null;
+                      draw();
+                    },
+                  })
+                : null,
               h('textarea', {
                 className: 'tall',
                 value: state.letter ?? '',
@@ -1093,13 +1239,57 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       ]),
     );
 
-    if (state.error) body.append(h('div', { className: 'err', textContent: state.error }));
+    if (state.error) body.append(drawError());
     return body;
+  }
+
+  /**
+   * What went wrong, and the one thing that would put it right.
+   *
+   * The two failures worth acting on both end the same way — nothing works and
+   * the card says so in a sentence the user cannot do anything with. ResumeM-M
+   * not being open, and being open with no save in it, are each one click from
+   * fixed, and the click belongs here rather than in a paragraph describing
+   * where to find it.
+   */
+  function drawError() {
+    const box = h('div', { className: 'err' }, [h('div', { textContent: state.error })]);
+    const fix = state.errorFix;
+    if (!fix) return box;
+
+    box.append(
+      h('div', { className: 'row gap err-actions' }, [
+        h('button', {
+          className: 'tiny',
+          textContent: fix.fix === 'open-save' ? 'Open a save in ResumeM-M' : 'Open ResumeM-M',
+          onclick: () => onAction('openTab', { url: fix.serverUrl }),
+        }),
+        h('button', {
+          className: 'tiny',
+          textContent: busyLabel('retry', 'Try again', 'Trying…'),
+          onclick: () => act('rebuild', { useAi: false }),
+        }),
+      ]),
+    );
+    return box;
   }
 
   function describeAutofill(r) {
     const parts = [`Filled ${plural(r.filled.length, 'field')}`];
-    if (r.skipped.length) parts.push(`left ${plural(r.skipped.length, 'field')} that already had a value`);
+
+    /*
+     * Skipped is not one thing. A field left alone because it already had an
+     * answer is finished; one skipped because nothing in its list matched, or
+     * because it is a widget nothing can drive, is a required field still
+     * empty. Calling both "already had a value" told someone their country
+     * dropdown was done when it read "Select One" — and autofill.js calls that
+     * exact distinction the difference between done and done silently wrong,
+     * which is why it records the reasons at all.
+     */
+    const done = r.skipped.filter((s) => s.reason === 'already filled').length;
+    const yours = r.skipped.length - done;
+    if (done) parts.push(`left ${plural(done, 'field')} that already had a value`);
+    if (yours) parts.push(`${plural(yours, 'field')} still for you to answer`);
     return `${parts.join(', ')}.`;
   }
 
@@ -1171,7 +1361,19 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             disabled: Boolean(state.busy),
             onclick: () =>
               act(`answer:${q.question}`, { question: q.question, force: true }, (r) => {
-                if (r?.output) state.answers[q.question] = r.output;
+                /*
+                 * `executed` first, not `output` first.
+                 *
+                 * When the AI is off the server used to hand back the prompt it
+                 * would have sent, in `output` — always truthy, so the second
+                 * branch was dead and the answer box filled with nine kilobytes
+                 * starting "You are helping with a resume and job-search
+                 * assistant", carrying every cover letter the user had saved
+                 * and their whole writing corpus. One more click put that in
+                 * the employer's form. The server no longer sends it here, and
+                 * this no longer reaches for it either.
+                 */
+                if (r?.executed && r.output) state.answers[q.question] = r.output;
                 else if (r && !r.executed) {
                   state.error = 'The AI is off, so a new answer cannot be drafted. Anything you type here is saved for next time.';
                 }
@@ -1243,7 +1445,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       ]),
       state.autofillReport ? h('div', { className: 'ok-note', textContent: describeAutofill(state.autofillReport) }) : null,
       h('div', { className: 'hint', style: 'margin-top:8px' }, 'Tracked in ResumeM-M with a copy of exactly what was sent.'),
-      state.error ? h('div', { className: 'err', textContent: state.error }) : null,
+      state.error ? drawError() : null,
     ]);
   }
 
@@ -1270,7 +1472,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       ]),
       h('div', { className: 'progress' }),
       h('div', { className: 'progress-label', textContent: 'Reading the posting…' }),
-      state.error ? h('div', { className: 'err', textContent: state.error }) : null,
+      state.error ? drawError() : null,
     ].filter(Boolean));
   }
 
@@ -1312,20 +1514,48 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      * after the deterministic proposal is already on screen, so there is
      * something to read and something to see happening.
      */
-    tailorWithAi() {
+    async tailorWithAi() {
       state.rebuilding = 'ai';
-      return act('rebuild', { useAi: true }, () => {
-        state.builtWith = 'ai';
-        state.render = null;
+      try {
+        return await act('rebuild', { useAi: true }, () => {
+          state.builtWith = 'ai';
+          state.render = null;
+        });
+      } finally {
         state.rebuilding = null;
-      });
+      }
+    },
+    /**
+     * The form asks for a cover letter after all.
+     *
+     * Read from the top document when the card goes up, which is the whole of
+     * the form on most systems and none of it on the ones that serve it in an
+     * iframe. Those can only be read once the frames have answered, by which
+     * point the card is already on screen.
+     */
+    setNeedsCoverLetter(needed) {
+      if (!needed || state.letterNeeded) return;
+      state.letterNeeded = true;
+      draw();
     },
     setQuestions(qs) {
       state.questions = qs;
+      // Questions arrive after the card is built, so anything carried over
+      // from the last page can only be matched to them now.
+      applyCarriedAnswers();
       draw();
     },
-    setStatus(text) {
+
+    /** Hand back the work worth keeping when this page is replaced. */
+    takeWork,
+
+    /** Put back the work from the page this one continues. */
+    restoreWork,
+    setStatus(text, fix = null) {
       state.error = text;
+      // The first pass failing is the commonest way to meet this, and the
+      // commonest reason is that ResumeM-M is not running.
+      state.errorFix = fix;
       draw();
     },
   };
