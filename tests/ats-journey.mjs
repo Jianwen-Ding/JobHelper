@@ -116,7 +116,19 @@ async function main() {
         /* 1. Noticed at all. */
         await page.locator(HOST).waitFor({ state: 'attached', timeout: 30_000 });
         await page.locator(`${HOST} .card .role`).waitFor({ timeout: 30_000 });
-        await page.waitForTimeout(1200);
+        /*
+         * Wait for the card to stop changing rather than for 1.2 seconds. It
+         * fills in as the page is read, and a fixed wait is a bet on how long
+         * that takes — made once per system, so twenty times a run.
+         */
+        const settle = () => page.locator(`${HOST} .card`).innerText().catch(() => '');
+        let last = await settle();
+        for (let i = 0; i < 40; i++) {
+          await page.waitForTimeout(150);
+          const now = await settle();
+          if (now && now === last) break;
+          last = now;
+        }
         const card = page.locator(`${HOST} .card`);
         const role = (await card.locator('.role').textContent())?.trim();
         check('a card appears, knowing the role', /platform engineer/i.test(role ?? ''), role);
