@@ -59,7 +59,24 @@ const cardOf = (page) => page.locator(`${HOST} .card`);
 async function settled(page) {
   await page.locator(HOST).waitFor({ state: 'attached', timeout: 25_000 });
   await page.locator(`${HOST} .card .role`).waitFor({ timeout: 25_000 });
-  await page.waitForTimeout(1800);
+  /*
+   * Wait for the card to stop changing, rather than for a number of
+   * milliseconds. It fills in as the page is read — the role first, then the
+   * company once it is worked out, then the buttons — and a fixed sleep is a
+   * bet on how long that takes. On a loaded machine the bet loses, and the
+   * failure reads like the extension getting the company wrong rather than
+   * like the test looking too early. Two identical reads half a second apart
+   * is the same claim, checked instead of assumed, and quicker when there is
+   * nothing else running.
+   */
+  const read = () => page.locator(`${HOST} .card`).innerText().catch(() => '');
+  let last = await read();
+  for (let i = 0; i < 40; i++) {
+    await page.waitForTimeout(250);
+    const now = await read();
+    if (now && now === last) return;
+    last = now;
+  }
 }
 
 /**

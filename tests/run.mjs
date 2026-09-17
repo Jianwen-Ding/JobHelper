@@ -34,6 +34,11 @@
  *
  *   node tests/run.mjs --only e2e,card     # just these
  *   JH_JOBS=1 node tests/run.mjs           # back to serial
+ *
+ * For the same reason, do not run anything else heavy alongside it. A full
+ * ResumeM-M unit run at the same time — pdflatex and all — once turned a
+ * passing suite into a thirty-second timeout on a card that renders in one,
+ * and the failure looked like the product.
  */
 
 import { spawn } from 'node:child_process';
@@ -151,11 +156,11 @@ async function poolAgrees() {
   const servers = await Promise.all(
     pool.map(async (server) => {
       try {
-        const res = await fetch(`${server}/health`);
-        const { build, ok, dataDir } = await res.json();
-        return { server, build: ok ? (build ?? 'unknown') : 'not ok', dataDir: dataDir ?? null };
+        const res = await fetch(`${server}/health?fresh`);
+        const { build, ok, dataDir, stale } = await res.json();
+        return { server, build: ok ? (build ?? 'unknown') : 'not ok', dataDir: dataDir ?? null, stale: stale === true };
       } catch (err) {
-        return { server, build: `unreachable: ${(err && err.message) || err}`, dataDir: null };
+        return { server, build: `unreachable: ${(err && err.message) || err}`, dataDir: null, stale: false };
       }
     }),
   );
@@ -174,6 +179,35 @@ async function poolAgrees() {
     ]
       .filter(Boolean)
       .join('\n');
+  }
+
+  /*
+   * All of them stale together is the ordinary case: the code was edited while
+   * they were running. Comparing them to each other cannot see it, because
+   * they agree — with each other, and with nothing on disk.
+   *
+   * `JH_ALLOW_STALE=1` is for the case where the edit was a comment and you
+   * know it. A check with no way past it gets deleted the first time it is
+   * wrong, and then it is not there the time it is right.
+   */
+  const stale = servers.filter((s) => s.stale);
+  if (stale.length && process.env.JH_ALLOW_STALE === '1') {
+    console.log(`(${stale.length} of ${servers.length} servers are older than the code on disk; JH_ALLOW_STALE is set)\n`);
+  } else if (servers.every((s) => s.stale)) {
+    return [
+      'Every server in the pool is older than the code on disk.',
+      '',
+      'They agree with each other and with nothing else, so a suite that fails',
+      'here is failing against code nobody is looking at. Rebuild and restart',
+      'them: npm run build, then rmm serve --port N --data /tmp/store-N.',
+    ].join('\n');
+  } else if (stale.length) {
+    return [
+      'Some of the servers are older than the code on disk:',
+      ...servers.map((s) => `  ${s.server}  ${s.stale ? 'stale' : 'current'}`),
+      '',
+      'Restart them all against the same build and try again.',
+    ].join('\n');
   }
 
   const shared = servers.filter((s, i) => s.dataDir && servers.findIndex((o) => o.dataDir === s.dataDir) !== i);
