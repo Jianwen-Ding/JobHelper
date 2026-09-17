@@ -21,7 +21,7 @@
  *
  *   for p in 4788 4789 4790; do
  *     cp -r /path/to/store /tmp/store-$p
- *     node dist/cli.js serve --port $p --data /tmp/store-$p &
+ *     node dist/src/cli.js serve --port $p --data /tmp/store-$p &
  *   done
  *
  * ## Choosing how many
@@ -57,6 +57,7 @@ const SUITES = [
   { name: 'ats-forms', file: 'ats-forms.mjs', cost: 180 },
   { name: 'e2e', file: 'e2e.mjs', cost: 150 },
   { name: 'carrying', file: 'carrying.mjs', cost: 120 },
+  { name: 'roundtrip', file: 'roundtrip.mjs', cost: 60 },
   { name: 'quiet', file: 'quiet.mjs', cost: 120 },
   { name: 'adverse', file: 'adverse.mjs', cost: 100 },
   { name: 'nav', file: 'navigation.mjs', cost: 90 },

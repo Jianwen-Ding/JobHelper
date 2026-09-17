@@ -877,8 +877,175 @@ receive and keep them on file, so it is still worth writing to us.</p>
 </div></body></html>`,
 };
 
+/**
+ * "Life at Vireo" — every hiring word there is, and nothing to apply to.
+ *
+ * The hardest kind of false positive, because it is written by the same
+ * marketing team that writes the postings and reads like one on every signal
+ * except the one that matters: there is no role and no form.
+ */
+export const LIFE_AT = {
+  name: 'life-at',
+  path: '/vireo/life',
+  html: `<!doctype html><html><head><title>Life at Vireo — join our team</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Life at Vireo</h1>
+<p>We are growing fast and we are always looking for talented people to join
+our team. Here is what it is like to work here.</p>
+<h2>What we look for</h2>
+<ul><li>Ownership from day one</li><li>Bias to action</li><li>Strong communication skills</li></ul>
+<h2>Benefits and compensation</h2>
+<ul><li>Competitive salary and equity</li><li>Full-time remote or hybrid</li>
+<li>Learning budget</li><li>Health, dental and vision</li></ul>
+<h2>Our interview process</h2>
+<p>A screen, a technical conversation, and a team day. We aim to give a
+decision within a week of the final round.</p>
+<p><a href="/vireo/careers">See open roles</a></p>
+</div></body></html>`,
+};
+
+/**
+ * A conference's call for speakers.
+ *
+ * A real form, with a name, an email, a bio and a long textarea asking what
+ * you would talk about — which is the exact shape of an application form and
+ * the exact shape of the question the autofill heuristic looks for. Filling
+ * it in with somebody's cover letter would be a memorable way to fail.
+ */
+export const CALL_FOR_SPEAKERS = {
+  name: 'call-for-speakers',
+  path: '/confer/cfp',
+  html: `<!doctype html><html><head><title>Call for speakers — Confer 2026</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Call for speakers</h1>
+<p>Confer 2026 is open for proposals until March. We are looking for talks on
+distributed systems, developer experience and anything you have built that
+surprised you.</p>
+<form>
+<label>Your name <input name="name"></label>
+<label>Email <input name="email" type="email"></label>
+<label>Short bio <textarea name="bio"></textarea></label>
+<label>What would you like to talk about, and why you? <textarea name="pitch"></textarea></label>
+<label>Slides, if you have them <input type="file" name="slides"></label>
+<button type="submit">Submit proposal</button>
+</form>
+</div></body></html>`,
+};
+
+/**
+ * Contact us, with an attachment.
+ *
+ * Name, email, message and a file picker that says "attach your portfolio".
+ * Every field an application form has, and not an application: offering here
+ * would mean offering on a third of the web.
+ */
+export const CONTACT_FORM = {
+  name: 'contact-form',
+  path: '/studio/contact',
+  html: `<!doctype html><html><head><title>Contact — Meridian Studio</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Get in touch</h1>
+<p>Tell us about your project and we will come back to you within two working days.</p>
+<form>
+<label>Name <input name="name"></label>
+<label>Email <input name="email" type="email"></label>
+<label>Phone <input name="phone"></label>
+<label>Company <input name="company"></label>
+<label>How can we help? <textarea name="message"></textarea></label>
+<label>Attach your portfolio <input type="file" name="portfolio"></label>
+<button type="submit">Send</button>
+</form>
+</div></body></html>`,
+};
+
+/** A job-alert email, opened in webmail: five roles, five apply links, no posting. */
+export const JOB_ALERT = {
+  name: 'job-alert',
+  path: '/mail/message/8812',
+  html: `<!doctype html><html><head><title>Inbox — 5 new jobs matching "backend engineer"</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>5 new jobs matching your search</h1>
+<ul>
+<li><a href="/out?u=1">Backend Engineer — Helios Robotics</a> · Remote · Apply</li>
+<li><a href="/out?u=2">Senior Backend Engineer — Vega Analytics</a> · Boston · Apply</li>
+<li><a href="/out?u=3">Platform Engineer — Lyra Health</a> · Remote · Apply</li>
+<li><a href="/out?u=4">Staff Engineer, Infrastructure — Cygnus</a> · NYC · Apply</li>
+<li><a href="/out?u=5">Backend Engineer, Payments — Northwind</a> · Remote · Apply</li>
+</ul>
+<p>You are receiving this because you saved a search. Unsubscribe or change how
+often we send these.</p>
+</div></body></html>`,
+};
+
+/**
+ * A recruiter's profile.
+ *
+ * Names four roles she is hiring for, in a title that ends with one. The
+ * "names a role" rule is what decides most pages, and this is the page it is
+ * most likely to get wrong.
+ */
+export const RECRUITER_PROFILE = {
+  name: 'recruiter-profile',
+  path: '/in/dana-okonkwo',
+  html: `<!doctype html><html><head><title>Dana Okonkwo — Senior Technical Recruiter</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Dana Okonkwo</h1>
+<p class="sub">Senior Technical Recruiter at Helios Robotics · Boston</p>
+<h2>About</h2>
+<p>I hire backend and platform engineers. Currently open on my desk: Backend
+Engineer, Senior Backend Engineer, Platform Engineer, and Staff Engineer,
+Infrastructure. Message me if you want a referral.</p>
+<h2>Experience</h2>
+<p>Senior Technical Recruiter, Helios Robotics — 2023 to now</p>
+<p>Technical Recruiter, Vega Analytics — 2020 to 2023</p>
+</div></body></html>`,
+};
+
+/**
+ * A university course page.
+ *
+ * "Requirements", "Responsibilities", "Qualifications", twelve weeks of
+ * distributed systems. Every heading a posting has, about a class.
+ */
+export const COURSE_PAGE = {
+  name: 'course-page',
+  path: '/courses/cs6650',
+  html: `<!doctype html><html><head><title>CS 6650 — Building Scalable Distributed Systems</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>CS 6650 — Building Scalable Distributed Systems</h1>
+<h2>Requirements</h2>
+<p>CS 5800 or equivalent. Working knowledge of Java or Go.</p>
+<h2>Responsibilities</h2>
+<p>Four projects, a midterm, and a final systems build. Students are expected
+to attend every lab.</p>
+<h2>Qualifications</h2>
+<p>Open to graduate students; undergraduates need instructor approval.</p>
+<h2>Topics</h2>
+<p>Consistency, replication, consensus, message queues, observability.</p>
+</div></body></html>`,
+};
+
+/** A press release about hiring, which is news rather than a job. */
+export const HIRING_NEWS = {
+  name: 'hiring-news',
+  path: '/press/2026-hiring',
+  html: `<!doctype html><html><head><title>Helios Robotics to hire 500 engineers in 2026</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Helios Robotics to hire 500 engineers in 2026</h1>
+<p class="sub">Press release · Boston</p>
+<p>Helios Robotics said today it will add 500 engineering roles over the next
+year, most of them in backend, platform and hardware teams, following a
+funding round that closed last month.</p>
+<p>"We are looking for people who want to work on hard problems at scale,"
+said the company's head of engineering. Compensation for the new roles will be
+benchmarked against the Boston market, the company said.</p>
+<p>Applications will open on the company's careers site in the spring.</p>
+</div></body></html>`,
+};
+
 export const QUIET = [CAREERS_ARTICLE, SHOP, SIGN_IN, DOCS, SPA_SHELL, FORUM_THREAD, BLOG,
-  BOARD_FEED, THANK_YOU, SALARY_PAGE, CAREERS_LANDING];
+  BOARD_FEED, THANK_YOU, SALARY_PAGE, CAREERS_LANDING,
+  /*
+   * The second batch, chosen for being harder than the first. Two of them
+   * carry a real form with a file picker and a long textarea — the shape the
+   * actionability gate exists to tell apart from an application — and three
+   * are written in the vocabulary a posting is written in, by the people who
+   * write postings.
+   */
+  LIFE_AT, CALL_FOR_SPEAKERS, CONTACT_FORM, JOB_ALERT, RECRUITER_PROFILE, COURSE_PAGE, HIRING_NEWS];
 
 /**
  * A posting on a page the size of a real one.
