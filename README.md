@@ -178,7 +178,7 @@ done
 RMM_SERVERS=http://127.0.0.1:4788,http://127.0.0.1:4789,http://127.0.0.1:4790 npm test
 ```
 
-Three servers takes the whole suite from about eight minutes to about three.
+Three servers takes the whole suite from about seven minutes to about three and a half.
 The default worker count is one per two cores, capped by the size of the pool,
 because headless Chromium is not cheap and this suite's assertions are about
 timing — loading the machine past its cores turns them into flakes, and a

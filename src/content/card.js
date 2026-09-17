@@ -348,6 +348,9 @@ select {
   100% { transform: translateX(110%) scaleX(.1); }
 }
 .progress-label { font-size: 11px; color: var(--muted); margin-top: -3px; margin-bottom: 6px; }
+/* The clock, quieter than the label and only there once there is one. */
+.progress-label .elapsed { margin-left: 6px; font-variant-numeric: tabular-nums; color: var(--faint); }
+.progress-label .elapsed:empty { display: none; }
 
 /* The compiled resume, drawn in the card: a page you can actually look at,
    on the tab you are already on. */
@@ -605,9 +608,12 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * the other was still thinking.
    */
   const running = new Set();
+  /** When each in-flight action started, so the card can say how long. */
+  const startedAt = new Map();
 
   async function act(action, payload, apply) {
     running.add(action);
+    startedAt.set(action, Date.now());
     state.busy = action;
     state.error = null;
     state.errorFix = null;
@@ -623,6 +629,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       return null;
     } finally {
       running.delete(action);
+      startedAt.delete(action);
       // Keep showing progress for whatever is still going.
       state.busy = [...running].pop() ?? null;
       draw();
@@ -818,9 +825,38 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     const entry = WORKING[state.busy];
     if (!entry || entry[0] !== step) return null;
     const label = running.has('rebuild') && state.rebuilding === 'ai' ? 'Reading the posting…' : entry[1];
+
+    /*
+     * And how long it has been going.
+     *
+     * An indeterminate bar animates whether or not anything is happening, so
+     * after the first half-minute of an AI pass it stops being reassurance
+     * and starts being the thing you are trying to decide about. A count of
+     * seconds moves for a real reason, and it answers the actual question:
+     * has this hung, or is it just slow?
+     *
+     * Ticked in place rather than through `draw()`, which rebuilds the whole
+     * subtree and would take the caret out of whatever box is being typed
+     * into once a second — see the repaint case in tests/card.mjs. And held
+     * back for a moment, because a keyword match finishes in a third of a
+     * second and a clock that flashes 0:00 is noise.
+     */
+    const since = startedAt.get(state.busy) ?? Date.now();
+    const clock = h('span', { className: 'elapsed' });
+    const tick = () => {
+      const s = Math.round((Date.now() - since) / 1000);
+      clock.textContent = s < 2 ? '' : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    };
+    tick();
+    const timer = setInterval(() => {
+      // The card redraws often; a bar that has been replaced stops counting.
+      if (!clock.isConnected) clearInterval(timer);
+      else tick();
+    }, 1000);
+
     return h('div', {}, [
       h('div', { className: 'progress', role: 'progressbar', 'aria-label': label }),
-      h('div', { className: 'progress-label', textContent: label }),
+      h('div', { className: 'progress-label' }, [h('span', { textContent: label }), clock]),
     ]);
   }
 

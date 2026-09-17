@@ -48,24 +48,26 @@ const root = path.resolve(here, '..');
  * Every suite, with a rough cost in seconds.
  *
  * The cost is only used to start the long ones first: with three workers and
- * a ten-minute suite left until last, the wall clock is ten minutes whatever
- * else finished early. These numbers do not need to be right, only ordered.
+ * a two-minute suite left until last, the wall clock is two minutes whatever
+ * else finished early. They do not need to be exact, only ordered — but they
+ * are kept roughly honest, because a number that is wrong by a factor of ten
+ * schedules the wrong suite first and nobody notices.
  */
 const SUITES = [
-  { name: 'ats-journey', file: 'ats-journey.mjs', cost: 300 },
-  { name: 'journey', file: 'journey.mjs', cost: 200 },
-  { name: 'ats-forms', file: 'ats-forms.mjs', cost: 180 },
-  { name: 'e2e', file: 'e2e.mjs', cost: 150 },
-  { name: 'carrying', file: 'carrying.mjs', cost: 120 },
-  { name: 'roundtrip', file: 'roundtrip.mjs', cost: 60 },
-  { name: 'quiet', file: 'quiet.mjs', cost: 120 },
-  { name: 'adverse', file: 'adverse.mjs', cost: 100 },
-  { name: 'nav', file: 'navigation.mjs', cost: 90 },
-  { name: 'joins', file: 'joins.mjs', cost: 60 },
-  { name: 'card', file: 'card.mjs', cost: 30 },
-  { name: 'autofill', file: 'autofill.mjs', cost: 30 },
-  { name: 'ats', file: 'ats.mjs', cost: 10, nodeTest: true },
-  { name: 'trail', file: 'trail.mjs', cost: 5, nodeTest: true },
+  { name: 'nav', file: 'navigation.mjs', cost: 125 },
+  { name: 'ats-journey', file: 'ats-journey.mjs', cost: 75 },
+  { name: 'adverse', file: 'adverse.mjs', cost: 53 },
+  { name: 'carrying', file: 'carrying.mjs', cost: 45 },
+  { name: 'quiet', file: 'quiet.mjs', cost: 35 },
+  { name: 'e2e', file: 'e2e.mjs', cost: 21 },
+  { name: 'journey', file: 'journey.mjs', cost: 18 },
+  { name: 'roundtrip', file: 'roundtrip.mjs', cost: 12 },
+  { name: 'joins', file: 'joins.mjs', cost: 12 },
+  { name: 'card', file: 'card.mjs', cost: 6 },
+  { name: 'ats-forms', file: 'ats-forms.mjs', cost: 6 },
+  { name: 'autofill', file: 'autofill.mjs', cost: 2 },
+  { name: 'ats', file: 'ats.mjs', cost: 1, nodeTest: true },
+  { name: 'trail', file: 'trail.mjs', cost: 1, nodeTest: true },
 ];
 
 const pool = (process.env.RMM_SERVERS ?? process.env.RMM_SERVER ?? 'http://127.0.0.1:4600')

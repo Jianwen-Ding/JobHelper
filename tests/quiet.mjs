@@ -17,6 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import {
+  HELIOS_ROLE,
   QUIET,
   findChromium,
   pointExtensionAt,
@@ -32,6 +33,22 @@ const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
 /** Long enough for the analysis, and past the window in which a page is re-judged. */
 const WATCH_MS = 6000;
 
+/**
+ * How many pages to watch at once.
+ *
+ * Watched one after another, eighteen pages at six seconds each came to three
+ * minutes, twice — two thirds of the whole suite's wall clock for a check that
+ * is six seconds of waiting repeated thirty-six times. Watched together it is
+ * six seconds for all of them.
+ *
+ * Six at a time rather than all eighteen because this also runs beside two
+ * other suites on the same machine, and a browser with nineteen tabs loading
+ * at once is measuring the machine rather than the extension. It is not a
+ * weaker test for being concurrent: load is what made the flicker this file
+ * exists for visible in the first place.
+ */
+const AT_ONCE = 6;
+
 let passed = 0;
 let failed = 0;
 const check = (what, ok, detail = '') => {
@@ -39,9 +56,42 @@ const check = (what, ok, detail = '') => {
   console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${what}${detail ? ` — ${detail}` : ''}`);
 };
 
+/**
+ * Watch a batch of pages at once, and say what each of them did.
+ *
+ * A generator of promises rather than one big promise, so the batches run one
+ * after another — the point is to overlap the waiting, not to open eighteen
+ * tabs. Each page is watched rather than sampled once: a card that appears and
+ * then removes itself is still a card that appeared, and that flicker is the
+ * thing people actually complained about.
+ */
+function* sweep(context, fixtures, list, watchMs) {
+  for (let at = 0; at < list.length; at += AT_ONCE) {
+    const batch = list.slice(at, at + AT_ONCE);
+    yield Promise.all(
+      batch.map(async (fixture) => {
+        const page = await context.newPage();
+        const errors = [];
+        page.on('pageerror', (e) => errors.push(String(e.message ?? e).slice(0, 120)));
+        await page.goto(fixtures.urlFor(fixture), { waitUntil: 'domcontentloaded' });
+
+        let everAppeared = false;
+        const until = Date.now() + watchMs;
+        while (Date.now() < until && !everAppeared) {
+          everAppeared = (await page.locator('#jobhelper-card-host').count()) > 0;
+          if (!everAppeared) await page.waitForTimeout(250);
+        }
+        await page.close();
+        return { fixture, everAppeared, errors };
+      }),
+    );
+  }
+}
+
 async function main() {
   await requireOpenSave(SERVER);
-  const fixtures = await serveFixtures(QUIET);
+  // The control posting is served alongside, so it is reached the same way.
+  const fixtures = await serveFixtures([...QUIET, HELIOS_ROLE]);
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-quiet-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     executablePath: findChromium(),
@@ -55,27 +105,33 @@ async function main() {
     await pointExtensionAt(context, worker, SERVER);
 
     console.log('\nPages that are not job postings');
-    for (const fixture of QUIET) {
-      const page = await context.newPage();
-      const errors = [];
-      page.on('pageerror', (e) => errors.push(e.message));
-
-      await page.goto(fixtures.urlFor(fixture), { waitUntil: 'domcontentloaded' });
-      // Watched rather than sampled once: a card that appears and then removes
-      // itself is still a card that appeared, and that flicker is the thing
-      // people actually complained about.
-      let everAppeared = false;
-      const until = Date.now() + WATCH_MS;
-      while (Date.now() < until) {
-        if ((await page.locator('#jobhelper-card-host').count()) > 0) {
-          everAppeared = true;
-          break;
-        }
-        await page.waitForTimeout(250);
+    for (const results of sweep(context, fixtures, QUIET, WATCH_MS)) {
+      for (const { fixture, everAppeared, errors } of await results) {
+        check(`stays quiet on ${fixture.name}`, !everAppeared);
+        check(`and breaks nothing on ${fixture.name}`, errors.length === 0, errors.join('; '));
       }
+    }
 
-      check(`stays quiet on ${fixture.name}`, !everAppeared);
-      check(`and breaks nothing on ${fixture.name}`, errors.length === 0, errors.join('; '));
+    /*
+     * And the control, which is the half that was missing.
+     *
+     * "No card appeared" proves nothing on its own: a content script that
+     * failed to inject, a service worker that never woke, a store that was
+     * unreachable — every one of those produces eighteen quiet pages and a
+     * green run. So a page that *must* get a card is watched under exactly the
+     * same conditions, and this file only means something when it passes.
+     */
+    console.log('\nAnd a posting, to prove the extension was awake for all that');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(HELIOS_ROLE), { waitUntil: 'domcontentloaded' });
+      let appeared = false;
+      const until = Date.now() + 25_000;
+      while (Date.now() < until && !appeared) {
+        appeared = (await page.locator('#jobhelper-card-host .card .role').count()) > 0;
+        if (!appeared) await page.waitForTimeout(250);
+      }
+      check('a real posting still gets a card', appeared);
       await page.close();
     }
 
@@ -102,24 +158,11 @@ async function main() {
     const slow = await serveSlowProxy(SERVER, { slowRoute: /analyze/, ms: 5000 });
     try {
       await useServer(context, slow.base);
-      for (const fixture of QUIET) {
-        const page = await context.newPage();
-        const errors = [];
-        page.on('pageerror', (e) => errors.push(String(e).slice(0, 120)));
-        await page.goto(fixtures.urlFor(fixture), { waitUntil: 'domcontentloaded' });
-
-        let everAppeared = false;
-        const until = Date.now() + 4000;
-        while (Date.now() < until) {
-          if ((await page.locator('#jobhelper-card-host').count()) > 0) {
-            everAppeared = true;
-            break;
-          }
-          await page.waitForTimeout(200);
+      for (const results of sweep(context, fixtures, QUIET, 4000)) {
+        for (const { fixture, everAppeared, errors } of await results) {
+          check(`no early card on ${fixture.name}`, !everAppeared);
+          check(`and nothing thrown on ${fixture.name}`, errors.length === 0, errors.join('; '));
         }
-        check(`no early card on ${fixture.name}`, !everAppeared);
-        check(`and nothing thrown on ${fixture.name}`, errors.length === 0, errors.join('; '));
-        await page.close();
       }
     } finally {
       await useServer(context, SERVER);
