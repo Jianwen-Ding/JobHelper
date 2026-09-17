@@ -174,6 +174,7 @@ the default port.
 | `test:e2e` | Detect → tailor → compile → autofill → file → track |
 | `test:nav` | Getting to the form, on every route real systems use |
 | `test:carrying` | Wandering off mid-application and coming back |
+| `test:adverse` | The tab closed mid-letter, the store gone, the store slow |
 | `test:journey` | The same walk on every shape of posting, with timings |
 
 `node tests/shots.mjs` photographs every state of both products into
