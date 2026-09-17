@@ -196,6 +196,28 @@ async function main() {
     if (offered_letter > 0) {
       const before = await card.locator('textarea.tall').first().inputValue();
       check('a previous letter is offered rather than adopted', before.trim() === '', before.slice(0, 40));
+
+      /*
+       * Filing it in exactly that state — the default one, with the AI off
+       * and the offer untaken — used to produce a folder with no letter in
+       * it, under the words "Saved. These files are named and ready to
+       * attach" and "Everything you are sending, in one place". Both true of
+       * the files listed and both wrong about the application: the form asks
+       * for a letter, and you would have attached the two files it named and
+       * sent it without one.
+       */
+      await card.getByRole('button', { name: 'Save application folder' }).click();
+      await card.locator('.done-box').waitFor({ timeout: 90_000 });
+      const body = await card.innerText();
+      check('a folder missing the letter the form wants says so', /Not in this folder: a cover letter/.test(body));
+      check(
+        'and does not claim to hold everything',
+        !/Everything you are sending/.test(body),
+        body.split('\n').find((l) => /in one place/.test(l)) ?? '',
+      );
+      await card.getByRole('button', { name: 'Back' }).click();
+      await page.waitForTimeout(300);
+
       await offer.click();
       await page.waitForTimeout(300);
       const after = await card.locator('textarea.tall').first().inputValue();

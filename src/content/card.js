@@ -286,6 +286,17 @@ select {
 }
 .done-box .file { font-size: 12px; color: var(--ink-soft); margin-top: 5px; }
 
+/*
+ * What the form asked for and the folder does not have. Above the green box
+ * rather than inside it: the green is the "this went well" colour, and the
+ * whole point of this line is that it did not, entirely.
+ */
+.done-missing {
+  background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn);
+  border-radius: 8px; padding: 10px 11px; margin-bottom: 9px; font-size: 12px; line-height: 1.55;
+}
+.done-missing strong { display: block; margin-bottom: 3px; }
+
 .spinner {
   width: 14px; height: 14px; border: 2px solid var(--accent-soft); border-top-color: var(--accent);
   border-radius: 50%; display: inline-block; animation: spin .7s linear infinite; vertical-align: -2px;
@@ -681,10 +692,27 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       state.busy ? h('span', { className: 'spinner' }) : null,
       h('span', { className: 'spacer' }),
       drawAiChip(),
+      /*
+       * Named as well as drawn. A button whose only content is "‹" has "‹"
+       * for an accessible name, so a screen reader announces a punctuation
+       * mark and the title attribute never gets a look in.
+       */
       state.view !== 'propose'
-        ? h('button', { className: 'icon', title: 'Back', textContent: '‹', onclick: () => { state.view = 'propose'; draw(); } })
+        ? h('button', {
+            className: 'icon',
+            title: 'Back',
+            ariaLabel: 'Back',
+            textContent: '‹',
+            onclick: () => { state.view = 'propose'; draw(); },
+          })
         : null,
-      h('button', { className: 'icon', title: 'Not now', textContent: '×', onclick: () => removeCard() }),
+      h('button', {
+        className: 'icon',
+        title: 'Not now',
+        ariaLabel: 'Close JobHelper on this page',
+        textContent: '×',
+        onclick: () => removeCard(),
+      }),
     ]);
   }
 
@@ -1662,7 +1690,38 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
 
   function drawDoneView() {
     const b = state.bundle;
+
+    /*
+     * What the form asked for and this folder does not contain.
+     *
+     * The panel says "Saved. These files are named and ready to attach" and
+     * "Everything you are sending, in one place", and it said both while
+     * quietly leaving out the cover letter. That is the ordinary path, not a
+     * corner: the AI is off by default, so the letter drafts to nothing, the
+     * previous letter is deliberately offered rather than used, and an empty
+     * letter writes no file. You reach a screen that looks like completion,
+     * attach what it lists, and send an application missing the document the
+     * form asked for.
+     *
+     * A list of files cannot say what is absent, so it is said here.
+     */
+    const missing = [];
+    if (state.letterNeeded && !state.letter?.trim()) missing.push('a cover letter');
+    const unanswered = (state.questions ?? []).filter(
+      (q) => q.required !== false && !(state.answers[q.question] ?? q.answer ?? '').trim(),
+    ).length;
+    if (unanswered > 0) missing.push(`${unanswered} ${unanswered === 1 ? 'answer' : 'answers'}`);
+
     return h('div', { className: 'body' }, [
+      missing.length > 0
+        ? h('div', { className: 'done-missing' }, [
+            h('strong', { textContent: `Not in this folder: ${missing.join(' and ')}.` }),
+            h('div', {
+              textContent:
+                'The form asks for it. Write it above and save again, or attach it yourself — nothing here will add it for you.',
+            }),
+          ])
+        : null,
       h('div', { className: 'done-box' }, [
         h('div', { textContent: 'Saved. These files are named and ready to attach:' }),
         ...b.files.map((f) => h('div', { className: 'file', textContent: f })),
@@ -1680,10 +1739,14 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             textContent: 'Copy folder path',
             onclick: () => navigator.clipboard?.writeText(b.currentDir ?? b.dir),
           }),
+          // Not claimed when it is not true — see `missing` above.
           b.currentDir
             ? h('span', {
                 className: 'faint',
-                textContent: 'Everything you are sending, in one place. The full record is kept separately.',
+                textContent:
+                  missing.length > 0
+                    ? 'These are in one place. The full record is kept separately.'
+                    : 'Everything you are sending, in one place. The full record is kept separately.',
               })
             : null,
         ]),
