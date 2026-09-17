@@ -791,7 +791,6 @@
      * guessing about, and the honest thing to do while guessing is nothing.
      */
     if (showNow) putUpCard();
-    const settleCard = () => undefined;
 
     /*
      * The automatic pass is always the deterministic one. Tag matching takes
@@ -818,12 +817,10 @@
        * corner of a page that has nothing to do with jobs is the flicker again,
        * only louder.
        */
-      settleCard();
       if (current() && cardHandle) cardHandle.setStatus(err.message, err.jobhelper ?? null);
       else quietly(err);
       return;
     }
-    settleCard();
     if (!current()) return;
     analysis = found;
 
