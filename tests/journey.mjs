@@ -265,6 +265,38 @@ async function main() {
       check('the hand-off to the editor is offered', false, openWorkspace);
     }
 
+    /* ------------------------------------------------------------------ *
+     * Making the material you actually send                               *
+     * ------------------------------------------------------------------ */
+
+    /*
+     * This is the part that genuinely takes time — a real LaTeX run, twice
+     * over if a cover letter comes with it — and it is the wait people
+     * remember, because it stands between them and the upload button. Timed
+     * end to end, and checked for saying it is working while it does.
+     */
+    console.log('\nMaking the files');
+    await formCard.getByRole('button', { name: 'Build resume' }).click();
+    await timed('the card says it is compiling', 15_000, () =>
+      formCard.locator('.progress').first().waitFor({ timeout: 15_000 }),
+    );
+    const compiling = await formCard.locator('.progress-label').innerText().catch(() => '');
+    check('and says what it is doing', compiling.trim().length > 0, compiling);
+
+    await timed('compile the resume', 90_000, () =>
+      formCard.locator('.fit.ok, .fit.bad').waitFor({ timeout: 90_000 }),
+    );
+    const fit = await formCard.locator('.fit.ok, .fit.bad').innerText();
+    check('and says whether it fits the page', /page/i.test(fit), fit);
+    check('with the working indicator gone', (await formCard.locator('.progress').count()) === 0);
+
+    await formCard.getByRole('button', { name: 'Save application folder' }).click();
+    await timed('write the application folder', 90_000, () =>
+      formCard.locator('.done-box').waitFor({ timeout: 90_000 }),
+    );
+    const written = await formCard.locator('.done-box').innerText();
+    check('the resume is in it, named for the person', /-Resume\.pdf/.test(written), written.split('\n')[1] ?? written);
+
     await page.close();
 
     /* ------------------------------------------------------------------ *
