@@ -18,7 +18,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import {
+  ASHBY_FORM,
+  ASHBY_ROLE,
+  CROWDED_PAGE,
   CYGNUS_BOARD,
+  EMBEDDED_BOARD,
+  FRAMED_ROLE,
   HEAVY_POSTING,
   CYGNUS_ROLE_A,
   HELIOS_ROLE,
@@ -140,6 +145,10 @@ async function main() {
       ['a board of several roles', CYGNUS_BOARD, 12_000],
       ['a posting rendered by script', WORKDAY, 15_000],
       ['half a megabyte of application shell', HEAVY_POSTING, 15_000],
+      ['an Ashby-shaped posting', ASHBY_ROLE, 12_000],
+      ['a posting served inside an iframe', FRAMED_ROLE, 18_000],
+      ['a careers page that is only an embedded board', EMBEDDED_BOARD, 18_000],
+      ['a posting among fifty other frames', CROWDED_PAGE, 18_000],
     ]) {
       const page = await context.newPage();
       await page.goto(fixtures.urlFor(fixture), { waitUntil: 'domcontentloaded' });
@@ -207,11 +216,18 @@ async function main() {
     const trailRows = await formCard.locator('.trail-row').count();
     check('it says which pages this application is being written from', trailRows >= 2, `${trailRows} rows`);
 
-    const trailText = (await formCard.locator('.trail').textContent().catch(() => '')) ?? '';
+    /*
+     * And says it in the open, not behind a disclosure. "Is it still working
+     * from the description I read two clicks ago?" is the question the whole
+     * trail exists to answer, and an answer you have to go looking for does
+     * not answer it.
+     */
+    const summary = formCard.locator('.trail');
+    const visibleSummary = (await summary.count()) > 0 ? ((await summary.first().innerText()) ?? '') : '';
     check(
-      'and names them, rather than only counting them',
-      /helios/i.test(trailText) || trailRows >= 2,
-      trailText.slice(0, 80),
+      'and says so without being asked',
+      /\b2 pages of this application\b/i.test(visibleSummary),
+      visibleSummary.split('\n')[0]?.slice(0, 70) ?? '(nothing)',
     );
 
     /* ------------------------------------------------------------------ *
@@ -250,6 +266,41 @@ async function main() {
     }
 
     await page.close();
+
+    /* ------------------------------------------------------------------ *
+     * The same journey on a different system                              *
+     * ------------------------------------------------------------------ */
+
+    /*
+     * Helios is a careers site of its own. This is the other common shape: a
+     * posting and its form on an applicant tracking system, where the form's
+     * address is the posting's with a suffix. If the round trip only works on
+     * one of them it works on neither, so it is walked twice.
+     */
+    console.log('\nThe same journey, on an applicant tracking system');
+    const ats = await context.newPage();
+    await ats.goto(fixtures.urlFor(ASHBY_ROLE), { waitUntil: 'domcontentloaded' });
+    await timed('read the posting', 12_000, () => settled(ats));
+    const atsRole = (await cardOf(ats).locator('.role').textContent())?.trim();
+    check('the role is read', /platform engineer/i.test(atsRole ?? ''), atsRole);
+
+    await ats.click(`a[href*="${ASHBY_FORM.path}"]`);
+    await ats.waitForLoadState('domcontentloaded');
+    await timed('carry it to the form', 15_000, () => settled(ats));
+    await ats
+      .locator(`${HOST} .card .trail-row`)
+      .first()
+      .waitFor({ state: 'attached', timeout: 15_000 })
+      .catch(() => undefined);
+
+    const atsCarried = (await cardOf(ats).locator('.role').textContent())?.trim();
+    check('and carried to a form that never names it', /platform engineer/i.test(atsCarried ?? ''), atsCarried);
+    check(
+      'with the pages it is written from named there too',
+      (await cardOf(ats).locator('.trail-row').count()) >= 2,
+      `${await cardOf(ats).locator('.trail-row').count()} rows`,
+    );
+    await ats.close();
 
     /* ------------------------------------------------------------------ *
      * When the answer is slow, say something                              *
