@@ -273,6 +273,38 @@ async function main() {
       await second.close();
     }
 
+    group('And never on ResumeM-M itself');
+    {
+      /*
+       * The builder is a page full of the words this tool looks for — a
+       * resume, a cover letter, application questions, and more form fields
+       * than most application forms have. It offered on it: a card proposing
+       * to tailor a resume for the save's own name, with the editor's own
+       * buttons read as questions to answer.
+       */
+      const editor = await context.newPage();
+      await editor.goto(SERVER, { waitUntil: 'domcontentloaded' });
+      await editor.waitForTimeout(5000);
+      check('no card on the builder', (await cardOf(editor).count()) === 0);
+
+      /*
+       * Asked outright, too. Left to the automatic path this depends on when
+       * the rescore happens to fire, which made the check pass whether the
+       * rule was there or not; "Open on this page" takes the same decision
+       * immediately and every time.
+       */
+      await worker.evaluate(async (url) => {
+        const [tab] = await chrome.tabs.query({ url: `${url}/*` });
+        if (tab) await chrome.tabs.sendMessage(tab.id, { type: 'show-card' }).catch(() => undefined);
+      }, SERVER);
+      await editor.waitForTimeout(4000);
+      check('and none even when asked for outright', (await cardOf(editor).count()) === 0);
+
+      const mark = await toolbar(worker, editor);
+      check('and no mark on its tab', mark.text === '', `badge "${mark.text}"`);
+      await editor.close();
+    }
+
     group('A tab that was never on a posting is not marked');
     {
       const clean = await context.newPage();

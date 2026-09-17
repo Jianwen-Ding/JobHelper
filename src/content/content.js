@@ -625,6 +625,29 @@
 
     const settings = await send('getSettings');
     if (!current()) return;
+
+    /*
+     * Never on ResumeM-M itself.
+     *
+     * The editor is a page full of the exact words this tool looks for — a
+     * resume, a cover letter, application questions, and more form fields
+     * than most application forms have. So it offered: a card in the corner
+     * of the builder proposing to tailor a resume for "jh-store", with the
+     * save's own name read as the role and the editor's buttons scraped into
+     * application questions.
+     *
+     * Told apart by address rather than by content, because by content it is
+     * indistinguishable from what it is for, and always will be. The store's
+     * own pages are the one place this tool has nothing to offer: everything
+     * it would propose is already there, in the thing you are looking at.
+     */
+    try {
+      if (settings.serverUrl && new URL(settings.serverUrl).origin === location.origin) return;
+    } catch {
+      // An unparseable server URL is the settings panel's problem to report,
+      // not a reason to stop looking at ordinary pages.
+    }
+
     // Kept so the re-score below can decide locally whether it is worth asking
     // again, rather than asking the worker once a second.
     lastSettings = settings;
