@@ -21,7 +21,7 @@ import { chromium } from 'playwright-core';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { findChromium } from './fixtures.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -567,6 +567,92 @@ export const SYSTEMS = [
     questions: [],
     wantsLetter: false,
   },
+
+  /*
+   * The four the classifier recognises by name and nothing had a form from.
+   *
+   * `ATS` in extract.ts lists nineteen hosts; thirteen of them had their
+   * markup here. Claiming to handle a system and never having seen one of its
+   * forms is the gap most likely to turn into "it noticed the page and then
+   * did nothing", which is worse than not noticing.
+   */
+  {
+    name: 'Rippling',
+    // Rippling wraps each field in a div and labels by proximity, not `for`.
+    html: `
+      <div class="field"><div class="label">First name</div><input name="firstName" type="text"></div>
+      <div class="field"><div class="label">Last name</div><input name="lastName" type="text"></div>
+      <div class="field"><div class="label">Email</div><input name="email" type="email"></div>
+      <div class="field"><div class="label">Phone</div><input name="phone" type="tel"></div>
+      <div class="field"><div class="label">LinkedIn</div><input name="linkedinUrl" type="text"></div>
+      <div class="field"><div class="label">Why are you a good fit?</div><textarea name="q_fit"></textarea></div>`,
+    want: {
+      'input[name="firstName"]': 'Jianwen',
+      'input[name="lastName"]': 'Ding',
+      'input[name="email"]': 'ding.jianw@northeastern.edu',
+      'input[name="phone"]': '555-0100',
+      'input[name="linkedinUrl"]': 'linkedin.com/in/jianwen',
+    },
+    questions: [/why are you a good fit/i],
+    wantsLetter: false,
+  },
+
+  {
+    name: 'Breezy',
+    html: `
+      <label for="bz-name">Full Name</label><input id="bz-name" name="name" type="text">
+      <label for="bz-em">Email Address</label><input id="bz-em" name="email_address" type="email">
+      <label for="bz-ph">Phone Number</label><input id="bz-ph" name="phone_number" type="tel">
+      <label for="bz-cl">Cover Letter</label><textarea id="bz-cl" name="cover_letter"></textarea>
+      <label for="bz-rs">Resume</label><input id="bz-rs" name="resume" type="file">`,
+    want: {
+      '#bz-name': 'Jianwen Ding',
+      '#bz-em': 'ding.jianw@northeastern.edu',
+      '#bz-ph': '555-0100',
+    },
+    questions: [],
+    wantsLetter: true,
+  },
+
+  {
+    name: 'Recruitee',
+    // Recruitee uses aria-label where there is no visible label at all.
+    html: `
+      <input name="candidate[name]" type="text" aria-label="Your name">
+      <input name="candidate[email]" type="email" aria-label="Your email">
+      <input name="candidate[phone]" type="tel" aria-label="Your phone number">
+      <div class="c-form__question">
+        <span class="c-form__label">What draws you to this team?</span>
+        <textarea name="open_question_1"></textarea>
+      </div>`,
+    want: {
+      'input[name="candidate[name]"]': 'Jianwen Ding',
+      'input[name="candidate[email]"]': 'ding.jianw@northeastern.edu',
+      'input[name="candidate[phone]"]': '555-0100',
+    },
+    questions: [/what draws you to this team/i],
+    wantsLetter: false,
+  },
+
+  {
+    name: 'BrassRing',
+    // Old-school: a table, and labels in the cell to the left.
+    html: `
+      <table>
+        <tr><td><label for="br1">First Name</label></td><td><input id="br1" name="TEXT1" type="text"></td></tr>
+        <tr><td><label for="br2">Last Name</label></td><td><input id="br2" name="TEXT2" type="text"></td></tr>
+        <tr><td><label for="br3">E-mail Address</label></td><td><input id="br3" name="TEXT3" type="text"></td></tr>
+        <tr><td><label for="br4">Home Phone</label></td><td><input id="br4" name="TEXT4" type="text"></td></tr>
+      </table>`,
+    want: {
+      '#br1': 'Jianwen',
+      '#br2': 'Ding',
+      '#br3': 'ding.jianw@northeastern.edu',
+      '#br4': '555-0100',
+    },
+    questions: [],
+    wantsLetter: false,
+  },
 ];
 
 /** The things that look like the top of an application and are not one. */
@@ -796,7 +882,17 @@ async function main() {
   if (failed > 0) process.exit(1);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+/*
+ * Only when run, not when imported.
+ *
+ * `ats-journey.mjs` imports `SYSTEMS` from here, and importing a module runs
+ * it — so the whole of this suite executed as a side effect of that import,
+ * printing its results in the middle of the other harness's output and doing
+ * every check twice.
+ */
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

@@ -552,6 +552,26 @@ function unfillableChoices(fields, filled) {
 const APPLICATION_WORDS =
   /\b(submit (your )?application|start your application|cover letter|work authorizat|legally authorized to work|require sponsorship|equal opportunity employer|voluntary self-identification)\b/i;
 
+/**
+ * A question only the employer would ask.
+ *
+ * Recruitee asks for a name, an email, a phone number and "What draws you to
+ * this team?" — and labels none of them, using `aria-label` throughout. By
+ * every other rule here that is a newsletter box with a comment field: the
+ * three fields are the three a mailing list asks for, there is no file
+ * upload, and the prose says nothing about applying. So the form was filled
+ * correctly and then not recognised as a form at all, which matters because
+ * recognition is what gates autofill inside a frame and the finding of
+ * questions anywhere.
+ *
+ * The open question is the evidence that was being ignored. Narrowly: one
+ * that asks about *this* role, team or company. "How can we help?" on a
+ * contact form and "Comment" under a blog post ask about neither, and both
+ * are fixtures here precisely so this cannot quietly start filling them.
+ */
+const ASKS_ABOUT_THE_JOB =
+  /\b(this (role|team|position|job|opportunity|company)|work(ing)? (here|with us|for us)|join(ing)? (us|the team)|our (team|company|mission))\b/i;
+
 /*
  * Fields an advert has no reason to ask for.
  *
@@ -611,6 +631,8 @@ export function looksLikeApplicationForm() {
    */
   const evidence =
     APPLICATION_WORDS.test(text) ||
+    // A long-form question about this role — see `ASKS_ABOUT_THE_JOB`.
+    (deepQueryAll('textarea').length > 0 && ASKS_ABOUT_THE_JOB.test(text)) ||
     // A file upload beside the word résumé is the clearest sign there is.
     (deepQueryAll('input[type=file]').length > 0 && /\b(resum|cv)\b/i.test(text)) ||
     // One field only an employer asks for. The hosted systems serve the form

@@ -156,19 +156,47 @@
    * the page where the questions live.
    */
   /*
-   * Evidence that is on its own conclusive: a JSON-LD JobPosting block, or an
-   * applicant tracking system in the url. Both are all but impossible to hit
-   * by accident, and together they are what separates "show the card now" from
-   * "wait and see" — see `show`.
+   * Evidence good enough to put the card up before the verdict comes back.
+   *
+   * Being on an applicant tracking system used to count, and it is not
+   * evidence of anything: the page after you press submit is on one, so is a
+   * board's own feed, so is a careers page with nothing open. On a
+   * confirmation page the card therefore appeared at once and was withdrawn a
+   * moment later — the flicker, on the one page where it is pure noise, and
+   * on a slow machine it lingered long enough to read. The server's
+   * classifier had already stopped believing the host for exactly this
+   * reason; this side had not.
+   *
+   * Score cannot stand in for it. A confirmation page scores 7 and so does a
+   * real application form; a real posting scores 5 and so do a salary page, a
+   * careers landing page and a documentation page. There is no line to draw.
+   *
+   * What does separate them is whether the page is *about one role*, which is
+   * the same question the server asks and can be asked here of the title
+   * alone. "Platform Engineer at Helios" names a post. "Application submitted
+   * — Acme" does not.
    */
-  const ATS_HOST =
-    /\b(greenhouse|lever|workday|myworkdayjobs|ashby|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite|bamboohr|rippling|breezy|recruitee|teamtailor|jazzhr|successfactors|brassring)\b/i;
+  const ROLE_WORDS =
+    /\b(engineer|developer|programmer|scientist|analyst|designer|manager|director|architect|administrator|consultant|specialist|technician|researcher|intern|internship|associate|coordinator|accountant|nurse|physician|teacher|professor|writer|editor|marketer|recruiter|counsel|attorney|paralegal|therapist|chef|driver|technologist|strategist|producer|operator|advisor|apprentice|fellow|lead|head of|officer|assistant|representative|agent)\b/i;
+  const ENDS_WITH_ROLE = new RegExp(`${ROLE_WORDS.source}\\s*(?:\\b(?:i{1,3}|iv|v|\\d+)\\b\\s*)?$`, 'i');
+  const LEADS_WITH_ROLE = /^(head|director|vp|vice president|chief|lead)\s+of\b/i;
+
+  /** The page's own title for itself, before any "at Company" or " — Company". */
+  function namesARole() {
+    const heading = `${document.title ?? ''} ${document.querySelector('h1')?.textContent ?? ''}`;
+    const named = heading.split(/\s+[–—|]\s+|\s+\bat\b\s+|,/)[0]?.trim() ?? '';
+    return (
+      named.split(/\s+/).length <= 8 &&
+      (ENDS_WITH_ROLE.test(named) || LEADS_WITH_ROLE.test(named)) &&
+      !/^(how|why|what|when|where|the|a|an|is|are|should|we|our|i|my|thanks|thank you)\b/i.test(named)
+    );
+  }
 
   function decisiveSignal() {
     for (const tag of document.querySelectorAll('script[type="application/ld+json"]')) {
       if (/"@type"\s*:\s*"?JobPosting/i.test(tag.textContent ?? '')) return true;
     }
-    return ATS_HOST.test(location.href);
+    return namesARole();
   }
 
   /**
@@ -724,8 +752,6 @@
      * posting still takes its card away, and that is the right trade — it is
      * rare, and the alternative is silence exactly when the user is wondering.
      */
-    const PROVISIONAL_AFTER_MS = 700;
-
     // What the page asks for decides what the card offers. Asking the user
     // "does this need a cover letter?" is asking them to read the form on the
     // extension's behalf, when the form is right there to be read.
@@ -741,15 +767,31 @@
       });
       return cardHandle;
     };
-    let slowCard = null;
+    /*
+     * Early, or not at all.
+     *
+     * There used to be a second tier: any page above the local threshold got
+     * a card after 700ms if the verdict had not arrived, on the reasoning
+     * that a wait long enough to notice is a wait worth explaining, and that
+     * a page which then turns out not to be a posting losing its card again
+     * is rare.
+     *
+     * It is not rare. With the verdict slowed on purpose — a busy machine, a
+     * store on a network drive — seven of the eleven pages in the quiet sweep
+     * got a card and lost it: a careers article, documentation, a forum
+     * thread, a board's own feed, a confirmation page, a salary page, a
+     * careers page with nothing open. Every one of those is a page this tool
+     * is supposed to stay off, and on a fast machine the flicker is over in
+     * milliseconds, which is why it went unnoticed and then failed once,
+     * under load, looking like noise.
+     *
+     * The tier earned nothing it did not already have. A page that names a
+     * role or declares itself with structured data shows its card at once,
+     * which is better than 700ms; a page that does neither is one we are only
+     * guessing about, and the honest thing to do while guessing is nothing.
+     */
     if (showNow) putUpCard();
-    else {
-      slowCard = setTimeout(() => {
-        if (current() && !cardHandle) putUpCard();
-      }, PROVISIONAL_AFTER_MS);
-      teardown.push(() => clearTimeout(slowCard));
-    }
-    const settleCard = () => clearTimeout(slowCard);
+    const settleCard = () => undefined;
 
     /*
      * The automatic pass is always the deterministic one. Tag matching takes

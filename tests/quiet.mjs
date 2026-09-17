@@ -16,7 +16,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import { QUIET, findChromium, pointExtensionAt, requireOpenSave, serveFixtures } from './fixtures.mjs';
+import {
+  QUIET,
+  findChromium,
+  pointExtensionAt,
+  requireOpenSave,
+  serveFixtures,
+  serveSlowProxy,
+  useServer,
+} from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
@@ -69,6 +77,53 @@ async function main() {
       check(`stays quiet on ${fixture.name}`, !everAppeared);
       check(`and breaks nothing on ${fixture.name}`, errors.length === 0, errors.join('; '));
       await page.close();
+    }
+
+    /* ------------------------------------------------------------------ *
+     * The same pages, with the store answering slowly                     *
+     * ------------------------------------------------------------------ */
+
+    /*
+     * Quiet on a fast machine is not the same as quiet.
+     *
+     * The card can go up before the verdict arrives — that is deliberate, so
+     * a slow answer does not read as the extension being broken. Which pages
+     * get that early card is therefore a second rule, and it was wrong: being
+     * on an applicant tracking system counted as proof, so the page after you
+     * press submit got a card at once and lost it a moment later.
+     *
+     * On an idle machine the answer comes back in milliseconds and the flicker
+     * is invisible, which is why the sweep above passed and passed and then
+     * failed once, under load, looking like noise. Slowing the verdict down on
+     * purpose makes the early card certain, so this asks the real question
+     * every run rather than one run in ten.
+     */
+    console.log('\nAnd still quiet when the store is slow to answer');
+    const slow = await serveSlowProxy(SERVER, { slowRoute: /analyze/, ms: 5000 });
+    try {
+      await useServer(context, slow.base);
+      for (const fixture of QUIET) {
+        const page = await context.newPage();
+        const errors = [];
+        page.on('pageerror', (e) => errors.push(String(e).slice(0, 120)));
+        await page.goto(fixtures.urlFor(fixture), { waitUntil: 'domcontentloaded' });
+
+        let everAppeared = false;
+        const until = Date.now() + 4000;
+        while (Date.now() < until) {
+          if ((await page.locator('#jobhelper-card-host').count()) > 0) {
+            everAppeared = true;
+            break;
+          }
+          await page.waitForTimeout(200);
+        }
+        check(`no early card on ${fixture.name}`, !everAppeared);
+        check(`and nothing thrown on ${fixture.name}`, errors.length === 0, errors.join('; '));
+        await page.close();
+      }
+    } finally {
+      await useServer(context, SERVER);
+      slow.close();
     }
   } finally {
     await context.close();
