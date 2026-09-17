@@ -24,6 +24,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   BLOG,
+  CYGNUS_ROLE_A,
   DOCS,
   HELIOS_ROLE,
   HELIOS_FORM,
@@ -211,6 +212,30 @@ async function main() {
       await popup.close().catch(() => undefined);
     }
 
+    group('Two applications open at once, each minding its own');
+    {
+      /*
+       * The tab is the application, and the mark has to agree: applying to
+       * two places in two tabs is ordinary, and a toolbar that reported the
+       * other one's company would be worse than reporting nothing — it is
+       * the same mistake as a cover letter addressed to the wrong employer,
+       * made somewhere you would believe it.
+       */
+      const second = await context.newPage();
+      await second.goto(fixtures.urlFor(CYGNUS_ROLE_A), { waitUntil: 'domcontentloaded' });
+      await settled(second);
+
+      const theirs = await toolbar(worker, second);
+      check('the new tab names its own', /cygnus/i.test(theirs.title), theirs.title);
+
+      await page.bringToFront();
+      const ours = await toolbar(worker, page);
+      check('and the first tab still names Helios', /helios/i.test(ours.title), ours.title);
+      check('with its own page count', ours.text === '2', `badge "${ours.text}"`);
+      check('not the other one’s', !/cygnus/i.test(ours.title), ours.title);
+      await second.close();
+    }
+
     group('A tab that was never on a posting is not marked');
     {
       const clean = await context.newPage();
@@ -229,7 +254,7 @@ async function main() {
     await context.close();
     fixtures.close();
     fs.rmSync(userDataDir, { recursive: true, force: true });
-    await cleanStore(SERVER, ['Helios']);
+    await cleanStore(SERVER, ['Helios', 'Cygnus']);
   }
 
   console.log(`\n${passed}/${passed + failed} checks passed`);
