@@ -11,7 +11,7 @@
     "test:ats": "node --test tests/ats.mjs",
     "test:ats-forms": "node tests/ats-forms.mjs",
     "test:joins": "node tests/joins.mjs",
-    "test": "npm run test:parse && npm run test:trail && npm run test:ats && npm run test:autofill && npm run test:ats-forms && npm run test:ats-journey && npm run test:card && npm run test:quiet && npm run test:joins && npm run test:e2e && npm run test:nav && npm run test:carrying && npm run test:adverse && npm run test:journey",
+    "test": "node tests/run.mjs",
     "test:carrying": "node tests/carrying.mjs",
     "test:autofill": "node tests/autofill.mjs",
     "test:card": "node tests/card.mjs",
@@ -19,7 +19,8 @@
     "test:journey": "node tests/journey.mjs",
     "test:ats-journey": "node tests/ats-journey.mjs",
     "test:adverse": "node tests/adverse.mjs",
-    "test:parse": "node tests/parse.mjs"
+    "test:parse": "node tests/parse.mjs",
+    "test:serial": "npm run test:parse && npm run test:trail && npm run test:ats && npm run test:autofill && npm run test:ats-forms && npm run test:ats-journey && npm run test:card && npm run test:quiet && npm run test:joins && npm run test:e2e && npm run test:nav && npm run test:carrying && npm run test:adverse && npm run test:journey"
   },
   "devDependencies": {
     "playwright-core": "^1.49.1"

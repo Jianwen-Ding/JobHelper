@@ -128,6 +128,29 @@ async function main() {
     check('each change shows the sentence it chose', nowText.length > 20 && nowText !== wasText, nowText.slice(0, 50));
     check('the rename to the posting is not shown as a change', !/^New grad$/m.test(wasText));
 
+    /*
+     * And the way out of all of it. Tailoring is the feature; it was never
+     * supposed to be compulsory, and until there was a third mode every
+     * proposal arrived already altered with nothing to undo it.
+     */
+    {
+      const before = await card.locator('.change').count();
+      await card.locator('.diff-head button.undo-all').click();
+      await card.locator('.no-change').waitFor({ timeout: 60_000 });
+      const said = await card.locator('.no-change').innerText();
+      check('undoing every change leaves the resume alone', /exactly as you keep it/i.test(said), said);
+      check('and the changes it undid were real', before > 0, `${before} undone`);
+      check(
+        'the card says which resume that is, and that the base is untouched',
+        /untouched/i.test((await card.innerText()) ?? ''),
+      );
+
+      // Back to the match, which is what the rest of this walk is about.
+      await card.locator('button.mode', { hasText: 'Match by keyword' }).click();
+      await card.locator('.change').first().waitFor({ timeout: 60_000 });
+      check('and the match can be asked for again', (await card.locator('.change').count()) > 0);
+    }
+
     await card.getByRole('button', { name: 'Build resume' }).click();
 
     // Compiling takes seconds; the card has to show it is working.

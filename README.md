@@ -161,8 +161,37 @@ RMM_SERVER=http://127.0.0.1:4788 npm test
 the card under test talks to the scratch store rather than to whatever is on
 the default port.
 
+### Several at a time
+
+`npm test` runs the suites through `tests/run.mjs`, which will run them
+concurrently if you give it more than one server. They are serial by default
+for exactly one reason — they share a store, and several of them check it was
+left as they found it — so parallelism means one store each:
+
+```bash
+# in the ResumeM-M checkout, one server per copy
+for p in 4788 4789 4790; do
+  cp -r /path/to/store /tmp/store-$p
+  node dist/src/cli.js serve --port $p --data /tmp/store-$p &
+done
+# here
+RMM_SERVERS=http://127.0.0.1:4788,http://127.0.0.1:4789,http://127.0.0.1:4790 npm test
+```
+
+Three servers takes the whole suite from about eight minutes to about three.
+The default worker count is one per two cores, capped by the size of the pool,
+because headless Chromium is not cheap and this suite's assertions are about
+timing — loading the machine past its cores turns them into flakes, and a
+flaky suite is not a faster one. `JH_JOBS=1` puts it back to serial, and
+`--only e2e,card` runs a subset:
+
+```bash
+npm test -- --only e2e,card
+```
+
 | Harness | What it walks |
 | --- | --- |
+| `test:parse` | Whether every source still parses as the module Chrome loads |
 | `test:trail` | Which pages belong to one application, in isolation |
 | `test:ats` | Classifying the shapes real boards serve |
 | `test:autofill` | Filling forms, including comboboxes, shadow roots and frames |
@@ -176,6 +205,9 @@ the default port.
 | `test:carrying` | Wandering off mid-application and coming back |
 | `test:adverse` | Tab closed mid-letter, store gone, store slow, worker killed |
 | `test:journey` | The same walk on every shape of posting, with timings |
+
+`test:serial` runs the same list one after another without the runner, for
+when you want the output in order rather than in blocks.
 
 `node tests/shots.mjs` photographs every state of both products into
 `/tmp/shots` — including the empty, busy, error and overflow ones that are easy
