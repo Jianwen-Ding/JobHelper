@@ -1016,6 +1016,64 @@
    */
   let workRestored = false;
 
+  /**
+   * Notice, roughly, that the application went out.
+   *
+   * The tracker recorded what you remembered to tell it, and nobody tells it
+   * about the last step: by the time the form is submitted the tab is already
+   * on a confirmation page and the application is behind you. So it showed
+   * every application you had started and none of the ones you had finished,
+   * which is the wrong half.
+   *
+   * Rough on purpose. From outside a portal there is no way to know an
+   * application was accepted — only that the form in front of you was sent.
+   * Two things say that, and both are worth taking: a real `submit`, and a
+   * click on a button that says Submit, because plenty of systems never fire
+   * the event at all and post the form themselves. Recorded in capture phase,
+   * since a handler that calls preventDefault and then posts by hand is the
+   * ordinary case rather than the exception.
+   *
+   * It only ever says "this went out". What that is worth to the tracker —
+   * whether it moves anything, and never backwards — is the store's decision.
+   */
+  function watchForSending() {
+    let told = false;
+    const SENDING = /\b(submit|send)\b.{0,20}\b(application|apply)\b|^\s*(submit|apply now|send application)\s*$/i;
+
+    const tell = (how) => {
+      if (told) return;
+      const named = analysis?.spec?.generatedFor;
+      // Nothing to file it under. The card knows a posting by what the
+      // analysis made of it, and without that this is just a form.
+      if (!named?.company || !named?.role) return;
+      told = true;
+      send('applicationSent', {
+        company: named.company,
+        role: named.role,
+        url: location.href,
+        note: how,
+      }).catch(() => undefined);
+      cardHandle?.setStatus?.('Recorded as sent.');
+    };
+
+    const onSubmit = () => tell('The form was submitted on the page');
+    const onClick = (event) => {
+      const target = event.target;
+      if (!target || typeof target.closest !== 'function') return;
+      const button = target.closest('button, input[type=submit], [role=button]');
+      if (!button) return;
+      const label = (button.value || button.textContent || button.getAttribute('aria-label') || '').trim();
+      if (SENDING.test(label)) tell(`"${label.slice(0, 40)}" was pressed on the page`);
+    };
+
+    document.addEventListener('submit', onSubmit, true);
+    document.addEventListener('click', onClick, true);
+    teardown.push(() => {
+      document.removeEventListener('submit', onSubmit, true);
+      document.removeEventListener('click', onClick, true);
+    });
+  }
+
   function keepWorkSafe() {
     /*
      * `worthKeeping` is loaded once and kept, rather than awaited each time.
@@ -1321,6 +1379,7 @@
 
   watchForApplyClicks();
   keepWorkSafe();
+  watchForSending();
 
   // And once the card exists, orphaning takes it off the page: a card whose
   // buttons all throw is worse than no card.

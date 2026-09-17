@@ -56,6 +56,16 @@ const group = (name) => console.log(`\n${name}`);
 const HOST = '#jobhelper-card-host';
 const cardOf = (page) => page.locator(`${HOST} .card`);
 
+/** What the store has filed under a company, as the editor would show it. */
+async function filed(company) {
+  const [apps, drafts] = await Promise.all([
+    fetch(`${SERVER}/api/applications`).then((r) => r.json()),
+    fetch(`${SERVER}/api/workspace`).then((r) => r.json()),
+  ]);
+  const of = (list) => list.find((x) => (x.company ?? '').toLowerCase().includes(company.toLowerCase()));
+  return { application: of(apps.applications ?? []), draft: of(drafts.drafts ?? []) };
+}
+
 /** How many pages of the compiled resume are actually drawn in the card. */
 const drawnPages = (page) =>
   page.evaluate(
@@ -185,6 +195,40 @@ async function main() {
       const drawn = await drawnPages(page);
       check('and the resume you built is still drawn, not an empty strip', drawn > 0, `${drawn} pages`);
       check('the pane is a page tall, not a sliver', (await paneHeight(page)) > 100, `${await paneHeight(page)}px`);
+    }
+
+    /*
+     * A half-written application used to exist only in the browser: a resume
+     * built, half a letter typed, and nothing in the editor's Workspace or its
+     * tracker to come back to. You found it again by remembering which tab it
+     * was in.
+     */
+    group('Half finished, and already a place to come back to');
+    {
+      // The keeper writes on an interval, and the space is opened from there.
+      await page.waitForTimeout(3000);
+      const { application, draft } = await filed('Helios');
+      check('the tracker holds it, without being told to', Boolean(application), application?.id ?? '(nothing)');
+      check('and calls it one that is being worked on', application?.status === 'applying', application?.status ?? '(none)');
+      check('the Workspace has somewhere to write it', Boolean(draft), draft?.id ?? '(nothing)');
+      check('named for the posting, not the tab', /helios/i.test(draft?.company ?? ''), draft?.company ?? '');
+    }
+
+    /*
+     * And the last step, which nobody records: by the time the form is sent
+     * the tab is already on a confirmation page. This form's Submit is a
+     * `type=button` that never fires a submit event, which is the ordinary
+     * case rather than the exception.
+     */
+    group('Pressing Submit on the form');
+    {
+      await page.getByRole('button', { name: 'Submit Application' }).click();
+      await page.waitForTimeout(2500);
+      const { application, draft } = await filed('Helios');
+      check('the tracker says it went out', application?.status === 'applied', application?.status ?? '(none)');
+      check('and says why it thinks so', /pressed|submitted/i.test(application?.history?.at(-1)?.note ?? ''),
+        application?.history?.at(-1)?.note ?? '');
+      check('the draft stops looking like something to finish', draft?.status === 'submitted', draft?.status ?? '(none)');
     }
 
     group('Leaving for a page that has nothing to do with it');
