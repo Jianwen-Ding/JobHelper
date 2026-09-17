@@ -166,10 +166,10 @@ the default port.
 | `test:trail` | Which pages belong to one application, in isolation |
 | `test:ats` | Classifying the shapes real boards serve |
 | `test:autofill` | Filling forms, including comboboxes, shadow roots and frames |
-| `test:ats-forms` | Autofill against thirteen systems' real form markup |
+| `test:ats-forms` | Autofill against seventeen systems' real form markup |
 | `test:ats-journey` | The whole path — detect, build, fill, file — on each of them |
 | `test:card` | Typing in the card while it repaints under you |
-| `test:quiet` | False positives: pages that must get no card at all |
+| `test:quiet` | False positives: pages that must get no card at all, fast store and slow |
 | `test:joins` | Two postings open at once staying two |
 | `test:e2e` | Detect → tailor → compile → autofill → file → track |
 | `test:nav` | Getting to the form, on every route real systems use |
