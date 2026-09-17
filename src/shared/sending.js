@@ -91,9 +91,28 @@ export function looksLikeTheApplication(form) {
   return fields.length >= 3;
 }
 
-/** A control's visible name, however this system chose to give it one. */
+/**
+ * A control's name, in the order the browser itself would work it out.
+ *
+ * `aria-label` first, and that is the whole point: an author writes one
+ * exactly when the visible content does not say what the control does. The
+ * order here was value, then text, then aria-label — so a submit button whose
+ * content is an arrow glyph answered "→", which is not a send by any rule,
+ * and the application went out unrecorded. The one case the attribute exists
+ * for was the one case it was never read in.
+ *
+ * Then `value`, which is how `input[type=submit]` carries its label, then the
+ * text, then `title` as the last resort — the same precedence the accessible
+ * name computation uses, for the same reason.
+ */
 export function nameOf(control) {
-  return (control?.value || control?.textContent || control?.getAttribute?.('aria-label') || '').trim();
+  const said =
+    control?.getAttribute?.('aria-label') ||
+    control?.value ||
+    control?.textContent ||
+    control?.getAttribute?.('title') ||
+    '';
+  return said.trim();
 }
 
 /**

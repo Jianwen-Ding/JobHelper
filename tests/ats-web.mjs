@@ -784,6 +784,81 @@ export const EMBEDDED_SUBSCRIBE_FRAME = {
 /** The frame documents, which are served but never visited directly. */
 export const FRAME_DOCUMENTS = [EMBEDDED_APPLY_FRAME, EMBEDDED_SUBSCRIBE_FRAME];
 
+
+/* ------------------------------------------------------------------ *
+ * Shapes, rather than brands                                          *
+ * ------------------------------------------------------------------ */
+
+/**
+ * The three below are not another vendor each. They are the page shapes the
+ * rules had never been asked about: a control whose words are not in its
+ * text, a form that is not on the page until you ask for it, and a page that
+ * offers to do the whole thing again.
+ */
+
+/** An icon for a button, and the words in an attribute — as ARIA intends. */
+export const ICON_SUBMIT = form({
+  name: 'icon-only-submit',
+  path: '/apply/platform-engineer/finish',
+  company: 'Larkhill Instruments',
+  title: 'Platform Engineer',
+  sends: 'Submit application',
+  inner: `<form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="submit" aria-label="Submit application"><span aria-hidden="true">→</span></button>
+    </form>`,
+});
+
+/**
+ * The form is behind the button that says Apply, on the same page.
+ *
+ * Every embedded board does this: the posting is a page, and pressing Apply
+ * unfolds the form under it rather than going anywhere. The press has the
+ * word on it and sends nothing.
+ */
+export const ACCORDION = form({
+  name: 'unfolds-the-form',
+  path: '/en/careers/openings/platform-engineer',
+  company: 'Denby Optics',
+  title: 'Platform Engineer',
+  sends: 'Apply for this job',
+  sent: false,
+  alsoOffers: 'Submit application',
+  inner: `<button type="button" class="btn" onclick="document.getElementById('unfold').hidden = false;">
+      Apply for this job
+    </button>
+    <div id="unfold" hidden>
+      <form onsubmit="event.preventDefault();">
+        ${FIELDS}
+        <button type="submit">Submit application</button>
+      </form>
+    </div>`,
+});
+
+/**
+ * And the page after it went out, which offers to do it again.
+ *
+ * "Submit another application" carries the verb and the object and means the
+ * opposite of this one; a portal that shows it beside the form you have just
+ * sent is the most likely place to record a second application nobody made.
+ */
+export const ANOTHER_ONE = form({
+  name: 'offers-another-application',
+  path: '/apply/platform-engineer/submitted',
+  company: 'Marchwood Ceramics',
+  title: 'Platform Engineer',
+  sends: 'Submit another application',
+  sent: false,
+  alsoOffers: 'Submit application',
+  inner: `<form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="submit">Submit application</button>
+    </form>
+    <hr>
+    <p>Applying for more than one role at Marchwood?</p>
+    <button type="button" class="quiet">Submit another application</button>`,
+});
+
 /** Every form above, in the order the suite walks them. */
 export const SENDS = [
   ORACLE,
@@ -801,6 +876,7 @@ export const SENDS = [
   PINPOINT,
   COMEET,
   BULLHORN,
+  ICON_SUBMIT,
   EASY_APPLY,
   BOARD_APPLY,
   HANDSHAKE,
@@ -828,4 +904,6 @@ export const DOES_NOT_SEND = [
   FINISH_LATER,
   BY_EMAIL,
   EMBEDDED_SUBSCRIBE,
+  ACCORDION,
+  ANOTHER_ONE,
 ];

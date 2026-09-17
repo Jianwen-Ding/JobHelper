@@ -192,6 +192,33 @@ async function main() {
   const slowest = timings.slice().sort((a, b) => b[1] - a[1])[0];
   if (slowest) console.log(`  slowest: ${slowest[0]} at ${(slowest[1] / 1000).toFixed(1)}s`);
 
+  /*
+   * How long an application takes is a feature, not a statistic.
+   *
+   * Every walk above is the whole path — read the posting, build the resume,
+   * fill the form, write the folder — on a machine also running two other
+   * suites. It settles around three seconds a system, and the number that
+   * matters is not the average but whether any one system has quietly become
+   * the slow one: a rule that rescans, a compile that stopped being cached, a
+   * wait that was a race and is now a sleep. So the shape of the distribution
+   * is checked rather than a stopwatch value, which would fail on a busy
+   * machine and prove nothing on an idle one.
+   *
+   * Four times the median is loose on purpose. It is not a performance
+   * target; it is the line past which one system is behaving differently
+   * from the other twenty, which is a bug with a cause worth finding.
+   */
+  const ordered = timings.map(([, ms]) => ms).sort((a, b) => a - b);
+  const median = ordered[Math.floor(ordered.length / 2)] ?? 0;
+  const dawdling = timings.filter(([, ms]) => ms > Math.max(median * 4, 20_000));
+  check(
+    'no system takes far longer than the rest of them',
+    dawdling.length === 0,
+    dawdling.length
+      ? `${dawdling.map(([n, ms]) => `${n} ${(ms / 1000).toFixed(1)}s`).join(', ')} against a median of ${(median / 1000).toFixed(1)}s`
+      : `median ${(median / 1000).toFixed(1)}s, slowest ${((slowest?.[1] ?? 0) / 1000).toFixed(1)}s`,
+  );
+
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed > 0) process.exit(1);
 }
