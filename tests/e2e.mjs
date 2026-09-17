@@ -149,25 +149,68 @@ async function main() {
     const inserted = await page.evaluate(() => document.querySelector('#q1')?.value ?? '');
     check('stored answer inserted into the form', inserted.length > 0, `${inserted.slice(0, 48)}…`);
 
-    /* Autofill. */
+    /*
+     * Autofill.
+     *
+     * Asserted against what the store actually offers, not against a fixed
+     * list. These assertions named `email` and `phone` outright, and the store
+     * a developer happens to have open need not have either — a profile with no
+     * email is a perfectly ordinary profile. The suite then failed for a reason
+     * that had nothing to do with the extension, and the wait on `#em` hung for
+     * fifteen seconds before saying so.
+     */
+    const offered = await (await fetch(`${SERVER}/api/autofill`)).json().then((r) => r.fields ?? {});
+    const boxes = { first_name: '#fn', email: '#em', linkedin: '#li', school: '#sc' };
+    const expected = Object.entries(boxes).filter(([key]) => offered[key]);
+    check('the store offers something to fill with', expected.length > 0, Object.keys(offered).join(', '));
+
     await card.getByRole('button', { name: 'Autofill this form' }).click();
-    await page.waitForFunction(() => document.querySelector('#em')?.value?.length > 0, { timeout: 15_000 });
-    const filled = await page.evaluate(() => ({
-      first: document.querySelector('#fn').value,
-      email: document.querySelector('#em').value,
-      linkedin: document.querySelector('#li').value,
-      school: document.querySelector('#sc').value,
-    }));
-    check('autofill filled the name', Boolean(filled.first), filled.first);
-    check('autofill filled the email', filled.email.includes('@'), filled.email);
-    check('autofill filled linkedin and school', Boolean(filled.linkedin && filled.school));
+    const firstSelector = expected[0][1];
+    await page.waitForFunction(
+      (sel) => document.querySelector(sel)?.value?.length > 0,
+      firstSelector,
+      { timeout: 15_000 },
+    );
+
+    const filled = await page.evaluate(
+      (pairs) => Object.fromEntries(pairs.map(([key, sel]) => [key, document.querySelector(sel)?.value ?? ''])),
+      expected,
+    );
+    for (const [key] of expected) {
+      check(`autofill filled ${key.replace(/_/g, ' ')}`, Boolean(filled[key]), filled[key]);
+    }
+    if (offered.email) check('the email went in as an address', filled.email.includes('@'), filled.email);
+
+    /*
+     * The cover letter, with the AI off.
+     *
+     * Nothing is adopted on the user's behalf. This used to drop the closest
+     * previous letter straight into the box, and "Save application folder" then
+     * typeset a letter opening "Dear Streamly," as "Cover Letter Helios.pdf" —
+     * so the test could assert a letter in the bundle without anyone having
+     * asked for one. Now the previous letter is offered by name and waits.
+     */
+    const offer = card.getByRole('button', { name: /^Start from "/ });
+    const offered_letter = await offer.count();
+    if (offered_letter > 0) {
+      const before = await card.locator('textarea.tall').first().inputValue();
+      check('a previous letter is offered rather than adopted', before.trim() === '', before.slice(0, 40));
+      await offer.click();
+      await page.waitForTimeout(300);
+      const after = await card.locator('textarea.tall').first().inputValue();
+      check('and taking it puts it in the box', after.trim().length > 0, after.slice(0, 40));
+    }
 
     /* File it. */
     await card.getByRole('button', { name: 'Save application folder' }).click();
     await card.locator('.done-box').waitFor({ timeout: 90_000 });
     const done = await card.locator('.done-box').innerText();
     check('application folder written', /Resume Streamly\.pdf/.test(done));
-    check('cover letter included in the bundle', /Cover Letter/i.test(done), done.split('\n').slice(1, 3).join(' '));
+    check(
+      'a cover letter is bundled only once there is one',
+      /Cover Letter/i.test(done) === offered_letter > 0,
+      done.split('\n').slice(1, 3).join(' '),
+    );
 
     const tracked = await (await fetch(`${SERVER}/api/applications`)).json();
     const entry = tracked.applications.find((a) => a.company === 'Streamly');

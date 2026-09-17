@@ -47,6 +47,24 @@ import {
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
 
+/*
+ * What the running store can actually fill with.
+ *
+ * Assertions here named `email` and `phone` outright, and a profile with
+ * neither is a perfectly ordinary profile — so the suite failed for reasons
+ * that had nothing to do with the extension. Ask the server instead, and judge
+ * each check against a field it really offers.
+ */
+let offeredFields = {};
+async function loadOffered() {
+  offeredFields = await fetch(`${SERVER}/api/autofill`)
+    .then((r) => r.json())
+    .then((r) => r.fields ?? {})
+    .catch(() => ({}));
+}
+/** The selector for the first of these the store can fill, or null. */
+const fillable = (pairs) => pairs.find(([key]) => offeredFields[key])?.[1] ?? null;
+
 let passed = 0;
 let failed = 0;
 const check = (what, ok, detail = '') => {
@@ -104,6 +122,7 @@ async function expectContinuity(page, label, { role, expectTrail = true } = {}) 
 }
 
 async function main() {
+  await loadOffered();
   try {
     if (!(await fetch(`${SERVER}/health`)).ok) throw new Error();
   } catch {
@@ -349,7 +368,23 @@ async function main() {
         email: document.getElementById('em').value,
         phone: document.getElementById('ph').value,
       }));
-      check('autofill filled the fields inside the frame', Boolean(typed?.first && typed?.email), JSON.stringify(typed));
+      /*
+       * Judged against what the store actually offers. Naming email and phone
+       * outright made this fail on any profile that has neither — which is a
+       * perfectly ordinary profile — for a reason with nothing to do with
+       * frames. What is being tested here is that autofill reached *into the
+       * frame* at all.
+       */
+      const wanted = [
+        ['first', offeredFields.first_name],
+        ['email', offeredFields.email],
+        ['phone', offeredFields.phone],
+      ].filter(([, offered]) => offered);
+      check(
+        'autofill filled the fields inside the frame',
+        wanted.length > 0 && wanted.every(([key]) => Boolean(typed?.[key])),
+        `${JSON.stringify(typed)} against ${wanted.map(([k]) => k).join(', ') || 'nothing on offer'}`,
+      );
 
       /*
        * The script runs in every frame of every page now, so the thing that
@@ -431,8 +466,13 @@ async function main() {
       await card.getByRole('button', { name: 'Autofill this form' }).click();
       await page.waitForTimeout(6000);
       const form = page.frames().find((f) => f.url().endsWith('/platform-engineer/form'));
-      const filled = await form?.evaluate(() => document.getElementById('em').value);
-      check('autofill reached the right frame', Boolean(filled), filled);
+      const sel = fillable([
+        ['email', '#em'],
+        ['first_name', '#fn'],
+        ['phone', '#ph'],
+      ]);
+      const filled = sel ? await form?.evaluate((s) => document.querySelector(s)?.value ?? '', sel) : '';
+      check('autofill reached the right frame', Boolean(filled), `${sel ?? 'nothing on offer'} = ${filled}`);
 
       const promos = page.frames().filter((f) => f.url().endsWith('/promo/newsletter'));
       const leaked = await Promise.all(
@@ -541,11 +581,13 @@ async function main() {
         !leaked?.email && !leaked?.name,
         JSON.stringify(leaked),
       );
-      check(
-        "and the posting's own form was still filled",
-        Boolean(await page.locator('#em').inputValue()),
-        await page.locator('#em').inputValue(),
-      );
+      const own = fillable([
+        ['email', '#em'],
+        ['first_name', '#fn'],
+        ['phone', '#ph'],
+      ]);
+      const ownValue = own ? await page.locator(own).inputValue() : '';
+      check("and the posting's own form was still filled", Boolean(ownValue), `${own ?? 'nothing on offer'} = ${ownValue}`);
       await page.close();
     }
 
