@@ -780,7 +780,70 @@ cover letter, most wanted years of experience I do not have.</p>
 <button type="button">Reply</button></div></body></html>`,
 };
 
-export const QUIET = [CAREERS_ARTICLE, SHOP, SIGN_IN, DOCS, SPA_SHELL, FORUM_THREAD, BLOG];
+
+/*
+ * The near-misses that actually turn up, now that vocabulary alone is not
+ * enough. Each of these clears one of the new tests and should still be
+ * refused: a job board's own feed is on a board host, a confirmation page is
+ * on an applicant tracking system, a salary page names a role, and a careers
+ * landing page has somewhere to apply without having anything to apply to.
+ */
+
+/** A job board, showing you everything except a job. */
+export const BOARD_FEED = {
+  name: 'board-feed',
+  path: '/linkedin/feed',
+  html: `<!doctype html><html><head><title>Feed | LinkedIn</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Your feed</h1>
+<p>Dana commented on a post about hiring. Sam is celebrating 3 years at Acme.</p>
+<p>Someone you follow shared: "we are looking for people who care about compensation
+transparency and benefits — full-time, remote".</p>
+<label for="post">Start a post</label><textarea id="post"></textarea>
+<button type="button">Post</button></div></body></html>`,
+};
+
+/** The page after you press submit. Nothing left to do here. */
+export const THANK_YOU = {
+  name: 'thank-you',
+  path: '/greenhouse/acme/jobs/9001/confirmation',
+  html: `<!doctype html><html><head><title>Application submitted — Acme</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Thanks — your application is in</h1>
+<p>We have received your application for the Platform Engineer role. Our team
+reviews every application; you will hear from us either way.</p>
+<p>Acme is an equal opportunity employer.</p>
+<p><a href="/greenhouse/acme/jobs">See other openings</a></p>
+</div></body></html>`,
+};
+
+/** A salary page. Names a role, describes the work, cannot be applied to. */
+export const SALARY_PAGE = {
+  name: 'salary-page',
+  path: '/salaries/software-engineer-at-acme',
+  html: `<!doctype html><html><head><title>Software Engineer salaries at Acme</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Software Engineer salaries</h1>
+<p>The median total compensation for a Software Engineer at Acme is reported by
+412 people. Salary range by level, with years of experience:</p>
+<ul><li>L3 — 0-2 years of experience</li><li>L4 — 3-5 years of experience</li></ul>
+<h2>Benefits</h2><p>Reported benefits include full-time remote work.</p>
+<p>Data is self-reported and not verified by Acme.</p>
+</div></body></html>`,
+};
+
+/** A careers landing page with nothing open on it. */
+export const CAREERS_LANDING = {
+  name: 'careers-landing',
+  path: '/vireo/careers',
+  html: `<!doctype html><html><head><title>Careers at Vireo</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Careers at Vireo</h1>
+<p>We are not hiring for any roles right now. We review every application we
+receive and keep them on file, so it is still worth writing to us.</p>
+<p><a href="/vireo/apply/general">Send a general application</a></p>
+<h2>Benefits</h2><p>Full-time staff get the usual; compensation is reviewed yearly.</p>
+</div></body></html>`,
+};
+
+export const QUIET = [CAREERS_ARTICLE, SHOP, SIGN_IN, DOCS, SPA_SHELL, FORUM_THREAD, BLOG,
+  BOARD_FEED, THANK_YOU, SALARY_PAGE, CAREERS_LANDING];
 
 /**
  * A posting on a page the size of a real one.
