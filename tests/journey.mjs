@@ -32,6 +32,42 @@ import {
   serveFixtures,
 } from './fixtures.mjs';
 
+
+/**
+ * The store, answering the analysis slowly.
+ *
+ * Everything on this machine is local and answers in tens of milliseconds, so
+ * the path taken when the user is actually waiting is the one path nothing
+ * exercises. Only the analysis is delayed: the rest has to keep working, or
+ * the test is measuring a broken server rather than a slow one.
+ */
+import http from 'node:http';
+
+function slowProxy(target, delayMs) {
+  return new Promise((resolve) => {
+    const server = http.createServer(async (req, res) => {
+      const body = [];
+      for await (const chunk of req) body.push(chunk);
+      if (/\/analyze/.test(req.url ?? '')) await new Promise((go) => setTimeout(go, delayMs));
+      try {
+        const upstream = await fetch(`${target}${req.url}`, {
+          method: req.method,
+          headers: { 'Content-Type': req.headers['content-type'] ?? 'application/json' },
+          body: body.length ? Buffer.concat(body) : undefined,
+        });
+        res.writeHead(upstream.status, { 'Content-Type': 'application/json' });
+        res.end(Buffer.from(await upstream.arrayBuffer()));
+      } catch (err) {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+    });
+    server.listen(0, '127.0.0.1', () =>
+      resolve({ url: `http://127.0.0.1:${server.address().port}`, close: () => new Promise((d) => server.close(d)) }),
+    );
+  });
+}
+
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
 const HOST = '#jobhelper-card-host';
@@ -214,6 +250,40 @@ async function main() {
     }
 
     await page.close();
+
+    /* ------------------------------------------------------------------ *
+     * When the answer is slow, say something                              *
+     * ------------------------------------------------------------------ */
+
+    /*
+     * Holding the card back until the verdict is what stops it appearing on an
+     * ordinary page and vanishing. The cost is that a slow answer means
+     * nothing happens at all, which reads as the extension being broken — so
+     * after a wait long enough to notice, the provisional card goes up and
+     * says what it is doing. This is that path, which is otherwise never taken
+     * on a local server that answers in forty milliseconds.
+     */
+    console.log('\nWhen the store is slow to answer');
+    const slow = await slowProxy(SERVER, 3000);
+    try {
+      await pointExtensionAt(context, worker, slow.url);
+      const waiting = await context.newPage();
+      await waiting.goto(fixtures.urlFor(CYGNUS_ROLE_A), { waitUntil: 'domcontentloaded' });
+
+      await timed('a card appears while the answer is still coming', 2500, () =>
+        waiting.locator(HOST).waitFor({ state: 'attached', timeout: 2500 }),
+      );
+      const saying = (await cardOf(waiting).textContent()) ?? '';
+      check('and says it is reading the posting', /reading the posting/i.test(saying), saying.slice(0, 60));
+
+      await timed('then the real answer replaces it', 12_000, () => settled(waiting));
+      const settledRole = (await cardOf(waiting).locator('.role').textContent())?.trim();
+      check('with the role it read', /platform engineer/i.test(settledRole ?? ''), settledRole);
+      await waiting.close();
+    } finally {
+      await slow.close();
+      await pointExtensionAt(context, worker, SERVER);
+    }
 
     /* ------------------------------------------------------------------ *
      * A second application does not inherit the first                     *

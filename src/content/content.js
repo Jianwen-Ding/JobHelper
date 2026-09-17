@@ -662,6 +662,25 @@
      */
     const showNow = force || viaFrame || decisiveSignal();
 
+    /*
+     * And, failing that, once the wait becomes one you would notice.
+     *
+     * Holding the card back until the verdict is what stops it appearing on an
+     * ordinary page and vanishing a second later. It also means that on a page
+     * where the answer is slow — a busy machine, a store being read off a
+     * network drive, a posting inside three frames — nothing at all happens
+     * for as long as it takes, which reads as the extension being broken. The
+     * whole point of the provisional card was that a card showing up late
+     * looks like one that never came.
+     *
+     * So: nothing for the first moment, which covers every fast negative, and
+     * after that the provisional card, because a wait long enough to notice is
+     * a wait worth explaining. A slow page that then turns out not to be a
+     * posting still takes its card away, and that is the right trade — it is
+     * rare, and the alternative is silence exactly when the user is wondering.
+     */
+    const PROVISIONAL_AFTER_MS = 700;
+
     // What the page asks for decides what the card offers. Asking the user
     // "does this need a cover letter?" is asking them to read the form on the
     // extension's behalf, when the form is right there to be read.
@@ -677,7 +696,15 @@
       });
       return cardHandle;
     };
+    let slowCard = null;
     if (showNow) putUpCard();
+    else {
+      slowCard = setTimeout(() => {
+        if (current() && !cardHandle) putUpCard();
+      }, PROVISIONAL_AFTER_MS);
+      teardown.push(() => clearTimeout(slowCard));
+    }
+    const settleCard = () => clearTimeout(slowCard);
 
     /*
      * The automatic pass is always the deterministic one. Tag matching takes
@@ -704,10 +731,12 @@
        * corner of a page that has nothing to do with jobs is the flicker again,
        * only louder.
        */
+      settleCard();
       if (current() && cardHandle) cardHandle.setStatus(err.message, err.jobhelper ?? null);
       else quietly(err);
       return;
     }
+    settleCard();
     if (!current()) return;
     analysis = found;
 
