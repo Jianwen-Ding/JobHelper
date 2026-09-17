@@ -84,8 +84,14 @@ async function main() {
     const aiText = await aiChip.innerText();
     check('the card says whether AI is on', /^AI (on|off)/.test(aiText), aiText);
 
-    const modes = card.locator('button.mode');
+    // Two ways to tailor, and a third way out: going to write the sentence
+    // yourself in the builder, which is neither.
+    const modes = card.locator('button.mode:not(.ghost)');
     check('both ways to tailor are offered', (await modes.count()) === 2);
+    check(
+      'and a way through to the builder, for what neither can do',
+      (await card.locator('button.mode.ghost').count()) === 1,
+    );
     check(
       'the AI option is disabled while AI is off, and says why',
       (await modes.nth(1).isDisabled()) && Boolean(await modes.nth(1).getAttribute('title')),

@@ -733,7 +733,10 @@ const handlers = {
 
   /** Open the editor in a new tab, focused on this draft. */
   async openTab({ url }) {
-    const tab = await chrome.tabs.create({ url });
+    // A path is resolved against the store, so the card can send someone to a
+    // page of the editor without knowing where the editor lives.
+    const absolute = /^[a-z]+:/i.test(url) ? url : `${(await getSettings()).serverUrl.replace(/\/$/, '')}${url}`;
+    const tab = await chrome.tabs.create({ url: absolute });
     return { id: tab.id };
   },
 

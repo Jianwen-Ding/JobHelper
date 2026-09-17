@@ -100,6 +100,17 @@ button.mode.on {
   background: var(--accent-soft); font-weight: 500;
 }
 button.mode.on:hover { background: #d2e3fc; }
+/* A third way out, offered quietly beside the two that rebuild the resume. */
+button.mode.ghost { flex: 0 0 auto; color: #5f6368; }
+
+/*
+ * Pressing one of these costs minutes and, depending on the command, money;
+ * the button beside it is instant. The mark goes on the ones that start AI
+ * work and on no others.
+ */
+button.ai-action { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+.ai-mark { color: #1a73e8; font-size: 0.9em; line-height: 1; }
+button.ai-action:disabled .ai-mark { color: inherit; opacity: 0.5; }
 
 button {
   font: inherit; font-weight: 500; padding: 7px 16px;
@@ -472,6 +483,21 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   };
 
   const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+  /**
+   * Mark a button as one that runs the AI.
+   *
+   * Pressing one costs minutes and, depending on the command, money; the
+   * button beside it is instant. Nothing distinguished them, so the only way
+   * to find out which you had pressed was to wait and see. The mark goes on
+   * the ones that start AI work and on no others — saying "not AI" on every
+   * other button would be a great deal of noise to make a point about four.
+   */
+  const aiButton = (props, label) =>
+    h('button', { ...props, className: `${props.className ?? ''} ai-action`.trim() }, [
+      h('span', { className: 'ai-mark', textContent: '✦' }),
+      h('span', { textContent: label }),
+    ]);
 
   /**
    * Render the store's inline markup as real nodes. The stored text carries
@@ -1027,9 +1053,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
               }
             },
           }),
-          h('button', {
+          aiButton({
             className: state.builtWith === 'ai' ? 'mode on' : 'mode',
-            textContent: rebuildLabel('ai', 'Let the AI tailor it', 'Reading the posting…'),
             title: state.ai?.active
               ? 'The AI reads this posting and decides which phrasings and bullets to use.'
               : state.ai?.state === 'server-off'
@@ -1047,6 +1072,23 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 state.rebuilding = null;
               }
             },
+          }, rebuildLabel('ai', 'Let the AI tailor it', 'Reading the posting…')),
+          /*
+           * Neither matching nor AI: going and writing the sentence yourself.
+           *
+           * Looking at a posting is exactly when you notice the store has no
+           * bullet for the thing it is asking about — and the answer to that is
+           * two minutes in the builder, not another pass over the phrasings
+           * that already exist. Without a way through, it meant finding the
+           * editor by hand, finding the resume in it, and losing the card.
+           */
+          h('button', {
+            className: 'mode ghost',
+            textContent: 'Edit in ResumeM-M',
+            title: 'Open this resume in the builder to add a bullet or another phrasing',
+            disabled: Boolean(state.busy) || !state.spec?.id,
+            onclick: () =>
+              onAction('openTab', { url: `/#resumes/${encodeURIComponent(state.spec.id)}` }),
           }),
         ]),
         state.builtWith
@@ -1160,11 +1202,14 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 textContent: 'Drafted from the letters you have already written for similar roles.',
               }),
               h('div', { className: 'row gap' }, [
-                h('button', {
-                  textContent: busyLabel('coverLetter', 'Draft a letter', 'Drafting…'),
-                  disabled: Boolean(state.busy),
-                  onclick: draftLetter,
-                }),
+                aiButton(
+                  {
+                    title: 'Write a first draft from this posting and the letters you have written before. Runs your AI command.',
+                    disabled: Boolean(state.busy),
+                    onclick: draftLetter,
+                  },
+                  busyLabel('coverLetter', 'Draft a letter', 'Drafting…'),
+                ),
               ]),
             ]),
       ]),
@@ -1355,9 +1400,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             disabled: !q.fieldId,
             onclick: () => onAction('insertAnswer', { fieldId: q.fieldId, text: state.answers[q.question] ?? value }),
           }),
-          h('button', {
+          aiButton({
             className: 'tiny',
-            textContent: busyLabel(`answer:${q.question}`, q.answer ? 'Rewrite for this role' : 'Draft an answer', 'Writing…'),
             disabled: Boolean(state.busy),
             onclick: () =>
               act(`answer:${q.question}`, { question: q.question, force: true }, (r) => {
@@ -1377,7 +1421,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 else if (r && !r.executed) {
                   state.error = 'The AI is off, so a new answer cannot be drafted. Anything you type here is saved for next time.';
                 }
-              }),
+              },
+            busyLabel(`answer:${q.question}`, q.answer ? 'Rewrite for this role' : 'Draft an answer', 'Writing…')),
           }),
           h('button', {
             className: 'link',
