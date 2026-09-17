@@ -846,24 +846,42 @@
    * stale is losing the last keystroke of an answer — against the previous
    * behaviour, which was losing all of it.
    */
+  /** `keepWorkSafe`'s saver, so a route change can call it before tearing down. */
+  let saveWorkNow = null;
+
   function keepWorkSafe() {
-    const save = async () => {
+    /*
+     * `worthKeeping` is loaded once and kept, rather than awaited each time.
+     *
+     * `save` is registered on `pagehide`, and a continuation scheduled after an
+     * await there runs while the page is already unloading — which a real
+     * navigation is entitled to drop. The one save that matters most was the
+     * one most likely not to happen. Loaded up front, the save on the way out
+     * is synchronous up to the point the message leaves.
+     */
+    let worthKeeping = null;
+    imports
+      .trail()
+      .then((m) => (worthKeeping = m.worthKeeping))
+      .catch(() => undefined);
+
+    const save = () => {
       const work = cardHandle?.takeWork?.();
       if (!work) return;
 
       // Nothing worth keeping is not worth sending. The worker refuses it too,
       // but a card with an empty state should not be asking in the first place.
-      const { worthKeeping } = await imports.trail();
-      if (!worthKeeping(work)) return;
+      if (worthKeeping && !worthKeeping(work)) return;
 
       // The page is sent with it: a card left open on another posting must not
       // be able to write its work over this application's.
       send('saveWork', { work, page: pageIdentity() }).catch(() => undefined);
     };
+    saveWorkNow = save;
     every(2000, save);
     // A navigation is exactly when this matters, and exactly when an interval
     // is least likely to have just run.
-    const onHide = () => void save().catch(quietly);
+    const onHide = () => save();
     window.addEventListener('pagehide', onHide);
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') onHide();
@@ -1055,6 +1073,14 @@
   every(1000, () => {
     if (location.href !== lastUrl) {
       lastUrl = location.href;
+      /*
+       * Save before anything else. On a single-page board this is the only
+       * kind of navigation there is — `pagehide` never fires — and the card
+       * was torn down here without a save, so up to two seconds of letter or
+       * answer went with it.
+       */
+      saveWorkNow?.();
+
       // Before the await, not after: the pass still running belongs to the url
       // that just went away, and it must stop being able to write to the card
       // from this instant rather than from whenever the import resolves.

@@ -489,7 +489,11 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     });
 
   const h = (tag, props = {}, kids = []) => {
-    const n = Object.assign(document.createElement(tag), props);
+    // `dataset` is a read-only DOMStringMap, so assigning it does nothing at
+    // all — silently, which is the worst way for it to not work.
+    const { dataset, ...rest } = props;
+    const n = Object.assign(document.createElement(tag), rest);
+    for (const [k, v] of Object.entries(dataset ?? {})) n.dataset[k] = v;
     for (const k of [].concat(kids)) if (k != null && k !== false) n.append(k);
     return n;
   };
@@ -1210,6 +1214,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 : null,
               h('textarea', {
                 className: 'tall',
+                dataset: { field: 'letter' },
                 value: state.letter ?? '',
                 placeholder: 'Write the letter here. Saving it makes it the reference for the next one.',
                 oninput: (e) => (state.letter = e.target.value),
@@ -1462,6 +1467,9 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         h('div', { className: 'qt' }, [document.createTextNode(q.question), badge]),
         h('textarea', {
           value,
+          // Named for the question it answers, so a repaint puts the caret
+          // back in the same box even if another question arrived above it.
+          dataset: { field: `answer:${q.question}` },
           placeholder: q.answer ? '' : 'No stored answer yet — write one and it is saved for next time.',
           oninput: (e) => (state.answers[q.question] = e.target.value),
         }),
@@ -1585,7 +1593,26 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     ]);
   }
 
+  /**
+   * Repaint, keeping the caret where it was.
+   *
+   * `draw` rebuilds the whole subtree, and it runs on every action starting
+   * and finishing, on the AI status arriving, on the resume list arriving, on
+   * the trail, on the questions. The keystrokes already typed survive, because
+   * each one fires `oninput` — but the box being typed into is destroyed, so
+   * focus goes to `null` and the *next* keystroke goes nowhere until the user
+   * notices and clicks back. The realistic trigger is the AI pass that starts
+   * itself and lands minutes later, mid-sentence.
+   *
+   * Boxes are identified by what they are for rather than by position, so the
+   * caret comes back to the same answer even if a question has appeared above
+   * it in the meantime.
+   */
   function draw() {
+    const active = root.activeElement;
+    const focused = active && active !== card ? active.dataset?.field : null;
+    const caret = focused ? { start: active.selectionStart, end: active.selectionEnd } : null;
+
     // Provisional until the analysis lands: what is on screen is the page's
     // own title, not anything this has worked out yet.
     card.classList.toggle('loading', !analysis);
@@ -1593,6 +1620,17 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       drawHead(),
       !analysis ? drawReadingView() : state.view === 'done' ? drawDoneView() : drawProposeView(),
     );
+
+    if (!focused) return;
+    const again = card.querySelector(`[data-field="${CSS.escape(focused)}"]`);
+    if (!again) return;
+    again.focus({ preventScroll: true });
+    try {
+      again.setSelectionRange(caret.start, caret.end);
+    } catch {
+      // Not a text box any more, or the text is shorter than the old caret.
+      // Focus is the part that matters; the position is a courtesy.
+    }
   }
 
   /**
