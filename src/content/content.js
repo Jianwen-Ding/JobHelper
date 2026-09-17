@@ -7,26 +7,139 @@
  */
 
 (async () => {
+  /* ------------------ Outliving the extension that started us ----------- */
+
+  /*
+   * A content script is not unloaded when its extension is reloaded, updated
+   * or disabled. It goes on running in the page, with every `chrome.runtime`
+   * call throwing "Extension context invalidated." — and it goes on running
+   * its timers, so the throw repeats every second for as long as the tab is
+   * open. That is what put a stream of uncaught errors into the console of an
+   * ordinary page that has nothing to do with jobs.
+   *
+   * There is nothing to recover: this script belongs to an extension that no
+   * longer exists, and the new one has already injected a fresh copy into
+   * every page loaded since. So the only correct behaviour is to stop —
+   * quietly, completely, and at the first sign.
+   */
+  let orphaned = false;
+  const teardown = [];
+
+  /** `chrome.runtime.id` is undefined once the context has gone. */
+  function contextGone() {
+    try {
+      return !chrome.runtime?.id;
+    } catch {
+      return true;
+    }
+  }
+
+  class Orphaned extends Error {
+    constructor() {
+      super('JobHelper was reloaded; this copy has stopped.');
+      this.name = 'Orphaned';
+      // Nothing about this is worth showing: the page is fine, and a fresh
+      // copy of the extension is already running everywhere it matters.
+      this.quiet = true;
+    }
+  }
+
+  function orphan() {
+    if (orphaned) return;
+    orphaned = true;
+    for (const stop of teardown.splice(0)) {
+      try {
+        stop();
+      } catch {
+        // Tearing down is best effort by definition — half of what we are
+        // holding belongs to an extension that has already gone.
+      }
+    }
+  }
+
+  /** Every timer this script starts, so orphaning can stop all of them. */
+  const every = (ms, run) => {
+    const id = setInterval(() => {
+      if (orphaned || contextGone()) return orphan();
+      Promise.resolve()
+        .then(run)
+        .catch((err) => quietly(err));
+    }, ms);
+    teardown.push(() => clearInterval(id));
+    return id;
+  };
+
+  /** Swallow what the user cannot act on; log the rest once, at debug. */
+  const quietly = (err) => {
+    if (err?.quiet || orphaned) return;
+    if (/context invalidated/i.test(err?.message ?? '')) return orphan();
+    console.debug('[JobHelper]', err?.message ?? err);
+  };
+
   const send = (type, payload) =>
     new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({ type, payload }, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-        } else if (!response?.ok) {
-          const failed = new Error(response?.error ?? 'No response from JobHelper');
-          // What would put this right, when the worker knows.
-          failed.jobhelper = response?.fix;
-          reject(failed);
-        } else {
-          resolve(response.data);
-        }
-      });
+      if (orphaned || contextGone()) {
+        orphan();
+        reject(new Orphaned());
+        return;
+      }
+      try {
+        chrome.runtime.sendMessage({ type, payload }, (response) => {
+          if (chrome.runtime.lastError) {
+            const said = chrome.runtime.lastError.message ?? '';
+            // Not "receiving end does not exist", which is an asleep service
+            // worker and entirely normal; only the context actually going.
+            if (/context invalidated/i.test(said)) {
+              orphan();
+              reject(new Orphaned());
+              return;
+            }
+            reject(new Error(said));
+          } else if (!response?.ok) {
+            const failed = new Error(response?.error ?? 'No response from JobHelper');
+            // What would put this right, when the worker knows.
+            failed.jobhelper = response?.fix;
+            reject(failed);
+          } else {
+            resolve(response.data);
+          }
+        });
+      } catch (err) {
+        // `sendMessage` throws synchronously once the context has gone.
+        orphan();
+        reject(new Orphaned());
+        void err;
+      }
     });
 
+  /*
+   * `chrome.runtime.getURL` throws the same way, and these are called from a
+   * two-second timer — which is how one reload turned into an error every two
+   * seconds for the life of the tab.
+   */
+  const fromExtension = (path) => {
+    if (orphaned || contextGone()) {
+      orphan();
+      return Promise.reject(new Orphaned());
+    }
+    try {
+      return import(chrome.runtime.getURL(path)).catch((err) => {
+        if (contextGone()) {
+          orphan();
+          throw new Orphaned();
+        }
+        throw err;
+      });
+    } catch {
+      orphan();
+      return Promise.reject(new Orphaned());
+    }
+  };
+
   const imports = {
-    card: () => import(chrome.runtime.getURL('src/content/card.js')),
-    autofill: () => import(chrome.runtime.getURL('src/content/autofill.js')),
-    trail: () => import(chrome.runtime.getURL('src/shared/trail.js')),
+    card: () => fromExtension('src/content/card.js'),
+    autofill: () => fromExtension('src/content/autofill.js'),
+    trail: () => fromExtension('src/shared/trail.js'),
   };
 
   /**
@@ -42,6 +155,53 @@
    * entirely: it describes nothing, so it scored nothing, and it is exactly
    * the page where the questions live.
    */
+  /*
+   * Evidence that is on its own conclusive: a JSON-LD JobPosting block, or an
+   * applicant tracking system in the url. Both are all but impossible to hit
+   * by accident, and together they are what separates "show the card now" from
+   * "wait and see" — see `show`.
+   */
+  const ATS_HOST =
+    /\b(greenhouse|lever|workday|myworkdayjobs|ashby|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite|bamboohr|rippling|breezy|recruitee|teamtailor|jazzhr|successfactors|brassring)\b/i;
+
+  function decisiveSignal() {
+    for (const tag of document.querySelectorAll('script[type="application/ld+json"]')) {
+      if (/"@type"\s*:\s*"?JobPosting/i.test(tag.textContent ?? '')) return true;
+    }
+    return ATS_HOST.test(location.href);
+  }
+
+  /**
+   * The words on the page, as a reader would see them.
+   *
+   * `document.body.textContent` includes the contents of every `<script>` tag,
+   * and a modern board ships its posting inside one: a page showing nothing but
+   * "Loading…" scored higher than most real postings, because its bundle
+   * mentioned responsibilities, qualifications and "why do you want to work
+   * here?". That is the false-positive machine — every single-page application
+   * on the web carries text like that — and it also broke the pages it was
+   * meant to help. The server strips scripts before classifying, so the two
+   * disagreed: the extension judged a page worth reading, sent the stripped
+   * version, and was told it was not a posting. That verdict then stood, and
+   * the card never appeared when the posting actually arrived.
+   *
+   * A TreeWalker skipping those parents costs one pass over the text nodes,
+   * against `innerText`, which forces a full layout for the same answer.
+   */
+  const UNREADABLE = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'CANVAS']);
+
+  function readableText(limit = 60_000) {
+    const root = document.body ?? document.documentElement;
+    if (!root) return '';
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) =>
+        UNREADABLE.has(node.parentNode?.nodeName ?? '') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+    });
+    let out = '';
+    while (out.length < limit && walker.nextNode()) out += `${walker.currentNode.nodeValue} `;
+    return out.toLowerCase().slice(0, limit);
+  }
+
   function localScore() {
     let score = 0;
     const url = location.href;
@@ -66,9 +226,7 @@
       score += 2;
     }
 
-    // `textContent`, not `innerText`: the latter forces a full layout to work
-    // out what is visible, which is a lot to pay for a keyword count.
-    const text = (document.body?.textContent ?? '').toLowerCase().slice(0, 60_000);
+    const text = readableText();
 
     const described = [
       'apply now', 'job description', 'responsibilities', 'qualifications',
@@ -471,17 +629,40 @@
     ]);
     if (!current()) return;
 
+    /*
+     * Whether to put the card up now or wait for the verdict.
+     *
+     * Showing it immediately is right when the page is certainly a posting: the
+     * analysis takes seconds, and a card that says what it is doing beats a
+     * page that sits there. It is wrong on everything else, because the local
+     * score is deliberately generous — and a generous guess painted before the
+     * server disagrees is a card that appears on an ordinary page and vanishes
+     * a second later. Which is what people saw: a flicker in the corner of a
+     * forum thread, with no way to tell what it had been.
+     *
+     * So the early card is for the two signals that are conclusive on their
+     * own, and for `force`, where the user pressed the button and is owed an
+     * immediate answer. Everything else waits — the wait is the analysis, and
+     * nothing is lost by not announcing a guess during it.
+     */
+    const showNow = force || viaFrame || decisiveSignal();
+
     // What the page asks for decides what the card offers. Asking the user
     // "does this need a cover letter?" is asking them to read the form on the
     // extension's behalf, when the form is right there to be read.
-    cardHandle = createCard({
-      analysis: null,
-      resumes: [],
-      settings,
-      questions: [],
-      needsCoverLetter: wantsCoverLetter(),
-      onAction,
-    });
+    const putUpCard = () => {
+      if (cardHandle) return cardHandle;
+      cardHandle = createCard({
+        analysis: null,
+        resumes: [],
+        settings,
+        questions: [],
+        needsCoverLetter: wantsCoverLetter(),
+        onAction,
+      });
+      return cardHandle;
+    };
+    if (showNow) putUpCard();
 
     /*
      * The automatic pass is always the deterministic one. Tag matching takes
@@ -490,12 +671,26 @@
      * guess they did not ask for. "Let the AI tailor it" is a button.
      */
     let found;
+    // What the page was worth when it was read, not when the answer came back.
+    // A board that serves a shell and fetches the posting fills in during the
+    // analysis, so the two are different numbers — and recording the later one
+    // told the tick below that a page far richer than the one actually judged
+    // had already been ruled out. The card then never appeared at all.
+    const judgedScore = localScore();
     try {
       const payload = await applicationPayload();
       if (!current()) return;
       found = await send('analyze', { ...payload, useAi: false });
     } catch (err) {
-      if (current()) cardHandle?.setStatus(err.message, err.jobhelper ?? null);
+      /*
+       * A server that is down is worth saying on a page that is certainly a
+       * posting — that is the case where the user is waiting for this tool. On
+       * a page we were only guessing about, it is not: putting an error in the
+       * corner of a page that has nothing to do with jobs is the flicker again,
+       * only louder.
+       */
+      if (current() && cardHandle) cardHandle.setStatus(err.message, err.jobhelper ?? null);
+      else quietly(err);
       return;
     }
     if (!current()) return;
@@ -504,8 +699,16 @@
     if (!analysis.isJobPosting && !force) {
       removeCard();
       cardHandle = null;
+      /*
+       * Judged, and it stays judged until the url changes. Without this the
+       * rescore tick below — which fires on any DOM change, and a busy page
+       * makes those constantly — sent the whole page to be analysed again every
+       * second, each round ending in the same answer.
+       */
+      ruledOut = { url: location.href, score: judgedScore };
       return;
     }
+    putUpCard();
     cardHandle?.update(analysis);
 
     /*
@@ -642,12 +845,18 @@
       // be able to write its work over this application's.
       send('saveWork', { work, page: pageIdentity() }).catch(() => undefined);
     };
-    setInterval(save, 2000);
+    every(2000, save);
     // A navigation is exactly when this matters, and exactly when an interval
     // is least likely to have just run.
-    window.addEventListener('pagehide', save);
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') save();
+    const onHide = () => void save().catch(quietly);
+    window.addEventListener('pagehide', onHide);
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') onHide();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    teardown.push(() => {
+      window.removeEventListener('pagehide', onHide);
+      document.removeEventListener('visibilitychange', onVisibility);
     });
   }
 
@@ -810,22 +1019,37 @@
     pageChanged = true;
   });
   watcher.observe(document.documentElement, { childList: true, subtree: true });
+  teardown.push(() => watcher.disconnect());
+
+  /**
+   * A url the server has already said is not a posting, and how much the page
+   * was worth at the time.
+   *
+   * The score matters: Workday, Ashby and the rest serve an empty shell and
+   * fetch the posting afterwards, so the first look is at a loading spinner
+   * and the verdict on it is right. Remembering only the url meant that
+   * verdict stood for the life of the page and the card never appeared. What
+   * is worth a second look is a page that has gained something since.
+   */
+  let ruledOut = null;
+
+  /** True while a look at this page is still running; see the tick below. */
+  let looking = false;
 
   let lastUrl = location.href;
-  setInterval(() => {
+  every(1000, () => {
     if (location.href !== lastUrl) {
       lastUrl = location.href;
       // Before the await, not after: the pass still running belongs to the url
       // that just went away, and it must stop being able to write to the card
       // from this instant rather than from whenever the import resolves.
       supersede();
-      (async () => {
+      return (async () => {
         const { removeCard } = await imports.card();
         removeCard();
         cardHandle = null;
-        show().catch(() => {});
+        await show().catch(quietly);
       })();
-      return;
     }
 
     if (Date.now() - loadedAt > RESCORE_WINDOW_MS) {
@@ -834,18 +1058,40 @@
     }
     if (cardHandle || !pageChanged) return;
     pageChanged = false;
+    if (ruledOut?.url === location.href && localScore() <= ruledOut.score) return;
+
+    /*
+     * One look at a time.
+     *
+     * Every look calls `supersede()`, which is what stops a pass belonging to a
+     * page you have left from writing to the card. On a board that rewrites its
+     * DOM constantly that turned into starvation: a look began each second,
+     * cancelled the one before it, and none ever reached the end — so on the
+     * boards that serve a shell and fetch the posting afterwards, the card
+     * arrived late or never. It is the reading that is slow, and restarting it
+     * every second is what made it slower.
+     */
+    if (looking) return;
 
     // Scored here rather than inside `show`, so that a page rewriting itself
     // every second does not send a message every second to be told no.
     if (lastSettings && localScore() < lastSettings.minScore) return;
-    show().catch(() => undefined);
-  }, 1000);
+    looking = true;
+    return show().finally(() => {
+      looking = false;
+    });
+  });
 
   watchForApplyClicks();
   keepWorkSafe();
 
-  show().catch((err) => {
-    // A missing server must not spam every page the user opens.
-    console.debug('[JobHelper]', err.message);
+  // And once the card exists, orphaning takes it off the page: a card whose
+  // buttons all throw is worse than no card.
+  teardown.push(() => {
+    imports.card().then(({ removeCard }) => removeCard()).catch(() => undefined);
+    cardHandle = null;
   });
+
+  // A missing server must not spam every page the user opens.
+  show().catch(quietly);
 })();

@@ -42,6 +42,8 @@ import {
   serveFixtures,
   serveSlowProxy,
   useServer,
+  requireOpenSave,
+  pointExtensionAt,
 } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -124,9 +126,8 @@ async function expectContinuity(page, label, { role, expectTrail = true } = {}) 
 async function main() {
   await loadOffered();
   try {
-    if (!(await fetch(`${SERVER}/health`)).ok) throw new Error();
+    await requireOpenSave(SERVER);
   } catch {
-    console.error(`No ResumeM-M server at ${SERVER}.`);
     process.exit(2);
   }
 
@@ -145,7 +146,8 @@ async function main() {
   });
 
   try {
-    context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+    const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+    await pointExtensionAt(context, worker, SERVER);
 
     /* ---- A path suffix on the same host: Lever's shape ---- */
     group('Apply is the same address with /apply on the end');

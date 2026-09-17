@@ -787,7 +787,20 @@ const DELETABLE_RESUME = /^(job|shot)-/;
 
 /** Remove anything a run wrote to the store, so tests leave no trace. */
 export async function cleanStore(server, companies) {
-  const { applications } = await (await fetch(`${server}/api/applications`)).json();
+  const { applications, error } = await (await fetch(`${server}/api/applications`)).json();
+  /*
+   * A server with no save open answers every route with an error and no data,
+   * and reading `.filter` off that produced "Cannot read properties of
+   * undefined" at the end of a five-minute run — a stack trace in this file,
+   * naming nothing about the server it was talking to. Say what is actually
+   * wrong, in the one sentence that fixes it.
+   */
+  if (!Array.isArray(applications)) {
+    throw new Error(
+      `${server} would not list applications${error ? `: ${error}` : ''}. ` +
+        'Open a save in ResumeM-M first, or point RMM_SERVER at one that has one.',
+    );
+  }
   for (const app of applications.filter((a) => companies.includes(a.company))) {
     await fetch(`${server}/api/applications/${encodeURIComponent(app.id)}`, { method: 'DELETE' });
     if (app.resumeId && DELETABLE_RESUME.test(app.resumeId)) {
@@ -803,4 +816,48 @@ export async function cleanStore(server, companies) {
     if (!companies.includes(draft.company)) continue;
     await fetch(`${server}/api/workspace/${encodeURIComponent(draft.id)}`, { method: 'DELETE' });
   }
+}
+
+/**
+ * A reachable server is not a usable one: with no save open it answers every
+ * route with an error and no data, and the run then failed minutes later
+ * inside a fixture, reading a field off undefined. Health says which it is, so
+ * check it here where the message can name the fix.
+ */
+export async function requireOpenSave(server) {
+  let health;
+  try {
+    const res = await fetch(`${server}/health`);
+    if (!res.ok) throw new Error(String(res.status));
+    health = await res.json();
+  } catch {
+    console.error(`No ResumeM-M server at ${server}. Start one there with \`npm run serve\`.`);
+    process.exit(2);
+  }
+  if (!health.projectOpen) {
+    console.error(
+      `${server} is running with no save open, so every request will fail. ` +
+        'Open one in Save & Files, or start a scratch server:\n' +
+        '  RMM_DATA=/tmp/rmm-test-store PORT=4788 npm run serve   (in the ResumeM-M checkout)\n' +
+        '  RMM_SERVER=http://127.0.0.1:4788 npm test               (here)',
+    );
+    process.exit(2);
+  }
+  return health;
+}
+
+/**
+ * Point the extension itself at the server this run is using.
+ *
+ * `RMM_SERVER` only ever reached the harness's own `fetch` calls; the extension
+ * went on asking its default address. So a run against a scratch server tested
+ * the extension against whatever happened to be on 4600 — and when that had no
+ * save open, the card sat on "reading the posting" until the timeout, thirty
+ * seconds later, saying nothing about which server had refused.
+ */
+export async function pointExtensionAt(context, worker, server) {
+  const setup = await context.newPage();
+  await setup.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
+  await setup.evaluate((s) => chrome.storage.sync.set({ serverUrl: s }), server);
+  await setup.close();
 }

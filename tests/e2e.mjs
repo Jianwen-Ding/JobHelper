@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BLOG, HELIOS_ROLE, NORTHWIND, STREAMLY, cleanStore, findChromium, serveFixtures } from './fixtures.mjs';
+import { BLOG, HELIOS_ROLE, NORTHWIND, STREAMLY, cleanStore, findChromium, pointExtensionAt, requireOpenSave, serveFixtures } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
@@ -36,13 +36,7 @@ function cardOf(page) {
 }
 
 async function main() {
-  try {
-    const res = await fetch(`${SERVER}/health`);
-    if (!res.ok) throw new Error(String(res.status));
-  } catch {
-    console.error(`No ResumeM-M server at ${SERVER}. Start it with \`npm run serve\` there first.`);
-    process.exit(2);
-  }
+  await requireOpenSave(SERVER);
 
   const fixtures = await serveFixtures();
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-e2e-'));
@@ -58,6 +52,7 @@ async function main() {
     let worker = context.serviceWorkers()[0];
     if (!worker) worker = await context.waitForEvent('serviceworker', { timeout: 15_000 });
     check('service worker started', Boolean(worker));
+    await pointExtensionAt(context, worker, SERVER);
 
     /* ---------------- A structured posting, end to end ---------------- */
 
@@ -205,10 +200,16 @@ async function main() {
     await card.getByRole('button', { name: 'Save application folder' }).click();
     await card.locator('.done-box').waitFor({ timeout: 90_000 });
     const done = await card.locator('.done-box').innerText();
-    check('application folder written', /Resume Streamly\.pdf/.test(done));
+    /*
+     * Named for the person, not for the posting: a portal's file picker shows
+     * the filename to whoever opens it at the other end, and
+     * "Resume Streamly.pdf" tells a recruiter at Streamly nothing they do not
+     * know. The job title is in the name only when the setting asks for it.
+     */
+    check('application folder written', /-Resume\.pdf/.test(done), done.split('\n')[1] ?? done);
     check(
       'a cover letter is bundled only once there is one',
-      /Cover Letter/i.test(done) === offered_letter > 0,
+      /-Cover-Letter\.pdf/.test(done) === offered_letter > 0,
       done.split('\n').slice(1, 3).join(' '),
     );
 
