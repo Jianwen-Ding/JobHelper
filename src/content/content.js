@@ -762,12 +762,18 @@
      */
     const carried = await send('takeWork', { page: pageIdentity() }).catch(() => ({ work: null }));
     if (!current()) return;
-    if (carried?.work) {
-      cardHandle?.restoreWork(carried.work);
-      // Say so when it came from a tab that was closed rather than from the
-      // page before: finding your letter back without being told is its own
-      // kind of unsettling.
-      if (carried.recovered) cardHandle?.setStatus('Recovered what you had written before this tab closed.');
+    /*
+     * Always called, even with nothing to restore. "There was nothing
+     * carried" is an answer the card is waiting for: until it has one it does
+     * not know whether it is starting an application or continuing one, and
+     * it holds the automatic cover-letter draft back until it does.
+     */
+    cardHandle?.restoreWork(carried?.work ?? null);
+    // Say so when it came from a tab that was closed rather than from the
+    // page before: finding your letter back without being told is its own
+    // kind of unsettling.
+    if (carried?.work && carried.recovered) {
+      cardHandle?.setStatus('Recovered what you had written before this tab closed.');
     }
     /*
      * And only now may the keeper write.

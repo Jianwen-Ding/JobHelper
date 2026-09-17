@@ -435,8 +435,18 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     };
   }
 
+  /**
+   * Called once per card, with whatever was carried to this page or with
+   * nothing. Until it has been, the card does not know whether it is starting
+   * an application or continuing one — which is the difference between
+   * drafting a letter and already having one.
+   */
   function restoreWork(work) {
-    if (!work) return;
+    carriedSettled = true;
+    if (!work) {
+      maybeAutoDraft();
+      return;
+    }
     if (work.spec) state.spec = work.spec;
     if (work.builtWith) state.builtWith = work.builtWith;
     if (work.render) state.render = work.render;
@@ -448,6 +458,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     if (work.priorLetters?.length) state.priorLetters = work.priorLetters;
     state.carriedOver = work.answersByQuestion ?? {};
     applyCarriedAnswers();
+    maybeAutoDraft();
     draw();
   }
 
@@ -962,6 +973,34 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       );
       draw();
     }
+  }
+
+  /** Whether this card has been told what, if anything, was carried to it. */
+  let carriedSettled = false;
+
+  /**
+   * Start the letter the form is asking for — but not before the card knows
+   * whether it already has one.
+   *
+   * There are two conditions that have nothing to do with each other. A
+   * resume to write the letter against, which `update` supplies; and the
+   * answer to "was a letter carried here", which arrives a moment later from
+   * `restoreWork`. Starting on the first alone meant every return to a form
+   * fired a draft whose reply was then thrown away as "offered rather than
+   * used" — free when the AI is off, and minutes of somebody's AI budget
+   * spent on a letter they had already written when it is on.
+   *
+   * Whichever of the two arrives second runs this, so it happens once, as
+   * late as it can and no later.
+   */
+  function maybeAutoDraft() {
+    if (!carriedSettled) return;
+    if (!state.letterNeeded || state.letterAutoStarted || !state.spec) return;
+    // A letter is already here. It came from the page before, or from the tab
+    // that closed; either way there is nothing to draft.
+    if (state.letter?.trim()) return;
+    state.letterAutoStarted = true;
+    draftLetter();
   }
 
   /**
@@ -1687,13 +1726,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       state.builtWith = next.aiUsed ? 'ai' : state.builtWith;
       state.render = null;
       draw();
-
-      // The posting asked for a letter, so start writing one — but only once
-      // there is a resume to write it against, and only once.
-      if (state.letterNeeded && !state.letterAutoStarted && state.spec) {
-        state.letterAutoStarted = true;
-        draftLetter();
-      }
+      maybeAutoDraft();
     },
 
     /** The pages this application spans, as the trail grows. */

@@ -165,6 +165,20 @@ async function main() {
       const card = cardOf(page);
       const text = await card.locator('textarea.tall').first().inputValue();
       check('the letter is still there, word for word', /wanted to work on this for years/i.test(text), text.slice(0, 60));
+
+      /*
+       * And no draft was started to be thrown away. The automatic draft waits
+       * to hear whether a letter was carried here; if one was, there is
+       * nothing to draft. With the AI on, a draft started here is minutes of
+       * somebody's budget spent on a letter they had already written — and
+       * the only visible trace of it is the line saying it was not used, so
+       * that line is what this looks for.
+       */
+      const body = (await card.textContent()) ?? '';
+      check(
+        'and no draft was run just to be discarded',
+        !/while this was running|offered rather than used/i.test(body),
+      );
     }
 
     group('And the toolbar window says the same thing, in sentences');
