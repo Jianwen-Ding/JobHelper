@@ -30,6 +30,8 @@ import {
   LEVER_ROLE,
   findChromium,
   serveFixtures,
+  requireOpenSave,
+  pointExtensionAt,
 } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -53,6 +55,7 @@ async function settled(page) {
 }
 
 async function main() {
+  await requireOpenSave(SERVER);
   const fixtures = await serveFixtures([LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ATS_FORM]);
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-probe3-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
@@ -64,10 +67,7 @@ async function main() {
 
   try {
     const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
-    const setup = await context.newPage();
-    await setup.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
-    await setup.evaluate((s) => chrome.storage.sync.set({ serverUrl: s }), SERVER);
-    await setup.close();
+    await pointExtensionAt(context, worker, SERVER);
 
     const page = await context.newPage();
 

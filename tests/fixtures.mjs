@@ -184,6 +184,34 @@ const FORM_BODY = `
       <button type="button">Submit Application</button>
     </form>`;
 
+/**
+ * A form asking something no stored profile can answer.
+ *
+ * A country dropdown that does not list the country you live in. Autofill
+ * knows the field and has the answer, tries, finds no option that matches,
+ * and correctly leaves it alone — which is a required field still empty, and
+ * has to be said in a way that does not read as finished.
+ *
+ * Its own fixture rather than a line added to `FORM_BODY`, which half the
+ * harnesses here count the fields of.
+ */
+const FORM_WITH_UNANSWERABLE = `
+    <form>
+      <label for="fn">First Name</label><input id="fn" name="first_name">
+      <label for="ln">Last Name</label><input id="ln" name="last_name">
+      <label for="em">Email</label><input id="em" name="email" type="email">
+      <label for="rs">Resume</label><input id="rs" name="resume" type="file">
+      <label for="cl">Cover Letter</label><textarea id="cl" name="cover_letter"></textarea>
+      <label for="ctry">Country</label>
+      <select id="ctry" name="address_country" required>
+        <option value="">Select One</option>
+        <option>Canada</option>
+        <option>Mexico</option>
+      </select>
+      <label for="q1">Why do you want to work here?</label><textarea id="q1" name="why_here"></textarea>
+      <button type="button">Submit Application</button>
+    </form>`;
+
 const page = (title, heading, body, extra = '') => `<!doctype html>
 <html><head><title>${title}</title><style>${CHROME}</style></head>
 <body><div class="hdr"><h1>${heading}</h1></div><div class="wrap">${body}</div>${extra}</body></html>`;
@@ -274,6 +302,13 @@ export const ATS_FORM = {
   name: 'ats-form',
   path: '/gh/acme/jobs/9910',
   html: page('Apply — Acme', 'Acme', FORM_BODY),
+};
+
+/** The same form, plus one question nothing stored can answer. */
+export const ATS_FORM_UNANSWERABLE = {
+  name: 'ats-form-unanswerable',
+  path: '/gh/acme/jobs/9911',
+  html: page('Apply — Acme', 'Acme', FORM_WITH_UNANSWERABLE),
 };
 
 /** An Apply button that opens the form in a new tab, as plenty do. */
@@ -656,15 +691,248 @@ export const CYGNUS_ROLE_B = {
   ),
 };
 
+
+/* ------------------------------------------------------------------ *
+ * Pages that must stay quiet                                          *
+ * ------------------------------------------------------------------ *
+ *
+ * The local score is deliberately generous — the cost of offering on a page
+ * that turns out not to be a job is a card that gets dismissed, and the cost
+ * of staying quiet on one that is, is the whole tool not being there. But
+ * generous is not the same as indiscriminate, and these are the shapes that
+ * actually turn up in a browsing session: prose about careers, a shop, a
+ * sign-in wall, a documentation page full of the word "requirements", and —
+ * the one that used to defeat it entirely — a single-page application whose
+ * bundle mentions everything a posting does while the page itself shows a
+ * spinner.
+ */
+
+/** A news piece *about* hiring. Every posting word, no posting. */
+export const CAREERS_ARTICLE = {
+  name: 'careers-article',
+  path: '/news/tech-hiring-slowdown',
+  html: `<!doctype html><html><head><title>The tech hiring slowdown, explained</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>The tech hiring slowdown, explained</h1>
+<p>Companies that spent 2021 posting every open role they could think of are now quietly
+closing requisitions. We spoke to nine recruiters about what changed.</p>
+<h2>What the job descriptions stopped saying</h2>
+<p>"Minimum qualifications" sections grew by a third. Postings that once said
+"we are looking for" now say "you will need". The phrase "years of experience"
+appeared in 71% of the listings we sampled, up from 44%.</p>
+<h2>Responsibilities, and who carries them</h2>
+<p>Hiring managers describe reviewing four hundred applications for one opening.
+Benefits pages are unchanged; compensation bands are not.</p>
+<p>An equal opportunity employer statement is now standard boilerplate.</p>
+</div></body></html>`,
+};
+
+/** A shop. Full of buttons, none of them Apply. */
+export const SHOP = {
+  name: 'shop',
+  path: '/store/desk-lamp',
+  html: `<!doctype html><html><head><title>Anglepoise desk lamp — Lumen</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Anglepoise desk lamp</h1>
+<p>Full-time companion for your desk. Requirements: one power socket.</p>
+<label for="qty">Quantity</label><input id="qty" name="quantity" value="1">
+<button type="button">Add to cart</button><button type="button">Checkout</button>
+</div></body></html>`,
+};
+
+/** A sign-in wall. Two fields, one of them an email, and nothing behind it. */
+export const SIGN_IN = {
+  name: 'sign-in',
+  path: '/account/login',
+  html: `<!doctype html><html><head><title>Sign in</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Sign in to continue</h1>
+<form><label for="e">Email</label><input id="e" name="email" type="email">
+<label for="p">Password</label><input id="p" name="password" type="password">
+<button type="submit">Sign in</button></form>
+<p>Sign in to continue to your account.</p></div></body></html>`,
+};
+
+/** Documentation. "Requirements" and "qualifications" mean something else here. */
+export const DOCS = {
+  name: 'docs',
+  path: '/docs/install/requirements',
+  html: `<!doctype html><html><head><title>Requirements — Install</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Requirements</h1>
+<p>Before you begin, check the minimum qualifications of your environment.</p>
+<h2>Responsibilities of the operator</h2>
+<p>Full-time processes need at least 2GB. Benefits of the new scheduler include
+lower latency. Compensation for the extra memory is fewer restarts.</p>
+</div></body></html>`,
+};
+
+/**
+ * The one that used to defeat it: an application shell that shows a spinner
+ * and never becomes a posting, whose bundle happens to mention every phrase a
+ * posting uses. `document.body.textContent` includes script contents, so this
+ * scored higher than most real postings while displaying nothing at all.
+ */
+export const SPA_SHELL = {
+  name: 'spa-shell',
+  path: '/app/dashboard',
+  html: `<!doctype html><html><head><title>Dashboard</title><style>${CHROME}</style></head>
+<body><div class="wrap"><div id="root">Loading…</div></div>
+<script>
+  // A bundle, as bundles are.
+  const STRINGS = {
+    apply: 'Apply now',
+    jd: 'Job description',
+    resp: 'Responsibilities',
+    quals: 'Minimum qualifications',
+    prefs: 'Preferred qualifications',
+    eoe: 'Equal opportunity employer',
+    submit: 'Submit application',
+    years: 'years of experience',
+    about: 'About the role',
+    looking: 'we are looking for',
+    reqs: 'Requirements',
+    benefits: 'Benefits',
+    comp: 'Compensation',
+    band: 'salary range',
+    ft: 'full-time',
+    cover: 'cover letter',
+    upload: 'upload your resume',
+    auth: 'work authorization',
+    why: 'why do you want',
+  };
+  setTimeout(() => { document.getElementById('root').textContent = 'Nothing to show.'; }, 300);
+</script>
+</body></html>`,
+};
+
+/** A forum thread that talks about applying without being a posting. */
+export const FORUM_THREAD = {
+  name: 'forum-thread',
+  path: '/r/cscareers/comments/how-many-applications',
+  html: `<!doctype html><html><head><title>How many applications did it take you?</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>How many applications did it take you?</h1>
+<p>I have sent about 200. Most were full-time new grad roles. A few asked for a
+cover letter, most wanted years of experience I do not have.</p>
+<p>Replies: 43</p>
+<label for="c">Add a comment</label><textarea id="c" name="comment"></textarea>
+<button type="button">Reply</button></div></body></html>`,
+};
+
+
+/*
+ * The near-misses that actually turn up, now that vocabulary alone is not
+ * enough. Each of these clears one of the new tests and should still be
+ * refused: a job board's own feed is on a board host, a confirmation page is
+ * on an applicant tracking system, a salary page names a role, and a careers
+ * landing page has somewhere to apply without having anything to apply to.
+ */
+
+/** A job board, showing you everything except a job. */
+export const BOARD_FEED = {
+  name: 'board-feed',
+  path: '/linkedin/feed',
+  html: `<!doctype html><html><head><title>Feed | LinkedIn</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Your feed</h1>
+<p>Dana commented on a post about hiring. Sam is celebrating 3 years at Acme.</p>
+<p>Someone you follow shared: "we are looking for people who care about compensation
+transparency and benefits — full-time, remote".</p>
+<label for="post">Start a post</label><textarea id="post"></textarea>
+<button type="button">Post</button></div></body></html>`,
+};
+
+/** The page after you press submit. Nothing left to do here. */
+export const THANK_YOU = {
+  name: 'thank-you',
+  path: '/greenhouse/acme/jobs/9001/confirmation',
+  html: `<!doctype html><html><head><title>Application submitted — Acme</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Thanks — your application is in</h1>
+<p>We have received your application for the Platform Engineer role. Our team
+reviews every application; you will hear from us either way.</p>
+<p>Acme is an equal opportunity employer.</p>
+<p><a href="/greenhouse/acme/jobs">See other openings</a></p>
+</div></body></html>`,
+};
+
+/** A salary page. Names a role, describes the work, cannot be applied to. */
+export const SALARY_PAGE = {
+  name: 'salary-page',
+  path: '/salaries/software-engineer-at-acme',
+  html: `<!doctype html><html><head><title>Software Engineer salaries at Acme</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Software Engineer salaries</h1>
+<p>The median total compensation for a Software Engineer at Acme is reported by
+412 people. Salary range by level, with years of experience:</p>
+<ul><li>L3 — 0-2 years of experience</li><li>L4 — 3-5 years of experience</li></ul>
+<h2>Benefits</h2><p>Reported benefits include full-time remote work.</p>
+<p>Data is self-reported and not verified by Acme.</p>
+</div></body></html>`,
+};
+
+/** A careers landing page with nothing open on it. */
+export const CAREERS_LANDING = {
+  name: 'careers-landing',
+  path: '/vireo/careers',
+  html: `<!doctype html><html><head><title>Careers at Vireo</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Careers at Vireo</h1>
+<p>We are not hiring for any roles right now. We review every application we
+receive and keep them on file, so it is still worth writing to us.</p>
+<p><a href="/vireo/apply/general">Send a general application</a></p>
+<h2>Benefits</h2><p>Full-time staff get the usual; compensation is reviewed yearly.</p>
+</div></body></html>`,
+};
+
+export const QUIET = [CAREERS_ARTICLE, SHOP, SIGN_IN, DOCS, SPA_SHELL, FORUM_THREAD, BLOG,
+  BOARD_FEED, THANK_YOU, SALARY_PAGE, CAREERS_LANDING];
+
+/**
+ * A posting on a page the size of a real one.
+ *
+ * Every other fixture here is a few kilobytes, which is right for asking
+ * whether something works and useless for asking how long it takes. A posting
+ * on a modern board arrives inside a megabyte or two of application shell: a
+ * bundle inlined into the markup, a few thousand nodes of chrome, and the
+ * description somewhere in the middle. Reading that page is the most expensive
+ * thing the extension does, and it does it on every page you visit.
+ */
+const FILLER_NODE = (i) =>
+  `<div class="row" data-idx="${i}"><span class="k">field_${i}</span><span class="v">value ${i} ` +
+  `lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod</span></div>`;
+
+const BUNDLE = `
+  window.__APP_STATE__ = ${JSON.stringify({
+    strings: Array.from({ length: 400 }, (_, i) => `string_${i}_lorem_ipsum_dolor_sit_amet_${'x'.repeat(40)}`),
+    routes: Array.from({ length: 200 }, (_, i) => ({ path: `/r/${i}`, chunk: `chunk-${i}-${'y'.repeat(60)}` })),
+  })};
+  function boot(){ /* ${'z'.repeat(20000)} */ }
+`;
+
+export const HEAVY_POSTING = {
+  name: 'heavy-posting',
+  path: '/lumen/careers/staff-platform-engineer',
+  company: 'Lumen',
+  title: 'Staff Platform Engineer',
+  html: `<!doctype html>
+<html><head><title>Staff Platform Engineer at Lumen</title><style>${CHROME}</style>
+<script>${BUNDLE}</script></head>
+<body>
+  <div class="hdr"><h1>Lumen</h1></div>
+  <nav>${Array.from({ length: 300 }, (_, i) => `<a href="/n/${i}">Nav item ${i}</a>`).join('')}</nav>
+  <div class="wrap">
+    <h1>Staff Platform Engineer</h1>
+    ${ROLE_BODY}
+    <p><a href="/lumen/apply/staff-platform-engineer">Apply now</a></p>
+  </div>
+  <aside>${Array.from({ length: 2500 }, (_, i) => FILLER_NODE(i)).join('')}</aside>
+  <script>${BUNDLE}</script>
+</body></html>`,
+};
+
+
 export const NAVIGATION = [
   CYGNUS_BOARD, CYGNUS_ROLE_A, CYGNUS_ROLE_B, FRAMED_ROLE, FRAMED_FORM, ADVERT_FRAME, ADVERT_CONTENT,
   EMBEDDED_BOARD, EMBEDDED_BOARD_FRAME, BLOG_WITH_FORM, BLOG_ENQUIRY_FRAME, LATE_RENDER,
   CROWDED_PAGE, CROWDED_PAGE_FORM,
   LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY,
-  OWN_SITE, ATS_FORM, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, SPA_BOARD,
+  OWN_SITE, ATS_FORM, ATS_FORM_UNANSWERABLE, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, SPA_BOARD,
 ];
 
-export const ALL = [STREAMLY, NORTHWIND, BLOG, HELIOS_ROLE, HELIOS_FORM, ...NAVIGATION];
+export const ALL = [STREAMLY, NORTHWIND, HELIOS_ROLE, HELIOS_FORM, HEAVY_POSTING, ...QUIET, ...NAVIGATION];
 
 /**
  * Serve every fixture from one origin. Returns the base url and a `urlFor`
@@ -787,7 +1055,20 @@ const DELETABLE_RESUME = /^(job|shot)-/;
 
 /** Remove anything a run wrote to the store, so tests leave no trace. */
 export async function cleanStore(server, companies) {
-  const { applications } = await (await fetch(`${server}/api/applications`)).json();
+  const { applications, error } = await (await fetch(`${server}/api/applications`)).json();
+  /*
+   * A server with no save open answers every route with an error and no data,
+   * and reading `.filter` off that produced "Cannot read properties of
+   * undefined" at the end of a five-minute run — a stack trace in this file,
+   * naming nothing about the server it was talking to. Say what is actually
+   * wrong, in the one sentence that fixes it.
+   */
+  if (!Array.isArray(applications)) {
+    throw new Error(
+      `${server} would not list applications${error ? `: ${error}` : ''}. ` +
+        'Open a save in ResumeM-M first, or point RMM_SERVER at one that has one.',
+    );
+  }
   for (const app of applications.filter((a) => companies.includes(a.company))) {
     await fetch(`${server}/api/applications/${encodeURIComponent(app.id)}`, { method: 'DELETE' });
     if (app.resumeId && DELETABLE_RESUME.test(app.resumeId)) {
@@ -803,4 +1084,48 @@ export async function cleanStore(server, companies) {
     if (!companies.includes(draft.company)) continue;
     await fetch(`${server}/api/workspace/${encodeURIComponent(draft.id)}`, { method: 'DELETE' });
   }
+}
+
+/**
+ * A reachable server is not a usable one: with no save open it answers every
+ * route with an error and no data, and the run then failed minutes later
+ * inside a fixture, reading a field off undefined. Health says which it is, so
+ * check it here where the message can name the fix.
+ */
+export async function requireOpenSave(server) {
+  let health;
+  try {
+    const res = await fetch(`${server}/health`);
+    if (!res.ok) throw new Error(String(res.status));
+    health = await res.json();
+  } catch {
+    console.error(`No ResumeM-M server at ${server}. Start one there with \`npm run serve\`.`);
+    process.exit(2);
+  }
+  if (!health.projectOpen) {
+    console.error(
+      `${server} is running with no save open, so every request will fail. ` +
+        'Open one in Save & Files, or start a scratch server:\n' +
+        '  RMM_DATA=/tmp/rmm-test-store PORT=4788 npm run serve   (in the ResumeM-M checkout)\n' +
+        '  RMM_SERVER=http://127.0.0.1:4788 npm test               (here)',
+    );
+    process.exit(2);
+  }
+  return health;
+}
+
+/**
+ * Point the extension itself at the server this run is using.
+ *
+ * `RMM_SERVER` only ever reached the harness's own `fetch` calls; the extension
+ * went on asking its default address. So a run against a scratch server tested
+ * the extension against whatever happened to be on 4600 — and when that had no
+ * save open, the card sat on "reading the posting" until the timeout, thirty
+ * seconds later, saying nothing about which server had refused.
+ */
+export async function pointExtensionAt(context, worker, server) {
+  const setup = await context.newPage();
+  await setup.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
+  await setup.evaluate((s) => chrome.storage.sync.set({ serverUrl: s }), server);
+  await setup.close();
 }

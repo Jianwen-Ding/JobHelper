@@ -34,6 +34,64 @@ async function tellContentScript(type) {
 }
 
 /**
+ * Say what application this tab is in the middle of.
+ *
+ * The toolbar badge is a number, and a number on its own invites exactly one
+ * question. This is the answer to it: whose application, how much of it has
+ * been read, and whether anything you typed is being held. Then the two things
+ * you would want having asked — go back to where you were writing, or say this
+ * is finished and stop carrying it.
+ */
+async function showOpenApplication() {
+  const panel = $('openApplication');
+  const tab = await activeTab();
+  if (!tab?.id) return;
+
+  let trail;
+  try {
+    trail = await send('getTrail', { tabId: tab.id });
+  } catch {
+    // The worker is not answering. That is the connection line's news to
+    // break, not this panel's, and a wrong panel is worse than none.
+    panel.hidden = true;
+    return;
+  }
+
+  const pages = trail?.pages ?? [];
+  if (pages.length === 0) {
+    panel.hidden = true;
+    return;
+  }
+
+  const named = pages.map((p) => p.company).filter(Boolean).pop();
+  $('openWho').textContent = named ?? pages.map((p) => p.title).filter(Boolean).pop() ?? 'An application';
+
+  const n = pages.length;
+  const what = [`Written from ${n} ${n === 1 ? 'page' : 'pages'} of this application`];
+  // The reassurance is the point of the whole panel, so it is said in the
+  // words someone worried would use — and only about what is actually there.
+  if (trail.holdingWriting) what.push('your writing is being held, and comes back when you return');
+  else if (trail.holdingResume) what.push('the tailored resume is ready and waiting');
+  $('openWhat').textContent = `${what.join(' — ')}.`;
+  panel.hidden = false;
+
+  // Back to the last page of it, which is where you were when you wandered
+  // off. Same tab, because the application is the tab.
+  const last = pages[pages.length - 1];
+  $('backToApplication').onclick = async () => {
+    if (!last?.url) return;
+    await chrome.tabs.update(tab.id, { url: last.url });
+    window.close();
+  };
+
+  $('dropApplication').onclick = async () => {
+    await send('clearTrail', { tabId: tab.id });
+    panel.hidden = true;
+    setStatus('Forgotten. The next job page starts a new application.', 'ok');
+  };
+}
+
+/**
  * Say whether an AI is actually in play, and offer the thing that changes it.
  *
  * Two switches have to agree: this extension's `useAi`, and `ai.enabled` on the
@@ -138,6 +196,7 @@ async function boot() {
     showAiState();
   };
   showAiState();
+  showOpenApplication().catch(() => undefined);
 
   $('baseResumeId').onchange = () => save({ baseResumeId: $('baseResumeId').value });
 

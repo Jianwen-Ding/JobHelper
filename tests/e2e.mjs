@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BLOG, HELIOS_ROLE, NORTHWIND, STREAMLY, cleanStore, findChromium, serveFixtures } from './fixtures.mjs';
+import { BLOG, HELIOS_ROLE, NORTHWIND, STREAMLY, cleanStore, findChromium, pointExtensionAt, requireOpenSave, serveFixtures } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
@@ -36,13 +36,7 @@ function cardOf(page) {
 }
 
 async function main() {
-  try {
-    const res = await fetch(`${SERVER}/health`);
-    if (!res.ok) throw new Error(String(res.status));
-  } catch {
-    console.error(`No ResumeM-M server at ${SERVER}. Start it with \`npm run serve\` there first.`);
-    process.exit(2);
-  }
+  await requireOpenSave(SERVER);
 
   const fixtures = await serveFixtures();
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-e2e-'));
@@ -58,6 +52,7 @@ async function main() {
     let worker = context.serviceWorkers()[0];
     if (!worker) worker = await context.waitForEvent('serviceworker', { timeout: 15_000 });
     check('service worker started', Boolean(worker));
+    await pointExtensionAt(context, worker, SERVER);
 
     /* ---------------- A structured posting, end to end ---------------- */
 
@@ -89,8 +84,14 @@ async function main() {
     const aiText = await aiChip.innerText();
     check('the card says whether AI is on', /^AI (on|off)/.test(aiText), aiText);
 
-    const modes = card.locator('button.mode');
+    // Two ways to tailor, and a third way out: going to write the sentence
+    // yourself in the builder, which is neither.
+    const modes = card.locator('button.mode:not(.ghost)');
     check('both ways to tailor are offered', (await modes.count()) === 2);
+    check(
+      'and a way through to the builder, for what neither can do',
+      (await card.locator('button.mode.ghost').count()) === 1,
+    );
     check(
       'the AI option is disabled while AI is off, and says why',
       (await modes.nth(1).isDisabled()) && Boolean(await modes.nth(1).getAttribute('title')),
@@ -182,6 +183,29 @@ async function main() {
     if (offered.email) check('the email went in as an address', filled.email.includes('@'), filled.email);
 
     /*
+     * And the report is coloured by what it says.
+     *
+     * "Filled 6 fields, 3 fields still for you to answer" was drawn in the
+     * colour that means finished — the same mistake as a folder announcing
+     * itself complete without the letter in it. The popup had always got this
+     * right and the card had not, which is how it went unnoticed: the two
+     * describe the same run in the same words and disagreed only in colour.
+     */
+    const note = card.locator('.ok-note').first();
+    if (await note.count()) {
+      const said = (await note.innerText()).trim();
+      const leftWork = /still for you to answer/.test(said);
+      const looksUrgent = await note.evaluate((n) => n.classList.contains('warn'));
+      check(
+        leftWork
+          ? 'a report naming empty fields is not drawn as success'
+          : 'a report with nothing left is drawn as success',
+        leftWork === looksUrgent,
+        said,
+      );
+    }
+
+    /*
      * The cover letter, with the AI off.
      *
      * Nothing is adopted on the user's behalf. This used to drop the closest
@@ -195,6 +219,28 @@ async function main() {
     if (offered_letter > 0) {
       const before = await card.locator('textarea.tall').first().inputValue();
       check('a previous letter is offered rather than adopted', before.trim() === '', before.slice(0, 40));
+
+      /*
+       * Filing it in exactly that state — the default one, with the AI off
+       * and the offer untaken — used to produce a folder with no letter in
+       * it, under the words "Saved. These files are named and ready to
+       * attach" and "Everything you are sending, in one place". Both true of
+       * the files listed and both wrong about the application: the form asks
+       * for a letter, and you would have attached the two files it named and
+       * sent it without one.
+       */
+      await card.getByRole('button', { name: 'Save application folder' }).click();
+      await card.locator('.done-box').waitFor({ timeout: 90_000 });
+      const body = await card.innerText();
+      check('a folder missing the letter the form wants says so', /Not in this folder: a cover letter/.test(body));
+      check(
+        'and does not claim to hold everything',
+        !/Everything you are sending/.test(body),
+        body.split('\n').find((l) => /in one place/.test(l)) ?? '',
+      );
+      await card.getByRole('button', { name: 'Back' }).click();
+      await page.waitForTimeout(300);
+
       await offer.click();
       await page.waitForTimeout(300);
       const after = await card.locator('textarea.tall').first().inputValue();
@@ -205,10 +251,16 @@ async function main() {
     await card.getByRole('button', { name: 'Save application folder' }).click();
     await card.locator('.done-box').waitFor({ timeout: 90_000 });
     const done = await card.locator('.done-box').innerText();
-    check('application folder written', /Resume Streamly\.pdf/.test(done));
+    /*
+     * Named for the person, not for the posting: a portal's file picker shows
+     * the filename to whoever opens it at the other end, and
+     * "Resume Streamly.pdf" tells a recruiter at Streamly nothing they do not
+     * know. The job title is in the name only when the setting asks for it.
+     */
+    check('application folder written', /-Resume\.pdf/.test(done), done.split('\n')[1] ?? done);
     check(
       'a cover letter is bundled only once there is one',
-      /Cover Letter/i.test(done) === offered_letter > 0,
+      /-Cover-Letter\.pdf/.test(done) === offered_letter > 0,
       done.split('\n').slice(1, 3).join(' '),
     );
 

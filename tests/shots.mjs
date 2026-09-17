@@ -13,7 +13,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BLOG, NORTHWIND, STREAMLY, cleanStore, findChromium, serveFixtures } from './fixtures.mjs';
+import {
+  BLOG,
+  NORTHWIND,
+  STREAMLY,
+  cleanStore,
+  findChromium,
+  pointExtensionAt,
+  serveFixtures,
+} from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
@@ -87,6 +95,14 @@ async function main() {
   try {
     const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
     const extensionId = new URL(worker.url()).host;
+    /*
+     * The extension has its own idea of where the store is, and it is not
+     * this harness's `SERVER`. Without this, every card photographed here was
+     * talking to whatever happens to be on the default port — which on a
+     * developer's machine is their real save, and in a run like this one was
+     * a server with no save open, so every card came out as the same error.
+     */
+    await pointExtensionAt(context, worker, SERVER);
 
     /* ================= ResumeM-M editor ================= */
     console.log('\nResumeM-M editor:');
@@ -124,24 +140,44 @@ async function main() {
     await shot(gui, 'rmm-06-modal-add-entry');
     await gui.locator('#modal-cancel').click();
 
-    await gui.locator('#editor button:has-text("+ phrasing")').first().click();
-    await gui.waitForTimeout(400);
+    /*
+     * Everything a bullet can do apart from stepping between its wordings is
+     * folded behind its "…", so it has to be opened before any of it can be
+     * clicked. Only the stepper is out in the open, deliberately — it is the
+     * one thing you do to a line often enough that a menu would be in the way.
+     *
+     * Open the disclosure that holds the button, not merely the first one on
+     * the page: only one can be open at a time, so opening the wrong one is
+     * the same as opening none. Some of these buttons are not in a disclosure
+     * at all, hence the fallback.
+     */
+    const clickFolded = async (label) => {
+      const owner = gui.locator(`#editor .bullet-disclosure:has(button:has-text("${label}"))`).first();
+      if (await owner.count()) {
+        const more = owner.locator('.bullet-more').first();
+        if ((await more.getAttribute('aria-expanded')) !== 'true') await more.click();
+        await gui.waitForTimeout(250);
+        await owner.locator(`button:has-text("${label}")`).first().click();
+      } else {
+        await gui.locator(`#editor button:has-text("${label}")`).first().click();
+      }
+      await gui.waitForTimeout(400);
+    };
+
+    await clickFolded('+ phrasing');
     await shot(gui, 'rmm-07-modal-add-phrasing');
     await gui.locator('#modal-cancel').click();
 
-    await gui.locator('#editor button:has-text("+ alternate")').first().click();
-    await gui.waitForTimeout(400);
+    await clickFolded('+ alternate');
     await shot(gui, 'rmm-08-modal-add-alternate');
     await gui.locator('#modal-cancel').click();
 
-    await gui.locator('#editor button:has-text("+ Add bullet")').first().click();
-    await gui.waitForTimeout(400);
+    await clickFolded('+ Add bullet');
     await shot(gui, 'rmm-09-modal-add-bullet');
     await gui.locator('#modal-cancel').click();
 
     // Delete confirmation.
-    await gui.locator('#editor button:has-text("Remove")').first().click();
-    await gui.waitForTimeout(400);
+    await clickFolded('Remove');
     await shot(gui, 'rmm-10-modal-confirm-delete');
     await gui.locator('#modal-cancel').click();
 
@@ -160,10 +196,13 @@ async function main() {
     await gui.waitForTimeout(300);
 
     console.log('  (other tabs)');
-    await gui.locator('#tabs button[data-tab="master"]').click();
-    await gui.waitForTimeout(400);
-    await shot(gui, 'rmm-12-master-empty');
-    await gui.locator('#btn-master').click();
+    /*
+     * Everything-you-have is a choice in the resume picker now, not a tab of
+     * its own — it is a way of looking at the same editor, so it belongs
+     * beside the resumes rather than beside the Workspace. This still asked
+     * for the tab, and had done since the move.
+     */
+    await gui.locator('#resume-select').selectOption('__master__');
     await gui.waitForTimeout(6000);
     await shot(gui, 'rmm-13-master');
 
@@ -184,7 +223,7 @@ async function main() {
       method: 'POST',
       body: JSON.stringify({ company: 'Example Co.', role: 'Backend Intern', status: 'rejected', resumeId: 'intern' }),
     });
-    await gui.locator('#tabs button[data-tab="build"]').click();
+    await gui.locator('#tabs button[data-tab="resumes"]').click();
     await gui.locator('#tabs button[data-tab="applications"]').click();
     await gui.waitForTimeout(900);
     await shot(gui, 'rmm-15-applications');
@@ -196,6 +235,18 @@ async function main() {
     await gui.locator('#tabs button[data-tab="voice"]').click();
     await gui.waitForTimeout(500);
     await shot(gui, 'rmm-17-voice');
+
+    // The notes box holding something the store does not. It is the one field
+    // here with no autosave, so it is the one that has to say so. Behind a
+    // disclosure, because notes are secondary to the samples above them.
+    await gui.locator('#voice-extras summary').click();
+    await gui.waitForTimeout(250);
+    await gui.locator('#voice').fill('Never say "synergy".');
+    await gui.locator('#voice').dispatchEvent('input');
+    await gui.waitForTimeout(200);
+    await shot(gui, 'rmm-17b-voice-unsaved');
+    await gui.locator('#btn-save-voice').click();
+    await gui.waitForTimeout(500);
 
     // Adding files to the corpus: the drop zone, and the proposals it makes
     // before anything is saved.
@@ -228,7 +279,7 @@ async function main() {
         questions: [{ question: 'Why do you want to work here?', required: true }],
       }),
     });
-    await gui.locator('#tabs button[data-tab="build"]').click();
+    await gui.locator('#tabs button[data-tab="resumes"]').click();
     await gui.locator('#tabs button[data-tab="workspace"]').click();
     await gui.waitForTimeout(1500);
     await shot(gui, 'rmm-21-workspace-draft');
@@ -256,18 +307,77 @@ async function main() {
     }
 
     // Pinning: a base in the picker, and a wording marked as the default.
-    await gui.locator('#tabs button[data-tab="build"]').click();
+    await gui.locator('#tabs button[data-tab="resumes"]').click();
     await gui.waitForTimeout(1200);
+    // Back to a real resume first. The picker was left on everything-you-have
+    // further up, and pinning a base is meaningless there — the button is
+    // correctly hidden, so this waited thirty seconds for it.
+    await gui.locator('#resume-select').selectOption('newgrad');
+    await gui.waitForTimeout(3500);
     await gui.locator('#btn-base').click();
     await gui.waitForTimeout(1200);
     await shot(gui, 'rmm-24-pinned-base');
     await gui.locator('#btn-base').click();
     await gui.waitForTimeout(900);
 
+    /*
+     * The screens that tell you something you will act on.
+     *
+     * These were never photographed, and that family is where the worst bug
+     * so far lived: a panel announcing "everything you are sending, in one
+     * place" while leaving out the cover letter the form asked for. Anything
+     * that makes a claim about your application is worth looking at.
+     */
+    console.log('  (the screens that make claims)');
+
+    // Save & Files: a whole tab that had never been captured.
+    await gui.locator('#tabs button[data-tab="save"]').click();
+    await gui.waitForTimeout(1500);
+    await shot(gui, 'rmm-26-save-and-files');
+
+    // What was actually sent for one application, which is the record you
+    // would check before a phone screen.
+    await gui.locator('#tabs button[data-tab="applications"]').click();
+    await gui.waitForTimeout(1200);
+    const firstApp = gui.locator('#apps-wrap tbody tr').first();
+    if (await firstApp.count()) {
+      await firstApp.click();
+      await gui.waitForTimeout(1500);
+      await shot(gui, 'rmm-27-application-detail');
+    }
+
+    // A stored letter, and a stored answer, as they are kept for reuse.
+    await gui.locator('#tabs button[data-tab="letters"]').click();
+    await gui.waitForTimeout(1200);
+    const firstLetter = gui.locator('#letters .card-row, #letters .letter-row, #letters li').first();
+    if (await firstLetter.count()) {
+      await firstLetter.click();
+      await gui.waitForTimeout(900);
+      await shot(gui, 'rmm-28-letter-open');
+    }
+
+    // Saving a variation: the modal that decides what a new resume is called.
+    await gui.locator('#tabs button[data-tab="resumes"]').click();
+    await gui.waitForTimeout(1200);
+    await gui.locator('#btn-save-as').click();
+    await gui.waitForTimeout(600);
+    await shot(gui, 'rmm-29-modal-save-as');
+    await gui.locator('#modal-cancel').click();
+
+    /*
+     * A resume that cannot compile.
+     *
+     * Not by writing a broken one — a made-up field in a resume's layout
+     * compiles perfectly happily, which is its own small reassurance. The way
+     * it actually happens is an engine named in the settings that is not
+     * installed, and that is driven in `tests/fit.test.ts`, which can assert
+     * the sentence rather than photograph it.
+     */
+
     // Narrow viewport: the editor is used beside a browser window as often as
     // full screen.
     await gui.setViewportSize({ width: 900, height: 940 });
-    await gui.locator('#tabs button[data-tab="build"]').click();
+    await gui.locator('#tabs button[data-tab="resumes"]').click();
     await gui.waitForTimeout(1200);
     await shot(gui, 'rmm-25-narrow');
     await gui.setViewportSize({ width: 1440, height: 940 });
@@ -323,6 +433,23 @@ async function main() {
     await page2.locator('#jobhelper-card-host').waitFor({ state: 'attached', timeout: 20_000 });
     await page2.waitForTimeout(900);
     await shot(card2, 'ext-09-second-posting');
+
+    // Coming back from the builder: the proposal on screen was matched before
+    // whatever you just went and added existed, and the card says so.
+    const openedEditor = context.waitForEvent('page');
+    await card2.getByRole('button', { name: 'Edit in ResumeM-M' }).click();
+    const sentTo = await openedEditor;
+    await page2.bringToFront();
+    await page2
+      .waitForFunction(
+        () => /been editing the store/i.test(document.querySelector('#jobhelper-card-host')?.shadowRoot?.textContent ?? ''),
+        undefined,
+        { timeout: 10_000, polling: 100 },
+      )
+      .catch(() => undefined);
+    await page2.waitForTimeout(300);
+    await shot(card2, 'ext-09b-came-back-from-builder');
+    await sentTo.close();
     await page2.close();
 
     /* ================= Popup ================= */
@@ -333,12 +460,33 @@ async function main() {
     await popup.waitForTimeout(2200);
     await shot(popup, 'ext-10-popup');
 
+    /*
+     * The same window while an application is open, which is the state
+     * people arrive in: they clicked the number on the toolbar to find out
+     * what it means, and this is the answer.
+     */
+    const applying = await context.newPage();
+    await applying.goto(fixtures.urlFor(STREAMLY), { waitUntil: 'domcontentloaded' });
+    await applying.locator('#jobhelper-card-host .card .role').waitFor({ timeout: 20_000 });
+    await applying.waitForTimeout(1200);
+    // Wander off, so the card is gone and the window is the only thing left
+    // saying the application is still in hand.
+    await applying.goto(fixtures.urlFor(BLOG), { waitUntil: 'domcontentloaded' });
+    await applying.waitForTimeout(1500);
+    // A real popup is not a tab and reports on the page beneath it; opened as
+    // one it would report on itself, so put the page in front and boot again.
+    await applying.bringToFront();
+    await popup.evaluate(() => location.reload());
+    await popup.waitForTimeout(2200);
+    await shot(popup, 'ext-10b-popup-application-open');
+    await applying.close();
+
     // The state everyone hits first: the server is not running.
     await popup.evaluate(() => chrome.storage.sync.set({ serverUrl: 'http://127.0.0.1:4699' }));
     await popup.reload();
     await popup.waitForTimeout(2500);
     await shot(popup, 'ext-11-popup-disconnected');
-    await popup.evaluate(() => chrome.storage.sync.set({ serverUrl: 'http://127.0.0.1:4600' }));
+    await popup.evaluate((url) => chrome.storage.sync.set({ serverUrl: url }), SERVER);
     await popup.close();
 
     /* ================= Clean up ================= */

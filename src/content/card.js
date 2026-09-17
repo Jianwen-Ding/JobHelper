@@ -100,6 +100,17 @@ button.mode.on {
   background: var(--accent-soft); font-weight: 500;
 }
 button.mode.on:hover { background: #d2e3fc; }
+/* A third way out, offered quietly beside the two that rebuild the resume. */
+button.mode.ghost { flex: 0 0 auto; color: #5f6368; }
+
+/*
+ * Pressing one of these costs minutes and, depending on the command, money;
+ * the button beside it is instant. The mark goes on the ones that start AI
+ * work and on no others.
+ */
+button.ai-action { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+.ai-mark { color: #1a73e8; font-size: 0.9em; line-height: 1; }
+button.ai-action:disabled .ai-mark { color: inherit; opacity: 0.5; }
 
 button {
   font: inherit; font-weight: 500; padding: 7px 16px;
@@ -135,6 +146,22 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .row.gap { margin-top: 10px; }
 .grow { flex: 1 1 auto; }
 .hint { color: var(--muted); font-size: 12px; line-height: 1.55; }
+/* A hint you are meant to act on, rather than one that just explains. */
+.hint.warn {
+  color: var(--warn); background: var(--warn-bg); border: 1px solid var(--warn-line);
+  border-radius: 7px; padding: 7px 9px; margin-top: 8px;
+}
+/*
+ * Underlined standing still, not only on hover. Set in the same amber as the
+ * sentence around it, a bold word is not an affordance — the one thing here
+ * you can press read as emphasis, in a line whose whole purpose is to be
+ * pressed.
+ */
+.hint.warn button.link {
+  color: var(--warn); font-weight: 500; padding: 0;
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.hint.warn button.link:hover { background: transparent; text-decoration-thickness: 2px; }
 .faint { color: var(--faint); font-size: 11px; }
 
 .job { margin-bottom: 12px; }
@@ -249,6 +276,12 @@ select {
 }
 .err-actions { margin-top: 8px; }
 .ok-note { color: var(--good); font-size: 12px; margin-top: 9px; }
+/*
+ * The same sentence when it is not good news. "Filled 6 fields, 3 fields
+ * still for you to answer" is a result to act on, and it was drawn in the
+ * colour that means finished.
+ */
+.ok-note.warn { color: var(--warn); }
 
 .done-box {
   background: var(--good-bg); border: 1px solid var(--good-line); border-radius: 8px; padding: 11px;
@@ -258,6 +291,17 @@ select {
   border-radius: 5px; padding: 7px 8px; margin-top: 8px; word-break: break-all; color: var(--ink-soft);
 }
 .done-box .file { font-size: 12px; color: var(--ink-soft); margin-top: 5px; }
+
+/*
+ * What the form asked for and the folder does not have. Above the green box
+ * rather than inside it: the green is the "this went well" colour, and the
+ * whole point of this line is that it did not, entirely.
+ */
+.done-missing {
+  background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn);
+  border-radius: 8px; padding: 10px 11px; margin-bottom: 9px; font-size: 12px; line-height: 1.55;
+}
+.done-missing strong { display: block; margin-bottom: 3px; }
 
 .spinner {
   width: 14px; height: 14px; border: 2px solid var(--accent-soft); border-top-color: var(--accent);
@@ -379,6 +423,10 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     ai: null,
     /** Answers typed on an earlier page of this same application. */
     carriedOver: null,
+    /** "Edit in ResumeM-M" was pressed, so coming back here means something. */
+    wentToEditor: false,
+    /** And you did come back, so what is on screen may be out of date. */
+    editedElsewhere: false,
     /** How the proposal on screen was produced: 'tags' or 'ai'. */
     builtWith: analysis?.aiUsed ? 'ai' : 'tags',
     /** Which compiled PDF is on screen, and the canvases already drawn. */
@@ -424,8 +472,18 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     };
   }
 
+  /**
+   * Called once per card, with whatever was carried to this page or with
+   * nothing. Until it has been, the card does not know whether it is starting
+   * an application or continuing one — which is the difference between
+   * drafting a letter and already having one.
+   */
   function restoreWork(work) {
-    if (!work) return;
+    carriedSettled = true;
+    if (!work) {
+      maybeAutoDraft();
+      return;
+    }
     if (work.spec) state.spec = work.spec;
     if (work.builtWith) state.builtWith = work.builtWith;
     if (work.render) state.render = work.render;
@@ -437,18 +495,31 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     if (work.priorLetters?.length) state.priorLetters = work.priorLetters;
     state.carriedOver = work.answersByQuestion ?? {};
     applyCarriedAnswers();
+    maybeAutoDraft();
     draw();
   }
 
-  /** An answer typed on an earlier page, against the same question here. */
+  /**
+   * An answer typed on an earlier page, against the same question here.
+   *
+   * The guard used to refuse when the answer bank had matched the question too
+   * — `!q.answer?.trim()` — which is precisely backwards. A question the bank
+   * knows is one you have answered before, so it is exactly the question you
+   * rewrote for this company on page one; and page two would show the bank's
+   * older text instead, while the trail panel said "Carried over: your
+   * answers". Worse, nothing was written into `state.answers`, so the bundle
+   * left the question out altogether.
+   *
+   * What you typed for this application beats what the bank remembers from
+   * another one. It is only not applied over something typed here, on this
+   * page, which is newer still.
+   */
   function applyCarriedAnswers() {
     const carried = state.carriedOver;
     if (!carried) return;
     for (const q of state.questions ?? []) {
       const had = carried[q.question];
-      if (had && !state.answers[q.question]?.trim() && !q.answer?.trim()) {
-        state.answers[q.question] = had;
-      }
+      if (had && !state.answers[q.question]?.trim()) state.answers[q.question] = had;
     }
   }
 
@@ -466,12 +537,31 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     });
 
   const h = (tag, props = {}, kids = []) => {
-    const n = Object.assign(document.createElement(tag), props);
+    // `dataset` is a read-only DOMStringMap, so assigning it does nothing at
+    // all — silently, which is the worst way for it to not work.
+    const { dataset, ...rest } = props;
+    const n = Object.assign(document.createElement(tag), rest);
+    for (const [k, v] of Object.entries(dataset ?? {})) n.dataset[k] = v;
     for (const k of [].concat(kids)) if (k != null && k !== false) n.append(k);
     return n;
   };
 
   const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+  /**
+   * Mark a button as one that runs the AI.
+   *
+   * Pressing one costs minutes and, depending on the command, money; the
+   * button beside it is instant. Nothing distinguished them, so the only way
+   * to find out which you had pressed was to wait and see. The mark goes on
+   * the ones that start AI work and on no others — saying "not AI" on every
+   * other button would be a great deal of noise to make a point about four.
+   */
+  const aiButton = (props, label) =>
+    h('button', { ...props, className: `${props.className ?? ''} ai-action`.trim() }, [
+      h('span', { className: 'ai-mark', textContent: '✦' }),
+      h('span', { textContent: label }),
+    ]);
 
   /**
    * Render the store's inline markup as real nodes. The stored text carries
@@ -608,10 +698,27 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       state.busy ? h('span', { className: 'spinner' }) : null,
       h('span', { className: 'spacer' }),
       drawAiChip(),
+      /*
+       * Named as well as drawn. A button whose only content is "‹" has "‹"
+       * for an accessible name, so a screen reader announces a punctuation
+       * mark and the title attribute never gets a look in.
+       */
       state.view !== 'propose'
-        ? h('button', { className: 'icon', title: 'Back', textContent: '‹', onclick: () => { state.view = 'propose'; draw(); } })
+        ? h('button', {
+            className: 'icon',
+            title: 'Back',
+            ariaLabel: 'Back',
+            textContent: '‹',
+            onclick: () => { state.view = 'propose'; draw(); },
+          })
         : null,
-      h('button', { className: 'icon', title: 'Not now', textContent: '×', onclick: () => removeCard() }),
+      h('button', {
+        className: 'icon',
+        title: 'Not now',
+        ariaLabel: 'Close JobHelper on this page',
+        textContent: '×',
+        onclick: () => removeCard(),
+      }),
     ]);
   }
 
@@ -922,6 +1029,34 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     }
   }
 
+  /** Whether this card has been told what, if anything, was carried to it. */
+  let carriedSettled = false;
+
+  /**
+   * Start the letter the form is asking for — but not before the card knows
+   * whether it already has one.
+   *
+   * There are two conditions that have nothing to do with each other. A
+   * resume to write the letter against, which `update` supplies; and the
+   * answer to "was a letter carried here", which arrives a moment later from
+   * `restoreWork`. Starting on the first alone meant every return to a form
+   * fired a draft whose reply was then thrown away as "offered rather than
+   * used" — free when the AI is off, and minutes of somebody's AI budget
+   * spent on a letter they had already written when it is on.
+   *
+   * Whichever of the two arrives second runs this, so it happens once, as
+   * late as it can and no later.
+   */
+  function maybeAutoDraft() {
+    if (!carriedSettled) return;
+    if (!state.letterNeeded || state.letterAutoStarted || !state.spec) return;
+    // A letter is already here. It came from the page before, or from the tab
+    // that closed; either way there is nothing to draft.
+    if (state.letter?.trim()) return;
+    state.letterAutoStarted = true;
+    draftLetter();
+  }
+
   /**
    * Draft the letter. Three honest outcomes, in descending order of help, and
    * all of them leave you with an editor rather than a dead end: a fresh
@@ -929,10 +1064,64 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * the reference for next time.
    */
   function draftLetter() {
+    /*
+     * What is in the box when the draft was asked for.
+     *
+     * A draft can start itself — the form page wants a letter, so one is
+     * requested the moment the card goes up — and `restoreWork` puts the
+     * letter you wrote on the *previous* page into the box a few lines later.
+     * The reply then landed on top of it unconditionally. With the AI off,
+     * which is the default, that reply is an empty body, so the box went
+     * blank and the card explained that the AI is off: it read as an ordinary
+     * empty state rather than as the deletion it was.
+     *
+     * Nothing the AI produces is worth a paragraph somebody wrote.
+     */
+    const mine = state.letter ?? '';
+
     return act('coverLetter', { spec: state.spec }, (r) => {
       if (!r) return;
       state.priorLetters = r.priorLetters ?? [];
       state.letterStarted = true;
+
+      /*
+       * What is in the box *now*, which is the only thing that can be
+       * overwritten — and not the same question as what was in it when this
+       * was asked for.
+       *
+       * Guarding on `mine` alone was a fix for the wrong moment. This draft
+       * starts itself from `update`, and `update` runs a few lines before
+       * `restoreWork`: on landing back on a form you had already written on,
+       * the request goes out with the box empty, the carried letter arrives
+       * while it is in flight, and the reply — an empty body, because the AI
+       * is off by default — then fell through every guard and blanked it.
+       *
+       * Not a near-miss: the emptied card was saved back over the stored
+       * letter two seconds later, so the writing was gone from disk as well
+       * as from the screen, and returning to the page again did not bring it
+       * back. Wandering off to read something mid-application and coming
+       * back was enough to lose a cover letter.
+       */
+      const now = state.letter ?? '';
+
+      if (now.trim() && now !== mine) {
+        /*
+         * It arrived while the draft was out — typed by hand, or carried in
+         * from the page before. Either way it is somebody's writing and this
+         * reply is not.
+         */
+        state.letterSource = mine.trim()
+          ? 'You were writing while this ran, so what you wrote was kept.'
+          : 'What you had written was put back while this was running, so the draft was not used.';
+        return;
+      }
+      if (now.trim()) {
+        state.letterOffer = r.body?.trim() ? { title: 'the draft', body: r.body } : state.priorLetters[0] ?? null;
+        state.letterSource = state.letterOffer
+          ? 'You had already started one, so this is offered rather than used.'
+          : 'You had already started one, so nothing was replaced.';
+        return;
+      }
 
       if (r.body?.trim()) {
         state.letter = r.body;
@@ -1027,9 +1216,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
               }
             },
           }),
-          h('button', {
+          aiButton({
             className: state.builtWith === 'ai' ? 'mode on' : 'mode',
-            textContent: rebuildLabel('ai', 'Let the AI tailor it', 'Reading the posting…'),
             title: state.ai?.active
               ? 'The AI reads this posting and decides which phrasings and bullets to use.'
               : state.ai?.state === 'server-off'
@@ -1047,8 +1235,58 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 state.rebuilding = null;
               }
             },
+          }, rebuildLabel('ai', 'Let the AI tailor it', 'Reading the posting…')),
+          /*
+           * Neither matching nor AI: going and writing the sentence yourself.
+           *
+           * Looking at a posting is exactly when you notice the store has no
+           * bullet for the thing it is asking about — and the answer to that is
+           * two minutes in the builder, not another pass over the phrasings
+           * that already exist. Without a way through, it meant finding the
+           * editor by hand, finding the resume in it, and losing the card.
+           */
+          h('button', {
+            className: 'mode ghost',
+            textContent: 'Edit in ResumeM-M',
+            title: 'Open this resume in the builder to add a bullet or another phrasing',
+            disabled: Boolean(state.busy) || !state.spec?.id,
+            onclick: () => {
+              // Remembered so that coming back here means something. See
+              // `cameBack`.
+              state.wentToEditor = true;
+              onAction('openTab', { url: `/#resumes/${encodeURIComponent(state.spec.id)}` });
+            },
           }),
         ]),
+        /*
+         * You went to the builder because this posting wanted a bullet the
+         * store did not have. Coming back to a card still showing the match
+         * made from the store as it was is the half of that journey nobody
+         * built: the new wording exists, and the proposal in front of you
+         * cannot contain it.
+         *
+         * Offered, not done. A rebuild throws away every alternate you
+         * switched by hand on this card, and it is not worth guessing that
+         * the trip to the editor mattered more than those did.
+         */
+        state.editedElsewhere
+          ? h('div', { className: 'hint warn' }, [
+              h('span', { textContent: 'You have been editing the store. ' }),
+              h('button', {
+                className: 'link',
+                textContent: 'Match it again',
+                disabled: Boolean(state.busy),
+                onclick: () => {
+                  state.editedElsewhere = false;
+                  return act('rebuild', { useAi: false }, () => {
+                    state.builtWith = 'match';
+                    state.render = null;
+                  });
+                },
+              }),
+              h('span', { textContent: ' to use anything you added.' }),
+            ])
+          : null,
         state.builtWith
           ? h('div', {
               className: 'hint',
@@ -1128,6 +1366,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 : null,
               h('textarea', {
                 className: 'tall',
+                dataset: { field: 'letter' },
                 value: state.letter ?? '',
                 placeholder: 'Write the letter here. Saving it makes it the reference for the next one.',
                 oninput: (e) => (state.letter = e.target.value),
@@ -1160,11 +1399,14 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 textContent: 'Drafted from the letters you have already written for similar roles.',
               }),
               h('div', { className: 'row gap' }, [
-                h('button', {
-                  textContent: busyLabel('coverLetter', 'Draft a letter', 'Drafting…'),
-                  disabled: Boolean(state.busy),
-                  onclick: draftLetter,
-                }),
+                aiButton(
+                  {
+                    title: 'Write a first draft from this posting and the letters you have written before. Runs your AI command.',
+                    disabled: Boolean(state.busy),
+                    onclick: draftLetter,
+                  },
+                  busyLabel('coverLetter', 'Draft a letter', 'Drafting…'),
+                ),
               ]),
             ]),
       ]),
@@ -1230,9 +1472,24 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
               ),
           }),
         ]),
+        /*
+         * Why the button beside this is grey.
+         *
+         * The reason was a `title` on the button itself, and a tooltip on a
+         * disabled button is the one place a tooltip cannot be relied on —
+         * browsers differ on whether they show it at all, and it needs
+         * hovering a control that looks like it does nothing. On a posting
+         * the base resume already suits, "Save application folder" sits
+         * there greyed with no visible reason, which reads as broken rather
+         * than as one step out of order.
+         */
+        !state.render && !state.busy
+          ? h('div', { className: 'hint', textContent: 'Build the resume first — then the files can be named and filed.' })
+          : null,
         state.autofillReport
           ? h('div', {
-              className: 'ok-note',
+              // Green only when nothing is left. See `.ok-note.warn`.
+              className: `ok-note${autofillLeftWork(state.autofillReport) ? ' warn' : ''}`,
               textContent: describeAutofill(state.autofillReport),
             })
           : null,
@@ -1274,6 +1531,11 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     return box;
   }
 
+  /** True when the report names fields the form still needs from you. */
+  function autofillLeftWork(r) {
+    return r.skipped.some((skip) => skip.reason !== 'already filled');
+  }
+
   function describeAutofill(r) {
     const parts = [`Filled ${plural(r.filled.length, 'field')}`];
 
@@ -1293,10 +1555,29 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     return `${parts.join(', ')}.`;
   }
 
+  /**
+   * Every answer the card is showing, which is not the same as every answer
+   * the user typed.
+   *
+   * Text matched out of the answer bank lives on the question (`q.answer`) and
+   * is only read at render time, with `state.answers[q] ?? q.answer`. Walking
+   * `state.answers` alone therefore shipped nothing for a question that was
+   * answered from the bank and left as it stood — which is the whole point of
+   * having a bank. Those questions were simply absent from the uploadable
+   * Answers file and from the permanent record of what was sent, while every
+   * box on screen was full.
+   */
   function collectedAnswers() {
-    return Object.entries(state.answers)
-      .filter(([, v]) => v?.trim())
-      .map(([question, answer]) => ({ question, answer }));
+    const out = new Map();
+    for (const q of state.questions ?? []) {
+      const answer = state.answers[q.question] ?? q.answer ?? '';
+      if (answer.trim()) out.set(q.question, answer);
+    }
+    // Questions typed in by hand are in `state.answers` and on no page.
+    for (const [question, answer] of Object.entries(state.answers)) {
+      if (answer?.trim()) out.set(question, answer);
+    }
+    return [...out].map(([question, answer]) => ({ question, answer }));
   }
 
   /**
@@ -1323,9 +1604,22 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           title: 'Hand the posting, the resume, and the questions to the editor, where there is room to write',
           disabled: Boolean(state.busy),
           onclick: () =>
-            act('openWorkspace', { spec: state.spec, questions: state.questions }, (r) => {
-              if (r) state.workspaceOpened = true;
-            }),
+            act(
+              'openWorkspace',
+              {
+                spec: state.spec,
+                // What is on screen, not what the page asked: an answer typed
+                // here and left behind is an answer written twice.
+                questions: (state.questions ?? []).map((q) => ({
+                  ...q,
+                  answer: state.answers[q.question] ?? q.answer ?? '',
+                })),
+                coverLetter: state.letter ?? '',
+              },
+              (r) => {
+                if (r) state.workspaceOpened = true;
+              },
+            ),
         }),
         state.workspaceOpened
           ? h('span', { className: 'faint', textContent: 'Opened in the editor.' })
@@ -1345,6 +1639,9 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         h('div', { className: 'qt' }, [document.createTextNode(q.question), badge]),
         h('textarea', {
           value,
+          // Named for the question it answers, so a repaint puts the caret
+          // back in the same box even if another question arrived above it.
+          dataset: { field: `answer:${q.question}` },
           placeholder: q.answer ? '' : 'No stored answer yet — write one and it is saved for next time.',
           oninput: (e) => (state.answers[q.question] = e.target.value),
         }),
@@ -1355,30 +1652,49 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             disabled: !q.fieldId,
             onclick: () => onAction('insertAnswer', { fieldId: q.fieldId, text: state.answers[q.question] ?? value }),
           }),
-          h('button', {
-            className: 'tiny',
-            textContent: busyLabel(`answer:${q.question}`, q.answer ? 'Rewrite for this role' : 'Draft an answer', 'Writing…'),
-            disabled: Boolean(state.busy),
-            onclick: () =>
-              act(`answer:${q.question}`, { question: q.question, force: true }, (r) => {
-                /*
-                 * `executed` first, not `output` first.
-                 *
-                 * When the AI is off the server used to hand back the prompt it
-                 * would have sent, in `output` — always truthy, so the second
-                 * branch was dead and the answer box filled with nine kilobytes
-                 * starting "You are helping with a resume and job-search
-                 * assistant", carrying every cover letter the user had saved
-                 * and their whole writing corpus. One more click put that in
-                 * the employer's form. The server no longer sends it here, and
-                 * this no longer reaches for it either.
-                 */
-                if (r?.executed && r.output) state.answers[q.question] = r.output;
-                else if (r && !r.executed) {
-                  state.error = 'The AI is off, so a new answer cannot be drafted. Anything you type here is saved for next time.';
-                }
-              }),
-          }),
+          aiButton(
+            {
+              className: 'tiny',
+              disabled: Boolean(state.busy),
+              onclick: () => {
+                // What is in the box now, so the reply can tell its own work
+                // from anything written during the minutes it takes.
+                const typedBefore = state.answers[q.question] ?? value;
+                return act(`answer:${q.question}`, { question: q.question, force: true }, (r) => {
+                  /*
+                   * `executed` first, not `output` first.
+                   *
+                   * When the AI is off the server used to hand back the prompt
+                   * it would have sent, in `output` — always truthy, so the
+                   * second branch was dead and the answer box filled with nine
+                   * kilobytes starting "You are helping with a resume and
+                   * job-search assistant", carrying every cover letter the user
+                   * had saved and their whole writing corpus. One more click
+                   * put that in the employer's form. The server no longer sends
+                   * it here, and this no longer reaches for it either.
+                   */
+                  if (r?.executed && r.output) {
+                    /*
+                     * And not over what was typed while it ran. The box stays
+                     * enabled on purpose — the obvious thing to do with a wait
+                     * of minutes is write the answer yourself — and the reply
+                     * used to replace it outright, with no merge, no
+                     * confirmation and no copy kept.
+                     */
+                    if ((state.answers[q.question] ?? '') !== typedBefore) {
+                      state.answerNote = 'You were writing while that ran, so what you wrote was kept.';
+                    } else {
+                      state.answers[q.question] = r.output;
+                    }
+                  } else if (r && !r.executed) {
+                    state.error =
+                      'The AI is off, so a new answer cannot be drafted. Anything you type here is saved for next time.';
+                  }
+                });
+              },
+            },
+            busyLabel(`answer:${q.question}`, q.answer ? 'Rewrite for this role' : 'Draft an answer', 'Writing…'),
+          ),
           h('button', {
             className: 'link',
             textContent: 'Save for next time',
@@ -1400,7 +1716,38 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
 
   function drawDoneView() {
     const b = state.bundle;
+
+    /*
+     * What the form asked for and this folder does not contain.
+     *
+     * The panel says "Saved. These files are named and ready to attach" and
+     * "Everything you are sending, in one place", and it said both while
+     * quietly leaving out the cover letter. That is the ordinary path, not a
+     * corner: the AI is off by default, so the letter drafts to nothing, the
+     * previous letter is deliberately offered rather than used, and an empty
+     * letter writes no file. You reach a screen that looks like completion,
+     * attach what it lists, and send an application missing the document the
+     * form asked for.
+     *
+     * A list of files cannot say what is absent, so it is said here.
+     */
+    const missing = [];
+    if (state.letterNeeded && !state.letter?.trim()) missing.push('a cover letter');
+    const unanswered = (state.questions ?? []).filter(
+      (q) => q.required !== false && !(state.answers[q.question] ?? q.answer ?? '').trim(),
+    ).length;
+    if (unanswered > 0) missing.push(`${unanswered} ${unanswered === 1 ? 'answer' : 'answers'}`);
+
     return h('div', { className: 'body' }, [
+      missing.length > 0
+        ? h('div', { className: 'done-missing' }, [
+            h('strong', { textContent: `Not in this folder: ${missing.join(' and ')}.` }),
+            h('div', {
+              textContent:
+                'The form asks for it. Write it above and save again, or attach it yourself — nothing here will add it for you.',
+            }),
+          ])
+        : null,
       h('div', { className: 'done-box' }, [
         h('div', { textContent: 'Saved. These files are named and ready to attach:' }),
         ...b.files.map((f) => h('div', { className: 'file', textContent: f })),
@@ -1418,10 +1765,14 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             textContent: 'Copy folder path',
             onclick: () => navigator.clipboard?.writeText(b.currentDir ?? b.dir),
           }),
+          // Not claimed when it is not true — see `missing` above.
           b.currentDir
             ? h('span', {
                 className: 'faint',
-                textContent: 'Everything you are sending, in one place. The full record is kept separately.',
+                textContent:
+                  missing.length > 0
+                    ? 'These are in one place. The full record is kept separately.'
+                    : 'Everything you are sending, in one place. The full record is kept separately.',
               })
             : null,
         ]),
@@ -1443,13 +1794,37 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             }),
         }),
       ]),
-      state.autofillReport ? h('div', { className: 'ok-note', textContent: describeAutofill(state.autofillReport) }) : null,
+      state.autofillReport
+        ? h('div', {
+            className: `ok-note${autofillLeftWork(state.autofillReport) ? ' warn' : ''}`,
+            textContent: describeAutofill(state.autofillReport),
+          })
+        : null,
       h('div', { className: 'hint', style: 'margin-top:8px' }, 'Tracked in ResumeM-M with a copy of exactly what was sent.'),
       state.error ? drawError() : null,
     ]);
   }
 
+  /**
+   * Repaint, keeping the caret where it was.
+   *
+   * `draw` rebuilds the whole subtree, and it runs on every action starting
+   * and finishing, on the AI status arriving, on the resume list arriving, on
+   * the trail, on the questions. The keystrokes already typed survive, because
+   * each one fires `oninput` — but the box being typed into is destroyed, so
+   * focus goes to `null` and the *next* keystroke goes nowhere until the user
+   * notices and clicks back. The realistic trigger is the AI pass that starts
+   * itself and lands minutes later, mid-sentence.
+   *
+   * Boxes are identified by what they are for rather than by position, so the
+   * caret comes back to the same answer even if a question has appeared above
+   * it in the meantime.
+   */
   function draw() {
+    const active = root.activeElement;
+    const focused = active && active !== card ? active.dataset?.field : null;
+    const caret = focused ? { start: active.selectionStart, end: active.selectionEnd } : null;
+
     // Provisional until the analysis lands: what is on screen is the page's
     // own title, not anything this has worked out yet.
     card.classList.toggle('loading', !analysis);
@@ -1457,6 +1832,17 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       drawHead(),
       !analysis ? drawReadingView() : state.view === 'done' ? drawDoneView() : drawProposeView(),
     );
+
+    if (!focused) return;
+    const again = card.querySelector(`[data-field="${CSS.escape(focused)}"]`);
+    if (!again) return;
+    again.focus({ preventScroll: true });
+    try {
+      again.setSelectionRange(caret.start, caret.end);
+    } catch {
+      // Not a text box any more, or the text is shorter than the old caret.
+      // Focus is the part that matters; the position is a courtesy.
+    }
   }
 
   /**
@@ -1487,13 +1873,21 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       state.builtWith = next.aiUsed ? 'ai' : state.builtWith;
       state.render = null;
       draw();
+      maybeAutoDraft();
+    },
 
-      // The posting asked for a letter, so start writing one — but only once
-      // there is a resume to write it against, and only once.
-      if (state.letterNeeded && !state.letterAutoStarted && state.spec) {
-        state.letterAutoStarted = true;
-        draftLetter();
-      }
+    /**
+     * This tab is in front again.
+     *
+     * Only interesting if the card is the reason it stopped being: the whole
+     * point of "Edit in ResumeM-M" is to go and add the phrasing this posting
+     * wants, and the proposal on screen was made before it existed.
+     */
+    cameBack() {
+      if (!state.wentToEditor || state.editedElsewhere) return;
+      state.wentToEditor = false;
+      state.editedElsewhere = true;
+      draw();
     },
 
     /** The pages this application spans, as the trail grows. */
