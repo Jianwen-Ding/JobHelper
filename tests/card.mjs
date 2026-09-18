@@ -204,6 +204,116 @@ async function main() {
   check('and the AI says it is reading the posting', /reading the posting/i.test(byAi.label ?? ''), JSON.stringify(byAi));
 
   /*
+   * Building what is already there, while the AI reads the posting.
+   *
+   * Compiling shared a lane with the three rebuild modes, so an AI pass —
+   * minutes of it — greyed out "Build resume" as well. The proposal on screen
+   * is complete and compilable the whole time that runs; waiting for an offer
+   * is not something anyone should have to do.
+   */
+  console.log('\nBuilding while the AI is still reading');
+
+  const duringScan = await inPage(async (createCard) => {
+    let releaseScan;
+    const scan = new Promise((r) => (releaseScan = r));
+    const calls = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+      },
+      resumes: [{ id: 'base', label: 'New grad', base: true }],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        calls.push(action);
+        if (action === 'rebuild') return scan;
+        if (action === 'render') return { pages: 1, absolutePdfUrl: 'about:blank', spec: payload.spec };
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    await new Promise((r) => setTimeout(r, 100));
+
+    const named = (re) => [...root.querySelectorAll('button')].find((b) => re.test(b.textContent));
+    named(/Let the AI tailor it/).click();
+    await new Promise((r) => setTimeout(r, 200));
+
+    const build = named(/Build resume|Recompile|Compiling/);
+    const buildable = Boolean(build) && !build.disabled;
+    if (buildable) build.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const compiled = calls.includes('render');
+
+    releaseScan({});
+    await new Promise((r) => setTimeout(r, 200));
+    return { buildable, compiled, calls };
+  });
+
+  check(
+    'the build button stays live while the AI reads the posting',
+    duringScan.buildable === true,
+    JSON.stringify(duringScan.calls),
+  );
+  check('and pressing it actually compiles', duringScan.compiled === true, JSON.stringify(duringScan.calls));
+
+  /*
+   * And the race that opens up once it can: the scan lands, swaps the
+   * proposal and clears the preview, and then the compile of the *old* one
+   * arrives. Showing that picture would mean a page, a page count and a fit
+   * badge belonging to a resume nobody chose.
+   */
+  const raced = await inPage(async (createCard) => {
+    let releaseRender;
+    const held = new Promise((r) => (releaseRender = r));
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', choices: { b: 'old' } },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action) =>
+        action === 'render' ? held : action === 'aiStatus' ? { active: true, state: 'on' } : {},
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    await new Promise((r) => setTimeout(r, 100));
+    [...root.querySelectorAll('button')].find((b) => /Build resume|Recompile/.test(b.textContent))?.click();
+    await new Promise((r) => setTimeout(r, 200));
+
+    // The scan lands with a different proposal while that compile is in flight.
+    handle.update({
+      spec: { id: 'job-acme', label: 'Acme', choices: { b: 'new' } },
+      rationale: [],
+      diff: [],
+      tailor: 'ai',
+      aiUsed: true,
+    });
+    releaseRender({ pages: 3, absolutePdfUrl: 'about:blank' });
+    await new Promise((r) => setTimeout(r, 400));
+
+    return {
+      // A preview on screen now could only be the one compiled from the spec
+      // that has since been replaced.
+      shown: Boolean(root.querySelector('canvas.pdf-page')) || /3 pages/.test(root.textContent),
+      offersBuild: Boolean(
+        [...root.querySelectorAll('button')].find((b) => /Build resume/.test(b.textContent)),
+      ),
+    };
+  });
+
+  check('a compile that lost its proposal is not shown as a picture of the new one', raced.shown === false, JSON.stringify(raced));
+  check('and the card asks to be built again instead', raced.offersBuild === true, JSON.stringify(raced));
+
+  /*
    * What the card says when the AI you asked for did not happen.
    *
    * Two ways that goes and they want different words. The model ran and came
@@ -319,7 +429,13 @@ async function main() {
       return b ? b.disabled : null;
     };
     const state = {
-      // The one that is actually running, and the others in its lane.
+      /*
+       * Building is deliberately *not* in that lane any more: the proposal on
+       * screen is compilable the whole time a scan runs, and waiting for an
+       * offer is not something anyone should have to do. Applying written
+       * feedback is, because it rewrites the same choices the pass is about
+       * to replace.
+       */
       building: named('Build resume') ?? named('Recompile'),
       applyFeedback: named('Apply feedback'),
       // Filing waits for the two things it files.
@@ -345,8 +461,13 @@ async function main() {
     JSON.stringify(whileTailoring),
   );
   check(
-    'and the other buttons in its lane wait, because they would collide',
-    whileTailoring.building === true && whileTailoring.applyFeedback === true,
+    'written feedback waits, because it rewrites what the pass is replacing',
+    whileTailoring.applyFeedback === true,
+    JSON.stringify(whileTailoring),
+  );
+  check(
+    'but the resume you already have can still be built',
+    whileTailoring.building === false,
     JSON.stringify(whileTailoring),
   );
   check(

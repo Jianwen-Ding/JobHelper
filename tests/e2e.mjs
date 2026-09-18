@@ -124,11 +124,35 @@ async function main() {
     const diffHead = await card.locator('.diff-head').innerText();
     check('the diff names what it is comparing', /New grad/.test(diffHead), diffHead.replace(/\n/g, ' '));
 
-    const firstRow = card.locator('.change').first();
-    const wasText = await firstRow.locator('del').innerText();
-    const nowText = await firstRow.locator('ins').innerText();
-    check('each change shows the sentence it replaced', wasText.length > 20, wasText.slice(0, 50));
-    check('each change shows the sentence it chose', nowText.length > 20 && nowText !== wasText, nowText.slice(0, 50));
+    /*
+     * Both halves of every row, not just the first one's.
+     *
+     * This used to read the first row and ask whether each half was longer
+     * than twenty characters — a stand-in for "a sentence", which held only
+     * while the first row happened to be a bullet. A graduation date is a
+     * perfectly good change and "Sep. 2022 – May 2026" is twenty characters
+     * exactly, so the proxy started failing on a row that was completely
+     * correct. What the check is actually for is that a row names the wording
+     * it replaced and the wording it chose, rather than a pair of ids — so
+     * that is what it asks, of all of them.
+     */
+    const rows = await Promise.all(
+      (await card.locator('.change').all()).map(async (row) => ({
+        was: await row.locator('del').innerText(),
+        now: await row.locator('ins').innerText(),
+      })),
+    );
+    const wasText = rows[0]?.was ?? '';
+    check(
+      'each change shows the wording it replaced',
+      rows.length > 0 && rows.every((r) => r.was.trim().length > 0 && !/^[a-z][a-z0-9_]*$/.test(r.was.trim())),
+      JSON.stringify(rows.map((r) => r.was.slice(0, 30))),
+    );
+    check(
+      'each change shows the wording it chose, and it is different',
+      rows.length > 0 && rows.every((r) => r.now.trim().length > 0 && r.now !== r.was),
+      JSON.stringify(rows.map((r) => r.now.slice(0, 30))),
+    );
     check('the rename to the posting is not shown as a change', !/^New grad$/m.test(wasText));
 
     /*

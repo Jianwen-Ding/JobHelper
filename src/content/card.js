@@ -694,7 +694,24 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    */
   const LANE = {
     rebuild: 'resume',
-    render: 'resume',
+    /*
+     * Compiling has its own lane, because it is the one thing on this card
+     * that works on the resume you already have.
+     *
+     * It sat in `resume` with the three rebuild modes, so an AI pass — a model
+     * reading a posting, minutes of it — greyed out "Build resume" as well.
+     * That is the wrong way round: the proposal on screen is complete and
+     * compilable the whole time the scan runs, and wanting the file while the
+     * AI thinks about a better one is the ordinary case, not a mistake. The
+     * scan is an offer, and nobody should have to wait for an offer.
+     *
+     * What the shared lane was really protecting is `renderedFrom` below: a
+     * compile of one proposal must not be shown as a picture of another.
+     * Guarding that directly is both narrower and stricter — it also catches
+     * the rebuild landing *during* a compile, which sharing a lane never did,
+     * because by then the compile had already started.
+     */
+    render: 'compile',
     refine: 'resume',
     setBase: 'resume',
     coverLetter: 'letter',
@@ -1114,9 +1131,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     // The compiled PDF is now of a resume nobody has: recompile before the
     // preview or the fit badge claim to be about this one.
     state.render = null;
-    await act('render', { spec: state.spec }, (r) => {
-      state.render = r;
-    });
+    await compile();
   }
 
   /**
@@ -1140,6 +1155,29 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * preview is already on screen; its own lane means it blocks nothing while
    * it runs, and a failure is reported without taking the build with it.
    */
+  /**
+   * Compile the proposal on screen, and only keep the result if it is still
+   * the proposal on screen when it comes back.
+   *
+   * Compiling runs in its own lane, so it can be pressed while an AI pass is
+   * reading the posting. That makes a race real that the shared lane used to
+   * hide: the scan lands, `update` swaps in a different proposal and clears
+   * the preview, and then the compile of the *old* one arrives and puts a
+   * picture back. The card would then show a page, a page count and a fit
+   * badge belonging to a resume nobody had chosen.
+   *
+   * `state.spec` is replaced wholesale whenever it changes, so its identity is
+   * the whole test. A compile that loses the race is dropped rather than
+   * retried: the thing that replaced it clears the preview and the next
+   * compile is a button press away.
+   */
+  async function compile() {
+    const of = state.spec;
+    return act('render', { spec: of }, (r) => {
+      if (state.spec === of) state.render = r;
+    });
+  }
+
   function stageFiles() {
     if (!state.spec) return;
     act('stage', { spec: state.spec, coverLetter: state.letter, answers: collectedAnswers() }, (staged) => {
@@ -1250,7 +1288,9 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 className: 'link undo-one',
                 textContent: 'Keep the original',
                 title: 'Put this one line back the way your base resume has it',
-                disabled: busyIn('resume'),
+                // Also `compile`: undoing recompiles, and two compiles at once
+                // would leave whichever finished second describing the card.
+                disabled: busyIn('resume', 'compile'),
                 onclick: () => undoOne(change),
               })
             : null,
@@ -1845,9 +1885,11 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           h('button', {
             className: 'primary',
             textContent: busyLabel('render', state.render ? 'Recompile' : 'Build resume', 'Compiling…'),
-            disabled: busyIn('resume'),
+            // `compile`, not `resume`: the proposal on screen can be built
+            // while the AI is off reading the posting about a different one.
+            disabled: busyIn('compile'),
             onclick: async () => {
-              await act('render', { spec: state.spec }, (r) => (state.render = r));
+              await compile();
               stageFiles();
             },
           }),
@@ -1866,7 +1908,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
               const refined = await act('refine', { spec: state.spec, feedback: state.feedback });
               if (refined?.parsed?.choices) {
                 state.spec = { ...state.spec, choices: { ...state.spec.choices, ...refined.parsed.choices } };
-                await act('render', { spec: state.spec }, (r) => (state.render = r));
+                await compile();
               } else if (refined && !refined.executed) {
                 state.error =
                   'The AI is switched off, so written feedback cannot be applied automatically. Turn it on in ResumeM-M’s config.yaml, or change the wording in the editor.';
@@ -2104,7 +2146,10 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           h('button', {
             className: 'primary',
             textContent: busyLabel('bundle', 'Submit', 'Filing…'),
-            disabled: busyIn('submit', 'resume', 'letter') || !state.render,
+            // `compile` is in the list now that it is its own lane: filing
+            // while the preview is being recompiled files a resume the card
+            // is in the middle of changing its mind about.
+            disabled: busyIn('submit', 'resume', 'letter', 'compile') || !state.render,
             title: state.render ? 'Compile, name the files properly, and snapshot what was sent' : 'Build the resume first',
             onclick: () =>
               act(
