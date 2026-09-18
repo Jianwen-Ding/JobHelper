@@ -445,6 +445,69 @@ async function main() {
         check('the answer bank is put back as it was found', put.ok, `restore said ${put.status}`);
       }
     }
+    group('The list you start from, as the store fills up');
+    {
+      /*
+       * Every filed application leaves a resume behind, named `job-<company>-
+       * <role>` by the store. They were listed flat and alphabetical beside
+       * the handful somebody actually starts from — so a store four
+       * applications old already reads "Base resume, Summer intern, Acme —
+       * 127.0.0.1, Role — Acme, …", and after a year of applying the
+       * starting points are unfindable.
+       *
+       * Two resumes are added here and removed again, because this store is
+       * shared with every other suite.
+       */
+      const put = (id, label) =>
+        fetch(`${SERVER}/api/resumes/${encodeURIComponent(id)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label, sections: [] }),
+        });
+      const drop = (id) =>
+        fetch(`${SERVER}/api/resumes/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => undefined);
+
+      await put('job-helios-platform-engineer', 'Platform Engineer — Helios');
+      await put('job-zzzother-data-scientist', 'Data Scientist — ZzzOther');
+      try {
+        const page = await context.newPage();
+        await page.goto(fixtures.urlFor(HELIOS_ROLE), { waitUntil: 'domcontentloaded' });
+        await settled(page);
+
+        const shape = await page.evaluate(() => {
+          const sel = document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelector('select');
+          if (!sel) return null;
+          return [...sel.children]
+            .filter((n) => n.tagName === 'OPTGROUP')
+            .map((g) => ({ label: g.label, options: [...g.children].map((o) => o.textContent) }));
+        });
+
+        check('the list is grouped rather than one flat run', (shape?.length ?? 0) === 2, JSON.stringify(shape?.map((g) => g.label)));
+
+        const yours = shape?.[0];
+        check(
+          'your own resumes come first',
+          Boolean(yours) && yours.options.includes('Base resume') && !yours.options.some((o) => /—\s(Helios|ZzzOther)$/.test(o)),
+          JSON.stringify(yours?.options),
+        );
+
+        /*
+         * And the one built for this company at the top of the rest: applying
+         * to somewhere you have applied before, what you sent them last time
+         * is the most useful thing to start from and was the hardest to find.
+         */
+        const built = shape?.[1];
+        check(
+          'and this company is first among the ones built for a posting',
+          built?.options?.[0] === 'Platform Engineer — Helios',
+          JSON.stringify(built?.options?.slice(0, 3)),
+        );
+        await page.close();
+      } finally {
+        await drop('job-helios-platform-engineer');
+        await drop('job-zzzother-data-scientist');
+      }
+    }
   } finally {
     await context.close();
     fixtures.close();

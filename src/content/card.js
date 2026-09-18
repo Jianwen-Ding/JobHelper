@@ -1379,19 +1379,49 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
 
   function drawProposeView() {
     const baseSelect = h('select', { title: 'Which resume to start from' });
-    // Pinned bases are grouped apart. A store fills up with resumes tailored
-    // for one posting each; the ones you actually build from should not have
-    // to be picked out of that list by name.
-    const pinned = resumes.filter((r) => r.base);
     const option = (r) =>
       h('option', { value: r.id, textContent: `${r.label}`, selected: r.id === analysis.baseResumeId });
 
-    if (pinned.length > 0 && pinned.length < resumes.length) {
-      const bases = h('optgroup', { label: 'Bases' });
-      for (const r of pinned) bases.append(option(r));
-      const rest = h('optgroup', { label: 'Everything else' });
-      for (const r of resumes.filter((r) => !r.base)) rest.append(option(r));
-      baseSelect.append(bases, rest);
+    /*
+     * Your starting points at the top, whatever else has piled up under them.
+     *
+     * Pinning a resume as a base grouped this list properly, and nothing is
+     * pinned in a store nobody has pinned anything in — which is every store
+     * to begin with. So the list was flat and alphabetical, and it grows by
+     * one every time an application is filed: a store four applications old
+     * already reads "Base resume, Summer intern, Acme — 127.0.0.1, Role —
+     * Acme, Platform Engineer — Andromeda, …", and the four things somebody
+     * actually starts from are scattered through it. In a year of applying
+     * they are unfindable.
+     *
+     * A resume the extension built for a posting is named `job-<company>-
+     * <role>` by the store, which is the only marker there is and a reliable
+     * one — it is how the server names what it generates. Pinned bases still
+     * win where they exist; this is the answer for the store where nobody has
+     * pinned anything.
+     */
+    const forAPosting = (r) => /^job-/.test(r.id ?? '');
+    const pinned = resumes.filter((r) => r.base);
+    const mine = pinned.length > 0 ? pinned : resumes.filter((r) => !forAPosting(r));
+    const rest = resumes.filter((r) => !mine.includes(r));
+
+    if (mine.length > 0 && rest.length > 0) {
+      const bases = h('optgroup', { label: pinned.length > 0 ? 'Bases' : 'Your resumes' });
+      for (const r of mine) bases.append(option(r));
+
+      /*
+       * And within the rest, this company first. Applying to a company you
+       * have applied to before, the most useful thing to start from is what
+       * you sent them last time — and it was the hardest to find, being
+       * alphabetical among every other posting.
+       */
+      const here = (analysis?.job?.company ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const sameEmployer = here ? rest.filter((r) => r.id.startsWith(`job-${here}-`)) : [];
+      const others = rest.filter((r) => !sameEmployer.includes(r));
+
+      const built = h('optgroup', { label: 'Built for a posting' });
+      for (const r of [...sameEmployer, ...others]) built.append(option(r));
+      baseSelect.append(bases, built);
     } else {
       for (const r of resumes) baseSelect.append(option(r));
     }
