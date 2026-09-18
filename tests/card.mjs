@@ -148,6 +148,76 @@ async function main() {
   check('and a clock once it has been a while', /^\d+:\d\d$/.test(timing.later ?? ''), String(timing.later));
   check('which clears with the work rather than counting on', timing.after === false);
 
+  /*
+   * What the card says when the AI you asked for did not happen.
+   *
+   * Two ways that goes and they want different words. The model ran and came
+   * back with something unusable — a bad minute, worth trying again. Or it
+   * never started, which is nearly always the configured command not being on
+   * the path the builder runs with, and trying again does the same thing until
+   * the setting is fixed.
+   *
+   * Neither used to be said. The server reports `tailor: 'match'` for both,
+   * the card read that as "what was done", and the branch meant to catch this
+   * tested the same field — so it could not fire, and a run whose AI had
+   * failed read exactly like an ordinary keyword match.
+   */
+  console.log('\nWhen the AI did not happen');
+
+  const summaryFor = (extra) => inPage(
+    new Function('createCard', `return (${((createCard, more) => {
+      const handle = createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Platform Engineer', company: 'Acme' },
+          spec: { id: 'job-acme', label: 'Acme' },
+          baseLabel: 'New grad resume',
+          rationale: [],
+          diff: [],
+          ...more,
+        },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async () => ({}),
+      });
+      void handle;
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      return [...root.querySelectorAll('.hint')].map((n) => n.textContent).join(' | ');
+    }).toString()})(createCard, ${JSON.stringify(extra)})`),
+  );
+
+  const failedToStart = await summaryFor({
+    tailor: 'match',
+    aiUsed: false,
+    aiFailed: 'spawn /usr/local/bin/claude ENOENT',
+  });
+  check(
+    'a model that would not start is named as that, not as a keyword match',
+    /could not be started/i.test(failedToStart),
+    failedToStart.slice(0, 120),
+  );
+  check(
+    'and what the machine said is passed on, because it is what you would fix',
+    /ENOENT/.test(failedToStart),
+    failedToStart.slice(0, 120),
+  );
+
+  const unusable = await summaryFor({ tailor: 'match', aiUsed: false, aiRaw: 'Sure! Here are some ideas.' });
+  check(
+    'a model that answered with prose is told apart from one that would not start',
+    /nothing usable/i.test(unusable) && !/could not be started/i.test(unusable),
+    unusable.slice(0, 120),
+  );
+
+  const plainMatch = await summaryFor({ tailor: 'match', aiUsed: false });
+  check(
+    'and a keyword match nobody asked the AI for still reads as one',
+    /keyword match against phrasings/i.test(plainMatch) && !/could not be started|nothing usable/i.test(plainMatch),
+    plainMatch.slice(0, 120),
+  );
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);

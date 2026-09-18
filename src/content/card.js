@@ -953,7 +953,25 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     if (state.builtWith === 'ai' && analysis.aiUsed) {
       return `${base}, with the changes the AI chose below.${copy}`;
     }
-    if (state.builtWith === 'ai') {
+    /*
+     * The AI was asked for and did not happen.
+     *
+     * Two ways that goes, and they need different words. It ran and came back
+     * with something unusable — a bad minute, try again. Or it never started,
+     * which is almost always the configured command not being on the path the
+     * builder runs with, and trying again will do exactly the same thing until
+     * the setting is fixed. The server says which by sending `aiFailed`.
+     *
+     * Read before `builtWith`, because `builtWith` is what was *done* — the
+     * server reports `tailor: 'match'` in both of these — so the branch below
+     * that tested it could never fire and this read as an ordinary keyword
+     * match, with nothing to say the AI you asked for had not run.
+     */
+    if (analysis.aiFailed) {
+      return `The AI could not be started, so this is ${base} with the keyword match applied. ` +
+        `It said: ${analysis.aiFailed}${copy}`;
+    }
+    if (state.builtWith === 'ai' || analysis.aiRaw) {
       return `The AI returned nothing usable, so this is ${base} with the keyword match applied.${copy}`;
     }
     return `${base}, with wordings swapped by keyword match against phrasings you already wrote.${copy}`;
