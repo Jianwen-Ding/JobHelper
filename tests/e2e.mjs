@@ -154,6 +154,21 @@ async function main() {
       check('and the match can be asked for again', (await card.locator('.change').count()) > 0);
     }
 
+    /*
+     * What the tracker and the upload folder held before this build.
+     *
+     * Scoped deliberately: the suites share a save, `cleanStore` only clears
+     * the companies this one uses, and the first version of the checks below
+     * read "is there an `applying` row" — which another suite's leftovers
+     * answered yes to, so they passed against a build that staged nothing.
+     */
+    const before = {
+      ids: new Set(
+        ((await (await fetch(`${SERVER}/api/applications`)).json()).applications ?? []).map((a) => a.id),
+      ),
+      files: (((await (await fetch(`${SERVER}/current`)).text()).match(/href="\/current\//g)) ?? []).length,
+    };
+
     await card.getByRole('button', { name: 'Build resume' }).click();
 
     // Compiling takes seconds; the card has to show it is working.
@@ -164,6 +179,41 @@ async function main() {
     check('progress clears when the work finishes', (await card.locator('.progress').count()) === 0);
     const fitText = await card.locator('.fit.ok, .fit.bad').innerText();
     check('resume compiled and fits one page', /Fits on one page/.test(fitText), fitText);
+
+    /*
+     * And the files are already where the upload dialog will be.
+     *
+     * The flat folder used to fill up only when the application was filed,
+     * which is after the form is filled in — so the dialog opened over an
+     * empty folder at exactly the moment it mattered. Building now files the
+     * application as `applying`: built, in the folder, not yet sent.
+     */
+    await (async () => {
+      let made;
+      let listed = before.files;
+      for (let i = 0; i < 60 && !made; i++) {
+        const rows = (await (await fetch(`${SERVER}/api/applications`)).json()).applications ?? [];
+        // By company as well as by id: the suites share a save and run at
+        // the same time, so "a row that was not there before" can be
+        // another suite's.
+        made = rows.find((a) => !before.ids.has(a.id) && a.company === 'Streamly');
+        listed = (((await (await fetch(`${SERVER}/current`)).text()).match(/href="\/current\//g)) ?? []).length;
+        if (!made) await new Promise((r) => setTimeout(r, 1000));
+      }
+      /*
+       * The file count is the check. A "is there an `applying` row" assertion
+       * lived here too and was taken out: it passed against a build that
+       * staged nothing, because this flow reaches that state by other routes
+       * as well, and a check that cannot fail is worse than no check. That the
+       * row says `applying` rather than `applied` is forced in one line in the
+       * service worker and read there.
+       */
+      check(
+        'building puts its files in the upload folder, before anything is submitted',
+        listed > before.files,
+        `${before.files} files before, ${listed} after — newest row ${made?.company ?? 'none'} ${made?.status ?? ''}`,
+      );
+    })();
 
     // You can see what you are about to send without leaving the posting.
     await card.locator('.pdf-pane canvas').first().waitFor({ timeout: 30_000 });
@@ -324,7 +374,7 @@ async function main() {
      * The cover letter, with the AI off.
      *
      * Nothing is adopted on the user's behalf. This used to drop the closest
-     * previous letter straight into the box, and "Prepare to submit" then
+     * previous letter straight into the box, and Submit then
      * typeset a letter opening "Dear Streamly," as "Cover Letter Helios.pdf" —
      * so the test could assert a letter in the bundle without anyone having
      * asked for one. Now the previous letter is offered by name and waits.
@@ -370,7 +420,7 @@ async function main() {
        * for a letter, and you would have attached the two files it named and
        * sent it without one.
        */
-      await card.getByRole('button', { name: 'Prepare to submit' }).click();
+      await card.getByRole('button', { name: 'Submit' }).click();
       await card.locator('.done-box').waitFor({ timeout: 90_000 });
       const body = await card.innerText();
       check('a folder missing the letter the form wants says so', /Not in this folder: a cover letter/.test(body));
@@ -421,7 +471,7 @@ async function main() {
     }
 
     /* File it. */
-    await card.getByRole('button', { name: 'Prepare to submit' }).click();
+    await card.getByRole('button', { name: 'Submit' }).click();
     await card.locator('.done-box').waitFor({ timeout: 90_000 });
     const done = await card.locator('.done-box').innerText();
     /*

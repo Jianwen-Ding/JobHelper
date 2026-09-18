@@ -78,6 +78,21 @@ const STYLE = `
 .head .spacer { margin-left: auto; }
 .body { padding: 12px; overflow: auto; flex: 1 1 auto; }
 
+/*
+ * Folded: the header, and what it is a header for.
+ *
+ * A 380px card sits over the form you are filling in, and dismissing it to
+ * see a field means losing the letter, the answers and the built resume with
+ * it. So it folds instead — down to one bar you can still read the role off,
+ * and still see the spinner on, while a tailoring pass carries on behind it.
+ */
+.card.folded { height: auto; }
+.card.folded .head { border-bottom: none; }
+.folded-title {
+  font-size: 12px; color: var(--muted); padding: 0 12px 10px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
 /* Whether an AI is in play, stated in the header rather than left to be
    inferred from whether the wording came out any good. */
 .ai {
@@ -231,6 +246,14 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .diff-head .count { margin-left: auto; color: var(--faint); }
 /* The way out of the changes, where the changes are. */
 .diff-head .undo-all { padding: 0 0 0 8px; font-size: 11px; }
+/* Quiet, and at the end of the row it belongs to: available on every change,
+   never competing with the change itself for attention. */
+.change .undo-one { padding: 4px 0 0; font-size: 11px; }
+/* The folder the upload dialog wants, while it is still wanted. */
+.staged {
+  background: var(--panel-sunk); border: 1px solid var(--line-soft); border-radius: 8px;
+  padding: 8px 10px; margin-bottom: 8px; font-size: 12px; color: var(--muted);
+}
 .change .ba { display: grid; gap: 2px; margin-top: 3px; }
 .change .ba del, .change .ba ins {
   display: block; font-size: 12px; line-height: 1.45; text-decoration: none;
@@ -301,10 +324,12 @@ select {
 .done-box {
   background: var(--good-bg); border: 1px solid var(--good-line); border-radius: 8px; padding: 11px;
 }
-.done-box .path {
+.done-box .path, .staged .path {
   font-family: var(--mono); font-size: 11px; background: #fff; border: 1px solid var(--good-line);
   border-radius: 5px; padding: 7px 8px; margin-top: 8px; word-break: break-all; color: var(--ink-soft);
 }
+/* Selectable, because pasting it is the point. */
+.staged .path { user-select: all; border-color: var(--line); margin-bottom: 8px; }
 .done-box .file { font-size: 12px; color: var(--ink-soft); margin-top: 5px; }
 
 /*
@@ -416,6 +441,25 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     error: null,
     bundle: null,
     view: 'propose',
+    /**
+     * Folded down to its header, so the form underneath can be read.
+     *
+     * Per card rather than remembered: folding is something you do to see the
+     * field this one is sitting on, and the next posting is a different
+     * question. It survives every repaint, which is what matters — a
+     * tailoring pass landing mid-application must not unfold the card over
+     * the box you are typing in.
+     */
+    folded: false,
+    /**
+     * Changes this proposal made that you have put back.
+     *
+     * Kept by key rather than by rebuilding without them, because the match
+     * is deterministic: ask for it again and it proposes the same swap again.
+     * So the decision has to be remembered on this side, and it is carried in
+     * `spec.choices` — which is what gets compiled, and what gets filed.
+     */
+    undone: [],
     letter: null,
     /** True once the letter step is open, even if the draft came back empty. */
     letterStarted: false,
@@ -627,6 +671,48 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   /** When each in-flight action started, so the card can say how long. */
   const startedAt = new Map();
 
+  /**
+   * What each action holds while it runs.
+   *
+   * Knowing *that* something is in flight was enough to draw a progress bar
+   * and never enough to decide what to grey out, but it was used for both:
+   * every control on the card tested the same `busy` flag. So a tailoring
+   * pass — which is a model reading a job posting, and takes minutes — locked
+   * the whole card. You could not type in the cover letter it was not
+   * touching, answer a question, open the builder, or even press Done to put
+   * the card away, for the length of a run that had nothing to do with any of
+   * them.
+   *
+   * A control waits for the work that would actually collide with it and
+   * ignores the rest. Filing waits for both of the things it files. Opening a
+   * tab and dismissing the card wait for nothing at all, because there is no
+   * state of this card in which you should be unable to leave.
+   *
+   * Unknown actions are treated as holding the resume, which is the cautious
+   * reading: it is the lane almost everything is in, and a new action that
+   * forgets to name itself here grants no new freedom by accident.
+   */
+  const LANE = {
+    rebuild: 'resume',
+    render: 'resume',
+    refine: 'resume',
+    setBase: 'resume',
+    coverLetter: 'letter',
+    renderLetter: 'letter',
+    saveLetter: 'letter',
+    saveAnswer: 'answers',
+    autofill: 'page',
+    bundle: 'submit',
+    trackStatus: 'submit',
+    // Its own lane: staging runs after every build and must block nothing.
+    stage: 'staging',
+    clearTrail: 'trail',
+    forgetPage: 'trail',
+    setAiEnabled: 'settings',
+    openWorkspace: 'elsewhere',
+  };
+  const busyIn = (...lanes) => [...running].some((a) => lanes.includes(LANE[a] ?? 'resume'));
+
   async function act(action, payload, apply) {
     running.add(action);
     startedAt.set(action, Date.now());
@@ -742,6 +828,24 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             onclick: () => { state.view = 'propose'; draw(); },
           })
         : null,
+      /*
+       * Fold, rather than close.
+       *
+       * The card sits over the form, and the field you need is under it often
+       * enough that "get out of the way" is an ordinary thing to want. Closing
+       * did that and took the letter, the answers and the built resume with
+       * it. This keeps all of that and gives back the screen.
+       *
+       * Before the × for the same reason it reads that way: the reversible
+       * one first.
+       */
+      h('button', {
+        className: 'icon',
+        title: state.folded ? 'Unfold' : 'Fold out of the way',
+        ariaLabel: state.folded ? 'Unfold JobHelper' : 'Fold JobHelper out of the way',
+        textContent: state.folded ? '⌄' : '⌃',
+        onclick: () => { state.folded = !state.folded; draw(); },
+      }),
       h('button', {
         className: 'icon',
         title: 'Not now',
@@ -953,10 +1057,77 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     if (state.builtWith === 'ai' && analysis.aiUsed) {
       return `${base}, with the changes the AI chose below.${copy}`;
     }
-    if (state.builtWith === 'ai') {
+    /*
+     * The AI was asked for and did not happen.
+     *
+     * Two ways that goes, and they need different words. It ran and came back
+     * with something unusable — a bad minute, try again. Or it never started,
+     * which is almost always the configured command not being on the path the
+     * builder runs with, and trying again will do exactly the same thing until
+     * the setting is fixed. The server says which by sending `aiFailed`.
+     *
+     * Read before `builtWith`, because `builtWith` is what was *done* — the
+     * server reports `tailor: 'match'` in both of these — so the branch below
+     * that tested it could never fire and this read as an ordinary keyword
+     * match, with nothing to say the AI you asked for had not run.
+     */
+    if (analysis.aiFailed) {
+      return `The AI could not be started, so this is ${base} with the keyword match applied. ` +
+        `It said: ${analysis.aiFailed}${copy}`;
+    }
+    if (state.builtWith === 'ai' || analysis.aiRaw) {
       return `The AI returned nothing usable, so this is ${base} with the keyword match applied.${copy}`;
     }
     return `${base}, with wordings swapped by keyword match against phrasings you already wrote.${copy}`;
+  }
+
+  /**
+   * Put one swapped wording back, and recompile with it back.
+   *
+   * `change.from` is the wording the base resume was using before this
+   * proposal touched it, so pinning that is exactly "leave this line alone".
+   * It is written into `spec.choices`, which is the thing the PDF is compiled
+   * from and the thing filing sends — so the undo survives both rather than
+   * being a tidy-up of the list on screen.
+   */
+  async function undoOne(change) {
+    const choices = { ...(state.spec?.choices ?? {}), [change.key]: change.from };
+    state.spec = { ...state.spec, choices };
+    state.undone = [...(state.undone ?? []), change.key];
+    // The compiled PDF is now of a resume nobody has: recompile before the
+    // preview or the fit badge claim to be about this one.
+    state.render = null;
+    await act('render', { spec: state.spec }, (r) => {
+      state.render = r;
+    });
+  }
+
+  /**
+   * Put the built files where the upload dialog will be, as soon as they are
+   * built.
+   *
+   * Two things are true of "Build resume" that make this worth doing without
+   * being asked. The compile it runs is a *preview* — the fast path, which is
+   * right for a badge and a picture and is explicitly not what gets attached
+   * to an application — so something has to produce the real file eventually.
+   * And the moment after building is the moment the portal's file dialog
+   * opens, which is a bad time to discover the folder is empty because the
+   * application has not been "prepared" yet.
+   *
+   * So this files the application as `applying`: built, in the flat folder,
+   * not yet sent. Submitting moves it on. The compile here is the trusted
+   * engine, because the whole point is that what is in that folder is the
+   * thing you can attach.
+   *
+   * Never awaited by the button. It takes as long as a real compile and the
+   * preview is already on screen; its own lane means it blocks nothing while
+   * it runs, and a failure is reported without taking the build with it.
+   */
+  function stageFiles() {
+    if (!state.spec) return;
+    act('stage', { spec: state.spec, coverLetter: state.letter, answers: collectedAnswers() }, (staged) => {
+      if (staged) state.staged = staged;
+    });
   }
 
   function drawChanges() {
@@ -973,18 +1144,31 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       );
     }
 
-    // Keywords, matched to the diff row they explain by the text they swapped in.
-    const reasonFor = new Map();
+    /*
+     * The change behind each diff row, matched by the text it swapped in.
+     *
+     * This was a map to the keywords alone, which was all the row needed when
+     * all it did was explain itself. Undoing one needs the change itself: the
+     * key it is recorded under and the wording that was there before.
+     */
+    const changeFor = new Map();
     for (const r of rationale) {
-      if (r.toText && (r.because ?? []).length) reasonFor.set(plainish(r.toText), r.because);
+      if (r.toText) changeFor.set(plainish(r.toText), r);
     }
+    const undone = new Set(state.undone ?? []);
+    const stillThere = (c) => {
+      const key = changeFor.get(plainish(c.to ?? ''))?.key;
+      return !key || !undone.has(key);
+    };
+    const shown = diff.filter(stillThere);
+    const shownRationale = rationale.filter((r) => !undone.has(r.key));
 
     const list = h('div', { className: 'changes' }, [
       h('div', { className: 'diff-head' }, [
         h('span', { className: 'from-label', textContent: analysis.baseLabel ?? 'Base' }),
         h('span', { className: 'arrow', textContent: '→' }),
         h('span', { className: 'to-label', textContent: 'this posting' }),
-        h('span', { className: 'count', textContent: plural(diff.length || rationale.length, 'change') }),
+        h('span', { className: 'count', textContent: plural(shown.length || shownRationale.length, 'change') }),
         /*
          * The way out, beside the list rather than back up among the build
          * modes. This is where you find out what was changed, so this is where
@@ -996,7 +1180,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
               className: 'link undo-all',
               textContent: 'Undo all',
               title: 'Throw these changes away and send the resume exactly as you keep it',
-              disabled: Boolean(state.busy),
+              disabled: busyIn('resume'),
               onclick: async () => {
                 state.rebuilding = 'none';
                 try {
@@ -1012,8 +1196,9 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       ]),
     ]);
 
-    for (const c of diff) {
-      const because = reasonFor.get(plainish(c.to ?? ''));
+    for (const c of shown) {
+      const change = changeFor.get(plainish(c.to ?? ''));
+      const because = (change?.because ?? []).length ? change.because : undefined;
       // `text` is a self-contained sentence, which means it repeats the place
       // it happened — and the place is already the label above it.
       const detail = c.where && c.text?.startsWith(`${c.where}: `)
@@ -1031,13 +1216,34 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             !c.from && !c.to ? h('span', { className: 'plain', textContent: detail }) : null,
           ]),
           because?.length ? why : null,
+          /*
+           * One change, put back.
+           *
+           * "Undo all" threw away every swap to send the resume untouched,
+           * which is the wrong size of answer to "that one is wrong". The
+           * match is usually right about most of them and occasionally wrong
+           * about one, and the one it is wrong about is the one you notice.
+           *
+           * Only where the change says which wording it replaced. A diff row
+           * with no rationale behind it is something the base resume did, not
+           * something this proposal chose, and there is nothing here to undo.
+           */
+          change?.key && change.from
+            ? h('button', {
+                className: 'link undo-one',
+                textContent: 'Keep the original',
+                title: 'Put this one line back the way your base resume has it',
+                disabled: busyIn('resume'),
+                onclick: () => undoOne(change),
+              })
+            : null,
         ]),
       );
     }
 
     // A proposal the server could not resolve still has something to say.
-    if (diff.length === 0) {
-      for (const c of rationale) {
+    if (shown.length === 0) {
+      for (const c of shownRationale) {
         list.append(
           h('div', { className: 'change' }, [
             h('div', { className: 'where', textContent: c.where ?? 'On the resume' }),
@@ -1120,11 +1326,11 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   function syncLetterControls() {
     const written = Boolean(state.letter?.trim());
     if (letterControls.save) {
-      letterControls.save.disabled = Boolean(state.busy) || state.letterSaved || !written;
+      letterControls.save.disabled = busyIn('letter') || state.letterSaved || !written;
       letterControls.save.textContent = busyLabel('saveLetter', state.letterSaved ? 'Saved' : 'Save to store', 'Saving…');
     }
     if (letterControls.copy) letterControls.copy.disabled = !written;
-    if (letterControls.typeset) letterControls.typeset.disabled = Boolean(state.busy) || !written;
+    if (letterControls.typeset) letterControls.typeset.disabled = busyIn('letter') || !written;
     if (letterControls.note) {
       letterControls.note.textContent = state.letterSaved ? 'Future drafts will start from this one.' : '';
     }
@@ -1388,7 +1594,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
          * Offered, not adopted.
          *
          * This used to put the previous letter straight into `state.letter`,
-         * and `state.letter` is what "Prepare to submit" ships. So with
+         * and `state.letter` is what Submit ships. So with
          * the AI off — and nobody having clicked anything, because this draft
          * starts itself — a letter that opens "Dear Streamly," was typeset,
          * named "Cover Letter Helios.pdf", and dropped in the folder the card
@@ -1495,7 +1701,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             className: state.builtWith === 'none' ? 'mode on' : 'mode',
             textContent: rebuildLabel('none', 'Use it unchanged', 'Copying…'),
             title: 'Send this resume exactly as it is. Nothing is swapped, dropped or added.',
-            disabled: Boolean(state.busy),
+            disabled: busyIn('resume'),
             onclick: async () => {
               state.rebuilding = 'none';
               try {
@@ -1513,7 +1719,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             textContent: rebuildLabel('match', 'Match by keyword', 'Matching…'),
             title:
               'Swap in phrasings you already wrote, picked by the keywords in this posting. Nothing is sent to an AI, and nothing new is written.',
-            disabled: Boolean(state.busy),
+            disabled: busyIn('resume'),
             onclick: async () => {
               state.rebuilding = 'match';
               try {
@@ -1535,7 +1741,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
               : state.ai?.state === 'server-off'
                 ? 'ResumeM-M has its AI switched off — turn it on under Voice & AI.'
                 : 'Switch the AI on from the JobHelper toolbar icon to use this.',
-            disabled: Boolean(state.busy) || !state.ai?.active,
+            disabled: busyIn('resume') || !state.ai?.active,
             onclick: async () => {
               state.rebuilding = 'ai';
               try {
@@ -1561,7 +1767,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             className: 'mode ghost',
             textContent: 'Edit in ResumeM-M',
             title: 'Open this resume in the builder to add a bullet or another phrasing',
-            disabled: Boolean(state.busy) || !state.spec?.id,
+            disabled: !state.spec?.id,
             onclick: () => {
               // Remembered so that coming back here means something. See
               // `cameBack`.
@@ -1587,7 +1793,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
               h('button', {
                 className: 'link',
                 textContent: 'Build it again',
-                disabled: Boolean(state.busy),
+                disabled: busyIn('resume'),
                 onclick: () => {
                   state.editedElsewhere = false;
                   const mode = state.builtWith ?? 'match';
@@ -1622,8 +1828,11 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           h('button', {
             className: 'primary',
             textContent: busyLabel('render', state.render ? 'Recompile' : 'Build resume', 'Compiling…'),
-            disabled: Boolean(state.busy),
-            onclick: () => act('render', { spec: state.spec }, (r) => (state.render = r)),
+            disabled: busyIn('resume'),
+            onclick: async () => {
+              await act('render', { spec: state.spec }, (r) => (state.render = r));
+              stageFiles();
+            },
           }),
           state.render
             ? h('a', { href: state.render.absolutePdfUrl, target: '_blank', textContent: 'Open full size' })
@@ -1634,7 +1843,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           h('button', {
             className: 'tiny',
             textContent: busyLabel('refine', 'Apply feedback', 'Thinking…'),
-            disabled: Boolean(state.busy),
+            disabled: busyIn('resume'),
             onclick: async () => {
               if (!state.feedback.trim()) return;
               const refined = await act('refine', { spec: state.spec, feedback: state.feedback });
@@ -1709,7 +1918,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 (letterControls.save = h('button', {
                   className: 'tiny',
                   textContent: busyLabel('saveLetter', state.letterSaved ? 'Saved' : 'Save to store', 'Saving…'),
-                  disabled: Boolean(state.busy) || state.letterSaved || !state.letter?.trim(),
+                  disabled: busyIn('letter') || state.letterSaved || !state.letter?.trim(),
                   onclick: () =>
                     act('saveLetter', { body: state.letter }, () => {
                       state.letterSaved = true;
@@ -1735,7 +1944,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 (letterControls.typeset = h('button', {
                   className: 'tiny',
                   textContent: busyLabel('renderLetter', state.letterRender ? 'Typeset again' : 'See it typeset', 'Typesetting…'),
-                  disabled: Boolean(state.busy) || !state.letter?.trim(),
+                  disabled: busyIn('letter') || !state.letter?.trim(),
                   title: 'Compile it the way it will be sent',
                   onclick: () =>
                     /*
@@ -1778,7 +1987,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 aiButton(
                   {
                     title: 'Write a first draft from this posting and the letters you have written before. Runs your AI command.',
-                    disabled: Boolean(state.busy),
+                    disabled: busyIn('letter'),
                     onclick: draftLetter,
                   },
                   busyLabel('coverLetter', 'Draft a letter', 'Drafting…'),
@@ -1823,11 +2032,41 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       h('div', { className: 'step' }, [
         stepHead(4, 'Fill in and file', Boolean(state.bundle)),
         progressFor(4),
+        /*
+         * Where the files are, at the moment the file dialog is about to open.
+         *
+         * This used to be in the panel after filing, which is the one place
+         * you do not need it: by then the upload has happened. Building stages
+         * the files now, so the folder has something in it from the moment
+         * there is a resume — and a path you can paste into the dialog's
+         * location bar is the whole of what makes that reachable. An extension
+         * cannot set where the dialog opens; this is what it can do instead.
+         */
+        state.staged?.currentDir
+          ? h('div', { className: 'staged' }, [
+              h('div', { textContent: 'Ready to attach, in one folder:' }),
+              h('div', { className: 'path', textContent: state.staged.currentDir }),
+              h('div', { className: 'row gap' }, [
+                h('button', {
+                  className: 'tiny',
+                  textContent: 'Copy folder path',
+                  title: 'Paste it into the upload dialog',
+                  onclick: () => navigator.clipboard?.writeText(state.staged.currentDir),
+                }),
+                h('button', {
+                  className: 'tiny',
+                  textContent: 'Open the folder',
+                  title: 'See the files in a tab, and open any of them',
+                  onclick: () => onAction('openTab', { url: '/current' }),
+                }),
+              ]),
+            ])
+          : null,
         h('div', { className: 'row' }, [
           h('button', {
             className: 'tiny',
             textContent: busyLabel('autofill', 'Autofill this form', 'Filling…'),
-            disabled: Boolean(state.busy),
+            disabled: busyIn('page'),
             onclick: () => act('autofill', {}, (r) => (state.autofillReport = r)),
           }),
           /*
@@ -1847,8 +2086,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
            */
           h('button', {
             className: 'primary',
-            textContent: busyLabel('bundle', 'Prepare to submit', 'Preparing…'),
-            disabled: Boolean(state.busy) || !state.render,
+            textContent: busyLabel('bundle', 'Submit', 'Filing…'),
+            disabled: busyIn('submit', 'resume', 'letter') || !state.render,
             title: state.render ? 'Compile, name the files properly, and snapshot what was sent' : 'Build the resume first',
             onclick: () =>
               act(
@@ -1870,7 +2109,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
          * disabled button is the one place a tooltip cannot be relied on —
          * browsers differ on whether they show it at all, and it needs
          * hovering a control that looks like it does nothing. On a posting
-         * the base resume already suits, "Prepare to submit" sits
+         * the base resume already suits, Submit sits
          * there greyed with no visible reason, which reads as broken rather
          * than as one step out of order.
          */
@@ -2001,7 +2240,6 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           className: 'tiny',
           textContent: busyLabel('openWorkspace', 'Write these in ResumeM-M', 'Opening…'),
           title: 'Hand the posting, the resume, and the questions to the editor, where there is room to write',
-          disabled: Boolean(state.busy),
           onclick: () =>
             act(
               'openWorkspace',
@@ -2083,7 +2321,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           aiButton(
             {
               className: 'tiny',
-              disabled: Boolean(state.busy),
+              disabled: busyIn('answers'),
               onclick: () => {
                 // What is in the box now, so the reply can tell its own work
                 // from anything written during the minutes it takes.
@@ -2220,7 +2458,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             ...b.currentProblems.map((said) => h('div', { textContent: said })),
             h('div', {
               textContent:
-                'The archive below still has all of it. Clear whatever is in the way and press Prepare to submit again, or attach from the archive instead.',
+                'The archive below still has all of it. Clear whatever is in the way and press Submit again, or attach from the archive instead.',
             }),
           ])
         : null,
@@ -2275,7 +2513,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         h('button', {
           className: 'tiny',
           textContent: busyLabel('autofill', 'Autofill this form', 'Filling…'),
-          disabled: Boolean(state.busy),
+          disabled: busyIn('page'),
           onclick: () => act('autofill', {}, (r) => (state.autofillReport = r)),
         }),
         /*
@@ -2293,7 +2531,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         h('button', {
           className: 'tiny',
           textContent: busyLabel('trackStatus', 'Not sent after all', 'Saving…'),
-          disabled: Boolean(state.busy),
+          disabled: busyIn('submit'),
           title: 'Put this back on the list of applications still to finish',
           onclick: () =>
             act(
@@ -2307,7 +2545,6 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         h('button', {
           className: 'primary',
           textContent: 'Done',
-          disabled: Boolean(state.busy),
           onclick: () => removeCard(),
         }),
       ]),
@@ -2358,9 +2595,28 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     // Provisional until the analysis lands: what is on screen is the page's
     // own title, not anything this has worked out yet.
     card.classList.toggle('loading', !analysis);
+    card.classList.toggle('folded', Boolean(state.folded));
     card.replaceChildren(
       drawHead(),
-      !analysis ? drawReadingView() : state.view === 'done' ? drawDoneView() : drawProposeView(),
+      /*
+       * Folded, the card is its header and one line saying what it is the
+       * header for. The line matters: a bar reading only "JobHelper" over
+       * somebody's application form is a thing to close, not a thing to open.
+       * The spinner stays in the header either way, so work carrying on
+       * behind the fold is still visible.
+       */
+      state.folded
+        ? h('div', {
+            className: 'folded-title',
+            textContent: analysis?.job
+              ? [analysis.job.title, analysis.job.company].filter(Boolean).join(' · ')
+              : 'Reading this page…',
+          })
+        : !analysis
+          ? drawReadingView()
+          : state.view === 'done'
+            ? drawDoneView()
+            : drawProposeView(),
     );
 
     if (!focused) return;

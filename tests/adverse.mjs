@@ -630,16 +630,32 @@ async function main() {
         await card.getByRole('button', { name: 'Build resume' }).click();
         await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
 
-        // The person switches saves in the editor, in another window.
-        const switched = await fetch(`${own.url}/api/projects/switch`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dir: elsewhere, mode: 'create' }),
-        });
+        /*
+         * The person switches saves in the editor, in another window.
+         *
+         * Retried, because building now also files the application as
+         * `applying` so that its files are in the upload folder before the
+         * portal's dialog opens — and that is a real compile, held open as an
+         * API request. A save cannot be swapped out from under a write that is
+         * landing in it, so the server answers 409 until it finishes. That
+         * refusal is the guard working; what this test is about is what
+         * happens *after* the save changes, so it waits for its turn the way a
+         * person pressing the button again would.
+         */
+        let switched;
+        for (let i = 0; i < 30; i++) {
+          switched = await fetch(`${own.url}/api/projects/switch`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dir: elsewhere, mode: 'create' }),
+          });
+          if (switched.ok || switched.status !== 409) break;
+          await new Promise((r) => setTimeout(r, 1000));
+        }
         check('the editor changed save', switched.ok, String(switched.status));
 
         // And then presses the button that files it.
-        await card.getByRole('button', { name: 'Prepare to submit' }).click();
+        await card.getByRole('button', { name: 'Submit' }).click();
         await card.locator('.err, .done-box').first().waitFor({ timeout: 120_000 });
 
         /*

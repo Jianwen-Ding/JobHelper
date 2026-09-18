@@ -148,6 +148,472 @@ async function main() {
   check('and a clock once it has been a while', /^\d+:\d\d$/.test(timing.later ?? ''), String(timing.later));
   check('which clears with the work rather than counting on', timing.after === false);
 
+  /*
+   * What the card says when the AI you asked for did not happen.
+   *
+   * Two ways that goes and they want different words. The model ran and came
+   * back with something unusable — a bad minute, worth trying again. Or it
+   * never started, which is nearly always the configured command not being on
+   * the path the builder runs with, and trying again does the same thing until
+   * the setting is fixed.
+   *
+   * Neither used to be said. The server reports `tailor: 'match'` for both,
+   * the card read that as "what was done", and the branch meant to catch this
+   * tested the same field — so it could not fire, and a run whose AI had
+   * failed read exactly like an ordinary keyword match.
+   */
+  console.log('\nWhen the AI did not happen');
+
+  const summaryFor = (extra) => inPage(
+    new Function('createCard', `return (${((createCard, more) => {
+      const handle = createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Platform Engineer', company: 'Acme' },
+          spec: { id: 'job-acme', label: 'Acme' },
+          baseLabel: 'New grad resume',
+          rationale: [],
+          diff: [],
+          ...more,
+        },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async () => ({}),
+      });
+      void handle;
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      return [...root.querySelectorAll('.hint')].map((n) => n.textContent).join(' | ');
+    }).toString()})(createCard, ${JSON.stringify(extra)})`),
+  );
+
+  const failedToStart = await summaryFor({
+    tailor: 'match',
+    aiUsed: false,
+    aiFailed: 'spawn /usr/local/bin/claude ENOENT',
+  });
+  check(
+    'a model that would not start is named as that, not as a keyword match',
+    /could not be started/i.test(failedToStart),
+    failedToStart.slice(0, 120),
+  );
+  check(
+    'and what the machine said is passed on, because it is what you would fix',
+    /ENOENT/.test(failedToStart),
+    failedToStart.slice(0, 120),
+  );
+
+  const unusable = await summaryFor({ tailor: 'match', aiUsed: false, aiRaw: 'Sure! Here are some ideas.' });
+  check(
+    'a model that answered with prose is told apart from one that would not start',
+    /nothing usable/i.test(unusable) && !/could not be started/i.test(unusable),
+    unusable.slice(0, 120),
+  );
+
+  const plainMatch = await summaryFor({ tailor: 'match', aiUsed: false });
+  check(
+    'and a keyword match nobody asked the AI for still reads as one',
+    /keyword match against phrasings/i.test(plainMatch) && !/could not be started|nothing usable/i.test(plainMatch),
+    plainMatch.slice(0, 120),
+  );
+
+  /*
+   * What is still usable while the AI reads the posting.
+   *
+   * A tailoring pass is a model reading a job posting: minutes, not seconds.
+   * Every control on the card used to test one `busy` flag, so for the length
+   * of that run you could not type in the cover letter it was not touching,
+   * answer a question, open the builder, or even press Done to put the card
+   * away. The work being slow is not a reason for the rest of the card to be
+   * gone.
+   */
+  console.log('\nWhile the AI is reading the posting');
+
+  const whileTailoring = await inPage((createCard) => {
+    let release;
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        baseLabel: 'New grad resume',
+        rationale: [],
+        diff: [],
+        tailor: 'match',
+      },
+      resumes: [],
+      settings: {},
+      questions: [{ question: 'Why us?', answer: '', confident: false }],
+      needsCoverLetter: true,
+      // `rebuild` is the tailoring pass. Held open, so the card is caught
+      // mid-run rather than after it.
+      onAction: (action) =>
+        action === 'rebuild' ? new Promise((r) => { release = r; }) : Promise.resolve({}),
+    });
+    handle.setLetter?.('Dear Acme, I am writing about the Platform Engineer role.');
+
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
+
+    // Start the pass the way the card does.
+    byText('Match by keyword')?.click();
+
+    const named = (t) => {
+      const b = byText(t);
+      return b ? b.disabled : null;
+    };
+    const state = {
+      // The one that is actually running, and the others in its lane.
+      building: named('Build resume') ?? named('Recompile'),
+      applyFeedback: named('Apply feedback'),
+      // Filing waits for the two things it files.
+      filing: named('Submit'),
+      // Different lanes entirely: none of these touch the resume.
+      draftLetter: named('✦Draft a letter'),
+      draftAnswer: named('✦Draft an answer'),
+      fillForm: named('Autofill this form'),
+      // And the two that wait for nothing at all.
+      editInBuilder: named('Edit in ResumeM-M'),
+      // The × in the header is what puts the card away in this state; `Done`
+      // belongs to the panel after filing. Both are ungated now.
+      dismiss: named('×'),
+      spinner: Boolean(root.querySelector('.spinner')),
+    };
+    release?.({});
+    return state;
+  });
+
+  check(
+    'the work that is running still says so',
+    whileTailoring.spinner === true,
+    JSON.stringify(whileTailoring),
+  );
+  check(
+    'and the other buttons in its lane wait, because they would collide',
+    whileTailoring.building === true && whileTailoring.applyFeedback === true,
+    JSON.stringify(whileTailoring),
+  );
+  check(
+    'and so does filing, which waits for what it files',
+    whileTailoring.filing === true,
+    String(whileTailoring.filing),
+  );
+  check(
+    'the letter can still be drafted, because the resume is not the letter',
+    whileTailoring.draftLetter === false,
+    String(whileTailoring.draftLetter),
+  );
+  check('an answer can still be drafted', whileTailoring.draftAnswer === false, String(whileTailoring.draftAnswer));
+  check('and the form can still be filled', whileTailoring.fillForm === false, String(whileTailoring.fillForm));
+  check(
+    'the builder can still be opened',
+    whileTailoring.editInBuilder === false,
+    String(whileTailoring.editInBuilder),
+  );
+  check(
+    'and the card can always be put away',
+    whileTailoring.dismiss === false,
+    String(whileTailoring.dismiss),
+  );
+
+  /*
+   * Folding it out of the way.
+   *
+   * The card is 380px of fixed-position panel over the form you are filling
+   * in, and the field you need is under it often enough that "get out of the
+   * way" is an ordinary thing to want. The only way to do that was to close
+   * it, which took the letter, the answers and the built resume with it.
+   */
+  console.log('\nFolding the card away');
+
+  const folding = await inPage((createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [{ question: 'Why us?', answer: '', confident: false }],
+      needsCoverLetter: true,
+      onAction: async () => ({}),
+    });
+
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const card = root.querySelector('.card');
+    const fold = () => [...root.querySelectorAll('button')].find((b) => /Fold|Unfold/.test(b.getAttribute('aria-label') ?? ''));
+    const height = () => Math.round(card.getBoundingClientRect().height);
+    const buttons = () => root.querySelectorAll('button').length;
+
+    // Something worth not losing: typed in, the way it would be.
+    const answer = root.querySelector('textarea[data-field^="answer:"]');
+    answer.value = 'Because the ingest work is the part I like.';
+    answer.dispatchEvent(new Event('input', { bubbles: true }));
+    const open = { height: height(), buttons: buttons() };
+
+    fold().click();
+    const folded = {
+      height: height(),
+      buttons: buttons(),
+      title: root.querySelector('.folded-title')?.textContent ?? null,
+      // Still reachable while folded: you must be able to give up on it too.
+      canClose: Boolean([...root.querySelectorAll('button')].find((b) => b.textContent.trim() === '×')),
+    };
+
+    // A repaint — the shape every background pass ends in.
+    handle.setQuestions([
+      { question: 'Why us?', answer: '', confident: false },
+      { question: 'Tell us about a project.', answer: '', confident: false },
+    ]);
+    const afterRepaint = { folded: card.classList.contains('folded'), height: height() };
+
+    fold().click();
+    const reopened = {
+      height: height(),
+      answer: root.querySelector('textarea[data-field^="answer:"]')?.value ?? null,
+    };
+
+    return { open, folded, afterRepaint, reopened };
+  });
+
+  check(
+    'folding makes it much shorter than it was',
+    folding.folded.height < folding.open.height / 2,
+    `${folding.open.height}px open, ${folding.folded.height}px folded`,
+  );
+  check(
+    'and takes the controls off the screen rather than only hiding the text',
+    folding.folded.buttons < folding.open.buttons,
+    `${folding.open.buttons} buttons open, ${folding.folded.buttons} folded`,
+  );
+  check(
+    'while still saying what it is a header for',
+    /Platform Engineer/.test(folding.folded.title ?? ''),
+    String(folding.folded.title),
+  );
+  check('and still offering the way out', folding.folded.canClose === true);
+  /*
+   * The one that makes it usable. A tailoring pass landing mid-application
+   * repaints the card, and a fold that did not survive that would spring open
+   * over the box being typed in.
+   */
+  check(
+    'a repaint does not unfold it',
+    folding.afterRepaint.folded === true && folding.afterRepaint.height === folding.folded.height,
+    JSON.stringify(folding.afterRepaint),
+  );
+  check(
+    'unfolding brings it all back',
+    folding.reopened.height >= folding.open.height,
+    `${folding.reopened.height}px vs ${folding.open.height}px`,
+  );
+  check(
+    'with what was typed still in it, which is what closing would have cost',
+    /part I like/.test(folding.reopened.answer ?? ''),
+    String(folding.reopened.answer).slice(0, 50),
+  );
+
+  /*
+   * Putting one change back.
+   *
+   * "Undo all" threw away every swap and sent the base resume untouched,
+   * which is the wrong size of answer to "that one is wrong". The match is
+   * usually right about most of them and occasionally wrong about one — a
+   * degree line swapped for one naming a concentration, say — and the one it
+   * is wrong about is the one you notice.
+   */
+  console.log('\nKeeping the original wording of one change');
+
+  const undoing = await inPage((createCard) => {
+    const sent = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', choices: { b_pipeline: 'v_kafka' } },
+        baseLabel: 'New grad resume',
+        tailor: 'match',
+        diff: [
+          { kind: 'changed', where: 'Acme Co.', from: 'Built a pipeline', to: 'Built a Kafka pipeline' },
+          { kind: 'changed', where: 'Northeastern', from: 'BS in Computer Science', to: 'BS in Computer Science, Systems concentration' },
+        ],
+        rationale: [
+          { key: 'b_pipeline', from: 'v_base', to: 'v_kafka', toText: 'Built a Kafka pipeline', because: ['kafka'] },
+          { key: 'edu_neu.subtitle', from: 'v_plain', to: 'v_systems', toText: 'BS in Computer Science, Systems concentration', because: ['systems'] },
+        ],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        return action === 'render' ? { pages: 1, fits: true } : {};
+      },
+    });
+    void handle;
+
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const rows = () => root.querySelectorAll('.change').length;
+    const count = () => root.querySelector('.diff-head .count')?.textContent ?? null;
+    const undoButtons = () => [...root.querySelectorAll('.undo-one')];
+    const text = () => root.querySelector('.changes')?.textContent ?? '';
+
+    const before = { rows: rows(), count: count(), offered: undoButtons().length };
+
+    // Put back the second one — the degree line.
+    undoButtons()[1].click();
+    return {
+      before,
+      after: { rows: rows(), count: count(), stillNames: /Systems concentration/.test(text()) },
+      // What the resume is compiled from now, which is also what filing sends.
+      recompiled: sent.filter((c) => c.action === 'render').map((c) => c.payload.spec.choices),
+    };
+  });
+
+  check('every proposed change offers to be put back', undoing.before.offered === 2, JSON.stringify(undoing.before));
+  check(
+    'putting one back takes that row off the list',
+    undoing.after.rows === undoing.before.rows - 1,
+    `${undoing.before.rows} → ${undoing.after.rows}`,
+  );
+  check('and the count agrees', undoing.after.count === '1 change', String(undoing.after.count));
+  check('and it is the one that was asked for', undoing.after.stillNames === false);
+  /*
+   * The half that matters. Taking the row off the screen and sending the
+   * swapped wording anyway would be worse than not offering the button.
+   */
+  check(
+    'the resume is recompiled with the original wording pinned back',
+    undoing.recompiled.at(-1)?.['edu_neu.subtitle'] === 'v_plain',
+    JSON.stringify(undoing.recompiled.at(-1)),
+  );
+  check(
+    'and the change that was not undone is left alone',
+    undoing.recompiled.at(-1)?.b_pipeline === 'v_kafka',
+    JSON.stringify(undoing.recompiled.at(-1)),
+  );
+
+  /*
+   * Building puts the files where the upload dialog will be.
+   *
+   * The flat folder is a projection of the tracker, so nothing reached it
+   * until an application existed, and the only thing that made one was the
+   * submit button. That is the wrong moment: you press it *after* filling the
+   * form, and the file dialog opens during. So building files the application
+   * as `applying` — built, in the folder, not yet sent — and submitting moves
+   * it on.
+   *
+   * The compile matters as much as the timing. "Build resume" renders through
+   * the fast preview path, which is explicitly not what gets attached; the
+   * staging call is a real compile, which is why it is a second request and
+   * not a copy of the preview.
+   */
+  console.log('\nBuilding puts the files in place');
+
+  const staging = await inPage((createCard) => {
+    const sent = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        return action === 'render' ? { pages: 1, fits: true } : {};
+      },
+    });
+    void handle;
+
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
+
+    byText('Build resume').click();
+    return new Promise((resolve) => setTimeout(() => resolve({
+      actions: sent.map((c) => c.action),
+      staged: sent.find((c) => c.action === 'stage')?.payload ?? null,
+      submitLabel: Boolean(byText('Submit')),
+      oldLabel: Boolean(byText('Prepare to submit')),
+    }), 60));
+  });
+
+  check('building still compiles the preview', staging.actions.includes('render'), JSON.stringify(staging.actions));
+  check(
+    'and puts the real files in the flat folder without being asked',
+    staging.actions.includes('stage'),
+    JSON.stringify(staging.actions),
+  );
+  check(
+    'sending the resume it just built',
+    staging.staged?.spec?.id === 'job-acme',
+    JSON.stringify(staging.staged),
+  );
+  check('the filing button says what it does', staging.submitLabel === true && staging.oldLabel === false);
+
+  /*
+   * And the folder is reachable from the moment it has something in it.
+   *
+   * The path lived in the panel *after* filing, which is the one place it is
+   * not needed: by then the upload has happened. An extension cannot set
+   * where the file dialog opens — that is deliberately out of reach — so a
+   * path you can paste into its location bar is what there is, and it has to
+   * be there while the dialog is open.
+   */
+  const folderShown = await inPage((createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action) =>
+        action === 'render'
+          ? { pages: 1, fits: true }
+          : action === 'stage'
+            ? { currentDir: '/Users/someone/resume/out/current', files: ['Someone-Resume.pdf'] }
+            : {},
+    });
+    void handle;
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
+
+    const beforeBuilding = Boolean(root.querySelector('.staged .path'));
+    byText('Build resume').click();
+    return new Promise((resolve) => setTimeout(() => resolve({
+      beforeBuilding,
+      path: root.querySelector('.staged .path')?.textContent ?? null,
+      canCopy: Boolean([...root.querySelectorAll('.staged button')].find((b) => /Copy folder path/.test(b.textContent))),
+      // Filing has not happened: this is the point.
+      filed: Boolean(root.querySelector('.done-box')),
+    }), 60));
+  });
+
+  check('nothing claims a folder before there is one', folderShown.beforeBuilding === false);
+  check(
+    'and after building the folder to attach from is named',
+    folderShown.path === '/Users/someone/resume/out/current',
+    String(folderShown.path),
+  );
+  check('with a way to paste it into the dialog', folderShown.canCopy === true);
+  check('all of it before anything is filed', folderShown.filed === false);
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);

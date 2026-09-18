@@ -122,7 +122,7 @@ async function main() {
                   role: card?.querySelector('.role')?.textContent?.trim(),
                   changes: [...(card?.querySelectorAll('.change ins') ?? [])].map((n) => n.textContent.slice(0, 70)),
                   fileButton: [...(card?.querySelectorAll('button') ?? [])]
-                    .filter((b) => /Prepare to submit|Autofill/.test(b.textContent))
+                    .filter((b) => /Submit|Autofill/.test(b.textContent))
                     .map((b) => ({ label: b.textContent.trim(), disabled: b.disabled })),
                 };
               });

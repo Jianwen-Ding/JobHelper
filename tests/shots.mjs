@@ -424,7 +424,7 @@ async function main() {
     await page.waitForTimeout(500);
     await shot(page, 'ext-07-autofilled');
 
-    await card.getByRole('button', { name: 'Prepare to submit' }).click();
+    await card.getByRole('button', { name: 'Submit' }).click();
     await card.locator('.done-box').waitFor({ timeout: 90_000 });
     await page.waitForTimeout(400);
     await shot(card, 'ext-08-done');
