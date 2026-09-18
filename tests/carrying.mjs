@@ -389,7 +389,7 @@ async function main() {
        */
       const existing = await fetch(`${SERVER}/api/workspace`).then((r) => r.json());
       for (const d of existing.drafts) {
-        if (d.company === 'Unknown' || /^127\.0\.0\.1/.test(d.company ?? '')) {
+        if (d.company === 'Unknown' || /^127\.0\.0\.1/.test(d.company ?? '') || d.company === 'Acme') {
           await fetch(`${SERVER}/api/workspace/${encodeURIComponent(d.id)}`, { method: 'DELETE' }).catch(() => {});
         }
       }
@@ -409,9 +409,18 @@ async function main() {
       const fresh = drafts.filter((d) => !before.has(d.id)).map((d) => d.company);
       check('an application was filed', fresh.length > 0, fresh.join(', '));
       check('and not as "Unknown"', !fresh.includes('Unknown'), fresh.join(', '));
+      /*
+       * Under the name on the page, if the page has one.
+       *
+       * This used to expect the host, and the host was the best available
+       * answer while "Apply — Acme" was being read as the role "Acme". It is
+       * read as the employer now, so the honest expectation is the employer:
+       * the address is the fallback for a form that names nobody at all,
+       * which is a different page from this one.
+       */
       check(
-        'but under where it came from',
-        fresh.some((n) => /^127\.0\.0\.1/.test(n ?? '')),
+        'but under whoever the page says it is for',
+        fresh.some((n) => /acme/i.test(n ?? '')),
         fresh.join(', '),
       );
       await bare.close();
