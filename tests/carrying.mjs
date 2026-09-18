@@ -170,6 +170,14 @@ async function main() {
       // Which job, and whose: the hover title is the only place that can say
       // it while the card is not on screen.
       check('and says which job it is', /engineer at helios/i.test(mark.title), mark.title);
+      // And says nothing about having been here before, because nobody has.
+      // The claim is only worth making when it is true, and a card that makes
+      // it on every posting is one nobody reads by the third.
+      check(
+        'without claiming this one has been applied to',
+        (await cardOf(page).locator('.before').count()) === 0,
+        (await cardOf(page).locator('.before').textContent().catch(() => '')) ?? '',
+      );
 
       // Built here, so there is a drawn resume to carry as well as writing.
       const card = cardOf(page);
@@ -247,6 +255,26 @@ async function main() {
       check('and says why it thinks so', /pressed|submitted/i.test(application?.history?.at(-1)?.note ?? ''),
         application?.history?.at(-1)?.note ?? '');
       check('the draft stops looking like something to finish', draft?.status === 'submitted', draft?.status ?? '(none)');
+    }
+
+    /*
+     * The same posting, come round again. A job reappears on a board months
+     * later, or you follow a link to one you have already dealt with, and the
+     * moment that is worth knowing is before the work starts rather than
+     * afterwards from the tracker.
+     *
+     * A second tab, so this is a fresh reading of the page rather than the
+     * card that watched the application being sent — what a person meets when
+     * they arrive at the posting from somewhere else entirely.
+     */
+    group('Arriving at a posting that has already been applied to');
+    {
+      const again = await context.newPage();
+      await again.goto(fixtures.urlFor(HELIOS_ROLE), { waitUntil: 'domcontentloaded' });
+      await settled(again);
+      const said = (await cardOf(again).locator('.before').textContent())?.trim() ?? '';
+      check('the card says so, on the posting itself', /you applied to this on/i.test(said), said || '(nothing)');
+      await again.close();
     }
 
     group('Leaving for a page that has nothing to do with it');

@@ -172,6 +172,10 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .job { margin-bottom: 12px; }
 .job .role { font-weight: 500; font-size: 16px; line-height: 1.3; }
 .job .co { color: var(--muted); margin-top: 1px; }
+/* You have been here before. Said plainly, in the card's own voice, rather
+   than dressed as a warning — reapplying is allowed, and often right. */
+.job .before { margin-top: 6px; font-size: 12px; color: var(--muted); }
+.job .before b { font-weight: 500; color: var(--ink); }
 
 /* The pages one application is spread across. */
 .trail { margin-top: 7px; font-size: 12px; }
@@ -749,7 +753,51 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     return h('div', { className: 'job' }, [
       h('div', { className: 'role', textContent: job.title ?? 'This posting' }),
       h('div', { className: 'co', textContent: [job.company, job.location].filter(Boolean).join(' · ') }),
+      drawSentBefore(),
       drawTrail(),
+    ].filter(Boolean));
+  }
+
+  /**
+   * "You applied to this one on the twelfth of March."
+   *
+   * The tracker has known this all along; the moment it is worth anything is
+   * the moment before the work starts, and that moment happens here rather
+   * than in the builder. Reapplying to a role that came round again is a fine
+   * thing to do — so this says what happened and stops, with no warning
+   * colour and nothing to dismiss. What it prevents is the other version:
+   * twenty minutes on a second letter, and then finding the first one in the
+   * tracker afterwards.
+   *
+   * The store decides whether there is anything to say; the card only decides
+   * how to say it. The rule about a posting that names a role but no company
+   * lives there, with the applications.
+   */
+  function drawSentBefore() {
+    const past = analysis?.applied;
+    if (!past?.at) return null;
+
+    const when = new Date(past.at);
+    if (Number.isNaN(when.getTime())) return null;
+    const sameYear = when.getFullYear() === new Date().getFullYear();
+    const said = when.toLocaleDateString(undefined, {
+      day: 'numeric',
+      month: 'long',
+      ...(sameYear ? {} : { year: 'numeric' }),
+    });
+
+    // What happened next, where there is a next. "Applied" on its own is the
+    // ordinary case and needs no second clause.
+    const since = {
+      interview: ' — you were interviewing',
+      offer: ' — and got it',
+      closed: ' — and it closed',
+    }[past.status];
+
+    return h('div', { className: 'before' }, [
+      document.createTextNode('You applied to this on '),
+      h('b', { textContent: said }),
+      document.createTextNode(`${since ?? ''}.`),
     ]);
   }
 
