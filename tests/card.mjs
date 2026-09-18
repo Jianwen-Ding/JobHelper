@@ -675,6 +675,129 @@ async function main() {
   );
 
   /*
+   * And the skills rows, which had no way back at all.
+   *
+   * The button above tests for a `key` and a `from`, which is the shape of a
+   * wording swap: one of several phrasings an entry holds, recorded in
+   * `choices`. A narrowed skills group is a set of items under
+   * `sections[skills].items` and has neither, so every skills row came up
+   * without an undo — and those are the rows most likely to be wrong, four
+   * groups cut at once off the same handful of keywords. The only answer on
+   * offer was to throw the whole proposal away.
+   */
+  console.log('\nKeeping a skills group the way it was');
+
+  const skillUndo = await inPage(async (createCard) => {
+    const sent = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: {
+          id: 'job-acme',
+          label: 'Acme',
+          choices: { b_pipeline: 'v_kafka' },
+          sections: [
+            { kind: 'skills', groups: ['sk_lang', 'sk_tools'], items: { sk_lang: ['s_py', 's_go'], sk_tools: ['t_k8s'] } },
+          ],
+        },
+        baseLabel: 'New grad resume',
+        tailor: 'match',
+        diff: [
+          { kind: 'changed', where: 'Acme Co.', from: 'Built a pipeline', to: 'Built a Kafka pipeline' },
+          { kind: 'removed', where: 'Languages', text: 'Languages: dropped Ruby, PHP — keeping Python, Go' },
+          { kind: 'removed', where: 'Developer Tools', text: 'Developer Tools: dropped Docker — keeping Kubernetes' },
+        ],
+        rationale: [
+          { key: 'b_pipeline', from: 'v_base', to: 'v_kafka', toText: 'Built a Kafka pipeline', because: ['kafka'] },
+        ],
+        skillChanges: [
+          // The base named its own list for this one.
+          { groupId: 'sk_lang', groupName: 'Languages', from: ['s_py', 's_go', 's_rb', 's_php'], to: ['s_py', 's_go'] },
+          // And expressed no preference for this one, which prints them all.
+          { groupId: 'sk_tools', groupName: 'Developer Tools', from: null, to: ['t_k8s'] },
+        ],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        return action === 'render' ? { pages: 1, fits: true } : {};
+      },
+    });
+
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const rows = () => root.querySelectorAll('.change').length;
+    const undoButtons = () => [...root.querySelectorAll('.undo-one')];
+    const text = () => root.querySelector('.changes')?.textContent ?? '';
+
+    const offered = undoButtons().length;
+    const before = rows();
+
+    // Between the two, because undoing recompiles and the rest of the undo
+    // buttons are held while it does — a second click landing on a disabled
+    // button would do nothing and this would pass for the wrong reason.
+    const settle = () => new Promise((r) => setTimeout(r, 50));
+
+    // Guarded rather than assumed: without the fix there are no skills undo
+    // buttons at all, and this has to report that rather than throw.
+    const clickUndo = async (at) => {
+      const button = undoButtons()[at < 0 ? undoButtons().length + at : at];
+      if (!button) return false;
+      button.click();
+      await settle();
+      return true;
+    };
+
+    // The group whose base list was explicit.
+    const clicked = await clickUndo(1);
+    const afterFirst = { rows: rows(), stillNames: /dropped Ruby/.test(text()), clicked };
+    // And the one where the base said nothing.
+    await clickUndo(-1);
+
+    const last = sent.filter((c) => c.action === 'render').at(-1)?.payload?.spec;
+    const skills = (last?.sections ?? []).find((x) => x.kind === 'skills');
+    return {
+      offered,
+      before,
+      afterFirst,
+      after: rows(),
+      items: skills?.items ?? null,
+      hasTools: skills ? Object.prototype.hasOwnProperty.call(skills.items ?? {}, 'sk_tools') : null,
+      choices: last?.choices ?? null,
+    };
+  });
+
+  check('a skills row offers to be put back, like every other row', skillUndo.offered === 3, JSON.stringify(skillUndo));
+  check(
+    'putting one back takes that row off the list',
+    skillUndo.afterFirst.rows === skillUndo.before - 1 && skillUndo.afterFirst.stillNames === false,
+    JSON.stringify(skillUndo.afterFirst),
+  );
+  /*
+   * The half that matters, as with the wordings: taking the row off the screen
+   * and compiling the narrowed group anyway would be worse than no button.
+   */
+  check(
+    'the group the base named is compiled with its own list back',
+    JSON.stringify(skillUndo.items?.sk_lang) === JSON.stringify(['s_py', 's_go', 's_rb', 's_php']),
+    JSON.stringify(skillUndo.items),
+  );
+  /*
+   * `null` from the base is an answer, not a gap: a group with no entry under
+   * `items` prints all of its items, and the way to say that is to leave the
+   * key out. Writing an empty list instead would print nothing.
+   */
+  check(
+    'and the group it named nothing for goes back to having no entry at all',
+    skillUndo.hasTools === false,
+    JSON.stringify(skillUndo.items),
+  );
+  check('both rows are gone and the wording swap is untouched', skillUndo.after === 1 && skillUndo.choices?.b_pipeline === 'v_kafka', JSON.stringify(skillUndo));
+
+  /*
    * Building puts the files where the upload dialog will be.
    *
    * The flat folder is a projection of the tracker, so nothing reached it

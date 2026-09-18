@@ -1135,6 +1135,42 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   }
 
   /**
+   * The same, for a skills group that was narrowed.
+   *
+   * A different write because it is a different kind of change: a wording is
+   * one of several the entry holds, recorded in `choices`; a skills group is a
+   * set of items, recorded under `sections[skills].items`. Putting one back
+   * means putting that list back, and `null` means the base asked for nothing
+   * — which is not "no answer" but a real one, the group printing all of its
+   * items, and the way to say it is to leave the key out.
+   *
+   * Written into `state.spec` like the other undo, for the same reason: the
+   * spec is what is compiled and what is filed, so this survives both instead
+   * of being a correction to the list on screen.
+   */
+  async function undoSkill(change) {
+    const sections = (state.spec?.sections ?? []).map((section) => {
+      if (section.kind !== 'skills') return section;
+      const items = { ...(section.items ?? {}) };
+      if (change.from) items[change.groupId] = change.from;
+      else delete items[change.groupId];
+      return { ...section, items };
+    });
+    state.spec = { ...state.spec, sections };
+    state.undone = [...(state.undone ?? []), skillKey(change.groupId)];
+    state.render = null;
+    await compile();
+  }
+
+  /*
+   * Undone changes are remembered by key, and a group id is not a choice key.
+   * Prefixed so a skills group can never collide with a bullet that happens to
+   * share its id — which is not hypothetical, since both are free-form ids the
+   * user types in the editor.
+   */
+  const skillKey = (groupId) => `skills:${groupId}`;
+
+  /**
    * Put the built files where the upload dialog will be, as soon as they are
    * built.
    *
@@ -1210,10 +1246,28 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     for (const r of rationale) {
       if (r.toText) changeFor.set(plainish(r.toText), r);
     }
+
+    /*
+     * And the skills change behind each skills row, matched by the group's
+     * name.
+     *
+     * Not by the swapped text, which is how the rows above are matched,
+     * because a skills row has no `from`/`to` to match on — the diff writes it
+     * as one sentence ("Languages: dropped Ruby, PHP — keeping Python, Go").
+     * The name is what both sides have: the diff labels the row with it and
+     * the server sends it beside the group's id for exactly this.
+     */
+    const skillFor = new Map();
+    for (const sc of analysis.skillChanges ?? []) {
+      if (sc.groupName) skillFor.set(plainish(sc.groupName), sc);
+    }
+
     const undone = new Set(state.undone ?? []);
     const stillThere = (c) => {
       const key = changeFor.get(plainish(c.to ?? ''))?.key;
-      return !key || !undone.has(key);
+      if (key && undone.has(key)) return false;
+      const group = skillFor.get(plainish(c.where ?? ''))?.groupId;
+      return !group || !undone.has(skillKey(group));
     };
     const shown = diff.filter(stillThere);
     const shownRationale = rationale.filter((r) => !undone.has(r.key));
@@ -1253,6 +1307,9 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
 
     for (const c of shown) {
       const change = changeFor.get(plainish(c.to ?? ''));
+      // A row is one or the other, never both: a wording swap carries `to`,
+      // a narrowed skills group carries a group name and no `to` at all.
+      const skill = c.to ? undefined : skillFor.get(plainish(c.where ?? ''));
       const because = (change?.because ?? []).length ? change.because : undefined;
       // `text` is a self-contained sentence, which means it repeats the place
       // it happened — and the place is already the label above it.
@@ -1292,6 +1349,25 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 // would leave whichever finished second describing the card.
                 disabled: busyIn('resume', 'compile'),
                 onclick: () => undoOne(change),
+              })
+            : null,
+          /*
+           * And the same offer on a skills row.
+           *
+           * These are the rows most likely to be wrong — four groups narrowed
+           * at once off the same handful of keywords — and they were the only
+           * rows with no way back, because the test above asks for a `key` and
+           * a `from` and a skills change has neither. So the one kind of
+           * change you would most want to argue with was the one kind you
+           * could only accept or throw the whole proposal away over.
+           */
+          skill
+            ? h('button', {
+                className: 'link undo-one',
+                textContent: 'Keep the original',
+                title: `Show ${skill.groupName} the way your base resume has it`,
+                disabled: busyIn('resume', 'compile'),
+                onclick: () => undoSkill(skill),
               })
             : null,
         ]),
@@ -2717,6 +2793,17 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     /** The analysis, whether this is the first one or a later rebuild. */
     update(next) {
       analysis = analysis ? Object.assign(analysis, next) : next;
+      /*
+       * A new proposal, so nothing is undone on it yet.
+       *
+       * `undone` is a list of keys whose rows have been put back, and it only
+       * means anything against the spec those keys were undone on. A rebuild
+       * hands over a different spec — every swap made afresh — and carrying
+       * the old list across hid rows the new proposal really had changed. The
+       * undo itself is not lost by this: it was written into the spec, and the
+       * spec is what has just been replaced.
+       */
+      if (next.spec) state.undone = [];
       state.spec = next.spec ?? state.spec;
       state.builtWith = next.tailor ?? (next.aiUsed ? 'ai' : state.builtWith);
       state.render = null;
