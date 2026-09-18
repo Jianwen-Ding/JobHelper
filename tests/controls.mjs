@@ -588,22 +588,38 @@ async function main() {
           return Object.keys(all).filter((k) => k.startsWith('jh-orphan:'));
         });
 
-      // Planted directly: the point under test is the housekeeping, not the
-      // walk that produces an orphan, which `sending` already covers.
-      await worker.evaluate(async (stale) => {
+      /*
+       * Planted directly: the point under test is the housekeeping, not the
+       * walk that produces an orphan, which `sending` already covers.
+       *
+       * Planted and counted in one trip into the worker, which is not
+       * fussiness. `sweepOrphans` runs from the `onRemoved` listener, and
+       * that listener is asynchronous — it awaits the trail before it sweeps
+       * — so a tab closed earlier in this file finishes being cleaned up
+       * some time after `page.close()` has already returned. The block above
+       * closes one. Counting in a second trip left a window for that sweep
+       * to land, and it landed in it every time: thirty stale orphans,
+       * correctly removed, a moment before the test looked to see whether
+       * they were there. The suite reported a bug in the housekeeping when
+       * what it had actually caught was the housekeeping working.
+       *
+       * The worker runs one thing at a time, so inside a single evaluate
+       * nothing can interleave and the count is of what was just written.
+       */
+      const planted = await worker.evaluate(async (stale) => {
         const store = chrome.storage.session ?? chrome.storage.local;
         const old = Date.now() - stale;
         const put = {};
         for (let i = 0; i < 30; i++) put[`jh-orphan:https://old.example/${i}`] = { work: { letter: 'x' }, at: old };
         for (let i = 0; i < 5; i++) put[`jh-orphan:https://new.example/${i}`] = { work: { letter: 'y' }, at: Date.now() };
         await store.set(put);
+        // Counted by prefix rather than in total: earlier walks in this suite
+        // close tabs that hold work, so the store is not empty to begin with
+        // and an absolute number would test the order of this file.
+        const all = await store.get(null);
+        return Object.keys(all).filter((k) => /^jh-orphan:https:\/\/(old|new)\.example\//.test(k)).length;
       }, 3 * 60 * 60 * 1000);
-
-      // Counted by prefix rather than in total: earlier walks in this suite
-      // close tabs that hold work, so the store is not empty to begin with and
-      // asserting an absolute number tests the order of this file.
-      const planted = async () => (await orphans()).filter((k) => /old\.example|new\.example/.test(k));
-      check('the planted ones are there to begin with', (await planted()).length === 35, `${(await planted()).length}`);
+      check('the planted ones are there to begin with', planted === 35, `${planted}`);
 
       // Closing a tab that holds work is the moment a new orphan is written,
       // and the only moment the number can grow.
