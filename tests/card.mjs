@@ -268,7 +268,7 @@ async function main() {
       building: named('Build resume') ?? named('Recompile'),
       applyFeedback: named('Apply feedback'),
       // Filing waits for the two things it files.
-      filing: named('Prepare to submit'),
+      filing: named('Submit'),
       // Different lanes entirely: none of these touch the resume.
       draftLetter: named('✦Draft a letter'),
       draftAnswer: named('✦Draft an answer'),
@@ -497,6 +497,69 @@ async function main() {
     undoing.recompiled.at(-1)?.b_pipeline === 'v_kafka',
     JSON.stringify(undoing.recompiled.at(-1)),
   );
+
+  /*
+   * Building puts the files where the upload dialog will be.
+   *
+   * The flat folder is a projection of the tracker, so nothing reached it
+   * until an application existed, and the only thing that made one was the
+   * submit button. That is the wrong moment: you press it *after* filling the
+   * form, and the file dialog opens during. So building files the application
+   * as `applying` — built, in the folder, not yet sent — and submitting moves
+   * it on.
+   *
+   * The compile matters as much as the timing. "Build resume" renders through
+   * the fast preview path, which is explicitly not what gets attached; the
+   * staging call is a real compile, which is why it is a second request and
+   * not a copy of the preview.
+   */
+  console.log('\nBuilding puts the files in place');
+
+  const staging = await inPage((createCard) => {
+    const sent = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        return action === 'render' ? { pages: 1, fits: true } : {};
+      },
+    });
+    void handle;
+
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
+
+    byText('Build resume').click();
+    return new Promise((resolve) => setTimeout(() => resolve({
+      actions: sent.map((c) => c.action),
+      staged: sent.find((c) => c.action === 'stage')?.payload ?? null,
+      submitLabel: Boolean(byText('Submit')),
+      oldLabel: Boolean(byText('Prepare to submit')),
+    }), 60));
+  });
+
+  check('building still compiles the preview', staging.actions.includes('render'), JSON.stringify(staging.actions));
+  check(
+    'and puts the real files in the flat folder without being asked',
+    staging.actions.includes('stage'),
+    JSON.stringify(staging.actions),
+  );
+  check(
+    'sending the resume it just built',
+    staging.staged?.spec?.id === 'job-acme',
+    JSON.stringify(staging.staged),
+  );
+  check('the filing button says what it does', staging.submitLabel === true && staging.oldLabel === false);
 
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);

@@ -70,7 +70,7 @@ async function main() {
     await card.getByRole('button', { name: 'Build resume' }).click();
     await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
 
-    await card.getByRole('button', { name: 'Prepare to submit' }).click();
+    await card.getByRole('button', { name: 'Submit' }).click();
     await page.waitForTimeout(4000);
     console.log('\n--- what the card says when the endpoint is gone ---');
     console.log(await card.locator('.err').innerText().catch(() => '(no error box shown!)'));

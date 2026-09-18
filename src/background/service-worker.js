@@ -917,6 +917,23 @@ const handlers = {
   },
 
   /** Write the application folder and record it in the tracker. */
+  /**
+   * Build the files and put them in the flat folder, without filing the
+   * application as sent.
+   *
+   * Same endpoint as `bundle`; the status is forced here rather than taken
+   * from the caller, so that this route cannot file something by accident.
+   * That is the only difference and it is the point of having two names.
+   */
+  async stage(payload, tab) {
+    return serverFetch('/api/applications/bundle', {
+      method: 'POST',
+      timeoutMs: SLOW_TIMEOUT_MS,
+      save: saveOf.get(tab?.id),
+      body: JSON.stringify({ ...payload, status: 'applying' }),
+    });
+  },
+
   async bundle(payload, tab) {
     return serverFetch('/api/applications/bundle', {
       method: 'POST',

@@ -697,6 +697,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     autofill: 'page',
     bundle: 'submit',
     trackStatus: 'submit',
+    // Its own lane: staging runs after every build and must block nothing.
+    stage: 'staging',
     clearTrail: 'trail',
     forgetPage: 'trail',
     setAiEnabled: 'settings',
@@ -1090,6 +1092,34 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     state.render = null;
     await act('render', { spec: state.spec }, (r) => {
       state.render = r;
+    });
+  }
+
+  /**
+   * Put the built files where the upload dialog will be, as soon as they are
+   * built.
+   *
+   * Two things are true of "Build resume" that make this worth doing without
+   * being asked. The compile it runs is a *preview* — the fast path, which is
+   * right for a badge and a picture and is explicitly not what gets attached
+   * to an application — so something has to produce the real file eventually.
+   * And the moment after building is the moment the portal's file dialog
+   * opens, which is a bad time to discover the folder is empty because the
+   * application has not been "prepared" yet.
+   *
+   * So this files the application as `applying`: built, in the flat folder,
+   * not yet sent. Submitting moves it on. The compile here is the trusted
+   * engine, because the whole point is that what is in that folder is the
+   * thing you can attach.
+   *
+   * Never awaited by the button. It takes as long as a real compile and the
+   * preview is already on screen; its own lane means it blocks nothing while
+   * it runs, and a failure is reported without taking the build with it.
+   */
+  function stageFiles() {
+    if (!state.spec) return;
+    act('stage', { spec: state.spec, coverLetter: state.letter, answers: collectedAnswers() }, (staged) => {
+      if (staged) state.staged = staged;
     });
   }
 
@@ -1557,7 +1587,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
          * Offered, not adopted.
          *
          * This used to put the previous letter straight into `state.letter`,
-         * and `state.letter` is what "Prepare to submit" ships. So with
+         * and `state.letter` is what Submit ships. So with
          * the AI off — and nobody having clicked anything, because this draft
          * starts itself — a letter that opens "Dear Streamly," was typeset,
          * named "Cover Letter Helios.pdf", and dropped in the folder the card
@@ -1792,7 +1822,10 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             className: 'primary',
             textContent: busyLabel('render', state.render ? 'Recompile' : 'Build resume', 'Compiling…'),
             disabled: busyIn('resume'),
-            onclick: () => act('render', { spec: state.spec }, (r) => (state.render = r)),
+            onclick: async () => {
+              await act('render', { spec: state.spec }, (r) => (state.render = r));
+              stageFiles();
+            },
           }),
           state.render
             ? h('a', { href: state.render.absolutePdfUrl, target: '_blank', textContent: 'Open full size' })
@@ -2016,7 +2049,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
            */
           h('button', {
             className: 'primary',
-            textContent: busyLabel('bundle', 'Prepare to submit', 'Preparing…'),
+            textContent: busyLabel('bundle', 'Submit', 'Filing…'),
             disabled: busyIn('submit', 'resume', 'letter') || !state.render,
             title: state.render ? 'Compile, name the files properly, and snapshot what was sent' : 'Build the resume first',
             onclick: () =>
@@ -2039,7 +2072,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
          * disabled button is the one place a tooltip cannot be relied on —
          * browsers differ on whether they show it at all, and it needs
          * hovering a control that looks like it does nothing. On a posting
-         * the base resume already suits, "Prepare to submit" sits
+         * the base resume already suits, Submit sits
          * there greyed with no visible reason, which reads as broken rather
          * than as one step out of order.
          */
@@ -2388,7 +2421,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             ...b.currentProblems.map((said) => h('div', { textContent: said })),
             h('div', {
               textContent:
-                'The archive below still has all of it. Clear whatever is in the way and press Prepare to submit again, or attach from the archive instead.',
+                'The archive below still has all of it. Clear whatever is in the way and press Submit again, or attach from the archive instead.',
             }),
           ])
         : null,

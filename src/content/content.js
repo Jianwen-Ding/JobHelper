@@ -580,6 +580,28 @@
       case 'trackStatus':
         return send('trackStatus', payload);
 
+      /*
+       * The same files, put where the upload dialog will be, without saying
+       * they were sent.
+       *
+       * `applying` is exactly this state and has existed for it all along:
+       * built, sitting in the flat folder, not yet gone. The difference from
+       * `bundle` below is one word, and it is the whole difference between
+       * "ready" and "sent".
+       */
+      case 'stage':
+        return send('stage', {
+          spec: payload.spec,
+          resumeId: payload.spec.id,
+          company: analysis.job.company ?? whoIsHiring(),
+          role: analysis.job.title ?? 'Unknown role',
+          url: location.href,
+          source: new URL(location.href).hostname,
+          status: 'applying',
+          coverLetter: payload.coverLetter,
+          answers: payload.answers,
+        });
+
       case 'bundle':
         return send('bundle', {
           spec: payload.spec,
@@ -589,7 +611,7 @@
           url: location.href,
           source: new URL(location.href).hostname,
           /*
-           * Pressing "Prepare to submit" is taken as submitting it.
+           * Pressing Submit is taken as submitting it.
            *
            * Strictly this is early: the files exist, the portal has not seen
            * them, and the upload still has to happen in the dialog this opens.
