@@ -30,8 +30,24 @@ import {
 const REQUEST_TIMEOUT_MS = 20_000;
 const SLOW_TIMEOUT_MS = 10 * 60_000;
 
+/**
+ * Which save the application in hand was built from.
+ *
+ * An application takes pages and minutes to write, and the editor can be
+ * pointed at a different save in the meantime — a work one and a personal
+ * one is the ordinary reason to have two. Nothing said so, and filing the
+ * application then wrote it into whichever save happened to be open, with
+ * the PDFs typeset from that save's profile and wordings: files that were
+ * not the ones on screen, in somebody else's folder, with a 200 back.
+ *
+ * So the save each proposal came from travels with the writes that follow
+ * it, and the store refuses one meant for a save it no longer has open.
+ * Held per tab, because two tabs are two applications.
+ */
+const saveOf = new Map();
+
 async function serverFetch(path, options = {}) {
-  const { timeoutMs = REQUEST_TIMEOUT_MS, ...init } = options;
+  const { timeoutMs = REQUEST_TIMEOUT_MS, save, ...init } = options;
   const { serverUrl } = await getSettings();
   const url = `${serverUrl.replace(/\/$/, '')}${path}`;
 
@@ -40,7 +56,11 @@ async function serverFetch(path, options = {}) {
     res = await fetch(url, {
       ...init,
       signal: init.signal ?? AbortSignal.timeout(timeoutMs),
-      headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(save ? { 'X-RMM-Project': save } : {}),
+        ...(init.headers ?? {}),
+      },
     });
   } catch (cause) {
     // Marked, so the card can offer the way out rather than only naming the
@@ -78,6 +98,9 @@ async function serverFetch(path, options = {}) {
     // The server says which sort of refusal this is. "No save open" is the one
     // worth acting on: there is a button that fixes it, one tab away.
     if (body.kind === 'no-project') failed.jobhelper = { fix: 'open-save', serverUrl };
+    // And the same button for a different save being open: what fixes it is
+    // choosing one, which is the page that button goes to.
+    if (body.kind === 'other-save') failed.jobhelper = { fix: 'open-save', serverUrl };
     throw failed;
   }
   return body;
@@ -773,6 +796,7 @@ const handlers = {
      * as looked at would put a salary page, a careers index and a
      * confirmation page into the application you are writing.
      */
+    if (result?.save && tab?.id !== undefined) saveOf.set(tab.id, result.save);
     if (result?.isJobPosting) {
       await remember(tab, {
         url,
@@ -865,10 +889,11 @@ const handlers = {
   },
 
   /** Write the application folder and record it in the tracker. */
-  async bundle(payload) {
+  async bundle(payload, tab) {
     return serverFetch('/api/applications/bundle', {
       method: 'POST',
       timeoutMs: SLOW_TIMEOUT_MS,
+      save: saveOf.get(tab?.id),
       body: JSON.stringify(payload),
     });
   },
@@ -979,10 +1004,14 @@ const handlers = {
    * A browser sidebar is fine for picking a resume and wrong for writing three
    * paragraphs; this is the door between the two.
    */
-  async openWorkspace(payload) {
+  async openWorkspace(payload, tab) {
     const result = await serverFetch('/api/workspace', {
       method: 'POST',
       timeoutMs: SLOW_TIMEOUT_MS,
+      // The same rule as `bundle`: this writes a space, a tracker row and a
+      // tailored resume into a save, and it has to be the save the proposal
+      // was built from.
+      save: saveOf.get(tab?.id),
       body: JSON.stringify(payload),
     });
     const { serverUrl } = await getSettings();

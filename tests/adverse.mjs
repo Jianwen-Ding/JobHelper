@@ -423,6 +423,81 @@ async function main() {
         });
       }
     }
+    /* ---------------------------------------------------------------- *
+     * The save changes under an application that is already open          *
+     * ---------------------------------------------------------------- */
+
+    group('Another save is opened while an application is being written');
+    {
+      /*
+       * Two saves is the ordinary reason to have saves at all — a personal
+       * one and a work one — and an application takes long enough to write
+       * that the editor can be pointed at the other one meanwhile.
+       *
+       * Nothing said so. Filing the application then wrote it into whichever
+       * save happened to be open, saved its tailored resume there, and
+       * typeset the PDFs from that save's profile and wordings: a 200 back,
+       * files that were not the ones reviewed, and a row in the wrong
+       * tracker. The proposal now carries the save it was built from, and
+       * the store refuses a write meant for one it no longer has open.
+       */
+      // The same save the harness is using, on a second front door of our
+      // own: switching saves on the shared one would disturb every other
+      // suite running beside this.
+      const mine = await (await fetch(`${SERVER}/health`)).json();
+      const own = await ownServer(mine.dataDir);
+      const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'rmm-other-save-'));
+      try {
+        await pointExtensionAt(context, context.serviceWorkers()[0], own.url);
+
+        const page = await context.newPage();
+        const errors = [];
+        page.on('pageerror', (e) => errors.push(String(e).slice(0, 120)));
+        await page.goto(fixtures.urlFor(HELIOS_FORM), { waitUntil: 'domcontentloaded' });
+        await settled(page);
+        const card = cardOf(page);
+        await card.getByRole('button', { name: 'Build resume' }).click();
+        await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
+
+        // The person switches saves in the editor, in another window.
+        const switched = await fetch(`${own.url}/api/projects/switch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dir: elsewhere, mode: 'create' }),
+        });
+        check('the editor changed save', switched.ok, String(switched.status));
+
+        // And then presses the button that files it.
+        await card.getByRole('button', { name: 'Prepare to submit' }).click();
+        await card.locator('.err, .done-box').first().waitFor({ timeout: 120_000 });
+
+        /*
+         * The refusal in the store's own words, not merely the absence of a
+         * folder. A first version of this check also accepted any card text
+         * containing "save", and passed on the word "saved" in a sentence
+         * about the base resume being untouched — which is a check that
+         * cannot fail.
+         */
+        const said = await card.innerText();
+        const refusal = said.split('\n').find((line) => /open now|open that save again/i.test(line));
+        check('the card says the save changed rather than filing it anyway', Boolean(refusal), refusal ?? said.slice(0, 160));
+        check('and no folder is reported as written', !(await card.locator('.done-box').count()));
+
+        // Nothing of this application reached the save that is open.
+        const landed = await fetch(`${own.url}/api/applications`).then((r) => r.json());
+        check(
+          'the other save is untouched',
+          !(landed.applications ?? []).some((a) => /helios/i.test(a.company ?? '')),
+          (landed.applications ?? []).map((a) => a.company).join(', ') || '(empty)',
+        );
+        check('nothing was thrown at the page', errors.length === 0, errors.join('; '));
+        await page.close();
+      } finally {
+        own.kill();
+        fs.rmSync(elsewhere, { recursive: true, force: true });
+        await pointExtensionAt(context, context.serviceWorkers()[0], SERVER);
+      }
+    }
   } finally {
     if (doomed) doomed.kill();
     await context.close();
