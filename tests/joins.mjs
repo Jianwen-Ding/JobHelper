@@ -95,7 +95,11 @@ async function settled(page) {
 async function main() {
   await requireOpenSave(SERVER);
   const fixtures = await serveFixtures([LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ATS_FORM]);
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-probe3-'));
+  // Named for this suite, and taken away at the end. It was `jh-probe3-`,
+  // from the probe this grew out of, and nothing removed it — so every run
+  // left another browser profile in the temp folder under a name that looked
+  // like debris from a script nobody runs any more.
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-joins-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     executablePath: findChromium(),
     headless: true,
@@ -219,6 +223,7 @@ async function main() {
   } finally {
     await context.close();
     fixtures.close();
+    fs.rmSync(userDataDir, { recursive: true, force: true });
   }
 
   console.log(`\n${passed}/${passed + failed} checks passed`);
