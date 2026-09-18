@@ -246,6 +246,9 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .diff-head .count { margin-left: auto; color: var(--faint); }
 /* The way out of the changes, where the changes are. */
 .diff-head .undo-all { padding: 0 0 0 8px; font-size: 11px; }
+/* Quiet, and at the end of the row it belongs to: available on every change,
+   never competing with the change itself for attention. */
+.change .undo-one { padding: 4px 0 0; font-size: 11px; }
 .change .ba { display: grid; gap: 2px; margin-top: 3px; }
 .change .ba del, .change .ba ins {
   display: block; font-size: 12px; line-height: 1.45; text-decoration: none;
@@ -441,6 +444,15 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      * the box you are typing in.
      */
     folded: false,
+    /**
+     * Changes this proposal made that you have put back.
+     *
+     * Kept by key rather than by rebuilding without them, because the match
+     * is deterministic: ask for it again and it proposes the same swap again.
+     * So the decision has to be remembered on this side, and it is carried in
+     * `spec.choices` — which is what gets compiled, and what gets filed.
+     */
+    undone: [],
     letter: null,
     /** True once the letter step is open, even if the draft came back empty. */
     letterStarted: false,
@@ -1060,6 +1072,27 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     return `${base}, with wordings swapped by keyword match against phrasings you already wrote.${copy}`;
   }
 
+  /**
+   * Put one swapped wording back, and recompile with it back.
+   *
+   * `change.from` is the wording the base resume was using before this
+   * proposal touched it, so pinning that is exactly "leave this line alone".
+   * It is written into `spec.choices`, which is the thing the PDF is compiled
+   * from and the thing filing sends — so the undo survives both rather than
+   * being a tidy-up of the list on screen.
+   */
+  async function undoOne(change) {
+    const choices = { ...(state.spec?.choices ?? {}), [change.key]: change.from };
+    state.spec = { ...state.spec, choices };
+    state.undone = [...(state.undone ?? []), change.key];
+    // The compiled PDF is now of a resume nobody has: recompile before the
+    // preview or the fit badge claim to be about this one.
+    state.render = null;
+    await act('render', { spec: state.spec }, (r) => {
+      state.render = r;
+    });
+  }
+
   function drawChanges() {
     const diff = analysis.diff ?? [];
     const rationale = analysis.rationale ?? [];
@@ -1074,18 +1107,31 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       );
     }
 
-    // Keywords, matched to the diff row they explain by the text they swapped in.
-    const reasonFor = new Map();
+    /*
+     * The change behind each diff row, matched by the text it swapped in.
+     *
+     * This was a map to the keywords alone, which was all the row needed when
+     * all it did was explain itself. Undoing one needs the change itself: the
+     * key it is recorded under and the wording that was there before.
+     */
+    const changeFor = new Map();
     for (const r of rationale) {
-      if (r.toText && (r.because ?? []).length) reasonFor.set(plainish(r.toText), r.because);
+      if (r.toText) changeFor.set(plainish(r.toText), r);
     }
+    const undone = new Set(state.undone ?? []);
+    const stillThere = (c) => {
+      const key = changeFor.get(plainish(c.to ?? ''))?.key;
+      return !key || !undone.has(key);
+    };
+    const shown = diff.filter(stillThere);
+    const shownRationale = rationale.filter((r) => !undone.has(r.key));
 
     const list = h('div', { className: 'changes' }, [
       h('div', { className: 'diff-head' }, [
         h('span', { className: 'from-label', textContent: analysis.baseLabel ?? 'Base' }),
         h('span', { className: 'arrow', textContent: '→' }),
         h('span', { className: 'to-label', textContent: 'this posting' }),
-        h('span', { className: 'count', textContent: plural(diff.length || rationale.length, 'change') }),
+        h('span', { className: 'count', textContent: plural(shown.length || shownRationale.length, 'change') }),
         /*
          * The way out, beside the list rather than back up among the build
          * modes. This is where you find out what was changed, so this is where
@@ -1113,8 +1159,9 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       ]),
     ]);
 
-    for (const c of diff) {
-      const because = reasonFor.get(plainish(c.to ?? ''));
+    for (const c of shown) {
+      const change = changeFor.get(plainish(c.to ?? ''));
+      const because = (change?.because ?? []).length ? change.because : undefined;
       // `text` is a self-contained sentence, which means it repeats the place
       // it happened — and the place is already the label above it.
       const detail = c.where && c.text?.startsWith(`${c.where}: `)
@@ -1132,13 +1179,34 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             !c.from && !c.to ? h('span', { className: 'plain', textContent: detail }) : null,
           ]),
           because?.length ? why : null,
+          /*
+           * One change, put back.
+           *
+           * "Undo all" threw away every swap to send the resume untouched,
+           * which is the wrong size of answer to "that one is wrong". The
+           * match is usually right about most of them and occasionally wrong
+           * about one, and the one it is wrong about is the one you notice.
+           *
+           * Only where the change says which wording it replaced. A diff row
+           * with no rationale behind it is something the base resume did, not
+           * something this proposal chose, and there is nothing here to undo.
+           */
+          change?.key && change.from
+            ? h('button', {
+                className: 'link undo-one',
+                textContent: 'Keep the original',
+                title: 'Put this one line back the way your base resume has it',
+                disabled: busyIn('resume'),
+                onclick: () => undoOne(change),
+              })
+            : null,
         ]),
       );
     }
 
     // A proposal the server could not resolve still has something to say.
-    if (diff.length === 0) {
-      for (const c of rationale) {
+    if (shown.length === 0) {
+      for (const c of shownRationale) {
         list.append(
           h('div', { className: 'change' }, [
             h('div', { className: 'where', textContent: c.where ?? 'On the resume' }),

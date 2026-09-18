@@ -417,6 +417,87 @@ async function main() {
     String(folding.reopened.answer).slice(0, 50),
   );
 
+  /*
+   * Putting one change back.
+   *
+   * "Undo all" threw away every swap and sent the base resume untouched,
+   * which is the wrong size of answer to "that one is wrong". The match is
+   * usually right about most of them and occasionally wrong about one — a
+   * degree line swapped for one naming a concentration, say — and the one it
+   * is wrong about is the one you notice.
+   */
+  console.log('\nKeeping the original wording of one change');
+
+  const undoing = await inPage((createCard) => {
+    const sent = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', choices: { b_pipeline: 'v_kafka' } },
+        baseLabel: 'New grad resume',
+        tailor: 'match',
+        diff: [
+          { kind: 'changed', where: 'Acme Co.', from: 'Built a pipeline', to: 'Built a Kafka pipeline' },
+          { kind: 'changed', where: 'Northeastern', from: 'BS in Computer Science', to: 'BS in Computer Science, Systems concentration' },
+        ],
+        rationale: [
+          { key: 'b_pipeline', from: 'v_base', to: 'v_kafka', toText: 'Built a Kafka pipeline', because: ['kafka'] },
+          { key: 'edu_neu.subtitle', from: 'v_plain', to: 'v_systems', toText: 'BS in Computer Science, Systems concentration', because: ['systems'] },
+        ],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        return action === 'render' ? { pages: 1, fits: true } : {};
+      },
+    });
+    void handle;
+
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const rows = () => root.querySelectorAll('.change').length;
+    const count = () => root.querySelector('.diff-head .count')?.textContent ?? null;
+    const undoButtons = () => [...root.querySelectorAll('.undo-one')];
+    const text = () => root.querySelector('.changes')?.textContent ?? '';
+
+    const before = { rows: rows(), count: count(), offered: undoButtons().length };
+
+    // Put back the second one — the degree line.
+    undoButtons()[1].click();
+    return {
+      before,
+      after: { rows: rows(), count: count(), stillNames: /Systems concentration/.test(text()) },
+      // What the resume is compiled from now, which is also what filing sends.
+      recompiled: sent.filter((c) => c.action === 'render').map((c) => c.payload.spec.choices),
+    };
+  });
+
+  check('every proposed change offers to be put back', undoing.before.offered === 2, JSON.stringify(undoing.before));
+  check(
+    'putting one back takes that row off the list',
+    undoing.after.rows === undoing.before.rows - 1,
+    `${undoing.before.rows} → ${undoing.after.rows}`,
+  );
+  check('and the count agrees', undoing.after.count === '1 change', String(undoing.after.count));
+  check('and it is the one that was asked for', undoing.after.stillNames === false);
+  /*
+   * The half that matters. Taking the row off the screen and sending the
+   * swapped wording anyway would be worse than not offering the button.
+   */
+  check(
+    'the resume is recompiled with the original wording pinned back',
+    undoing.recompiled.at(-1)?.['edu_neu.subtitle'] === 'v_plain',
+    JSON.stringify(undoing.recompiled.at(-1)),
+  );
+  check(
+    'and the change that was not undone is left alone',
+    undoing.recompiled.at(-1)?.b_pipeline === 'v_kafka',
+    JSON.stringify(undoing.recompiled.at(-1)),
+  );
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);
