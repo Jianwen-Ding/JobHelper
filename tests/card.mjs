@@ -218,6 +218,105 @@ async function main() {
     plainMatch.slice(0, 120),
   );
 
+  /*
+   * What is still usable while the AI reads the posting.
+   *
+   * A tailoring pass is a model reading a job posting: minutes, not seconds.
+   * Every control on the card used to test one `busy` flag, so for the length
+   * of that run you could not type in the cover letter it was not touching,
+   * answer a question, open the builder, or even press Done to put the card
+   * away. The work being slow is not a reason for the rest of the card to be
+   * gone.
+   */
+  console.log('\nWhile the AI is reading the posting');
+
+  const whileTailoring = await inPage((createCard) => {
+    let release;
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        baseLabel: 'New grad resume',
+        rationale: [],
+        diff: [],
+        tailor: 'match',
+      },
+      resumes: [],
+      settings: {},
+      questions: [{ question: 'Why us?', answer: '', confident: false }],
+      needsCoverLetter: true,
+      // `rebuild` is the tailoring pass. Held open, so the card is caught
+      // mid-run rather than after it.
+      onAction: (action) =>
+        action === 'rebuild' ? new Promise((r) => { release = r; }) : Promise.resolve({}),
+    });
+    handle.setLetter?.('Dear Acme, I am writing about the Platform Engineer role.');
+
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
+
+    // Start the pass the way the card does.
+    byText('Match by keyword')?.click();
+
+    const named = (t) => {
+      const b = byText(t);
+      return b ? b.disabled : null;
+    };
+    const state = {
+      // The one that is actually running, and the others in its lane.
+      building: named('Build resume') ?? named('Recompile'),
+      applyFeedback: named('Apply feedback'),
+      // Filing waits for the two things it files.
+      filing: named('Prepare to submit'),
+      // Different lanes entirely: none of these touch the resume.
+      draftLetter: named('✦Draft a letter'),
+      draftAnswer: named('✦Draft an answer'),
+      fillForm: named('Autofill this form'),
+      // And the two that wait for nothing at all.
+      editInBuilder: named('Edit in ResumeM-M'),
+      // The × in the header is what puts the card away in this state; `Done`
+      // belongs to the panel after filing. Both are ungated now.
+      dismiss: named('×'),
+      spinner: Boolean(root.querySelector('.spinner')),
+    };
+    release?.({});
+    return state;
+  });
+
+  check(
+    'the work that is running still says so',
+    whileTailoring.spinner === true,
+    JSON.stringify(whileTailoring),
+  );
+  check(
+    'and the other buttons in its lane wait, because they would collide',
+    whileTailoring.building === true && whileTailoring.applyFeedback === true,
+    JSON.stringify(whileTailoring),
+  );
+  check(
+    'and so does filing, which waits for what it files',
+    whileTailoring.filing === true,
+    String(whileTailoring.filing),
+  );
+  check(
+    'the letter can still be drafted, because the resume is not the letter',
+    whileTailoring.draftLetter === false,
+    String(whileTailoring.draftLetter),
+  );
+  check('an answer can still be drafted', whileTailoring.draftAnswer === false, String(whileTailoring.draftAnswer));
+  check('and the form can still be filled', whileTailoring.fillForm === false, String(whileTailoring.fillForm));
+  check(
+    'the builder can still be opened',
+    whileTailoring.editInBuilder === false,
+    String(whileTailoring.editInBuilder),
+  );
+  check(
+    'and the card can always be put away',
+    whileTailoring.dismiss === false,
+    String(whileTailoring.dismiss),
+  );
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);

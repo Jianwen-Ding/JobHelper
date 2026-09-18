@@ -627,6 +627,46 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   /** When each in-flight action started, so the card can say how long. */
   const startedAt = new Map();
 
+  /**
+   * What each action holds while it runs.
+   *
+   * Knowing *that* something is in flight was enough to draw a progress bar
+   * and never enough to decide what to grey out, but it was used for both:
+   * every control on the card tested the same `busy` flag. So a tailoring
+   * pass — which is a model reading a job posting, and takes minutes — locked
+   * the whole card. You could not type in the cover letter it was not
+   * touching, answer a question, open the builder, or even press Done to put
+   * the card away, for the length of a run that had nothing to do with any of
+   * them.
+   *
+   * A control waits for the work that would actually collide with it and
+   * ignores the rest. Filing waits for both of the things it files. Opening a
+   * tab and dismissing the card wait for nothing at all, because there is no
+   * state of this card in which you should be unable to leave.
+   *
+   * Unknown actions are treated as holding the resume, which is the cautious
+   * reading: it is the lane almost everything is in, and a new action that
+   * forgets to name itself here grants no new freedom by accident.
+   */
+  const LANE = {
+    rebuild: 'resume',
+    render: 'resume',
+    refine: 'resume',
+    setBase: 'resume',
+    coverLetter: 'letter',
+    renderLetter: 'letter',
+    saveLetter: 'letter',
+    saveAnswer: 'answers',
+    autofill: 'page',
+    bundle: 'submit',
+    trackStatus: 'submit',
+    clearTrail: 'trail',
+    forgetPage: 'trail',
+    setAiEnabled: 'settings',
+    openWorkspace: 'elsewhere',
+  };
+  const busyIn = (...lanes) => [...running].some((a) => lanes.includes(LANE[a] ?? 'resume'));
+
   async function act(action, payload, apply) {
     running.add(action);
     startedAt.set(action, Date.now());
@@ -1014,7 +1054,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
               className: 'link undo-all',
               textContent: 'Undo all',
               title: 'Throw these changes away and send the resume exactly as you keep it',
-              disabled: Boolean(state.busy),
+              disabled: busyIn('resume'),
               onclick: async () => {
                 state.rebuilding = 'none';
                 try {
@@ -1138,11 +1178,11 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   function syncLetterControls() {
     const written = Boolean(state.letter?.trim());
     if (letterControls.save) {
-      letterControls.save.disabled = Boolean(state.busy) || state.letterSaved || !written;
+      letterControls.save.disabled = busyIn('letter') || state.letterSaved || !written;
       letterControls.save.textContent = busyLabel('saveLetter', state.letterSaved ? 'Saved' : 'Save to store', 'Saving…');
     }
     if (letterControls.copy) letterControls.copy.disabled = !written;
-    if (letterControls.typeset) letterControls.typeset.disabled = Boolean(state.busy) || !written;
+    if (letterControls.typeset) letterControls.typeset.disabled = busyIn('letter') || !written;
     if (letterControls.note) {
       letterControls.note.textContent = state.letterSaved ? 'Future drafts will start from this one.' : '';
     }
@@ -1513,7 +1553,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             className: state.builtWith === 'none' ? 'mode on' : 'mode',
             textContent: rebuildLabel('none', 'Use it unchanged', 'Copying…'),
             title: 'Send this resume exactly as it is. Nothing is swapped, dropped or added.',
-            disabled: Boolean(state.busy),
+            disabled: busyIn('resume'),
             onclick: async () => {
               state.rebuilding = 'none';
               try {
@@ -1531,7 +1571,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             textContent: rebuildLabel('match', 'Match by keyword', 'Matching…'),
             title:
               'Swap in phrasings you already wrote, picked by the keywords in this posting. Nothing is sent to an AI, and nothing new is written.',
-            disabled: Boolean(state.busy),
+            disabled: busyIn('resume'),
             onclick: async () => {
               state.rebuilding = 'match';
               try {
@@ -1553,7 +1593,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
               : state.ai?.state === 'server-off'
                 ? 'ResumeM-M has its AI switched off — turn it on under Voice & AI.'
                 : 'Switch the AI on from the JobHelper toolbar icon to use this.',
-            disabled: Boolean(state.busy) || !state.ai?.active,
+            disabled: busyIn('resume') || !state.ai?.active,
             onclick: async () => {
               state.rebuilding = 'ai';
               try {
@@ -1579,7 +1619,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             className: 'mode ghost',
             textContent: 'Edit in ResumeM-M',
             title: 'Open this resume in the builder to add a bullet or another phrasing',
-            disabled: Boolean(state.busy) || !state.spec?.id,
+            disabled: !state.spec?.id,
             onclick: () => {
               // Remembered so that coming back here means something. See
               // `cameBack`.
@@ -1605,7 +1645,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
               h('button', {
                 className: 'link',
                 textContent: 'Build it again',
-                disabled: Boolean(state.busy),
+                disabled: busyIn('resume'),
                 onclick: () => {
                   state.editedElsewhere = false;
                   const mode = state.builtWith ?? 'match';
@@ -1640,7 +1680,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           h('button', {
             className: 'primary',
             textContent: busyLabel('render', state.render ? 'Recompile' : 'Build resume', 'Compiling…'),
-            disabled: Boolean(state.busy),
+            disabled: busyIn('resume'),
             onclick: () => act('render', { spec: state.spec }, (r) => (state.render = r)),
           }),
           state.render
@@ -1652,7 +1692,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           h('button', {
             className: 'tiny',
             textContent: busyLabel('refine', 'Apply feedback', 'Thinking…'),
-            disabled: Boolean(state.busy),
+            disabled: busyIn('resume'),
             onclick: async () => {
               if (!state.feedback.trim()) return;
               const refined = await act('refine', { spec: state.spec, feedback: state.feedback });
@@ -1727,7 +1767,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 (letterControls.save = h('button', {
                   className: 'tiny',
                   textContent: busyLabel('saveLetter', state.letterSaved ? 'Saved' : 'Save to store', 'Saving…'),
-                  disabled: Boolean(state.busy) || state.letterSaved || !state.letter?.trim(),
+                  disabled: busyIn('letter') || state.letterSaved || !state.letter?.trim(),
                   onclick: () =>
                     act('saveLetter', { body: state.letter }, () => {
                       state.letterSaved = true;
@@ -1753,7 +1793,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 (letterControls.typeset = h('button', {
                   className: 'tiny',
                   textContent: busyLabel('renderLetter', state.letterRender ? 'Typeset again' : 'See it typeset', 'Typesetting…'),
-                  disabled: Boolean(state.busy) || !state.letter?.trim(),
+                  disabled: busyIn('letter') || !state.letter?.trim(),
                   title: 'Compile it the way it will be sent',
                   onclick: () =>
                     /*
@@ -1796,7 +1836,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 aiButton(
                   {
                     title: 'Write a first draft from this posting and the letters you have written before. Runs your AI command.',
-                    disabled: Boolean(state.busy),
+                    disabled: busyIn('letter'),
                     onclick: draftLetter,
                   },
                   busyLabel('coverLetter', 'Draft a letter', 'Drafting…'),
@@ -1845,7 +1885,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           h('button', {
             className: 'tiny',
             textContent: busyLabel('autofill', 'Autofill this form', 'Filling…'),
-            disabled: Boolean(state.busy),
+            disabled: busyIn('page'),
             onclick: () => act('autofill', {}, (r) => (state.autofillReport = r)),
           }),
           /*
@@ -1866,7 +1906,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           h('button', {
             className: 'primary',
             textContent: busyLabel('bundle', 'Prepare to submit', 'Preparing…'),
-            disabled: Boolean(state.busy) || !state.render,
+            disabled: busyIn('submit', 'resume', 'letter') || !state.render,
             title: state.render ? 'Compile, name the files properly, and snapshot what was sent' : 'Build the resume first',
             onclick: () =>
               act(
@@ -2019,7 +2059,6 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           className: 'tiny',
           textContent: busyLabel('openWorkspace', 'Write these in ResumeM-M', 'Opening…'),
           title: 'Hand the posting, the resume, and the questions to the editor, where there is room to write',
-          disabled: Boolean(state.busy),
           onclick: () =>
             act(
               'openWorkspace',
@@ -2101,7 +2140,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           aiButton(
             {
               className: 'tiny',
-              disabled: Boolean(state.busy),
+              disabled: busyIn('answers'),
               onclick: () => {
                 // What is in the box now, so the reply can tell its own work
                 // from anything written during the minutes it takes.
@@ -2293,7 +2332,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         h('button', {
           className: 'tiny',
           textContent: busyLabel('autofill', 'Autofill this form', 'Filling…'),
-          disabled: Boolean(state.busy),
+          disabled: busyIn('page'),
           onclick: () => act('autofill', {}, (r) => (state.autofillReport = r)),
         }),
         /*
@@ -2311,7 +2350,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         h('button', {
           className: 'tiny',
           textContent: busyLabel('trackStatus', 'Not sent after all', 'Saving…'),
-          disabled: Boolean(state.busy),
+          disabled: busyIn('submit'),
           title: 'Put this back on the list of applications still to finish',
           onclick: () =>
             act(
@@ -2325,7 +2364,6 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         h('button', {
           className: 'primary',
           textContent: 'Done',
-          disabled: Boolean(state.busy),
           onclick: () => removeCard(),
         }),
       ]),
