@@ -96,6 +96,9 @@ async function heldPages(worker, page) {
   }, page.url());
 }
 
+/** The cap `sweepOrphans` holds the count to, plus the one it just wrote. */
+const ORPHAN_BOUND = 21;
+
 async function main() {
   try {
     await requireOpenSave(SERVER);
@@ -559,6 +562,70 @@ async function main() {
       } finally {
         await fetch(`${SERVER}/api/resumes/${overflow}`, { method: 'DELETE' }).catch(() => undefined);
       }
+    }
+
+    /*
+     * What happens to writing rescued from a tab nobody reopened.
+     *
+     * Closing a tab that holds a letter keeps the writing under the address it
+     * was on, so Ctrl+Shift+T can find it again — the tab comes back with a new
+     * id, and the address is the only thing the two have in common. Until now
+     * that copy was removed only by a reopened tab claiming it while still
+     * fresh, so close ten tabs you never return to and ten copies sit there for
+     * the rest of the browser session.
+     *
+     * Session storage is 10MB shared across every tab and the trail is already
+     * budgeted to the limit: five tabs holding five pages fills it exactly.
+     * When it fills, `writeTrail` starts dropping page text — the description
+     * stops crossing pages, silently, which is the one thing the trail is for.
+     * Dead orphans must not be what costs that.
+     */
+    group('Writing rescued from a closed tab');
+    {
+      const orphans = () =>
+        worker.evaluate(async () => {
+          const all = await (chrome.storage.session ?? chrome.storage.local).get(null);
+          return Object.keys(all).filter((k) => k.startsWith('jh-orphan:'));
+        });
+
+      // Planted directly: the point under test is the housekeeping, not the
+      // walk that produces an orphan, which `sending` already covers.
+      await worker.evaluate(async (stale) => {
+        const store = chrome.storage.session ?? chrome.storage.local;
+        const old = Date.now() - stale;
+        const put = {};
+        for (let i = 0; i < 30; i++) put[`jh-orphan:https://old.example/${i}`] = { work: { letter: 'x' }, at: old };
+        for (let i = 0; i < 5; i++) put[`jh-orphan:https://new.example/${i}`] = { work: { letter: 'y' }, at: Date.now() };
+        await store.set(put);
+      }, 3 * 60 * 60 * 1000);
+
+      // Counted by prefix rather than in total: earlier walks in this suite
+      // close tabs that hold work, so the store is not empty to begin with and
+      // asserting an absolute number tests the order of this file.
+      const planted = async () => (await orphans()).filter((k) => /old\.example|new\.example/.test(k));
+      check('the planted ones are there to begin with', (await planted()).length === 35, `${(await planted()).length}`);
+
+      // Closing a tab that holds work is the moment a new orphan is written,
+      // and the only moment the number can grow.
+      const doomed = await context.newPage();
+      await doomed.goto(fixtures.urlFor(HELIOS_ROLE), { waitUntil: 'domcontentloaded' });
+      await cardAppears(doomed);
+      await worker.evaluate(async (url) => {
+        const [tab] = await chrome.tabs.query({ url });
+        const store = chrome.storage.session ?? chrome.storage.local;
+        await store.set({
+          [`trail:${tab.id}`]: { pages: [{ url, title: 'Helios' }], work: { letter: 'the one that matters' }, at: Date.now() },
+        });
+      }, doomed.url());
+      await doomed.close();
+      // `onRemoved` runs in the worker, after the tab has gone.
+      await new Promise((r) => setTimeout(r, 1200));
+
+      const left = await orphans();
+      check('the stale ones are gone', !left.some((k) => k.includes('old.example')), `${left.length} left`);
+      check('and the count is held to a bound', left.length <= ORPHAN_BOUND, `${left.length} left`);
+      check('while the fresh ones are kept', left.filter((k) => k.includes('new.example')).length === 5);
+      check('including the one just rescued', left.some((k) => k.includes('/helios')), left.join(' ').slice(0, 120));
     }
   } finally {
     await context.close();

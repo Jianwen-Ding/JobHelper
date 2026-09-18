@@ -612,9 +612,12 @@ const handlers = {
      */
     const key = orphanKey(page?.url ?? '');
     const rescued = page?.url ? (await session().get(key))[key] : null;
-    if (rescued?.work && Date.now() - (rescued.at ?? 0) < TRAIL_STALE_MS) {
+    if (rescued) {
+      const fresh = Date.now() - (rescued.at ?? 0) < TRAIL_STALE_MS;
+      // Claimed or expired, it goes either way. Leaving the stale ones behind
+      // is how the space fills up; see `sweepOrphans`.
       await session().remove(key).catch(() => undefined);
-      return { work: rescued.work, recovered: true };
+      if (rescued.work && fresh) return { work: rescued.work, recovered: true };
     }
     return { work: trail.work ?? null };
   },
@@ -1176,11 +1179,52 @@ chrome.tabs?.onUpdated?.addListener((tabId, changeInfo) => {
   markTab(tabId).catch(() => undefined);
 });
 
+/**
+ * Throw away rescued work nobody came back for.
+ *
+ * An orphan is written whenever a tab holding a letter closes, and until now
+ * it was only ever removed by a reopened tab on that same address claiming it.
+ * Close ten tabs you never return to and ten copies of your writing sit there
+ * for the rest of the browser session.
+ *
+ * That matters because the space is already budgeted to the limit: session
+ * storage is 10MB shared, and `writeTrail`'s own comment notes that five tabs
+ * holding five pages fills it exactly. When it does fill, the failure is
+ * silent and it is the wrong thing that degrades — `writeTrail` starts
+ * dropping page text, so the description stops crossing pages, which is the
+ * feature the trail exists for. Dead orphans must not be what costs you that.
+ *
+ * Swept when a new one is written, which is the only moment the number can
+ * grow, and bounded by count as well as by age so a single long sitting cannot
+ * accumulate without limit.
+ */
+const ORPHAN_LIMIT = 20;
+
+async function sweepOrphans() {
+  const all = await session().get(null).catch(() => ({}));
+  const mine = Object.entries(all ?? {})
+    .filter(([key]) => key.startsWith('jh-orphan:'))
+    .map(([key, value]) => ({ key, at: value?.at ?? 0 }));
+
+  const now = Date.now();
+  const expired = mine.filter((o) => now - o.at > TRAIL_STALE_MS).map((o) => o.key);
+  // Newest first, and anything past the limit goes with the expired ones.
+  const surplus = mine
+    .filter((o) => !expired.includes(o.key))
+    .sort((a, b) => b.at - a.at)
+    .slice(ORPHAN_LIMIT)
+    .map((o) => o.key);
+
+  const doomed = [...expired, ...surplus];
+  if (doomed.length > 0) await session().remove(doomed).catch(() => undefined);
+}
+
 chrome.tabs?.onRemoved?.addListener(async (tabId) => {
   try {
     const trail = await readTrail(tabId);
     const url = trail.pages?.[trail.pages.length - 1]?.url;
     if (trail.work && url) {
+      await sweepOrphans();
       await session().set({ [orphanKey(url)]: { work: trail.work, at: Date.now() } });
     }
   } catch {

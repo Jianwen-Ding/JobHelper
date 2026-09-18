@@ -231,6 +231,45 @@
     return out.toLowerCase().slice(0, limit);
   }
 
+/**
+   * Does this page ask who you are?
+   *
+   * The discriminator between a page that *is* an application and a page that
+   * *talks about* applications — which turns out to be the whole false-positive
+   * problem, and not the one I expected. A pull request on a repository about
+   * job tooling, and a chat window discussing a cover letter, both carry the
+   * vocabulary in quantity, and both have the furniture: one long textarea and
+   * a file picker for attachments. Nothing separates them from an application
+   * form by word count, because the words really are there.
+   *
+   * What separates them is that neither has any interest in your name. Every
+   * application form ever written asks for it, usually beside an email address;
+   * a comment box and a chat composer never do, because the site already knows
+   * who you are. So the file-input signal — three points, the largest single
+   * award here — is conditioned on an identity field being present.
+   *
+   * Structural rather than a list of hosts, deliberately. A blocklist of
+   * github.com and the chat sites would fix the two cases reported and nothing
+   * else, and would be wrong the moment somebody posts a job in a repository.
+   */
+  function asksWhoYouAre() {
+    for (const field of document.querySelectorAll('input, textarea')) {
+      const type = (field.getAttribute('type') ?? '').toLowerCase();
+      if (type === 'email') return true;
+      const how = `${field.name ?? ''} ${field.id ?? ''} ${field.getAttribute('placeholder') ?? ''} ` +
+        `${field.getAttribute('aria-label') ?? ''} ${field.getAttribute('autocomplete') ?? ''}`;
+      if (/\b(first|last|full|given|family)[\s_-]*name\b|\bname\b|\be-?mail\b/i.test(how)) return true;
+    }
+    // A label beside a field counts too: plenty of forms name nothing useful
+    // on the input itself and put the words in a <label>.
+    for (const label of document.querySelectorAll('label')) {
+      if (!/^\s*(first |last |full |your )?(name|e-?mail)\b/i.test(label.textContent ?? '')) continue;
+      const linked = label.htmlFor ? document.getElementById(label.htmlFor) : label.querySelector('input');
+      if (linked) return true;
+    }
+    return false;
+  }
+
   function localScore() {
     let score = 0;
     const url = location.href;
@@ -274,9 +313,25 @@
     ].filter((w) => text.includes(w)).length;
     if (formish) score += Math.min(formish, 4);
 
-    // A file input beside the word résumé is the clearest sign there is that a
-    // form is in front of you, and it costs one selector.
-    if (document.querySelector('input[type=file]') && /\b(resum|cv)\b/i.test(text)) score += 3;
+    /*
+     * A file input beside the word résumé is the clearest sign there is that a
+     * form is in front of you, and it costs one selector.
+     *
+     * The test used to be `/\b(resum|cv)\b/i`, which matches neither "resume"
+     * nor "resumes" nor "résumé": `\b` after "resum" wants a non-word
+     * character and finds the "e". So the strongest single signal this scorer
+     * has was dead for three years' worth of the only spellings anyone
+     * actually writes, and fired on "cv" alone. Every real application form
+     * that says "Upload your resume" was scoring three points lower than
+     * intended, which on a form with little other vocabulary is the difference
+     * between offering and staying quiet.
+     *
+     * A prefix rather than a whole word, so the plural and the accented
+     * spelling both count. "Resuming" on a page that also has a file upload is
+     * the price, and it is cheap: this adds three points, it does not decide
+     * anything on its own, and the false-positive sweep is the check on it.
+     */
+    if (document.querySelector('input[type=file]') && /\bcv\b|résum|resum/i.test(text) && asksWhoYouAre()) score += 3;
 
     const listish = [
       'open positions', 'open roles', 'all jobs', 'job openings', 'search jobs',
@@ -997,28 +1052,46 @@
   function watchForApplyClicks() {
     const MEANS_APPLY = /\b(apply|application|start (your )?application|submit (your )?application|continue to apply)\b/i;
 
-    document.addEventListener(
-      'click',
-      (event) => {
-        const link = event.target?.closest?.('a[href], button');
-        if (!link) return;
+    const noticed = (event) => {
+      const link = event.target?.closest?.('a[href], button');
+      if (!link) return;
 
-        const href = link.getAttribute?.('href') ?? '';
-        const label = (link.textContent ?? '').trim().slice(0, 80);
-        if (!MEANS_APPLY.test(href) && !MEANS_APPLY.test(label)) return;
+      const href = link.getAttribute?.('href') ?? '';
+      const label = (link.textContent ?? '').trim().slice(0, 80);
+      if (!MEANS_APPLY.test(href) && !MEANS_APPLY.test(label)) return;
 
-        let to = href;
-        try {
-          to = new URL(href, location.href).href;
-        } catch {
-          to = location.href; // a button, or a href this page will resolve itself
-        }
-        // Best effort by design: if this never arrives, the trail falls back
-        // to the host and path rules, which are right most of the time.
-        send('expectContinuation', { to }).catch(() => undefined);
-      },
-      true,
-    );
+      let to = href;
+      try {
+        to = new URL(href, location.href).href;
+      } catch {
+        to = location.href; // a button, or a href this page will resolve itself
+      }
+      // Best effort by design: if this never arrives, the trail falls back to
+      // the host and path rules and to `wasLinkedFrom`, which reads the same
+      // link out of the page we came from with no race in it at all.
+      send('expectContinuation', { to }).catch(() => undefined);
+    };
+
+    /*
+     * On the press as well as on the click.
+     *
+     * The message has to reach the worker and be written to storage before the
+     * page it was sent from is torn down. Measured, that takes 54 to 78
+     * milliseconds — comfortable, until the machine is busy, and one run in
+     * four of the full test suite was losing it.
+     *
+     * A person pressing a mouse button holds it down for something like a
+     * tenth of a second before releasing, and the navigation starts on the
+     * release. Listening on the press spends that entire gap on the write, for
+     * free, and it is a gap far larger than the one being lost. Sending twice
+     * costs nothing: the handler records the same intention either way, so the
+     * second is a no-op with the same value.
+     *
+     * `click` stays, because a link followed by keyboard never presses a
+     * pointer at all.
+     */
+    document.addEventListener('pointerdown', noticed, true);
+    document.addEventListener('click', noticed, true);
   }
 
   /**

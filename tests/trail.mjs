@@ -295,3 +295,92 @@ describe('whether there is anything to keep', () => {
     assert.equal(worthKeeping(null), false);
   });
 });
+
+/*
+ * The hand-off with no witness of its own.
+ *
+ * A careers site sending you to an applicant tracking system is the one walk
+ * where nothing about the two pages connects them: the hosts differ, so the
+ * address rules say no, and the Apply link routinely carries rel="noreferrer",
+ * so there is no referrer either. That left the click — a message the content
+ * script sends as its page is being torn down around it, which was measured
+ * taking 54 to 78 milliseconds to land and which one full-suite run in four
+ * was losing.
+ *
+ * The link is the same evidence, recorded before the navigation rather than
+ * during it: the markup of the page you came from is already in the trail, and
+ * an Apply link in it pointing here is a fact from minutes ago with nothing
+ * left to race.
+ */
+describe('an apply link on the page you came from', () => {
+  const careers = (body) => ({
+    url: 'https://acme.example/careers/platform-engineer',
+    title: 'Platform Engineer at Acme',
+    company: 'Acme',
+    html: `<html><body>${body}</body></html>`,
+  });
+  const form = { url: 'https://boards.other.example/gh/acme/jobs/9910', title: 'Apply — Acme' };
+
+  it('joins the form to the posting that linked to it', () => {
+    const trail = { pages: [careers('<p><a rel="noreferrer" href="https://boards.other.example/gh/acme/jobs/9910">Apply now</a></p>')] };
+    assert.equal(sameApplication(trail, form), true);
+  });
+
+  it('reads a relative link against the page it was on', () => {
+    const trail = {
+      pages: [
+        {
+          url: 'https://acme.example/careers/platform-engineer',
+          company: 'Acme',
+          html: '<a href="/apply/9910">Apply now</a>',
+        },
+      ],
+    };
+    assert.equal(sameApplication(trail, { url: 'https://acme.example/apply/9910' }), true);
+  });
+
+  /*
+   * The reason only apply links count. A board lists fifty postings and links
+   * to every one of them; "this page linked to that page" would make any two
+   * of them one application, which is the exact mistake the same-host rules
+   * already go to some length to avoid.
+   */
+  it('does not join two postings just because a board linked to both', () => {
+    const board = {
+      url: 'https://jobs.example/acme',
+      company: 'Acme',
+      html:
+        '<a href="https://boards.other.example/gh/acme/jobs/9910">Platform Engineer</a>' +
+        '<a href="https://boards.other.example/gh/acme/jobs/9911">Data Scientist</a>',
+    };
+    assert.equal(sameApplication({ pages: [board] }, { url: 'https://boards.other.example/gh/acme/jobs/9911' }), false);
+  });
+
+  it('does not join a link to somewhere else entirely', () => {
+    const trail = { pages: [careers('<a href="https://acme.example/apply/1">Apply now</a>')] };
+    assert.equal(sameApplication(trail, { url: 'https://elsewhere.example/jobs/7' }), false);
+  });
+
+  /*
+   * The company veto runs first and still wins. A link cannot make two
+   * employers into one application, which is the failure this whole file
+   * exists to prevent.
+   */
+  it('never overrules a different company', () => {
+    const trail = { pages: [careers('<a href="https://boards.other.example/gh/acme/jobs/9910">Apply now</a>')] };
+    assert.equal(sameApplication(trail, { ...form, company: 'Lyra' }), false);
+  });
+
+  it('is unbothered by a page whose markup was dropped to save room', () => {
+    // `lighten` throws the html away when session storage fills up. The rule
+    // simply stops applying; it must not throw.
+    const trail = { pages: [{ url: 'https://acme.example/careers/platform-engineer', company: 'Acme' }] };
+    assert.equal(sameApplication(trail, form), false);
+  });
+
+  it('is unbothered by markup that is not valid html', () => {
+    const trail = { pages: [careers('<a href=https://boards.other.example/gh/acme/jobs/9910 >Apply</a><a href=>x')] };
+    // Unquoted href is legal and is what a hand-written page often has.
+    assert.equal(sameApplication(trail, form), true);
+  });
+});
