@@ -797,7 +797,21 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     return h('div', { className: 'before' }, [
       document.createTextNode('You applied to this on '),
       h('b', { textContent: said }),
-      document.createTextNode(`${since ?? ''}.`),
+      document.createTextNode(`${since ?? ''}.${past.id ? ' ' : ''}`),
+      /*
+       * And the question that follows it. "You applied in March" invites
+       * exactly one reply — what did I send them? — and the answer is in the
+       * tracker, behind opening the editor, finding the tab and scrolling
+       * back past everything since. The record is one click instead.
+       */
+      past.id
+        ? h('button', {
+            className: 'link',
+            textContent: 'See what you sent',
+            title: 'Open that application in ResumeM-M',
+            onclick: () => onAction('openTab', { url: `/#applications/${encodeURIComponent(past.id)}` }),
+          })
+        : null,
     ]);
   }
 

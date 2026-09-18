@@ -99,6 +99,23 @@ const paneHeight = (page) =>
 async function settled(page) {
   await page.locator(HOST).waitFor({ state: 'attached', timeout: 25_000 });
   await page.locator(`${HOST} .card .role`).waitFor({ timeout: 25_000 });
+
+  /*
+   * And past the provisional card, which carries the role and none of the
+   * buttons. Without this the loop below could find a card that had stopped
+   * changing only because the analysis had not come back yet — and the test
+   * then spent its click timeout waiting for a button that was never going
+   * to be there in time. It is the same bet on how long the machine takes,
+   * made one step earlier.
+   *
+   * Tolerant on purpose: a page whose analysis never lands is a case several
+   * of these suites are about, and they still have their own assertions to
+   * make about it.
+   */
+  await page
+    .locator(`${HOST} .card:not(.loading)`)
+    .waitFor({ timeout: 60_000 })
+    .catch(() => undefined);
   /*
    * Wait for the card to stop changing, rather than for a number of
    * milliseconds. It fills in as the page is read — the role first, then the
@@ -274,6 +291,14 @@ async function main() {
       await settled(again);
       const said = (await cardOf(again).locator('.before').textContent())?.trim() ?? '';
       check('the card says so, on the posting itself', /you applied to this on/i.test(said), said || '(nothing)');
+
+      // And answers the question it raises. A sentence about March that
+      // cannot be followed up is worse than one that was never said.
+      const opened = context.waitForEvent('page');
+      await cardOf(again).getByRole('button', { name: 'See what you sent' }).click();
+      const record = await opened;
+      check('and the record is one click away', /#applications\/.+/.test(record.url()), record.url());
+      await record.close();
       await again.close();
     }
 
