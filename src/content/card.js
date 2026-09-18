@@ -2013,7 +2013,34 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     ).length;
     if (unanswered > 0) missing.push(`${unanswered} ${unanswered === 1 ? 'answer' : 'answers'}`);
 
+    /*
+     * And what the store could not give it.
+     *
+     * The resume is built from a proposal made minutes or pages earlier, and
+     * the store can change in between — that is the whole point of the round
+     * trip to the editor. An entry deleted in the meantime, or a wording
+     * renamed, leaves the resume compiling perfectly well without it. The
+     * store has always said so and nothing here read it, so a resume missing
+     * the job you were looking at was filed under "Saved. These files are
+     * named and ready to attach".
+     *
+     * Only what the store is missing: the same list carries typography notes
+     * about this machine's TeX install, which are true, worth saying once,
+     * and not worth putting in front of somebody about to attach a file.
+     */
+    const lost = b.missing;
+
     return h('div', { className: 'body' }, [
+      lost
+        ? h('div', { className: 'done-missing' }, [
+            h('strong', { textContent: `Not quite the resume you were looking at: ${lost}` }),
+            h('div', {
+              textContent:
+                'It was built from a proposal made before that changed. Build it again to see what it says now — ' +
+                'the files below were written from what the store holds today.',
+            }),
+          ])
+        : null,
       missing.length > 0
         ? h('div', { className: 'done-missing' }, [
             h('strong', { textContent: `Not in this folder: ${missing.join(' and ')}.` }),
