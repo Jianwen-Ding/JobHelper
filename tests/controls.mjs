@@ -332,6 +332,119 @@ async function main() {
       check('the popup drops the whole application', afterDrop.length === 0, afterDrop.join(' | ') || '(none)');
       await page.close();
     }
+    /* ---------------------------------------------------------------- *
+     * The one place the extension writes into the store                  *
+     * ---------------------------------------------------------------- */
+
+    group('Saving an answer for next time');
+    {
+      /*
+       * "Save for next time" puts what you just typed into the answer bank —
+       * the only write the card makes into the store's own writing, and the
+       * one that matters most now that the store holds real work. Nothing
+       * drove it: no test clicked the button and none named the message behind
+       * it, so a bug here would have landed in somebody's answers.yaml with a
+       * 200 back and nothing said.
+       *
+       * The bank is put back exactly as it was at the end, because this suite
+       * shares a store with every other one.
+       */
+      const bankNow = async () => (await fetch(`${SERVER}/api/store`).then((r) => r.json())).answers ?? [];
+      const before = await bankNow();
+
+      try {
+        const page = await context.newPage();
+        await page.goto(fixtures.urlFor(HELIOS_FORM), { waitUntil: 'domcontentloaded' });
+        await settled(page);
+
+        const card = cardOf(page);
+        const box = card.locator('.q textarea').first();
+        await box.waitFor({ timeout: 20_000 });
+        const said = `Because of the pipelines you publish — ${Date.now()}`;
+        await box.click();
+        await box.fill(said);
+        await page.waitForTimeout(400);
+
+        await card.getByRole('button', { name: 'Save for next time' }).first().click();
+        await page.waitForTimeout(2500);
+
+        const after = await bankNow();
+        const holds = (list) => JSON.stringify(list).includes(said);
+        check('the answer reaches the bank', holds(after), `${before.length} → ${after.length} answers`);
+
+        /*
+         * And nothing else in it moved. An answer bank is somebody's writing
+         * built up over months; a save that rewrites the file is one bad
+         * round-trip away from taking the rest of it with them.
+         */
+        const kept = before.every((b) => after.some((a) => a.id === b.id));
+        check('and every answer that was there is still there', kept, `${before.length} before, ${after.length} after`);
+        await page.close();
+
+        /*
+         * Saving the same question twice.
+         *
+         * The second time round the question matches the bank item the first
+         * save made, so the card sends its id and the store adds a phrasing to
+         * that item instead of filing the question again. Worth pinning both
+         * halves: one item, and the older phrasing still in it.
+         *
+         * It also moves that item's `default` to the phrasing just saved — so
+         * a button labelled "Save for next time" quietly changes which answer
+         * is used from now on, including over a default chosen by hand in the
+         * editor. That is defensible (the newest is usually the most relevant)
+         * and it is not what the label says, so it is recorded here rather
+         * than changed: it is the owner's answer bank and their call.
+         */
+        const again = await context.newPage();
+        await again.goto(fixtures.urlFor(HELIOS_FORM), { waitUntil: 'domcontentloaded' });
+        await settled(again);
+        const secondBox = cardOf(again).locator('.q textarea').first();
+        await secondBox.waitFor({ timeout: 20_000 });
+        const alsoSaid = `A second way of putting it — ${Date.now()}`;
+        await secondBox.click();
+        await secondBox.fill(alsoSaid);
+        await again.waitForTimeout(400);
+        await cardOf(again).getByRole('button', { name: 'Save for next time' }).first().click();
+        await again.waitForTimeout(2500);
+
+        const twice = await bankNow();
+        const forThisQuestion = twice.filter((a) => /why do you want to work here/i.test(a.question ?? ''));
+        check(
+          'asking the same question again adds a phrasing, not a second question',
+          forThisQuestion.length === 1,
+          `${forThisQuestion.length} entries for that question`,
+        );
+        const variants = forThisQuestion[0]?.variants ?? [];
+        check(
+          'and the phrasing saved before it is still there',
+          variants.some((v) => v.text === said) && variants.some((v) => v.text === alsoSaid),
+          `${variants.length} phrasings`,
+        );
+        const fresh = variants.find((v) => v.text === alsoSaid);
+        check(
+          'the newest becomes the one used from now on, which the label does not say',
+          forThisQuestion[0]?.default === fresh?.id,
+          `default is ${forThisQuestion[0]?.default}`,
+        );
+        await again.close();
+      } finally {
+        /*
+         * Whatever happened above, the bank goes back the way it was found —
+         * and says so if it cannot. This was a POST to a route that only takes
+         * PUT, with the failure swallowed: the restore 404'd every time, the
+         * suite reported nothing, and each run left another phrasing behind in
+         * a store the other suites share. A cleanup that fails quietly is
+         * worse than no cleanup, because it is the one nobody checks.
+         */
+        const put = await fetch(`${SERVER}/api/answers`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(before),
+        }).catch((err) => ({ ok: false, status: String(err.message ?? err) }));
+        check('the answer bank is put back as it was found', put.ok, `restore said ${put.status}`);
+      }
+    }
   } finally {
     await context.close();
     fixtures.close();
