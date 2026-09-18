@@ -48,6 +48,8 @@ import {
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
+/** What this suite files under; cleared before it starts as well as after. */
+const MINE = ['Vega', 'Lyra', 'Orion', 'Acme', 'Nova', 'Rigel', 'Altair', 'Cygnus', 'Vireo', 'Lyricus', 'Vela', 'Mensa Labs'];
 
 /*
  * What the running store can actually fill with.
@@ -170,6 +172,7 @@ async function main() {
   } catch {
     process.exit(2);
   }
+  await cleanStore(SERVER, MINE);
 
   // Two origins, so the careers-site-to-ATS hand-off is a genuine cross-host
   // navigation rather than two paths on one server.
@@ -775,7 +778,7 @@ async function main() {
     fixtures.close();
     ats.close();
     fs.rmSync(userDataDir, { recursive: true, force: true });
-    await cleanStore(SERVER, ['Vega', 'Lyra', 'Orion', 'Acme', 'Nova', 'Rigel', 'Altair', 'Cygnus', 'Vireo', 'Lyricus', 'Vela', 'Mensa Labs']);
+    await cleanStore(SERVER, MINE);
   }
 
   console.log(`\n${passed}/${passed + failed} checks passed`);

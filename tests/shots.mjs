@@ -25,6 +25,9 @@ import {
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
+
+/** What this suite files under; cleared before it starts as well as after. */
+const MINE = ['Streamly', 'Northwind', 'Example Co.'];
 const OUT = process.argv[2] ?? '/tmp/shots';
 
 const shots = [];
@@ -80,6 +83,7 @@ async function main() {
     process.exit(2);
   }
 
+  await cleanStore(SERVER, MINE).catch(() => undefined);
   const fixtures = await serveFixtures();
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-shots-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
@@ -490,7 +494,7 @@ async function main() {
     await popup.close();
 
     /* ================= Clean up ================= */
-    await cleanStore(SERVER, ['Streamly', 'Northwind', 'Example Co.']);
+    await cleanStore(SERVER, MINE);
     await fetch(`${SERVER}/api/resumes/shot-overflow`, { method: 'DELETE' });
   } finally {
     await context.close();

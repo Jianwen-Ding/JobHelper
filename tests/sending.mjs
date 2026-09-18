@@ -166,8 +166,12 @@ async function* inBatches(list, run) {
   }
 }
 
+/** What this suite files under; cleared before it starts as well as after. */
+const MINE = [...SENDS, ...DOES_NOT_SEND].map((f) => f.company).concat(['Novena']);
+
 async function main() {
   await requireOpenSave(SERVER);
+  await cleanStore(SERVER, MINE).catch(() => undefined);
   const fixtures = await serveFixtures([...SENDS, ...DOES_NOT_SEND, ...FRAME_DOCUMENTS]);
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-send-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
@@ -288,10 +292,7 @@ async function main() {
     }
     console.log(`\nWhole sweep: ${((Date.now() - started) / 1000).toFixed(1)}s`);
   } finally {
-    await cleanStore(
-      SERVER,
-      [...SENDS, ...DOES_NOT_SEND].map((f) => f.company).concat(['Novena']),
-    ).catch(() => undefined);
+    await cleanStore(SERVER, MINE).catch(() => undefined);
     await context.close();
     await fixtures.close();
     fs.rmSync(userDataDir, { recursive: true, force: true });

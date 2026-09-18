@@ -56,6 +56,21 @@ const group = (name) => console.log(`\n${name}`);
 const HOST = '#jobhelper-card-host';
 const cardOf = (page) => page.locator(`${HOST} .card`);
 
+/**
+ * The companies this suite files under, cleared before it starts as well as
+ * after it finishes.
+ *
+ * Clearing only at the end is enough exactly once. The pool hands one store to
+ * several suites in turn, and a run that is interrupted — or one that fails
+ * before its `finally` — leaves its applications behind for whoever gets that
+ * store next. Then this suite reads a Helios application that was sent by
+ * somebody else, sees `applied` where it expects `applying`, and reports a bug
+ * in code that is behaving perfectly. A suite that does not clear before it
+ * starts is not testing the extension; it is testing what was left lying
+ * around.
+ */
+const MINE = ['Helios', 'Cygnus'];
+
 /** What the store has filed under a company, as the editor would show it. */
 async function filed(company) {
   const [apps, drafts] = await Promise.all([
@@ -129,6 +144,7 @@ async function main() {
   } catch {
     process.exit(2);
   }
+  await cleanStore(SERVER, MINE);
 
   const fixtures = await serveFixtures();
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-carry-'));
@@ -504,7 +520,7 @@ async function main() {
     await context.close();
     fixtures.close();
     fs.rmSync(userDataDir, { recursive: true, force: true });
-    await cleanStore(SERVER, ['Helios', 'Cygnus']);
+    await cleanStore(SERVER, MINE);
   }
 
   console.log(`\n${passed}/${passed + failed} checks passed`);

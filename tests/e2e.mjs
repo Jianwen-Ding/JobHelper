@@ -16,6 +16,8 @@ import { BLOG, HELIOS_ROLE, NORTHWIND, STREAMLY, cleanStore, findChromium, point
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
+/** What this suite files under; cleared before it starts as well as after. */
+const MINE = ['Streamly', 'Northwind'];
 
 const results = [];
 function check(name, ok, detail = '') {
@@ -37,6 +39,7 @@ function cardOf(page) {
 
 async function main() {
   await requireOpenSave(SERVER);
+  await cleanStore(SERVER, MINE);
 
   const fixtures = await serveFixtures();
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-e2e-'));
@@ -608,7 +611,7 @@ async function main() {
     /* ---------------- Clean up ---------------- */
 
     group('Cleanup');
-    await cleanStore(SERVER, ['Streamly', 'Northwind']);
+    await cleanStore(SERVER, MINE);
     const after = await (await fetch(`${SERVER}/api/applications`)).json();
     check(
       'left the store as it was found',

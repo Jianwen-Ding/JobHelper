@@ -28,6 +28,8 @@ import { HELIOS_ROLE, cleanStore, findChromium, serveFixtures, requireOpenSave, 
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
+/** What this suite files under; cleared before it starts as well as after. */
+const MINE = ['Helios Robotics'];
 
 let passed = 0;
 let failed = 0;
@@ -155,6 +157,7 @@ async function main() {
   } catch {
     process.exit(2);
   }
+  await cleanStore(SERVER, MINE).catch(() => undefined);
 
   await scrubOldMarkers();
 
@@ -352,7 +355,7 @@ async function main() {
         check('the shared source is back as it was', false, String(err).slice(0, 120));
       }
     }
-    await cleanStore(SERVER, ['Helios Robotics']).catch(() => undefined);
+    await cleanStore(SERVER, MINE).catch(() => undefined);
     await context.close();
     await fixtures.close();
     fs.rmSync(userDataDir, { recursive: true, force: true });

@@ -42,6 +42,14 @@ const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)),
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
 const HOST = '#jobhelper-card-host';
 
+/**
+ * The companies this suite files under, cleared before it starts as well as
+ * after it finishes. One store is handed to several suites in turn, and one
+ * interrupted run otherwise leaves its applications for whoever gets that
+ * store next — who then reports a bug in code that is behaving perfectly.
+ */
+const MINE = ['Helios'];
+
 let passed = 0;
 let failed = 0;
 const check = (what, ok, detail = '') => {
@@ -130,6 +138,7 @@ async function ownServer(dataDir) {
 
 async function main() {
   const health = await requireOpenSave(SERVER).catch(() => process.exit(2));
+  await cleanStore(SERVER, MINE);
 
   const fixtures = await serveFixtures();
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-adverse-'));
@@ -503,7 +512,7 @@ async function main() {
     await context.close();
     fixtures.close();
     fs.rmSync(userDataDir, { recursive: true, force: true });
-    await cleanStore(SERVER, ['Helios']);
+    await cleanStore(SERVER, MINE);
   }
 
   console.log(`\n${passed}/${passed + failed} checks passed`);

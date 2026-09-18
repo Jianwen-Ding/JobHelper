@@ -26,6 +26,8 @@ import { cleanStore, findChromium, pointExtensionAt, requireOpenSave } from './f
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
+/** What this suite files under; cleared before it starts as well as after. */
+const MINE = ['Meridian'];
 
 let passed = 0;
 let failed = 0;
@@ -69,6 +71,7 @@ async function main() {
   } catch {
     process.exit(2);
   }
+  await cleanStore(SERVER, MINE);
 
   const server = http.createServer((req, res) => {
     const url = req.url.split('?')[0];
@@ -182,7 +185,7 @@ async function main() {
     await context.close();
     server.close();
     fs.rmSync(userDataDir, { recursive: true, force: true });
-    await cleanStore(SERVER, ['Meridian']);
+    await cleanStore(SERVER, MINE);
   }
 
   console.log('\nTime for the whole path, by system');
