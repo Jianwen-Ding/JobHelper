@@ -185,6 +185,33 @@ const FORM_BODY = `
     </form>`;
 
 /**
+ * A posting with no style of its own.
+ *
+ * For the Content-Security-Policy case, and only for it. Every other fixture
+ * here carries an inline `<style>` block so the screenshots look like a real
+ * page — and a policy that forbids inline style refuses that block, putting
+ * "Refused to apply inline style" in the console before the extension has done
+ * anything at all. A test that then checked the console for complaints would
+ * be reading the fixture's and blaming the card.
+ *
+ * So this one is deliberately unstyled: under a strict policy, anything in the
+ * console is ours.
+ */
+export const BARE_ROLE = {
+  name: 'bare-role',
+  path: '/andromeda/roles/platform-engineer',
+  company: 'Andromeda',
+  title: 'Platform Engineer',
+  html: `<!doctype html>
+<html><head><meta charset="utf-8"><title>Platform Engineer at Andromeda</title></head>
+<body>
+  <h1>Andromeda</h1><div>Platform Engineer</div>
+  ${ROLE_BODY}
+  ${FORM_BODY}
+</body></html>`,
+};
+
+/**
  * A form asking something no stored profile can answer.
  *
  * A country dropdown that does not list the country you live in. Autofill
@@ -1134,8 +1161,17 @@ export const ALL = [STREAMLY, NORTHWIND, HELIOS_ROLE, HELIOS_FORM, HEAVY_POSTING
  * extension does at load time therefore never happens either, which is not a
  * timing question but a permanent one, and the only way to ask it is to hold a
  * response open on purpose.
+ *
+ * `headers` are added to every page served. The one that matters is
+ * Content-Security-Policy: applicant tracking systems handle identity
+ * documents and salary figures and ship some of the strictest policies on the
+ * web, so "does the card draw under a policy that forbids inline style" is a
+ * question about the systems this tool exists for rather than an exotic one.
  */
-export function serveFixtures(fixtures = ALL, { vars = {}, hostname = '127.0.0.1', hold = null } = {}) {
+export function serveFixtures(
+  fixtures = ALL,
+  { vars = {}, hostname = '127.0.0.1', hold = null, headers = {} } = {},
+) {
   return new Promise((resolve) => {
     /** Held responses, so closing the server does not leave sockets open. */
     const holding = [];
@@ -1165,7 +1201,7 @@ export function serveFixtures(fixtures = ALL, { vars = {}, hostname = '127.0.0.1
       }
       // charset matters: an em dash in a page title came back as mojibake
       // without it, which looks like a bug in the extension rather than here.
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...headers });
       // `{{NAME}}` lets one fixture link to another server's origin, which is
       // how the careers-site-to-ATS hand-off is modelled.
       res.end(Object.entries(vars).reduce((html, [k, v]) => html.split(`{{${k}}}`).join(v), match.html));

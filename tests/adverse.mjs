@@ -26,6 +26,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import {
+  BARE_ROLE,
   HEAVY_POSTING,
   HELIOS_FORM,
   HELIOS_ROLE,
@@ -449,6 +450,150 @@ async function main() {
         });
       }
     }
+
+    /* ---------------------------------------------------------------- *
+     * The page forbids everything the card is made of                    *
+     * ---------------------------------------------------------------- */
+
+    group('A posting served under a strict Content-Security-Policy');
+    {
+      /*
+       * The systems this tool exists for are the ones with the tightest
+       * policies: they handle passports, salary figures and right-to-work
+       * documents, and their headers say so. The card is a shadow root full of
+       * inline style attached to their page, so if a policy can stop it
+       * drawing then the extension is simply broken where it matters most —
+       * and nothing else here would say so, because every other fixture is
+       * served with no headers at all.
+       *
+       * Drawing is the easy half, and it is nearly free: Chrome exempts a
+       * content script's own styles from the page's policy, and measurably so
+       * — a copy of this extension that appends a stylesheet to the page's own
+       * `<head>` under `style-src 'none'` still draws, still gets no
+       * violation. So "the card appeared" is a guard against that exemption
+       * changing, not a test of anything we do.
+       *
+       * The part with teeth is the preview, and it found something. pdf.js
+       * renders the compiled resume in a Worker, and a worker is not a style:
+       * `worker-src` is one of the directives an applicant tracking system
+       * pins down. Under `default-src 'none'` the page emits
+       * `worker-src blob` — once per preview, from a `chrome-extension`
+       * source file — which on a site with a `report-uri` is a report posted
+       * to somebody else's security monitoring for the sake of drawing a
+       * resume.
+       *
+       * It is left alone, because every way out is worse. The worker can only
+       * ever be a blob: a content script cannot construct one from an
+       * extension URL, since that is cross-origin to the document it runs in,
+       * so pdf.js fetches the script and wraps it — `workerPort` set by hand
+       * is refused for the same reason and silently ignored. Turning the
+       * worker off everywhere would move PDF parsing onto the thread of the
+       * form being filled in, on every site, to quieten a report on a few.
+       *
+       * And nothing breaks: pdf.js catches the refusal and parses on the main
+       * thread, so the pages still draw. That is the property worth pinning,
+       * and it is what the check below asserts — if a policy ever stops the
+       * preview appearing at all, this says so.
+       *
+       * `BARE_ROLE` and not one of the ordinary fixtures, because those carry
+       * an inline `<style>` of their own that the same policy refuses — the
+       * console would be full of complaints that were nothing to do with us.
+       */
+      const POLICIES = [
+        ["default-src 'self'", "default-src 'self'"],
+        ["style-src 'none'", "default-src 'self'; style-src 'none'"],
+        ['no inline anything', "default-src 'none'; style-src 'self'; script-src 'self'"],
+        ['trusted types', "require-trusted-types-for 'script'"],
+      ];
+
+      for (const [name, policy] of POLICIES) {
+        const strict = await serveFixtures([BARE_ROLE], { headers: { 'Content-Security-Policy': policy } });
+        const page = await context.newPage();
+        const complaints = [];
+        page.on('pageerror', (e) => complaints.push(String(e).slice(0, 100)));
+        /*
+         * The violation event rather than the console, because that is the
+         * thing with consequences: it is what a `report-uri` posts to the
+         * site's own security monitoring. The console also carries the
+         * browser's ordinary resource noise — a 404 for the favicon this
+         * one-page server does not have — which is nothing to do with either
+         * the policy or the card.
+         */
+        await page.addInitScript(() => {
+          window.__jhViolations = [];
+          document.addEventListener('securitypolicyviolation', (e) => {
+            window.__jhViolations.push(`${e.violatedDirective} ${e.blockedURI} ${(e.sourceFile ?? '').slice(-40)}`);
+          });
+        });
+
+        await page.goto(`${strict.base}${BARE_ROLE.path}`, { waitUntil: 'domcontentloaded' });
+        const drew = await page
+          .locator(`${HOST} .card`)
+          .waitFor({ timeout: 25_000 })
+          .then(() => true)
+          .catch(() => false);
+        check(`${name}: the card is drawn`, drew);
+
+        /*
+         * Styled, not merely present. A card whose stylesheet was refused is
+         * a stack of unstyled divs down the middle of somebody's application
+         * form, which is worse than no card at all — so this asks the page
+         * what it actually computed rather than whether an element exists.
+         */
+        const laidOut = await page
+          .evaluate(() => {
+            const el = document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelector('.card');
+            if (!el) return null;
+            return { position: getComputedStyle(el).position, width: Math.round(el.getBoundingClientRect().width) };
+          })
+          .catch(() => null);
+        check(
+          `${name}: and its stylesheet was applied`,
+          laidOut?.position === 'fixed' && laidOut.width > 200,
+          JSON.stringify(laidOut),
+        );
+
+        /*
+         * All the way through, on the tightest policy of the set: build the
+         * resume, and look at whether its pages are actually on the canvas.
+         * This is the one that exercises the pdf.js worker, and a card
+         * claiming "1 page" over an empty box is the failure it is here for.
+         */
+        if (drew && policy.includes("script-src 'self'")) {
+          const card = cardOf(page);
+          await card.getByRole('button', { name: 'Build resume' }).click();
+          await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
+          await page.waitForTimeout(1500);
+          const drawn = await page
+            .evaluate(
+              () =>
+                document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelector('.pdf-pages')
+                  ?.childElementCount ?? 0,
+            )
+            .catch(() => 0);
+          check(`${name}: and the compiled resume is drawn, worker and all`, drawn > 0, `${drawn} pages`);
+        }
+
+        await page.waitForTimeout(1500);
+        /*
+         * Every violation except the known blob worker above. Listed rather
+         * than counted so that a new one — a directive nobody has thought
+         * about yet — cannot hide behind the one we have accepted.
+         */
+        const violations = (await page.evaluate(() => window.__jhViolations ?? []).catch(() => [])).filter(
+          (v) => !/^worker-src blob/.test(v),
+        );
+        check(
+          `${name}: and the page reports nothing else`,
+          violations.length === 0,
+          violations.join(' | '),
+        );
+        check(`${name}: and nothing is thrown at the page`, complaints.length === 0, complaints.join(' | '));
+        await page.close();
+        strict.close();
+      }
+    }
+
     /* ---------------------------------------------------------------- *
      * The save changes under an application that is already open          *
      * ---------------------------------------------------------------- */
