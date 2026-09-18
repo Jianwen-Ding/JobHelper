@@ -169,6 +169,7 @@ async function main() {
     await context.close();
     strict.close();
     open.close();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 
   console.log(`\n${passed}/${passed + failed} checks passed`);
