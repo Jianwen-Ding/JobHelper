@@ -508,6 +508,58 @@ async function main() {
         await drop('job-zzzother-data-scientist');
       }
     }
+    group('A resume that will not fit on one page');
+    {
+      /*
+       * The one-page rule is the product's whole promise, so the moment it is
+       * broken is a moment somebody meets — and it was a dead end. The card
+       * said "2 pages — about 23 lines too long." and stopped: no advice, no
+       * way on, at the one place the overflow is ever discovered, which is
+       * mid-application with a form already open.
+       *
+       * The builder had said "pick a shorter phrasing or drop a bullet" at its
+       * own version of the same message all along. The card, where people
+       * actually meet it, said less and offered nothing.
+       */
+      const overflow = 'controls-overflow';
+      await fetch(`${SERVER}/api/resumes/${overflow}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        // Absurd margins, purely to reach the state. Nothing else here can
+        // make a resume too long without writing entries into the store.
+        body: JSON.stringify({ label: 'Overflow', extends: 'newgrad', layout: { marginIn: 2.6, autoFit: false, maxPages: 1 } }),
+      });
+
+      try {
+        const page = await context.newPage();
+        await page.goto(fixtures.urlFor(HELIOS_ROLE), { waitUntil: 'domcontentloaded' });
+        await settled(page);
+        const card = cardOf(page);
+
+        await card.locator('select').selectOption(overflow);
+        await page.waitForTimeout(2500);
+        await card.getByRole('button', { name: 'Build resume' }).click();
+        await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
+
+        const said = (await card.locator('.fit').first().innerText()).trim();
+        check('it says how much too long it is', /too long/i.test(said), said.replace(/\n/g, ' '));
+        check('and what to do about it', /shorter phrasing or drop a bullet/i.test(said), said.replace(/\n/g, ' '));
+
+        /*
+         * And the door. Opened onto the resume being sent — the proposal built
+         * for this posting — rather than the base it extends, because the
+         * lines that do not fit are in the one going out.
+         */
+        const opened = context.waitForEvent('page');
+        await card.locator('.fit.bad button').first().click();
+        const editor = await opened;
+        check('and opens the resume that does not fit', /#resumes\/job-/.test(editor.url()), editor.url());
+        await editor.close();
+        await page.close();
+      } finally {
+        await fetch(`${SERVER}/api/resumes/${overflow}`, { method: 'DELETE' }).catch(() => undefined);
+      }
+    }
   } finally {
     await context.close();
     fixtures.close();

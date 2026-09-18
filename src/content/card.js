@@ -203,6 +203,10 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
   background: var(--good-bg); border: 1px solid transparent; color: #0d652d;
 }
 .fit.bad { background: var(--bad-bg); color: #b31412; }
+/* The way out of the overflow box, drawn in its own colour rather than the
+   accent — a blue link on a red panel reads as belonging to something else. */
+.fit.bad button.link { color: #b31412; text-decoration: underline; padding: 0; margin-left: 6px; font-size: 12px; }
+.fit.bad button.link:hover { background: transparent; text-decoration-thickness: 2px; }
 .fit.idle { background: var(--line-soft); border-color: transparent; color: var(--muted); font-weight: 400; }
 
 /* What the tailoring changed, in words. */
@@ -1135,10 +1139,38 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     }
     const r = state.render;
     if (!r.fits) {
-      return h('div', {
-        className: 'fit bad',
-        textContent: `${plural(r.pages, 'page')} — about ${plural(r.overflowLines, 'line')} too long.`,
-      });
+      /*
+       * A dead end, until now. It said how much too long the resume was and
+       * stopped there — no advice, no way on — and this is the one place the
+       * overflow is ever discovered: mid-application, on the posting, with a
+       * form open. The builder has said "pick a shorter phrasing or drop a
+       * bullet" at its own version of this message for as long as it has
+       * existed; the card, which is where somebody actually meets it, said
+       * less and offered nothing.
+       *
+       * So: the same sentence, and the door to the place that can act on it,
+       * opened straight onto this resume. `wentToEditor` is set for the same
+       * reason the other button sets it — coming back here has to mean the
+       * proposal on screen may be out of date.
+       */
+      return h('div', { className: 'fit bad' }, [
+        h('span', {
+          textContent:
+            `${plural(r.pages, 'page')} — about ${plural(r.overflowLines, 'line')} too long. ` +
+            'Pick a shorter phrasing or drop a bullet.',
+        }),
+        state.spec?.id
+          ? h('button', {
+              className: 'link',
+              textContent: 'Open it in ResumeM-M',
+              title: 'Open this resume in the builder, where phrasings and bullets can be changed',
+              onclick: () => {
+                state.wentToEditor = true;
+                onAction('openTab', { url: `/#resumes/${encodeURIComponent(state.spec.id)}` });
+              },
+            })
+          : null,
+      ]);
     }
     const adj = r.adjustments?.length ? ` Auto-fit: ${r.adjustments.join('; ')}.` : '';
     return h('div', { className: 'fit ok', textContent: `Fits on one page.${adj}` });
