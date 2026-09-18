@@ -71,6 +71,7 @@ const SUITES = [
   { name: 'roundtrip', file: 'roundtrip.mjs', cost: 12 },
   { name: 'joins', file: 'joins.mjs', cost: 12 },
   { name: 'card', file: 'card.mjs', cost: 6 },
+  { name: 'csp', file: 'csp.mjs', cost: 6 },
   { name: 'ats-forms', file: 'ats-forms.mjs', cost: 6 },
   { name: 'autofill', file: 'autofill.mjs', cost: 2 },
   { name: 'ats', file: 'ats.mjs', cost: 1, nodeTest: true },

@@ -15,12 +15,13 @@
     "test:carrying": "node tests/carrying.mjs",
     "test:autofill": "node tests/autofill.mjs",
     "test:card": "node tests/card.mjs",
+    "test:csp": "node tests/csp.mjs",
     "test:quiet": "node tests/quiet.mjs",
     "test:journey": "node tests/journey.mjs",
     "test:ats-journey": "node tests/ats-journey.mjs",
     "test:adverse": "node tests/adverse.mjs",
     "test:parse": "node tests/parse.mjs",
-    "test:serial": "npm run test:parse && npm run test:trail && npm run test:ats && npm run test:autofill && npm run test:ats-forms && npm run test:ats-journey && npm run test:card && npm run test:quiet && npm run test:joins && npm run test:e2e && npm run test:nav && npm run test:carrying && npm run test:adverse && npm run test:roundtrip && npm run test:journey",
+    "test:serial": "npm run test:parse && npm run test:trail && npm run test:ats && npm run test:autofill && npm run test:ats-forms && npm run test:ats-journey && npm run test:card && npm run test:csp && npm run test:quiet && npm run test:joins && npm run test:e2e && npm run test:nav && npm run test:carrying && npm run test:adverse && npm run test:roundtrip && npm run test:journey",
     "test:roundtrip": "node tests/roundtrip.mjs"
   },
   "devDependencies": {

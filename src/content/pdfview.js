@@ -17,9 +17,43 @@ let pdfjs = null;
 async function loadPdfjs() {
   if (pdfjs) return pdfjs;
   pdfjs = await import(chrome.runtime.getURL('vendor/pdf.min.mjs'));
-  // The worker is web-accessible too; without it pdf.js falls back to running
-  // on the main thread, which is fine for one page but slower.
   pdfjs.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL('vendor/pdf.worker.min.mjs');
+
+  /*
+   * Ask for the worker by its own URL, and never through a blob.
+   *
+   * pdf.js spawns its worker one of two ways. Where `workerSrc` is the page's
+   * own origin it calls `new Worker(workerSrc)`. Where it is not — and from a
+   * content script it never is, because `workerSrc` is `chrome-extension://`
+   * and the page is whatever site you are on — it fetches the script into a
+   * Blob and starts the worker from `blob:`. That is the route every posting
+   * page took, and a page whose `worker-src` does not list `blob:` refuses it.
+   * GitHub's does not:
+   *
+   *   Refused to create a worker from 'blob:https://github.com/…' because it
+   *   violates the following Content Security Policy directive: "worker-src
+   *   github.githubassets.com …". The action has been blocked.
+   *
+   * Nothing broke — pdf.js catches it and sets up its fake worker, and the
+   * resume still draws. Measured under exactly that policy: one page, one
+   * canvas, 472ms. What it cost was a violation reported to the site on every
+   * posting with a strict policy, which reads as this extension being broken,
+   * plus a wasted fetch of a 1MB script before falling back.
+   *
+   * There is no way to have a real worker here. A content script cannot start
+   * one from an extension URL either — Chrome refuses that as cross-origin,
+   * measured — so the main thread is where this was always going to run. The
+   * only choice is how it gets there. Saying "same origin" sends pdf.js down
+   * the direct path, where the failure is a plain TypeError it already catches
+   * rather than something the browser reports to the page. On an extension
+   * page, where `workerSrc` really is same-origin, the direct path is the one
+   * that works, so this is a no-op there.
+   *
+   * `_isSameOrigin` is pdf.js's own, assigned as a plain static property. If a
+   * later version stops using it this assignment does nothing and the blob
+   * route comes back — noisy again, but not broken.
+   */
+  pdfjs.PDFWorker._isSameOrigin = () => true;
   return pdfjs;
 }
 
