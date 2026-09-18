@@ -495,6 +495,63 @@ async function main() {
       await bare.close();
     }
 
+    /*
+     * The link in the email that says "finish your application".
+     *
+     * It lands on the form, not the description — no posting read, no trail,
+     * nothing walked. And the form does not name the role: this one titles
+     * itself "Apply — Helios" and says "Submit application" in its heading,
+     * which is every bare application form there is.
+     *
+     * What that cost was not the label. Identity is the company and the role,
+     * so an application filed as "Unknown role" is a different job from the
+     * same job filed from its posting — and opening the posting afterwards
+     * filed a second row, with no sign on the card that it had already gone.
+     * One job, two rows, and the "you applied to this" line silent on the one
+     * page where it was most needed.
+     *
+     * The role was in the address the whole time: `/helios/apply/`
+     * `platform-engineer`. It is read from there when the page itself has
+     * nothing, through the same two gates the page title goes through — so a
+     * Greenhouse address ending `/jobs/4567` still yields nothing, and says so
+     * rather than inventing a role out of a number.
+     */
+    group('Arriving at the form from an email, with no posting behind it');
+    {
+      const heliosRows = async () =>
+        fetch(`${SERVER}/api/applications`)
+          .then((r) => r.json())
+          .then((r) => (r.applications ?? []).filter((a) => /helios/i.test(a.company ?? '')));
+
+      const before = await heliosRows();
+      // A tab of its own, with no opener: nothing for the trail to inherit.
+      const cold = await context.newPage();
+      await cold.goto(fixtures.urlFor(HELIOS_FORM), { waitUntil: 'domcontentloaded' });
+      await settled(cold);
+
+      const role = (await cardOf(cold).locator('.role').textContent())?.trim() ?? '';
+      check('the role is read out of the address', /platform engineer/i.test(role), role);
+
+      const card = cardOf(cold);
+      await card.getByRole('button', { name: 'Build resume' }).click();
+      await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
+      await card.getByRole('button', { name: 'Prepare to submit' }).click();
+      await cold.waitForTimeout(5000);
+
+      const after = await heliosRows();
+      check(
+        'and the job it belongs to is not filed twice',
+        after.length === before.length,
+        `${before.length} → ${after.length}: ${after.map((a) => a.role).join(' | ')}`,
+      );
+      check(
+        'nor filed as a job whose name nobody knows',
+        !after.some((a) => /unknown/i.test(a.role ?? '')),
+        after.map((a) => a.role).join(' | '),
+      );
+      await cold.close();
+    }
+
     group('A report that is not good news');
     {
       /*
