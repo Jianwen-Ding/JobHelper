@@ -16,6 +16,8 @@ import { BLOG, HELIOS_ROLE, NORTHWIND, STREAMLY, cleanStore, findChromium, point
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
+/** What this suite files under; cleared before it starts as well as after. */
+const MINE = ['Streamly', 'Northwind'];
 
 const results = [];
 function check(name, ok, detail = '') {
@@ -37,6 +39,7 @@ function cardOf(page) {
 
 async function main() {
   await requireOpenSave(SERVER);
+  await cleanStore(SERVER, MINE);
 
   const fixtures = await serveFixtures();
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-e2e-'));
@@ -177,6 +180,84 @@ async function main() {
     const qText = questions.length ? await questions[0].innerText() : '';
     check('a known question is recognised', /answered before|close match/.test(qText), qText.split('\n')[0]);
 
+    /*
+     * And an answer written for somebody else is never put in the box.
+     *
+     * "Why do you want to work here?" is answered by naming the company, so
+     * the answer stored for one employer says that employer's name. The bank
+     * handed it straight into the box for the next application and badged it
+     * "answered before" — the reassurance that stops anyone reading it.
+     *
+     * The situation is built rather than hoped for: the shipped bank answers
+     * that question with something deliberately generic, which is the right
+     * default and the wrong fixture. The bank is put back afterwards whatever
+     * happens.
+     */
+    {
+      const bankOf = async () => (await (await fetch(`${SERVER}/api/store`)).json()).answers ?? [];
+      const before = await bankOf();
+      const asked = 'Why are you interested in this role?';
+      const wrote = before.map((a) =>
+        a.question === asked
+          ? {
+              ...a,
+              default: 'v_wrong_company',
+              variants: [
+                ...a.variants,
+                {
+                  id: 'v_wrong_company',
+                  label: 'Halewood Group',
+                  text: 'Halewood Group has been doing this work for a decade and I want in.',
+                },
+              ],
+            }
+          : a,
+      );
+
+      try {
+        await fetch(`${SERVER}/api/answers`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(wrote),
+        });
+
+        // Read the page again, so the card matches against the bank as it is.
+        const second = await context.newPage();
+        await second.goto(fixtures.urlFor(STREAMLY), { waitUntil: 'domcontentloaded' });
+        const theirs = cardOf(second).card;
+        await theirs.locator('.role').waitFor({ timeout: 30_000 });
+        await second.waitForTimeout(2500);
+
+        const q = theirs.locator('.q').filter({ hasText: /interested in this role/i }).first();
+        const text = (await q.locator('textarea').count()) ? await q.locator('textarea').inputValue() : '';
+        check(
+          "an answer that names Halewood Group is not put into Streamly's form",
+          !/halewood/i.test(text),
+          text.slice(0, 80) || '(empty, as it should be)',
+        );
+        const offered = await q.getByRole('button', { name: /Start from what you told Halewood Group/ }).count();
+        check('it is offered by name instead', offered === 1, `${offered} offer(s)`);
+        const badge = ((await q.locator('.badge').first().textContent()) ?? '').trim();
+        check('and is not badged as safe to reuse', !/answered before/i.test(badge), badge);
+
+        // Taking it is one press, and then it is yours to edit.
+        await q.getByRole('button', { name: /Start from what you told/ }).click();
+        await second.waitForTimeout(300);
+        check(
+          'taking it puts it in the box',
+          /halewood/i.test(await q.locator('textarea').inputValue()),
+          (await q.locator('textarea').inputValue()).slice(0, 60),
+        );
+        await second.close();
+      } finally {
+        await fetch(`${SERVER}/api/answers`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(before),
+        });
+      }
+    }
+
     // Insert a stored answer back into the page's own form.
     const insert = card.getByRole('button', { name: 'Insert into form' }).first();
     await insert.click();
@@ -243,7 +324,7 @@ async function main() {
      * The cover letter, with the AI off.
      *
      * Nothing is adopted on the user's behalf. This used to drop the closest
-     * previous letter straight into the box, and "Save application folder" then
+     * previous letter straight into the box, and "Prepare to submit" then
      * typeset a letter opening "Dear Streamly," as "Cover Letter Helios.pdf" —
      * so the test could assert a letter in the bundle without anyone having
      * asked for one. Now the previous letter is offered by name and waits.
@@ -255,6 +336,32 @@ async function main() {
       check('a previous letter is offered rather than adopted', before.trim() === '', before.slice(0, 40));
 
       /*
+       * Typing reaches the buttons under the box.
+       *
+       * They are drawn from the letter's text, and nothing redraws the card
+       * while you type — a redraw would replace the box and take the caret
+       * with it. So writing a letter by hand left Save, Copy and "See it
+       * typeset" greyed out under a box that plainly had a letter in it,
+       * until something unrelated happened to redraw. Typed here rather than
+       * filled, because typing is what a person does and `fill` is not.
+       */
+      const box = card.locator('textarea.tall').first();
+      const state = async () =>
+        Promise.all(
+          ['Save to store', 'Copy', 'See it typeset'].map((name) =>
+            card.getByRole('button', { name, exact: true }).isDisabled(),
+          ),
+        );
+      check('with nothing written, there is nothing to save or typeset', (await state()).every(Boolean));
+      await box.click();
+      await box.type('Dear Streamly,');
+      check('and writing one wakes them up', (await state()).every((off) => off === false), (await state()).join(', '));
+      await box.fill('');
+      await box.type(' ');
+      check('while whitespace alone still counts as nothing', (await state()).every(Boolean));
+      await box.fill('');
+
+      /*
        * Filing it in exactly that state — the default one, with the AI off
        * and the offer untaken — used to produce a folder with no letter in
        * it, under the words "Saved. These files are named and ready to
@@ -263,7 +370,7 @@ async function main() {
        * for a letter, and you would have attached the two files it named and
        * sent it without one.
        */
-      await card.getByRole('button', { name: 'Save application folder' }).click();
+      await card.getByRole('button', { name: 'Prepare to submit' }).click();
       await card.locator('.done-box').waitFor({ timeout: 90_000 });
       const body = await card.innerText();
       check('a folder missing the letter the form wants says so', /Not in this folder: a cover letter/.test(body));
@@ -279,10 +386,42 @@ async function main() {
       await page.waitForTimeout(300);
       const after = await card.locator('textarea.tall').first().inputValue();
       check('and taking it puts it in the box', after.trim().length > 0, after.slice(0, 40));
+
+      /*
+       * And the letter as a document, not as a box of text.
+       *
+       * It is typeset through the same LaTeX as the resume and attached as a
+       * PDF, so the version with the name, the address block and the spacing
+       * in it was the one nobody saw until after it had been sent.
+       *
+       * The resume is checked again afterwards on purpose: both drawings
+       * share one cache and one "which one is on screen" record, and while
+       * that record was a single slot the letter's arrival cancelled the
+       * resume's draw and left a grey strip where the page had been.
+       */
+      const drawn = () => card.locator('.pdf-pane canvas').count();
+      const resumeBefore = await drawn();
+      await card.getByRole('button', { name: 'See it typeset' }).click();
+      await card.getByRole('button', { name: 'Typeset again' }).waitFor({ timeout: 120_000 });
+      let pages = 0;
+      for (let i = 0; i < 40 && pages <= resumeBefore; i++) {
+        await page.waitForTimeout(250);
+        pages = await drawn();
+      }
+      check('the letter can be seen as it will arrive, typeset', pages > resumeBefore, `${pages} pages drawn in the card`);
+      check(
+        'and drawing it does not take the resume off the screen',
+        (await card.locator('.pdf-pane canvas').count()) >= resumeBefore + 1,
+        `${await drawn()} still drawn`,
+      );
+      check(
+        'the preview says it is a preview, not the copy that gets attached',
+        /the attached copy is compiled when you prepare it/.test(await card.innerText()),
+      );
     }
 
     /* File it. */
-    await card.getByRole('button', { name: 'Save application folder' }).click();
+    await card.getByRole('button', { name: 'Prepare to submit' }).click();
     await card.locator('.done-box').waitFor({ timeout: 90_000 });
     const done = await card.locator('.done-box').innerText();
     /*
@@ -301,6 +440,69 @@ async function main() {
     const tracked = await (await fetch(`${SERVER}/api/applications`)).json();
     const entry = tracked.applications.find((a) => a.company === 'Streamly');
     check('application tracked', Boolean(entry), entry ? `${entry.status}` : 'not found');
+    /*
+     * Preparing the files is what records it as sent. The press that used to
+     * do it came afterwards, on a tab that by then shows a confirmation page
+     * — so it was never pressed, and the tracker undercounted. Being wrong
+     * the other way costs one click of "Not sent after all".
+     */
+    check('and taken as sent, without a second press', entry?.status === 'applied', entry?.status ?? '(none)');
+
+    /*
+     * And the space it was written in is still there, quietly. A portal that
+     * rejects the upload, or a question that comes back next week, wants the
+     * letter rather than a snapshot of it.
+     */
+    const spaces = await (await fetch(`${SERVER}/api/workspace`)).json();
+    const space = spaces.drafts.find((d) => d.company === 'Streamly');
+    check('the workspace keeps it, marked as sent', space?.status === 'submitted', space?.status ?? '(gone)');
+
+    /*
+     * The flat folder as a page: a path answers the upload dialog and nothing
+     * else, and from a job board this is the only clickable way to the files.
+     */
+    const folder = await fetch(`${SERVER}/current`);
+    const listing = await folder.text();
+    check(
+      'the upload folder can be opened rather than only pasted',
+      /*
+       * The name may carry the role: two roles at one company in flight at
+       * once get a file each, which is the flat folder's whole job.
+       */
+      folder.ok && /-Resume(-[\w-]+)?\.pdf/.test(listing),
+      folder.status === 200 ? `${(listing.match(/href="\/current\//g) ?? []).length} files listed` : String(folder.status),
+    );
+
+    /*
+     * And the button that opens it, from the page it was built on.
+     *
+     * The path beside it is what the upload dialog takes and the only thing
+     * this could offer before; from a job board it is a string you cannot
+     * click. The tab it opens has to be the folder, not the editor's front
+     * page — the point is to be looking at the files while the portal's file
+     * picker is up.
+     */
+    {
+      const opened = context.waitForEvent('page');
+      await card.getByRole('button', { name: 'Open the folder' }).click();
+      const tab = await opened;
+      await tab.waitForLoadState('domcontentloaded');
+      const names = await tab.locator('li a').allTextContents();
+      check('and "Open the folder" opens it', /\/current$/.test(tab.url()), tab.url());
+      check(
+        'with the files in it, each one openable',
+        names.some((n) => /-Resume(-[\w-]+)?\.pdf$/.test(n)),
+        names.join(', ') || '(nothing listed)',
+      );
+      await tab.close();
+    }
+
+    /* And the way back, for the application that was prepared and abandoned. */
+    await card.getByRole('button', { name: 'Not sent after all' }).click();
+    await card.locator('.ok-note.warn').waitFor({ timeout: 15_000 });
+    const back = await (await fetch(`${SERVER}/api/applications`)).json();
+    const again = back.applications.find((a) => a.company === 'Streamly');
+    check('and it can be put back if it never went out', again?.status === 'applying', again?.status ?? '(none)');
 
     check('no page errors', errors.length === 0, errors.join('; '));
     await page.close();
@@ -409,7 +611,7 @@ async function main() {
     /* ---------------- Clean up ---------------- */
 
     group('Cleanup');
-    await cleanStore(SERVER, ['Streamly', 'Northwind']);
+    await cleanStore(SERVER, MINE);
     const after = await (await fetch(`${SERVER}/api/applications`)).json();
     check(
       'left the store as it was found',

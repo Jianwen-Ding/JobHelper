@@ -48,6 +48,8 @@ import {
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
+/** What this suite files under; cleared before it starts as well as after. */
+const MINE = ['Vega', 'Lyra', 'Orion', 'Acme', 'Nova', 'Rigel', 'Altair', 'Cygnus', 'Vireo', 'Lyricus', 'Vela', 'Mensa Labs'];
 
 /*
  * What the running store can actually fill with.
@@ -120,6 +122,23 @@ async function appears(page, selector, within) {
 async function settled(page) {
   await page.locator(HOST).waitFor({ state: 'attached', timeout: 25_000 });
   await page.locator(`${HOST} .card .role`).waitFor({ timeout: 25_000 });
+
+  /*
+   * And past the provisional card, which carries the role and none of the
+   * buttons. Without this the loop below could find a card that had stopped
+   * changing only because the analysis had not come back yet — and the test
+   * then spent its click timeout waiting for a button that was never going
+   * to be there in time. It is the same bet on how long the machine takes,
+   * made one step earlier.
+   *
+   * Tolerant on purpose: a page whose analysis never lands is a case several
+   * of these suites are about, and they still have their own assertions to
+   * make about it.
+   */
+  await page
+    .locator(`${HOST} .card:not(.loading)`)
+    .waitFor({ timeout: 60_000 })
+    .catch(() => undefined);
   const read = () => page.locator(`${HOST} .card`).innerText().catch(() => '');
   let last = await read();
   for (let i = 0; i < 40; i++) {
@@ -170,6 +189,7 @@ async function main() {
   } catch {
     process.exit(2);
   }
+  await cleanStore(SERVER, MINE);
 
   // Two origins, so the careers-site-to-ATS hand-off is a genuine cross-host
   // navigation rather than two paths on one server.
@@ -547,6 +567,37 @@ async function main() {
       await page.close();
     }
 
+    /* ---- A frame that never finishes loading ---- */
+    /*
+     * The one an ordinary page gives you for free: a tracker, an advert or a
+     * chat widget whose host is having a bad day, holding its response open.
+     * The page's `load` event never fires while one is outstanding — and a
+     * content script at `document_idle` is entitled to run as late as `load`.
+     * If the card waits on that event, it does not arrive late on these pages;
+     * it does not arrive at all, on a posting that is fully readable and has
+     * its form right there. Held open on purpose rather than made slow,
+     * because "slow" is a number that passes on a fast machine.
+     */
+    group('An advert on the page that never finishes loading');
+    {
+      const hung = await serveFixtures(undefined, { hold: /\/promo\/newsletter/ });
+      const page = await context.newPage();
+      await page.goto(`${hung.base}${ADVERT_FRAME.path}`, { waitUntil: 'domcontentloaded' });
+
+      const there = await appears(page, `${HOST} .card .role`, 15_000);
+      check('the card appears anyway', there);
+      // Asked after the card is up, so it is the state the card appeared in
+      // rather than a race with it: a page still loading is the whole point.
+      const ready = await page.evaluate(() => document.readyState).catch(() => 'unknown');
+      check('and did not wait for a page that will never finish', ready !== 'complete', ready);
+      if (there) {
+        const role = (await cardOf(page).locator('.role').textContent())?.trim() ?? '';
+        check('and reads the posting it is sitting on', /platform engineer/i.test(role), role);
+      }
+      await page.close();
+      hung.close();
+    }
+
     /* ---- The posting arrives after the page has already been judged ---- */
     group('A posting that is not in the page when the page loads');
     {
@@ -578,6 +629,17 @@ async function main() {
       const there = await appears(page, HOST, 9000);
       check('the card appears even though the page itself says nothing', there);
       if (there) {
+        /*
+         * And then wait for it to mean something.
+         *
+         * The card appears on the page's own reading — here a heading that
+         * says only the company — and is rewritten when the frame's posting
+         * has been read. Asking the moment the host exists is asking during
+         * that gap: it passed most of the time and read the role as "Vireo"
+         * when the machine was busy. The card marks the gap itself, so this
+         * waits for it to stop changing rather than betting on it.
+         */
+        await settled(page);
         const card = cardOf(page);
         const role = (await card.locator('.role').textContent())?.trim() ?? '';
         check('and reads the role out of the frame', /platform engineer/i.test(role), role);
@@ -733,7 +795,7 @@ async function main() {
     fixtures.close();
     ats.close();
     fs.rmSync(userDataDir, { recursive: true, force: true });
-    await cleanStore(SERVER, ['Vega', 'Lyra', 'Orion', 'Acme', 'Nova', 'Rigel', 'Altair', 'Cygnus', 'Vireo', 'Lyricus', 'Vela', 'Mensa Labs']);
+    await cleanStore(SERVER, MINE);
   }
 
   console.log(`\n${passed}/${passed + failed} checks passed`);

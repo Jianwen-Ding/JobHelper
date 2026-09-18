@@ -40,12 +40,20 @@ machine.
    that survives wandering off — to the company's About page, to what the job
    pays — where the card correctly does not appear. Clicking it says what is
    held and offers the way back.
-7. **Files it.** "Save application folder" writes a folder with the files named
+7. **Files it.** "Prepare to submit" writes a folder with the files named
    for you rather than for the posting — `Your-Name-Resume.pdf` — snapshots
-   exactly what was sent, and records the application in the tracker. If the
-   form asked for something the folder does not have, it says so rather than
-   calling it complete.
-8. **Fills the form.** Autofill from your stored profile, and saved answers
+   exactly what was sent, and records the application as sent. "Open the
+   folder" shows what is in it, in a tab, so the upload is a click away rather
+   than a path to paste. If the form asked for something the folder does not
+   have, it says so rather than calling it complete. Nothing was sent after
+   all? One button puts it back.
+8. **Notices it anyway.** If you never press that button, JobHelper watches
+   for the application going out — the form submitted, or the control that
+   sends it pressed — and records it. Rules, not a judgement call, tested
+   against three dozen real systems and the controls that only look like one:
+   a newsletter box, a draft saved, the similar-jobs rail, "complete
+   application later".
+9. **Fills the form.** Autofill from your stored profile, and saved answers
    offered on questions it recognises.
 
 ---

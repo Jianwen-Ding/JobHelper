@@ -26,6 +26,8 @@ import { cleanStore, findChromium, pointExtensionAt, requireOpenSave } from './f
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
+/** What this suite files under; cleared before it starts as well as after. */
+const MINE = ['Meridian'];
 
 let passed = 0;
 let failed = 0;
@@ -69,6 +71,7 @@ async function main() {
   } catch {
     process.exit(2);
   }
+  await cleanStore(SERVER, MINE);
 
   const server = http.createServer((req, res) => {
     const url = req.url.split('?')[0];
@@ -147,11 +150,55 @@ async function main() {
         const filled = Number(/Filled (\d+)/.exec(report)?.[1] ?? 0);
         check('autofill puts something in the form', filled > 0, report);
 
-        /* 4. Filed, with the files a portal would ask for. */
-        await card.getByRole('button', { name: 'Save application folder' }).click();
+        /*
+         * 4. The two things a person actually spends the time on.
+         *
+         * This walk used to go straight from the resume to the folder, so what
+         * it measured was a resume-only application — and what it proved was
+         * that a resume-only bundle comes out. The letter and the answers are
+         * the parts somebody sits and writes, the parts the AI is allowed to
+         * write, and the parts a portal refuses the application without. They
+         * belong in the timing for the same reason they belong in the check.
+         *
+         * Conditional, because these systems differ in what they ask for and
+         * that is the point of walking all of them: a form with no letter box
+         * is not a failure, it is a form with no letter box.
+         */
+        const letterBox = card.locator('textarea.tall').first();
+        const wantsLetter = (await letterBox.count()) > 0;
+        if (wantsLetter) {
+          await letterBox.click();
+          await letterBox.fill('I have wanted to work on this kind of system for years.');
+        }
+
+        const answerBox = card.locator('.q textarea').first();
+        const asksQuestions = (await answerBox.count()) > 0;
+        if (asksQuestions) {
+          await answerBox.click();
+          await answerBox.fill('Because of the work your team publishes.');
+        }
+        // The keeper writes on an interval; let it, so the bundle is built
+        // from what is on screen rather than from what was there before.
+        await page.waitForTimeout(2600);
+
+        /* 5. Filed, with the files a portal would ask for. */
+        await card.getByRole('button', { name: 'Prepare to submit' }).click();
         await card.locator('.done-box').waitFor({ timeout: 120_000 });
         const done = await card.locator('.done-box').innerText();
         check('an application folder is written', /-Resume\.pdf/.test(done), done.split('\n')[1] ?? '');
+
+        /*
+         * And the letter is in it. A folder announcing itself ready with the
+         * letter missing is the failure this whole step exists to catch —
+         * every portal that asks for one refuses the application without it,
+         * and the card says "named and ready to attach" either way.
+         */
+        if (wantsLetter) {
+          check('the cover letter is in the folder too', /Cover-Letter\.pdf/.test(done), done.replace(/\n/g, ' | '));
+        }
+        if (asksQuestions) {
+          check('and the answers written for it', /Answers\.md/.test(done), done.replace(/\n/g, ' | '));
+        }
 
         check('and nothing threw on the way', errors.length === 0, errors.join('; '));
         timings.push([system.name, Date.now() - started]);
@@ -182,7 +229,7 @@ async function main() {
     await context.close();
     server.close();
     fs.rmSync(userDataDir, { recursive: true, force: true });
-    await cleanStore(SERVER, ['Meridian']);
+    await cleanStore(SERVER, MINE);
   }
 
   console.log('\nTime for the whole path, by system');
@@ -191,6 +238,33 @@ async function main() {
   }
   const slowest = timings.slice().sort((a, b) => b[1] - a[1])[0];
   if (slowest) console.log(`  slowest: ${slowest[0]} at ${(slowest[1] / 1000).toFixed(1)}s`);
+
+  /*
+   * How long an application takes is a feature, not a statistic.
+   *
+   * Every walk above is the whole path — read the posting, build the resume,
+   * fill the form, write the folder — on a machine also running two other
+   * suites. It settles around three seconds a system, and the number that
+   * matters is not the average but whether any one system has quietly become
+   * the slow one: a rule that rescans, a compile that stopped being cached, a
+   * wait that was a race and is now a sleep. So the shape of the distribution
+   * is checked rather than a stopwatch value, which would fail on a busy
+   * machine and prove nothing on an idle one.
+   *
+   * Four times the median is loose on purpose. It is not a performance
+   * target; it is the line past which one system is behaving differently
+   * from the other twenty, which is a bug with a cause worth finding.
+   */
+  const ordered = timings.map(([, ms]) => ms).sort((a, b) => a - b);
+  const median = ordered[Math.floor(ordered.length / 2)] ?? 0;
+  const dawdling = timings.filter(([, ms]) => ms > Math.max(median * 4, 20_000));
+  check(
+    'no system takes far longer than the rest of them',
+    dawdling.length === 0,
+    dawdling.length
+      ? `${dawdling.map(([n, ms]) => `${n} ${(ms / 1000).toFixed(1)}s`).join(', ')} against a median of ${(median / 1000).toFixed(1)}s`
+      : `median ${(median / 1000).toFixed(1)}s, slowest ${((slowest?.[1] ?? 0) / 1000).toFixed(1)}s`,
+  );
 
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed > 0) process.exit(1);

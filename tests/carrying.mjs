@@ -56,6 +56,21 @@ const group = (name) => console.log(`\n${name}`);
 const HOST = '#jobhelper-card-host';
 const cardOf = (page) => page.locator(`${HOST} .card`);
 
+/**
+ * The companies this suite files under, cleared before it starts as well as
+ * after it finishes.
+ *
+ * Clearing only at the end is enough exactly once. The pool hands one store to
+ * several suites in turn, and a run that is interrupted — or one that fails
+ * before its `finally` — leaves its applications behind for whoever gets that
+ * store next. Then this suite reads a Helios application that was sent by
+ * somebody else, sees `applied` where it expects `applying`, and reports a bug
+ * in code that is behaving perfectly. A suite that does not clear before it
+ * starts is not testing the extension; it is testing what was left lying
+ * around.
+ */
+const MINE = ['Helios', 'Cygnus'];
+
 /** What the store has filed under a company, as the editor would show it. */
 async function filed(company) {
   const [apps, drafts] = await Promise.all([
@@ -84,6 +99,23 @@ const paneHeight = (page) =>
 async function settled(page) {
   await page.locator(HOST).waitFor({ state: 'attached', timeout: 25_000 });
   await page.locator(`${HOST} .card .role`).waitFor({ timeout: 25_000 });
+
+  /*
+   * And past the provisional card, which carries the role and none of the
+   * buttons. Without this the loop below could find a card that had stopped
+   * changing only because the analysis had not come back yet — and the test
+   * then spent its click timeout waiting for a button that was never going
+   * to be there in time. It is the same bet on how long the machine takes,
+   * made one step earlier.
+   *
+   * Tolerant on purpose: a page whose analysis never lands is a case several
+   * of these suites are about, and they still have their own assertions to
+   * make about it.
+   */
+  await page
+    .locator(`${HOST} .card:not(.loading)`)
+    .waitFor({ timeout: 60_000 })
+    .catch(() => undefined);
   /*
    * Wait for the card to stop changing, rather than for a number of
    * milliseconds. It fills in as the page is read — the role first, then the
@@ -129,6 +161,7 @@ async function main() {
   } catch {
     process.exit(2);
   }
+  await cleanStore(SERVER, MINE);
 
   const fixtures = await serveFixtures();
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-carry-'));
@@ -151,7 +184,17 @@ async function main() {
       await settled(page);
       const mark = await toolbar(worker, page);
       check('the toolbar says an application is open', mark.text !== '', `badge "${mark.text}"`);
-      check('and says whose it is', /helios/i.test(mark.title), mark.title);
+      // Which job, and whose: the hover title is the only place that can say
+      // it while the card is not on screen.
+      check('and says which job it is', /engineer at helios/i.test(mark.title), mark.title);
+      // And says nothing about having been here before, because nobody has.
+      // The claim is only worth making when it is true, and a card that makes
+      // it on every posting is one nobody reads by the third.
+      check(
+        'without claiming this one has been applied to',
+        (await cardOf(page).locator('.before').count()) === 0,
+        (await cardOf(page).locator('.before').textContent().catch(() => '')) ?? '',
+      );
 
       // Built here, so there is a drawn resume to carry as well as writing.
       const card = cardOf(page);
@@ -231,6 +274,34 @@ async function main() {
       check('the draft stops looking like something to finish', draft?.status === 'submitted', draft?.status ?? '(none)');
     }
 
+    /*
+     * The same posting, come round again. A job reappears on a board months
+     * later, or you follow a link to one you have already dealt with, and the
+     * moment that is worth knowing is before the work starts rather than
+     * afterwards from the tracker.
+     *
+     * A second tab, so this is a fresh reading of the page rather than the
+     * card that watched the application being sent — what a person meets when
+     * they arrive at the posting from somewhere else entirely.
+     */
+    group('Arriving at a posting that has already been applied to');
+    {
+      const again = await context.newPage();
+      await again.goto(fixtures.urlFor(HELIOS_ROLE), { waitUntil: 'domcontentloaded' });
+      await settled(again);
+      const said = (await cardOf(again).locator('.before').textContent())?.trim() ?? '';
+      check('the card says so, on the posting itself', /you applied to this on/i.test(said), said || '(nothing)');
+
+      // And answers the question it raises. A sentence about March that
+      // cannot be followed up is worse than one that was never said.
+      const opened = context.waitForEvent('page');
+      await cardOf(again).getByRole('button', { name: 'See what you sent' }).click();
+      const record = await opened;
+      check('and the record is one click away', /#applications\/.+/.test(record.url()), record.url());
+      await record.close();
+      await again.close();
+    }
+
     group('Leaving for a page that has nothing to do with it');
     {
       await page.goto(fixtures.urlFor(BLOG), { waitUntil: 'domcontentloaded' });
@@ -297,7 +368,9 @@ async function main() {
 
       check('the panel is showing', !(await popup.locator('#openApplication').isHidden()));
       const who = (await popup.locator('#openWho').textContent())?.trim();
-      check('and names the application', who === 'Helios', who);
+      // The job, not only the employer: "Helios" is not enough to come back to
+      // an hour later, and tells two of their roles apart not at all.
+      check('and names the application', /helios/i.test(who ?? '') && /engineer/i.test(who ?? ''), who);
       const what = (await popup.locator('#openWhat').textContent())?.trim() ?? '';
       check('says how much of it has been read', /2 pages/.test(what), what);
       check('and that the writing is safe', /writing is being held/i.test(what), what);
@@ -385,7 +458,7 @@ async function main() {
        */
       const existing = await fetch(`${SERVER}/api/workspace`).then((r) => r.json());
       for (const d of existing.drafts) {
-        if (d.company === 'Unknown' || /^127\.0\.0\.1/.test(d.company ?? '')) {
+        if (d.company === 'Unknown' || /^127\.0\.0\.1/.test(d.company ?? '') || d.company === 'Acme') {
           await fetch(`${SERVER}/api/workspace/${encodeURIComponent(d.id)}`, { method: 'DELETE' }).catch(() => {});
         }
       }
@@ -405,12 +478,78 @@ async function main() {
       const fresh = drafts.filter((d) => !before.has(d.id)).map((d) => d.company);
       check('an application was filed', fresh.length > 0, fresh.join(', '));
       check('and not as "Unknown"', !fresh.includes('Unknown'), fresh.join(', '));
+      /*
+       * Under the name on the page, if the page has one.
+       *
+       * This used to expect the host, and the host was the best available
+       * answer while "Apply — Acme" was being read as the role "Acme". It is
+       * read as the employer now, so the honest expectation is the employer:
+       * the address is the fallback for a form that names nobody at all,
+       * which is a different page from this one.
+       */
       check(
-        'but under where it came from',
-        fresh.some((n) => /^127\.0\.0\.1/.test(n ?? '')),
+        'but under whoever the page says it is for',
+        fresh.some((n) => /acme/i.test(n ?? '')),
         fresh.join(', '),
       );
       await bare.close();
+    }
+
+    /*
+     * The link in the email that says "finish your application".
+     *
+     * It lands on the form, not the description — no posting read, no trail,
+     * nothing walked. And the form does not name the role: this one titles
+     * itself "Apply — Helios" and says "Submit application" in its heading,
+     * which is every bare application form there is.
+     *
+     * What that cost was not the label. Identity is the company and the role,
+     * so an application filed as "Unknown role" is a different job from the
+     * same job filed from its posting — and opening the posting afterwards
+     * filed a second row, with no sign on the card that it had already gone.
+     * One job, two rows, and the "you applied to this" line silent on the one
+     * page where it was most needed.
+     *
+     * The role was in the address the whole time: `/helios/apply/`
+     * `platform-engineer`. It is read from there when the page itself has
+     * nothing, through the same two gates the page title goes through — so a
+     * Greenhouse address ending `/jobs/4567` still yields nothing, and says so
+     * rather than inventing a role out of a number.
+     */
+    group('Arriving at the form from an email, with no posting behind it');
+    {
+      const heliosRows = async () =>
+        fetch(`${SERVER}/api/applications`)
+          .then((r) => r.json())
+          .then((r) => (r.applications ?? []).filter((a) => /helios/i.test(a.company ?? '')));
+
+      const before = await heliosRows();
+      // A tab of its own, with no opener: nothing for the trail to inherit.
+      const cold = await context.newPage();
+      await cold.goto(fixtures.urlFor(HELIOS_FORM), { waitUntil: 'domcontentloaded' });
+      await settled(cold);
+
+      const role = (await cardOf(cold).locator('.role').textContent())?.trim() ?? '';
+      check('the role is read out of the address', /platform engineer/i.test(role), role);
+
+      const card = cardOf(cold);
+      await card.getByRole('button', { name: 'Build resume' }).click();
+      await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
+      await card.getByRole('button', { name: 'Prepare to submit' }).click();
+      await cold.waitForTimeout(5000);
+
+      const after = await heliosRows();
+      check(
+        'and the job it belongs to is not filed twice',
+        after.length === before.length,
+        `${before.length} → ${after.length}: ${after.map((a) => a.role).join(' | ')}`,
+      );
+      check(
+        'nor filed as a job whose name nobody knows',
+        !after.some((a) => /unknown/i.test(a.role ?? '')),
+        after.map((a) => a.role).join(' | '),
+      );
+      await cold.close();
     }
 
     group('A report that is not good news');
@@ -491,7 +630,7 @@ async function main() {
     await context.close();
     fixtures.close();
     fs.rmSync(userDataDir, { recursive: true, force: true });
-    await cleanStore(SERVER, ['Helios', 'Cygnus']);
+    await cleanStore(SERVER, MINE);
   }
 
   console.log(`\n${passed}/${passed + failed} checks passed`);

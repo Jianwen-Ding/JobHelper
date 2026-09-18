@@ -140,6 +140,7 @@
     card: () => fromExtension('src/content/card.js'),
     autofill: () => fromExtension('src/content/autofill.js'),
     trail: () => fromExtension('src/shared/trail.js'),
+    sending: () => fromExtension('src/shared/sending.js'),
   };
 
   /**
@@ -346,7 +347,10 @@
     if (found.length === 0) return { questions: [], wantsLetter };
 
     try {
-      const { matches } = await send('matchAnswers', { questions: found.map((q) => q.question) });
+      const { matches } = await send('matchAnswers', {
+        questions: found.map((q) => q.question),
+        company: analysis?.job?.company,
+      });
       return {
         wantsLetter,
         questions: found.map((q, i) => ({
@@ -355,6 +359,8 @@
           confident: Boolean(matches[i]?.confident),
           score: matches[i]?.score ?? 0,
           itemId: matches[i]?.item?.id,
+          // Whose name is in it, when that is not the company being applied to.
+          namesAnother: matches[i]?.namesAnother,
         })),
       };
     } catch {
@@ -501,6 +507,17 @@
       case 'saveLetter':
         return send('saveLetter', { body: payload.body, job: analysis.job });
 
+      // Who it is addressed to comes from the page, as it does everywhere
+      // else here — the card sends the words and the resume they are set to
+      // match, not the company it half-remembers.
+      case 'renderLetter':
+        return send('renderLetter', {
+          body: payload.body,
+          resumeId: payload.resumeId,
+          company: analysis.job?.company,
+          role: analysis.job?.title,
+        });
+
 
       case 'saveAnswer':
         return send('saveAnswer', payload);
@@ -517,15 +534,24 @@
           url: location.href,
           source: new URL(location.href).hostname,
           /*
-           * Building the files is not sending them. This said 'applied', so the
-           * tracker recorded a submitted application the moment you pressed
-           * "Save application folder" — before the portal had seen anything —
-           * and "Mark as submitted" afterwards was a no-op that only appended a
-           * history line. Close the tab without submitting and the tracker, and
-           * the response rate it reports, counted an application nobody sent.
-           * `trackStatus` is what moves it on, which is what that button is for.
+           * Pressing "Prepare to submit" is taken as submitting it.
+           *
+           * Strictly this is early: the files exist, the portal has not seen
+           * them, and the upload still has to happen in the dialog this opens.
+           * It was 'applying' for exactly that reason, and the step that moved
+           * it on was a second button pressed afterwards — which is a button
+           * pressed after the interesting part is over, on a tab that by then
+           * shows a confirmation page. Nobody presses it, so the tracker
+           * undercounted instead of overcounting, which is the worse of the
+           * two: an application missing from the list is one you apply for
+           * twice.
+           *
+           * So this is the main path and it files the application as sent. The
+           * two ways of being wrong are both covered: "Not sent after all" in
+           * the card puts it back, and the procedural watcher is the backstop
+           * for an application never prepared here at all.
            */
-          status: 'applying',
+          status: 'applied',
           coverLetter: payload.coverLetter,
           answers: payload.answers,
         });
@@ -565,8 +591,14 @@
       case 'forgetPage':
         return send('forgetPage', { url: payload.url });
 
+      /*
+       * "Start a new application here" — and `here` is this page, which the
+       * worker cannot know on its own. Without it the trail emptied
+       * completely, the badge went blank on the form the user was standing
+       * on, and the next page began an application this one was not part of.
+       */
       case 'clearTrail':
-        return send('clearTrail', {});
+        return send('clearTrail', { keep: pageIdentity() });
 
       default:
         throw new Error(`Unknown card action "${action}"`);
@@ -661,7 +693,15 @@
     // know the role best, and before the shell they are embedded in, which
     // often knows only the company.
     const framed = await framePages();
-    return { ...here, pages: [...earlier, ...framed, here] };
+    /*
+     * `framed` is handed back as well as folded in. Remembering this page
+     * needs exactly these two things — the page and the frames inside it —
+     * and reading them a second time a moment later was both a duplicate walk
+     * of every frame and a window: until the second read finished, this page
+     * was not part of any application, so following Apply quickly enough
+     * started a second one and lost the description you had just read.
+     */
+    return { ...here, framed, pages: [...earlier, ...framed, here] };
   }
 
   /** Who this page is, as far as belonging to an application goes. */
@@ -815,6 +855,8 @@
      * guess they did not ask for. "Let the AI tailor it" is a button.
      */
     let found;
+    /** What this page was when it was read — reused below, not re-read. */
+    let payload;
     // What the page was worth when it was read, not when the answer came back.
     // A board that serves a shell and fetches the posting fills in during the
     // analysis, so the two are different numbers — and recording the later one
@@ -822,7 +864,7 @@
     // had already been ruled out. The card then never appeared at all.
     const judgedScore = localScore();
     try {
-      const payload = await applicationPayload();
+      payload = await applicationPayload();
       if (!current()) return;
       found = await send('analyze', { ...payload, tailor: 'match' });
     } catch (err) {
@@ -854,6 +896,21 @@
     }
     putUpCard();
     cardHandle?.update(analysis);
+
+    /*
+     * The page is already part of an application by the time this line runs.
+     *
+     * It used to be told so by a second message, sent from here once the card
+     * was up — and a page only belongs to an application once that message
+     * lands. Following Apply in the meantime, which is exactly what you do on
+     * a description page, started a fresh application on the form and lost
+     * the description you had just read: the role reverted to whatever the
+     * form calls itself, and the tracker took two rows for one job. A message
+     * in flight when the tab navigates is never delivered, so no amount of
+     * sending it sooner closes that window. `analyze` records the page in the
+     * same round trip that read it, and hands back the trail it made.
+     */
+    if (analysis.trail) cardHandle?.setTrail(analysis.trail);
 
     /*
      * Whatever was built on the page before this one. Restored before the AI
@@ -891,36 +948,6 @@
      * this line too, and a fresh application must not be frozen out of saving.
      */
     workRestored = true;
-
-    // Taken once, and already trimmed: the same page is both what was just
-    // analysed and what the next page will be written from.
-    const trimmed = await pagePayload();
-    if (!current()) return;
-
-    /*
-     * What is remembered has to include the frames, or a page whose posting is
-     * entirely inside an embed is remembered as the empty shell it looks like
-     * — and the next page of the application is written from nothing.
-     */
-    const framed = await framePages();
-    if (!current()) return;
-    const remembered = [trimmed.html, ...framed.map((f) => f.html)].join('\n').slice(0, 400_000);
-
-    /*
-     * This page is now part of an application. Remembering it is what lets the
-     * next page — usually the form, on a different host — be written from the
-     * description you read here rather than from the form's own empty prose.
-     */
-    send('rememberPage', {
-      page: {
-        ...pageIdentity(),
-        company: analysis.job?.company,
-        kind: analysis.kind,
-        html: remembered,
-      },
-    })
-      .then((trail) => current() && cardHandle?.setTrail(trail))
-      .catch(() => undefined);
 
     /*
      * If the user asked for AI tailoring, it runs now — after the
@@ -1025,44 +1052,13 @@
    * every application you had started and none of the ones you had finished,
    * which is the wrong half.
    *
-   * Rough on purpose. From outside a portal there is no way to know an
-   * application was accepted — only that the form in front of you was sent.
-   * Two things say that, and both are worth taking: a real `submit`, and a
-   * click on a button that says Submit, because plenty of systems never fire
-   * the event at all and post the form themselves. Recorded in capture phase,
-   * since a handler that calls preventDefault and then posts by hand is the
-   * ordinary case rather than the exception.
-   *
-   * It only ever says "this went out". What that is worth to the tracker —
-   * whether it moves anything, and never backwards — is the store's decision.
+   * The rules for what counts live in `shared/sending.js`, because the form is
+   * as often inside an iframe as on the page and the frame has to reach the
+   * same verdict from the same rules rather than from a second copy of them.
    */
-  function watchForSending() {
-    let told = false;
-    /*
-     * The words these systems end an application with.
-     *
-     * Widened against real ones rather than guessed at: Paylocity says
-     * "Submit Resume", Phenom says "Complete application", ADP says "Apply
-     * Now", Personio says "Send application", Paycom says "Submit my
-     * application". A verb and the thing it acts on, close together, covers
-     * all of them — and leaves alone the ones that share half the phrase:
-     * "Submit a question" has the verb and no object, "Apply filters" has an
-     * object and no verb, "Save draft" and "Subscribe" have neither.
-     */
-    const SENDING =
-      /\b(submit|send|complete|finish)\b[^.]{0,24}\b(application|apply|resume|cv|submission|submit)\b|^\s*(submit|apply now|send|finish)\s*$/i;
-    /*
-     * And the words that take it back.
-     *
-     * "Complete application later" is the whole phrase and the opposite act,
-     * offered near the end of every long form; "Apply to another role" and
-     * "Send application by email" are the same trick. A label that says when
-     * or where instead of now and here is not the button that ends this.
-     */
-    const NOT_YET = /\b(later|reminder|another|different|instead|by email|via email|by post|draft)\b/i;
-
-    const tell = (how) => {
-      if (told) return;
+  async function watchForSending() {
+    const { watchForSending: watch } = await imports.sending();
+    const stop = watch(document, (how) => {
       /*
        * Only on the page where an application is actually sent.
        *
@@ -1071,10 +1067,6 @@
        * anywhere, it filed every posting you so much as opened as one you had
        * sent, which is the worst thing this could do: a job marked as done
        * comes off the list of things to finish.
-       *
-       * `kind` is the analysis's own answer to what sort of page this is, and
-       * `application` means it has the fields and the words of a form rather
-       * than a description of a job.
        */
       if (analysis?.kind !== 'application') return;
 
@@ -1082,7 +1074,7 @@
       // Nothing to file it under. The card knows a posting by what the
       // analysis made of it, and without that this is just a form.
       if (!named?.company || !named?.role) return;
-      told = true;
+
       send('applicationSent', {
         company: named.company,
         role: named.role,
@@ -1090,80 +1082,8 @@
         note: how,
       }).catch(() => undefined);
       cardHandle?.setStatus?.('Recorded as sent.');
-    };
-
-    /**
-     * Is this the application, or the other form on the page?
-     *
-     * An application page is rarely one form. There is a newsletter box, a
-     * question box, a filter panel — all real forms, all submitted, none of
-     * them the application. Listening for any submit at all marked an
-     * application as sent when somebody signed up for job alerts underneath
-     * it, which takes the job off the list of things to finish.
-     *
-     * The button that did it answers this when there is one: a submitter
-     * labelled "Subscribe" is not a submission whatever form it sits in. When
-     * a script submits the form itself there is no submitter, and then the
-     * form's own shape has to answer — an application asks for a file or for
-     * several fields, and a newsletter asks for an address.
-     */
-    const looksLikeTheApplication = (form) => {
-      if (!form || typeof form.querySelectorAll !== 'function') return false;
-      if (form.querySelector('input[type=file]')) return true;
-      const fields = [...form.querySelectorAll('input, select, textarea')].filter(
-        (el) => !['hidden', 'submit', 'button', 'image', 'reset'].includes(el.type),
-      );
-      return fields.length >= 3;
-    };
-
-    const onSubmit = (event) => {
-      const label = (event.submitter?.value || event.submitter?.textContent || '').trim();
-      if (label) {
-        if (SENDING.test(label) && !NOT_YET.test(label)) tell(`"${label.slice(0, 40)}" was pressed on the page`);
-        return;
-      }
-      if (looksLikeTheApplication(event.target)) tell('The form was submitted on the page');
-    };
-    /*
-     * A link to somewhere else is a journey, not a send.
-     *
-     * Two systems here end the application with an anchor, so anchors have to
-     * count — but the similar-jobs rail every portal carries is also anchors,
-     * offering "Apply now" for a different role, and the small print offers
-     * to take the application by email. Both said the right words and went
-     * somewhere else. An anchor that stays on this page is a button wearing
-     * the wrong element; one that leaves is a link.
-     */
-    const leavesThePage = (link) => {
-      const href = link.getAttribute('href') ?? '';
-      if (!href || href.startsWith('#') || /^javascript:/i.test(href)) return false;
-      try {
-        const to = new URL(link.href, location.href);
-        return to.origin !== location.origin || to.pathname !== location.pathname;
-      } catch {
-        // An href this cannot parse — mailto:, tel:, a custom scheme — is not
-        // a control on this form whatever else it is.
-        return true;
-      }
-    };
-
-    const onClick = (event) => {
-      const target = event.target;
-      if (!target || typeof target.closest !== 'function') return;
-      const button = target.closest('button, input[type=submit], [role=button]');
-      if (!button) return;
-      const link = target.closest('a[href]');
-      if (link && leavesThePage(link)) return;
-      const label = (button.value || button.textContent || button.getAttribute('aria-label') || '').trim();
-      if (SENDING.test(label) && !NOT_YET.test(label)) tell(`"${label.slice(0, 40)}" was pressed on the page`);
-    };
-
-    document.addEventListener('submit', onSubmit, true);
-    document.addEventListener('click', onClick, true);
-    teardown.push(() => {
-      document.removeEventListener('submit', onSubmit, true);
-      document.removeEventListener('click', onClick, true);
     });
+    teardown.push(stop);
   }
 
   function keepWorkSafe() {
@@ -1234,6 +1154,29 @@
    * is where it stops.
    */
   if (window.top !== window) {
+    /*
+     * One exception to "a frame does nothing until asked": it watches for the
+     * application in it being sent.
+     *
+     * The form is as often in an iframe as on the page — iCIMS above all, and
+     * every careers page that embeds a board — and when it is, the button, the
+     * click and the submit all happen in here. The top document sees none of
+     * them, so every application sent through an embedded form went
+     * unrecorded: the one case where the tracker most needed to hear.
+     *
+     * It reports the fact and nothing else. A frame has no analysis and no
+     * card, so it cannot say which application this is; the service worker
+     * knows, from the trail this tab has been building, and decides there.
+     */
+    imports
+      .sending()
+      .then(({ watchForSending }) =>
+        watchForSending(document, (how) => {
+          send('applicationSentHere', { note: how, url: location.href }).catch(() => undefined);
+        }),
+      )
+      .catch(() => undefined);
+
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const answer = (work) =>
         work
@@ -1471,7 +1414,7 @@
 
   watchForApplyClicks();
   keepWorkSafe();
-  watchForSending();
+  watchForSending().catch(() => undefined);
 
   // And once the card exists, orphaning takes it off the page: a card whose
   // buttons all throw is worse than no card.

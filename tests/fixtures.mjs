@@ -185,6 +185,33 @@ const FORM_BODY = `
     </form>`;
 
 /**
+ * A posting with no style of its own.
+ *
+ * For the Content-Security-Policy case, and only for it. Every other fixture
+ * here carries an inline `<style>` block so the screenshots look like a real
+ * page — and a policy that forbids inline style refuses that block, putting
+ * "Refused to apply inline style" in the console before the extension has done
+ * anything at all. A test that then checked the console for complaints would
+ * be reading the fixture's and blaming the card.
+ *
+ * So this one is deliberately unstyled: under a strict policy, anything in the
+ * console is ours.
+ */
+export const BARE_ROLE = {
+  name: 'bare-role',
+  path: '/andromeda/roles/platform-engineer',
+  company: 'Andromeda',
+  title: 'Platform Engineer',
+  html: `<!doctype html>
+<html><head><meta charset="utf-8"><title>Platform Engineer at Andromeda</title></head>
+<body>
+  <h1>Andromeda</h1><div>Platform Engineer</div>
+  ${ROLE_BODY}
+  ${FORM_BODY}
+</body></html>`,
+};
+
+/**
  * A form asking something no stored profile can answer.
  *
  * A country dropdown that does not list the country you live in. Autofill
@@ -522,6 +549,28 @@ export const LATE_RENDER = {
  * times and is asked thirty times on every scan. Only one of them is the
  * application, and finding it among the rest — without the rest costing
  * anything or contributing anything — is the thing to check.
+ *
+ * It is also the slowest page in the set to put a card on, and the budget has
+ * been measured rather than guessed, so that the next person to look at the
+ * number does not have to. Against the same store, card up:
+ *
+ *   0 adverts 112ms · 6 253ms · 12 298ms · 24 450ms · 48 813ms
+ *
+ * — linear in the frame count, at roughly 15ms a frame. Of the ~700ms the 48
+ * adverts add, about 400ms remains with every piece of this extension's own
+ * frame code removed: it is Chrome loading 48 iframes and injecting a content
+ * script into each, which is the price of `all_frames`, and `all_frames` is
+ * what reaches the form on iCIMS. Around 90ms is the two things a frame does
+ * for itself at boot (watch for a send, decide whether it holds a form), and
+ * around 200ms is the top document's own injection being queued behind the
+ * frames' — `document_end` recovers part of that and costs a guess about
+ * pages that render late.
+ *
+ * So there is no large win here, only a scattering of small ones with real
+ * risk attached, and the measurement is recorded so that stays known. The
+ * failure on frame-heavy pages that would actually matter is a frame that
+ * never finishes at all, and that one is held down by its own case in
+ * tests/navigation.mjs.
  */
 export const CROWDED_PAGE = {
   name: 'crowded-page',
@@ -1104,10 +1153,36 @@ export const ALL = [STREAMLY, NORTHWIND, HELIOS_ROLE, HELIOS_FORM, HEAVY_POSTING
 /**
  * Serve every fixture from one origin. Returns the base url and a `urlFor`
  * helper so callers do not hard-code ports.
+ *
+ * `hold` names routes whose response is opened and then never finished. A
+ * third-party frame that hangs is an ordinary fact of the pages this runs on —
+ * a tracker, an advert, a chat widget whose host is having a bad day — and the
+ * page's `load` event never fires while one is outstanding. Anything the
+ * extension does at load time therefore never happens either, which is not a
+ * timing question but a permanent one, and the only way to ask it is to hold a
+ * response open on purpose.
+ *
+ * `headers` are added to every page served. The one that matters is
+ * Content-Security-Policy: applicant tracking systems handle identity
+ * documents and salary figures and ship some of the strictest policies on the
+ * web, so "does the card draw under a policy that forbids inline style" is a
+ * question about the systems this tool exists for rather than an exotic one.
  */
-export function serveFixtures(fixtures = ALL, { vars = {}, hostname = '127.0.0.1' } = {}) {
+export function serveFixtures(
+  fixtures = ALL,
+  { vars = {}, hostname = '127.0.0.1', hold = null, headers = {} } = {},
+) {
   return new Promise((resolve) => {
+    /** Held responses, so closing the server does not leave sockets open. */
+    const holding = [];
     const server = http.createServer((req, res) => {
+      if (hold?.test(req.url)) {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        // Enough to be a document, never enough to be a finished one.
+        res.write('<!doctype html><html><body><p>Sponsored</p>');
+        holding.push(res);
+        return;
+      }
       /*
        * Longest path wins. Matching on the first prefix served the role page
        * at the form's own address, because /lever/vega/8f21 is a prefix of
@@ -1126,7 +1201,7 @@ export function serveFixtures(fixtures = ALL, { vars = {}, hostname = '127.0.0.1
       }
       // charset matters: an em dash in a page title came back as mojibake
       // without it, which looks like a bug in the extension rather than here.
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...headers });
       // `{{NAME}}` lets one fixture link to another server's origin, which is
       // how the careers-site-to-ATS hand-off is modelled.
       res.end(Object.entries(vars).reduce((html, [k, v]) => html.split(`{{${k}}}`).join(v), match.html));
@@ -1136,7 +1211,16 @@ export function serveFixtures(fixtures = ALL, { vars = {}, hostname = '127.0.0.1
       resolve({
         base,
         urlFor: (f) => `${base}${f.path}`,
-        close: () => server.close(),
+        close: () => {
+          for (const res of holding) {
+            try {
+              res.end();
+            } catch {
+              // Already gone with the page that asked for it.
+            }
+          }
+          server.close();
+        },
       });
     });
   });

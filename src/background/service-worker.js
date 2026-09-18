@@ -30,8 +30,24 @@ import {
 const REQUEST_TIMEOUT_MS = 20_000;
 const SLOW_TIMEOUT_MS = 10 * 60_000;
 
+/**
+ * Which save the application in hand was built from.
+ *
+ * An application takes pages and minutes to write, and the editor can be
+ * pointed at a different save in the meantime — a work one and a personal
+ * one is the ordinary reason to have two. Nothing said so, and filing the
+ * application then wrote it into whichever save happened to be open, with
+ * the PDFs typeset from that save's profile and wordings: files that were
+ * not the ones on screen, in somebody else's folder, with a 200 back.
+ *
+ * So the save each proposal came from travels with the writes that follow
+ * it, and the store refuses one meant for a save it no longer has open.
+ * Held per tab, because two tabs are two applications.
+ */
+const saveOf = new Map();
+
 async function serverFetch(path, options = {}) {
-  const { timeoutMs = REQUEST_TIMEOUT_MS, ...init } = options;
+  const { timeoutMs = REQUEST_TIMEOUT_MS, save, ...init } = options;
   const { serverUrl } = await getSettings();
   const url = `${serverUrl.replace(/\/$/, '')}${path}`;
 
@@ -40,7 +56,11 @@ async function serverFetch(path, options = {}) {
     res = await fetch(url, {
       ...init,
       signal: init.signal ?? AbortSignal.timeout(timeoutMs),
-      headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(save ? { 'X-RMM-Project': save } : {}),
+        ...(init.headers ?? {}),
+      },
     });
   } catch (cause) {
     // Marked, so the card can offer the way out rather than only naming the
@@ -78,6 +98,9 @@ async function serverFetch(path, options = {}) {
     // The server says which sort of refusal this is. "No save open" is the one
     // worth acting on: there is a button that fixes it, one tab away.
     if (body.kind === 'no-project') failed.jobhelper = { fix: 'open-save', serverUrl };
+    // And the same button for a different save being open: what fixes it is
+    // choosing one, which is the page that button goes to.
+    if (body.kind === 'other-save') failed.jobhelper = { fix: 'open-save', serverUrl };
     throw failed;
   }
   return body;
@@ -208,7 +231,15 @@ async function markTab(tabId, trail) {
     // form that never names the employer, "the application you are on" is
     // still better said with the words from the page it started on.
     const named = pages.map((p) => p.company).filter(Boolean).pop();
-    const what = named ?? pages.map((p) => p.title).filter(Boolean).pop() ?? 'An application';
+    const role = pages.map((p) => p.role).filter(Boolean).pop();
+    const who = named ?? pages.map((p) => p.title).filter(Boolean).pop() ?? 'An application';
+    /*
+     * "Platform Engineer at Helios", the way the card's own heading says it.
+     * Not with a dash: this line already joins its parts with dashes, and
+     * three of them in "JobHelper — Platform Engineer — Helios — 2 pages
+     * read" is a sentence nobody can find the seams of.
+     */
+    const what = role && named ? `${role} at ${named}` : who;
     const n = pages.length;
     const parts = [`${what} — ${n} ${n === 1 ? 'page' : 'pages'} read`];
     /*
@@ -392,6 +423,82 @@ async function holdASpace(trail) {
 }
 
 /** Message handlers, one per action the content script or popup can request. */
+
+/**
+ * Put a page into this tab's application, or start a new one with it.
+ *
+ * Called from `analyze`, and only from there. The page is recorded in the same
+ * message that read it, so there is no window in which it has been read and
+ * does not yet belong anywhere — which is the whole reason it moved here.
+ *
+ * There used to be a `rememberPage` message beside it "for anything that reads
+ * a page without analysing it". Nothing ever sent it: every message type in
+ * this extension is a literal string, and that one appeared in no content
+ * script, no popup and no test. A handler nobody calls is not free — the
+ * comment above this function described a second way in, and a second way in
+ * is exactly what somebody reading this would have to reason about.
+ */
+async function remember(tab, page) {
+  await inheritIfNew(tab?.id, tab?.openerTabId);
+  const trail = await readTrail(tab?.id);
+  const joins = sameApplication(trail, page);
+  const pages = joins ? trail.pages.filter((p) => p.url !== page.url) : [];
+
+  pages.push({
+    url: page.url,
+    title: page.title,
+    company: page.company,
+    /*
+     * And which job it is, not only who it is with.
+     *
+     * The popup and the toolbar said "Helios" — right, and not enough to come
+     * back to an hour later, or to tell two roles at one employer apart. The
+     * analysis has worked the role out by the time a page is recorded; not
+     * keeping it meant asking the page again later, from a tab that has since
+     * moved on.
+     */
+    role: page.role,
+    kind: page.kind,
+    html: trimForStorage(page.html, TRAIL_HTML_MAX),
+    at: Date.now(),
+  });
+
+  /*
+   * A fresh application inherits nothing.
+   *
+   * This kept the whole of the old trail and replaced only its pages, so the
+   * previous posting's resume, letter and answers stayed behind under `work`
+   * — invisible, because the page that started fresh is correctly refused
+   * them. It is the page after that which asks and is given them: read one
+   * job, build its resume, open another job in the same tab, follow Apply,
+   * and the form comes up holding the first job's application.
+   *
+   * The expectation goes once it has been honoured, too: a click means "the
+   * next page", and leaving it standing let it vouch for a third page five
+   * minutes later.
+   *
+   * `expecting` has to be named in that inheriting, because the spread drops
+   * every key except the ones written below it. Carrying it across a fresh
+   * start was the whole of the rule undone by one line: press Apply on Vega
+   * and have the board cancel the navigation and route the page itself —
+   * which content.js already anticipates, and which `target=_blank` produces
+   * too — then read a different job, and the expectation left over from Vega
+   * vouches for it. Vega's form then comes up holding Lyra's resume and
+   * Lyra's description as the source for the letter, with nothing on screen
+   * looking wrong.
+   */
+  const honoured = joins && wasExpected(trail, page.url);
+  const next = {
+    ...(joins ? trail : {}),
+    expecting: joins && !honoured ? trail.expecting : undefined,
+    pages: pages.slice(-TRAIL_MAX),
+    at: Date.now(),
+  };
+  await writeTrail(tab?.id, next);
+  await markTab(tab?.id, next);
+return { ...summarise(next), startedFresh: !joins };
+}
+
 const handlers = {
   /** "There is a content script in this frame." Sent once, on load. */
   async frameReady(_payload, tab, sender) {
@@ -448,61 +555,6 @@ const handlers = {
       .sendMessage(tab.id, { type: 'jh-frame-insert', payload: { fieldId, text } }, { frameId })
       .catch(() => null);
     return Boolean(reply?.ok && reply.data);
-  },
-
-  /**
-   * Add the page to the current application, or start a new one with it.
-   * Returns the trail as it now stands, so the card can show it.
-   */
-  async rememberPage({ page }, tab) {
-    await inheritIfNew(tab?.id, tab?.openerTabId);
-    const trail = await readTrail(tab?.id);
-    const joins = sameApplication(trail, page);
-    const pages = joins ? trail.pages.filter((p) => p.url !== page.url) : [];
-
-    pages.push({
-      url: page.url,
-      title: page.title,
-      company: page.company,
-      kind: page.kind,
-      html: trimForStorage(page.html, TRAIL_HTML_MAX),
-      at: Date.now(),
-    });
-
-    /*
-     * A fresh application inherits nothing.
-     *
-     * This kept the whole of the old trail and replaced only its pages, so the
-     * previous posting's resume, letter and answers stayed behind under `work`
-     * — invisible, because the page that started fresh is correctly refused
-     * them. It is the page after that which asks and is given them: read one
-     * job, build its resume, open another job in the same tab, follow Apply,
-     * and the form comes up holding the first job's application.
-     *
-     * The expectation goes once it has been honoured, too: a click means "the
-     * next page", and leaving it standing let it vouch for a third page five
-     * minutes later.
-     *
-     * `expecting` has to be named in that inheriting, because the spread drops
-     * every key except the ones written below it. Carrying it across a fresh
-     * start was the whole of the rule undone by one line: press Apply on Vega
-     * and have the board cancel the navigation and route the page itself —
-     * which content.js already anticipates, and which `target=_blank` produces
-     * too — then read a different job, and the expectation left over from Vega
-     * vouches for it. Vega's form then comes up holding Lyra's resume and
-     * Lyra's description as the source for the letter, with nothing on screen
-     * looking wrong.
-     */
-    const honoured = joins && wasExpected(trail, page.url);
-    const next = {
-      ...(joins ? trail : {}),
-      expecting: joins && !honoured ? trail.expecting : undefined,
-      pages: pages.slice(-TRAIL_MAX),
-      at: Date.now(),
-    };
-    await writeTrail(tab?.id, next);
-    await markTab(tab?.id, next);
-    return { ...summarise(next), startedFresh: !joins };
   },
 
   /**
@@ -601,11 +653,41 @@ const handlers = {
 
   /** Forget the trail — "this is a different application from the last one". */
   // Named tab honoured on the same terms as `getTrail`.
-  async clearTrail({ tabId } = {}, tab, sender) {
+  /**
+   * Forget this application — and, from the card, keep the page it was pressed
+   * on.
+   *
+   * The two callers mean two different things by it, and the buttons say so.
+   * The popup's is "Start fresh": the user is not on the page, they are saying
+   * they are done with it, and everything goes. The card's says "Start a new
+   * application here" and explains itself as "forget the earlier pages and use
+   * only this one" — and it was using none of them.
+   *
+   * What that cost was not only a count. The badge went blank and the toolbar
+   * reverted to plain "JobHelper" while the user stood on the application form
+   * they had just said to start from, so the tool reported no application open
+   * on the page that was one. The next page of the form then began its own
+   * application, leaving the page the button was pressed on out of it — the
+   * opposite of what the button offered.
+   *
+   * `keep` is the page to hold on to, sent by the card and absent from the
+   * popup. The stored entry is kept rather than a fresh stub, because it
+   * carries the markup this application is written from.
+   */
+  async clearTrail({ tabId, keep } = {}, tab, sender) {
     const id = whichTab(tabId, tab, sender);
-    await session().remove(trailKey(id));
-    await markTab(id, { pages: [] });
-    return { pages: [] };
+    const held = keep?.url ? (await readTrail(id)).pages.filter((p) => p.url === keep.url) : [];
+
+    if (held.length === 0) {
+      await session().remove(trailKey(id));
+      await markTab(id, { pages: [] });
+      return { pages: [] };
+    }
+
+    const next = { pages: held, at: Date.now() };
+    await writeTrail(id, next);
+    await markTab(id, next);
+    return summarise(next);
   },
 
   /** Drop one page the user says does not belong. */
@@ -700,11 +782,11 @@ const handlers = {
    * back to the stored preference. `useAi` is the older two-way form of the
    * same question and still works.
    */
-  async analyze({ url, title, html, pages, useAi, tailor }) {
+  async analyze({ url, title, html, pages, framed, useAi, tailor }, tab) {
     const settings = await getSettings();
     const mode =
       tailor ?? (typeof useAi === 'boolean' ? (useAi ? 'ai' : 'match') : settings.useAi ? 'ai' : 'match');
-    return serverFetch('/api/extension/analyze', {
+    const result = await serverFetch('/api/extension/analyze', {
       method: 'POST',
       timeoutMs: SLOW_TIMEOUT_MS,
       body: JSON.stringify({
@@ -721,6 +803,39 @@ const handlers = {
         useAi: mode === 'ai',
       }),
     });
+
+    /*
+     * And the page counts from here, in the same message that read it.
+     *
+     * It used to be a second message, sent by the content script once the
+     * card was up. That is a round trip later, and a page is only part of an
+     * application once it lands — so following Apply in the meantime, which
+     * is exactly what you do on a description page, started a fresh
+     * application on the form and lost the description you had just read: the
+     * role reverted to whatever the form calls itself, and the tracker took
+     * two rows for one job. A message in flight when the tab navigates is not
+     * delivered, so no amount of sending it earlier closes that window; not
+     * sending it at all does.
+     *
+     * Only when it is a posting. Recording every page the extension so much
+     * as looked at would put a salary page, a careers index and a
+     * confirmation page into the application you are writing.
+     */
+    if (result?.save && tab?.id !== undefined) saveOf.set(tab.id, result.save);
+    if (result?.isJobPosting) {
+      await remember(tab, {
+        url,
+        title,
+        company: result.job?.company,
+        role: result.job?.title,
+        kind: result.kind,
+        // The frames are part of the page: a posting inside an embed is an
+        // empty shell at the top level, and the next page would be written
+        // from the shell.
+        html: [html, ...(framed ?? []).map((f) => f.html)].join('\n').slice(0, 400_000),
+      });
+    }
+    return { ...result, trail: summarise(await readTrail(tab?.id)) };
   },
 
   /** Compile a proposed spec so the user can look at it before committing. */
@@ -729,6 +844,23 @@ const handlers = {
       method: 'POST',
       timeoutMs: SLOW_TIMEOUT_MS,
       body: JSON.stringify({ spec }),
+    });
+    const { serverUrl } = await getSettings();
+    return { ...result, absolutePdfUrl: `${serverUrl.replace(/\/$/, '')}${result.pdfUrl}` };
+  },
+
+  /**
+   * Typeset the cover letter, so it can be looked at before it is sent.
+   *
+   * Set to match the resume it goes with — same margins, same name at the top
+   * — which is why the resume's id travels with it. A preview compile: the
+   * copy that gets attached is built again when the folder is.
+   */
+  async renderLetter({ body, company, role, resumeId }) {
+    const result = await serverFetch('/api/render/letter', {
+      method: 'POST',
+      timeoutMs: SLOW_TIMEOUT_MS,
+      body: JSON.stringify({ body, company, role, resumeId }),
     });
     const { serverUrl } = await getSettings();
     return { ...result, absolutePdfUrl: `${serverUrl.replace(/\/$/, '')}${result.pdfUrl}` };
@@ -782,10 +914,11 @@ const handlers = {
   },
 
   /** Write the application folder and record it in the tracker. */
-  async bundle(payload) {
+  async bundle(payload, tab) {
     return serverFetch('/api/applications/bundle', {
       method: 'POST',
       timeoutMs: SLOW_TIMEOUT_MS,
+      save: saveOf.get(tab?.id),
       body: JSON.stringify(payload),
     });
   },
@@ -817,10 +950,13 @@ const handlers = {
   },
 
   /** Pair page questions with whatever the answer bank already holds. */
-  async matchAnswers({ questions }) {
+  async matchAnswers({ questions, company }) {
     return serverFetch('/api/answers/match', {
       method: 'POST',
-      body: JSON.stringify({ questions }),
+      // Who is being applied to. An answer to "why do you want to work here?"
+      // names the company, so the bank has to know which company is being
+      // asked about before it hands one over.
+      body: JSON.stringify({ questions, company }),
     });
   },
 
@@ -896,10 +1032,14 @@ const handlers = {
    * A browser sidebar is fine for picking a resume and wrong for writing three
    * paragraphs; this is the door between the two.
    */
-  async openWorkspace(payload) {
+  async openWorkspace(payload, tab) {
     const result = await serverFetch('/api/workspace', {
       method: 'POST',
       timeoutMs: SLOW_TIMEOUT_MS,
+      // The same rule as `bundle`: this writes a space, a tracker row and a
+      // tailored resume into a save, and it has to be the save the proposal
+      // was built from.
+      save: saveOf.get(tab?.id),
       body: JSON.stringify(payload),
     });
     const { serverUrl } = await getSettings();
@@ -916,6 +1056,26 @@ const handlers = {
     // something. See `awaitingReturn`.
     if (typeof tab?.id === 'number') awaitingReturn.add(tab.id);
     return { id: opened.id };
+  },
+
+  /**
+   * "The application in this frame was just sent."
+   *
+   * Said by a frame, which has no analysis and no card and so cannot say
+   * which application it is. This side can: the tab has been building a trail
+   * as the person moved through the application, and the resume built for it
+   * carries the company and the role.
+   *
+   * Requiring that resume is a stronger guard than the top document's, not a
+   * weaker one — it means this tab was already being tracked as an
+   * application in flight, so the worst this can do is finish something that
+   * had already started.
+   */
+  async applicationSentHere({ note, url }, tab) {
+    const trail = await readTrail(tab?.id);
+    const named = trail?.work?.spec?.generatedFor;
+    if (!named?.company || !named?.role) return { ok: false };
+    return handlers.applicationSent({ company: named.company, role: named.role, url, note });
   },
 
   /**

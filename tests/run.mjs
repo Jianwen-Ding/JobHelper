@@ -60,10 +60,11 @@ const root = path.resolve(here, '..');
  */
 const SUITES = [
   { name: 'nav', file: 'navigation.mjs', cost: 125 },
-  { name: 'sending', file: 'sending.mjs', cost: 80 },
+  { name: 'sending', file: 'sending.mjs', cost: 90 },
   { name: 'ats-journey', file: 'ats-journey.mjs', cost: 75 },
   { name: 'adverse', file: 'adverse.mjs', cost: 53 },
   { name: 'carrying', file: 'carrying.mjs', cost: 45 },
+  { name: 'controls', file: 'controls.mjs', cost: 40 },
   { name: 'quiet', file: 'quiet.mjs', cost: 35 },
   { name: 'e2e', file: 'e2e.mjs', cost: 21 },
   { name: 'journey', file: 'journey.mjs', cost: 18 },
@@ -158,10 +159,16 @@ async function poolAgrees() {
     pool.map(async (server) => {
       try {
         const res = await fetch(`${server}/health?fresh`);
-        const { build, ok, dataDir, stale } = await res.json();
-        return { server, build: ok ? (build ?? 'unknown') : 'not ok', dataDir: dataDir ?? null, stale: stale === true };
+        const { build, ok, dataDir, outDir, stale } = await res.json();
+        return {
+          server,
+          build: ok ? (build ?? 'unknown') : 'not ok',
+          dataDir: dataDir ?? null,
+          outDir: outDir ?? null,
+          stale: stale === true,
+        };
       } catch (err) {
-        return { server, build: `unreachable: ${(err && err.message) || err}`, dataDir: null, stale: false };
+        return { server, build: `unreachable: ${(err && err.message) || err}`, dataDir: null, outDir: null, stale: false };
       }
     }),
   );
@@ -220,6 +227,28 @@ async function poolAgrees() {
       'Suites build resumes and bundles and then check the save was left as they',
       'found it, so two sharing one do not run slower — they fail each other.',
       'Give each server its own copy: rmm serve --port N --data /tmp/store-N.',
+    ].join('\n');
+  }
+
+  /*
+   * And the same question about the other folder.
+   *
+   * `out` is a sibling of the save, not part of it, so three saves in one
+   * parent directory share one output folder — the compiled PDFs, the
+   * per-application archives, and `out/current`, which rebuilds itself from
+   * whichever tracker asked last and deletes what the other two put there.
+   * Separate saves are not separate runs unless this is separate too.
+   */
+  const sharedOut = servers.filter((s, i) => s.outDir && servers.findIndex((o) => o.outDir === s.outDir) !== i);
+  if (sharedOut.length) {
+    return [
+      'Two servers in the pool write to the same output folder:',
+      ...servers.map((s) => `  ${s.server}  ${s.outDir ?? 'not saying'}`),
+      '',
+      'Bundles, compiled PDFs and the flat upload folder all live there, and the',
+      'flat one is rebuilt from the tracker that asked last — so one run tidies',
+      "away another's files mid-suite.",
+      'Put each save in its own directory, or set output.withinProject in its config.yaml.',
     ].join('\n');
   }
   return null;

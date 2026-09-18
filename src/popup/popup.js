@@ -17,7 +17,50 @@ function setStatus(text, kind = '') {
 
 async function activeTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  /*
+   * Never this extension's own pages.
+   *
+   * A popup is not a tab, so the active tab is the page behind it and this
+   * costs nothing in ordinary use. But popup.html opens perfectly well as a
+   * tab of its own — which is how it is looked at while being worked on, and
+   * how a harness reaches it — and then the active tab is the popup, so
+   * "mute this site" offered to mute the extension. Whatever the popup is
+   * acting on, it is never itself.
+   */
+  if (tab?.url?.startsWith('chrome-extension://')) {
+    const [behind] = await chrome.tabs.query({ currentWindow: true, url: ['http://*/*', 'https://*/*'] });
+    return behind ?? tab;
+  }
   return tab;
+}
+
+/**
+ * Say which way the mute button goes, for the site in front of you.
+ *
+ * Drawn from the settings rather than remembered, so a host muted in another
+ * window — or in a previous sitting — is reported as muted here.
+ */
+async function drawMute() {
+  const button = $('mute');
+  if (!button) return;
+  const host = hostOf((await activeTab())?.url);
+  const muted = host && ((await send('getSettings')).mutedHosts ?? []).includes(host);
+  button.textContent = muted ? 'Show here again' : 'Mute this site';
+  button.title = muted
+    ? `JobHelper is muted on ${host}. This turns it back on.`
+    : host
+      ? `Never offer on ${host}.`
+      : 'Never offer on this site.';
+}
+
+/** The host a page belongs to, or nothing when it does not have one. */
+function hostOf(url) {
+  try {
+    const { protocol, hostname } = new URL(url ?? '');
+    return /^https?:$/.test(protocol) && hostname ? hostname : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Ask the content script to do something, reporting clearly if it is absent. */
@@ -64,7 +107,12 @@ async function showOpenApplication() {
   }
 
   const named = pages.map((p) => p.company).filter(Boolean).pop();
-  $('openWho').textContent = named ?? pages.map((p) => p.title).filter(Boolean).pop() ?? 'An application';
+  const role = pages.map((p) => p.role).filter(Boolean).pop();
+  // The role first, then who it is with: "Helios" alone is not enough to come
+  // back to an hour later, and says nothing at all when two of their jobs are
+  // open in two tabs.
+  const who = named ?? pages.map((p) => p.title).filter(Boolean).pop() ?? 'An application';
+  $('openWho').textContent = role && named ? `${role} — ${named}` : who;
 
   const n = pages.length;
   const what = [`Written from ${n} ${n === 1 ? 'page' : 'pages'} of this application`];
@@ -238,13 +286,32 @@ async function boot() {
     }
   };
 
+  /*
+   * Muting, and unmuting, from the same button.
+   *
+   * It was one-way. One click, no warning on it, and the card never came back
+   * on that host — there was no list of muted sites anywhere, no toggle, and
+   * nothing in the popup that even said this one was muted. The way back was
+   * editing `chrome.storage.sync` by hand, which is not a thing anybody is
+   * going to find. Mute a job board while reading it, come back next week, and
+   * the tool is simply broken there for reasons you cannot see.
+   *
+   * So the button says which way it goes, and it is drawn from the settings
+   * every time the popup opens rather than remembered here.
+   */
   $('mute').onclick = async () => {
-    const tab = await activeTab();
-    if (!tab?.url) return;
-    const host = new URL(tab.url).hostname;
-    const current = await send('getSettings');
-    await save({ mutedHosts: [...new Set([...(current.mutedHosts ?? []), host])] });
-    setStatus(`Muted ${host}.`, 'ok');
+    const host = hostOf((await activeTab())?.url);
+    if (!host) {
+      setStatus('This page does not belong to a site that can be muted.', 'warn');
+      return;
+    }
+    const muted = new Set((await send('getSettings')).mutedHosts ?? []);
+    const wasMuted = muted.has(host);
+    if (wasMuted) muted.delete(host);
+    else muted.add(host);
+    await save({ mutedHosts: [...muted] });
+    await drawMute();
+    setStatus(wasMuted ? `${host} is no longer muted — reload the page.` : `Muted ${host}.`, 'ok');
   };
 
   $('openApp').onclick = async () => {
@@ -253,6 +320,9 @@ async function boot() {
   };
 
   check();
+  // The mute button's own state, which does not depend on the store being
+  // reachable: a muted site stays muted whether or not ResumeM-M answers.
+  drawMute().catch(() => undefined);
 }
 
 async function check() {

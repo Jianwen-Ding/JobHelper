@@ -692,6 +692,173 @@ export const BY_EMAIL = form({
       <a href="mailto:jobs@tolworth.example?subject=Application" role="button">Send application by email</a></p>`,
 });
 
+
+/* ------------------------------------------------------------------ *
+ * The form in a frame                                                 *
+ * ------------------------------------------------------------------ */
+
+/**
+ * A careers page that embeds its application form, which is how iCIMS and
+ * every hosted board works: the page you are looking at holds a heading and
+ * an iframe, and the form — with its fields, its button, and the click that
+ * ends the application — is inside.
+ *
+ * Two fixtures, because that is what it really is: a page, and the document
+ * the frame loads.
+ */
+export const EMBEDDED_APPLY = {
+  name: 'embedded-apply',
+  path: '/careers/platform-engineer',
+  company: 'Wexford Marine',
+  title: 'Platform Engineer',
+  sends: 'Submit application',
+  sent: true,
+  inFrame: true,
+  html: page(
+    'Platform Engineer — Wexford Marine',
+    'Wexford Marine',
+    `<h2>Platform Engineer</h2>${FORM_WORDS}
+     <iframe src="/embed/apply/88201" title="Application form" width="720" height="620"
+             style="border:1px solid #ddd"></iframe>`,
+  ),
+};
+
+/** The document inside it: nothing but the form. */
+export const EMBEDDED_APPLY_FRAME = {
+  name: 'embedded-apply-frame',
+  path: '/embed/apply/88201',
+  company: 'Wexford Marine',
+  html: page(
+    'Application form',
+    'Apply',
+    `${FORM_WORDS}
+     <form onsubmit="event.preventDefault();">
+       ${FIELDS}
+       <button type="submit">Submit application</button>
+     </form>`,
+  ),
+};
+
+/**
+ * And the same shape with a control that must not count, because a frame gets
+ * no second opinion: the top document cannot see what was pressed in here, so
+ * whatever the frame decides stands.
+ */
+export const EMBEDDED_SUBSCRIBE = {
+  name: 'embedded-subscribe',
+  path: '/careers/data-engineer',
+  company: 'Kingsmere Foods',
+  title: 'Data Engineer',
+  sends: 'Subscribe',
+  sent: false,
+  inFrame: true,
+  html: page(
+    'Data Engineer — Kingsmere Foods',
+    'Kingsmere Foods',
+    `<h2>Data Engineer</h2>${FORM_WORDS}
+     <iframe src="/embed/apply/88202" title="Application form" width="720" height="700"
+             style="border:1px solid #ddd"></iframe>`,
+  ),
+};
+
+export const EMBEDDED_SUBSCRIBE_FRAME = {
+  name: 'embedded-subscribe-frame',
+  path: '/embed/apply/88202',
+  company: 'Kingsmere Foods',
+  html: page(
+    'Application form',
+    'Apply',
+    `${FORM_WORDS}
+     <form onsubmit="event.preventDefault();">
+       ${FIELDS}
+       <button type="submit">Submit application</button>
+     </form>
+     <h2>Job alerts</h2>
+     <form onsubmit="event.preventDefault();">
+       <label for="nl">Email me new roles</label><input id="nl" type="email">
+       <button type="submit">Subscribe</button>
+     </form>`,
+  ),
+};
+
+/** The frame documents, which are served but never visited directly. */
+export const FRAME_DOCUMENTS = [EMBEDDED_APPLY_FRAME, EMBEDDED_SUBSCRIBE_FRAME];
+
+
+/* ------------------------------------------------------------------ *
+ * Shapes, rather than brands                                          *
+ * ------------------------------------------------------------------ */
+
+/**
+ * The three below are not another vendor each. They are the page shapes the
+ * rules had never been asked about: a control whose words are not in its
+ * text, a form that is not on the page until you ask for it, and a page that
+ * offers to do the whole thing again.
+ */
+
+/** An icon for a button, and the words in an attribute — as ARIA intends. */
+export const ICON_SUBMIT = form({
+  name: 'icon-only-submit',
+  path: '/apply/platform-engineer/finish',
+  company: 'Larkhill Instruments',
+  title: 'Platform Engineer',
+  sends: 'Submit application',
+  inner: `<form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="submit" aria-label="Submit application"><span aria-hidden="true">→</span></button>
+    </form>`,
+});
+
+/**
+ * The form is behind the button that says Apply, on the same page.
+ *
+ * Every embedded board does this: the posting is a page, and pressing Apply
+ * unfolds the form under it rather than going anywhere. The press has the
+ * word on it and sends nothing.
+ */
+export const ACCORDION = form({
+  name: 'unfolds-the-form',
+  path: '/en/careers/openings/platform-engineer',
+  company: 'Denby Optics',
+  title: 'Platform Engineer',
+  sends: 'Apply for this job',
+  sent: false,
+  alsoOffers: 'Submit application',
+  inner: `<button type="button" class="btn" onclick="document.getElementById('unfold').hidden = false;">
+      Apply for this job
+    </button>
+    <div id="unfold" hidden>
+      <form onsubmit="event.preventDefault();">
+        ${FIELDS}
+        <button type="submit">Submit application</button>
+      </form>
+    </div>`,
+});
+
+/**
+ * And the page after it went out, which offers to do it again.
+ *
+ * "Submit another application" carries the verb and the object and means the
+ * opposite of this one; a portal that shows it beside the form you have just
+ * sent is the most likely place to record a second application nobody made.
+ */
+export const ANOTHER_ONE = form({
+  name: 'offers-another-application',
+  path: '/apply/platform-engineer/submitted',
+  company: 'Marchwood Ceramics',
+  title: 'Platform Engineer',
+  sends: 'Submit another application',
+  sent: false,
+  alsoOffers: 'Submit application',
+  inner: `<form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="submit">Submit application</button>
+    </form>
+    <hr>
+    <p>Applying for more than one role at Marchwood?</p>
+    <button type="button" class="quiet">Submit another application</button>`,
+});
+
 /** Every form above, in the order the suite walks them. */
 export const SENDS = [
   ORACLE,
@@ -709,6 +876,7 @@ export const SENDS = [
   PINPOINT,
   COMEET,
   BULLHORN,
+  ICON_SUBMIT,
   EASY_APPLY,
   BOARD_APPLY,
   HANDSHAKE,
@@ -717,6 +885,7 @@ export const SENDS = [
   HOURLY,
   STAFFING,
   GOVERNMENT,
+  EMBEDDED_APPLY,
 ];
 
 /** And the ones that must leave the tracker alone. */
@@ -734,4 +903,7 @@ export const DOES_NOT_SEND = [
   SIMILAR_JOBS,
   FINISH_LATER,
   BY_EMAIL,
+  EMBEDDED_SUBSCRIBE,
+  ACCORDION,
+  ANOTHER_ONE,
 ];

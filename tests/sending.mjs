@@ -23,7 +23,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { serveFixtures, findChromium, pointExtensionAt, requireOpenSave, cleanStore } from './fixtures.mjs';
-import { SENDS, DOES_NOT_SEND } from './ats-web.mjs';
+import { SENDS, DOES_NOT_SEND, FRAME_DOCUMENTS } from './ats-web.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
@@ -43,6 +43,23 @@ const cardOf = (page) => page.locator(`${HOST} .card`);
 async function settled(page) {
   await page.locator(HOST).waitFor({ state: 'attached', timeout: 25_000 });
   await page.locator(`${HOST} .card .role`).waitFor({ timeout: 25_000 });
+
+  /*
+   * And past the provisional card, which carries the role and none of the
+   * buttons. Without this the loop below could find a card that had stopped
+   * changing only because the analysis had not come back yet — and the test
+   * then spent its click timeout waiting for a button that was never going
+   * to be there in time. It is the same bet on how long the machine takes,
+   * made one step earlier.
+   *
+   * Tolerant on purpose: a page whose analysis never lands is a case several
+   * of these suites are about, and they still have their own assertions to
+   * make about it.
+   */
+  await page
+    .locator(`${HOST} .card:not(.loading)`)
+    .waitFor({ timeout: 60_000 })
+    .catch(() => undefined);
   const read = () => cardOf(page).innerText().catch(() => '');
   let last = await read();
   for (let i = 0; i < 40; i++) {
@@ -70,8 +87,14 @@ async function filed(company) {
  * anything carrying `role=button`, which between them is every shape in these
  * fixtures — including the anchor and the div, which is the point.
  */
-async function press(page, name) {
-  await page.getByRole('button', { name, exact: true }).first().click({ timeout: 10_000 });
+async function press(page, name, { inFrame = false } = {}) {
+  /*
+   * In the frame when the form is in the frame. An embedded board puts the
+   * fields, the button and the click inside an iframe, and Playwright's
+   * page-level locators do not cross into one.
+   */
+  const where = inFrame ? page.frameLocator('iframe') : page;
+  await where.getByRole('button', { name, exact: true }).first().click({ timeout: 10_000 });
 }
 
 /**
@@ -111,7 +134,7 @@ async function walk(context, fixtures, fixture, { build = true } = {}) {
 
     // The keeper writes on an interval, and the space is opened from there.
     const before = await awaitFiled(fixture.company, (f) => f.application?.status === 'applying');
-    await press(page, fixture.sends);
+    await press(page, fixture.sends, { inFrame: fixture.inFrame });
 
     /*
      * A page that should send is waited on until it has; one that should not
@@ -160,9 +183,13 @@ async function* inBatches(list, run) {
   }
 }
 
+/** What this suite files under; cleared before it starts as well as after. */
+const MINE = [...SENDS, ...DOES_NOT_SEND].map((f) => f.company).concat(['Novena']);
+
 async function main() {
   await requireOpenSave(SERVER);
-  const fixtures = await serveFixtures([...SENDS, ...DOES_NOT_SEND]);
+  await cleanStore(SERVER, MINE).catch(() => undefined);
+  const fixtures = await serveFixtures([...SENDS, ...DOES_NOT_SEND, ...FRAME_DOCUMENTS]);
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-send-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     executablePath: findChromium(),
@@ -282,10 +309,7 @@ async function main() {
     }
     console.log(`\nWhole sweep: ${((Date.now() - started) / 1000).toFixed(1)}s`);
   } finally {
-    await cleanStore(
-      SERVER,
-      [...SENDS, ...DOES_NOT_SEND].map((f) => f.company).concat(['Novena']),
-    ).catch(() => undefined);
+    await cleanStore(SERVER, MINE).catch(() => undefined);
     await context.close();
     await fixtures.close();
     fs.rmSync(userDataDir, { recursive: true, force: true });
