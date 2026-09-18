@@ -591,8 +591,14 @@
       case 'forgetPage':
         return send('forgetPage', { url: payload.url });
 
+      /*
+       * "Start a new application here" — and `here` is this page, which the
+       * worker cannot know on its own. Without it the trail emptied
+       * completely, the badge went blank on the form the user was standing
+       * on, and the next page began an application this one was not part of.
+       */
       case 'clearTrail':
-        return send('clearTrail', {});
+        return send('clearTrail', { keep: pageIdentity() });
 
       default:
         throw new Error(`Unknown card action "${action}"`);

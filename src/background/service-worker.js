@@ -658,11 +658,41 @@ const handlers = {
 
   /** Forget the trail — "this is a different application from the last one". */
   // Named tab honoured on the same terms as `getTrail`.
-  async clearTrail({ tabId } = {}, tab, sender) {
+  /**
+   * Forget this application — and, from the card, keep the page it was pressed
+   * on.
+   *
+   * The two callers mean two different things by it, and the buttons say so.
+   * The popup's is "Start fresh": the user is not on the page, they are saying
+   * they are done with it, and everything goes. The card's says "Start a new
+   * application here" and explains itself as "forget the earlier pages and use
+   * only this one" — and it was using none of them.
+   *
+   * What that cost was not only a count. The badge went blank and the toolbar
+   * reverted to plain "JobHelper" while the user stood on the application form
+   * they had just said to start from, so the tool reported no application open
+   * on the page that was one. The next page of the form then began its own
+   * application, leaving the page the button was pressed on out of it — the
+   * opposite of what the button offered.
+   *
+   * `keep` is the page to hold on to, sent by the card and absent from the
+   * popup. The stored entry is kept rather than a fresh stub, because it
+   * carries the markup this application is written from.
+   */
+  async clearTrail({ tabId, keep } = {}, tab, sender) {
     const id = whichTab(tabId, tab, sender);
-    await session().remove(trailKey(id));
-    await markTab(id, { pages: [] });
-    return { pages: [] };
+    const held = keep?.url ? (await readTrail(id)).pages.filter((p) => p.url === keep.url) : [];
+
+    if (held.length === 0) {
+      await session().remove(trailKey(id));
+      await markTab(id, { pages: [] });
+      return { pages: [] };
+    }
+
+    const next = { pages: held, at: Date.now() };
+    await writeTrail(id, next);
+    await markTab(id, next);
+    return summarise(next);
   },
 
   /** Drop one page the user says does not belong. */

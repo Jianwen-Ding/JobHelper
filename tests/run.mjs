@@ -64,6 +64,7 @@ const SUITES = [
   { name: 'ats-journey', file: 'ats-journey.mjs', cost: 75 },
   { name: 'adverse', file: 'adverse.mjs', cost: 53 },
   { name: 'carrying', file: 'carrying.mjs', cost: 45 },
+  { name: 'controls', file: 'controls.mjs', cost: 40 },
   { name: 'quiet', file: 'quiet.mjs', cost: 35 },
   { name: 'e2e', file: 'e2e.mjs', cost: 21 },
   { name: 'journey', file: 'journey.mjs', cost: 18 },
