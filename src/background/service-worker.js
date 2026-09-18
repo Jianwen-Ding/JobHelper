@@ -427,10 +427,16 @@ async function holdASpace(trail) {
 /**
  * Put a page into this tab's application, or start a new one with it.
  *
- * Called from `analyze`, which is the ordinary path — the page is recorded in
- * the same message that read it, so there is no window in which it has been
- * read and does not yet belong anywhere — and from the `rememberPage` message
- * for anything that reads a page without analysing it.
+ * Called from `analyze`, and only from there. The page is recorded in the same
+ * message that read it, so there is no window in which it has been read and
+ * does not yet belong anywhere — which is the whole reason it moved here.
+ *
+ * There used to be a `rememberPage` message beside it "for anything that reads
+ * a page without analysing it". Nothing ever sent it: every message type in
+ * this extension is a literal string, and that one appeared in no content
+ * script, no popup and no test. A handler nobody calls is not free — the
+ * comment above this function described a second way in, and a second way in
+ * is exactly what somebody reading this would have to reason about.
  */
 async function remember(tab, page) {
   await inheritIfNew(tab?.id, tab?.openerTabId);
@@ -549,17 +555,6 @@ const handlers = {
       .sendMessage(tab.id, { type: 'jh-frame-insert', payload: { fieldId, text } }, { frameId })
       .catch(() => null);
     return Boolean(reply?.ok && reply.data);
-  },
-
-  /**
-   * Add the page to the current application, or start a new one with it.
-   *
-   * Kept as a message of its own for anything that reads a page without
-   * analysing it; the ordinary path goes through `analyze`, which records it
-   * in the same round trip that read it.
-   */
-  async rememberPage({ page }, tab) {
-    return remember(tab, page);
   },
 
   /**
