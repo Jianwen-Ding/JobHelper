@@ -150,11 +150,55 @@ async function main() {
         const filled = Number(/Filled (\d+)/.exec(report)?.[1] ?? 0);
         check('autofill puts something in the form', filled > 0, report);
 
-        /* 4. Filed, with the files a portal would ask for. */
+        /*
+         * 4. The two things a person actually spends the time on.
+         *
+         * This walk used to go straight from the resume to the folder, so what
+         * it measured was a resume-only application — and what it proved was
+         * that a resume-only bundle comes out. The letter and the answers are
+         * the parts somebody sits and writes, the parts the AI is allowed to
+         * write, and the parts a portal refuses the application without. They
+         * belong in the timing for the same reason they belong in the check.
+         *
+         * Conditional, because these systems differ in what they ask for and
+         * that is the point of walking all of them: a form with no letter box
+         * is not a failure, it is a form with no letter box.
+         */
+        const letterBox = card.locator('textarea.tall').first();
+        const wantsLetter = (await letterBox.count()) > 0;
+        if (wantsLetter) {
+          await letterBox.click();
+          await letterBox.fill('I have wanted to work on this kind of system for years.');
+        }
+
+        const answerBox = card.locator('.q textarea').first();
+        const asksQuestions = (await answerBox.count()) > 0;
+        if (asksQuestions) {
+          await answerBox.click();
+          await answerBox.fill('Because of the work your team publishes.');
+        }
+        // The keeper writes on an interval; let it, so the bundle is built
+        // from what is on screen rather than from what was there before.
+        await page.waitForTimeout(2600);
+
+        /* 5. Filed, with the files a portal would ask for. */
         await card.getByRole('button', { name: 'Prepare to submit' }).click();
         await card.locator('.done-box').waitFor({ timeout: 120_000 });
         const done = await card.locator('.done-box').innerText();
         check('an application folder is written', /-Resume\.pdf/.test(done), done.split('\n')[1] ?? '');
+
+        /*
+         * And the letter is in it. A folder announcing itself ready with the
+         * letter missing is the failure this whole step exists to catch —
+         * every portal that asks for one refuses the application without it,
+         * and the card says "named and ready to attach" either way.
+         */
+        if (wantsLetter) {
+          check('the cover letter is in the folder too', /Cover-Letter\.pdf/.test(done), done.replace(/\n/g, ' | '));
+        }
+        if (asksQuestions) {
+          check('and the answers written for it', /Answers\.md/.test(done), done.replace(/\n/g, ' | '));
+        }
 
         check('and nothing threw on the way', errors.length === 0, errors.join('; '));
         timings.push([system.name, Date.now() - started]);
