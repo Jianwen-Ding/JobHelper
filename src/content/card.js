@@ -78,6 +78,21 @@ const STYLE = `
 .head .spacer { margin-left: auto; }
 .body { padding: 12px; overflow: auto; flex: 1 1 auto; }
 
+/*
+ * Folded: the header, and what it is a header for.
+ *
+ * A 380px card sits over the form you are filling in, and dismissing it to
+ * see a field means losing the letter, the answers and the built resume with
+ * it. So it folds instead — down to one bar you can still read the role off,
+ * and still see the spinner on, while a tailoring pass carries on behind it.
+ */
+.card.folded { height: auto; }
+.card.folded .head { border-bottom: none; }
+.folded-title {
+  font-size: 12px; color: var(--muted); padding: 0 12px 10px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
 /* Whether an AI is in play, stated in the header rather than left to be
    inferred from whether the wording came out any good. */
 .ai {
@@ -416,6 +431,16 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     error: null,
     bundle: null,
     view: 'propose',
+    /**
+     * Folded down to its header, so the form underneath can be read.
+     *
+     * Per card rather than remembered: folding is something you do to see the
+     * field this one is sitting on, and the next posting is a different
+     * question. It survives every repaint, which is what matters — a
+     * tailoring pass landing mid-application must not unfold the card over
+     * the box you are typing in.
+     */
+    folded: false,
     letter: null,
     /** True once the letter step is open, even if the draft came back empty. */
     letterStarted: false,
@@ -782,6 +807,24 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             onclick: () => { state.view = 'propose'; draw(); },
           })
         : null,
+      /*
+       * Fold, rather than close.
+       *
+       * The card sits over the form, and the field you need is under it often
+       * enough that "get out of the way" is an ordinary thing to want. Closing
+       * did that and took the letter, the answers and the built resume with
+       * it. This keeps all of that and gives back the screen.
+       *
+       * Before the × for the same reason it reads that way: the reversible
+       * one first.
+       */
+      h('button', {
+        className: 'icon',
+        title: state.folded ? 'Unfold' : 'Fold out of the way',
+        ariaLabel: state.folded ? 'Unfold JobHelper' : 'Fold JobHelper out of the way',
+        textContent: state.folded ? '⌄' : '⌃',
+        onclick: () => { state.folded = !state.folded; draw(); },
+      }),
       h('button', {
         className: 'icon',
         title: 'Not now',
@@ -2414,9 +2457,28 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     // Provisional until the analysis lands: what is on screen is the page's
     // own title, not anything this has worked out yet.
     card.classList.toggle('loading', !analysis);
+    card.classList.toggle('folded', Boolean(state.folded));
     card.replaceChildren(
       drawHead(),
-      !analysis ? drawReadingView() : state.view === 'done' ? drawDoneView() : drawProposeView(),
+      /*
+       * Folded, the card is its header and one line saying what it is the
+       * header for. The line matters: a bar reading only "JobHelper" over
+       * somebody's application form is a thing to close, not a thing to open.
+       * The spinner stays in the header either way, so work carrying on
+       * behind the fold is still visible.
+       */
+      state.folded
+        ? h('div', {
+            className: 'folded-title',
+            textContent: analysis?.job
+              ? [analysis.job.title, analysis.job.company].filter(Boolean).join(' · ')
+              : 'Reading this page…',
+          })
+        : !analysis
+          ? drawReadingView()
+          : state.view === 'done'
+            ? drawDoneView()
+            : drawProposeView(),
     );
 
     if (!focused) return;

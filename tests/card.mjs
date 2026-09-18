@@ -317,6 +317,106 @@ async function main() {
     String(whileTailoring.dismiss),
   );
 
+  /*
+   * Folding it out of the way.
+   *
+   * The card is 380px of fixed-position panel over the form you are filling
+   * in, and the field you need is under it often enough that "get out of the
+   * way" is an ordinary thing to want. The only way to do that was to close
+   * it, which took the letter, the answers and the built resume with it.
+   */
+  console.log('\nFolding the card away');
+
+  const folding = await inPage((createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [{ question: 'Why us?', answer: '', confident: false }],
+      needsCoverLetter: true,
+      onAction: async () => ({}),
+    });
+
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const card = root.querySelector('.card');
+    const fold = () => [...root.querySelectorAll('button')].find((b) => /Fold|Unfold/.test(b.getAttribute('aria-label') ?? ''));
+    const height = () => Math.round(card.getBoundingClientRect().height);
+    const buttons = () => root.querySelectorAll('button').length;
+
+    // Something worth not losing: typed in, the way it would be.
+    const answer = root.querySelector('textarea[data-field^="answer:"]');
+    answer.value = 'Because the ingest work is the part I like.';
+    answer.dispatchEvent(new Event('input', { bubbles: true }));
+    const open = { height: height(), buttons: buttons() };
+
+    fold().click();
+    const folded = {
+      height: height(),
+      buttons: buttons(),
+      title: root.querySelector('.folded-title')?.textContent ?? null,
+      // Still reachable while folded: you must be able to give up on it too.
+      canClose: Boolean([...root.querySelectorAll('button')].find((b) => b.textContent.trim() === '×')),
+    };
+
+    // A repaint — the shape every background pass ends in.
+    handle.setQuestions([
+      { question: 'Why us?', answer: '', confident: false },
+      { question: 'Tell us about a project.', answer: '', confident: false },
+    ]);
+    const afterRepaint = { folded: card.classList.contains('folded'), height: height() };
+
+    fold().click();
+    const reopened = {
+      height: height(),
+      answer: root.querySelector('textarea[data-field^="answer:"]')?.value ?? null,
+    };
+
+    return { open, folded, afterRepaint, reopened };
+  });
+
+  check(
+    'folding makes it much shorter than it was',
+    folding.folded.height < folding.open.height / 2,
+    `${folding.open.height}px open, ${folding.folded.height}px folded`,
+  );
+  check(
+    'and takes the controls off the screen rather than only hiding the text',
+    folding.folded.buttons < folding.open.buttons,
+    `${folding.open.buttons} buttons open, ${folding.folded.buttons} folded`,
+  );
+  check(
+    'while still saying what it is a header for',
+    /Platform Engineer/.test(folding.folded.title ?? ''),
+    String(folding.folded.title),
+  );
+  check('and still offering the way out', folding.folded.canClose === true);
+  /*
+   * The one that makes it usable. A tailoring pass landing mid-application
+   * repaints the card, and a fold that did not survive that would spring open
+   * over the box being typed in.
+   */
+  check(
+    'a repaint does not unfold it',
+    folding.afterRepaint.folded === true && folding.afterRepaint.height === folding.folded.height,
+    JSON.stringify(folding.afterRepaint),
+  );
+  check(
+    'unfolding brings it all back',
+    folding.reopened.height >= folding.open.height,
+    `${folding.reopened.height}px vs ${folding.open.height}px`,
+  );
+  check(
+    'with what was typed still in it, which is what closing would have cost',
+    /part I like/.test(folding.reopened.answer ?? ''),
+    String(folding.reopened.answer).slice(0, 50),
+  );
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);
