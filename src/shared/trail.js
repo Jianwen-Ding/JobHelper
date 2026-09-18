@@ -172,6 +172,85 @@ export function wasExpected(trail, url, now = Date.now()) {
 }
 
 /**
+ * A link on a page that plainly means "apply".
+ *
+ * Deliberately the same words `content.js` watches clicks for. What the two
+ * are asking is one question in two tenses: that one asks "are you about to
+ * follow an apply link", this one asks "was there an apply link here pointing
+ * at where you now are".
+ */
+const MEANS_APPLY = /\b(apply|application|start (your )?application|submit (your )?application|continue to apply)\b/i;
+
+/** `<a href="…">text</a>`, near enough for markup nobody is generating to trick us. */
+const ANCHOR = /<a\b([^>]*)>([\s\S]{0,200}?)<\/a>/gi;
+const HREF = /href\s*=\s*("([^"]*)"|'([^']*)'|([^\s">]+))/i;
+
+/**
+ * Did a page we are already holding have an apply link pointing here?
+ *
+ * The cross-host hand-off — a careers site handing you to an applicant
+ * tracking system — is the one walk with no evidence of its own. The hosts
+ * differ, so nothing about the address connects them, and the link that got
+ * you there routinely carries rel="noreferrer", so there is no referrer
+ * either. That left one witness: the click, reported by the content script as
+ * the page is being torn down around it, which is a message racing a
+ * navigation. Measured at 54-78ms to land — comfortable, until the machine is
+ * busy, and then an application silently starts again at the form with the
+ * description you just read left behind.
+ *
+ * This is the same evidence gathered before the navigation instead of during
+ * it. The markup of every page in the trail is already stored; if one of them
+ * held an Apply link pointing at this address, that is a fact recorded minutes
+ * ago and there is nothing left to race.
+ *
+ * Only links that *say* apply count. A job board lists fifty postings and
+ * links to all of them, and "this page linked to that page" would make any two
+ * of them one application — which is the exact mistake `relatedPath` exists to
+ * avoid on a single host.
+ */
+export function wasLinkedFrom(trail, url) {
+  const target = pathOf(url);
+  const host = hostOf(url);
+  if (!target || !host) return false;
+
+  for (const page of trail?.pages ?? []) {
+    const html = page?.html;
+    if (typeof html !== 'string' || !html) continue;
+    /*
+     * Cheap reject before walking every anchor on a page that can run to four
+     * hundred kilobytes. Sound because every phrasing `MEANS_APPLY` accepts
+     * contains "apply" or "application", and it has to appear in the href or
+     * the link text either way — both of which are in this string.
+     *
+     * The first version of this rejected on the target's hostname not being
+     * present, which is wrong for exactly the links most worth catching: a
+     * relative `href="/apply/9910"` names no host at all.
+     */
+    if (!/appl(y|ication)/i.test(html)) continue;
+
+    for (const [, attrs = '', text = ''] of html.matchAll(ANCHOR)) {
+      const raw = HREF.exec(attrs);
+      const href = raw?.[2] ?? raw?.[3] ?? raw?.[4];
+      if (!href) continue;
+
+      let absolute;
+      try {
+        absolute = new URL(href, page.url).href;
+      } catch {
+        continue;
+      }
+      if (hostOf(absolute) !== host) continue;
+      const there = pathOf(absolute);
+      if (!there || !(there === target || target.startsWith(there) || there.startsWith(target))) continue;
+
+      const label = text.replace(/<[^>]*>/g, ' ').trim();
+      if (MEANS_APPLY.test(href) || MEANS_APPLY.test(label)) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Is this page part of the application already being followed?
  *
  * In order of how much the evidence is worth: the click that brought you here,
@@ -215,7 +294,14 @@ export function sameApplication(trail, page, now = Date.now()) {
       page.referrerHost && (page.referrerHost === there || rootOf(page.referrerHost) === rootOf(there));
     if (cameFromHere) return true;
   }
-  return false;
+
+  /*
+   * Last, and only for the hand-off with no other witness: an apply link on a
+   * page already held, pointing here. Checked after everything else because it
+   * is the most expensive and the least specific — and after the company veto
+   * above, so a link cannot join two employers.
+   */
+  return wasLinkedFrom(trail, page.url);
 }
 
 /** The trail without the page text, or the work, which the card has no use for. */

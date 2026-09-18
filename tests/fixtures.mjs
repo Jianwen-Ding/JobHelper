@@ -1085,6 +1085,169 @@ benchmarked against the Boston market, the company said.</p>
 </div></body></html>`,
 };
 
+
+/*
+ * A pull request, on the repository of a tool for job applications.
+ *
+ * Reported from life: the extension put a card up on
+ * github.com/…/ResumeM-M/pull/16. It is the hardest false positive this
+ * project can produce, because the page is genuinely full of the vocabulary
+ * the detector scores on — the commit titles say "Apply", "application",
+ * "cover letter" and "resume" over and over, since that is what the software
+ * is about — and the page furniture is the shape of a form: a long textarea
+ * for the comment box, a file picker for attachments, and a row of controls
+ * labelled Reviewers, Assignees and Labels.
+ *
+ * Nothing on it is a job. There is no employer, no role being offered, and
+ * nothing to submit an application to. Anyone who builds software for a living
+ * is on a page like this several times a day, so offering here is not one
+ * wasted card — it is the tool making itself unusable for its own author.
+ */
+export const CODE_REVIEW = {
+  name: 'code-review',
+  path: '/Jianwen-Ding/ResumeM-M/pull/16',
+  html: `<!doctype html><html><head><title>Claude/hello 06h9rf by Jianwen-Ding · Pull Request #16 · Jianwen-Ding/ResumeM-M</title><style>${CHROME}</style></head>
+<body><div class="wrap">
+<h1>Claude/hello 06h9rf <span>#16</span></h1>
+<div><span class="state">Merged</span> Jianwen-Ding merged 8 commits into <code>main</code> from <code>claude/hello-06h9rf</code></div>
+<nav><a href="#conversation">Conversation 0</a><a href="#commits">Commits 8</a><a href="#files">Files changed 16</a></nav>
+<div class="sidebar">
+  <div><b>Reviewers</b> No reviews</div>
+  <div><b>Assignees</b> No one assigned</div>
+  <div><b>Labels</b> None yet</div>
+  <div><b>Milestone</b> No milestone</div>
+</div>
+<h2 id="commits">Commits</h2>
+<ul>
+  <li><a href="/Jianwen-Ding/ResumeM-M/commit/aaa1">Say, on the posting, that this one has been applied to before</a></li>
+  <li><a href="/Jianwen-Ding/ResumeM-M/commit/aaa2">Stop an application id being a path, and a rebuild being a deletion</a></li>
+  <li><a href="/Jianwen-Ding/ResumeM-M/commit/aaa3">Give the one-page rule somewhere to go when it is broken</a></li>
+  <li><a href="/Jianwen-Ding/ResumeM-M/commit/aaa4">Render cover letters through LaTeX, like the resume</a></li>
+  <li><a href="/Jianwen-Ding/ResumeM-M/commit/aaa5">Let the AI draft a cover letter and the application answers</a></li>
+  <li><a href="/Jianwen-Ding/ResumeM-M/commit/aaa6">Search the letters and the answer bank, for the same reason as the tracker</a></li>
+</ul>
+<h2 id="files">Files changed</h2>
+<ul>
+  <li><a href="#d1">src/model/applications.ts</a> +192 −111</li>
+  <li><a href="#d2">src/server/api.ts</a> +240 −38</li>
+  <li><a href="#d3">web/app.js</a> +410 −22</li>
+</ul>
+<h2>Add a comment</h2>
+<form>
+  <label for="body">Comment</label>
+  <textarea id="body" name="comment" rows="10" placeholder="Leave a comment"></textarea>
+  <label for="att">Attach files by dragging and dropping, selecting or pasting them.</label>
+  <input id="att" name="attachment" type="file">
+  <button type="submit">Comment</button>
+  <button type="button">Close pull request</button>
+</form>
+</div></body></html>`,
+};
+
+
+/*
+ * The same pull request, on the Files changed tab.
+ *
+ * Worse than the conversation view, and the reason this is a separate fixture:
+ * the diff being reviewed is the job-title detector itself. The page therefore
+ * renders, as ordinary text, the detector's own vocabulary — "apply now",
+ * "submit your application", "application form", "Apply — Helios", "Submit
+ * application", "/helios/apply/platform-engineer" — in the quantities a word
+ * list is written in. There is no more adversarial input available to this
+ * project, and it is not contrived: it is a page its author reads every day.
+ *
+ * Lines are quoted from the real diff of Jianwen-Ding/ResumeM-M#16.
+ */
+export const CODE_REVIEW_DIFF = {
+  name: 'code-review-diff',
+  path: '/Jianwen-Ding/ResumeM-M/pull/16/files',
+  html: `<!doctype html><html><head><title>Claude/hello 06h9rf by Jianwen-Ding · Pull Request #16 · Jianwen-Ding/ResumeM-M</title><style>${CHROME}</style></head>
+<body><div class="wrap">
+<h1>Claude/hello 06h9rf <span>#16</span></h1>
+<nav><a href="#conversation">Conversation</a><a href="#files">Files changed 16</a></nav>
+<div class="file"><h3>src/jobs/extract.ts</h3>
+<pre class="diff">
+@@ -297,6 +297,78 @@ const NOT_A_ROLE =
+ /^(apply|apply now|apply here|apply (for|to)|application( form)?|job application|submit (your )?application|start (your )?application|careers?|jobs?|job (details?|description|posting|board)|candidate (portal|home|login)|requisition|vacanc(y|ies)|openings?|current openings|join us|work (with|for) us|home|welcome)$/i;
++/**
++ * The role, read out of the address, when the page itself never says it.
++ *
++ * This is for the link in the email that says "finish your application". It
++ * lands on the form rather than the description, with no posting read and no
++ * trail behind it, and a bare application form does not name the job. This one
++ * titles itself "Apply - Helios" and heads itself "Submit application", which
++ * is every such form there is.
++ *
++ * What that cost was not a label. Identity is the company and the role, so an
++ * application filed as "Unknown role" is a different job from the same job
++ * filed from its posting: opening the posting afterwards filed a second
++ * tracker row, and the card said nothing about having applied, on the one page
++ * where that was worth saying. One job, two rows, and the address had the
++ * answer in it the whole time: /helios/apply/platform-engineer.
++ */
++export function roleFromUrl(url) {
++  const words = segments.filter((seg) => ROLE_NOUN.test(seg) && !NOT_A_ROLE.test(seg));
++  return titleCase(words.join(' '));
++}
+</pre></div>
+<div class="file"><h3>src/server/api.ts</h3>
+<pre class="diff">
++      const sent = alreadySent(data.applications, job.company, job.role);
++      res.json({ applied: sent ? { id: sent.id, at: sent.appliedAt, status: sent.status } : null });
+</pre></div>
+<h2>Review changes</h2>
+<form>
+  <label for="body">Leave a comment</label>
+  <textarea id="body" name="comment" rows="10" placeholder="Leave a comment"></textarea>
+  <input id="att" name="attachment" type="file">
+  <button type="submit">Submit review</button>
+</form>
+</div></body></html>`,
+};
+
+
+/*
+ * A coding-assistant chat, discussing this very tool.
+ *
+ * Reported from life, alongside the pull request, and the pair of them is what
+ * finally named the problem: neither page is a job, and both are pages that
+ * *talk about* job applications. The vocabulary really is there — cover
+ * letter, application, resume, "why do you want to work here", Platform
+ * Engineer, the names of employers — because that is the subject. And the
+ * furniture really is form-shaped: one long textarea to type into, a file
+ * picker for attachments, a submit button.
+ *
+ * Nothing in the word counting can tell this from an application form. What
+ * can is that this page has no interest in who you are: there is no name field
+ * and no email field, because the site already knows. Every application form
+ * ever written asks for both.
+ */
+export const ASSISTANT_CHAT = {
+  name: 'assistant-chat',
+  path: '/code/session_01MAG',
+  html: `<!doctype html><html><head><title>Claude Code</title><style>${CHROME}</style></head>
+<body><div class="wrap">
+<h1>Claude Code</h1>
+<div class="thread">
+  <div class="turn"><b>You</b><p>Can you draft a cover letter for the Platform Engineer posting at Helios?
+  I want to reuse the answer I gave about why do you want to work here.</p></div>
+  <div class="turn"><b>Claude</b><p>I have read the job description and the requirements. The posting asks
+  for years of experience with distributed systems and lists responsibilities around build pipelines.
+  Here is a draft that adapts your earlier application answer.</p></div>
+  <div class="turn"><b>You</b><p>Also make the resume fit on one page, and attach the resume to the
+  application form when you submit application materials.</p></div>
+  <div class="turn"><b>Claude</b><p>Done. The resume compiles to one page and the cover letter is
+  drafted. Your qualifications line up with what they are looking for.</p></div>
+</div>
+<form>
+  <label for="composer">Reply to Claude</label>
+  <textarea id="composer" name="prompt" rows="6" placeholder="Reply to Claude…"></textarea>
+  <input id="upload" name="attachment" type="file">
+  <button type="submit">Send</button>
+</form>
+</div></body></html>`,
+};
+
 export const QUIET = [CAREERS_ARTICLE, SHOP, SIGN_IN, DOCS, SPA_SHELL, FORUM_THREAD, BLOG,
   BOARD_FEED, THANK_YOU, SALARY_PAGE, CAREERS_LANDING,
   /*
@@ -1094,7 +1257,9 @@ export const QUIET = [CAREERS_ARTICLE, SHOP, SIGN_IN, DOCS, SPA_SHELL, FORUM_THR
    * are written in the vocabulary a posting is written in, by the people who
    * write postings.
    */
-  LIFE_AT, CALL_FOR_SPEAKERS, CONTACT_FORM, JOB_ALERT, RECRUITER_PROFILE, COURSE_PAGE, HIRING_NEWS];
+  LIFE_AT, CALL_FOR_SPEAKERS, CONTACT_FORM, JOB_ALERT, RECRUITER_PROFILE, COURSE_PAGE, HIRING_NEWS,
+  /* Reported from life; see the notes on the fixtures. */
+  CODE_REVIEW, CODE_REVIEW_DIFF, ASSISTANT_CHAT];
 
 /**
  * A posting on a page the size of a real one.
