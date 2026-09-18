@@ -1402,13 +1402,17 @@ export function serveFixtures(
  * minutes. Putting a deliberate delay in front of one route makes it a fact
  * rather than a matter of timing luck.
  */
-export function serveSlowProxy(target, { slowRoute = /analyze/, ms = 4000 } = {}) {
+export function serveSlowProxy(target, { slowRoute = /analyze/, ms = 4000, skip = 0 } = {}) {
+  let seen = 0;
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
       const forward = async () => {
         const chunks = [];
         for await (const chunk of req) chunks.push(chunk);
-        if (slowRoute.test(req.url)) await new Promise((r) => setTimeout(r, ms));
+        // `skip` lets the first few through at full speed, which is how a
+        // route the card needs *before* it can be clicked — the opening
+        // analysis — can be slowed on the second call and not the first.
+        if (slowRoute.test(req.url) && seen++ >= skip) await new Promise((r) => setTimeout(r, ms));
 
         const upstream = await fetch(`${target}${req.url}`, {
           method: req.method,

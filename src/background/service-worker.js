@@ -791,7 +791,23 @@ const handlers = {
       tailor ?? (typeof useAi === 'boolean' ? (useAi ? 'ai' : 'match') : settings.useAi ? 'ai' : 'match');
     const result = await serverFetch('/api/extension/analyze', {
       method: 'POST',
-      timeoutMs: SLOW_TIMEOUT_MS,
+      /*
+       * The long deadline belongs to the AI and nothing else.
+       *
+       * All three modes came through here on `SLOW_TIMEOUT_MS`, which is ten
+       * minutes, because one of them runs a model. The other two read the
+       * pages and pick among phrasings already written — no model, no LaTeX,
+       * no network beyond this one call. Measured against the worst case worth
+       * having, eight pages totalling 17.6MB against a real save, that is two
+       * seconds.
+       *
+       * So a keyword match or a straight copy that went wrong sat there
+       * looking like work for ten minutes before saying anything, which is
+       * indistinguishable from a wedged server and is what it was. Twenty
+       * seconds is ten times the measured worst case, and the difference is
+       * between a message you can act on and a morning.
+       */
+      timeoutMs: mode === 'ai' ? SLOW_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
       body: JSON.stringify({
         url,
         title,

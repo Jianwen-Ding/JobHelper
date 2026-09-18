@@ -149,6 +149,61 @@ async function main() {
   check('which clears with the work rather than counting on', timing.after === false);
 
   /*
+   * And it has to name the job you asked for.
+   *
+   * All three mode buttons call the same `rebuild`, so the bar read
+   * "Choosing what to change…" to somebody who had just pressed "Use it
+   * unchanged" and asked for nothing to be changed. The bar's only purpose is
+   * telling you whether what you asked for is under way.
+   */
+  console.log('\nThe bar names the mode you pressed');
+
+  const labelFor = (button) => inPage(
+    new Function('createCard', `return (${(async (createCard, want) => {
+      let release;
+      const held = new Promise((r) => (release = r));
+      createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Platform Engineer', company: 'Acme' },
+          spec: { id: 'job-acme', label: 'Acme' },
+          rationale: [],
+        },
+        resumes: [{ id: 'base', label: 'New grad', base: true }],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        // The AI button stays disabled until the card has asked and been told
+        // the AI is on, so the status read has to answer before it can be
+        // pressed.
+        onAction: async (action) =>
+          action === 'rebuild' ? held : action === 'aiStatus' ? { active: true, state: 'on' } : {},
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      await new Promise((r) => setTimeout(r, 100));
+      const button = [...root.querySelectorAll('button.mode')].find((b) => new RegExp(want).test(b.textContent));
+      if (!button) return { error: `no ${want} button` };
+      button.click();
+      await new Promise((r) => setTimeout(r, 300));
+      const label = root.querySelector('.progress-label span')?.textContent ?? null;
+      release({});
+      return { label };
+    }).toString()})(createCard, ${JSON.stringify(button)})`),
+  );
+
+  const unchanged = await labelFor('Use it unchanged');
+  const byKeyword = await labelFor('Match by keyword');
+  const byAi = await labelFor('Let the AI tailor it');
+  check(
+    'asking for it unchanged does not say it is choosing what to change',
+    unchanged.label != null && !/choosing what to change/i.test(unchanged.label),
+    JSON.stringify(unchanged),
+  );
+  check('it says it is copying it across', /copying/i.test(unchanged.label ?? ''), JSON.stringify(unchanged));
+  check('a keyword match says so', /keyword/i.test(byKeyword.label ?? ''), JSON.stringify(byKeyword));
+  check('and the AI says it is reading the posting', /reading the posting/i.test(byAi.label ?? ''), JSON.stringify(byAi));
+
+  /*
    * What the card says when the AI you asked for did not happen.
    *
    * Two ways that goes and they want different words. The model ran and came

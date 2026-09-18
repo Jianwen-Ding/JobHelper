@@ -296,6 +296,61 @@ async function main() {
       }
     }
     /* ---------------------------------------------------------------- *
+     * The store accepts the connection and then never answers            *
+     * ---------------------------------------------------------------- */
+
+    group('A keyword match against a store that never answers');
+    {
+      /*
+       * The worst kind of broken server: the socket is accepted, so nothing
+       * refuses and nothing errors, and the request simply never comes back.
+       *
+       * Every mode of `rebuild` went out on the ten-minute deadline, which is
+       * the AI's — a model reading a posting really does take that long. A
+       * keyword match does not: it reads the pages and picks among phrasings
+       * already written, and the worst case measured is two seconds. So a
+       * match against a wedged store sat behind a progress bar for ten
+       * minutes with nothing to press, which is indistinguishable from the
+       * tool having hung, because it had.
+       *
+       * The deadline is twenty seconds, so this waits at most thirty for a
+       * message. Deliberately not a check on the wording: what matters is
+       * that it stops, says something, and gives the buttons back.
+       */
+      const stalled = await serveSlowProxy(SERVER, { slowRoute: /extension\/analyze/, ms: 90_000, skip: 1 });
+      try {
+        await useServer(context, stalled.base);
+        const page = await context.newPage();
+        const errors = [];
+        page.on('pageerror', (e) => errors.push(String(e).slice(0, 120)));
+        await page.goto(fixtures.urlFor(HELIOS_ROLE), { waitUntil: 'domcontentloaded' });
+        await settled(page);
+
+        const card = cardOf(page);
+        const began = Date.now();
+        await card.getByRole('button', { name: 'Match by keyword' }).click();
+        const failed = await card
+          .locator('.err')
+          .first()
+          .waitFor({ timeout: 30_000 })
+          .then(() => true)
+          .catch(() => false);
+        const took = Math.round((Date.now() - began) / 1000);
+
+        check('it gives up rather than waiting out the AI deadline', failed, `${took}s`);
+        check(
+          'and the buttons come back, so another mode can be tried',
+          await card.getByRole('button', { name: 'Use it unchanged' }).isEnabled(),
+        );
+        check('nothing thrown while it gave up', errors.length === 0, errors.join('; '));
+        await page.close();
+      } finally {
+        await useServer(context, SERVER);
+        stalled.close();
+      }
+    }
+
+    /* ---------------------------------------------------------------- *
      * The browser stops the extension's worker, as it does constantly    *
      * ---------------------------------------------------------------- */
 

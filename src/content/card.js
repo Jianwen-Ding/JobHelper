@@ -998,11 +998,28 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     openWorkspace: [3, 'Opening ResumeM-M…'],
   };
 
+  /** What `rebuild` is doing, which depends on which of the three was pressed. */
+  const REBUILDING = {
+    none: 'Copying it across…',
+    match: 'Matching on keywords…',
+    ai: 'Reading the posting…',
+  };
+
   /** A progress bar for `step`, when that is what the card is busy doing. */
   function progressFor(step) {
     const entry = WORKING[state.busy];
     if (!entry || entry[0] !== step) return null;
-    const label = running.has('rebuild') && state.rebuilding === 'ai' ? 'Reading the posting…' : entry[1];
+    /*
+     * One action, three jobs, and the bar has to name the one you asked for.
+     *
+     * `rebuild` is the same call whether you pressed "Use it unchanged",
+     * "Match by keyword" or "Let the AI tailor it", so a single label meant
+     * the bar said "Choosing what to change…" to someone who had just asked
+     * for nothing to be changed. Read against the button they pressed: the
+     * only reason to watch this bar is to find out whether what you asked for
+     * is happening.
+     */
+    const label = (running.has('rebuild') && REBUILDING[state.rebuilding]) || entry[1];
 
     /*
      * And how long it has been going.
