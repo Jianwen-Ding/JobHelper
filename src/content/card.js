@@ -2141,6 +2141,27 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             }),
           ])
         : null,
+      /*
+       * A file the store could not put in the folder you are about to upload
+       * from — something of yours already sitting under that name, a file open
+       * and locked, a full disk. The store names each one and finishes the
+       * rest, which is right, and until now said it to nobody.
+       *
+       * It belongs here rather than only in the builder, because this is the
+       * moment a file picker is about to open. A list headed "named and ready
+       * to attach" with a file quietly absent from the folder is how last
+       * week's resume gets sent.
+       */
+      (b.currentProblems ?? []).length > 0
+        ? h('div', { className: 'done-missing' }, [
+            h('strong', { textContent: 'Not everything reached the folder you upload from.' }),
+            ...b.currentProblems.map((said) => h('div', { textContent: said })),
+            h('div', {
+              textContent:
+                'The archive below still has all of it. Clear whatever is in the way and press Prepare to submit again, or attach from the archive instead.',
+            }),
+          ])
+        : null,
       h('div', { className: 'done-box' }, [
         h('div', { textContent: 'Saved. These files are named and ready to attach:' }),
         ...b.files.map((f) => h('div', { className: 'file', textContent: f })),
