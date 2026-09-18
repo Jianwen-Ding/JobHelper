@@ -249,6 +249,11 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 /* Quiet, and at the end of the row it belongs to: available on every change,
    never competing with the change itself for attention. */
 .change .undo-one { padding: 4px 0 0; font-size: 11px; }
+/* The folder the upload dialog wants, while it is still wanted. */
+.staged {
+  background: var(--panel-sunk); border: 1px solid var(--line-soft); border-radius: 8px;
+  padding: 8px 10px; margin-bottom: 8px; font-size: 12px; color: var(--muted);
+}
 .change .ba { display: grid; gap: 2px; margin-top: 3px; }
 .change .ba del, .change .ba ins {
   display: block; font-size: 12px; line-height: 1.45; text-decoration: none;
@@ -319,10 +324,12 @@ select {
 .done-box {
   background: var(--good-bg); border: 1px solid var(--good-line); border-radius: 8px; padding: 11px;
 }
-.done-box .path {
+.done-box .path, .staged .path {
   font-family: var(--mono); font-size: 11px; background: #fff; border: 1px solid var(--good-line);
   border-radius: 5px; padding: 7px 8px; margin-top: 8px; word-break: break-all; color: var(--ink-soft);
 }
+/* Selectable, because pasting it is the point. */
+.staged .path { user-select: all; border-color: var(--line); margin-bottom: 8px; }
 .done-box .file { font-size: 12px; color: var(--ink-soft); margin-top: 5px; }
 
 /*
@@ -2025,6 +2032,36 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       h('div', { className: 'step' }, [
         stepHead(4, 'Fill in and file', Boolean(state.bundle)),
         progressFor(4),
+        /*
+         * Where the files are, at the moment the file dialog is about to open.
+         *
+         * This used to be in the panel after filing, which is the one place
+         * you do not need it: by then the upload has happened. Building stages
+         * the files now, so the folder has something in it from the moment
+         * there is a resume — and a path you can paste into the dialog's
+         * location bar is the whole of what makes that reachable. An extension
+         * cannot set where the dialog opens; this is what it can do instead.
+         */
+        state.staged?.currentDir
+          ? h('div', { className: 'staged' }, [
+              h('div', { textContent: 'Ready to attach, in one folder:' }),
+              h('div', { className: 'path', textContent: state.staged.currentDir }),
+              h('div', { className: 'row gap' }, [
+                h('button', {
+                  className: 'tiny',
+                  textContent: 'Copy folder path',
+                  title: 'Paste it into the upload dialog',
+                  onclick: () => navigator.clipboard?.writeText(state.staged.currentDir),
+                }),
+                h('button', {
+                  className: 'tiny',
+                  textContent: 'Open the folder',
+                  title: 'See the files in a tab, and open any of them',
+                  onclick: () => onAction('openTab', { url: '/current' }),
+                }),
+              ]),
+            ])
+          : null,
         h('div', { className: 'row' }, [
           h('button', {
             className: 'tiny',

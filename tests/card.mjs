@@ -561,6 +561,59 @@ async function main() {
   );
   check('the filing button says what it does', staging.submitLabel === true && staging.oldLabel === false);
 
+  /*
+   * And the folder is reachable from the moment it has something in it.
+   *
+   * The path lived in the panel *after* filing, which is the one place it is
+   * not needed: by then the upload has happened. An extension cannot set
+   * where the file dialog opens — that is deliberately out of reach — so a
+   * path you can paste into its location bar is what there is, and it has to
+   * be there while the dialog is open.
+   */
+  const folderShown = await inPage((createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action) =>
+        action === 'render'
+          ? { pages: 1, fits: true }
+          : action === 'stage'
+            ? { currentDir: '/Users/someone/resume/out/current', files: ['Someone-Resume.pdf'] }
+            : {},
+    });
+    void handle;
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
+
+    const beforeBuilding = Boolean(root.querySelector('.staged .path'));
+    byText('Build resume').click();
+    return new Promise((resolve) => setTimeout(() => resolve({
+      beforeBuilding,
+      path: root.querySelector('.staged .path')?.textContent ?? null,
+      canCopy: Boolean([...root.querySelectorAll('.staged button')].find((b) => /Copy folder path/.test(b.textContent))),
+      // Filing has not happened: this is the point.
+      filed: Boolean(root.querySelector('.done-box')),
+    }), 60));
+  });
+
+  check('nothing claims a folder before there is one', folderShown.beforeBuilding === false);
+  check(
+    'and after building the folder to attach from is named',
+    folderShown.path === '/Users/someone/resume/out/current',
+    String(folderShown.path),
+  );
+  check('with a way to paste it into the dialog', folderShown.canCopy === true);
+  check('all of it before anything is filed', folderShown.filed === false);
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);
