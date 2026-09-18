@@ -522,6 +522,28 @@ export const LATE_RENDER = {
  * times and is asked thirty times on every scan. Only one of them is the
  * application, and finding it among the rest — without the rest costing
  * anything or contributing anything — is the thing to check.
+ *
+ * It is also the slowest page in the set to put a card on, and the budget has
+ * been measured rather than guessed, so that the next person to look at the
+ * number does not have to. Against the same store, card up:
+ *
+ *   0 adverts 112ms · 6 253ms · 12 298ms · 24 450ms · 48 813ms
+ *
+ * — linear in the frame count, at roughly 15ms a frame. Of the ~700ms the 48
+ * adverts add, about 400ms remains with every piece of this extension's own
+ * frame code removed: it is Chrome loading 48 iframes and injecting a content
+ * script into each, which is the price of `all_frames`, and `all_frames` is
+ * what reaches the form on iCIMS. Around 90ms is the two things a frame does
+ * for itself at boot (watch for a send, decide whether it holds a form), and
+ * around 200ms is the top document's own injection being queued behind the
+ * frames' — `document_end` recovers part of that and costs a guess about
+ * pages that render late.
+ *
+ * So there is no large win here, only a scattering of small ones with real
+ * risk attached, and the measurement is recorded so that stays known. The
+ * failure on frame-heavy pages that would actually matter is a frame that
+ * never finishes at all, and that one is held down by its own case in
+ * tests/navigation.mjs.
  */
 export const CROWDED_PAGE = {
   name: 'crowded-page',
@@ -1104,10 +1126,27 @@ export const ALL = [STREAMLY, NORTHWIND, HELIOS_ROLE, HELIOS_FORM, HEAVY_POSTING
 /**
  * Serve every fixture from one origin. Returns the base url and a `urlFor`
  * helper so callers do not hard-code ports.
+ *
+ * `hold` names routes whose response is opened and then never finished. A
+ * third-party frame that hangs is an ordinary fact of the pages this runs on —
+ * a tracker, an advert, a chat widget whose host is having a bad day — and the
+ * page's `load` event never fires while one is outstanding. Anything the
+ * extension does at load time therefore never happens either, which is not a
+ * timing question but a permanent one, and the only way to ask it is to hold a
+ * response open on purpose.
  */
-export function serveFixtures(fixtures = ALL, { vars = {}, hostname = '127.0.0.1' } = {}) {
+export function serveFixtures(fixtures = ALL, { vars = {}, hostname = '127.0.0.1', hold = null } = {}) {
   return new Promise((resolve) => {
+    /** Held responses, so closing the server does not leave sockets open. */
+    const holding = [];
     const server = http.createServer((req, res) => {
+      if (hold?.test(req.url)) {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        // Enough to be a document, never enough to be a finished one.
+        res.write('<!doctype html><html><body><p>Sponsored</p>');
+        holding.push(res);
+        return;
+      }
       /*
        * Longest path wins. Matching on the first prefix served the role page
        * at the form's own address, because /lever/vega/8f21 is a prefix of
@@ -1136,7 +1175,16 @@ export function serveFixtures(fixtures = ALL, { vars = {}, hostname = '127.0.0.1
       resolve({
         base,
         urlFor: (f) => `${base}${f.path}`,
-        close: () => server.close(),
+        close: () => {
+          for (const res of holding) {
+            try {
+              res.end();
+            } catch {
+              // Already gone with the page that asked for it.
+            }
+          }
+          server.close();
+        },
       });
     });
   });

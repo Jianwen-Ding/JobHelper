@@ -547,6 +547,37 @@ async function main() {
       await page.close();
     }
 
+    /* ---- A frame that never finishes loading ---- */
+    /*
+     * The one an ordinary page gives you for free: a tracker, an advert or a
+     * chat widget whose host is having a bad day, holding its response open.
+     * The page's `load` event never fires while one is outstanding — and a
+     * content script at `document_idle` is entitled to run as late as `load`.
+     * If the card waits on that event, it does not arrive late on these pages;
+     * it does not arrive at all, on a posting that is fully readable and has
+     * its form right there. Held open on purpose rather than made slow,
+     * because "slow" is a number that passes on a fast machine.
+     */
+    group('An advert on the page that never finishes loading');
+    {
+      const hung = await serveFixtures(undefined, { hold: /\/promo\/newsletter/ });
+      const page = await context.newPage();
+      await page.goto(`${hung.base}${ADVERT_FRAME.path}`, { waitUntil: 'domcontentloaded' });
+
+      const there = await appears(page, `${HOST} .card .role`, 15_000);
+      check('the card appears anyway', there);
+      // Asked after the card is up, so it is the state the card appeared in
+      // rather than a race with it: a page still loading is the whole point.
+      const ready = await page.evaluate(() => document.readyState).catch(() => 'unknown');
+      check('and did not wait for a page that will never finish', ready !== 'complete', ready);
+      if (there) {
+        const role = (await cardOf(page).locator('.role').textContent())?.trim() ?? '';
+        check('and reads the posting it is sitting on', /platform engineer/i.test(role), role);
+      }
+      await page.close();
+      hung.close();
+    }
+
     /* ---- The posting arrives after the page has already been judged ---- */
     group('A posting that is not in the page when the page loads');
     {
