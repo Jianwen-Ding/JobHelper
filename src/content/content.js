@@ -347,7 +347,10 @@
     if (found.length === 0) return { questions: [], wantsLetter };
 
     try {
-      const { matches } = await send('matchAnswers', { questions: found.map((q) => q.question) });
+      const { matches } = await send('matchAnswers', {
+        questions: found.map((q) => q.question),
+        company: analysis?.job?.company,
+      });
       return {
         wantsLetter,
         questions: found.map((q, i) => ({
@@ -356,6 +359,8 @@
           confident: Boolean(matches[i]?.confident),
           score: matches[i]?.score ?? 0,
           itemId: matches[i]?.item?.id,
+          // Whose name is in it, when that is not the company being applied to.
+          namesAnother: matches[i]?.namesAnother,
         })),
       };
     } catch {

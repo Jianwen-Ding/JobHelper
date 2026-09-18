@@ -1903,15 +1903,44 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     );
 
     for (const q of state.questions) {
-      const value = state.answers[q.question] ?? q.answer ?? '';
-      const badge = q.confident
-        ? h('span', { className: 'badge', textContent: 'answered before' })
-        : q.answer
-          ? h('span', { className: 'badge weak', textContent: 'close match' })
-          : h('span', { className: 'badge none', textContent: 'new question' });
+      /*
+       * An answer that names somebody else is offered, never filled in.
+       *
+       * "Why do you want to work here?" is answered by naming the company, so
+       * the answer written for Acme says Acme — and the bank handed it
+       * straight into the box for the next application, badged "answered
+       * before", which is the reassurance that stops you reading it. The
+       * cover letter learned this the same way and was fixed the same way:
+       * put it in front of the person, and let them take it.
+       */
+      const borrowed = Boolean(q.namesAnother) && !state.answers[q.question];
+      const value = state.answers[q.question] ?? (borrowed ? '' : (q.answer ?? ''));
+      const badge = q.namesAnother
+        ? h('span', { className: 'badge weak', textContent: `written for ${q.namesAnother}` })
+        : q.confident
+          ? h('span', { className: 'badge', textContent: 'answered before' })
+          : q.answer
+            ? h('span', { className: 'badge weak', textContent: 'close match' })
+            : h('span', { className: 'badge none', textContent: 'new question' });
 
       const box = h('div', { className: 'q' }, [
         h('div', { className: 'qt' }, [document.createTextNode(q.question), badge]),
+        borrowed
+          ? h('div', { className: 'row gap' }, [
+              h('button', {
+                className: 'tiny',
+                textContent: `Start from what you told ${q.namesAnother}`,
+                onclick: () => {
+                  state.answers[q.question] = q.answer ?? '';
+                  draw();
+                },
+              }),
+              h('span', {
+                className: 'faint',
+                textContent: `It names ${q.namesAnother}, so it is not put in for you.`,
+              }),
+            ])
+          : null,
         h('textarea', {
           value,
           // Named for the question it answers, so a repaint puts the caret

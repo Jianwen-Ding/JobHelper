@@ -177,6 +177,84 @@ async function main() {
     const qText = questions.length ? await questions[0].innerText() : '';
     check('a known question is recognised', /answered before|close match/.test(qText), qText.split('\n')[0]);
 
+    /*
+     * And an answer written for somebody else is never put in the box.
+     *
+     * "Why do you want to work here?" is answered by naming the company, so
+     * the answer stored for one employer says that employer's name. The bank
+     * handed it straight into the box for the next application and badged it
+     * "answered before" — the reassurance that stops anyone reading it.
+     *
+     * The situation is built rather than hoped for: the shipped bank answers
+     * that question with something deliberately generic, which is the right
+     * default and the wrong fixture. The bank is put back afterwards whatever
+     * happens.
+     */
+    {
+      const bankOf = async () => (await (await fetch(`${SERVER}/api/store`)).json()).answers ?? [];
+      const before = await bankOf();
+      const asked = 'Why are you interested in this role?';
+      const wrote = before.map((a) =>
+        a.question === asked
+          ? {
+              ...a,
+              default: 'v_wrong_company',
+              variants: [
+                ...a.variants,
+                {
+                  id: 'v_wrong_company',
+                  label: 'Halewood Group',
+                  text: 'Halewood Group has been doing this work for a decade and I want in.',
+                },
+              ],
+            }
+          : a,
+      );
+
+      try {
+        await fetch(`${SERVER}/api/answers`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(wrote),
+        });
+
+        // Read the page again, so the card matches against the bank as it is.
+        const second = await context.newPage();
+        await second.goto(fixtures.urlFor(STREAMLY), { waitUntil: 'domcontentloaded' });
+        const theirs = cardOf(second).card;
+        await theirs.locator('.role').waitFor({ timeout: 30_000 });
+        await second.waitForTimeout(2500);
+
+        const q = theirs.locator('.q').filter({ hasText: /interested in this role/i }).first();
+        const text = (await q.locator('textarea').count()) ? await q.locator('textarea').inputValue() : '';
+        check(
+          "an answer that names Halewood Group is not put into Streamly's form",
+          !/halewood/i.test(text),
+          text.slice(0, 80) || '(empty, as it should be)',
+        );
+        const offered = await q.getByRole('button', { name: /Start from what you told Halewood Group/ }).count();
+        check('it is offered by name instead', offered === 1, `${offered} offer(s)`);
+        const badge = ((await q.locator('.badge').first().textContent()) ?? '').trim();
+        check('and is not badged as safe to reuse', !/answered before/i.test(badge), badge);
+
+        // Taking it is one press, and then it is yours to edit.
+        await q.getByRole('button', { name: /Start from what you told/ }).click();
+        await second.waitForTimeout(300);
+        check(
+          'taking it puts it in the box',
+          /halewood/i.test(await q.locator('textarea').inputValue()),
+          (await q.locator('textarea').inputValue()).slice(0, 60),
+        );
+        await second.close();
+      } finally {
+        await fetch(`${SERVER}/api/answers`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(before),
+        });
+      }
+    }
+
     // Insert a stored answer back into the page's own form.
     const insert = card.getByRole('button', { name: 'Insert into form' }).first();
     await insert.click();

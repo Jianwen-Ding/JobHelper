@@ -925,10 +925,13 @@ const handlers = {
   },
 
   /** Pair page questions with whatever the answer bank already holds. */
-  async matchAnswers({ questions }) {
+  async matchAnswers({ questions, company }) {
     return serverFetch('/api/answers/match', {
       method: 'POST',
-      body: JSON.stringify({ questions }),
+      // Who is being applied to. An answer to "why do you want to work here?"
+      // names the company, so the bank has to know which company is being
+      // asked about before it hands one over.
+      body: JSON.stringify({ questions, company }),
     });
   },
 
