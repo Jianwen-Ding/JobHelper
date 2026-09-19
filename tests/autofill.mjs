@@ -564,6 +564,45 @@ async function main() {
       awkward.questions.some((q) => /why do you want to work at lever/i.test(q)),
       awkward.questions.join(' | ') || '(none found)',
     );
+    /*
+     * Which questions a model must not answer, swept over the phrasings forms
+     * actually use.
+     *
+     * The plural is the whole reason this sweep exists rather than a single
+     * case: "What are your salary expectations for this role?" is the
+     * commonest phrasing on any form, and the first version of the rule
+     * required `expectation` without the `s`, so it missed every one of them
+     * while passing on "Desired salary". The false side matters as much —
+     * "What compensation structures have you designed?" is an ordinary essay
+     * question about the applicant's work, and withholding the draft button
+     * there is a feature silently going missing.
+     */
+    const yoursCases = [
+      ['What are your salary expectations for this role?', true],
+      ['Desired salary', true],
+      ['Please state your expected compensation', true],
+      ['What is your minimum acceptable pay rate?', true],
+      ['Do you require any accommodations for the interview process?', true],
+      ['Voluntary self-identification of disability', true],
+      ['Please describe your veteran status', true],
+      ['Have you ever been convicted of a felony?', true],
+      ['Why do you want to work here?', false],
+      ['Tell us about a project you are proud of.', false],
+      ['Describe a time you disagreed with a manager.', false],
+      ['What compensation structures have you designed for teams you led?', false],
+      ['How do you make engineering accessible to new joiners?', false],
+    ];
+    const verdicts = await page.evaluate(
+      async ({ b, cases }) => {
+        const m = await import(`${b}/autofill.js`);
+        return cases.map(([q]) => Boolean(m.yoursToAnswer(q)));
+      },
+      { b: base, cases: yoursCases },
+    );
+    const wrong = yoursCases
+      .map(([q, want], i) => (verdicts[i] === want ? null : `${verdicts[i] ? 'withheld' : 'offered'}: ${q}`))
+      .filter(Boolean);
+    check('every question is judged the right way round', wrong.length === 0, wrong.join(' | ') || '13 phrasings');
   } finally {
     await browser.close();
     server.close();

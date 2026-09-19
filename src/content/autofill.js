@@ -858,9 +858,53 @@ export function findQuestions() {
       id = `jh-${++fieldCounter}`;
       field.setAttribute(FIELD_KEY, id);
     }
-    found.push({ fieldId: id, question, currentValue: field.value ?? field.textContent ?? '' });
+    found.push({
+      fieldId: id,
+      question,
+      currentValue: field.value ?? field.textContent ?? '',
+      ...(yoursToAnswer(question) ? { yours: yoursToAnswer(question) } : {}),
+    });
   }
   return found;
+}
+
+/*
+ * Questions a model must not answer for you, and why.
+ *
+ * These are still offered — hiding a question the form requires is the worse
+ * failure, and the box is still there to type in. What is withheld is the
+ * "draft an answer" button, because an answer invented for any of these is
+ * either a false statement or a disclosure that is not the tool's to make.
+ *
+ * A salary figure is the plain case: whatever a model writes is a number the
+ * applicant did not choose and may be held to. The self-identification
+ * questions are the other kind — voluntary by law and about the person, so an
+ * answer written on their behalf is a lie told in their name about something
+ * they were entitled to decline.
+ */
+const YOURS_TO_ANSWER = [
+  /*
+   * Plurals matter here, and this is where that was measured rather than
+   * assumed: "What are your salary expectations for this role?" is the single
+   * commonest phrasing on any form, and `expectation` without the `s?` misses
+   * every one of them.
+   */
+  [/\b(salary|compensation|wage|pay|rate|comp)\b.*\b(expectations?|expected|desired|requirements?|ranges?|seeking)\b/i,
+    'A figure here is yours to choose.'],
+  [/\b(expected|desired|minimum|required)\b.*\b(salary|compensation|pay|rate)\b/i,
+    'A figure here is yours to choose.'],
+  [/\b(disabilit|accommodat|impairment)\w*/i,
+    'This one is yours to answer — nothing is written for you.'],
+  [/\b(race|ethnicit|gender|veteran|disabled|sexual orientation|pronoun)\w*/i,
+    'This one is yours to answer — nothing is written for you.'],
+  [/\b(criminal|conviction|felony|misdemeanou?r|background check)\b/i,
+    'This one is yours to answer — nothing is written for you.'],
+];
+
+/** The reason a question is yours alone, or undefined where it is not. */
+export function yoursToAnswer(question) {
+  for (const [re, why] of YOURS_TO_ANSWER) if (re.test(question)) return why;
+  return undefined;
 }
 
 /**

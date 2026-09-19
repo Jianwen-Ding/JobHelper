@@ -1404,8 +1404,21 @@ export function serveFixtures(
  */
 export function serveSlowProxy(target, { slowRoute = /analyze/, ms = 4000, skip = 0 } = {}) {
   let seen = 0;
+  /*
+   * Requests the client walked away from, by route.
+   *
+   * The Stop button's whole claim is that it lets go of the connection rather
+   * than hiding the spinner, and the only place that is observable is the
+   * other end of the socket. Counted here so a suite can say the browser
+   * really did hang up, which no amount of reading the card can establish.
+   */
+  const dropped = [];
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
+      let answered = false;
+      res.on('close', () => {
+        if (!answered) dropped.push(req.url);
+      });
       const forward = async () => {
         const chunks = [];
         for await (const chunk of req) chunks.push(chunk);
@@ -1419,6 +1432,11 @@ export function serveSlowProxy(target, { slowRoute = /analyze/, ms = 4000, skip 
           headers: { 'content-type': req.headers['content-type'] ?? 'application/json' },
           body: req.method === 'GET' || req.method === 'HEAD' ? undefined : Buffer.concat(chunks),
         });
+        // Nothing to answer if the client has already gone; writing to a
+        // closed socket throws and would be reported as a 502 the browser is
+        // not there to read.
+        if (res.writableEnded || res.destroyed) return;
+        answered = true;
         res.writeHead(upstream.status, {
           'content-type': upstream.headers.get('content-type') ?? 'application/json',
           'access-control-allow-origin': '*',
@@ -1426,12 +1444,19 @@ export function serveSlowProxy(target, { slowRoute = /analyze/, ms = 4000, skip 
         res.end(Buffer.from(await upstream.arrayBuffer()));
       };
       forward().catch((err) => {
+        if (res.writableEnded || res.destroyed) return;
+        answered = true;
         res.writeHead(502);
         res.end(String(err));
       });
     });
     server.listen(0, '127.0.0.1', () =>
-      resolve({ base: `http://127.0.0.1:${server.address().port}`, close: () => server.close() }),
+      resolve({
+        base: `http://127.0.0.1:${server.address().port}`,
+        /** Routes the browser hung up on before an answer was written. */
+        dropped,
+        close: () => server.close(),
+      }),
     );
   });
 }
@@ -1549,3 +1574,114 @@ export async function pointExtensionAt(context, worker, server) {
   await setup.evaluate((s) => chrome.storage.sync.set({ serverUrl: s }), server);
   await setup.close();
 }
+
+/* ------------------------------------------------------------------ *
+ * Three applications open at once                                     *
+ * ------------------------------------------------------------------ *
+ *
+ * `tests/tabs.mjs` needs three postings that can be told apart by every
+ * surface the card has: a different employer, a different job, and a
+ * description that tailors to a different set of skills. Everything already
+ * here that comes in a description-then-form pair — Helios, Vega, Lyra, Nova —
+ * shares `ROLE_BODY` and the title "Platform Engineer", so a card showing one
+ * tab's proposal in another tab's window would look exactly right. Three pairs
+ * are added rather than the existing ones reused, because a test that cannot
+ * distinguish its own fixtures cannot detect them being swapped.
+ *
+ * One skills group tells all three apart on its own. The store keeps Languages
+ * as Python, SQL, TypeScript, Java, Go and C, and a keyword match against
+ * these three descriptions narrows it three ways: Python and SQL for Harbour,
+ * TypeScript for Marigold, Go for Kestrel. So "which posting is this proposal
+ * for" is one word in one row — on the card, and in the resume that reaches
+ * the store.
+ *
+ * Their forms name nobody. That is the ordinary case — a posting on a careers
+ * site, an Apply link to an applicant tracking system, and a page there whose
+ * address is a number — and it is the case that matters here: with nothing on
+ * the form to read, who is being applied to can only come from the trail this
+ * tab walked. So the company and the role on the form's card are a direct
+ * reading of whether the tab kept its own trail, which they are not on
+ * `HELIOS_FORM`, whose heading says "Helios" in so many words.
+ */
+
+/** Pricing models: Python, SQL and a warehouse. No Kafka, no React. */
+export const HARBOUR_ROLE = {
+  name: 'harbour-role',
+  path: '/harbour/careers/data-scientist-pricing',
+  company: 'Harbour Analytics',
+  title: 'Data Scientist, Pricing',
+  html: page(
+    'Data Scientist, Pricing at Harbour Analytics',
+    'Harbour Analytics',
+    `<h2>About the role</h2>
+     <p>We are looking for a data scientist to own our pricing and demand
+        models. You will build them in Python and SQL against a PostgreSQL
+        warehouse and ship them to production yourself.</p>
+     <h2>Minimum qualifications</h2>
+     <ul><li>Years of experience with statistics</li><li>Experience with SQL and PostgreSQL</li></ul>
+     <p>Equal opportunity employer. Full-time. Compensation is competitive.</p>
+     <p><a href="/gh/j/4821">Apply now</a></p>`,
+  ),
+};
+
+/** The form Harbour's Apply link goes to: an address and a number. */
+export const HARBOUR_FORM = {
+  name: 'harbour-form',
+  path: '/gh/j/4821',
+  html: page('Application', 'Application', FORM_BODY),
+};
+
+/** A design system: React, TypeScript, Node.js. No Kafka, no warehouse. */
+export const MARIGOLD_ROLE = {
+  name: 'marigold-role',
+  path: '/marigold/jobs/design-systems',
+  company: 'Marigold',
+  title: 'Frontend Engineer, Design Systems',
+  html: page(
+    'Frontend Engineer, Design Systems at Marigold',
+    'Marigold',
+    `<h2>About the role</h2>
+     <p>We are looking for a frontend engineer to own our design system. You
+        will build accessible components in React and TypeScript, with some
+        Node.js behind the tooling that ships them.</p>
+     <h2>Minimum qualifications</h2>
+     <ul><li>Two years of experience with modern JavaScript</li><li>Experience with React and TypeScript</li></ul>
+     <p>Equal opportunity employer. Full-time. Compensation is competitive.</p>
+     <p><a href="/gh/j/9912">Apply for this job</a></p>`,
+  ),
+};
+
+/** And Marigold's, at the same kind of address on the same host. */
+export const MARIGOLD_FORM = {
+  name: 'marigold-form',
+  path: '/gh/j/9912',
+  html: page('Application', 'Application', FORM_BODY),
+};
+
+/** A streaming estate: Kafka, Go, Kubernetes. No React, no warehouse. */
+export const KESTREL_ROLE = {
+  name: 'kestrel-role',
+  path: '/kestrel/careers/streaming-infrastructure-engineer',
+  company: 'Kestrel Freight',
+  title: 'Streaming Infrastructure Engineer',
+  html: page(
+    'Streaming Infrastructure Engineer at Kestrel Freight',
+    'Kestrel Freight',
+    `<h2>About the role</h2>
+     <p>We are looking for an engineer to run the Kafka estate our shipment
+        tracking is built on. You will own the streaming infrastructure end to
+        end, in Go, on Kubernetes, with the Docker and AWS plumbing that ships
+        it.</p>
+     <h2>Minimum qualifications</h2>
+     <ul><li>Experience with distributed systems and Kafka</li><li>Years of experience with Go and Kubernetes</li></ul>
+     <p>Equal opportunity employer. Full-time. Compensation is competitive.</p>
+     <p><a href="/gh/j/7730">Apply now</a></p>`,
+  ),
+};
+
+/** And Kestrel's, the third numbered address on the same host. */
+export const KESTREL_FORM = {
+  name: 'kestrel-form',
+  path: '/gh/j/7730',
+  html: page('Application', 'Application', FORM_BODY),
+};
