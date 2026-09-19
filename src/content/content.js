@@ -1557,6 +1557,30 @@
       // open gate from the page before, which is the race this closes.
       workRestored = false;
 
+      /*
+       * And what the *previous* posting's form asked for, which is not a fact
+       * about this one.
+       *
+       * `letterInFrame` is learnt from a frame scan and never went back to
+       * false, so on a single-page board — LinkedIn, Workday, Ashby, where
+       * this is the only kind of navigation there is — one posting whose
+       * embedded form wanted a cover letter made every posting looked at
+       * afterwards in that tab demand one too.
+       *
+       * Measured against the same posting two ways. Loaded fresh it offers
+       * the letter as something to add; reached by route change from a
+       * posting that wanted one, it asserts a letter is required and drops
+       * the offer:
+       *
+       *   fresh tab      {"role":"Data Scientist","addLetter":true}
+       *   after the hop  {"role":"Data Scientist","addLetter":false}
+       *
+       * Downstream that is an unrequested letter drafted by `maybeAutoDraft`,
+       * a Submit blocked for "missing a cover letter", and
+       * `coverLetterRequired: true` handed to the editor.
+       */
+      letterInFrame = false;
+
       // Before the await, not after: the pass still running belongs to the url
       // that just went away, and it must stop being able to write to the card
       // from this instant rather than from whenever the import resolves.

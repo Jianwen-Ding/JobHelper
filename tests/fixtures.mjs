@@ -818,6 +818,78 @@ lower latency. Compensation for the extra memory is fewer restarts.</p>
  * posting uses. `document.body.textContent` includes script contents, so this
  * scored higher than most real postings while displaying nothing at all.
  */
+/*
+ * A single-page board where one posting's form asks for a cover letter and
+ * the next one does not.
+ *
+ * `letterInFrame` is learnt from a frame scan and was never put back, so on a
+ * board where a route change is the only kind of navigation there is, one
+ * posting that wanted a letter made every posting after it in that tab demand
+ * one — an unrequested draft, a Submit blocked for "missing a cover letter",
+ * and `coverLetterRequired: true` handed to the editor.
+ */
+export const LETTER_SPA = {
+  name: 'letter-spa',
+  path: '/altair/roles/platform-engineer',
+  company: 'Altair',
+  html: `<!doctype html>
+<html><head><title>Platform Engineer at Altair</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Altair</h1><div id="sub">Platform Engineer</div></div>
+  <div class="wrap">
+    <div id="view">${ROLE_BODY}</div>
+    <iframe id="form" title="Application form" src="/altair/roles/platform-engineer/form"
+            style="width:100%;height:420px;border:1px solid #ccc"></iframe>
+    <p><button id="to-b" type="button">Open the data scientist role</button></p>
+  </div>
+  <script>
+    document.getElementById('to-b').addEventListener('click', () => {
+      history.pushState({}, '', '/altair/roles/data-scientist');
+      document.title = 'Data Scientist at Altair';
+      document.getElementById('sub').textContent = 'Data Scientist';
+      document.getElementById('form').remove();
+      document.getElementById('view').innerHTML =
+        '<h2>About the role</h2><p>We are looking for a data scientist to own our ' +
+        'forecasting models. Responsibilities include building models in Python and SQL ' +
+        'and shipping them to production.</p><h2>Minimum qualifications</h2>' +
+        '<ul><li>Years of experience with statistics</li><li>Experience with SQL</li></ul>' +
+        '<p>Equal opportunity employer. Full-time. Compensation is competitive.</p>';
+    });
+  </script>
+</body></html>`,
+};
+
+/** Its form — the one that really does want a letter. */
+export const LETTER_SPA_FORM = {
+  name: 'letter-spa-form',
+  path: '/altair/roles/platform-engineer/form',
+  html: `<!doctype html><html><head><title>Apply</title></head><body>
+  <form>
+    <label>First name <input name="first_name"></label>
+    <label>Last name <input name="last_name"></label>
+    <label>Email <input name="email" type="email"></label>
+    <label>Cover letter <textarea name="cover_letter" rows="6"></textarea></label>
+    <label>Resume <input type="file" name="resume"></label>
+    <button type="submit">Submit Application</button>
+  </form></body></html>`,
+};
+
+/** The second posting on its own, which is the control: it wants no letter. */
+export const LETTER_SPA_PLAIN = {
+  name: 'letter-spa-plain',
+  path: '/altair/roles/data-scientist',
+  company: 'Altair',
+  html: `<!doctype html>
+<html><head><title>Data Scientist at Altair</title><style>${CHROME}</style></head>
+<body><div class="hdr"><h1>Altair</h1><div>Data Scientist</div></div>
+<div class="wrap"><h2>About the role</h2><p>We are looking for a data scientist to own our
+forecasting models. Responsibilities include building models in Python and SQL and shipping
+them to production.</p><h2>Minimum qualifications</h2>
+<ul><li>Years of experience with statistics</li><li>Experience with SQL</li></ul>
+<p>Equal opportunity employer. Full-time. Compensation is competitive.</p></div>
+</body></html>`,
+};
+
 export const SPA_SHELL = {
   name: 'spa-shell',
   path: '/app/dashboard',
@@ -1311,6 +1383,7 @@ export const NAVIGATION = [
   CROWDED_PAGE, CROWDED_PAGE_FORM,
   LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY,
   OWN_SITE, ATS_FORM, ATS_FORM_UNANSWERABLE, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, SPA_BOARD,
+  LETTER_SPA, LETTER_SPA_FORM, LETTER_SPA_PLAIN,
 ];
 
 export const ALL = [STREAMLY, NORTHWIND, HELIOS_ROLE, HELIOS_FORM, HEAVY_POSTING, ...QUIET, ...NAVIGATION];
