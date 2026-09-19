@@ -98,7 +98,13 @@ async function main() {
      * bar is down to the two things that really are exclusive — the resume as
      * you keep it, or the one the AI wrote.
      */
-    const modes = card.locator('button.mode:not(.ghost)');
+    /*
+     * Every `.mode` there is. The `:not(.ghost)` this carried was excluding
+     * the builder link, which wore `mode` and read as a third way to build —
+     * it is a link on its own line now, so there is nothing to exclude and
+     * the count is a straight reading of the row.
+     */
+    const modes = card.locator('button.mode');
     check('both ways to build are offered', (await modes.count()) === 2, `${await modes.count()} modes`);
     check(
       'including leaving the resume exactly as it is',
@@ -112,7 +118,7 @@ async function main() {
     );
     check(
       'and a way through to the builder, for what none of them can do',
-      (await card.locator('button.mode.ghost').count()) === 1,
+      (await card.locator('.to-builder').count()) === 1,
     );
     // Found by what it is, not by where it sits: adding a mode in front of it
     // used to point this check at the button next door, which passes for the

@@ -347,7 +347,7 @@ async function main() {
         // not about what was done while away.
         await useServer(context, stalled.base);
         const builder = context.waitForEvent('page');
-        await card.locator('button.mode.ghost').click();
+        await card.locator('.to-builder').click();
         await (await builder).waitForLoadState('domcontentloaded').catch(() => undefined);
         await page.bringToFront();
 

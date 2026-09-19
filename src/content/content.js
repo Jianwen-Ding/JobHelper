@@ -672,7 +672,7 @@
         /*
          * The newest press wins, and an older one lands nowhere.
          *
-         * The three build modes no longer wait for each other — an AI pass is
+         * The build buttons no longer wait for each other — an AI pass is
          * minutes long and being unable to change your mind for the whole of
          * one is the scan holding the card. That freedom is only safe if the
          * slow reply cannot arrive afterwards and overwrite the fast one, and
@@ -966,7 +966,7 @@
      * The automatic pass is always the deterministic one. Tag matching takes
      * milliseconds; the AI takes seconds to minutes, and running it before the
      * user has even seen the posting's proposal is spending their time on a
-     * guess they did not ask for. "Let the AI tailor it" is a button.
+     * guess they did not ask for. "Have AI Tailor" is a button.
      */
     let found;
     /** What this page was when it was read — reused below, not re-read. */

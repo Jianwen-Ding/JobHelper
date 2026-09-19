@@ -121,7 +121,9 @@ button.mode.on {
 }
 button.mode.on:hover { background: #d2e3fc; }
 /* A third way out, offered quietly beside the two that rebuild the resume. */
-button.mode.ghost { flex: 0 0 auto; color: #5f6368; }
+/* The way out to the builder, quiet and on its own line: it is not a third
+   way to build, and it used to look like one. */
+.to-builder { padding: 2px 0; font-size: 12px; }
 
 /*
  * Pressing one of these costs minutes and, depending on the command, money;
@@ -288,6 +290,19 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 }
 .change.off .ba del { text-decoration: none; color: var(--ink); background: var(--good-bg); }
 .change.off .ba .plain { text-decoration: line-through; color: var(--muted); }
+
+/* The half that is not in the document, kept short.
+   Both sides were drawn at full length, so a row offering a four-line
+   rewrite spent eight lines saying so — and half of that was a sentence
+   nobody had chosen. Struck through over four lines is also genuinely hard
+   to read. Two lines is enough to recognise which wording it is, and the
+   whole of it is one click away in the builder. Clamped rather than hidden:
+   a row with one side missing cannot be compared, which is the only reason
+   to open this list. */
+.change .ba .aside {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden; font-size: 11.5px; line-height: 1.4;
+}
 /* The folder the upload dialog wants, while it is still wanted. */
 .staged {
   background: var(--panel-sunk); border: 1px solid var(--line-soft); border-radius: 8px;
@@ -739,12 +754,12 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   /*
    * Counted, not a set.
    *
-   * The three build modes no longer wait for each other, so two `rebuild`s can
-   * genuinely be in flight — press "Match by keyword" while the AI reads and
-   * the match finishes in a third of a second. A set holds one entry for the
-   * name, so the fast one's `delete` cleared it, the bar came down and every
-   * button came back while a model was still running. Which is precisely the
-   * thing the bar exists to be honest about.
+   * The build buttons no longer wait for each other, so two runs can
+   * genuinely be in flight — press "Use Original" while the AI reads and its
+   * recompile finishes in a moment. A set holds one entry per name, so the
+   * fast one's `delete` cleared it, the bar came down and every button came
+   * back while a model was still running. Which is precisely the thing the
+   * bar exists to be honest about.
    *
    * `running` is kept as the set of names that have at least one run in
    * flight; `depth` is how many.
@@ -915,13 +930,13 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     running.has('rebuild') && state.rebuilding === mode ? working : idle;
 
   /**
-   * Build the proposal one of the three ways, superseding whatever was already
-   * being built.
+   * Build the proposal from the base, superseding whatever was already being
+   * built.
    *
-   * The three were written out wherever they were offered, and they waited for
-   * each other. Waiting is right between two that take a moment and wrong when
-   * one of them is a model reading a posting: being unable to say "never mind,
-   * match it by keyword" for three minutes is the scan holding the card. So a
+   * The modes were written out wherever they were offered, and they waited
+   * for each other. Waiting is right between two that take a moment and wrong
+   * when one of them is a model reading a posting: being unable to say "never
+   * mind, send what I have" for three minutes is the scan holding the card. So a
    * later press wins, and the token is what keeps the loser from landing on
    * top of it — the slow reply still arrives, finds its number stale, and is
    * dropped.
@@ -1285,14 +1300,15 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     const athome = aiIsReading() ? 'ai' : HOMED.has(action) ? action : null;
     if (opts.here ? opts.here !== athome : athome) return null;
     /*
-     * One action, three jobs, and the bar has to name the one you asked for.
+     * One action, more than one job, and the bar has to name the one you
+     * asked for.
      *
-     * `rebuild` is the same call whether you pressed "Use it unchanged",
-     * "Match by keyword" or "Let the AI tailor it", so a single label meant
-     * the bar said "Choosing what to change…" to someone who had just asked
-     * for nothing to be changed. Read against the button they pressed: the
-     * only reason to watch this bar is to find out whether what you asked for
-     * is happening.
+     * `rebuild` was the same call whichever mode button was pressed, so a
+     * single label meant the bar said "Choosing what to change…" to someone
+     * who had just asked for nothing to be changed. Read against what was
+     * asked for: the only reason to watch this bar is to find out whether
+     * that is what is happening. It still matters — the offer to work the
+     * suggestions out again comes through here as `match`.
      */
     const label = (running.has('rebuild') && REBUILDING[state.rebuilding]) || entry[1];
 
@@ -1817,9 +1833,14 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           box,
           h('div', { className: 'change-body' }, [
             c.where ? h('div', { className: 'where', textContent: c.where }) : null,
+            /*
+             * Which side is the aside depends on which way the box is set:
+             * switched on, the original is the one nobody is sending;
+             * switched off, it is the suggestion.
+             */
             h('div', { className: 'ba' }, [
-              c.from ? h('del', { textContent: c.from }) : null,
-              c.to ? h('ins', { textContent: c.to }) : null,
+              c.from ? h('del', { className: on ? 'aside' : '', textContent: c.from }) : null,
+              c.to ? h('ins', { className: on ? '' : 'aside', textContent: c.to }) : null,
               !c.from && !c.to ? h('span', { className: 'plain', textContent: detail }) : null,
             ]),
             because?.length ? why : null,
@@ -2494,17 +2515,25 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
            * by looking at the AI button, not by reading a label.
            */
           progressFor(1, { here: 'ai' }),
-          /*
-           * Neither matching nor AI: going and writing the sentence yourself.
-           *
-           * Looking at a posting is exactly when you notice the store has no
-           * bullet for the thing it is asking about — and the answer to that is
-           * two minutes in the builder, not another pass over the phrasings
-           * that already exist. Without a way through, it meant finding the
-           * editor by hand, finding the resume in it, and losing the card.
-           */
+        ]),
+        /*
+         * Neither of the two: going and writing the sentence yourself.
+         *
+         * Looking at a posting is exactly when you notice the store has no
+         * bullet for the thing it is asking about — and the answer to that is
+         * two minutes in the builder, not another pass over the phrasings
+         * that already exist. Without a way through, it meant finding the
+         * editor by hand, finding the resume in it, and losing the card.
+         *
+         * On its own line and drawn as a link, not in the row above wearing
+         * `mode`. There are two ways to build and this is not one of them —
+         * sitting between them, at the same weight, it read as a third, and
+         * the row was supposed to be the whole answer to "what happens to my
+         * resume".
+         */
+        h('div', { className: 'row' }, [
           h('button', {
-            className: 'mode ghost',
+            className: 'link to-builder',
             textContent: 'Edit in ResumeM-M',
             title: 'Open this resume in the builder to add a bullet or another phrasing',
             disabled: !state.spec?.id,

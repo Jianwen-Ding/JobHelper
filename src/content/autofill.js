@@ -170,8 +170,25 @@ const BARE_NAME = /^(full\s+)?name$/i;
  * roots are readable; closed ones are not, and a site using those has decided
  * nobody may look.
  */
+/*
+ * Except our own.
+ *
+ * The card is a shadow root on the page like any other, so the walk below
+ * went straight into it — and everything in it is a box with a label. Its
+ * feedback field, "Anything to change? e.g. …", came back as an application
+ * question and was listed under "Application questions" with an offer to
+ * draft an answer to it. The letter box and the answer boxes are the same
+ * shape, so a form with three questions could grow three more out of the card
+ * that was showing them.
+ *
+ * By id rather than by a marker on the element, because this has to hold for
+ * the host before `createCard` has finished putting anything in it.
+ */
+const OURS = 'jobhelper-card-host';
+
 function allRoots(root = document, out = [root]) {
   for (const element of root.querySelectorAll('*')) {
+    if (element.id === OURS) continue;
     if (element.shadowRoot) {
       out.push(element.shadowRoot);
       allRoots(element.shadowRoot, out);

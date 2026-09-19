@@ -1340,7 +1340,7 @@ async function main() {
       handle.cameBack?.();
       // `cameBack` only fires where the card sent you to the builder.
       if (!root.querySelector('.hint.warn')) {
-        root.querySelector('button.mode.ghost')?.click();
+        root.querySelector('.to-builder')?.click();
         handle.cameBack?.();
       }
       await new Promise((r) => setTimeout(r, 80));
@@ -1392,7 +1392,7 @@ async function main() {
       await new Promise((r) => setTimeout(r, 80));
       handle.cameBack?.();
       if (!root.querySelector('.hint.warn')) {
-        root.querySelector('button.mode.ghost')?.click();
+        root.querySelector('.to-builder')?.click();
         handle.cameBack?.();
       }
       await new Promise((r) => setTimeout(r, 80));
@@ -1888,6 +1888,67 @@ async function main() {
   });
 
   check('the card really is long enough to scroll', !scrolled.error, String(scrolled.error ?? `${scrolled.room}px`));
+
+  console.log('\nThe wording nobody is sending takes less room');
+
+  /*
+   * Both sides of a row were drawn at full length, so a suggestion that
+   * rewrites four lines spent eight saying so — half of it a sentence nobody
+   * had chosen, struck through, which is also the half that is hardest to
+   * read. The one not in the document is clamped to two lines.
+   *
+   * Clamped rather than hidden: a row with one side missing cannot be
+   * compared, and comparing is the only reason to open this list.
+   */
+  const clamped = await inPage(async (createCard) => {
+    const long = 'Created system for adjusting bounding boxes of models to encompass animations, polling animations for large changes and storing bounding box offsets in frames in order to reduce initial 20-30 ms freeze to 2 ms overhead.';
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Engine Programmer', company: 'Storm Flag Games' },
+        spec: { id: 'job-sfg', label: 'Storm Flag', choices: { b_bounds: 'v_short' } },
+        baseLabel: 'New grad resume',
+        tailor: 'match',
+        diff: [{ kind: 'changed', where: 'Storm Flag Games', from: long, to: 'Created system for accurate bounding of animated models, optimized away 20ms load time freeze into 2ms cost.' }],
+        rationale: [{ key: 'b_bounds', from: 'v_long', to: 'v_short', toText: 'Created system for accurate bounding of animated models, optimized away 20ms load time freeze into 2ms cost.', because: ['performance'] }],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action) => (action === 'render' ? { pages: 1, fits: true } : {}),
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    root.querySelector('.fold-changes')?.click();
+    const row = () => root.querySelector('.change');
+    const heightOf = (sel) => row()?.querySelector(sel)?.getBoundingClientRect().height ?? null;
+
+    // Off, so the suggestion is the one nobody is sending.
+    const off = { kept: heightOf('del'), offered: heightOf('ins'), aside: Boolean(row()?.querySelector('ins.aside')) };
+
+    root.querySelector('.pick')?.click();
+    await new Promise((r) => setTimeout(r, 80));
+    // On, so it is the original that is the aside now.
+    const on = { kept: heightOf('del'), offered: heightOf('ins'), aside: Boolean(row()?.querySelector('del.aside')) };
+    return { off, on };
+  });
+
+  check(
+    'the longer wording really is the one being clamped',
+    clamped.off.offered !== null && clamped.off.kept !== null,
+    JSON.stringify(clamped),
+  );
+  check(
+    'switched off, the suggestion is the short one on screen',
+    clamped.off.aside === true && clamped.off.offered < clamped.off.kept,
+    JSON.stringify(clamped.off),
+  );
+  check(
+    'and switched on, it is the original that shrinks instead',
+    clamped.on.aside === true && clamped.on.kept < clamped.off.kept,
+    JSON.stringify(clamped),
+  );
   check('and it really was scrolled', scrolled.before > 0, String(scrolled.before));
   check(
     'a redraw leaves you where you were reading',
