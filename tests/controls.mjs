@@ -740,6 +740,56 @@ async function main() {
       check('it says it is still reading it', /reading/i.test(initial), initial.slice(0, 120));
     }
 
+    group('A failure the popup can offer a way out of');
+    {
+      /*
+       * `serverFetch` marks the two failures somebody can act on in one press
+       * — no save open, server not running — and the card on a job page turns
+       * that mark into "Open a save in ResumeM-M". The popup's `send` kept
+       * only the sentence and dropped the mark, so the identical failure was a
+       * red line and nothing to press, in the window people open *because*
+       * they are checking the connection.
+       */
+      const proxy = await new Promise((resolve) => {
+        const server = http.createServer((req, res) => {
+          if (req.url.startsWith('/health')) {
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, projectOpen: false, dataDir: null, ai: { enabled: false, configured: false } }));
+            return;
+          }
+          res.writeHead(409, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ kind: 'no-project', error: 'No save is open in ResumeM-M.' }));
+        });
+        server.listen(0, '127.0.0.1', () => resolve({
+          url: `http://127.0.0.1:${server.address().port}`,
+          close: () => server.close(),
+        }));
+      });
+
+      try {
+        await pointExtensionAt(context, context.serviceWorkers()[0], proxy.url);
+        const popup = await openPopup();
+        await popup.waitForTimeout(1500);
+
+        const said = (await popup.locator('#status').textContent())?.trim() ?? '';
+        check('it still says what is wrong', /no save is open/i.test(said), said.slice(0, 120));
+
+        const button = popup.locator('#status button');
+        check('and offers the button that fixes it', (await button.count()) > 0, said.slice(0, 120));
+        if (await button.count()) {
+          check(
+            'named for what pressing it does',
+            /open a save in resumem-m/i.test((await button.first().textContent()) ?? ''),
+            (await button.first().textContent()) ?? '',
+          );
+        }
+        await popup.close();
+      } finally {
+        proxy.close();
+        await pointExtensionAt(context, context.serviceWorkers()[0], SERVER);
+      }
+    }
+
     group('A resume that will not fit on one page');
     {
       /*

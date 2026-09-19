@@ -4,16 +4,53 @@ const send = (type, payload) =>
   new Promise((resolve, reject) => {
     chrome.runtime.sendMessage({ type, payload }, (response) => {
       if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-      else if (!response?.ok) reject(new Error(response?.error ?? 'No response'));
-      else resolve(response.data);
+      else if (!response?.ok) {
+        /*
+         * With the button that fixes it, which used to be dropped here.
+         *
+         * `serverFetch` goes to deliberate trouble to mark the two failures
+         * somebody can actually do something about — no save open, server not
+         * running — and the content script turns that mark into a one-click
+         * "Open a save in ResumeM-M" on the card. This threw the mark away and
+         * kept only the sentence, so the same failure that offers a button on
+         * a job page offered nothing at all in the window people open
+         * *because* they are checking the connection.
+         */
+        const err = new Error(response?.error ?? 'No response');
+        if (response?.fix) err.jobhelper = response.fix;
+        reject(err);
+      } else resolve(response.data);
     });
   });
 
-function setStatus(text, kind = '') {
+function setStatus(text, kind = '', fix) {
   const s = $('status');
   s.textContent = text;
   s.className = `status ${kind}`;
+
+  /*
+   * And the way out, when the failure came with one.
+   *
+   * Two of these are things the user can act on in one press — no save open,
+   * the server not running — and the card on a job page has offered that
+   * button for a while. This window is where somebody goes *because* they are
+   * checking the connection, and it was the one place the same failure was a
+   * dead end.
+   */
+  if (fix?.serverUrl) {
+    const button = document.createElement('button');
+    button.className = 'ai-fix';
+    button.textContent = fix.fix === 'open-save' ? 'Open a save in ResumeM-M' : 'Open ResumeM-M';
+    button.onclick = () => {
+      chrome.tabs.create({ url: fix.serverUrl });
+      window.close();
+    };
+    s.append(document.createElement('br'), button);
+  }
 }
+
+/** Report a failure, carrying whatever it knows about how to get past it. */
+const failed = (err) => setStatus(err.message, 'err', err.jobhelper);
 
 async function activeTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -258,7 +295,7 @@ async function showAiState() {
       }
       await showAiState();
     } catch (err) {
-      setStatus(err.message, 'err');
+      failed(err);
     } finally {
       fix.disabled = false;
     }
@@ -302,7 +339,7 @@ async function boot() {
       await tellContentScript('show-card');
       window.close();
     } catch (err) {
-      setStatus(err.message, 'err');
+      failed(err);
     }
   };
 
@@ -331,7 +368,7 @@ async function boot() {
 
       setStatus(`${parts.join(', ')}.`, yours ? 'warn' : 'ok');
     } catch (err) {
-      setStatus(err.message, 'err');
+      failed(err);
     }
   };
 
@@ -441,8 +478,8 @@ async function check() {
       setStatus(`Connected — ${n} ${n === 1 ? 'resume' : 'resumes'} in the store.`, 'ok');
     }
   } catch (err) {
-    setStatus(err.message, 'err');
+    failed(err);
   }
 }
 
-boot().catch((err) => setStatus(err.message, 'err'));
+boot().catch((err) => failed(err));
