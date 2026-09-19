@@ -170,10 +170,35 @@ function refusedByTheBrowser(button) {
  */
 export function watchForSending(doc, tell) {
   let told = false;
+
+  /*
+   * Said once — but only a press that was actually taken as a send spends it.
+   *
+   * `told` used to be set before `tell` was called, and `tell` is where the
+   * caller decides: the page has to be the application rather than the
+   * description of it, and there has to be a company and a role to file it
+   * under. A press it declines is not a send, so it must not be the one send
+   * this watcher had to give.
+   *
+   * "Apply Now" is where those come apart, and this file already says why: it
+   * ends the application on ADP and opens it on almost every description page
+   * there is. Measured on a single-page board — press Apply Now, fill the
+   * form it swaps in, press Submit Application:
+   *
+   *   before Apply Now   {"application":"applying","draft":"drafting"}
+   *   after Apply Now    {"application":"applying","draft":"drafting"}
+   *   after real Submit  {"application":"applying","draft":"drafting"}
+   *
+   * The same page with the opening button worded "See the application form"
+   * ends `{"application":"applied","draft":"submitted"}`. The application went
+   * out either way; only one of them was recorded, and the difference was a
+   * button pressed several minutes earlier that nothing was filed for.
+   *
+   * A caller that says nothing still spends it, which is what the frames do.
+   */
   const once = (how) => {
     if (told) return;
-    told = true;
-    tell(how);
+    told = tell(how) !== false;
   };
 
   const onSubmit = (event) => {

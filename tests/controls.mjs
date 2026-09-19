@@ -721,6 +721,96 @@ async function main() {
       }
     }
 
+    /*
+     * The other half of the pair of switches, and the half with no way out.
+     *
+     * Both have to agree before anything is sent to an AI. `server-off` — on
+     * here, off in ResumeM-M — has been a chip you can press for a while. The
+     * mirror of it was a tooltip: turn the AI on in ResumeM-M, which is where
+     * the command and the model live and so where somebody setting one up is
+     * sitting, and the card reads "AI off" with nothing to press and nothing
+     * saying the second switch is behind the toolbar icon.
+     *
+     * Reported from life: "AI is off even though it is on in ResumeM-M."
+     *
+     * Through a proxy that says the AI is on rather than by turning it on in
+     * the store, because every other suite shares that store and an AI that is
+     * really on would start really running.
+     */
+    group('ResumeM-M has its AI on and this extension does not');
+    {
+      const upstream = SERVER.replace(/\/$/, '');
+      const proxy = await new Promise((resolve) => {
+        const server = http.createServer(async (req, res) => {
+          const body = [];
+          for await (const chunk of req) body.push(chunk);
+          const up = await fetch(`${upstream}${req.url}`, {
+            method: req.method,
+            headers: Object.fromEntries(
+              Object.entries(req.headers).filter(([k]) => !['host', 'connection', 'content-length'].includes(k)),
+            ),
+            body: ['GET', 'HEAD'].includes(req.method) ? undefined : Buffer.concat(body),
+          }).catch(() => null);
+          if (!up) {
+            res.writeHead(502).end('{}');
+            return;
+          }
+          const text = await up.text();
+          if (req.url.startsWith('/health') && up.ok) {
+            const health = JSON.parse(text);
+            health.ai = { ...health.ai, enabled: true, configured: true };
+            res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(health));
+            return;
+          }
+          res.writeHead(up.status, { 'content-type': up.headers.get('content-type') ?? 'application/json' }).end(text);
+        });
+        server.listen(0, '127.0.0.1', () => resolve({
+          url: `http://127.0.0.1:${server.address().port}`,
+          close: () => server.close(),
+        }));
+      });
+
+      try {
+        await pointExtensionAt(context, context.serviceWorkers()[0], proxy.url);
+        // Never opted in, which is every profile to begin with and the state
+        // being reported.
+        await context.serviceWorkers()[0].evaluate(() => chrome.storage.sync.remove('useAi'));
+
+        const page = await context.newPage();
+        await page.goto(fixtures.urlFor(HELIOS_ROLE), { waitUntil: 'domcontentloaded' });
+        await settled(page);
+        const chip = cardOf(page).locator('.ai');
+        await chip.waitFor({ timeout: 20_000 });
+        await page.waitForTimeout(1200);
+
+        const said = (await chip.innerText()).trim();
+        check(
+          'the chip names which switch is off, rather than saying only "AI off"',
+          /jobhelper/i.test(said),
+          said,
+        );
+        check(
+          'and it is something to press',
+          ((await chip.getAttribute('class')) ?? '').includes('actionable'),
+          (await chip.getAttribute('class')) ?? '',
+        );
+
+        await chip.click({ timeout: 5000 }).catch(() => undefined);
+        await page.waitForTimeout(2500);
+        const now = (await chip.innerText()).trim();
+        check('pressing it turns the AI on', /^ai on$/i.test(now), now);
+        check(
+          "and the extension's own switch is what was set",
+          (await context.serviceWorkers()[0].evaluate(async () => (await chrome.storage.sync.get('useAi')).useAi)) === true,
+        );
+        await page.close();
+      } finally {
+        await context.serviceWorkers()[0].evaluate(() => chrome.storage.sync.remove('useAi')).catch(() => undefined);
+        proxy.close();
+        await pointExtensionAt(context, context.serviceWorkers()[0], SERVER);
+      }
+    }
+
     group('The AI hint before anything is known about it');
     {
       /*
