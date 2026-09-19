@@ -3396,6 +3396,22 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     const focused = active && active !== card ? active.dataset?.field : null;
     const caret = focused ? { start: active.selectionStart, end: active.selectionEnd } : null;
 
+    /*
+     * Where you were reading.
+     *
+     * `.body` is the scroller and it is destroyed and rebuilt on every
+     * redraw, so every redraw put you back at the top — and the card redraws
+     * for things that have nothing to do with where you are looking: a status
+     * read landing, a compile finishing, a tailoring pass arriving minutes
+     * later, opening any panel. Working on the questions at the bottom of a
+     * long card meant being thrown to the header over and over, and the cost
+     * lands hardest on the longest cards, which are the ones where scrolling
+     * back is most work.
+     *
+     * Saved and put back for the same reason the caret is, a few lines down.
+     */
+    const wasScrolled = card.querySelector('.body')?.scrollTop ?? 0;
+
     // Provisional until the analysis lands: what is on screen is the page's
     // own title, not anything this has worked out yet.
     card.classList.toggle('loading', !analysis);
@@ -3423,9 +3439,17 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             : drawProposeView(),
     );
 
+    if (wasScrolled) {
+      const body = card.querySelector('.body');
+      // `scrollTop` clamps itself to what the element can actually scroll, so
+      // a shorter body simply lands at its own bottom rather than throwing.
+      if (body) body.scrollTop = wasScrolled;
+    }
+
     if (!focused) return;
     const again = card.querySelector(`[data-field="${CSS.escape(focused)}"]`);
     if (!again) return;
+    // `preventScroll`, or focusing the box would undo the line above.
     again.focus({ preventScroll: true });
     try {
       again.setSelectionRange(caret.start, caret.end);

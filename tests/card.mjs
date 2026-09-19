@@ -1835,6 +1835,66 @@ async function main() {
     JSON.stringify(whileDrafting),
   );
 
+  console.log('\nA redraw does not throw you back to the top');
+
+  /*
+   * `.body` is the scroller and it is destroyed and rebuilt on every redraw,
+   * so every redraw put you back at the header — and the card redraws for
+   * things that have nothing to do with where you are looking: a status read
+   * landing, a compile finishing, a tailoring pass arriving minutes later,
+   * opening any panel. Working on the questions at the bottom of a long card
+   * meant being thrown to the top over and over.
+   */
+  const scrolled = await inPage(async (createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      // Enough of them that the card is longer than it is tall, which is the
+      // only state in which any of this is observable.
+      questions: Array.from({ length: 12 }, (_, i) => ({
+        question: `Question number ${i + 1}?`,
+        answer: '',
+        confident: false,
+      })),
+      needsCoverLetter: true,
+      onAction: async () => ({}),
+    });
+    await new Promise((r) => setTimeout(r, 80));
+
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const body = () => root.querySelector('.body');
+    const room = body().scrollHeight - body().clientHeight;
+    if (room < 50) return { error: `card is not scrollable (${room}px of room)` };
+
+    body().scrollTop = Math.round(room / 2);
+    const before = body().scrollTop;
+
+    // A redraw with nothing to do with where the user is looking: one more
+    // question arriving, which is what a form finishing its own render does.
+    handle.setQuestions([
+      ...Array.from({ length: 12 }, (_, i) => ({ question: `Question number ${i + 1}?`, answer: '', confident: false })),
+      { question: 'One that turned up late?', answer: '', confident: false },
+    ]);
+    await new Promise((r) => setTimeout(r, 60));
+
+    return { room, before, after: body().scrollTop, rebuilt: body() !== null };
+  });
+
+  check('the card really is long enough to scroll', !scrolled.error, String(scrolled.error ?? `${scrolled.room}px`));
+  check('and it really was scrolled', scrolled.before > 0, String(scrolled.before));
+  check(
+    'a redraw leaves you where you were reading',
+    scrolled.after === scrolled.before,
+    `${scrolled.before} → ${scrolled.after}`,
+  );
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);
