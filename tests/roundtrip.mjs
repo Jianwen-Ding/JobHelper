@@ -315,6 +315,27 @@ async function main() {
         !/been editing the store/i.test((await card.textContent()) ?? ''),
       );
 
+      /*
+       * And then ask for the match, because arriving tailors nothing now.
+       *
+       * The opening analysis sends `tailor: 'none'`, so the card comes up with
+       * the resume unchanged and "Build it again" repeats the mode it was
+       * built with — which is 'none'. The new wording lives on an alternate
+       * phrasing of the pipeline bullet (`v_kafka`, tagged kafka/streaming)
+       * and only the keyword match selects it, so without this the resume that
+       * was filed printed the neutral phrasing — "Built an event-processing
+       * pipeline handling 2M events/day…", no Kafka, no marker — and the last
+       * check below failed while the round trip itself was working. Clicking
+       * the mode button is what a person does now; the walk has to do it too.
+       */
+      await card.locator('button.mode', { hasText: 'Match by keyword' }).click();
+      await card.locator('.diff-head').first().waitFor({ timeout: 60_000 });
+      check(
+        'and the match asked for has something to swap in',
+        (await card.locator('.change').count()) > 0,
+        `${await card.locator('.change').count()} changes`,
+      );
+
       await card.getByRole('button', { name: 'Build resume' }).click();
       await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 90_000 });
       const fit = await card.locator('.fit.ok, .fit.bad').innerText();

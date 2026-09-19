@@ -787,8 +787,21 @@ const handlers = {
    */
   async analyze({ url, title, html, pages, framed, useAi, tailor }, tab) {
     const settings = await getSettings();
-    const mode =
-      tailor ?? (typeof useAi === 'boolean' ? (useAi ? 'ai' : 'match') : settings.useAi ? 'ai' : 'match');
+    /*
+     * Nothing, unless this call says otherwise.
+     *
+     * Landing on a posting used to run the keyword match, and run the model if
+     * the AI switch was on — so simply reading a job advert started a tailoring
+     * pass, and clicking through an application started one per page. Both
+     * cost something the person had not asked for: the model costs money and
+     * minutes, and the match arrives having already changed the resume, which
+     * makes "send what I have" the thing you undo rather than the default.
+     *
+     * The pages are still read and still remembered; what stops is acting on
+     * them. `tailor` is passed explicitly by each of the three buttons, so
+     * this fallback is only ever the opening analysis.
+     */
+    const mode = tailor ?? (typeof useAi === 'boolean' ? (useAi ? 'ai' : 'match') : 'none');
     const result = await serverFetch('/api/extension/analyze', {
       method: 'POST',
       /*
@@ -1021,6 +1034,35 @@ const handlers = {
     return serverFetch('/api/answers/save', {
       method: 'POST',
       body: JSON.stringify({ question, answer, itemId }),
+    });
+  },
+
+  /**
+   * The letter and every answer, in one run of the model.
+   *
+   * The two handlers below still exist and are still used: they are what
+   * redrafting a single thing does, and what happens when the reply says one
+   * run was not possible — the writing tools need an MCP entry point and a CLI
+   * willing to take it, and without those the pieces cannot be collected
+   * apart from each other.
+   */
+  async writeApplication({ spec, job, letter, questions }) {
+    return serverFetch('/api/extension/write', {
+      method: 'POST',
+      timeoutMs: SLOW_TIMEOUT_MS,
+      body: JSON.stringify({
+        // The base, as `coverLetter` does: a tailored spec exists only in the
+        // card until the folder is built, so the store has never seen it.
+        resumeId: spec.extends ?? spec.id,
+        job: {
+          jobTitle: job.title,
+          company: job.company,
+          jobDescription: job.description ?? '',
+          url: job.url ?? job.source,
+        },
+        letter,
+        questions,
+      }),
     });
   },
 

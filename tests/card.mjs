@@ -204,6 +204,60 @@ async function main() {
   check('and the AI says it is reading the posting', /reading the posting/i.test(byAi.label ?? ''), JSON.stringify(byAi));
 
   /*
+   * Where the bar is, while the AI reads.
+   *
+   * Every step-one action shared one bar at the top of the step, so a model
+   * reading the posting for three minutes looked exactly like a compile: same
+   * bar, same place, under a heading that says "Resume". Whether the AI is
+   * what you are waiting for should be answerable by looking at the AI button.
+   */
+  console.log('\nThe AI holds up the AI, and says so where it happened');
+
+  const aiHoldup = await inPage(async (createCard) => {
+    let release;
+    const held = new Promise((r) => (release = r));
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+      },
+      resumes: [{ id: 'base', label: 'New grad', base: true }],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action) =>
+        action === 'rebuild' ? held : action === 'aiStatus' ? { active: true, state: 'on' } : {},
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    await new Promise((r) => setTimeout(r, 100));
+
+    const modes = () => [...root.querySelectorAll('button.mode')];
+    const named = (re) => modes().find((b) => re.test(b.textContent));
+    named(/Let the AI tailor it/).click();
+    await new Promise((r) => setTimeout(r, 200));
+
+    const row = root.querySelector('.build-modes');
+    const out = {
+      // The bar is inside the row the buttons are in, not above them.
+      barBesideButtons: Boolean(row?.querySelector('.progress')),
+      barAtTopOfStep: Boolean(root.querySelector('.step > .progress, .step > div > .progress')),
+      aiDisabled: named(/Reading the posting|Let the AI tailor it/)?.disabled ?? null,
+      unchangedLive: named(/Use it unchanged/)?.disabled === false,
+      matchLive: named(/Match by keyword/)?.disabled === false,
+    };
+    release({});
+    await new Promise((r) => setTimeout(r, 150));
+    return out;
+  });
+
+  check('the bar sits with the button that started it', aiHoldup.barBesideButtons === true, JSON.stringify(aiHoldup));
+  check('and not at the top of the step, where a compile would put it', aiHoldup.barAtTopOfStep === false, JSON.stringify(aiHoldup));
+  check('the AI button is the one that waits', aiHoldup.aiDisabled === true, JSON.stringify(aiHoldup));
+  check('the other two ways to build stay live', aiHoldup.unchangedLive && aiHoldup.matchLive, JSON.stringify(aiHoldup));
+
+  /*
    * Building what is already there, while the AI reads the posting.
    *
    * Compiling shared a lane with the three rebuild modes, so an AI pass —
@@ -403,8 +457,11 @@ async function main() {
         job: { title: 'Platform Engineer', company: 'Acme' },
         spec: { id: 'job-acme', label: 'Acme' },
         baseLabel: 'New grad resume',
-        rationale: [],
-        diff: [],
+        // One swapped wording, so there is a switch to try while the pass runs.
+        rationale: [
+          { key: 'b_pipeline', from: 'v_base', to: 'v_kafka', toText: 'Built a Kafka pipeline', because: ['kafka'] },
+        ],
+        diff: [{ kind: 'changed', where: 'Acme Co.', from: 'Built a pipeline', to: 'Built a Kafka pipeline' }],
         tailor: 'match',
       },
       resumes: [],
@@ -438,6 +495,13 @@ async function main() {
        */
       building: named('Build resume') ?? named('Recompile'),
       applyFeedback: named('Apply feedback'),
+      // The switches on the proposal already in front of you. An AI pass is
+      // minutes long and has nothing to do with them.
+      keepOriginal: (() => {
+        root.querySelector('.fold-changes')?.click();
+        const b = root.querySelector('button.undo-one');
+        return b ? b.disabled : null;
+      })(),
       // Filing waits for the two things it files.
       filing: named('Submit'),
       // Different lanes entirely: none of these touch the resume.
@@ -468,6 +532,11 @@ async function main() {
   check(
     'but the resume you already have can still be built',
     whileTailoring.building === false,
+    JSON.stringify(whileTailoring),
+  );
+  check(
+    'and the keyword swaps on it can still be switched back',
+    whileTailoring.keepOriginal === false,
     JSON.stringify(whileTailoring),
   );
   check(
@@ -639,7 +708,12 @@ async function main() {
     const undoButtons = () => [...root.querySelectorAll('.undo-one')];
     const text = () => root.querySelector('.changes')?.textContent ?? '';
 
-    const before = { rows: rows(), count: count(), offered: undoButtons().length };
+    // Shut by default, so this is the click that reveals the rows at all.
+    const shutAtFirst = Boolean(root.querySelector('.changes.shut'));
+    const hiddenAtFirst = root.querySelector('.change')?.checkVisibility?.() === false;
+    root.querySelector('.fold-changes')?.click();
+
+    const before = { rows: rows(), count: count(), offered: undoButtons().length, shutAtFirst, hiddenAtFirst };
 
     // Put back the second one — the degree line.
     undoButtons()[1].click();
@@ -651,6 +725,14 @@ async function main() {
     };
   });
 
+  /*
+   * The rows are the most detailed thing on the card and they sat between the
+   * resume and the build button, so the ordinary case — read the count, accept
+   * it, build — meant scrolling past every line of reasoning. The count stays
+   * out; the rows come out when one of them looks wrong.
+   */
+  check('the list of changes starts shut', undoing.before.shutAtFirst === true, JSON.stringify(undoing.before));
+  check('and its rows really are out of the way', undoing.before.hiddenAtFirst === true, JSON.stringify(undoing.before));
   check('every proposed change offers to be put back', undoing.before.offered === 2, JSON.stringify(undoing.before));
   check(
     'putting one back takes that row off the list',
@@ -733,6 +815,7 @@ async function main() {
     const undoButtons = () => [...root.querySelectorAll('.undo-one')];
     const text = () => root.querySelector('.changes')?.textContent ?? '';
 
+    root.querySelector('.fold-changes')?.click();
     const offered = undoButtons().length;
     const before = rows();
 
@@ -796,6 +879,328 @@ async function main() {
     JSON.stringify(skillUndo.items),
   );
   check('both rows are gone and the wording swap is untouched', skillUndo.after === 1 && skillUndo.choices?.b_pipeline === 'v_kafka', JSON.stringify(skillUndo));
+
+  /*
+   * The letter and the answers, written by one run.
+   *
+   * They used to be a run each — one for the letter, one per question — so a
+   * form with three was four runs of a model, each reading the same posting
+   * and the same corpus from scratch, and none able to see what the others
+   * wrote. Which is how an application says two different things about why
+   * you want the job.
+   */
+  console.log('\nOne run writes the letter and every answer');
+
+  const oneRun = await inPage(async (createCard) => {
+    const sent = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme', description: 'Kafka and Go.' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [
+        { question: 'Why us?', answer: '', confident: false },
+        { question: 'Tell us about a project.', answer: '', confident: false },
+      ],
+      needsCoverLetter: true,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'writeApplication') {
+          // Keyed by the ids the card minted for this round trip.
+          const ids = payload.questions.map((q) => q.id);
+          return {
+            oneRun: true,
+            letter: 'Dear Acme, I build streaming systems.',
+            answers: { [ids[0]]: 'Because of the Kafka work.', [ids[1]]: 'I built a pipeline.' },
+            priorLetters: [],
+            aiUsed: true,
+          };
+        }
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    await new Promise((r) => setTimeout(r, 120));
+
+    const button = [...root.querySelectorAll('button')].find((b) => /Write the letter and/.test(b.textContent));
+    const label = button?.textContent ?? null;
+    button?.click();
+    await new Promise((r) => setTimeout(r, 300));
+
+    const boxes = [...root.querySelectorAll('textarea')].map((t) => ({ field: t.dataset.field, value: t.value }));
+    return {
+      label,
+      runs: sent.filter((c) => /writeApplication|coverLetter|^answer:/.test(c.action)).map((c) => c.action),
+      asked: sent.find((c) => c.action === 'writeApplication')?.payload ?? null,
+      boxes,
+    };
+  });
+
+  check('one button offers to write all of it', /Write the letter and 2 answers/.test(oneRun.label ?? ''), String(oneRun.label));
+  check(
+    'and it is one run, not one per thing',
+    oneRun.runs.length === 1 && oneRun.runs[0] === 'writeApplication',
+    JSON.stringify(oneRun.runs),
+  );
+  check(
+    'the run is told about the letter and every question',
+    oneRun.asked?.letter?.required === true && (oneRun.asked?.questions ?? []).length === 2,
+    JSON.stringify(oneRun.asked?.questions?.map((q) => q.id)),
+  );
+  check(
+    'the letter it wrote lands in the letter box',
+    oneRun.boxes.some((b) => b.field === 'letter' && /I build streaming systems/.test(b.value)),
+    JSON.stringify(oneRun.boxes.map((b) => b.field)),
+  );
+  /*
+   * Keyed back by question text, because that is the only key this card has —
+   * the ids are minted for the round trip and thrown away.
+   */
+  check(
+    'and each answer lands in its own box',
+    oneRun.boxes.some((b) => b.field === 'answer:Why us?' && /Kafka work/.test(b.value)) &&
+      oneRun.boxes.some((b) => b.field === 'answer:Tell us about a project.' && /built a pipeline/.test(b.value)),
+    JSON.stringify(oneRun.boxes),
+  );
+
+  /*
+   * What a run wrote over, and could not use.
+   *
+   * The answer box stays enabled while a run is writing — the obvious thing to
+   * do with a wait of minutes is write it yourself — and what you type wins.
+   * That was already true and already recorded, in a field nothing rendered,
+   * so a discarded draft was discarded in silence. One run writing every
+   * answer can discard several, which makes the silence worse.
+   */
+  console.log('\nWhat you typed beats what the run wrote, and it says so');
+
+  const clash = await inPage(async (createCard) => {
+    let release;
+    const held = new Promise((r) => (release = r));
+    let ids = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme', description: 'Kafka and Go.' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [
+        { question: 'Why us?', answer: '', confident: false },
+        { question: 'Tell us about a project.', answer: '', confident: false },
+      ],
+      needsCoverLetter: true,
+      onAction: async (action, payload) => {
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'writeApplication') {
+          ids = payload.questions.map((q) => q.id);
+          return held;
+        }
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    await new Promise((r) => setTimeout(r, 120));
+    [...root.querySelectorAll('button')].find((b) => /Write the letter and/.test(b.textContent))?.click();
+    await new Promise((r) => setTimeout(r, 200));
+
+    // Typed into both boxes while the run was out.
+    for (const box of root.querySelectorAll('textarea[data-field^="answer:"]')) {
+      box.value = 'Mine, written by hand.';
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    release({
+      oneRun: true,
+      letter: 'Dear Acme.',
+      answers: { [ids[0]]: 'The run wrote this.', [ids[1]]: 'And this.' },
+      priorLetters: [],
+      aiUsed: true,
+    });
+    await new Promise((r) => setTimeout(r, 300));
+
+    return {
+      boxes: [...root.querySelectorAll('textarea[data-field^="answer:"]')].map((t) => t.value),
+      said: root.textContent.match(/You were writing while that ran[^.]*\./)?.[0] ?? null,
+    };
+  });
+
+  check(
+    'what you typed is still there, not the run\u2019s version',
+    clash.boxes.length === 2 && clash.boxes.every((v) => /Mine, written by hand/.test(v)),
+    JSON.stringify(clash.boxes),
+  );
+  check('and the card says so rather than dropping them in silence', Boolean(clash.said), String(clash.said));
+  check('counting them, because one run can collide with several', /2 answers/.test(clash.said ?? ''), String(clash.said));
+
+  /*
+   * Two rebuilds really can be in flight now, so the bar has to belong to the
+   * one still running. A set held one entry per name, so the fast one's
+   * removal took the bar down while a model was still reading.
+   */
+  console.log('\nThe bar belongs to the work still going');
+
+  const overlap = await inPage(async (createCard) => {
+    let releaseAi;
+    const slowAi = new Promise((r) => (releaseAi = r));
+    let seen = 0;
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+      },
+      resumes: [{ id: 'base', label: 'New grad', base: true }],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'rebuild') {
+          seen += 1;
+          // The AI is slow; the keyword match is not.
+          return payload.tailor === 'ai' ? slowAi : {};
+        }
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    await new Promise((r) => setTimeout(r, 120));
+    const named = (re) => [...root.querySelectorAll('button.mode')].find((b) => re.test(b.textContent));
+
+    named(/Let the AI tailor it/).click();
+    await new Promise((r) => setTimeout(r, 150));
+    named(/Match by keyword/).click();
+    await new Promise((r) => setTimeout(r, 400));
+
+    const during = { runs: seen, bar: Boolean(root.querySelector('.progress')) };
+    releaseAi({});
+    await new Promise((r) => setTimeout(r, 250));
+    return { during, barAfter: Boolean(root.querySelector('.progress')) };
+  });
+
+  check('both really ran, so this is the overlap that mattered', overlap.during.runs === 2, JSON.stringify(overlap));
+  check(
+    'the bar stays up while the AI is still reading',
+    overlap.during.bar === true,
+    JSON.stringify(overlap),
+  );
+  check('and comes down when it finishes', overlap.barAfter === false, JSON.stringify(overlap));
+
+  /*
+   * Coming back from the builder having written something new.
+   *
+   * A wording added there is an *alternate*, and an alternate is only reached
+   * by something choosing it. On an untailored proposal — which is now where
+   * every application starts — rebuilding in the same mode can never use what
+   * was just written: it rebuilds the resume exactly as it is kept, which is
+   * what was already on screen. The sentence said "to use anything you added".
+   */
+  console.log('\nComing back from the builder');
+
+  const cameBack = await inPage(
+    new Function('createCard', `return (${(async (createCard, builtWith) => {
+      const sent = [];
+      const handle = createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Platform Engineer', company: 'Acme' },
+          spec: { id: 'job-acme', label: 'Acme' },
+          rationale: [],
+          diff: [],
+          tailor: builtWith,
+        },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async (action, payload) => {
+          sent.push({ action, tailor: payload?.tailor });
+          return action === 'aiStatus' ? { active: true, state: 'on' } : {};
+        },
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      await new Promise((r) => setTimeout(r, 80));
+      handle.cameBack?.();
+      // `cameBack` only fires where the card sent you to the builder.
+      if (!root.querySelector('.hint.warn')) {
+        root.querySelector('button.mode.ghost')?.click();
+        handle.cameBack?.();
+      }
+      await new Promise((r) => setTimeout(r, 80));
+      const offer = [...root.querySelectorAll('.hint.warn button')][0];
+      const label = offer?.textContent ?? null;
+      offer?.click();
+      await new Promise((r) => setTimeout(r, 200));
+      return { label, asked: sent.filter((c) => c.action === 'rebuild').map((c) => c.tailor) };
+    }).toString()})(createCard, ${JSON.stringify('none')})`),
+  );
+
+  check(
+    'on an untailored proposal the offer names the thing that would pick it up',
+    cameBack.label === 'Match by keyword',
+    JSON.stringify(cameBack),
+  );
+  check(
+    'and asks for that, not for another copy of what was already shown',
+    cameBack.asked.at(-1) === 'match',
+    JSON.stringify(cameBack.asked),
+  );
+
+  const cameBackMatched = await inPage(
+    new Function('createCard', `return (${(async (createCard, builtWith) => {
+      const sent = [];
+      const handle = createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Platform Engineer', company: 'Acme' },
+          spec: { id: 'job-acme', label: 'Acme' },
+          rationale: [],
+          diff: [],
+          tailor: builtWith,
+        },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async (action, payload) => {
+          sent.push({ action, tailor: payload?.tailor });
+          return action === 'aiStatus' ? { active: true, state: 'on' } : {};
+        },
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      await new Promise((r) => setTimeout(r, 80));
+      handle.cameBack?.();
+      if (!root.querySelector('.hint.warn')) {
+        root.querySelector('button.mode.ghost')?.click();
+        handle.cameBack?.();
+      }
+      await new Promise((r) => setTimeout(r, 80));
+      const offer = [...root.querySelectorAll('.hint.warn button')][0];
+      const label = offer?.textContent ?? null;
+      offer?.click();
+      await new Promise((r) => setTimeout(r, 200));
+      return { label, asked: sent.filter((c) => c.action === 'rebuild').map((c) => c.tailor) };
+    }).toString()})(createCard, ${JSON.stringify('ai')})`),
+  );
+
+  /*
+   * And on one that was already tailored it repeats what was asked for, rather
+   * than quietly dropping you into a different mode.
+   */
+  check(
+    'a tailored proposal is offered the same thing again',
+    cameBackMatched.label === 'Build it again' && cameBackMatched.asked.at(-1) === 'ai',
+    JSON.stringify(cameBackMatched),
+  );
 
   /*
    * Building puts the files where the upload dialog will be.
