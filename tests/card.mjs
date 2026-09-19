@@ -1016,6 +1016,7 @@ async function main() {
       // And back to what the base asked for, with both switched off.
       items: itemsOf(off) ?? null,
       hasTools: itemsOf(off) ? Object.prototype.hasOwnProperty.call(itemsOf(off), 'sk_tools') : null,
+      hasLang: itemsOf(off) ? Object.prototype.hasOwnProperty.call(itemsOf(off), 'sk_lang') : null,
       choices: off?.choices ?? null,
       backTicks: ticks(),
     };
@@ -1051,18 +1052,23 @@ async function main() {
    * The half that matters, as with the wordings: taking the row off the screen
    * and compiling the narrowed group anyway would be worse than no button.
    */
-  check(
-    'the group the base named is compiled with its own list back',
-    JSON.stringify(skillUndo.items?.sk_lang) === JSON.stringify(['s_py', 's_go', 's_rb', 's_php']),
-    JSON.stringify(skillUndo.items),
-  );
   /*
-   * `null` from the base is an answer, not a gap: a group with no entry under
-   * `items` prints all of its items, and the way to say that is to leave the
-   * key out. Writing an empty list instead would print nothing.
+   * Off, both groups go back to having no entry at all.
+   *
+   * Absent means inherited, and what is inherited is the base's own list —
+   * so the printed document is the base's, which is what "off" means. The
+   * card used to write the base's list back explicitly for a group the base
+   * had named, which prints the same today and pins it: a skill added to the
+   * base next month would never reach this resume. Writing an empty list
+   * would be different again, and wrong — that prints nothing.
    */
   check(
-    'and the group it named nothing for goes back to having no entry at all',
+    'the group the base named goes back to having no entry of its own',
+    skillUndo.hasLang === false,
+    JSON.stringify(skillUndo.items),
+  );
+  check(
+    'and so does the group it named nothing for',
     skillUndo.hasTools === false,
     JSON.stringify(skillUndo.items),
   );
@@ -2261,6 +2267,124 @@ async function main() {
     'a store with no ranking keeps its order and its plain labels',
     JSON.stringify(unranked) === JSON.stringify(['New grad', 'Lab', 'Role — Acme']),
     JSON.stringify(unranked),
+  );
+
+  console.log('\nAdding to a skills group and cutting from it are two decisions');
+
+  /*
+   * A narrowed group is really two things: some items the posting names go
+   * in, and some it never mentions come out. The diff already writes them as
+   * two rows — "Frameworks: added Node.js, Express" and "Frameworks: dropped
+   * Unity, SDL — keeping Node.js, Express" — and they shared one box, because
+   * both resolve to the same group and the box was the group's. Ticking
+   * either did both, which is not what either row says it would do.
+   */
+  const halves = await inPage(async (createCard) => {
+    const sent = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Engine Programmer', company: 'Storm Flag' },
+        spec: {
+          id: 'job-sfg',
+          label: 'Storm Flag',
+          sections: [{ kind: 'skills', entries: [], items: { sk_fw: ['f_node', 'f_express'] } }],
+        },
+        baseLabel: 'New grad resume',
+        tailor: 'match',
+        diff: [
+          { kind: 'added', where: 'Frameworks', text: 'Frameworks: added Node.js, Express' },
+          { kind: 'removed', where: 'Frameworks', text: 'Frameworks: dropped Unity, SDL — keeping Node.js, Express' },
+        ],
+        rationale: [],
+        skillChanges: [
+          {
+            groupId: 'sk_fw',
+            groupName: 'Frameworks',
+            // The base listed the two the posting never mentions…
+            from: ['f_unity', 'f_sdl'],
+            // …and the match wants the two it does.
+            to: ['f_node', 'f_express'],
+          },
+        ],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        return action === 'render' ? { pages: 1, fits: true } : {};
+      },
+    });
+    await new Promise((r) => setTimeout(r, 80));
+
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    root.querySelector('.fold-changes')?.click();
+    const picks = () => [...root.querySelectorAll('.pick')];
+    const ticks = () => [...root.querySelectorAll('.pick input')].map((b) => b.checked);
+    const settle = () => new Promise((r) => setTimeout(r, 60));
+    const itemsNow = () => {
+      const spec = sent.filter((c) => c.action === 'render').at(-1)?.payload?.spec;
+      const items = (spec?.sections ?? []).find((x) => x.kind === 'skills')?.items ?? {};
+      return Object.prototype.hasOwnProperty.call(items, 'sk_fw') ? items.sk_fw : 'inherited';
+    };
+
+    const boxes = picks().length;
+    const start = ticks();
+
+    // The adding half only.
+    picks()[0].click();
+    await settle();
+    const added = { ticks: ticks(), items: itemsNow() };
+
+    // And the cutting half on top of it.
+    picks()[1].click();
+    await settle();
+    const both = { ticks: ticks(), items: itemsNow() };
+
+    // Now take the adding half back off, leaving only the cut.
+    picks()[0].click();
+    await settle();
+    const cutOnly = { ticks: ticks(), items: itemsNow() };
+
+    return { boxes, start, added, both, cutOnly };
+  });
+
+  check('each row gets its own box', halves.boxes === 2, String(halves.boxes));
+  check(
+    'and both start off, over the group the base has',
+    JSON.stringify(halves.start) === JSON.stringify([false, false]),
+    JSON.stringify(halves.start),
+  );
+  /*
+   * The half that matters, and the thing that was impossible before: adding
+   * what the posting names without also cutting what it does not.
+   */
+  check(
+    'taking the additions alone leaves the cut untouched',
+    JSON.stringify(halves.added.ticks) === JSON.stringify([true, false]),
+    JSON.stringify(halves.added.ticks),
+  );
+  check(
+    'and the group keeps what it had, plus what was added',
+    JSON.stringify(halves.added.items) === JSON.stringify(['f_unity', 'f_sdl', 'f_node', 'f_express']),
+    JSON.stringify(halves.added.items),
+  );
+  /*
+   * Both on is the match's own list, verbatim rather than the same set
+   * rebuilt — it chose an order as well as a set.
+   */
+  check(
+    'both together are exactly what the match proposed',
+    JSON.stringify(halves.both.items) === JSON.stringify(['f_node', 'f_express']),
+    JSON.stringify(halves.both.items),
+  );
+  check(
+    'and the cut alone drops what the posting never names, adding nothing',
+    JSON.stringify(halves.cutOnly.ticks) === JSON.stringify([false, true])
+      && JSON.stringify(halves.cutOnly.items) === JSON.stringify([]),
+    JSON.stringify(halves.cutOnly),
   );
 
   await browser.close();

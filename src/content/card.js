@@ -1420,12 +1420,20 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       const change = changeFor.get(plainish(c.to ?? ''));
       if (change?.key && change.from) return { kind: 'wording', change };
       const skill = c.to ? undefined : skillFor.get(plainish(c.where ?? ''));
-      return skill ? { kind: 'skills', skill } : null;
+      if (!skill) return null;
+      /*
+       * Which half of the group's change this row is about. The diff writes
+       * the two as separate rows and gives each its own kind, so the row
+       * already knows — it just had nowhere to say it while both shared a
+       * box. A group the base said nothing about has one row and no half.
+       */
+      const part = skill.from ? (c.kind === 'added' ? 'added' : c.kind === 'removed' ? 'dropped' : null) : null;
+      return { kind: 'skills', skill, part };
     };
     const onFor = (c) => {
       const t = toggleFor(c);
       if (!t) return true;
-      return t.kind === 'wording' ? wordingOn(t.change) : skillsOn(t.skill);
+      return t.kind === 'wording' ? wordingOn(t.change) : skillsOn(t.skill, t.part);
     };
     const rows = analysis.diff ?? [];
     return { rows, toggleFor, onFor, on: rows.filter(onFor).length, total: rows.length };
@@ -1505,9 +1513,43 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   const sameItems = (a, b) =>
     Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => x === b[i]);
 
-  const skillsOn = (change) => {
+  /**
+   * The two halves of what a match does to a skills group.
+   *
+   * Narrowing a group is really two decisions — some items the posting names
+   * go in, some it never mentions come out — and the diff already writes them
+   * as two rows ("Frameworks: added Node.js, Express" and "Frameworks:
+   * dropped Unity, SDL — keeping Node.js, Express"). They shared one box,
+   * because both rows resolve to the same group and the box was the group's:
+   * ticking either did both, which is not what either row says it would do.
+   *
+   * `from: null` is the base asking for nothing, which prints every item in
+   * the group. Nothing can be *added* to that, so such a group has only the
+   * dropping half, and the ids it drops are not knowable from here — the
+   * server sends what was kept, not what the group holds. That case keeps the
+   * whole-group toggle it always had.
+   */
+  const addedBy = (change) =>
+    change.from ? (change.to ?? []).filter((id) => !change.from.includes(id)) : [];
+  const droppedBy = (change) =>
+    change.from ? change.from.filter((id) => !(change.to ?? []).includes(id)) : null;
+
+  /** What the group prints as things stand: the choice made, or the base's. */
+  const skillItemsNow = (change) => {
     const items = (state.spec?.sections ?? []).find((s) => s.kind === 'skills')?.items ?? {};
-    return sameItems(items[change.groupId], change.to);
+    return items[change.groupId] ?? change.from ?? null;
+  };
+
+  const skillsOn = (change, part) => {
+    const now = skillItemsNow(change);
+    const dropped = droppedBy(change);
+    // The group the base said nothing about: one decision, one box.
+    if (!change.from || !part) return sameItems(now, change.to);
+    if (part === 'added') {
+      const added = addedBy(change);
+      return added.length > 0 && added.every((id) => (now ?? []).includes(id));
+    }
+    return (dropped ?? []).length > 0 && !(dropped ?? []).some((id) => (now ?? []).includes(id));
   };
 
   /**
@@ -1539,13 +1581,14 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     const sections = (spec.sections ?? []).map((section) => {
       if (section.kind !== 'skills') return section;
       const items = { ...(section.items ?? {}) };
-      for (const sc of skillChanges ?? []) {
-        // `null` from the base is an answer, not a gap: a group with no entry
-        // under `items` prints all of its items, and the way to say that is
-        // to leave the key out.
-        if (sc.from) items[sc.groupId] = sc.from;
-        else delete items[sc.groupId];
-      }
+      /*
+       * The key comes out rather than being written back as the base's own
+       * list. Absent means inherited, and what is inherited here *is* the
+       * base's list — `from` is read off the flattened base — so the printed
+       * document is the same either way. Pinning it is how a resume stops
+       * seeing a skill added to its base next month.
+       */
+      for (const sc of skillChanges ?? []) delete items[sc.groupId];
       return { ...section, items };
     });
     return { ...spec, choices, ...(spec.sections ? { sections } : {}) };
@@ -1600,11 +1643,34 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * — which is not "no answer" but a real one, the group printing all of its
    * items, and the way to say it is to leave the key out.
    */
-  async function setSkills(change, on) {
+  async function setSkills(change, on, part) {
+    /*
+     * The list this group would print with `part` set the way it was just
+     * asked for, and the other half left exactly as it is.
+     *
+     * Where both halves end up on, the answer is `change.to` verbatim rather
+     * than the same set rebuilt — the match chose an order as well as a set,
+     * and a rebuilt list is a permutation of it. Where both end up off, the
+     * key is left out rather than written back as the base's own list:
+     * absent means inherited, and pinning what was inherited is how a resume
+     * stops seeing things added to its base later.
+     */
+    const wanted = () => {
+      if (!change.from || !part) return on ? change.to : null;
+      const added = addedBy(change);
+      const dropped = droppedBy(change) ?? [];
+      const addOn = part === 'added' ? on : skillsOn(change, 'added');
+      const dropOn = part === 'dropped' ? on : skillsOn(change, 'dropped');
+      if (addOn && dropOn) return change.to;
+      if (!addOn && !dropOn) return null;
+      const kept = change.from.filter((id) => !(dropOn && dropped.includes(id)));
+      return addOn ? [...kept, ...added] : kept;
+    };
+
+    const want = wanted();
     const sections = (state.spec?.sections ?? []).map((section) => {
       if (section.kind !== 'skills') return section;
       const items = { ...(section.items ?? {}) };
-      const want = on ? change.to : change.from;
       if (want) items[change.groupId] = want;
       else delete items[change.groupId];
       return { ...section, items };
@@ -1779,6 +1845,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       const toggle = toggleFor(c);
       const change = toggle?.kind === 'wording' ? toggle.change : undefined;
       const skill = toggle?.kind === 'skills' ? toggle.skill : undefined;
+      const part = toggle?.kind === 'skills' ? toggle.part : undefined;
       const because = (change?.because ?? []).length ? change.because : undefined;
       // `text` is a self-contained sentence, which means it repeats the place
       // it happened — and the place is already the label above it.
@@ -1801,12 +1868,34 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
        * A row with neither is something the base resume does, not something
        * this proposal chose, and there is nothing here to decide.
        */
-      const settable = change?.key && change.from ? () => setWording(change, !onFor(c)) : skill ? () => setSkills(skill, !onFor(c)) : null;
+      const settable = change?.key && change.from
+        ? () => setWording(change, !onFor(c))
+        : skill
+          ? () => setSkills(skill, !onFor(c), part)
+          : null;
       const on = onFor(c);
+      /*
+       * What the box would do, in the words of the row it is on. A group's
+       * two halves are separate decisions now, so "show the group the way
+       * your base has it" was wrong on both of them: it describes undoing
+       * the whole change from a box that does half of it.
+       */
+      const undoes = !skill
+        ? 'Put this one line back the way your base resume has it'
+        : part === 'added'
+          ? `Leave ${skill.groupName} without the ones this posting names`
+          : part === 'dropped'
+            ? `Keep everything ${skill.groupName} already lists`
+            : `Show ${skill.groupName} the way your base resume has it`;
+      const takes = !skill
+        ? 'Use what the match picked for this one'
+        : part === 'added'
+          ? `Add what this posting names to ${skill.groupName}`
+          : part === 'dropped'
+            ? `Drop what this posting never mentions from ${skill.groupName}`
+            : 'Use what the match picked for this one';
       const box = settable
-        ? h('label', { className: 'pick', title: on
-            ? (skill ? `Show ${skill.groupName} the way your base resume has it` : 'Put this one line back the way your base resume has it')
-            : 'Use what the match picked for this one' }, [
+        ? h('label', { className: 'pick', title: on ? undoes : takes }, [
             h('input', {
               type: 'checkbox',
               checked: on,
