@@ -546,6 +546,44 @@ async function remember(tab, page) {
   const joins = sameApplication(trail, page);
   const pages = joins ? trail.pages.filter((p) => p.url !== page.url) : [];
 
+  /*
+   * A page that starts a fresh application in a tab that was holding written
+   * work does not get to throw it away.
+   *
+   * `joins` is a judgement — a click, a company name, where the pages live —
+   * and judgements are wrong sometimes. When it says fresh, everything under
+   * `work` is replaced: the letter, the answers, the tailored resume. That is
+   * right for the resume, which can be built again in seconds, and wrong for
+   * the letter, which somebody wrote.
+   *
+   * So it is parked where a closed tab's work is parked, under the address of
+   * the page it was written on, and going back to that page brings it
+   * straight back — see the rescue in `takeWork`. Nothing is carried forward
+   * into the new application, because that is the failure this heuristic
+   * exists to prevent; nothing is destroyed either, which is the failure it
+   * was causing.
+   */
+  if (!joins && trail.work) {
+    /*
+     * Under every page of it, not only the last one. An application is a
+     * posting and a form and whatever came between; somebody coming back to
+     * it comes back to whichever of those they were last looking at, and
+     * keying only the last one meant returning to the form found nothing
+     * because the trail happened to end on the description. Five at most —
+     * see `TRAIL_MAX` — and `sweepOrphans` keeps the total bounded.
+     */
+    const parked = Object.fromEntries(
+      trail.pages
+        .map((p) => p?.url)
+        .filter(Boolean)
+        .map((url) => [orphanKey(url), { work: trail.work, save: trail.save, at: Date.now() }]),
+    );
+    if (Object.keys(parked).length > 0) {
+      await sweepOrphans();
+      await session().set(parked).catch(() => undefined);
+    }
+  }
+
   pages.push({
     url: page.url,
     title: page.title,
@@ -716,8 +754,11 @@ const handlers = {
 
     /*
      * Nothing in this tab. A tab closed on this same page may have left its
-     * writing behind — Ctrl+Shift+T gives the reopened page a new tab id, so
-     * the only thing the two have in common is the address.
+     * writing behind, and so may this tab itself, having gone off to read
+     * another job: `remember` parks what it is about to replace under every
+     * page of the application it belonged to. Ctrl+Shift+T gives a reopened
+     * page a new tab id and a new posting replaces the trail, so in both
+     * cases the address is the only thing the two have in common.
      */
     const key = orphanKey(page?.url ?? '');
     const rescued = page?.url ? (await session().get(key))[key] : null;
