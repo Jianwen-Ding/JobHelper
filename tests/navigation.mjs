@@ -533,6 +533,32 @@ async function main() {
         asked.join(' | '),
       );
 
+      /*
+       * And every one of them is on the list the worker asks.
+       *
+       * Each frame announces itself, and recording that was read-the-list,
+       * add, write-it-back — three turns, with forty-nine of them interleaved.
+       * Two frames that read the same list both write their own onto it, and
+       * the second one to land has dropped the first. Measured on this page,
+       * every load lost some: 40, 42, 43, 42 and 34 of 49 recorded.
+       *
+       * A frame missing from the list is never asked anything, so its
+       * questions never reach the card and Autofill walks past its fields.
+       * The checks above do not see it — they ask about the one frame holding
+       * the application, and the odds are with them. This counts them all.
+       */
+      const registered = await worker.evaluate(async (url) => {
+        const [tab] = await chrome.tabs.query({ url: `${url}*` });
+        const key = `frames:${tab.id}`;
+        return (await chrome.storage.session.get(key))[key] ?? [];
+      }, fixtures.urlFor(CROWDED_PAGE));
+      const onThePage = page.frames().length - 1;
+      check(
+        'every frame that announced itself is on the list the worker asks',
+        registered.length === onThePage,
+        `${registered.length} recorded of ${onThePage} on the page`,
+      );
+
       await card.getByRole('button', { name: 'Autofill this form' }).click();
       /*
        * Until the form has something in it, rather than for six seconds. Same
