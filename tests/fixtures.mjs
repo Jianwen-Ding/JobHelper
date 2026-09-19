@@ -1588,6 +1588,37 @@ export async function requireOpenSave(server) {
  * save open, the card sat on "reading the posting" until the timeout, thirty
  * seconds later, saying nothing about which server had refused.
  */
+/**
+ * The extension's service worker, once it can actually be talked to.
+ *
+ * `context.serviceWorkers()[0]` hands back the worker target as soon as it
+ * exists, which is not the same moment its extension APIs are bound. On a
+ * loaded machine the gap is wide enough to fall into: a suite evaluated in it
+ * and got `Cannot read properties of undefined (reading 'query')` from
+ * `chrome.tabs.query` — inside an extension worker, where `chrome.tabs` is
+ * never legitimately absent.
+ *
+ * So the wait is for the thing that is actually needed rather than for the
+ * target to appear. Said plainly if it never arrives, because "chrome.tabs is
+ * undefined" one call later is a sentence nobody can act on.
+ */
+export async function extensionWorker(context, { timeout = 20_000 } = {}) {
+  const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker', { timeout }));
+  const until = Date.now() + timeout;
+  for (;;) {
+    const ready = await worker.evaluate(() => Boolean(globalThis.chrome?.tabs?.query)).catch(() => false);
+    if (ready) return worker;
+    if (Date.now() > until) {
+      throw new Error(
+        'The extension service worker is running but its APIs never appeared — ' +
+          '`chrome.tabs` is still undefined after ' + Math.round(timeout / 1000) + 's. ' +
+          'That is the browser starting the worker and not finishing, not anything this suite did.',
+      );
+    }
+    await new Promise((go) => setTimeout(go, 100));
+  }
+}
+
 export async function pointExtensionAt(context, worker, server) {
   const setup = await context.newPage();
   await setup.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
