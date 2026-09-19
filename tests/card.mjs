@@ -1096,6 +1096,113 @@ async function main() {
   check('and comes down when it finishes', overlap.barAfter === false, JSON.stringify(overlap));
 
   /*
+   * Coming back from the builder having written something new.
+   *
+   * A wording added there is an *alternate*, and an alternate is only reached
+   * by something choosing it. On an untailored proposal — which is now where
+   * every application starts — rebuilding in the same mode can never use what
+   * was just written: it rebuilds the resume exactly as it is kept, which is
+   * what was already on screen. The sentence said "to use anything you added".
+   */
+  console.log('\nComing back from the builder');
+
+  const cameBack = await inPage(
+    new Function('createCard', `return (${(async (createCard, builtWith) => {
+      const sent = [];
+      const handle = createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Platform Engineer', company: 'Acme' },
+          spec: { id: 'job-acme', label: 'Acme' },
+          rationale: [],
+          diff: [],
+          tailor: builtWith,
+        },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async (action, payload) => {
+          sent.push({ action, tailor: payload?.tailor });
+          return action === 'aiStatus' ? { active: true, state: 'on' } : {};
+        },
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      await new Promise((r) => setTimeout(r, 80));
+      handle.cameBack?.();
+      // `cameBack` only fires where the card sent you to the builder.
+      if (!root.querySelector('.hint.warn')) {
+        root.querySelector('button.mode.ghost')?.click();
+        handle.cameBack?.();
+      }
+      await new Promise((r) => setTimeout(r, 80));
+      const offer = [...root.querySelectorAll('.hint.warn button')][0];
+      const label = offer?.textContent ?? null;
+      offer?.click();
+      await new Promise((r) => setTimeout(r, 200));
+      return { label, asked: sent.filter((c) => c.action === 'rebuild').map((c) => c.tailor) };
+    }).toString()})(createCard, ${JSON.stringify('none')})`),
+  );
+
+  check(
+    'on an untailored proposal the offer names the thing that would pick it up',
+    cameBack.label === 'Match by keyword',
+    JSON.stringify(cameBack),
+  );
+  check(
+    'and asks for that, not for another copy of what was already shown',
+    cameBack.asked.at(-1) === 'match',
+    JSON.stringify(cameBack.asked),
+  );
+
+  const cameBackMatched = await inPage(
+    new Function('createCard', `return (${(async (createCard, builtWith) => {
+      const sent = [];
+      const handle = createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Platform Engineer', company: 'Acme' },
+          spec: { id: 'job-acme', label: 'Acme' },
+          rationale: [],
+          diff: [],
+          tailor: builtWith,
+        },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async (action, payload) => {
+          sent.push({ action, tailor: payload?.tailor });
+          return action === 'aiStatus' ? { active: true, state: 'on' } : {};
+        },
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      await new Promise((r) => setTimeout(r, 80));
+      handle.cameBack?.();
+      if (!root.querySelector('.hint.warn')) {
+        root.querySelector('button.mode.ghost')?.click();
+        handle.cameBack?.();
+      }
+      await new Promise((r) => setTimeout(r, 80));
+      const offer = [...root.querySelectorAll('.hint.warn button')][0];
+      const label = offer?.textContent ?? null;
+      offer?.click();
+      await new Promise((r) => setTimeout(r, 200));
+      return { label, asked: sent.filter((c) => c.action === 'rebuild').map((c) => c.tailor) };
+    }).toString()})(createCard, ${JSON.stringify('ai')})`),
+  );
+
+  /*
+   * And on one that was already tailored it repeats what was asked for, rather
+   * than quietly dropping you into a different mode.
+   */
+  check(
+    'a tailored proposal is offered the same thing again',
+    cameBackMatched.label === 'Build it again' && cameBackMatched.asked.at(-1) === 'ai',
+    JSON.stringify(cameBackMatched),
+  );
+
+  /*
    * Building puts the files where the upload dialog will be.
    *
    * The flat folder is a projection of the tracker, so nothing reached it

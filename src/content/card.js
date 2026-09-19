@@ -2185,27 +2185,38 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
          * switched by hand on this card, and it is not worth guessing that
          * the trip to the editor mattered more than those did.
          */
-        state.editedElsewhere
-          ? h('div', { className: 'hint warn' }, [
-              h('span', { textContent: 'You have been editing the store. ' }),
-              h('button', {
-                className: 'link',
-                textContent: 'Build it again',
-                disabled: busyIn('resume'),
-                onclick: () => {
-                  state.editedElsewhere = false;
-                  const mode = state.builtWith ?? 'match';
-                  state.rebuilding = mode;
-                  return act('rebuild', { tailor: mode }, () => {
-                    state.builtWith = mode;
-                    state.render = null;
-                    state.rebuilding = null;
-                  });
-                },
-              }),
-              h('span', { textContent: ' to use anything you added.' }),
-            ])
-          : null,
+        (() => {
+          if (!state.editedElsewhere) return null;
+          /*
+           * What the offer is depends on what this proposal is.
+           *
+           * A wording added in the builder is an *alternate*, and an alternate
+           * is only reached by something choosing it. So on an untailored
+           * proposal — which is now where every application starts — "build it
+           * again" in the same mode can never use what you just wrote: it
+           * rebuilds the resume exactly as you keep it, which is what it was
+           * already showing. The sentence promised otherwise.
+           *
+           * So the offer names the thing that would actually pick it up, and
+           * on a proposal that was already matched or tailored it repeats what
+           * was asked for rather than quietly changing the mode.
+           */
+          const mode = state.builtWith && state.builtWith !== 'none' ? state.builtWith : 'match';
+          const same = mode === state.builtWith;
+          return h('div', { className: 'hint warn' }, [
+            h('span', { textContent: 'You have been editing the store. ' }),
+            h('button', {
+              className: 'link',
+              textContent: same ? 'Build it again' : 'Match by keyword',
+              disabled: busyIn('resume'),
+              onclick: () => {
+                state.editedElsewhere = false;
+                return rebuildAs(mode);
+              },
+            }),
+            h('span', { textContent: ' to use anything you added.' }),
+          ]);
+        })(),
         /*
          * Which resume this is, and what was done to it.
          *
