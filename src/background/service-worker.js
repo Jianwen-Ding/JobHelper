@@ -46,6 +46,62 @@ const SLOW_TIMEOUT_MS = 10 * 60_000;
  */
 const saveOf = new Map();
 
+/**
+ * Work the user is allowed to walk away from, by tab.
+ *
+ * A tailoring pass is a model reading a posting — minutes of it — and until
+ * there was a way out the only ways out were waiting and closing the card. The
+ * controller for the request in flight is kept here so a later "stop" can
+ * reach it.
+ *
+ * What stopping does and does not do is worth being exact about: it abandons
+ * the request, so the extension lets go of the connection and the reply is
+ * never applied. The model on the other end is a process ResumeM-M started and
+ * it keeps going until it is finished. Nothing here can reach into that, and
+ * pretending otherwise would be the more comfortable lie.
+ */
+const stoppable = new Map();
+
+/**
+ * The reason a controller in `stoppable` was aborted.
+ *
+ * A fresh object each time, because `AbortSignal.any` forwards the reason of
+ * whichever signal fired first and the check downstream is identity-free: it
+ * asks whether the reason is marked, not which controller it came from.
+ */
+function stopReason() {
+  const err = new Error('Stopped.');
+  err.jobhelper = { stopped: true };
+  return err;
+}
+
+/**
+ * Run `fn` with a signal the tab can abort, and forget the controller after.
+ *
+ * Held as a set per tab, and each controller remembers `what` it is for,
+ * because a tab can have a tailoring pass and a writing pass in the air at
+ * once — the card runs them in separate lanes on purpose, so that typing a
+ * cover letter is possible while the resume is being read. The Stop beside
+ * the tailoring bar has to mean *that* run and not the letter being written
+ * underneath it; a stop that took both down would be a worse trap than the
+ * one it was added to fix, because at least waiting does not throw work away.
+ */
+async function stoppably(tab, what, fn) {
+  const id = tab?.id;
+  if (id === undefined) return fn(undefined);
+  const ctl = new AbortController();
+  ctl.what = what;
+  const held = stoppable.get(id) ?? new Set();
+  held.add(ctl);
+  stoppable.set(id, held);
+  try {
+    return await fn(ctl.signal);
+  } finally {
+    held.delete(ctl);
+    if (held.size === 0) stoppable.delete(id);
+  }
+}
+
 async function serverFetch(path, options = {}) {
   const { timeoutMs = REQUEST_TIMEOUT_MS, save, ...init } = options;
   const { serverUrl } = await getSettings();
@@ -55,7 +111,17 @@ async function serverFetch(path, options = {}) {
   try {
     res = await fetch(url, {
       ...init,
-      signal: init.signal ?? AbortSignal.timeout(timeoutMs),
+      /*
+       * Both deadlines, not whichever was passed.
+       *
+       * A caller's signal used to replace the timeout, which meant every
+       * request that could be stopped by hand also lost its ceiling: a wedged
+       * server would have hung until the tab was closed. `any` aborts on the
+       * first of the two, and the reason tells them apart below.
+       */
+      signal: init.signal
+        ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
+        : AbortSignal.timeout(timeoutMs),
       headers: {
         'Content-Type': 'application/json',
         ...(save ? { 'X-RMM-Project': save } : {}),
@@ -66,6 +132,17 @@ async function serverFetch(path, options = {}) {
     // Marked, so the card can offer the way out rather than only naming the
     // problem. The text still has to stand on its own: it is what a user sees
     // if anything swallows the marker.
+    /*
+     * Asked to stop, rather than gone wrong. `AbortSignal.timeout` and a
+     * controller we aborted ourselves both arrive here as an AbortError, and
+     * telling somebody who has just pressed Stop that the server did not
+     * answer would be blaming the server for doing as it was told. The mark
+     * on the reason is what separates them; the name on the exception does
+     * not.
+     */
+    if (init.signal?.aborted && init.signal.reason?.jobhelper?.stopped) {
+      throw stopReason();
+    }
     const wedged = cause?.name === 'TimeoutError' || cause?.name === 'AbortError';
     const offline = new Error(
       wedged
@@ -802,39 +879,42 @@ const handlers = {
      * this fallback is only ever the opening analysis.
      */
     const mode = tailor ?? (typeof useAi === 'boolean' ? (useAi ? 'ai' : 'match') : 'none');
-    const result = await serverFetch('/api/extension/analyze', {
-      method: 'POST',
-      /*
-       * The long deadline belongs to the AI and nothing else.
-       *
-       * All three modes came through here on `SLOW_TIMEOUT_MS`, which is ten
-       * minutes, because one of them runs a model. The other two read the
-       * pages and pick among phrasings already written — no model, no LaTeX,
-       * no network beyond this one call. Measured against the worst case worth
-       * having, eight pages totalling 17.6MB against a real save, that is two
-       * seconds.
-       *
-       * So a keyword match or a straight copy that went wrong sat there
-       * looking like work for ten minutes before saying anything, which is
-       * indistinguishable from a wedged server and is what it was. Twenty
-       * seconds is ten times the measured worst case, and the difference is
-       * between a message you can act on and a morning.
-       */
-      timeoutMs: mode === 'ai' ? SLOW_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
-      body: JSON.stringify({
-        url,
-        title,
-        html,
-        // Every page of this application, not just the one in front of you.
-        // Forgetting to pass this on is invisible: the analysis still works,
-        // it is just written from the wrong half of what was read.
-        pages,
-        baseResumeId: settings.baseResumeId,
-        tailor: mode,
-        // Older servers read this and know nothing of `tailor`.
-        useAi: mode === 'ai',
+    const result = await stoppably(tab, 'rebuild', (signal) =>
+      serverFetch('/api/extension/analyze', {
+        method: 'POST',
+        signal,
+        /*
+         * The long deadline belongs to the AI and nothing else.
+         *
+         * All three modes came through here on `SLOW_TIMEOUT_MS`, which is ten
+         * minutes, because one of them runs a model. The other two read the
+         * pages and pick among phrasings already written — no model, no LaTeX,
+         * no network beyond this one call. Measured against the worst case
+         * worth having, eight pages totalling 17.6MB against a real save, that
+         * is two seconds.
+         *
+         * So a keyword match or a straight copy that went wrong sat there
+         * looking like work for ten minutes before saying anything, which is
+         * indistinguishable from a wedged server and is what it was. Twenty
+         * seconds is ten times the measured worst case, and the difference is
+         * between a message you can act on and a morning.
+         */
+        timeoutMs: mode === 'ai' ? SLOW_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
+        body: JSON.stringify({
+          url,
+          title,
+          html,
+          // Every page of this application, not just the one in front of you.
+          // Forgetting to pass this on is invisible: the analysis still works,
+          // it is just written from the wrong half of what was read.
+          pages,
+          baseResumeId: settings.baseResumeId,
+          tailor: mode,
+          // Older servers read this and know nothing of `tailor`.
+          useAi: mode === 'ai',
+        }),
       }),
-    });
+    );
 
     /*
      * And the page counts from here, in the same message that read it.
@@ -1010,24 +1090,27 @@ const handlers = {
   },
 
   /** Answer one question, reusing a stored answer unless asked to redraft. */
-  async answerQuestion({ question, force, job }) {
-    return serverFetch('/api/ai/answer', {
-      method: 'POST',
-      timeoutMs: SLOW_TIMEOUT_MS,
-      body: JSON.stringify({
-        question,
-        force,
-        // Mapped into the server's shape, as `coverLetter` does below.
-        job: job
-          ? {
-              jobTitle: job.title,
-              company: job.company,
-              jobDescription: job.description ?? '',
-              url: job.url ?? job.source,
-            }
-          : undefined,
+  async answerQuestion({ question, force, job }, tab) {
+    return stoppably(tab, 'answerQuestion', (signal) =>
+      serverFetch('/api/ai/answer', {
+        method: 'POST',
+        signal,
+        timeoutMs: SLOW_TIMEOUT_MS,
+        body: JSON.stringify({
+          question,
+          force,
+          // Mapped into the server's shape, as `coverLetter` does below.
+          job: job
+            ? {
+                jobTitle: job.title,
+                company: job.company,
+                jobDescription: job.description ?? '',
+                url: job.url ?? job.source,
+              }
+            : undefined,
+        }),
       }),
-    });
+    );
   },
 
   async saveAnswer({ question, answer, itemId }) {
@@ -1046,44 +1129,51 @@ const handlers = {
    * willing to take it, and without those the pieces cannot be collected
    * apart from each other.
    */
-  async writeApplication({ spec, job, letter, questions }) {
-    return serverFetch('/api/extension/write', {
-      method: 'POST',
-      timeoutMs: SLOW_TIMEOUT_MS,
-      body: JSON.stringify({
-        // The base, as `coverLetter` does: a tailored spec exists only in the
-        // card until the folder is built, so the store has never seen it.
-        resumeId: spec.extends ?? spec.id,
-        job: {
-          jobTitle: job.title,
-          company: job.company,
-          jobDescription: job.description ?? '',
-          url: job.url ?? job.source,
-        },
-        letter,
-        questions,
+  async writeApplication({ spec, job, letter, questions }, tab) {
+    return stoppably(tab, 'writeApplication', (signal) =>
+      serverFetch('/api/extension/write', {
+        method: 'POST',
+        signal,
+        timeoutMs: SLOW_TIMEOUT_MS,
+        body: JSON.stringify({
+          // The base, as `coverLetter` does: a tailored spec exists only in
+          // the card until the folder is built, so the store has never seen
+          // it.
+          resumeId: spec.extends ?? spec.id,
+          job: {
+            jobTitle: job.title,
+            company: job.company,
+            jobDescription: job.description ?? '',
+            url: job.url ?? job.source,
+          },
+          letter,
+          questions,
+        }),
       }),
-    });
+    );
   },
 
   /**
    * Draft a cover letter. The server returns the relevant previous letters
    * whether or not the AI runs, so there is always something to start from.
    */
-  async coverLetter({ spec, job }) {
-    return serverFetch('/api/ai/cover-letter', {
-      method: 'POST',
-      timeoutMs: SLOW_TIMEOUT_MS,
-      body: JSON.stringify({
-        resumeId: spec.extends ?? spec.id,
-        job: {
-          jobTitle: job.title,
-          company: job.company,
-          jobDescription: job.description ?? '',
-          url: job.url,
-        },
+  async coverLetter({ spec, job }, tab) {
+    return stoppably(tab, 'coverLetter', (signal) =>
+      serverFetch('/api/ai/cover-letter', {
+        method: 'POST',
+        signal,
+        timeoutMs: SLOW_TIMEOUT_MS,
+        body: JSON.stringify({
+          resumeId: spec.extends ?? spec.id,
+          job: {
+            jobTitle: job.title,
+            company: job.company,
+            jobDescription: job.description ?? '',
+            url: job.url,
+          },
+        }),
       }),
-    });
+    );
   },
 
   async saveLetter({ body, job }) {
@@ -1174,6 +1264,25 @@ const handlers = {
       // just sent an application. It stays in the tracker as "applying".
       return { ok: false, error: String(err?.message ?? err) };
     }
+  },
+
+  /**
+   * Let go of whatever this tab has in the air.
+   *
+   * Answers how many were let go of rather than `{ ok: true }`, because zero
+   * is a real and useful answer: it means the reply had already landed and
+   * the card is about to show it, and a card that has just hidden its
+   * progress bar on the strength of a stop it did not actually make would be
+   * lying about which of the two happened.
+   */
+  async cancelWork({ what }, tab) {
+    const held = stoppable.get(tab?.id);
+    if (!held) return { stopped: 0 };
+    // A copy, because aborting runs the `finally` in `stoppably`, which
+    // mutates the set we would otherwise be iterating.
+    const going = [...held].filter((ctl) => !what?.length || what.includes(ctl.what));
+    for (const ctl of going) ctl.abort(stopReason());
+    return { stopped: going.length };
   },
 
   async trackStatus({ id, status, note }) {

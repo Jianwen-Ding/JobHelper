@@ -430,11 +430,54 @@ async function main() {
     unusable.slice(0, 120),
   );
 
+  /*
+   * And a keyword match says which of its two levers actually moved.
+   *
+   * It used to claim "wordings swapped" over every match, which on most
+   * stores is false: narrowing a skills group needs nothing but the group,
+   * while swapping a wording needs a line that has a second wording and an
+   * alternate that clearly beats the current one. A match that only cut
+   * skills read as one that had rewritten your sentences.
+   */
+  const swapsOnly = await summaryFor({
+    tailor: 'match',
+    aiUsed: false,
+    rationale: [{ key: 'b1', from: 'v_a', to: 'v_b', toText: 'Built a Kafka pipeline', because: ['kafka'] }],
+  });
+  check(
+    'a match that swapped a wording says so',
+    /wordings swapped/i.test(swapsOnly) && !/skills/i.test(swapsOnly),
+    swapsOnly.slice(0, 140),
+  );
+
+  const cutsOnly = await summaryFor({
+    tailor: 'match',
+    aiUsed: false,
+    skillChanges: [{ groupId: 'sk_lang', groupName: 'Languages', from: null, to: ['s_py'] }],
+  });
+  check(
+    'and one that only narrowed skills does not claim to have rewritten anything',
+    /skills/i.test(cutsOnly) && /no wording changed/i.test(cutsOnly),
+    cutsOnly.slice(0, 140),
+  );
+
+  const both = await summaryFor({
+    tailor: 'match',
+    aiUsed: false,
+    rationale: [{ key: 'b1', from: 'v_a', to: 'v_b', toText: 'Built a Kafka pipeline', because: ['kafka'] }],
+    skillChanges: [{ groupId: 'sk_lang', groupName: 'Languages', from: null, to: ['s_py'] }],
+  });
+  check(
+    'and one that did both names both',
+    /wordings swapped/i.test(both) && /skills narrowed/i.test(both),
+    both.slice(0, 140),
+  );
+
   const plainMatch = await summaryFor({ tailor: 'match', aiUsed: false });
   check(
-    'and a keyword match nobody asked the AI for still reads as one',
-    /keyword match against phrasings/i.test(plainMatch) && !/could not be started|nothing usable/i.test(plainMatch),
-    plainMatch.slice(0, 120),
+    'a keyword match that found nothing says that, rather than nothing',
+    /found nothing to change/i.test(plainMatch) && !/could not be started|nothing usable/i.test(plainMatch),
+    plainMatch.slice(0, 140),
   );
 
   /*
@@ -499,7 +542,7 @@ async function main() {
       // minutes long and has nothing to do with them.
       keepOriginal: (() => {
         root.querySelector('.fold-changes')?.click();
-        const b = root.querySelector('button.undo-one');
+        const b = root.querySelector('.pick input');
         return b ? b.disabled : null;
       })(),
       // Filing waits for the two things it files.
@@ -663,23 +706,40 @@ async function main() {
   );
 
   /*
-   * Putting one change back.
+   * Taking one change out, and putting it back.
    *
    * "Undo all" threw away every swap and sent the base resume untouched,
    * which is the wrong size of answer to "that one is wrong". The match is
    * usually right about most of them and occasionally wrong about one — a
    * degree line swapped for one naming a concentration, say — and the one it
    * is wrong about is the one you notice.
+   *
+   * The first answer to that was a "Keep the original" link that removed the
+   * row it was on, which decided the question permanently in the other
+   * direction: the evidence disappeared at the moment of the decision, so
+   * there was no comparing the two readings and no way back from a misclick
+   * short of rebuilding the whole proposal. A box goes both ways and leaves
+   * the row where it is.
    */
-  console.log('\nKeeping the original wording of one change');
+  console.log('\nTaking one change out, and putting it back');
 
-  const undoing = await inPage((createCard) => {
+  const undoing = await inPage(async (createCard) => {
     const sent = [];
     const handle = createCard({
       analysis: {
         isJobPosting: true,
         job: { title: 'Platform Engineer', company: 'Acme' },
-        spec: { id: 'job-acme', label: 'Acme', choices: { b_pipeline: 'v_kafka' } },
+        /*
+         * Both swaps are in `choices`, which is what the server sends: it
+         * derives the spec and the rationale from one match result, so every
+         * key the rationale names is a key the spec chose. Which box is
+         * ticked is read off exactly this.
+         */
+        spec: {
+          id: 'job-acme',
+          label: 'Acme',
+          choices: { b_pipeline: 'v_kafka', 'edu_neu.subtitle': 'v_systems' },
+        },
         baseLabel: 'New grad resume',
         tailor: 'match',
         diff: [
@@ -705,23 +765,46 @@ async function main() {
     const root = document.querySelector('#jobhelper-card-host').shadowRoot;
     const rows = () => root.querySelectorAll('.change').length;
     const count = () => root.querySelector('.diff-head .count')?.textContent ?? null;
-    const undoButtons = () => [...root.querySelectorAll('.undo-one')];
+    const boxes = () => [...root.querySelectorAll('.pick input')];
+    const ticks = () => boxes().map((b) => b.checked);
     const text = () => root.querySelector('.changes')?.textContent ?? '';
+    // Undoing recompiles, and the boxes are held while it does; a second
+    // click landing on a disabled one would do nothing and pass for the
+    // wrong reason.
+    const settle = () => new Promise((r) => setTimeout(r, 60));
 
     // Shut by default, so this is the click that reveals the rows at all.
     const shutAtFirst = Boolean(root.querySelector('.changes.shut'));
     const hiddenAtFirst = root.querySelector('.change')?.checkVisibility?.() === false;
     root.querySelector('.fold-changes')?.click();
 
-    const before = { rows: rows(), count: count(), offered: undoButtons().length, shutAtFirst, hiddenAtFirst };
+    const before = { rows: rows(), count: count(), offered: boxes().length, ticks: ticks(), shutAtFirst, hiddenAtFirst };
 
-    // Put back the second one — the degree line.
-    undoButtons()[1].click();
+    // Take out the second one — the degree line.
+    boxes()[1].click();
+    await settle();
+    const after = {
+      rows: rows(),
+      count: count(),
+      ticks: ticks(),
+      // The row stays, and it still says what it would have said.
+      stillNames: /Systems concentration/.test(text()),
+      struck: Boolean(root.querySelectorAll('.change')[1]?.classList.contains('off')),
+      choices: sent.filter((c) => c.action === 'render').at(-1)?.payload?.spec?.choices ?? null,
+    };
+
+    // And back in again, which is the thing the old link could not do.
+    boxes()[1].click();
+    await settle();
     return {
       before,
-      after: { rows: rows(), count: count(), stillNames: /Systems concentration/.test(text()) },
-      // What the resume is compiled from now, which is also what filing sends.
-      recompiled: sent.filter((c) => c.action === 'render').map((c) => c.payload.spec.choices),
+      after,
+      back: {
+        rows: rows(),
+        count: count(),
+        ticks: ticks(),
+        choices: sent.filter((c) => c.action === 'render').at(-1)?.payload?.spec?.choices ?? null,
+      },
     };
   });
 
@@ -733,27 +816,52 @@ async function main() {
    */
   check('the list of changes starts shut', undoing.before.shutAtFirst === true, JSON.stringify(undoing.before));
   check('and its rows really are out of the way', undoing.before.hiddenAtFirst === true, JSON.stringify(undoing.before));
-  check('every proposed change offers to be put back', undoing.before.offered === 2, JSON.stringify(undoing.before));
+  check('every proposed change gets a box', undoing.before.offered === 2, JSON.stringify(undoing.before));
   check(
-    'putting one back takes that row off the list',
-    undoing.after.rows === undoing.before.rows - 1,
+    'and they start ticked, because the changes start applied',
+    JSON.stringify(undoing.before.ticks) === '[true,true]',
+    JSON.stringify(undoing.before.ticks),
+  );
+  check(
+    'unticking one leaves the row where it is',
+    undoing.after.rows === undoing.before.rows,
     `${undoing.before.rows} → ${undoing.after.rows}`,
   );
-  check('and the count agrees', undoing.after.count === '1 change', String(undoing.after.count));
-  check('and it is the one that was asked for', undoing.after.stillNames === false);
+  check('still naming what it would have said', undoing.after.stillNames === true);
+  check('but marked as not in the document', undoing.after.struck === true, JSON.stringify(undoing.after));
+  check(
+    'and only that one comes off',
+    JSON.stringify(undoing.after.ticks) === '[true,false]',
+    JSON.stringify(undoing.after.ticks),
+  );
+  check('the count says how many are in', undoing.after.count === '1 of 2 changes', String(undoing.after.count));
   /*
-   * The half that matters. Taking the row off the screen and sending the
-   * swapped wording anyway would be worse than not offering the button.
+   * The half that matters. Marking the row on screen and sending the swapped
+   * wording anyway would be worse than not offering the box.
    */
   check(
     'the resume is recompiled with the original wording pinned back',
-    undoing.recompiled.at(-1)?.['edu_neu.subtitle'] === 'v_plain',
-    JSON.stringify(undoing.recompiled.at(-1)),
+    undoing.after.choices?.['edu_neu.subtitle'] === 'v_plain',
+    JSON.stringify(undoing.after.choices),
   );
   check(
-    'and the change that was not undone is left alone',
-    undoing.recompiled.at(-1)?.b_pipeline === 'v_kafka',
-    JSON.stringify(undoing.recompiled.at(-1)),
+    'and the change that was left alone is left alone',
+    undoing.after.choices?.b_pipeline === 'v_kafka',
+    JSON.stringify(undoing.after.choices),
+  );
+  /*
+   * And the direction the old one-way link had no answer for at all.
+   */
+  check(
+    'ticking it again puts the change back',
+    JSON.stringify(undoing.back.ticks) === '[true,true]',
+    JSON.stringify(undoing.back.ticks),
+  );
+  check('and the count with it', undoing.back.count === '2 changes', String(undoing.back.count));
+  check(
+    'in the resume that is compiled, not only on the screen',
+    undoing.back.choices?.['edu_neu.subtitle'] === 'v_systems',
+    JSON.stringify(undoing.back.choices),
   );
 
   /*
@@ -767,7 +875,7 @@ async function main() {
    * groups cut at once off the same handful of keywords. The only answer on
    * offer was to throw the whole proposal away.
    */
-  console.log('\nKeeping a skills group the way it was');
+  console.log('\nTaking a skills group out, and putting it back');
 
   const skillUndo = await inPage(async (createCard) => {
     const sent = [];
@@ -812,52 +920,68 @@ async function main() {
 
     const root = document.querySelector('#jobhelper-card-host').shadowRoot;
     const rows = () => root.querySelectorAll('.change').length;
-    const undoButtons = () => [...root.querySelectorAll('.undo-one')];
+    const boxes = () => [...root.querySelectorAll('.pick input')];
+    const ticks = () => boxes().map((b) => b.checked);
     const text = () => root.querySelector('.changes')?.textContent ?? '';
 
     root.querySelector('.fold-changes')?.click();
-    const offered = undoButtons().length;
+    const offered = boxes().length;
     const before = rows();
 
-    // Between the two, because undoing recompiles and the rest of the undo
-    // buttons are held while it does — a second click landing on a disabled
-    // button would do nothing and this would pass for the wrong reason.
-    const settle = () => new Promise((r) => setTimeout(r, 50));
+    // Between clicks, because a flip recompiles and the rest of the boxes
+    // are held while it does — a second click landing on a disabled one
+    // would do nothing and this would pass for the wrong reason.
+    const settle = () => new Promise((r) => setTimeout(r, 60));
 
-    // Guarded rather than assumed: without the fix there are no skills undo
-    // buttons at all, and this has to report that rather than throw.
-    const clickUndo = async (at) => {
-      const button = undoButtons()[at < 0 ? undoButtons().length + at : at];
-      if (!button) return false;
-      button.click();
+    // Guarded rather than assumed: without the fix there are no boxes on the
+    // skills rows at all, and this has to report that rather than throw.
+    const flip = async (at) => {
+      const box = boxes()[at < 0 ? boxes().length + at : at];
+      if (!box) return false;
+      box.click();
       await settle();
       return true;
     };
 
     // The group whose base list was explicit.
-    const clicked = await clickUndo(1);
-    const afterFirst = { rows: rows(), stillNames: /dropped Ruby/.test(text()), clicked };
+    const clicked = await flip(1);
+    const afterFirst = { rows: rows(), stillNames: /dropped Ruby/.test(text()), ticks: ticks(), clicked };
     // And the one where the base said nothing.
-    await clickUndo(-1);
+    await flip(-1);
 
-    const last = sent.filter((c) => c.action === 'render').at(-1)?.payload?.spec;
-    const skills = (last?.sections ?? []).find((x) => x.kind === 'skills');
+    const specAt = (n) => sent.filter((c) => c.action === 'render').at(n)?.payload?.spec;
+    const itemsOf = (spec) => (spec?.sections ?? []).find((x) => x.kind === 'skills')?.items;
+    const off = specAt(-1);
+
+    // Both back on, which is the direction the one-way link never had.
+    await flip(1);
+    await flip(-1);
+    const on = specAt(-1);
+
     return {
       offered,
       before,
       afterFirst,
       after: rows(),
-      items: skills?.items ?? null,
-      hasTools: skills ? Object.prototype.hasOwnProperty.call(skills.items ?? {}, 'sk_tools') : null,
-      choices: last?.choices ?? null,
+      items: itemsOf(off) ?? null,
+      hasTools: itemsOf(off) ? Object.prototype.hasOwnProperty.call(itemsOf(off), 'sk_tools') : null,
+      choices: off?.choices ?? null,
+      backTicks: ticks(),
+      backLang: itemsOf(on)?.sk_lang ?? null,
+      backTools: itemsOf(on)?.sk_tools ?? null,
     };
   });
 
-  check('a skills row offers to be put back, like every other row', skillUndo.offered === 3, JSON.stringify(skillUndo));
+  check('a skills row gets a box, like every other row', skillUndo.offered === 3, JSON.stringify(skillUndo));
   check(
-    'putting one back takes that row off the list',
-    skillUndo.afterFirst.rows === skillUndo.before - 1 && skillUndo.afterFirst.stillNames === false,
+    'unticking one leaves the row, and the reasoning on it, in place',
+    skillUndo.afterFirst.rows === skillUndo.before && skillUndo.afterFirst.stillNames === true,
     JSON.stringify(skillUndo.afterFirst),
+  );
+  check(
+    'and takes only that one off',
+    JSON.stringify(skillUndo.afterFirst.ticks) === '[true,false,true]',
+    JSON.stringify(skillUndo.afterFirst.ticks),
   );
   /*
    * The half that matters, as with the wordings: taking the row off the screen
@@ -878,7 +1002,28 @@ async function main() {
     skillUndo.hasTools === false,
     JSON.stringify(skillUndo.items),
   );
-  check('both rows are gone and the wording swap is untouched', skillUndo.after === 1 && skillUndo.choices?.b_pipeline === 'v_kafka', JSON.stringify(skillUndo));
+  check(
+    'all three rows are still there and the wording swap is untouched',
+    skillUndo.after === 3 && skillUndo.choices?.b_pipeline === 'v_kafka',
+    JSON.stringify(skillUndo),
+  );
+  /*
+   * And back. This is the whole reason for the box: a narrowed skills group
+   * is the part of a match most likely to be wrong and the part you most want
+   * to see both ways before deciding, and the link it replaces could only
+   * ever be pressed once.
+   */
+  check(
+    'ticking them again narrows both groups back',
+    JSON.stringify(skillUndo.backTicks) === '[true,true,true]',
+    JSON.stringify(skillUndo.backTicks),
+  );
+  check(
+    'to exactly what the match picked, including the one the base said nothing about',
+    JSON.stringify(skillUndo.backLang) === JSON.stringify(['s_py', 's_go'])
+      && JSON.stringify(skillUndo.backTools) === JSON.stringify(['t_k8s']),
+    JSON.stringify([skillUndo.backLang, skillUndo.backTools]),
+  );
 
   /*
    * The letter and the answers, written by one run.
@@ -1203,6 +1348,82 @@ async function main() {
   );
 
   /*
+   * Questions a model must not answer for you.
+   *
+   * A salary expectation it invents is a number the applicant did not choose
+   * and may be held to. The self-identification questions are voluntary by law
+   * and about the person, so an answer written on their behalf is a lie told
+   * in their name about something they were entitled to decline.
+   *
+   * Still shown, still typeable — hiding a question the form requires is the
+   * worse failure. What goes is the offer to write it.
+   */
+  console.log('\nQuestions that are yours alone');
+
+  const yours = await inPage(async (createCard) => {
+    const sent = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme', description: 'Kafka.' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [
+        { question: 'Why us?', answer: '', confident: false },
+        {
+          question: 'What are your salary expectations for this role?',
+          answer: '',
+          confident: false,
+          yours: 'A figure here is yours to choose.',
+        },
+      ],
+      needsCoverLetter: true,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        return action === 'aiStatus' ? { active: true, state: 'on' } : {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    await new Promise((r) => setTimeout(r, 120));
+
+    const boxes = [...root.querySelectorAll('textarea[data-field^="answer:"]')].map((t) => t.dataset.field);
+    const drafts = [...root.querySelectorAll('button')].filter((b) => /Draft an answer/.test(b.textContent)).length;
+    const writeAll = [...root.querySelectorAll('button')].find((b) => /Write the letter and/.test(b.textContent));
+    const label = writeAll?.textContent ?? null;
+    writeAll?.click();
+    await new Promise((r) => setTimeout(r, 250));
+
+    return {
+      boxes,
+      drafts,
+      label,
+      said: /yours to choose/.test(root.textContent),
+      handed: (sent.find((c) => c.action === 'writeApplication')?.payload?.questions ?? []).map((q) => q.question),
+    };
+  });
+
+  check('the question is still shown, not hidden', yours.boxes.length === 2, JSON.stringify(yours.boxes));
+  check('and says why it is yours', yours.said === true, JSON.stringify(yours));
+  check(
+    'but nothing offers to write it',
+    yours.drafts === 1,
+    `${yours.drafts} draft buttons for 2 questions`,
+  );
+  check(
+    'the run is not handed it either',
+    yours.handed.length === 1 && /Why us/.test(yours.handed[0] ?? ''),
+    JSON.stringify(yours.handed),
+  );
+  check(
+    'and the button does not promise to write it',
+    /and 1 answer\b/.test(yours.label ?? ''),
+    String(yours.label),
+  );
+
+  /*
    * Building puts the files where the upload dialog will be.
    *
    * The flat folder is a projection of the tracker, so nothing reached it
@@ -1317,6 +1538,133 @@ async function main() {
   );
   check('with a way to paste it into the dialog', folderShown.canCopy === true);
   check('all of it before anything is filed', folderShown.filed === false);
+
+  console.log('\nA way out of a run that is taking too long');
+
+  /*
+   * Every long run on this card used to be one-way. A keyword match is a
+   * second; a model reading a posting is minutes, and there was no exit from
+   * it except waiting or closing the card — and closing the card takes the
+   * letter and the answers with it. So: a Stop in the progress bar, and what
+   * it has to be is a stop rather than a hidden spinner. The reply must not
+   * land afterwards, the proposal already on screen must survive, and the
+   * abandoned request must not be reported as a failure.
+   */
+  const stopped = await inPage((createCard) => {
+    let release;
+    let crossing = false;
+    const seen = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+        diff: [],
+        // Arriving untailored, which is what landing on a posting now does.
+        tailor: 'none',
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        seen.push([action, payload]);
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'rebuild') {
+          // Hangs, like the real one does, until the stop reaches it.
+          return new Promise((resolve, reject) => {
+            release = { resolve, reject };
+          });
+        }
+        if (action === 'cancelWork') {
+          /*
+           * What the worker does when it catches the request: rejects it,
+           * marked. `crossing` is the other case it really has — a reply that
+           * was already on the wire when Stop was pressed, which no abort can
+           * take back. The worker answers `{ stopped: 0 }` and the reply turns
+           * up a moment later as if nothing had happened.
+           */
+          if (crossing) return { stopped: 0 };
+          const err = new Error('Stopped.');
+          err.jobhelper = { stopped: true };
+          release?.reject(err);
+          return { stopped: 1 };
+        }
+        return {};
+      },
+    });
+    void handle;
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
+    const stop = () => root.querySelector('.progress-label .stop');
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    return (async () => {
+      // The status arrives out of band; the AI button is dead until it does.
+      await wait(20);
+      byText('Match by keyword').click();
+      await wait(20);
+      const offered = Boolean(stop());
+      stop()?.click();
+      await wait(40);
+      const after = {
+        offered,
+        // The bar is gone, so the card is not still claiming to be working.
+        barGone: !root.querySelector('.progress'),
+        // And it did not call it a failure.
+        errored: root.querySelector('.err')?.textContent ?? null,
+        // The worker was actually asked to let go, and named the run rather
+        // than asking for everything: the letter being written underneath is
+        // in another lane and must survive a stop aimed at the resume.
+        asked: seen.filter(([a]) => a === 'cancelWork').map(([, p]) => JSON.stringify(p?.what)),
+      };
+
+      /*
+       * And the other half: a reply that was already on its way when Stop was
+       * pressed. Aborting cannot catch a request that is mid-answer, so the
+       * card has to drop it on arrival — otherwise the thing you just chose
+       * not to have lands on top of the thing you kept.
+       */
+      crossing = true;
+      // Carries the AI star, so match on the words rather than the whole label.
+      [...root.querySelectorAll('button')]
+        .find((b) => /Let the AI tailor it/.test(b.textContent))
+        .click();
+      await wait(20);
+      const late = release;
+      stop()?.click();
+      await wait(20);
+      late.resolve({
+        spec: { id: 'job-acme-late', label: 'Late' },
+        diff: [],
+        rationale: [],
+        tailor: 'ai',
+      });
+      await wait(40);
+      /*
+       * Which mode is lit is the reading that can tell the difference. The
+       * proposal itself is put into `state` by the content script, not here,
+       * so a card driven directly cannot see the spec change and asserting on
+       * it would pass whether or not the reply was dropped.
+       */
+      return { ...after, lateClaimed: root.querySelector('.mode.on')?.textContent?.trim() ?? null };
+    })();
+  });
+
+  check('a run in flight offers a way out', stopped.offered === true);
+  check('and pressing it clears the bar', stopped.barGone === true);
+  check('without calling it a failure', stopped.errored === null, String(stopped.errored));
+  check(
+    'the worker is told which run to let go of, not all of them',
+    stopped.asked?.[0] === '["rebuild"]',
+    JSON.stringify(stopped.asked),
+  );
+  check(
+    'a reply that crossed the stop is dropped, not applied late',
+    stopped.lateClaimed === 'Use it unchanged',
+    String(stopped.lateClaimed),
+  );
 
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);

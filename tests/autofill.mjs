@@ -75,6 +75,139 @@ const FORM = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — 
   <label for="q3">Notes</label><textarea id="q3"></textarea>
 </form></body></html>`;
 
+/*
+ * Fields that carry one of autofill's patterns and belong to somebody else,
+ * plus the question that is two questions.
+ *
+ * Every one of these was filled, from a profile, with the applicant's own
+ * details: the referee's email address and telephone number were the
+ * applicant's, so were the emergency contact's, and "Where did you hear about
+ * this job?" was answered with their LinkedIn profile. The card counted all of
+ * them as fields successfully filled. A blank field is a form to finish; a
+ * field filled with the wrong answer is a false statement submitted in
+ * somebody's name.
+ */
+const NOT_YOURS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Test</title></head><body>
+<form>
+  <label for="own-email">Email</label><input id="own-email" name="email" type="email">
+  <label for="own-phone">Phone</label><input id="own-phone" name="phone" type="tel">
+
+  <h3>References</h3>
+  <label for="r-name">Reference 1 full name</label><input id="r-name" name="ref1_name">
+  <label for="r-email">Reference 1 email</label><input id="r-email" name="ref1_email" type="email">
+  <label for="r-phone">Reference 1 phone</label><input id="r-phone" name="ref1_phone" type="tel">
+  <label for="mgr-email">Your current manager's email address</label><input id="mgr-email" name="mgr" type="email">
+
+  <h3>Emergency contact</h3>
+  <label for="ec-name">Emergency contact name</label><input id="ec-name" name="ec_name">
+  <label for="ec-phone">Emergency contact number</label><input id="ec-phone" name="ec_phone" type="tel">
+
+  <!-- A previous employer's address, from the employment-history section. -->
+  <h3>Employment history</h3>
+  <label for="emp-city">Employer City</label><input id="emp-city" name="emp_city">
+
+  <label for="source">Where did you hear about this job? (LinkedIn, Indeed, referral)</label>
+  <input id="source" name="source">
+
+  <!-- Citizenship is not residence, and they take the same answers. -->
+  <label for="citizenship">Country of citizenship</label>
+  <select id="citizenship" name="citizenship">
+    <option value="">--</option><option>United States</option><option>India</option>
+  </select>
+  <label for="residence">Country of residence</label>
+  <select id="residence" name="residence">
+    <option value="">--</option><option>United States</option><option>India</option>
+  </select>
+
+  <!-- Nor is where you were born, which anyone who has moved country answers
+       differently again — and on the half of the form that goes to a lawyer. -->
+  <label for="b-country">Country of Birth</label>
+  <select id="b-country" name="birth_country">
+    <option value="">--</option><option>United States</option><option>India</option>
+  </select>
+  <label for="b-city">City of Birth</label><input id="b-city" name="birth_city">
+
+  <!-- The box beside a telephone number that wants "+1", not a number. -->
+  <label for="cc">Phone Country Code</label><input id="cc" name="phone_country_code">
+
+  <!-- "State" is a verb in this one, and address_state reads it as a noun. -->
+  <label for="st">State</label><input id="st" name="state">
+  <label for="sal">Please state your expected salary</label><input id="sal" name="expected_salary">
+
+  <!-- Where you would like to work, asked both ways round, and where you
+       would move to — none of which is where you live now. -->
+  <label for="pref1">Preferred Work Location</label><input id="pref1" name="pref_loc">
+  <label for="pref2">Location Preference</label><input id="pref2" name="loc_pref">
+  <label for="reloc">Which city would you relocate to?</label><input id="reloc" name="reloc_city">
+  <fieldset>
+    <legend>Preferred work location</legend>
+    <label><input type="radio" name="office" value="Boston, MA"> Boston, MA</label>
+    <label><input type="radio" name="office" value="Remote"> Remote</label>
+  </fieldset>
+
+  <!-- The signature line on the voluntary forms, which is a "Your Name" box
+       like any other and is a signature on a form nobody asked them for. -->
+  <fieldset>
+    <legend>Voluntary Self-Identification of Disability</legend>
+    <label for="dis-sig">Your Name</label><input id="dis-sig" name="disability_signature_name">
+  </fieldset>
+  <fieldset>
+    <legend>Voluntary Self-Identification</legend>
+    <label for="eeo-sig">Your Name</label><input id="eeo-sig" name="eeo_self_identification_name">
+  </fieldset>
+
+  <!-- One half of that question on its own, which is answerable and must
+       still be answered: the commonest phrasing there is. -->
+  <label for="auth-any">Are you authorized to work in the US for any employer?</label>
+  <select id="auth-any" name="auth_any"><option value="">--</option><option>Yes</option><option>No</option></select>
+
+  <!-- Two declarations in one question, asked as a dropdown and as radios. -->
+  <label for="both">Are you legally authorized to work in the United States without sponsorship?</label>
+  <select id="both" name="auth_nosponsor"><option value="">--</option><option>Yes</option><option>No</option></select>
+  <fieldset>
+    <legend>Are you legally authorized to work in the US without requiring visa sponsorship?</legend>
+    <label><input type="radio" name="auth2" value="Yes"> Yes</label>
+    <label><input type="radio" name="auth2" value="No"> No</label>
+  </fieldset>
+</form></body></html>`;
+
+/*
+ * The same form as a framework would hold it.
+ *
+ * React installs its own `value`/`checked` setter on every control it renders
+ * and drops any change event whose value matches what that setter last saw —
+ * which is how it tells a keystroke from a no-op. The shim below is that
+ * mechanism, reduced to the part that matters: `sawChange` is exactly the
+ * question React asks before it will run an onChange handler.
+ */
+const REACT_FORM = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Test</title></head><body>
+<form>
+  <label for="rf-fn">First Name</label><input id="rf-fn" name="first_name">
+  <label for="rf-country">Country</label>
+  <select id="rf-country" name="country"><option value="">--</option><option value="US">United States</option></select>
+  <fieldset>
+    <legend>Are you legally authorized to work in the United States?</legend>
+    <label><input type="radio" name="rf_auth" value="Yes"> Yes</label>
+    <label><input type="radio" name="rf_auth" value="No"> No</label>
+  </fieldset>
+</form></body></html>`;
+
+/* Option text padded the way the enterprise systems pad it, and Lever's
+ * questions, which exist only as a placeholder. */
+const AWKWARD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Test</title></head><body>
+<form>
+  <label for="aw-country">Country</label>
+  <select id="aw-country" name="country">
+    <option value="">Select One</option>
+    <option value="US">United&nbsp;States</option>
+    <option value="CA">Canada</option>
+  </select>
+  <input type="text" name="name" placeholder="Full name">
+  <textarea name="q1" placeholder="Why do you want to work at Lever?"></textarea>
+</form></body></html>`;
+
+const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD };
+
 const PROFILE = {
   first_name: 'Jianwen',
   last_name: 'Ding',
@@ -98,7 +231,7 @@ async function main() {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(FORM);
+    res.end(PAGES[req.url.split('?')[0]] ?? FORM);
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -172,6 +305,304 @@ async function main() {
     );
     check('the asterisk is stripped from the question itself', !asked.some((q) => q.includes('*')));
     check('but the form is still known to want one', out.wantsLetter === true);
+
+    /* ------------------------------------------------------------------ */
+
+    const mine = await page.goto(`${base}/not-yours`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(profile);
+        return {
+          values: Object.fromEntries(
+            ['own-email', 'own-phone', 'r-name', 'r-email', 'r-phone', 'mgr-email', 'ec-name', 'ec-phone',
+             'emp-city', 'source', 'citizenship', 'residence', 'b-country', 'b-city', 'cc', 'pref1',
+             'pref2', 'reloc', 'st', 'sal', 'dis-sig', 'eeo-sig', 'auth-any', 'both']
+              .map((id) => [id, document.getElementById(id).value]),
+          ),
+          checked: document.querySelector('input[name="auth2"]:checked')?.value ?? '',
+          office: document.querySelector('input[name="office"]:checked')?.value ?? '',
+          filled: report.filled.map((f) => f.key),
+          // With the description, because two fields can be skipped for the
+          // same reason under the same key and only the question tells them
+          // apart — see the pair below.
+          skipped: report.skipped.map((s) => `${s.key}:${s.reason}:${s.description}`),
+        };
+      }, {
+        b: base,
+        profile: { ...PROFILE, work_authorization: 'Yes', location: 'Boston, MA', address_state: 'MA' },
+      }),
+    );
+
+    group('Fields that are about somebody else');
+    // Paired with the applicant's own field of the same kind, so that this
+    // cannot pass by autofill having simply stopped filling anything.
+    check(
+      "a referee's email address is not the applicant's",
+      mine.values['own-email'] === PROFILE.email && mine.values['r-email'] === '',
+      `own "${mine.values['own-email']}", referee's "${mine.values['r-email']}"`,
+    );
+    check(
+      'nor their telephone number',
+      mine.values['own-phone'] === PROFILE.phone && mine.values['r-phone'] === '',
+      `own "${mine.values['own-phone']}", referee's "${mine.values['r-phone']}"`,
+    );
+    check("nor their name", mine.values['r-name'] === '', mine.values['r-name']);
+    check(
+      'an emergency contact is not the person having the emergency',
+      mine.values['ec-phone'] === '' && mine.values['ec-name'] === '',
+      `${mine.values['ec-name']} / ${mine.values['ec-phone']}`,
+    );
+    check("nor is the manager's email yours", mine.values['mgr-email'] === '', mine.values['mgr-email']);
+    check(
+      "nor is a previous employer's town your own",
+      mine.values['emp-city'] === '',
+      mine.values['emp-city'],
+    );
+    check(
+      'where you heard about the job is not your LinkedIn profile',
+      mine.values.source === '',
+      mine.values.source,
+    );
+
+    group('Questions that take the same answers and mean different things');
+    // Each paired with the field it was being confused with, so none of these
+    // can pass by autofill having stopped filling that kind of field at all.
+    check(
+      'the country you live in is not the country you are a citizen of',
+      mine.values.residence === 'United States' && mine.values.citizenship === '',
+      `residence "${mine.values.residence}", citizenship "${mine.values.citizenship}"`,
+    );
+    check(
+      'nor the country you were born in',
+      mine.values.residence === 'United States' && mine.values['b-country'] === '',
+      `residence "${mine.values.residence}", birth "${mine.values['b-country']}"`,
+    );
+    check(
+      'and the town you live in is not the town you were born in',
+      mine.values['b-city'] === '',
+      mine.values['b-city'],
+    );
+    check(
+      'a dialling code is not a telephone number',
+      mine.values['own-phone'] === PROFILE.phone && mine.values.cc === '',
+      `phone "${mine.values['own-phone']}", code "${mine.values.cc}"`,
+    );
+    check(
+      'where you want to work is not where you are — said either way round',
+      mine.values.pref1 === '' && mine.values.pref2 === '',
+      `"${mine.values.pref1}" / "${mine.values.pref2}"`,
+    );
+    check(
+      'and the same question as radio buttons is not answered either',
+      mine.office === '',
+      mine.office,
+    );
+    check(
+      'nor is the city you would move to the city you already live in',
+      mine.values.reloc === '',
+      mine.values.reloc,
+    );
+    /*
+     * "Please state your expected salary" is `address_state` matching a verb,
+     * and it wrote "MA" into the salary box. A number an employer reads as a
+     * salary expectation, invented by an extension, is the most expensive
+     * wrong value on this page — it is read before anyone is interviewed.
+     */
+    check(
+      'and "please state" is not the state you live in',
+      mine.values.st === 'MA' && mine.values.sal === '',
+      `state "${mine.values.st}", salary "${mine.values.sal}"`,
+    );
+    check(
+      'the signature line of a voluntary disability form is left unsigned',
+      mine.values['dis-sig'] === '',
+      mine.values['dis-sig'],
+    );
+    check(
+      'and so is the one on the self-identification form',
+      mine.values['eeo-sig'] === '',
+      mine.values['eeo-sig'],
+    );
+
+    group('A question that is two questions');
+    /*
+     * "Legally authorized to work without sponsorship" was answered from
+     * `work_authorization` alone, so an applicant who is authorized *and*
+     * needs sponsorship — anyone on a student visa — had their form answered
+     * "Yes". Handed back rather than guessed, and reported, so the card shows
+     * it as one still for them.
+     */
+    check(
+      'authorization-without-sponsorship is not answered from the authorization alone',
+      mine.values.both === '',
+      mine.values.both,
+    );
+    // Named by its own question, not merely by its key: the radio group below
+    // reports under the same key for the same reason, so a check that only
+    // counted keys would pass on either one of the two being handled.
+    check(
+      'and the dropdown is reported, by the question it could not answer',
+      mine.skipped.some((s) =>
+        /^work_authorization:this one asks two things at once:.*United States/.test(s),
+      ),
+      mine.skipped.join(', ') || '(nothing reported)',
+    );
+    check(
+      'the same question as radio buttons is left alone too',
+      mine.checked === '' &&
+        mine.skipped.some((s) =>
+          /^work_authorization:this one asks two things at once:.*US without requiri/.test(s),
+        ),
+      `checked "${mine.checked}"; ${mine.skipped.join(', ')}`,
+    );
+    /*
+     * And the half-question that is answerable is still answered. Without this
+     * the safe reading of everything above would be to stop touching work
+     * authorization at all, which leaves a required question blank on nearly
+     * every form — the failure this file exists to avoid.
+     */
+    check(
+      'but one declaration on its own is still answered',
+      mine.values['auth-any'] === 'Yes',
+      `"${mine.values['auth-any']}"`,
+    );
+
+    /* ------------------------------------------------------------------ */
+
+    const react = await page.goto(`${base}/react`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        /*
+         * ReactDOM's `inputValueTracking`, reduced to the part that decides
+         * whether a change event is a change: it shadows the element's own
+         * value (or checked) setter, remembers what it last saw through it,
+         * and drops any event whose value it has already seen.
+         */
+        const seen = new Map();
+        const sawChange = {};
+        const sawInput = {};
+        for (const el of document.querySelectorAll('input, select')) {
+          const prop = el.type === 'radio' || el.type === 'checkbox' ? 'checked' : 'value';
+          const descriptor = Object.getOwnPropertyDescriptor(el.constructor.prototype, prop);
+          seen.set(el, String(descriptor.get.call(el)));
+          Object.defineProperty(el, prop, {
+            configurable: true,
+            get() { return descriptor.get.call(this); },
+            set(v) { seen.set(el, String(v)); descriptor.set.call(this, v); },
+          });
+          const name = el.name || el.id;
+          el.addEventListener('change', () => {
+            // What React does on the event: a value it has already recorded
+            // means nothing happened, and the handler never runs.
+            sawChange[name] = sawChange[name] || String(descriptor.get.call(el)) !== seen.get(el);
+          });
+          // And separately, whether an `input` event arrived at all: the
+          // widgets that wrap a native select listen for that one.
+          el.addEventListener('input', () => { sawInput[name] = true; });
+        }
+
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm(profile);
+        return {
+          sawChange,
+          sawInput,
+          country: document.getElementById('rf-country').value,
+          checked: document.querySelector('input[name="rf_auth"]:checked')?.value ?? '',
+        };
+      }, { b: base, profile: { ...PROFILE, work_authorization: 'Yes' } }),
+    );
+
+    group('Values a framework will notice');
+    // Only these two: the text input was already written through the
+    // prototype's setter and passes either way. The dropdown and the radio
+    // were not, so React discarded both change events, kept its own state and
+    // put the empty value back at the next render.
+    check(
+      'a dropdown React controls sees a real change',
+      react.sawChange.country === true && react.country === 'US',
+      `saw ${react.sawChange.country}, value "${react.country}"`,
+    );
+    check(
+      'and so does a radio button',
+      react.sawChange.rf_auth === true && react.checked === 'Yes',
+      `saw ${react.sawChange.rf_auth}, checked "${react.checked}"`,
+    );
+    /*
+     * Choosing from a dropdown by hand fires `input` and then `change`. A
+     * script that fires only `change` is telling half the truth, and the
+     * widgets that wrap a native select — react-select's plain-select mode,
+     * Vue's `v-model` on a custom component — are the half that listens for
+     * `input` and never hears it.
+     */
+    check(
+      'and a dropdown is announced the way choosing from one is',
+      react.sawInput.country === true,
+      `input ${react.sawInput.country}, change ${react.sawChange.country}`,
+    );
+
+    /* ------------------------------------------------------------------ */
+
+    const awkward = await page.goto(`${base}/awkward`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(profile);
+        return {
+          country: document.getElementById('aw-country').value,
+          questions: m.findQuestions().map((q) => q.question),
+          skipped: report.skipped.map((s) => `${s.key}:${s.reason}`),
+        };
+      }, { b: base, profile: PROFILE }),
+    );
+
+    group('Markup that is nearly right');
+    check(
+      'an option padded with a non-breaking space is still the user\'s country',
+      awkward.country === 'US',
+      `value "${awkward.country}", skipped ${awkward.skipped.join(', ') || 'nothing'}`,
+    );
+    check(
+      'a question that exists only as a placeholder is still offered',
+      awkward.questions.some((q) => /why do you want to work at lever/i.test(q)),
+      awkward.questions.join(' | ') || '(none found)',
+    );
+    /*
+     * Which questions a model must not answer, swept over the phrasings forms
+     * actually use.
+     *
+     * The plural is the whole reason this sweep exists rather than a single
+     * case: "What are your salary expectations for this role?" is the
+     * commonest phrasing on any form, and the first version of the rule
+     * required `expectation` without the `s`, so it missed every one of them
+     * while passing on "Desired salary". The false side matters as much —
+     * "What compensation structures have you designed?" is an ordinary essay
+     * question about the applicant's work, and withholding the draft button
+     * there is a feature silently going missing.
+     */
+    const yoursCases = [
+      ['What are your salary expectations for this role?', true],
+      ['Desired salary', true],
+      ['Please state your expected compensation', true],
+      ['What is your minimum acceptable pay rate?', true],
+      ['Do you require any accommodations for the interview process?', true],
+      ['Voluntary self-identification of disability', true],
+      ['Please describe your veteran status', true],
+      ['Have you ever been convicted of a felony?', true],
+      ['Why do you want to work here?', false],
+      ['Tell us about a project you are proud of.', false],
+      ['Describe a time you disagreed with a manager.', false],
+      ['What compensation structures have you designed for teams you led?', false],
+      ['How do you make engineering accessible to new joiners?', false],
+    ];
+    const verdicts = await page.evaluate(
+      async ({ b, cases }) => {
+        const m = await import(`${b}/autofill.js`);
+        return cases.map(([q]) => Boolean(m.yoursToAnswer(q)));
+      },
+      { b: base, cases: yoursCases },
+    );
+    const wrong = yoursCases
+      .map(([q, want], i) => (verdicts[i] === want ? null : `${verdicts[i] ? 'withheld' : 'offered'}: ${q}`))
+      .filter(Boolean);
+    check('every question is judged the right way round', wrong.length === 0, wrong.join(' | ') || '13 phrasings');
   } finally {
     await browser.close();
     server.close();

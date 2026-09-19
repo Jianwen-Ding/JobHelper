@@ -253,9 +253,41 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .diff-head .count { margin-left: auto; color: var(--faint); }
 /* The way out of the changes, where the changes are. */
 .diff-head .undo-all { padding: 0 0 0 8px; font-size: 11px; }
-/* Quiet, and at the end of the row it belongs to: available on every change,
-   never competing with the change itself for attention. */
-.change .undo-one { padding: 4px 0 0; font-size: 11px; }
+/* A box per change, ticked when the change is in.
+   Square rather than round on purpose: these are independent decisions, not a
+   choice of one from several, and a row of circles would say the opposite. */
+.change { display: flex; align-items: flex-start; gap: 9px; }
+.change-body { min-width: 0; flex: 1 1 auto; }
+.pick { position: relative; flex: 0 0 auto; margin-top: 2px; cursor: pointer; line-height: 0; }
+.pick input {
+  position: absolute; opacity: 0; width: 16px; height: 16px; margin: 0; cursor: pointer;
+  /* Over the square it draws, not under it. The span is painted after the
+     input and would otherwise swallow every click aimed at the control. */
+  z-index: 1;
+}
+.pick .box {
+  display: block; width: 16px; height: 16px; border-radius: 3px;
+  border: 2px solid var(--muted); background: #fff; transition: background .12s, border-color .12s;
+}
+.pick input:checked + .box { background: var(--accent); border-color: var(--accent); }
+/* The tick, drawn rather than typed: a glyph would sit at the mercy of
+   whatever font the host page happens to have loaded. */
+.pick input:checked + .box::after {
+  content: ''; position: absolute; left: 5px; top: 1px;
+  width: 4px; height: 9px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(42deg);
+}
+.pick input:focus-visible + .box { box-shadow: 0 0 0 3px var(--accent-hover-layer); }
+.pick input:disabled + .box { opacity: .45; cursor: default; }
+/* Switched off: the change is still shown, because seeing what you turned
+   down is the point of leaving the row there. The strike moves to the side
+   that is no longer in the document. */
+.change.off { opacity: .72; }
+.change.off .ba ins {
+  background: var(--line-soft); color: var(--muted);
+  text-decoration: line-through; text-decoration-color: var(--line);
+}
+.change.off .ba del { text-decoration: none; color: var(--ink); background: var(--good-bg); }
+.change.off .ba .plain { text-decoration: line-through; color: var(--muted); }
 /* The folder the upload dialog wants, while it is still wanted. */
 .staged {
   background: var(--panel-sunk); border: 1px solid var(--line-soft); border-radius: 8px;
@@ -391,6 +423,22 @@ select {
 /* The clock, quieter than the label and only there once there is one. */
 .progress-label .elapsed { margin-left: 6px; font-variant-numeric: tabular-nums; color: var(--faint); }
 .progress-label .elapsed:empty { display: none; }
+/* The way out, kept to the weight of the line it sits on. It is a real exit
+   and it should be findable, but it is not the thing you came here to press:
+   a Stop drawn as loudly as the button that started the work would read as a
+   warning about work that is going fine. */
+.progress-label .stop {
+  margin-left: 8px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  font: inherit;
+  color: var(--muted);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.progress-label .stop:hover { background: var(--state-hover); color: var(--ink); }
 
 /* The compiled resume, drawn in the card: a page you can actually look at,
    on the tab you are already on. */
@@ -789,6 +837,18 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       apply?.(result);
       return result;
     } catch (err) {
+      /*
+       * Asked to stop is not gone wrong.
+       *
+       * Pressing Stop abandons the request, and an abandoned request comes
+       * back here as a rejection like any other — so the first version of
+       * this put "Stopped." in the red error strip, which tells somebody who
+       * has just pressed a button that the thing they asked for failed. The
+       * card goes quiet instead and keeps whatever was already on screen: the
+       * proposal from before the run is still good, and it is the thing they
+       * are going back to.
+       */
+      if (err.jobhelper?.stopped) return null;
       state.error = err.message;
       // Some failures have a way out. Keep it, so the card can offer it.
       state.errorFix = err.jobhelper ?? null;
@@ -1099,7 +1159,48 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     ai: 'Reading the posting…',
   };
 
-  /** A progress bar for `step`, when that is what the card is busy doing. */
+  /**
+   * Runs the worker can be told to let go of, and what it calls each one.
+   *
+   * Only the long ones. A compile or a save is over before the button could be
+   * found, and offering to stop something that is already finished is how you
+   * end up with a button that does nothing when pressed.
+   */
+  const STOPPABLE = {
+    rebuild: 'rebuild',
+    coverLetter: 'coverLetter',
+    writeApplication: 'writeApplication',
+  };
+  const stopName = (action) =>
+    action?.startsWith('answer:') ? 'answerQuestion' : STOPPABLE[action] ?? null;
+
+  /**
+   * Let go of the run this bar belongs to.
+   *
+   * Stopping is not undoing and the card does not pretend otherwise: whatever
+   * was on screen before the run stays on screen, because the run never got
+   * as far as replacing it. What this costs is the run itself — the model on
+   * ResumeM-M's side is a process that keeps going to the end whatever we do
+   * here, so a stopped AI pass is money already spent, not money saved. What
+   * it buys is the card back.
+   *
+   * The token goes up as well as the request going down. A stop and a reply
+   * can cross: the request that is already answering at the moment the button
+   * is pressed will not be aborted in time, and without the bump it would
+   * land afterwards and overwrite the proposal the person just chose to keep.
+   */
+  async function stopWork(action) {
+    const what = stopName(action);
+    if (!what) return;
+    if (what === 'rebuild') {
+      rebuildToken += 1;
+      state.rebuilding = null;
+    }
+    // The worker rejects the in-flight request, which `act` recognises and
+    // passes over in silence; this call only has to ask.
+    await onAction('cancelWork', { what: [what] }).catch(() => undefined);
+  }
+
   /** Whether the AI is the thing holding this card up right now. */
   const aiIsReading = () => running.has('rebuild') && state.rebuilding === 'ai';
 
@@ -1173,9 +1274,38 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       else tick();
     }, 1000);
 
+    /*
+     * And a way out of it.
+     *
+     * Every long run on this card was one-way: a model reading a posting is
+     * minutes, and the only exits were waiting for it and closing the card,
+     * which loses the letter and the answers with it. The stop sits in the
+     * bar rather than beside the button that started it because the bar is
+     * what you are looking at while you decide — and it only exists while
+     * there is something to stop, so it can never be the button that does
+     * nothing.
+     */
+    const what = stopName(action);
     return h('div', {}, [
       h('div', { className: 'progress', role: 'progressbar', 'aria-label': label }),
-      h('div', { className: 'progress-label' }, [h('span', { textContent: label }), clock]),
+      h('div', { className: 'progress-label' }, [
+        h('span', { textContent: label }),
+        clock,
+        ...(what
+          ? [
+              h('button', {
+                className: 'stop',
+                type: 'button',
+                textContent: 'Stop',
+                title:
+                  what === 'rebuild'
+                    ? 'Stop this and keep the resume as it is now.'
+                    : 'Stop this and keep what is already written.',
+                onclick: () => stopWork(action),
+              }),
+            ]
+          : []),
+      ]),
     ]);
   }
 
@@ -1219,22 +1349,71 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     if (state.builtWith === 'ai' || analysis.aiRaw) {
       return `The AI returned nothing usable, so this is ${base} with the keyword match applied.${copy}`;
     }
-    return `${base}, with wordings swapped by keyword match against phrasings you already wrote.${copy}`;
+    /*
+     * What the match actually did, not what it is capable of doing.
+     *
+     * This said "with wordings swapped by keyword match against phrasings you
+     * already wrote" over every keyword match, and on most stores that is
+     * false. The two levers are not equally likely to fire: narrowing a
+     * skills group needs nothing from the store but the group, while swapping
+     * a wording needs a line that *has* a second wording and an alternate
+     * that beats the current one by a clear margin. So the ordinary keyword
+     * match on a store whose lines have one phrasing each is a skills cut and
+     * nothing else — and telling somebody their sentences were rewritten when
+     * they were not is how they stop reading this line.
+     */
+    const swaps = (analysis.rationale ?? []).length;
+    const cuts = (analysis.skillChanges ?? []).length;
+    const did = swaps && cuts
+      ? 'with wordings swapped and skills narrowed to what this posting asks for'
+      : swaps
+        ? 'with wordings swapped for phrasings you already wrote'
+        : cuts
+          ? 'with the skills narrowed to what this posting asks for — no wording changed'
+          : 'which the keyword match found nothing to change in';
+    return `${base}, ${did}.${copy}`;
   }
 
   /**
-   * Put one swapped wording back, and recompile with it back.
+   * Whether one proposed change is currently in the resume, read off the
+   * proposal rather than off a list of what has been pressed.
+   *
+   * This used to be a `state.undone` array of keys, which made the button
+   * one-way in more places than the obvious one: the array did not travel
+   * with `takeWork`, so carrying an application to the next page brought the
+   * corrected spec along with every box ticked again, and the row you had
+   * turned off came back claiming to be on. `spec.choices` is the thing that
+   * is compiled and the thing that is filed. Asking it directly cannot
+   * disagree with what is on the page.
+   */
+  const wordingOn = (change) => (state.spec?.choices ?? {})[change.key] === change.to;
+
+  const sameItems = (a, b) =>
+    Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => x === b[i]);
+
+  const skillsOn = (change) => {
+    const items = (state.spec?.sections ?? []).find((s) => s.kind === 'skills')?.items ?? {};
+    return sameItems(items[change.groupId], change.to);
+  };
+
+  /**
+   * Take one swapped wording, or put it back.
    *
    * `change.from` is the wording the base resume was using before this
-   * proposal touched it, so pinning that is exactly "leave this line alone".
-   * It is written into `spec.choices`, which is the thing the PDF is compiled
-   * from and the thing filing sends — so the undo survives both rather than
-   * being a tidy-up of the list on screen.
+   * proposal touched it, so pinning that is exactly "leave this line alone",
+   * and `change.to` is what the match picked. Both are written into
+   * `spec.choices`, which is what the PDF is compiled from and what filing
+   * sends — so the decision survives both rather than being a tidy-up of the
+   * list on screen.
+   *
+   * Going both ways is the point. Pressing this used to remove the row it was
+   * on, which meant deciding against one swap was permanent for as long as
+   * the proposal lasted: no way to compare the two readings, and no way back
+   * from a misclick short of rebuilding the whole thing.
    */
-  async function undoOne(change) {
-    const choices = { ...(state.spec?.choices ?? {}), [change.key]: change.from };
+  async function setWording(change, on) {
+    const choices = { ...(state.spec?.choices ?? {}), [change.key]: on ? change.to : change.from };
     state.spec = { ...state.spec, choices };
-    state.undone = [...(state.undone ?? []), change.key];
     // The compiled PDF is now of a resume nobody has: recompile before the
     // preview or the fit badge claim to be about this one.
     state.render = null;
@@ -1250,32 +1429,20 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * means putting that list back, and `null` means the base asked for nothing
    * — which is not "no answer" but a real one, the group printing all of its
    * items, and the way to say it is to leave the key out.
-   *
-   * Written into `state.spec` like the other undo, for the same reason: the
-   * spec is what is compiled and what is filed, so this survives both instead
-   * of being a correction to the list on screen.
    */
-  async function undoSkill(change) {
+  async function setSkills(change, on) {
     const sections = (state.spec?.sections ?? []).map((section) => {
       if (section.kind !== 'skills') return section;
       const items = { ...(section.items ?? {}) };
-      if (change.from) items[change.groupId] = change.from;
+      const want = on ? change.to : change.from;
+      if (want) items[change.groupId] = want;
       else delete items[change.groupId];
       return { ...section, items };
     });
     state.spec = { ...state.spec, sections };
-    state.undone = [...(state.undone ?? []), skillKey(change.groupId)];
     state.render = null;
     await compile();
   }
-
-  /*
-   * Undone changes are remembered by key, and a group id is not a choice key.
-   * Prefixed so a skills group can never collide with a bullet that happens to
-   * share its id — which is not hypothetical, since both are free-form ids the
-   * user types in the editor.
-   */
-  const skillKey = (groupId) => `skills:${groupId}`;
 
   /**
    * Put the built files where the upload dialog will be, as soon as they are
@@ -1369,15 +1536,26 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       if (sc.groupName) skillFor.set(plainish(sc.groupName), sc);
     }
 
-    const undone = new Set(state.undone ?? []);
-    const stillThere = (c) => {
-      const key = changeFor.get(plainish(c.to ?? ''))?.key;
-      if (key && undone.has(key)) return false;
-      const group = skillFor.get(plainish(c.where ?? ''))?.groupId;
-      return !group || !undone.has(skillKey(group));
+    /*
+     * Every row stays, whether or not it is switched on.
+     *
+     * A change turned off used to be removed from the list, which is a
+     * strange thing to do to a decision the user has just made: the evidence
+     * for it disappears at the moment they make it, so they cannot see what
+     * they chose, cannot compare the two readings, and cannot get back from a
+     * misclick without throwing the whole proposal away. The rows are a
+     * record of what the match proposed. What the user did about each one is
+     * the state of its box.
+     */
+    const shown = diff;
+    const shownRationale = rationale;
+    const onFor = (c) => {
+      const change = changeFor.get(plainish(c.to ?? ''));
+      if (change?.key && change.from) return wordingOn(change);
+      const skill = c.to ? undefined : skillFor.get(plainish(c.where ?? ''));
+      return skill ? skillsOn(skill) : true;
     };
-    const shown = diff.filter(stillThere);
-    const shownRationale = rationale.filter((r) => !undone.has(r.key));
+    const live = shown.filter(onFor).length;
 
     /*
      * Collapsed until asked for.
@@ -1404,7 +1582,20 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         h('span', { className: 'from-label', textContent: analysis.baseLabel ?? 'Base' }),
         h('span', { className: 'arrow', textContent: '→' }),
         h('span', { className: 'to-label', textContent: 'this posting' }),
-        h('span', { className: 'count', textContent: plural(shown.length || shownRationale.length, 'change') }),
+        /*
+         * How many are in, out of how many were offered. It said only the
+         * total, which stopped being the interesting number the moment the
+         * rows could be switched off: "6 changes" over a list with two boxes
+         * unticked is describing what the match suggested, not what is about
+         * to be printed.
+         */
+        h('span', {
+          className: 'count',
+          textContent:
+            shown.length && live !== shown.length
+              ? `${live} of ${plural(shown.length, 'change')}`
+              : plural(shown.length || shownRationale.length, 'change'),
+        }),
         /*
          * The way out, beside the list rather than back up among the build
          * modes. This is where you find out what was changed, so this is where
@@ -1436,67 +1627,58 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       const why = h('div', { className: 'why' });
       for (const k of because ?? []) why.append(h('span', { className: 'kw', textContent: k }));
 
+      /*
+       * A box per change, ticked when the change is in.
+       *
+       * Both kinds get one — a swapped wording and a narrowed skills group —
+       * and both are toggles rather than the one-way "Keep the original" this
+       * replaces. The skills rows are the ones that most needed it: four
+       * groups narrowed at once off the same handful of keywords is the part
+       * of a match most likely to be wrong, and it is also the part you are
+       * most likely to want to see both ways before deciding.
+       *
+       * A row with neither is something the base resume does, not something
+       * this proposal chose, and there is nothing here to decide.
+       */
+      const settable = change?.key && change.from ? () => setWording(change, !onFor(c)) : skill ? () => setSkills(skill, !onFor(c)) : null;
+      const on = onFor(c);
+      const box = settable
+        ? h('label', { className: 'pick', title: on
+            ? (skill ? `Show ${skill.groupName} the way your base resume has it` : 'Put this one line back the way your base resume has it')
+            : 'Use what the match picked for this one' }, [
+            h('input', {
+              type: 'checkbox',
+              checked: on,
+              /*
+               * `compile` only, deliberately — not `resume`.
+               *
+               * Flipping one recompiles, so two at once would leave whichever
+               * finished second describing the card, and that is worth
+               * waiting for. An AI pass is not: it is minutes of a model
+               * reading the posting, and greying out the switches on the
+               * proposal already in front of you for the whole of it is the
+               * scan interfering with work it has nothing to do with. When it
+               * lands it brings a proposal of its own, and says so.
+               */
+              disabled: busyIn('compile'),
+              onchange: settable,
+            }),
+            h('span', { className: 'box' }),
+          ])
+        : null;
+
       list.append(
-        h('div', { className: `change ${c.kind}` }, [
-          c.where ? h('div', { className: 'where', textContent: c.where }) : null,
-          h('div', { className: 'ba' }, [
-            c.from ? h('del', { textContent: c.from }) : null,
-            c.to ? h('ins', { textContent: c.to }) : null,
-            !c.from && !c.to ? h('span', { className: 'plain', textContent: detail }) : null,
+        h('div', { className: `change ${c.kind}${settable && !on ? ' off' : ''}` }, [
+          box,
+          h('div', { className: 'change-body' }, [
+            c.where ? h('div', { className: 'where', textContent: c.where }) : null,
+            h('div', { className: 'ba' }, [
+              c.from ? h('del', { textContent: c.from }) : null,
+              c.to ? h('ins', { textContent: c.to }) : null,
+              !c.from && !c.to ? h('span', { className: 'plain', textContent: detail }) : null,
+            ]),
+            because?.length ? why : null,
           ]),
-          because?.length ? why : null,
-          /*
-           * One change, put back.
-           *
-           * "Undo all" threw away every swap to send the resume untouched,
-           * which is the wrong size of answer to "that one is wrong". The
-           * match is usually right about most of them and occasionally wrong
-           * about one, and the one it is wrong about is the one you notice.
-           *
-           * Only where the change says which wording it replaced. A diff row
-           * with no rationale behind it is something the base resume did, not
-           * something this proposal chose, and there is nothing here to undo.
-           */
-          change?.key && change.from
-            ? h('button', {
-                className: 'link undo-one',
-                textContent: 'Keep the original',
-                title: 'Put this one line back the way your base resume has it',
-                /*
-                 * `compile` only, deliberately — not `resume`.
-                 *
-                 * Undoing recompiles, so two at once would leave whichever
-                 * finished second describing the card, and that is worth
-                 * waiting for. An AI pass is not: it is minutes of a model
-                 * reading the posting, and greying out the switches on the
-                 * proposal already in front of you for the whole of it is the
-                 * scan interfering with work it has nothing to do with. When
-                 * it lands it brings a proposal of its own, and says so.
-                 */
-                disabled: busyIn('compile'),
-                onclick: () => undoOne(change),
-              })
-            : null,
-          /*
-           * And the same offer on a skills row.
-           *
-           * These are the rows most likely to be wrong — four groups narrowed
-           * at once off the same handful of keywords — and they were the only
-           * rows with no way back, because the test above asks for a `key` and
-           * a `from` and a skills change has neither. So the one kind of
-           * change you would most want to argue with was the one kind you
-           * could only accept or throw the whole proposal away over.
-           */
-          skill
-            ? h('button', {
-                className: 'link undo-one',
-                textContent: 'Keep the original',
-                title: `Show ${skill.groupName} the way your base resume has it`,
-                // `compile` only, for the reason given on the button above.
-                disabled: busyIn('compile'),
-                onclick: () => undoSkill(skill),
-              })
-            : null,
         ]),
       );
     }
@@ -1967,6 +2149,9 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
        * the run would build on another company's text. See the same rule
        * where the box is filled.
        */
+      // Not the model's to answer, so not handed to the run either — see the
+      // question box, and `YOURS_TO_ANSWER` in autofill.js.
+      if (q.yours) continue;
       const borrowed = Boolean(q.namesAnother) && !state.answers[q.question];
       const before = state.answers[q.question] ?? (borrowed ? '' : q.answer ?? '');
       slots.push({ id: `q${slots.length + 1}`, question: q.question, answer: before, before });
@@ -2287,7 +2472,9 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      */
     {
       const wants = Boolean(state.letterNeeded || state.letterAsked);
-      const asked = (state.questions ?? []).length;
+      // Questions that are the applicant's alone are not counted: the button
+      // must not offer to write what it will not write.
+      const asked = (state.questions ?? []).filter((q) => !q.yours).length;
       if (asked + (wants ? 1 : 0) > 1) {
         body.append(
           h('div', { className: 'row gap write-all' }, [
@@ -2791,7 +2978,21 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             disabled: !q.fieldId,
             onclick: () => onAction('insertAnswer', { fieldId: q.fieldId, text: state.answers[q.question] ?? value }),
           }),
-          aiButton(
+          /*
+           * Some questions are not the model's to answer.
+           *
+           * A salary expectation invented by a model is a number the applicant
+           * did not choose and may be held to; the self-identification
+           * questions are voluntary by law and about the person, so an answer
+           * written on their behalf is a lie told in their name about
+           * something they were entitled to decline. The question is still
+           * shown and the box still typed in — hiding something the form
+           * requires is the worse failure — but there is no button offering to
+           * write it. See `YOURS_TO_ANSWER`.
+           */
+          q.yours
+            ? h('span', { className: 'faint', textContent: q.yours })
+            : aiButton(
             {
               className: 'tiny',
               disabled: busyIn('answers'),
@@ -3118,16 +3319,10 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     update(next) {
       analysis = analysis ? Object.assign(analysis, next) : next;
       /*
-       * A new proposal, so nothing is undone on it yet.
-       *
-       * `undone` is a list of keys whose rows have been put back, and it only
-       * means anything against the spec those keys were undone on. A rebuild
-       * hands over a different spec — every swap made afresh — and carrying
-       * the old list across hid rows the new proposal really had changed. The
-       * undo itself is not lost by this: it was written into the spec, and the
-       * spec is what has just been replaced.
+       * A new proposal replaces the old one whole, every swap made afresh.
+       * Nothing has to be forgotten alongside it: which changes are in is
+       * read off the spec, so replacing the spec is the whole of the reset.
        */
-      if (next.spec) state.undone = [];
       state.spec = next.spec ?? state.spec;
       state.builtWith = next.tailor ?? (next.aiUsed ? 'ai' : state.builtWith);
       state.render = null;

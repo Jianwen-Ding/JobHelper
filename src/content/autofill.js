@@ -45,11 +45,111 @@ const FIELD_PATTERNS = [
    * "work authorization" — the words every form actually uses — never matched,
    * and neither did "sponsorship".
    */
-  ['work_authorization', /\b(work[\s_-]?authoriz\w*|legally[\s_-]?authorized|right[\s_-]?to[\s_-]?work)\b/i],
+  /*
+   * `authoriz\w+ to work` as well, because that is how the question is put
+   * when it is not put as two nouns: "Are you authorized to work in the US for
+   * any employer?" is the commonest phrasing on the hosted boards and matched
+   * none of the three above — the required question came out blank and, having
+   * matched no key at all, was not reported either. The conjunction with
+   * sponsorship is still refused; see `asksBothAtOnce`.
+   */
+  [
+    'work_authorization',
+    /\b(work[\s_-]?authoriz\w*|legally[\s_-]?authorized|authoriz\w+[\s_-]+to[\s_-]+work|right[\s_-]?to[\s_-]?work)\b/i,
+  ],
   ['requires_sponsorship', /\b(sponsor\w*|visa[\s_-]?status)\b/i],
 ];
 
 const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+
+/**
+ * Fields that carry one of the patterns above and are not about the applicant.
+ *
+ * Every one of these was measured: with a profile loaded, "Reference 1 email"
+ * was filled with the applicant's own address, "Emergency contact number" and
+ * "Reference 1 phone" with their own telephone number, "Reference 1 full name"
+ * with their own name, and "Where did you hear about this job? (LinkedIn,
+ * Indeed, referral)" with their LinkedIn URL. Each is a wrong answer rather
+ * than a missing one — a referee who is really the candidate, an emergency
+ * contact who is the person having the emergency — and the card counted them
+ * as fields successfully filled.
+ *
+ * Citizenship is the same mistake about a different thing: `address_country`
+ * is where the applicant lives, and "Country of citizenship" was being filled
+ * from it. Someone living in the United States on a visa was having their
+ * application state that they are a US citizen. Birth is a third question
+ * with the same answers again — "Country of Birth", "City of Birth" and
+ * "State/Province of Birth" were being filled with where the applicant lives
+ * now, which for anyone who has moved country is simply false, and false on
+ * the part of the form an employer passes to an immigration lawyer.
+ *
+ * Salary matches nothing here today. It is listed because the cost of that
+ * changing is a lie about money, and the cost of naming it now is a line of
+ * regex. The self-identification line is not in that position: a signature
+ * box on a voluntary EEO or disability form is labelled "Your Name", which
+ * `full_name` matches, so the applicant's legal name was being typed onto the
+ * signature line of a form they had not chosen to complete.
+ */
+const NOT_ABOUT_YOU = [
+  // Somebody else's name, telephone number or address.
+  /\b(references?|referee|emergency|next[\s_-]?of[\s_-]?kin|guardian|spouse|supervisor|manager'?s?|recommender)\b/i,
+  /*
+   * A previous employer's address, which the employment-history sections of
+   * Taleo and BrassRing ask for field by field. "Employer City" matched
+   * `address_city` and was filled with the applicant's own town.
+   */
+  /\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+(name|address|city|town|state|province|country|phone|telephone|zip|postal)\b/i,
+  // Where you heard about the job, which is not a profile of yours.
+  /\b(did[\s_-]you[\s_-]hear|hear[\s_-]about[\s_-](us|this)|referral)\b/i,
+  // Citizenship, birth and residence are different questions with the same
+  // answers.
+  /\b(citizen\w*|nationality|passport)\b/i,
+  /\b(birth|born)\b/i,
+  /*
+   * A preference about the job, not a fact about the applicant — in either
+   * order, because the forms put it both ways: "Preferred Work Location" and
+   * "Location Preference" are the same question, and only the first was
+   * caught. Both were filled with where the applicant lives, which turns
+   * "where I am" into "where I want to be" without being asked.
+   */
+  /\b(prefer\w*|desired|requested)\b[\s\S]{0,24}\b(location|city|town|country|office|site)\b/i,
+  /\b(location|city|town|country|office|site)\b[\s\S]{0,24}\b(prefer\w*|desired|requested)\b/i,
+  // Relocation is about somewhere you are not. "Which city would you relocate
+  // to?" was answered with the city the applicant already lives in.
+  /\brelocat\w*/i,
+  /\b(salary|compensation|wage|pay[\s_-]?rate|hourly[\s_-]?rate|bonus)\b/i,
+  /\b(gender|race|ethnicit\w*|hispanic|latin[ox]|veteran|disabilit\w*|sexual[\s_-]orientation|pronouns)\b/i,
+  /\b(eeoc?|self[\s_-]?identification|equal[\s_-]employment)\b/i,
+  /*
+   * The box beside a telephone number that wants "+1", not a telephone
+   * number. `phone` matched "Phone Country Code" first and wrote the whole
+   * number into it; where the word "phone" was absent, `address_country`
+   * matched and wrote "United States". Neither is a dialling code, and a
+   * telephone number an employer cannot ring is worse than a blank one.
+   */
+  /\b(country|area|dial(?:l?ing)?)[\s_-]?code\b/i,
+];
+
+const isNotAboutYou = (description) => NOT_ABOUT_YOU.some((re) => re.test(description));
+
+/*
+ * "Are you legally authorized to work in the United States without
+ * sponsorship?" is two declarations in one, and was answered from the first
+ * alone: `work_authorization` matches, so an applicant storing "authorized:
+ * yes" and "needs sponsorship: yes" — which is most people on a student visa —
+ * had their form answered "Yes". That is a false statement about their right
+ * to work, made in their name, and counted as a field filled.
+ *
+ * Answering it means resolving a conjunction between two stored declarations,
+ * and either way round the answer can be a lie. This file's rule for exactly
+ * this pair is that an extension should not be the one deciding them, so the
+ * question is handed back instead — reported, so the card shows it as one
+ * still for the user, rather than passed over in silence.
+ */
+const AUTHORIZATION = FIELD_PATTERNS.find(([key]) => key === 'work_authorization')[1];
+const SPONSORSHIP = FIELD_PATTERNS.find(([key]) => key === 'requires_sponsorship')[1];
+const asksBothAtOnce = (description) =>
+  AUTHORIZATION.test(description) && SPONSORSHIP.test(description);
 
 /**
  * A label that is just "Name" wants the whole name.
@@ -274,14 +374,43 @@ function selectIsAnswered(select) {
   return !looksLikePlaceholder(option, select);
 }
 
+/**
+ * Set a property the way the browser does, rather than the way a script does.
+ *
+ * React puts its own `value` (and, on a radio, `checked`) setter on the element
+ * and remembers the last value it saw through it; when an event arrives it
+ * compares the two and drops the event if they agree. An ordinary assignment
+ * goes through that setter, so React updated its memory and then discarded the
+ * change event as a no-op — the control showed the new value until the next
+ * render, when React wrote its own state back over it and the form submitted
+ * the old one. Reaching past it to the prototype's setter leaves React's memory
+ * stale, which is how it tells a real keystroke from nothing having happened.
+ *
+ * Text inputs already did this. Selects and radios did not, and a fixture
+ * carrying React's own value tracker shows the difference: the country dropdown
+ * and the work-authorization radio both reported "react-ignores".
+ */
+function nativeSet(element, property, value) {
+  const proto =
+    element instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement
+      : element instanceof HTMLSelectElement
+        ? HTMLSelectElement
+        : HTMLInputElement;
+  const setter = Object.getOwnPropertyDescriptor(proto.prototype, property)?.set;
+  if (setter) setter.call(element, value);
+  else element[property] = value;
+}
+
 /** Set a value in a way React and friends actually notice. */
 function setValue(input, value) {
-  const proto = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement : HTMLInputElement;
-  const setter = Object.getOwnPropertyDescriptor(proto.prototype, 'value')?.set;
-  setter?.call(input, value);
+  nativeSet(input, 'value', value);
   input.dispatchEvent(new Event('input', { bubbles: true }));
   input.dispatchEvent(new Event('change', { bubbles: true }));
 }
+
+/** Two option labels are the same answer if they read the same. */
+const sameOption = (a, b) => clean(a).toLowerCase() === clean(b).toLowerCase();
 
 /**
  * Fill what we can. Returns a report of what was filled and what was skipped,
@@ -297,6 +426,10 @@ export function fillForm(fields, { overwrite = false } = {}) {
 
     const description = describeField(input);
     if (!description) continue;
+    // Somebody else's details, or a question this profile does not answer —
+    // see `NOT_ABOUT_YOU`. Not reported: there is nothing here for the user to
+    // do about it, and naming it would imply the field is theirs to fill.
+    if (isNotAboutYou(description)) continue;
 
     let match = FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key]);
 
@@ -308,6 +441,11 @@ export function fillForm(fields, { overwrite = false } = {}) {
     const [key] = match;
     const value = fields[key];
 
+    if (asksBothAtOnce(description)) {
+      skipped.push({ key, reason: 'this one asks two things at once', description: description.slice(0, 60) });
+      continue;
+    }
+
     const answered = input instanceof HTMLSelectElement ? selectIsAnswered(input) : Boolean(input.value);
     if (answered && !overwrite) {
       skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
@@ -315,14 +453,22 @@ export function fillForm(fields, { overwrite = false } = {}) {
     }
 
     if (input instanceof HTMLSelectElement) {
-      // Only pick an option that plainly matches; never guess on a dropdown.
+      /*
+       * Only pick an option that plainly matches; never guess on a dropdown.
+       * Compared through `clean` because the enterprise systems pad their
+       * option text — a country list whose entry was `United&nbsp;States`
+       * matched nothing under a plain `trim`, and a required country dropdown
+       * was reported as having no option for the user's country while sitting
+       * two lines above the one that did.
+       */
       const option = [...input.options].find(
-        (o) =>
-          o.textContent.trim().toLowerCase() === String(value).toLowerCase() ||
-          o.value.toLowerCase() === String(value).toLowerCase(),
+        (o) => sameOption(o.textContent, value) || sameOption(o.value, value),
       );
       if (option) {
-        input.value = option.value;
+        nativeSet(input, 'value', option.value);
+        // Both, because choosing from a list fires both. `change` alone is
+        // what a script fires, and some widgets only listen for `input`.
+        input.dispatchEvent(new Event('input', { bubbles: true }));
         input.dispatchEvent(new Event('change', { bubbles: true }));
         filled.push({ key, value });
       } else {
@@ -456,6 +602,7 @@ function answerRadioGroups(fields, overwrite) {
   for (const radios of groups.values()) {
     const description = clean([groupLabelFor(radios), radios[0].name].filter(Boolean).join(' '));
     if (!description) continue;
+    if (isNotAboutYou(description)) continue;
 
     /*
      * Only the keys that are a choice between options. A name, an email address
@@ -471,7 +618,15 @@ function answerRadioGroups(fields, overwrite) {
     if (!match) continue;
 
     const [key] = match;
-    const value = String(fields[key]).toLowerCase();
+    const value = fields[key];
+
+    // Two declarations in one question — see `asksBothAtOnce`. Radios are the
+    // commoner shape for it: Workable and Teamtailor ask "legally authorized
+    // to work without sponsorship" as a pair of buttons.
+    if (asksBothAtOnce(description)) {
+      skipped.push({ key, reason: 'this one asks two things at once', description: description.slice(0, 60) });
+      continue;
+    }
 
     if (radios.some((radio) => radio.checked) && !overwrite) {
       skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
@@ -479,14 +634,17 @@ function answerRadioGroups(fields, overwrite) {
     }
 
     const wanted = radios.find(
-      (radio) => optionLabelFor(radio).toLowerCase() === value || String(radio.value).toLowerCase() === value,
+      (radio) => sameOption(optionLabelFor(radio), value) || sameOption(radio.value, value),
     );
     if (!wanted) {
       skipped.push({ key, reason: 'no matching option', description: description.slice(0, 60) });
       continue;
     }
 
-    wanted.checked = true;
+    // Through the prototype's setter, for the same reason a text input is —
+    // see `nativeSet`. A React form ignored the change event outright, left its
+    // own state unset, and submitted the question unanswered.
+    nativeSet(wanted, 'checked', true);
     wanted.dispatchEvent(new Event('input', { bubbles: true }));
     wanted.dispatchEvent(new Event('change', { bubbles: true }));
     filled.push({ key, value: fields[key] });
@@ -522,6 +680,7 @@ function unfillableChoices(fields, filled) {
 
     const description = describeField(widget);
     if (!description) continue;
+    if (isNotAboutYou(description)) continue;
 
     const match = FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key] && !already.has(key));
     if (!match) continue;
@@ -676,7 +835,17 @@ export function findQuestions() {
      */
     if (/cover\s*letter/i.test(describeField(field))) continue;
 
-    const question = cleanQuestion(questionFor(field));
+    /*
+     * The placeholder, where there is no label at all.
+     *
+     * Lever labels nothing: "Why do you want to work at Lever?" is a
+     * placeholder on the textarea and nothing else, so the one question on the
+     * form was not offered — the card showed a form with no questions on it,
+     * and the box stayed empty. Only as a fallback, and only from the
+     * placeholder rather than `describeField`, because a field's name and id
+     * are not a question anyone wrote.
+     */
+    const question = cleanQuestion(questionFor(field) || field.getAttribute?.('placeholder') || '');
     // Anything this short is a label like "Notes" rather than a question worth
     // drafting an answer to — unless it ends in a question mark, which settles
     // it. "Why us?" is seven characters and is exactly the sort of thing this
@@ -689,9 +858,53 @@ export function findQuestions() {
       id = `jh-${++fieldCounter}`;
       field.setAttribute(FIELD_KEY, id);
     }
-    found.push({ fieldId: id, question, currentValue: field.value ?? field.textContent ?? '' });
+    found.push({
+      fieldId: id,
+      question,
+      currentValue: field.value ?? field.textContent ?? '',
+      ...(yoursToAnswer(question) ? { yours: yoursToAnswer(question) } : {}),
+    });
   }
   return found;
+}
+
+/*
+ * Questions a model must not answer for you, and why.
+ *
+ * These are still offered — hiding a question the form requires is the worse
+ * failure, and the box is still there to type in. What is withheld is the
+ * "draft an answer" button, because an answer invented for any of these is
+ * either a false statement or a disclosure that is not the tool's to make.
+ *
+ * A salary figure is the plain case: whatever a model writes is a number the
+ * applicant did not choose and may be held to. The self-identification
+ * questions are the other kind — voluntary by law and about the person, so an
+ * answer written on their behalf is a lie told in their name about something
+ * they were entitled to decline.
+ */
+const YOURS_TO_ANSWER = [
+  /*
+   * Plurals matter here, and this is where that was measured rather than
+   * assumed: "What are your salary expectations for this role?" is the single
+   * commonest phrasing on any form, and `expectation` without the `s?` misses
+   * every one of them.
+   */
+  [/\b(salary|compensation|wage|pay|rate|comp)\b.*\b(expectations?|expected|desired|requirements?|ranges?|seeking)\b/i,
+    'A figure here is yours to choose.'],
+  [/\b(expected|desired|minimum|required)\b.*\b(salary|compensation|pay|rate)\b/i,
+    'A figure here is yours to choose.'],
+  [/\b(disabilit|accommodat|impairment)\w*/i,
+    'This one is yours to answer — nothing is written for you.'],
+  [/\b(race|ethnicit|gender|veteran|disabled|sexual orientation|pronoun)\w*/i,
+    'This one is yours to answer — nothing is written for you.'],
+  [/\b(criminal|conviction|felony|misdemeanou?r|background check)\b/i,
+    'This one is yours to answer — nothing is written for you.'],
+];
+
+/** The reason a question is yours alone, or undefined where it is not. */
+export function yoursToAnswer(question) {
+  for (const [re, why] of YOURS_TO_ANSWER) if (re.test(question)) return why;
+  return undefined;
 }
 
 /**

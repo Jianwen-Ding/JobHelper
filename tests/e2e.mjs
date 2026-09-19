@@ -229,9 +229,14 @@ async function main() {
      */
     const putBack = await (async () => {
       const row = card.locator('.change').filter({ hasText: /dropped/ }).first();
-      const undoable = await row.locator('button.undo-one').count();
-      check('a narrowed skills group offers to be put back', undoable === 1, `${undoable} buttons`);
-      if (undoable !== 1) return null;
+      // The label, which is what a pointer lands on: the input itself is an
+      // invisible 16px square sitting over a drawn one.
+      const pick = row.locator('.pick');
+      const box = row.locator('.pick input');
+      const offered = await box.count();
+      check('a narrowed skills group gets a box', offered === 1, `${offered} boxes`);
+      if (offered !== 1) return null;
+      check('ticked, because the narrowing is in the proposal', await box.isChecked());
 
       // The group's name is its own element; the sentence beside it has had
       // that prefix stripped, so it cannot be split back out of the text.
@@ -239,13 +244,19 @@ async function main() {
       const said = (await row.innerText()).replace(/\s+/g, ' ');
       const cut = (said.match(/dropped ([^—]+)/)?.[1] ?? '').split(',').map((x) => x.trim()).filter(Boolean);
 
-      await row.locator('button.undo-one').click();
+      await pick.click();
       await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 90_000 });
+      /*
+       * The row stays and the box comes off. It used to be the row that went,
+       * which put the evidence for the decision out of reach at the moment it
+       * was made — and left no way back from a misclick but rebuilding.
+       */
       check(
-        'the row goes once it is put back',
-        (await card.locator('.change').filter({ hasText: /dropped/ }).filter({ hasText: group }).count()) === 0,
+        'the row stays, marked as not in the document',
+        (await row.count()) === 1 && (await row.getAttribute('class'))?.includes('off') === true,
         `${group}: ${said.slice(0, 40)}`,
       );
+      check('with its box unticked', (await box.isChecked()) === false);
       return { group, cut };
     })();
 

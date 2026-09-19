@@ -537,6 +537,14 @@
       case 'coverLetter':
         return send('coverLetter', { spec: payload.spec, job: analysis.job });
 
+      /*
+       * Let go of what is in the air. Straight through, because which requests
+       * exist is the worker's business — this side knows only the name of the
+       * button that was pressed.
+       */
+      case 'cancelWork':
+        return send('cancelWork', { what: payload.what });
+
       /**
        * Hand the whole application to the editor: what the form asks for, the
        * resume already tailored, and the questions with whatever the bank
