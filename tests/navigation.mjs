@@ -785,6 +785,61 @@ async function main() {
           roles[roles.length - 1],
         );
         await page.close();
+
+        /*
+         * And the same again, for a build the *user* asked for.
+         *
+         * The check above covers the pass the extension starts by itself,
+         * which `supersede` stops. A build somebody pressed is a different
+         * path with its own token, and that token only answered "has another
+         * build started" — not "is this still the page that asked". So
+         * changing the base and walking to the next posting let the reply
+         * land on the card in front of you, carrying the previous role's
+         * proposal, and the files would have been built from it.
+         *
+         * Changing the base rather than rebuilding because `setBase` had
+         * neither guard, and because it is the one people press repeatedly:
+         * trying two bases against a posting is what the picker is for.
+         */
+        const second = await context.newPage();
+        await second.goto(fixtures.urlFor(SPA_BOARD), { waitUntil: 'domcontentloaded' });
+        await settled(second);
+
+        const roleNow = () => second.evaluate(() => {
+          const host = document.querySelector('#jobhelper-card-host');
+          return host?.shadowRoot?.querySelector('.card .role')?.textContent?.trim() ?? '';
+        });
+        const startedOn = await roleNow();
+
+        // Pick a different base without waiting for the reply, then move on.
+        const picked = await second.evaluate(() => {
+          const root = document.querySelector('#jobhelper-card-host')?.shadowRoot;
+          const select = root?.querySelector('select');
+          const other = [...(select?.options ?? [])].find((o) => o.value !== select.value);
+          if (!other) return null;
+          select.value = other.value;
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+          return other.value;
+        });
+        await second.waitForTimeout(300);
+        await second.click('#to-b');
+
+        const after = [];
+        for (let i = 0; i < 100; i++) {
+          const role = await roleNow();
+          if (role && after[after.length - 1] !== role) after.push(role);
+          await second.waitForTimeout(60);
+        }
+
+        const sinceSwitch = after.slice(after.findIndex((r) => /data scientist/i.test(r)) + 1);
+        check(
+          'a base changed on the previous posting does not land on the next one',
+          picked === null || !sinceSwitch.some((r) => /platform engineer/i.test(r)),
+          picked === null ? '(only one resume to pick from)' : `${startedOn} → ${after.join(' → ')}`,
+        );
+        await second.close();
+
+        await page.close();
       } finally {
         await useServer(context, SERVER);
         slow.close();
