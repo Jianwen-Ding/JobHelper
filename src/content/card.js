@@ -930,9 +930,19 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     const mine = ++rebuildToken;
     state.rebuilding = mode;
     try {
-      return await act('rebuild', { tailor: mode }, () => {
+      return await act('rebuild', { tailor: mode }, (result) => {
         if (mine !== rebuildToken) return;
-        state.builtWith = mode;
+        /*
+         * What came back, not what was asked for.
+         *
+         * This recorded `mode`, so pressing "Have AI Tailor" lit the AI
+         * button whether or not a model had answered — a run that never
+         * started, or came back with prose instead of choices, falls through
+         * to the suggestions and changes nothing, and the card said the AI
+         * had tailored it. The same reading as everywhere else: only a run
+         * the model actually answered is a decision.
+         */
+        state.builtWith = isDecision(result) ? 'ai' : 'none';
         state.render = null;
       });
     } finally {
@@ -2399,7 +2409,19 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     } else {
       for (const r of resumes) baseSelect.append(option(r));
     }
-    baseSelect.onchange = () => act('setBase', { baseResumeId: baseSelect.value, tailor: state.builtWith ?? 'none' });
+    /*
+     * A different base, worked out again for this posting.
+     *
+     * This asked for `state.builtWith`, which is now `'none'` unless the AI
+     * decided something — and `'none'` comes back with no rationale and no
+     * skill changes at all, so choosing a different resume emptied the
+     * suggestion list and left nothing to tick. The suggestions belong to the
+     * pair (base, posting): change either and they have to be computed again.
+     * An AI proposal is the one thing that cannot be, so that one repeats
+     * what was asked for.
+     */
+    baseSelect.onchange = () =>
+      act('setBase', { baseResumeId: baseSelect.value, tailor: state.builtWith === 'ai' ? 'ai' : 'match' });
 
     const feedback = h('textarea', {
       value: state.feedback,
@@ -3554,8 +3576,9 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       if (mode !== 'ai' && mode !== 'match') return null;
       state.rebuilding = mode;
       try {
-        return await act('rebuild', { tailor: mode }, () => {
-          state.builtWith = mode;
+        return await act('rebuild', { tailor: mode }, (result) => {
+          // What came back, not what was asked for — see `rebuildAs`.
+          state.builtWith = isDecision(result) ? 'ai' : 'none';
           state.render = null;
         });
       } finally {

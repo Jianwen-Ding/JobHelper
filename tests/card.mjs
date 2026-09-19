@@ -1895,6 +1895,124 @@ async function main() {
     `${scrolled.before} → ${scrolled.after}`,
   );
 
+  console.log('\nAsking for the AI is not the same as getting it');
+
+  /*
+   * A run that never started, or came back with prose instead of choices,
+   * falls through to the suggestions and changes nothing. The card used to
+   * record the mode that was *asked for*, so the AI button lit up either way
+   * and the card claimed a tailoring that had not happened.
+   */
+  const aiFailedRun = await inPage(async (createCard) => {
+    /*
+     * What the server sends when the command could not be started: the
+     * keyword match's shape, with the reason attached.
+     */
+    const failed = {
+      spec: { id: 'job-acme', label: 'Acme' },
+      rationale: [],
+      diff: [],
+      tailor: 'match',
+      aiUsed: false,
+      aiFailed: 'spawn claude ENOENT',
+    };
+    let handle;
+    handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action) => {
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action !== 'rebuild') return {};
+        /*
+         * The content script hands every rebuild reply to `update` before
+         * returning it, and that is what puts the reason on the analysis the
+         * summary reads. Without it this harness would be asking the card
+         * about a failure it was never told about.
+         */
+        handle.update(failed);
+        return failed;
+      },
+    });
+    await new Promise((r) => setTimeout(r, 100));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    [...root.querySelectorAll('button.mode')].find((b) => /Have AI Tailor/.test(b.textContent))?.click();
+    await new Promise((r) => setTimeout(r, 150));
+    return {
+      lit: root.querySelector('.mode.on')?.textContent?.trim() ?? null,
+      // Every `.hint` on the card: the first one is the "Start from" label
+      // above the base picker, not the sentence this is about.
+      said: [...root.querySelectorAll('.hint')].map((n) => n.textContent).join(' | '),
+    };
+  });
+
+  check(
+    'a run that never started does not light the AI button',
+    aiFailedRun.lit === 'Use Original',
+    String(aiFailedRun.lit),
+  );
+  check(
+    'and the card says what actually happened',
+    /could not be started/i.test(aiFailedRun.said),
+    aiFailedRun.said.slice(0, 90),
+  );
+
+  console.log('\nChanging the base resume keeps the suggestions');
+
+  /*
+   * The suggestions belong to the pair (base, posting): change either and
+   * they have to be worked out again. This asked for `state.builtWith`, which
+   * is `none` on everything the AI has not touched — and `none` comes back
+   * with no rationale and no skill changes at all, so choosing a different
+   * resume emptied the list and left nothing to tick.
+   */
+  const rebased = await inPage(async (createCard) => {
+    const sent = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [
+        { id: 'base', label: 'New grad', base: true },
+        { id: 'intern', label: 'Summer intern', base: true },
+      ],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, tailor: payload?.tailor });
+        return action === 'aiStatus' ? { active: true, state: 'on' } : {};
+      },
+    });
+    void handle;
+    await new Promise((r) => setTimeout(r, 100));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const picker = root.querySelector('select');
+    if (!picker) return { error: 'no base picker' };
+    picker.value = 'intern';
+    picker.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 120));
+    return { asked: sent.filter((c) => c.action === 'setBase').map((c) => c.tailor) };
+  });
+
+  check(
+    'choosing another resume works the suggestions out for it',
+    rebased.asked?.[0] === 'match',
+    JSON.stringify(rebased),
+  );
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);
