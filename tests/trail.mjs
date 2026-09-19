@@ -80,6 +80,33 @@ describe('two addresses on one site', () => {
     assert.equal(relatedPath('https://x.com/vega/8f21', 'https://x.com/vega/8f21/apply/12345'), true);
   });
 
+  /*
+   * And from the form itself, which is where somebody actually is when they
+   * press Next.
+   *
+   * "Anything after the step segment is that step's own business" held only
+   * while the page being compared against was the posting. The moment the
+   * form's own address went into the trail — which it does as soon as you
+   * land on it and start typing — the next page of the same form was judged a
+   * different application, the letter was parked, and the card came up empty
+   * one click into a form half filled in.
+   */
+  it('joins the next page of a form to the form you are standing on', () => {
+    const form = 'https://x.com/jobs/1234/apply';
+    for (const next of ['experience', 'eeo', 'voluntary-disclosures', 'documents', '12345']) {
+      assert.equal(relatedPath(form, `${form}/${next}`), true, next);
+    }
+  });
+
+  /*
+   * Without letting that reach anything it should not. A listing is never a
+   * step, so extending one still joins nothing.
+   */
+  it('does not let that join a listing to what is under it', () => {
+    assert.equal(relatedPath('https://x.com/jobs', 'https://x.com/jobs/1234'), false);
+    assert.equal(relatedPath('https://x.com/acme/careers', 'https://x.com/acme/careers/swe'), false);
+  });
+
   it('ignores a trailing slash, which means nothing', () => {
     assert.equal(relatedPath('https://x.com/vega/8f21/', 'https://x.com/vega/8f21'), true);
   });

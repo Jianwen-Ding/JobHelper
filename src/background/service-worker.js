@@ -43,8 +43,66 @@ const SLOW_TIMEOUT_MS = 10 * 60_000;
  * So the save each proposal came from travels with the writes that follow
  * it, and the store refuses one meant for a save it no longer has open.
  * Held per tab, because two tabs are two applications.
+ *
+ * And on the trail as well as here, because here does not survive. This
+ * worker is stopped after about half a minute of no extension events, which
+ * reading a posting and writing a letter produces none of — so the map was
+ * routinely empty by the time Submit was pressed. `serverFetch` sends the
+ * header only when it has a save, and the store's guard only refuses a save
+ * it disagrees with, so a forgotten one was not a refusal: it was the whole
+ * protection quietly switching itself off, in the ordinary case rather than a
+ * rare one, and the application filed into whichever save happened to be open.
  */
 const saveOf = new Map();
+
+/**
+ * Which save this tab's application was built from, memory or not.
+ *
+ * The map is the fast path and the trail is the true one; the trail is in
+ * session storage and outlives the worker. Undefined only for an application
+ * that was in flight when the extension was updated, which is the one case
+ * where there is genuinely nothing to know.
+ */
+async function saveFor(tabId) {
+  const known = saveOf.get(tabId);
+  if (known) return known;
+  const trail = await readTrail(tabId);
+  if (trail.save) saveOf.set(tabId, trail.save);
+  return trail.save;
+}
+
+/**
+ * The save this application belongs to, or a refusal to write without one.
+ *
+ * The store refuses a write whose `X-RMM-Project` disagrees with the save it
+ * has open. It does not refuse one that carries no header at all — it cannot,
+ * because the editor's own pages and every other caller are headerless and
+ * legitimate. So "which save is this?" being unanswerable did not mean the
+ * write stopped; it meant the write went to whichever save happened to be
+ * open, agreed with nothing, and was accepted.
+ *
+ * That is the same failure `saveOf` and the header exist to prevent, reached
+ * by not knowing rather than by knowing wrongly. Seen end to end: stop the
+ * worker mid-application, change save in the editor, press Submit. The final
+ * filing still remembered the save and was refused — the card said so, in the
+ * store's own words — while the staging write that puts the files in the
+ * upload folder had already landed a row in the other save's tracker, marked
+ * `applying`, because it went out with no header.
+ *
+ * Refusing is right rather than harsh. There is no save to guess at here: the
+ * work on screen was built from one, and picking a different one silently is
+ * the outcome this whole mechanism is about. A reload rebuilds the
+ * application against the save that is actually open, which is a few seconds
+ * and no surprises.
+ */
+async function saveOrRefuse(tabId) {
+  const save = await saveFor(tabId);
+  if (save) return save;
+  throw new Error(
+    'JobHelper has lost track of which save this application was built from, so it will not file it — ' +
+      'it could go into the wrong one. Reload this page to start it again.',
+  );
+}
 
 /**
  * Work the user is allowed to walk away from, by tab.
@@ -521,6 +579,44 @@ async function remember(tab, page) {
   const joins = sameApplication(trail, page);
   const pages = joins ? trail.pages.filter((p) => p.url !== page.url) : [];
 
+  /*
+   * A page that starts a fresh application in a tab that was holding written
+   * work does not get to throw it away.
+   *
+   * `joins` is a judgement — a click, a company name, where the pages live —
+   * and judgements are wrong sometimes. When it says fresh, everything under
+   * `work` is replaced: the letter, the answers, the tailored resume. That is
+   * right for the resume, which can be built again in seconds, and wrong for
+   * the letter, which somebody wrote.
+   *
+   * So it is parked where a closed tab's work is parked, under the address of
+   * the page it was written on, and going back to that page brings it
+   * straight back — see the rescue in `takeWork`. Nothing is carried forward
+   * into the new application, because that is the failure this heuristic
+   * exists to prevent; nothing is destroyed either, which is the failure it
+   * was causing.
+   */
+  if (!joins && trail.work) {
+    /*
+     * Under every page of it, not only the last one. An application is a
+     * posting and a form and whatever came between; somebody coming back to
+     * it comes back to whichever of those they were last looking at, and
+     * keying only the last one meant returning to the form found nothing
+     * because the trail happened to end on the description. Five at most —
+     * see `TRAIL_MAX` — and `sweepOrphans` keeps the total bounded.
+     */
+    const parked = Object.fromEntries(
+      trail.pages
+        .map((p) => p?.url)
+        .filter(Boolean)
+        .map((url) => [orphanKey(url), { work: trail.work, save: trail.save, at: Date.now() }]),
+    );
+    if (Object.keys(parked).length > 0) {
+      await sweepOrphans();
+      await session().set(parked).catch(() => undefined);
+    }
+  }
+
   pages.push({
     url: page.url,
     title: page.title,
@@ -568,6 +664,13 @@ async function remember(tab, page) {
   const next = {
     ...(joins ? trail : {}),
     expecting: joins && !honoured ? trail.expecting : undefined,
+    /*
+     * Which save this application is being built from, kept where it will
+     * still be after the worker is stopped — see `saveOf`. Named in the
+     * spread above rather than left to it, because a fresh application
+     * inherits nothing and this is the page that decides which save it is.
+     */
+    save: joins ? (trail.save ?? page.save) : page.save,
     pages: pages.slice(-TRAIL_MAX),
     at: Date.now(),
   };
@@ -684,8 +787,11 @@ const handlers = {
 
     /*
      * Nothing in this tab. A tab closed on this same page may have left its
-     * writing behind — Ctrl+Shift+T gives the reopened page a new tab id, so
-     * the only thing the two have in common is the address.
+     * writing behind, and so may this tab itself, having gone off to read
+     * another job: `remember` parks what it is about to replace under every
+     * page of the application it belonged to. Ctrl+Shift+T gives a reopened
+     * page a new tab id and a new posting replaces the trail, so in both
+     * cases the address is the only thing the two have in common.
      */
     const key = orphanKey(page?.url ?? '');
     const rescued = page?.url ? (await session().get(key))[key] : null;
@@ -694,7 +800,19 @@ const handlers = {
       // Claimed or expired, it goes either way. Leaving the stale ones behind
       // is how the space fills up; see `sweepOrphans`.
       await session().remove(key).catch(() => undefined);
-      if (rescued.work && fresh) return { work: rescued.work, recovered: true };
+      if (rescued.work && fresh) {
+        /*
+         * Onto this tab's trail, because the rescue is a different tab and
+         * this is the only moment the answer is in hand. `at` with it: a
+         * trail without one reads as stale on the next look, which would
+         * lose the save again a moment after finding it.
+         */
+        if (rescued.save && tab?.id !== undefined) {
+          saveOf.set(tab.id, rescued.save);
+          await writeTrail(tab.id, { ...trail, save: rescued.save, at: Date.now() });
+        }
+        return { work: rescued.work, recovered: true };
+      }
     }
     return { work: trail.work ?? null };
   },
@@ -934,9 +1052,27 @@ const handlers = {
      * as looked at would put a salary page, a careers index and a
      * confirmation page into the application you are writing.
      */
-    if (result?.save && tab?.id !== undefined) saveOf.set(tab.id, result.save);
+    /*
+     * Only if this tab has not already bound itself to one.
+     *
+     * A page is analysed again whenever the worker comes back, which is often
+     * — and this line used to take whichever save was open at that moment. So
+     * an application in progress could be moved to a different save without
+     * anything happening on screen: the work still showing came from the old
+     * one, `saveOf` now said the new one, and the write went there and was
+     * not refused, because it agreed with itself. Quietly rebinding is the
+     * exact failure the header exists to prevent, arriving through the code
+     * that sets it.
+     *
+     * A genuinely new application in this tab does rebind — see `remember`,
+     * which keeps the save only while the application continues.
+     */
+    if (result?.save && tab?.id !== undefined && !(await saveFor(tab.id))) {
+      saveOf.set(tab.id, result.save);
+    }
     if (result?.isJobPosting) {
       await remember(tab, {
+        save: result?.save,
         url,
         title,
         company: result.job?.company,
@@ -1039,7 +1175,7 @@ const handlers = {
     return serverFetch('/api/applications/bundle', {
       method: 'POST',
       timeoutMs: SLOW_TIMEOUT_MS,
-      save: saveOf.get(tab?.id),
+      save: await saveOrRefuse(tab?.id),
       body: JSON.stringify({ ...payload, status: 'applying' }),
     });
   },
@@ -1048,7 +1184,7 @@ const handlers = {
     return serverFetch('/api/applications/bundle', {
       method: 'POST',
       timeoutMs: SLOW_TIMEOUT_MS,
-      save: saveOf.get(tab?.id),
+      save: await saveOrRefuse(tab?.id),
       body: JSON.stringify(payload),
     });
   },
@@ -1208,7 +1344,7 @@ const handlers = {
       // The same rule as `bundle`: this writes a space, a tracker row and a
       // tailored resume into a save, and it has to be the save the proposal
       // was built from.
-      save: saveOf.get(tab?.id),
+      save: await saveOrRefuse(tab?.id),
       body: JSON.stringify(payload),
     });
     const { serverUrl } = await getSettings();
@@ -1410,7 +1546,13 @@ chrome.tabs?.onRemoved?.addListener(async (tabId) => {
     const url = trail.pages?.[trail.pages.length - 1]?.url;
     if (trail.work && url) {
       await sweepOrphans();
-      await session().set({ [orphanKey(url)]: { work: trail.work, at: Date.now() } });
+      /*
+       * And which save it was built from. Without it the rescued application
+       * comes back knowing what it says and not where it belongs, and the
+       * writes that follow go out with no `X-RMM-Project` at all — which the
+       * store does not refuse. See `saveOf`.
+       */
+      await session().set({ [orphanKey(url)]: { work: trail.work, save: trail.save, at: Date.now() } });
     }
   } catch {
     // Storage full, or the trail already gone. Losing the rescue copy is not

@@ -519,27 +519,6 @@ async function main() {
       await bare.close();
     }
 
-    /*
-     * The link in the email that says "finish your application".
-     *
-     * It lands on the form, not the description — no posting read, no trail,
-     * nothing walked. And the form does not name the role: this one titles
-     * itself "Apply — Helios" and says "Submit application" in its heading,
-     * which is every bare application form there is.
-     *
-     * What that cost was not the label. Identity is the company and the role,
-     * so an application filed as "Unknown role" is a different job from the
-     * same job filed from its posting — and opening the posting afterwards
-     * filed a second row, with no sign on the card that it had already gone.
-     * One job, two rows, and the "you applied to this" line silent on the one
-     * page where it was most needed.
-     *
-     * The role was in the address the whole time: `/helios/apply/`
-     * `platform-engineer`. It is read from there when the page itself has
-     * nothing, through the same two gates the page title goes through — so a
-     * Greenhouse address ending `/jobs/4567` still yields nothing, and says so
-     * rather than inventing a role out of a number.
-     */
     group('Arriving at the form from an email, with no posting behind it');
     {
       const heliosRows = async () =>
@@ -650,6 +629,64 @@ async function main() {
       check('and the plain title', mark.title === 'JobHelper', mark.title);
       await clean.close();
     }
+
+    group('Reading another job in the same tab, and coming back');
+    {
+      /*
+       * The letter survives leaving for a blog because a page with no card
+       * never asks the trail anything. Another *posting* does ask, and it
+       * used to be the end of the letter: the trail decides whether the new
+       * page continues the application, and when it decides not to, the whole
+       * of `work` was replaced — the resume, the answers, and the letter
+       * somebody had written.
+       *
+       * That judgement is right to be strict; two jobs at one company are two
+       * applications, and carrying a letter between them is the failure it
+       * exists to prevent. Being strict is not a licence to destroy: the work
+       * is parked under the page it was written on, so going back to that
+       * page brings it back, the same way a closed tab's writing comes back.
+       */
+      await page.goto(fixtures.urlFor(CYGNUS_ROLE_A), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      check('the other posting gets a card of its own', (await cardOf(page).count()) > 0);
+      const theirs = await cardOf(page).textContent();
+      check('named for the other job', /cygnus/i.test(theirs ?? ''), (theirs ?? '').slice(0, 80));
+      check(
+        'and not holding the letter written for the first',
+        !/wanted to work on this for years/i.test(theirs ?? ''),
+      );
+
+      await page.goto(fixtures.urlFor(HELIOS_FORM), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      const back = await cardOf(page).locator('textarea.tall').first().inputValue();
+      check(
+        'and the letter is there again on the page it was written on',
+        /wanted to work on this for years/i.test(back),
+        back.slice(0, 60),
+      );
+    }
+
+    /*
+     * The link in the email that says "finish your application".
+     *
+     * It lands on the form, not the description — no posting read, no trail,
+     * nothing walked. And the form does not name the role: this one titles
+     * itself "Apply — Helios" and says "Submit application" in its heading,
+     * which is every bare application form there is.
+     *
+     * What that cost was not the label. Identity is the company and the role,
+     * so an application filed as "Unknown role" is a different job from the
+     * same job filed from its posting — and opening the posting afterwards
+     * filed a second row, with no sign on the card that it had already gone.
+     * One job, two rows, and the "you applied to this" line silent on the one
+     * page where it was most needed.
+     *
+     * The role was in the address the whole time: `/helios/apply/`
+     * `platform-engineer`. It is read from there when the page itself has
+     * nothing, through the same two gates the page title goes through — so a
+     * Greenhouse address ending `/jobs/4567` still yields nothing, and says so
+     * rather than inventing a role out of a number.
+     */
   } finally {
     await context.close();
     fixtures.close();

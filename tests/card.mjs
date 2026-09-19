@@ -30,15 +30,17 @@ async function main() {
   await page.goto('about:blank');
   const source = fs.readFileSync(new URL('../src/content/card.js', import.meta.url), 'utf8');
 
-  const inPage = (fn) => page.evaluate(
-    async ([code, body]) => {
+  // `given` is for the cases that want the same body run with different data;
+  // everything written before it takes one argument and ignores this.
+  const inPage = (fn, given) => page.evaluate(
+    async ([code, body, arg]) => {
       const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
       const { createCard, removeCard } = await import(url);
       removeCard();
       // eslint-disable-next-line no-new-func
-      return new Function('createCard', `return (${body})(createCard)`)(createCard);
+      return new Function('createCard', 'given', `return (${body})(createCard, given)`)(createCard, arg);
     },
-    [source, fn.toString()],
+    [source, fn.toString(), given ?? null],
   );
 
   console.log('\nWriting while the card repaints');
@@ -2517,6 +2519,67 @@ async function main() {
     emptyBuild.stillWaiting === true,
     JSON.stringify(emptyBuild),
   );
+
+  console.log('\nWhere a drafted letter would come from');
+
+  /*
+   * A model writing a cover letter is the part of this people are rightly
+   * wariest of, and the answer to that wariness is the whole reason the
+   * letter bank, the answer bank and the writing notes exist: it works from
+   * their letters, their samples and their own account of how they write.
+   * The card asked for a letter and never said where one would come from, so
+   * the button read as "have a machine write this".
+   */
+  const askCard = (voice) => inPage((createCard, given) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+        voice: given ?? undefined,
+      },
+      resumes: [],
+      settings: {},
+      questions: [{ question: 'Why us?', answer: '', confident: false }],
+      needsCoverLetter: true,
+      onAction: async () => ({}),
+    });
+    void handle;
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    return [...root.querySelectorAll('.voice-from')].map((n) => n.textContent);
+  }, voice);
+
+  const counted = await askCard({ letters: 9, answers: 4, samples: 2, notes: true });
+  check('it is said beside the letter and beside the questions', counted.length === 2, JSON.stringify(counted));
+  check(
+    'and counts what it has of yours, rather than claiming it',
+    /9 letters you have written/.test(counted[0] ?? '') && /4 answers you have written/.test(counted[1] ?? ''),
+    JSON.stringify(counted),
+  );
+  check(
+    'naming the samples and the notes too',
+    /2 writing samples/.test(counted[0] ?? '') && /how you write/.test(counted[0] ?? ''),
+    String(counted[0]),
+  );
+
+  /*
+   * And the honest answer on a first application, which is the one most worth
+   * showing: a letter written with nothing of yours to learn from is a
+   * different offer and should look like one.
+   */
+  const empty = await askCard({ letters: 0, answers: 0, samples: 0, notes: false });
+  check(
+    'says so plainly when there is nothing of yours to learn from yet',
+    /nothing of yours to learn it from yet/i.test(empty[0] ?? ''),
+    String(empty[0]),
+  );
+  check('and does not claim otherwise', !/not from nothing/.test(empty[0] ?? ''), String(empty[0]));
+
+  // An older server that does not send the counts says nothing, rather than
+  // saying something wrong about a bank it never described.
+  const silent = await askCard(undefined);
+  check('and nothing at all when the save did not say', silent.length === 0, JSON.stringify(silent));
 
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);

@@ -135,6 +135,28 @@ export function relatedPath(a, b) {
   // partly from the first.
   const [shorter, longer] = sa.length <= sb.length ? [sa, sb] : [sb, sa];
   if (shorter.every((seg, i) => seg === longer[i])) {
+    /*
+     * A path that already ends in a step is already this application's form,
+     * so what comes after it is a later page of that form.
+     *
+     * This is the rule below said from the other end, and it was the half
+     * that was missing. "Anything after the step segment is that step's own
+     * business" held only while the trail's page was the posting: the moment
+     * somebody landed on `/jobs/1234/apply` and started typing, that address
+     * went into the trail, and the form's own next page —
+     * `/jobs/1234/apply/experience`, `/apply/eeo`, `/apply/documents`,
+     * `/apply/12345` — was measured against it and judged a different
+     * application. The work was parked and the card came up empty, one click
+     * into a form the person was halfway through. Even the example in the
+     * comment below is only true from the posting; from the form page it was
+     * false.
+     *
+     * The last segment, not any segment: the claim is that this page is a
+     * step, not that a step happened somewhere upstream. A later step still
+     * matches through the form page already in the trail.
+     */
+    if (STEP_WORDS.test(bare(shorter[shorter.length - 1]))) return true;
+
     // The first added segment decides, once any meaningless container is out
     // of the way; anything after it is that step's own business, which is how
     // /8f21/apply/12345 stays one application.
