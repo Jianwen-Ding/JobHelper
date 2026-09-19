@@ -66,6 +66,29 @@ async function main() {
    * make the whole thing pass for the wrong reason.
    */
   const slow = await serveSlowProxy(SERVER, { slowRoute: /extension\/analyze/, ms: 12_000, skip: 1 });
+
+  /*
+   * The AI switched on, for the length of this suite.
+   *
+   * The Stop exists for the one thing on this card that takes minutes, and
+   * that is the model — so testing it needs the AI button enabled, which
+   * needs both switches: the store's and the extension's. Nothing is spent:
+   * the proxy holds the request in front of the server for twelve seconds
+   * and the stop lands after three, so it is abandoned before it is
+   * forwarded and no model is ever started.
+   *
+   * Put back in `finally`, because this suite shares a save with the others
+   * and leaving somebody else's AI switched on is not its decision to make.
+   */
+  const configWas = await (await fetch(`${SERVER}/api/config`)).json();
+  const setServerAi = (enabled) =>
+    fetch(`${SERVER}/api/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ai: { ...configWas.ai, enabled } }),
+    });
+  await setServerAi(true);
+
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-stopping-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     executablePath: findChromium(),
@@ -77,6 +100,11 @@ async function main() {
   try {
     const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
     await pointExtensionAt(context, worker, slow.base);
+    // And the extension's own switch, which is the other half of `active`.
+    const settings = await context.newPage();
+    await settings.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
+    await settings.evaluate(() => chrome.storage.sync.set({ useAi: true }));
+    await settings.close();
 
     const page = await context.newPage();
     await page.goto(`${fixtures.base}${HELIOS_ROLE.path}`);
@@ -84,13 +112,15 @@ async function main() {
     await page.waitForTimeout(1500);
 
     const card = page.locator(`${HOST} .card`);
-    const matchButton = card.locator('button.mode', { hasText: 'Match by keyword' });
+    // The AI, which is the only run that goes to the server now — and the
+    // long one, which is what a Stop is for.
+    const aiButton = card.locator('button.mode', { hasText: 'Have AI Tailor' });
     const bar = card.locator('.progress');
     const stop = card.locator('.progress-label .stop');
 
-    console.log('\nA keyword match that is taking too long');
+    console.log('\nAn AI pass that is taking too long');
 
-    await matchButton.click();
+    await aiButton.click();
     await bar.waitFor({ timeout: 10_000 });
     check('the run puts a bar up', await bar.count() > 0);
     check('with a way out on it', await stop.count() > 0);
@@ -131,19 +161,20 @@ async function main() {
 
     /*
      * The point of stopping is getting the card back, so the thing to check
-     * is that it works — not that it merely looks idle. "Use it unchanged" is
+     * is that it works — not that it merely looks idle. "Use Original" is
      * the cheapest proof: it is a real run through the same lane the stopped
      * one held, and it has to be able to start and finish.
      */
-    const unchanged = card.locator('button.mode', { hasText: 'Use it unchanged' });
+    const unchanged = card.locator('button.mode', { hasText: 'Use Original' });
     check('the buttons are live again', await unchanged.isEnabled());
     await unchanged.click();
-    await card.locator('button.mode.on', { hasText: 'Use it unchanged' }).waitFor({ timeout: 40_000 });
+    await card.locator('button.mode.on', { hasText: 'Use Original' }).waitFor({ timeout: 40_000 });
     check('and a new run goes through', await card.locator('button.mode.on').count() === 1);
   } finally {
     await context.close();
     fixtures.close();
     slow.close();
+    await setServerAi(configWas.ai?.enabled ?? false).catch(() => undefined);
     fs.rmSync(userDataDir, { recursive: true, force: true });
   }
 

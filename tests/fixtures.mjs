@@ -1427,6 +1427,26 @@ export function serveSlowProxy(target, { slowRoute = /analyze/, ms = 4000, skip 
         // analysis — can be slowed on the second call and not the first.
         if (slowRoute.test(req.url) && seen++ >= skip) await new Promise((r) => setTimeout(r, ms));
 
+        /*
+         * Gone before we got there, so there is nothing to ask for.
+         *
+         * A real proxy does not finish an errand for somebody who has walked
+         * out, and here it matters twice: forwarding a request the browser
+         * abandoned would run the work anyway — which for a tailoring pass
+         * means starting a model — and the reply would go nowhere. The point
+         * of the stop is that the work is not done.
+         */
+        /*
+         * Gone before we got there, so there is nothing to ask for.
+         *
+         * A real proxy does not finish an errand for somebody who has walked
+         * out, and here it matters twice: forwarding a request the browser
+         * abandoned would run the work anyway — which for a tailoring pass
+         * means starting a model — and the reply would go nowhere. The point
+         * of the stop is that the work is not done.
+         */
+        if (res.writableEnded || res.destroyed) return;
+
         const upstream = await fetch(`${target}${req.url}`, {
           method: req.method,
           headers: { 'content-type': req.headers['content-type'] ?? 'application/json' },
