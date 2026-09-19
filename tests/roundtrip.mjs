@@ -301,14 +301,30 @@ async function main() {
       )
       .catch(() => undefined);
     check('the card knows the store moved under it', /been editing the store/i.test((await card.textContent()) ?? ''));
+    /*
+     * Which offer it is depends on what this proposal is, and that is what
+     * this checks. Arriving tailors nothing now, so what is on screen is the
+     * resume exactly as it is kept — and "build it again" in that mode would
+     * rebuild it unchanged and could never reach the alternate just written
+     * in the builder, while the sentence beside it promised otherwise. The
+     * offer has to name the thing that would actually pick it up.
+     */
+    const offer = card.locator('.hint.warn button');
+    const offered = ((await offer.textContent().catch(() => '')) ?? '').trim();
     check(
       'and offers to redo the match rather than doing it behind your back',
-      /build it again/i.test((await card.textContent()) ?? ''),
+      (await offer.count()) === 1,
+      offered,
+    );
+    check(
+      'naming the mode that would actually use what was just written',
+      /match by keyword/i.test(offered) && !/build it again/i.test(offered),
+      offered,
     );
 
     group('And the sentence arrives in what gets sent');
     {
-      await card.getByRole('button', { name: 'Build it again' }).click();
+      await offer.click();
       await page.waitForTimeout(3000);
       check(
         'rebuilding clears the notice rather than leaving it up for good',
