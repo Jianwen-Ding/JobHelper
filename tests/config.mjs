@@ -13,7 +13,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULTS, normaliseServerUrl } from '../src/shared/config.js';
+import { DEFAULTS, getSettings, normaliseServerUrl } from '../src/shared/config.js';
 
 describe('the server address, as typed', () => {
   it('leaves an address that is already one alone', () => {
@@ -70,5 +70,65 @@ describe('the server address, as typed', () => {
    */
   it('keeps a path rather than guessing which part was surplus', () => {
     assert.equal(normaliseServerUrl('http://127.0.0.1:4600/api'), 'http://127.0.0.1:4600/api');
+  });
+});
+
+/*
+ * Why seeding the defaults into storage on install was not just unnecessary
+ * but harmful.
+ *
+ * `getSettings` passes DEFAULTS to `chrome.storage.sync.get`, which is the
+ * API's way of saying "these are the fallbacks" — so a key that is simply
+ * absent already reads as its default. Writing them in on install therefore
+ * bought nothing, and cost the ability to ever improve one: a stored value
+ * wins, so every default was pinned to whatever version somebody first
+ * installed. `minScore` went 4 → 3 precisely so the card would stop being
+ * absent on application forms, and that fix reached new installs only.
+ *
+ * Tested with a stand-in for chrome.storage rather than a browser, because
+ * the real `onInstalled` does not fire for an unpacked extension loaded by
+ * the harness — a browser test of this passes whichever version is in place,
+ * which is worth less than nothing.
+ */
+describe('a setting nobody has chosen', () => {
+  const withStorage = async (stored, fn) => {
+    const had = globalThis.chrome;
+    globalThis.chrome = {
+      storage: {
+        sync: {
+          async get(keys) {
+            // The shape `getSettings` relies on: an object of key → fallback.
+            const out = {};
+            for (const [key, fallback] of Object.entries(keys)) {
+              out[key] = key in stored ? stored[key] : fallback;
+            }
+            return out;
+          },
+        },
+      },
+    };
+    try {
+      return await fn();
+    } finally {
+      globalThis.chrome = had;
+    }
+  };
+
+  it('reads as the shipped default when storage does not hold it', async () => {
+    const settings = await withStorage({}, () => getSettings());
+    assert.equal(settings.minScore, DEFAULTS.minScore);
+    assert.equal(settings.serverUrl, DEFAULTS.serverUrl);
+  });
+
+  /*
+   * And the half that made seeding harmful: a stored copy wins, for ever.
+   * That is correct for a setting somebody chose and wrong for one that was
+   * only ever written in on their behalf — which is why the install step no
+   * longer writes any of them, and clears the one key that has no control.
+   */
+  it('is overridden by a stored copy, which is what pinned it', async () => {
+    const settings = await withStorage({ minScore: 4 }, () => getSettings());
+    assert.equal(settings.minScore, 4);
+    assert.notEqual(DEFAULTS.minScore, 4, 'the shipped default has moved on, and the stored copy still wins');
   });
 });
