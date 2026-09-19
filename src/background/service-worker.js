@@ -463,23 +463,65 @@ async function inheritIfNew(tabId, openerTabId) {
  */
 const framesKey = (tabId) => `frames:${tabId}`;
 
+/**
+ * One frame at a time may change the list.
+ *
+ * Reading the list, adding to it and writing it back is three turns, and every
+ * frame on the page announces itself at once — a page with eight iframes is
+ * eight of these interleaved. Two that read the same list both write their own
+ * frame onto it, and the one that lands second has silently dropped the first.
+ *
+ * Measured, on the same page loaded six times:
+ *
+ *   round 1: iframes on the page 8, recorded 8
+ *   round 2: iframes on the page 8, recorded 7   <-- LOST 1
+ *   round 3: iframes on the page 8, recorded 8
+ *   round 4: iframes on the page 8, recorded 8
+ *   round 5: iframes on the page 8, recorded 8
+ *   round 6: iframes on the page 8, recorded 6   <-- LOST 2
+ *
+ * A frame that is not on the list is never asked anything: `askFrames` reads
+ * the list and messages what is in it, so the lost frame's questions never
+ * appear on the card and Autofill walks past its fields. Two in three loads
+ * were right here, which is the worst shape for this — the same page works
+ * when you try it and quietly misses a field when you do not look.
+ *
+ * `chrome.storage.session` has no compare-and-set, so the exclusion is a
+ * promise chain: each change waits for the one before it and reads a list that
+ * already has it in. Per key, so two tabs loading at once do not queue behind
+ * each other. Worth saying that this is enough only because there is one
+ * service worker at a time — the chain lives in its memory, and a worker that
+ * has been stopped has no changes in flight to lose.
+ */
+const frameWrites = new Map();
+
+function changeFrames(key, change) {
+  const next = (frameWrites.get(key) ?? Promise.resolve())
+    .then(async () => {
+      const ids = (await session().get(key))[key] ?? [];
+      const wanted = change(ids);
+      if (wanted === null) return;
+      await session().set({ [key]: wanted });
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      // Only the last change queued clears the slot, or a change queued while
+      // this one was running would be dropped from the chain.
+      if (frameWrites.get(key) === next) frameWrites.delete(key);
+    });
+  frameWrites.set(key, next);
+  return next;
+}
+
 async function noteFrame(tabId, frameId) {
   if (tabId === undefined || !frameId) return;
-  const key = framesKey(tabId);
-  const ids = new Set((await session().get(key))[key] ?? []);
-  if (ids.has(frameId)) return;
-  ids.add(frameId);
-  await session()
-    .set({ [key]: [...ids] })
-    .catch(() => undefined);
+  await changeFrames(framesKey(tabId), (ids) => (ids.includes(frameId) ? null : [...ids, frameId]));
 }
 
 async function forgetFrame(tabId, frameId) {
-  const key = framesKey(tabId);
-  const ids = ((await session().get(key))[key] ?? []).filter((id) => id !== frameId);
-  await session()
-    .set({ [key]: ids })
-    .catch(() => undefined);
+  await changeFrames(framesKey(tabId), (ids) =>
+    ids.includes(frameId) ? ids.filter((id) => id !== frameId) : null,
+  );
 }
 
 /**
