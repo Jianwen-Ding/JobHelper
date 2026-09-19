@@ -252,27 +252,66 @@ const rootOf = (node) => {
  * outright, and the positional fallback only looks at what immediately precedes
  * the field.
  */
+/**
+ * What `aria-labelledby` points at, as one piece of text.
+ *
+ * Its own function because a radio needs it and cannot use `labelFor`: a
+ * radio's own `label[for]` is its *answer* — "Yes" — and the question is
+ * somewhere else entirely, so the chain that is right for a text box gives
+ * exactly the wrong string for a group.
+ */
+function fromLabelledBy(element) {
+  const ids = element.getAttribute?.('aria-labelledby');
+  if (!ids) return '';
+  const text = ids
+    .split(/\s+/)
+    /*
+     * Never the field itself, which `aria-labelledby` does sometimes name.
+     *
+     * Defensive rather than fixing anything measured, and worth being plain
+     * about: an `<input>` has no `textContent`, so on the field this is
+     * really about it changes nothing, and no test here falsifies it. It
+     * earns its line on a `<textarea>`, whose `textContent` is whatever the
+     * applicant typed — labelling a field with its own contents is not a
+     * description of anything.
+     */
+    .filter((id) => id !== element.id)
+    // Scoped to this field's own root: ids inside a component are not in the
+    // document's id map, so Workday-style labelling breaks there otherwise.
+    .map((id) => rootOf(element).getElementById?.(id)?.textContent
+      ?? rootOf(element).querySelector(`#${CSS.escape(id)}`)?.textContent
+      ?? '')
+    .join(' ');
+  return clean(text);
+}
+
 function labelFor(input) {
+  /*
+   * Each of these answers only when it has something to say.
+   *
+   * `if (label) return clean(label.textContent)` returned the empty string
+   * for a label that exists and is empty — and an empty `<label for=…>` is
+   * ordinary markup: a styling hook, an icon slot, a label a framework
+   * renders before its text arrives. Returning it ended the search, so
+   * `aria-labelledby` and `aria-label` below were never reached on exactly
+   * the forms that use them, and the field was described by its `name`
+   * attribute alone. On a system whose names are `field_0192` that is no
+   * description at all.
+   *
+   * A wrapping `<label>` has the same shape: one that holds only the input
+   * cleans down to nothing.
+   */
   if (input.id) {
     const label = rootOf(input).querySelector(`label[for="${CSS.escape(input.id)}"]`);
-    if (label) return clean(label.textContent);
+    const said = clean(label?.textContent);
+    if (said) return said;
   }
 
-  const wrapping = input.closest('label');
-  if (wrapping) return clean(wrapping.textContent);
+  const wrapping = clean(input.closest('label')?.textContent);
+  if (wrapping) return wrapping;
 
-  const describedBy = input.getAttribute('aria-labelledby');
-  if (describedBy) {
-    const text = describedBy
-      .split(/\s+/)
-      // Scoped to this field's own root: ids inside a component are not in the
-      // document's id map, so Workday-style labelling breaks there otherwise.
-      .map((id) => rootOf(input).getElementById?.(id)?.textContent
-        ?? rootOf(input).querySelector(`#${CSS.escape(id)}`)?.textContent
-        ?? '')
-      .join(' ');
-    if (clean(text)) return clean(text);
-  }
+  const described = fromLabelledBy(input);
+  if (described) return described;
 
   const aria = clean(input.getAttribute('aria-label'));
   if (aria) return aria;
@@ -623,8 +662,27 @@ export function fillForm(fields, { overwrite = false } = {}) {
  */
 function groupLabelFor(radios) {
   const first = radios[0];
-  const legend = first.closest('fieldset')?.querySelector('legend');
-  if (legend) return clean(legend.textContent);
+  const legend = clean(first.closest('fieldset')?.querySelector('legend')?.textContent);
+  if (legend) return legend;
+
+  /*
+   * Then whatever the buttons themselves point at, which is how the
+   * enterprise systems mark a radio question: no fieldset, no heading inside
+   * a wrapper, just `aria-labelledby` on each button naming the div that
+   * holds the question. Read from `labelFor` so the same chain — several
+   * ids, a missing one, one naming the field itself — applies here too.
+   *
+   * Only the parts every button agrees on, because each one also carries its
+   * own answer: taking the first button's whole label would make the question
+   * "Are you legally authorized to work in the US? Yes".
+   */
+  const shared = radios.map((radio) => radio.getAttribute('aria-labelledby')).filter(Boolean);
+  if (shared.length === radios.length && new Set(shared).size === 1) {
+    const said = fromLabelledBy(first);
+    if (said) return said;
+  }
+  const aria = clean(first.getAttribute('aria-label'));
+  if (aria) return aria;
 
   let group = first.parentElement;
   for (let i = 0; i < 5 && group; i++, group = group.parentElement) {

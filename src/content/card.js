@@ -2587,48 +2587,55 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      * actually starts from are scattered through it. In a year of applying
      * they are unfindable.
      *
-     * A resume the extension built for a posting is named `job-<company>-
-     * <role>` by the store, which is the only marker there is and a reliable
-     * one — it is how the server names what it generates. Pinned bases still
-     * win where they exist; this is the answer for the store where nobody has
-     * pinned anything.
+     * Every resume carries a tier now — what you build from, what you keep,
+     * and what was made for one posting and gets swept once that posting is
+     * done with — including the ones a migration gave one to. So there is
+     * always something to group by, rather than a grouping that waited for a
+     * pin nobody had found.
+     *
+     * A resume with no tier at all is one from a save this version has not
+     * opened yet. It is read as kept, which is what it is: a file written
+     * before any of this existed is not something to file under "about to be
+     * deleted".
      */
-    const forAPosting = (r) => /^job-/.test(r.id ?? '');
-    const pinned = resumes.filter((r) => r.base);
-    const mine = pinned.length > 0 ? pinned : resumes.filter((r) => !forAPosting(r));
-    const rest = resumes.filter((r) => !mine.includes(r));
+    const tierOf = (r) => r.tier ?? 'extended';
+    const GROUPS = [
+      ['base', 'Bases'],
+      ['extended', 'Kept'],
+      ['temporary', 'Built for a posting'],
+    ];
 
-    if (mine.length > 0 && rest.length > 0) {
-      const bases = h('optgroup', { label: pinned.length > 0 ? 'Bases' : 'Your resumes' });
-      for (const r of byFit(mine)) bases.append(option(r));
+    /*
+     * Within the temporary group, this company first — as a tiebreaker.
+     *
+     * Applying somewhere you have applied before, what you sent them last
+     * time is the most useful thing to start from, so it used to be lifted to
+     * the top of the group outright. That put a resume with nothing to do
+     * with this posting above one written for exactly it, which is the
+     * opposite of what a ranked list is for. As a tiebreaker it still wins
+     * every time the numbers cannot separate them, which is the case it was
+     * really about: two resumes that suit the posting equally, one of which
+     * this employer has already seen.
+     */
+    const here = (analysis?.job?.company ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const sameEmployer = (r) => Boolean(here) && r.id.startsWith(`job-${here}-`);
 
-      /*
-       * And within the rest, this company first. Applying to a company you
-       * have applied to before, the most useful thing to start from is what
-       * you sent them last time — and it was the hardest to find, being
-       * alphabetical among every other posting.
-       */
-      const here = (analysis?.job?.company ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-      const sameEmployer = (r) => Boolean(here) && r.id.startsWith(`job-${here}-`);
+    const groups = GROUPS
+      .map(([tier, label]) => [label, resumes.filter((r) => tierOf(r) === tier)])
+      .filter(([, list]) => list.length > 0);
 
-      /*
-       * Fit decides, and this company breaks the ties.
-       *
-       * Applying somewhere you have applied before, what you sent them last
-       * time is the most useful thing to start from — so it used to be
-       * lifted to the top of the group outright. That put a resume with
-       * nothing to do with this posting above one written for exactly it,
-       * which is the opposite of what a ranked list is for. As a tiebreaker
-       * it still wins every time the numbers cannot separate them, which is
-       * the case it was really about: two resumes that suit the posting
-       * equally, one of which this employer has already seen.
-       */
-      const built = h('optgroup', { label: 'Built for a posting' });
-      for (const r of byFit(rest, sameEmployer)) built.append(option(r));
-      baseSelect.append(bases, built);
+    // One group is no grouping, and an empty one reads as a section that
+    // failed to load.
+    if (groups.length > 1) {
+      for (const [label, list] of groups) {
+        const group = h('optgroup', { label });
+        for (const r of byFit(list, sameEmployer)) group.append(option(r));
+        baseSelect.append(group);
+      }
     } else {
-      for (const r of byFit(resumes)) baseSelect.append(option(r));
+      for (const r of byFit(resumes, sameEmployer)) baseSelect.append(option(r));
     }
+
     /*
      * A different base, worked out again for this posting.
      *

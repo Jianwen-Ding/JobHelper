@@ -255,7 +255,53 @@ const CONSENT = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</
   <label for="own">Email</label><input id="own" name="email">
 </form></body></html>`;
 
-const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT };
+/*
+ * How a field says what it is, on the systems that do not use a plain label.
+ *
+ * Every one of these is how a real applicant tracking system marks its
+ * fields, and a branch map of autofill.js against this suite found that none
+ * of them was reached by any fixture: `aria-labelledby`, `aria-label`, and a
+ * radio with a separate `label[for]` rather than a wrapping one. Untested
+ * paths that real forms take are where the next bug is.
+ *
+ * Writing them down found one. The chain answered with the *empty string* for
+ * a label that exists and is empty — an ordinary thing in generated markup: a
+ * styling hook, an icon slot, a label whose text has not arrived. An empty
+ * answer still counted as an answer, so it ended the search and everything
+ * below it was unreachable on exactly the forms that use it.
+ */
+const LABELS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <!-- Workday: the question is in one node, the hint in another. -->
+  <span id="q1">Email</span><span id="h1">Address</span>
+  <input id="wd" name="f_0192" aria-labelledby="q1 h1">
+
+  <!-- Named ids that are not there. Ought to fall through, not stop. -->
+  <input id="gone" name="f_0193" aria-labelledby="no-such-node" aria-label="First Name">
+
+  <!-- Pointing at itself, which happens. The plain label wins anyway, which
+       is the behaviour worth pinning; the guard against self-reference in
+       fromLabelledBy is defensive and this does not exercise it. -->
+  <label for="selfref">Last Name</label>
+  <input id="selfref" name="f_0194" aria-labelledby="selfref">
+
+  <!-- The empty label. Without the fix it ends the search and the aria-label
+       below it is never read. -->
+  <label for="styled"></label>
+  <input id="styled" name="f_0195" aria-label="GitHub">
+
+  <!-- And a wrapping label holding only the field, which cleans to nothing. -->
+  <label><input id="wrapped" name="f_0196" aria-label="Phone"></label>
+
+  <!-- A radio group labelled the way SuccessFactors does it. -->
+  <div id="auth-q">Are you legally authorized to work in the US?</div>
+  <input type="radio" id="auth_y" name="auth" value="1" aria-labelledby="auth-q">
+  <label for="auth_y">Yes</label>
+  <input type="radio" id="auth_n" name="auth" value="0" aria-labelledby="auth-q">
+  <label for="auth_n">No</label>
+</form></body></html>`;
+
+const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -646,6 +692,55 @@ async function main() {
       }),
     );
     check('a hedged "Yes, but not until 2027" is still a yes', hedged === 'y', `checked "${hedged}"`);
+
+
+    /* ------------------------------------------------------------------ */
+
+    const labels = await page.goto(`${base}/labels`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm(profile);
+        return {
+          values: Object.fromEntries(
+            ['wd', 'gone', 'selfref', 'styled', 'wrapped'].map((id) => [id, document.getElementById(id).value]),
+          ),
+          auth: document.querySelector('input[name="auth"]:checked')?.value ?? '',
+        };
+      }, { b: base, profile: { ...PROFILE, work_authorization: 'Authorized to work in the US' } }),
+    );
+
+    group('Fields labelled the way the enterprise systems label them');
+    check(
+      'aria-labelledby naming two nodes is read as one question',
+      labels.values.wd === PROFILE.email,
+      `"${labels.values.wd}"`,
+    );
+    check(
+      'an id that is not in the page falls through to the aria-label',
+      labels.values.gone === PROFILE.first_name,
+      `"${labels.values.gone}"`,
+    );
+    check(
+      'and one naming the field itself falls through to the plain label',
+      labels.values.selfref === PROFILE.last_name,
+      `"${labels.values.selfref}"`,
+    );
+    /* The two the fix is actually for. */
+    check(
+      'an empty label does not hide the aria-label under it',
+      labels.values.styled === PROFILE.github,
+      `"${labels.values.styled}"`,
+    );
+    check(
+      'nor does a wrapping label holding only the field',
+      labels.values.wrapped === PROFILE.phone,
+      `"${labels.values.wrapped}"`,
+    );
+    check(
+      'a radio group labelled by a separate node is still answered',
+      labels.auth === '1',
+      `checked "${labels.auth}"`,
+    );
 
     group('Values a framework will notice');
     // Only these two: the text input was already written through the
