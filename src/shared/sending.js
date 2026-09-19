@@ -116,6 +116,50 @@ export function nameOf(control) {
 }
 
 /**
+ * A press on Submit that the browser is going to refuse anyway.
+ *
+ * The click listener exists because plenty of these systems call
+ * `preventDefault` and post the form by hand, so waiting for a `submit` event
+ * misses real sends. But a click is not a send, and constraint validation is
+ * the case where the difference is stark: an empty required field means the
+ * browser blocks the submission and fires no `submit` event at all — while the
+ * capture-phase click listener has already run and latched.
+ *
+ * Measured, on a form with two empty required fields:
+ *
+ *   browser submit events fired : 0
+ *   validation message shown    : "Please fill out this field."
+ *   JobHelper recorded as sent  : ["Submit Application" was pressed…]
+ *
+ * The page says "Please fill out this field." and the application is still
+ * sitting there; the card says "Recorded as sent.", the tracker moves the row
+ * to applied, and `told` latches so the real submit afterwards does nothing.
+ * Press Submit, read the validation error, come back tomorrow — and the job is
+ * off the list of things still to do, unsent. This file's own header calls a
+ * wrong "yes" the worst failure available, and this is one.
+ *
+ * Read per control rather than through `form.checkValidity()`, which dispatches
+ * `invalid` events the page can see: asking a question must not be something
+ * the page can notice, let alone act on.
+ *
+ * Only for controls that really would trigger native validation. A
+ * `[role=button]` div has no form to validate, and a `type=button` inside one
+ * submits by script if it submits at all — neither is the browser refusing
+ * anything.
+ */
+function refusedByTheBrowser(button) {
+  const submits =
+    (button.tagName === 'BUTTON' || button.tagName === 'INPUT') && button.type === 'submit';
+  if (!submits || button.formNoValidate) return false;
+  const form = button.form ?? button.closest?.('form');
+  if (!form || form.noValidate) return false;
+  for (const control of form.elements ?? []) {
+    if (control.willValidate && control.validity && !control.validity.valid) return true;
+  }
+  return false;
+}
+
+/**
  * Watch a document for its application being sent, and say so once.
  *
  * Both listeners are in capture phase: a handler that calls preventDefault and
@@ -148,6 +192,8 @@ export function watchForSending(doc, tell) {
     if (!button) return;
     const link = target.closest('a[href]');
     if (link && leavesThePage(link, doc.location ?? doc.defaultView?.location)) return;
+    // A press the browser is about to refuse is not a send.
+    if (refusedByTheBrowser(button)) return;
     const label = nameOf(button);
     if (looksLikeASend(label)) once(`"${label.slice(0, 40)}" was pressed on the page`);
   };

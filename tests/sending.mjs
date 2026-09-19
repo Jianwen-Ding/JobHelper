@@ -303,6 +303,67 @@ async function main() {
       }
     }
 
+    /*
+     * A press the browser refuses is not a send.
+     *
+     * The click listener exists because these systems routinely call
+     * `preventDefault` and post the form by hand, so waiting for a `submit`
+     * event misses real sends. But constraint validation is where a click and
+     * a send come apart hardest: an empty required field means no `submit`
+     * event fires at all, while the capture-phase click listener has already
+     * run and latched. The page said "Please fill out this field.", the
+     * application was still sitting there, and the card said "Recorded as
+     * sent."
+     *
+     * Driven against the real module in a bare page rather than through the
+     * store, because the question is entirely about what the browser does with
+     * a click — and the surrounding cases are what stop the fix from being a
+     * cure worse than the disease.
+     */
+    group('A press the browser refuses');
+    {
+      const src = fs.readFileSync(path.join(extensionRoot, 'src/shared/sending.js'), 'utf8');
+      const cases = [
+        ['a valid form, submitted natively', true,
+          '<form onsubmit="event.preventDefault()"><input name="n" required value="Jane">' +
+          '<button type="submit">Submit Application</button></form>'],
+        ['a script send on a role=button, fields still empty', true,
+          '<form><input name="n" required><div role="button">Submit Application</div></form>'],
+        ['a script send on a type=button inside an invalid form', true,
+          '<form><input name="n" required><button type="button">Submit Application</button></form>'],
+        ['a form that has opted out of validation', true,
+          '<form novalidate onsubmit="event.preventDefault()"><input name="n" required>' +
+          '<button type="submit">Submit Application</button></form>'],
+        ['a button that has opted out of validation', true,
+          '<form onsubmit="event.preventDefault()"><input name="n" required>' +
+          '<button type="submit" formnovalidate>Submit Application</button></form>'],
+        ['an empty required field, which the browser blocks', false,
+          '<form><input name="n" required><button type="submit">Submit Application</button></form>'],
+      ];
+
+      for (const [what, shouldRecord, html] of cases) {
+        const bare = await context.newPage();
+        try {
+          await bare.setContent(`<!doctype html><title>Apply</title>${html}`);
+          await bare.evaluate(async (js) => {
+            const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+            window.__said = [];
+            mod.watchForSending(document, (how) => window.__said.push(how));
+          }, src);
+          await bare.click('button, [role=button]');
+          await bare.waitForTimeout(150);
+          const recorded = await bare.evaluate(() => window.__said.length > 0);
+          check(
+            shouldRecord ? `${what} is recorded` : `${what} is not recorded`,
+            recorded === shouldRecord,
+            `recorded=${recorded}`,
+          );
+        } finally {
+          await bare.close().catch(() => undefined);
+        }
+      }
+    }
+
     console.log('\nTime per system');
     for (const t of [...timings].sort((a, b) => b.ms - a.ms)) {
       console.log(`  ${(t.ms / 1000).toFixed(1)}s  ${t.name}`);

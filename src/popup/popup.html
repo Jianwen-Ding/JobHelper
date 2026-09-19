@@ -187,7 +187,13 @@
     <input type="checkbox" id="useAi">
     <label for="useAi">Let it use the AI when tailoring</label>
   </div>
-  <div class="hint" id="aiHint">Off by default — tag matching is instant and free, and usually right.</div>
+  <!-- Nothing is known about the AI setting until the worker answers, so this
+       says that rather than guessing. It used to ship the "off" hint — and
+       not the current one either, but the sentence `AI_STATE.off` documents
+       as retired, about an automatic decision that no longer happens. So the
+       one moment the panel was certain to be read, before it had any news,
+       was the moment it was wrong twice over. -->
+  <div class="hint" id="aiHint">Reading ResumeM-M’s AI setting…</div>
   <!-- Which command would run. Its own line, because a name and a button
        competing for 360px is how "claude" became "c…". -->
   <div id="aiCommand" class="ai-command"></div>

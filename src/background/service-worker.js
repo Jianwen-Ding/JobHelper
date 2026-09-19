@@ -5,7 +5,7 @@
  * is not running.
  */
 
-import { DEFAULTS, getSettings } from '../shared/config.js';
+import { getSettings } from '../shared/config.js';
 import {
   lighten,
   sameApplication,
@@ -915,7 +915,28 @@ const handlers = {
     const { useAi, serverUrl } = await getSettings();
     let server;
     try {
-      const res = await fetch(`${serverUrl.replace(/\/$/, '')}/health`);
+      /*
+       * With a deadline, and only a reply that says it worked.
+       *
+       * This is the one server call in here that does not go through
+       * `serverFetch`, and it had neither of those. A server that accepts the
+       * socket and then never answers — wedged, paused, behind a proxy that
+       * has lost its upstream — left this promise unsettled for ever, and the
+       * popup's AI panel awaits it: it sat on whatever `popup.html` had
+       * painted before anything was known, while the status line underneath
+       * correctly reported that the server had not answered. The window
+       * contradicted itself and never stopped.
+       *
+       * And `res.ok` was never looked at, so a 503 carrying `{"error": "The
+       * store is still starting up."}` was read as a health payload. That has
+       * no `ai` in it, so "no AI is configured" is what the panel concluded —
+       * about a server that has one and was merely restarting — and it
+       * offered a button to go and set up what was already set up.
+       */
+      const res = await fetch(`${serverUrl.replace(/\/$/, '')}/health`, {
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      if (!res.ok) throw new Error(`the server answered ${res.status}`);
       server = await res.json();
     } catch {
       return { active: false, useAi, reachable: false, serverEnabled: false, state: 'offline' };
@@ -1569,11 +1590,37 @@ chrome.tabs?.onRemoved?.addListener(async (tabId) => {
  * doing it lazily is one message that goes nowhere, once.
  */
 
+/**
+ * Settings that exist but cannot be chosen, and so must not be frozen.
+ *
+ * A default written into storage stops being a default. `getSettings` reads
+ * `chrome.storage.sync.get(DEFAULTS)`, which returns a stored value whenever
+ * the key is present — so seeding every default on install pinned all of them
+ * to whatever version somebody first installed, and a later improvement to
+ * one reached new installs only.
+ *
+ * That already happened. `minScore` went from 4 to 3 in "Follow one
+ * application across the pages it is spread over", precisely so the card
+ * would stop being absent on application forms — which describe nothing and
+ * score almost nothing. Anyone installed before that keeps 4 for ever, and
+ * the symptom is silence on exactly the pages the change was made for.
+ *
+ * Nothing needed the seed: `getSettings` supplies a default for every key
+ * that is missing, which is the whole point of passing DEFAULTS to `get`. So
+ * it is gone, and from here a default stays a default until somebody changes
+ * it.
+ *
+ * The stored copies left behind by earlier installs still need clearing, and
+ * that can only be done where it is certain the value was never a choice.
+ * `minScore` has no control anywhere — it is read in content.js and written
+ * nowhere — so a stored copy of it is a seed and nothing else. The settings
+ * that do have controls are left exactly alone: a value that could have been
+ * chosen is treated as chosen.
+ */
+const NEVER_CHOSEN = ['minScore'];
+
 chrome.runtime.onInstalled.addListener(async () => {
-  // Seed defaults so the popup has something to show on first open.
-  const current = await chrome.storage.sync.get(null);
-  const missing = Object.fromEntries(
-    Object.entries(DEFAULTS).filter(([k]) => !(k in current)),
-  );
-  if (Object.keys(missing).length > 0) await chrome.storage.sync.set(missing);
+  const stored = await chrome.storage.sync.get(NEVER_CHOSEN);
+  const seeded = NEVER_CHOSEN.filter((key) => key in stored);
+  if (seeded.length > 0) await chrome.storage.sync.remove(seeded);
 });

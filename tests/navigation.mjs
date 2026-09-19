@@ -31,6 +31,8 @@ import {
   EMBEDDED_BOARD,
   FRAMED_ROLE,
   LATE_RENDER,
+  LETTER_SPA,
+  LETTER_SPA_PLAIN,
   LEVER_ROLE,
   NEW_TAB_ROLE,
   OWN_SITE,
@@ -737,6 +739,80 @@ async function main() {
       await settled(page);
       const onForm = (await cardOf(page).locator('.fit').textContent())?.trim() ?? '';
       check('and neither does its application form', /not compiled/i.test(onForm), onForm);
+      await page.close();
+    }
+
+    /*
+     * Whether a cover letter is wanted is a fact about the posting in front of
+     * you, and on a single-page board it was a fact about the tab.
+     *
+     * The frame scan sets `letterInFrame` when a form in an iframe asks for
+     * one, and the route-change branch put back every other thing it had
+     * learnt and not that. So one posting whose form has a cover-letter box
+     * made every posting after it in that tab demand a letter: a draft written
+     * nobody asked for, Submit held back as "missing a cover letter", and
+     * `coverLetterRequired: true` handed to the editor — on a page with no
+     * cover letter anywhere on it.
+     *
+     * Read against the same posting opened in a fresh tab, because "does the
+     * card mention a cover letter" is true of both states: the fixed card
+     * offers one as `+ Cover letter`, the broken card demands one as a step.
+     * The control is what the card is supposed to look like.
+     */
+    group('A posting that wants a cover letter, and the next one in the same tab');
+    {
+      const letterState = (page) =>
+        page.evaluate(() => {
+          const card = document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelector('.card');
+          const said = card?.innerText ?? '';
+          return {
+            role: card?.querySelector('.role')?.textContent?.trim() ?? '',
+            // An opt-in, offered on every posting: "+ Cover letter".
+            offered: /\+\s*Cover letter/i.test(said),
+            // A step of the application, which is the demand.
+            demanded: /Cover letter/i.test(said) && !/\+\s*Cover letter/i.test(said),
+          };
+        });
+
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(LETTER_SPA), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      // The frame scan is what sets this, and it runs after the first pass.
+      await page.waitForTimeout(2500);
+      const first = await letterState(page);
+      check(
+        'the posting whose form asks for a letter demands one',
+        first.demanded,
+        `${first.role}: ${JSON.stringify(first)}`,
+      );
+
+      // The control: the second posting, on its own, in a tab that has never
+      // seen a cover-letter form.
+      const control = await context.newPage();
+      await control.goto(fixtures.urlFor(LETTER_SPA_PLAIN), { waitUntil: 'domcontentloaded' });
+      await settled(control);
+      await control.waitForTimeout(2500);
+      const alone = await letterState(control);
+      await control.close();
+
+      await page.click('#to-b');
+      await page.waitForTimeout(3500);
+      await settled(page);
+      await page.waitForTimeout(2500);
+      const second = await letterState(page);
+
+      const mentions = await page.evaluate(() => /cover letter/i.test(document.body.innerText));
+      check('the second posting mentions no cover letter at all', mentions === false);
+      check(
+        'and so the card stops demanding one after the route change',
+        second.demanded === false,
+        `${second.role}: ${JSON.stringify(second)}`,
+      );
+      check(
+        'the card matches the same posting opened fresh',
+        second.offered === alone.offered && second.demanded === alone.demanded,
+        `after: ${JSON.stringify(second)} — fresh: ${JSON.stringify(alone)}`,
+      );
       await page.close();
     }
 

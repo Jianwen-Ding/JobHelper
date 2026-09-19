@@ -29,7 +29,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findChromium } from './fixtures.mjs';
+import { extensionWorker, findChromium } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -119,8 +119,7 @@ async function main() {
   });
 
   try {
-    const worker =
-      context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker', { timeout: 15_000 }));
+    const worker = await extensionWorker(context);
 
     console.log('\nA page that forbids blob workers');
     const page = await context.newPage();

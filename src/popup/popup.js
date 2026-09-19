@@ -4,16 +4,53 @@ const send = (type, payload) =>
   new Promise((resolve, reject) => {
     chrome.runtime.sendMessage({ type, payload }, (response) => {
       if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-      else if (!response?.ok) reject(new Error(response?.error ?? 'No response'));
-      else resolve(response.data);
+      else if (!response?.ok) {
+        /*
+         * With the button that fixes it, which used to be dropped here.
+         *
+         * `serverFetch` goes to deliberate trouble to mark the two failures
+         * somebody can actually do something about — no save open, server not
+         * running — and the content script turns that mark into a one-click
+         * "Open a save in ResumeM-M" on the card. This threw the mark away and
+         * kept only the sentence, so the same failure that offers a button on
+         * a job page offered nothing at all in the window people open
+         * *because* they are checking the connection.
+         */
+        const err = new Error(response?.error ?? 'No response');
+        if (response?.fix) err.jobhelper = response.fix;
+        reject(err);
+      } else resolve(response.data);
     });
   });
 
-function setStatus(text, kind = '') {
+function setStatus(text, kind = '', fix) {
   const s = $('status');
   s.textContent = text;
   s.className = `status ${kind}`;
+
+  /*
+   * And the way out, when the failure came with one.
+   *
+   * Two of these are things the user can act on in one press — no save open,
+   * the server not running — and the card on a job page has offered that
+   * button for a while. This window is where somebody goes *because* they are
+   * checking the connection, and it was the one place the same failure was a
+   * dead end.
+   */
+  if (fix?.serverUrl) {
+    const button = document.createElement('button');
+    button.className = 'ai-fix';
+    button.textContent = fix.fix === 'open-save' ? 'Open a save in ResumeM-M' : 'Open ResumeM-M';
+    button.onclick = () => {
+      chrome.tabs.create({ url: fix.serverUrl });
+      window.close();
+    };
+    s.append(document.createElement('br'), button);
+  }
 }
+
+/** Report a failure, carrying whatever it knows about how to get past it. */
+const failed = (err) => setStatus(err.message, 'err', err.jobhelper);
 
 async function activeTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -67,13 +104,32 @@ function hostOf(url) {
 async function tellContentScript(type) {
   const tab = await activeTab();
   if (!tab?.id) return;
+
+  /*
+   * Two different failures, and only one of them is "not running here".
+   *
+   * `sendMessage` rejects when there is no content script to receive it — a
+   * chrome:// page, a page loaded before the extension, a tab that has not
+   * finished loading. Reloading genuinely fixes that one.
+   *
+   * A content script that answers `{ok: false, error}` is running and telling
+   * us exactly what went wrong. That sentence used to be thrown a line above
+   * a bare `catch` inside the same `try`, so it was caught by the handler
+   * meant for the other failure and replaced with a diagnosis of a problem
+   * the user did not have: press Autofill with no name in your profile and
+   * the popup said JobHelper was not running and to reload the tab. Reloading
+   * changes nothing, the message never changes, and the one sentence that
+   * said what to do — "Your profile has no name or email in it yet" — was
+   * the thing discarded.
+   */
+  let response;
   try {
-    const response = await chrome.tabs.sendMessage(tab.id, { type });
-    if (!response?.ok) throw new Error(response?.error ?? 'Failed');
-    return response.data;
+    response = await chrome.tabs.sendMessage(tab.id, { type });
   } catch {
     throw new Error('JobHelper is not running on this page. Reload the tab and try again.');
   }
+  if (!response?.ok) throw new Error(response?.error ?? 'That did not work, and the page did not say why.');
+  return response.data;
 }
 
 /**
@@ -189,7 +245,15 @@ const AI_STATE = {
   offline: {
     text: 'AI unknown',
     className: 'ai off',
-    hint: 'ResumeM-M is not reachable, so its AI setting could not be read.',
+    /*
+     * Two ways to get here and the sentence has to be true of both: the
+     * server is not there at all, or it is there and answered something that
+     * was not its settings — starting up, restarting, a proxy in front of it.
+     * "Not reachable" was a claim about the first that was simply false in
+     * the second, said directly above a status line reporting the real
+     * problem.
+     */
+    hint: 'ResumeM-M did not say what its AI setting is, so this could not be read.',
   },
 };
 
@@ -231,7 +295,7 @@ async function showAiState() {
       }
       await showAiState();
     } catch (err) {
-      setStatus(err.message, 'err');
+      failed(err);
     } finally {
       fix.disabled = false;
     }
@@ -249,7 +313,15 @@ async function boot() {
   };
 
   $('serverUrl').onchange = async () => {
-    await save({ serverUrl: $('serverUrl').value.trim() });
+    /*
+     * And put back what is actually in force, which is not always what was
+     * typed: `localhost:4600` gains the scheme it needs, an emptied box goes
+     * back to the default rather than storing nothing. Showing the typed text
+     * while using something else is the disagreement this whole window keeps
+     * getting wrong — see `normaliseServerUrl`.
+     */
+    const after = await send('setSettings', { patch: { serverUrl: $('serverUrl').value.trim() } });
+    $('serverUrl').value = after.serverUrl;
     check();
   };
   $('autoPrompt').onchange = () => save({ autoPrompt: $('autoPrompt').checked });
@@ -267,7 +339,7 @@ async function boot() {
       await tellContentScript('show-card');
       window.close();
     } catch (err) {
-      setStatus(err.message, 'err');
+      failed(err);
     }
   };
 
@@ -296,7 +368,7 @@ async function boot() {
 
       setStatus(`${parts.join(', ')}.`, yours ? 'warn' : 'ok');
     } catch (err) {
-      setStatus(err.message, 'err');
+      failed(err);
     }
   };
 
@@ -372,11 +444,42 @@ async function check() {
     } else {
       picker.replaceChildren(...resumes.map(option));
     }
+    /*
+     * A stored choice naming a resume this save does not have.
+     *
+     * Nothing gets `selected`, so the browser quietly selects the first
+     * option — and because that is not a change the user made, no `change`
+     * event fires and nothing is written back. The picker then read
+     * confidently as one resume while every page's card failed with
+     * `No resume "newgrad"`, naming an id its owner had never typed and
+     * pointing at a picker that looked correctly set.
+     *
+     * Not repaired silently either: which resume to start from is the user's
+     * choice, and picking a different one on their behalf is how the card
+     * ends up built from something they did not ask for. Said plainly, and
+     * they choose.
+     */
     const n = resumes.length;
-    setStatus(`Connected — ${n} ${n === 1 ? 'resume' : 'resumes'} in the store.`, 'ok');
+    const stale = resumes.length > 0 && !resumes.some((r) => r.id === settings.baseResumeId);
+    if (stale) {
+      // And nothing valid left looking chosen, which is the half of this the
+      // status line cannot fix: a picker reading "Software Engineer 2025" is
+      // a claim, and it was not true.
+      const placeholder = document.createElement('option');
+      placeholder.textContent = '— pick a resume —';
+      placeholder.disabled = true;
+      placeholder.selected = true;
+      picker.prepend(placeholder);
+      setStatus(
+        `Connected, but the resume this was set to is not in this save any more — pick one to start from.`,
+        'err',
+      );
+    } else {
+      setStatus(`Connected — ${n} ${n === 1 ? 'resume' : 'resumes'} in the store.`, 'ok');
+    }
   } catch (err) {
-    setStatus(err.message, 'err');
+    failed(err);
   }
 }
 
-boot().catch((err) => setStatus(err.message, 'err'));
+boot().catch((err) => failed(err));
