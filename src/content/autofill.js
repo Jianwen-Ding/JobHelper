@@ -128,6 +128,25 @@ const NOT_ABOUT_YOU = [
    * telephone number an employer cannot ring is worse than a blank one.
    */
   /\b(country|area|dial(?:l?ing)?)[\s_-]?code\b/i,
+  /*
+   * A consent question, which is not a fact about the applicant at all — it
+   * is a decision about what the employer may send them.
+   *
+   * Measured: a group headed "Marketing: may we email you about sponsorship
+   * webinars?" was answered "No", from `requires_sponsorship`, because
+   * `sponsor\w*` matched the word "sponsorship" in it. That is the visa
+   * answer written onto a mailing-list question — and the same shape reaches
+   * any of these patterns, because a consent question is free to mention
+   * whatever it is consenting about.
+   *
+   * Two rules rather than one long list of words, and both are deliberately
+   * narrow. The nouns are ones no profile field is ever called. The second
+   * wants "may we"/"can we" *and* an "about" within a phrase of it, so it
+   * catches "may we email you about openings" and not "How can we contact
+   * you?", which is the heading over a real email box.
+   */
+  /\b(marketing|newsletter|mailing[\s_-]?list|promotional?|webinars?|subscribe|unsubscribe|opt[\s_-]?(?:in|out)|communications?[\s_-]?preferences?)\b/i,
+  /\b(?:may|can)[\s_-]we\b[\s\S]{0,40}\babout\b/i,
 ];
 
 const isNotAboutYou = (description) => NOT_ABOUT_YOU.some((re) => re.test(description));
@@ -430,6 +449,73 @@ function setValue(input, value) {
 const sameOption = (a, b) => clean(a).toLowerCase() === clean(b).toLowerCase();
 
 /**
+ * Reading a yes/no answer out of a profile that holds a sentence.
+ *
+ * Measured, and it is the worst miss in the file: a form asking "Are you
+ * legally authorized to work in the US?" with Yes and No beside it, against a
+ * profile whose `work_authorization` reads "Authorized to work in the US",
+ * matched no option and was left blank. That is the one question most likely
+ * to get an application rejected without a person reading it, and it was
+ * being skipped on every form that asks it as a choice rather than a box —
+ * which is nearly all of them, because it is a legal declaration.
+ *
+ * The profile holds a sentence because the field is a free-text box and a
+ * sentence is what people type in one.
+ *
+ * Deliberately narrow, because the cost here is not a blank field but a false
+ * declaration about the applicant's right to work, made in their name:
+ *
+ *   Only where the options really are a yes/no pair. A three-way list, or a
+ *   list of visa categories, is not this question and is left alone.
+ *
+ *   Only for the two keys that *are* yes/no questions. Nothing else in the
+ *   profile is a declaration, and a city is never "yes".
+ *
+ *   A leading Yes or No wins over everything, because that is the answer and
+ *   the rest of the sentence is its explanation. "Yes, but not until 2027"
+ *   is a yes; read for negation words instead it comes out a no.
+ *
+ *   Then an explicit negation. Then an explicit affirmation. A phrase that is
+ *   neither is skipped and reported, exactly as it is today — "it needs you"
+ *   is a fine answer and a wrong declaration is not.
+ */
+const YES_NO_KEYS = new Set(['work_authorization', 'requires_sponsorship']);
+const NEGATED = /\b(no|not|never|non|cannot|can't|don'?t|does'?nt|doesn't|without|un(?:authori[sz]ed|able)|ineligible)\b/i;
+const AFFIRMED = /\b(yes|authori[sz]ed|eligible|permitted|allowed|able|citizen|permanent[\s_-]resident|require[sd]?|need(?:s|ed)?|do)\b/i;
+
+/** Yes, no, or "cannot tell" — for a value against a yes/no pair. */
+function yesNoFrom(value) {
+  const said = clean(value).toLowerCase();
+  if (!said) return undefined;
+
+  const lead = /^(yes|no)\b/i.exec(said)?.[1]?.toLowerCase();
+  if (lead) return lead;
+
+  if (NEGATED.test(said)) return 'no';
+  if (AFFIRMED.test(said)) return 'yes';
+  return undefined;
+}
+
+/**
+ * The option that answers a yes/no question, where the labels are yes and no
+ * and the profile's answer is a phrase. `undefined` unless all of that holds.
+ */
+function yesNoOption(key, value, options) {
+  if (!YES_NO_KEYS.has(key)) return undefined;
+
+  const labelled = options.map((o) => ({ o, said: clean(o.label).toLowerCase() }));
+  const yes = labelled.find((x) => x.said === 'yes');
+  const no = labelled.find((x) => x.said === 'no');
+  // A yes/no *pair* and nothing else. "Yes / No / Prefer not to say" is a
+  // different question with a third answer, and guessing between three is
+  // exactly what this file does not do.
+  if (!yes || !no || labelled.length !== 2) return undefined;
+
+  const answer = yesNoFrom(value);
+  return answer === 'yes' ? yes.o : answer === 'no' ? no.o : undefined;
+}
+
+/**
  * Fill what we can. Returns a report of what was filled and what was skipped,
  * so the user can see the difference between "done" and "done silently wrong".
  */
@@ -478,9 +564,16 @@ export function fillForm(fields, { overwrite = false } = {}) {
        * was reported as having no option for the user's country while sitting
        * two lines above the one that did.
        */
-      const option = [...input.options].find(
-        (o) => sameOption(o.textContent, value) || sameOption(o.value, value),
-      );
+      const option =
+        [...input.options].find(
+          (o) => sameOption(o.textContent, value) || sameOption(o.value, value),
+        ) ??
+        // And, failing that, a yes/no pair against a phrase. See `yesNoOption`.
+        yesNoOption(
+          key,
+          value,
+          [...input.options].map((o) => ({ label: o.textContent, el: o })),
+        )?.el;
       if (option) {
         nativeSet(input, 'value', option.value);
         // Both, because choosing from a list fires both. `change` alone is
@@ -650,9 +743,16 @@ function answerRadioGroups(fields, overwrite) {
       continue;
     }
 
-    const wanted = radios.find(
-      (radio) => sameOption(optionLabelFor(radio), value) || sameOption(radio.value, value),
-    );
+    const wanted =
+      radios.find(
+        (radio) => sameOption(optionLabelFor(radio), value) || sameOption(radio.value, value),
+      ) ??
+      // And, failing that, a yes/no pair against a phrase. See `yesNoOption`.
+      yesNoOption(
+        key,
+        value,
+        radios.map((radio) => ({ label: optionLabelFor(radio), el: radio })),
+      )?.el;
     if (!wanted) {
       skipped.push({ key, reason: 'no matching option', description: description.slice(0, 60) });
       continue;

@@ -206,7 +206,56 @@ const AWKWARD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply �
   <textarea name="q1" placeholder="Why do you want to work at Lever?"></textarea>
 </form></body></html>`;
 
-const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD };
+/*
+ * A consent question, and a declaration answered from a sentence.
+ *
+ * Both measured against the real filler. The first is a marketing group that
+ * happens to say "sponsorship", which was answered from the applicant's visa
+ * status — the shape reaches any pattern, because a consent question is free
+ * to mention whatever it is consenting about. The second is the opposite
+ * failure: "Are you legally authorized to work in the US?" beside Yes and No,
+ * against a profile that holds a sentence, matched no option and was left
+ * blank. That is the question most likely to get an application rejected
+ * without a person reading it.
+ */
+const CONSENT = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <fieldset>
+    <legend>Marketing: may we email you about sponsorship webinars?</legend>
+    <label><input type="radio" name="mkt" value="yes"> Yes</label>
+    <label><input type="radio" name="mkt" value="no"> No</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Would you like to subscribe to our newsletter about visa status changes?</legend>
+    <label><input type="radio" name="news" value="yes"> Yes</label>
+    <label><input type="radio" name="news" value="no"> No</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Are you legally authorized to work in the US?</legend>
+    <label><input type="radio" name="auth" value="y"> Yes</label>
+    <label><input type="radio" name="auth" value="n"> No</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Will you now or in the future require sponsorship?</legend>
+    <label><input type="radio" name="spon" value="y"> Yes</label>
+    <label><input type="radio" name="spon" value="n"> No</label>
+  </fieldset>
+
+  <!-- Three answers, not two. Guessing between three is not this file's job. -->
+  <label for="spon3">Will you now or in the future require sponsorship?</label>
+  <select id="spon3" name="spon3">
+    <option value="">Choose</option><option>Yes</option><option>No</option><option>Prefer not to say</option>
+  </select>
+
+  <!-- The applicant's own email, so none of this can pass by the filler
+       having simply stopped touching the page. -->
+  <label for="own">Email</label><input id="own" name="email">
+</form></body></html>`;
+
+const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -510,6 +559,93 @@ async function main() {
         };
       }, { b: base, profile: { ...PROFILE, work_authorization: 'Yes' } }),
     );
+
+
+    /* ------------------------------------------------------------------ */
+
+    const consent = await page.goto(`${base}/consent`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(profile);
+        const picked = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value ?? '';
+        return {
+          mkt: picked('mkt'),
+          news: picked('news'),
+          auth: picked('auth'),
+          spon: picked('spon'),
+          spon3: document.getElementById('spon3').value,
+          own: document.getElementById('own').value,
+          skipped: report.skipped.map((s) => `${s.key}:${s.reason}`),
+        };
+      }, {
+        b: base,
+        // A sentence, which is what people type into a free-text box — and
+        // the whole point of the second half of this group.
+        profile: {
+          ...PROFILE,
+          work_authorization: 'Authorized to work in the US',
+          requires_sponsorship: 'No, I do not need sponsorship',
+        },
+      }),
+    );
+
+    group('A consent question, which is not a fact about the applicant');
+    check(
+      'a marketing group that says "sponsorship" is not given the visa answer',
+      consent.mkt === '',
+      `checked "${consent.mkt}"`,
+    );
+    check(
+      'nor is a newsletter question that says "visa status"',
+      consent.news === '',
+      `checked "${consent.news}"`,
+    );
+    // Paired with the real question, so this cannot pass by the filler having
+    // stopped answering sponsorship at all.
+    check(
+      'while the question that really asks it is still answered',
+      consent.spon === 'n',
+      `checked "${consent.spon}"`,
+    );
+    check('and the applicant\'s own email is still filled', consent.own === PROFILE.email, consent.own);
+
+    group('A declaration answered from a sentence');
+    check(
+      '"Authorized to work in the US" answers Yes beside a Yes/No pair',
+      consent.auth === 'y',
+      `checked "${consent.auth}"`,
+    );
+    /*
+     * And not beside three. A wrong declaration about the right to work is
+     * made in the applicant's name and is worse than a blank one, so a list
+     * with a third answer is handed back rather than guessed at.
+     */
+    check(
+      'but a three-answer list is left for the user, and reported',
+      consent.spon3 === '' && consent.skipped.includes('requires_sponsorship:no matching option'),
+      `"${consent.spon3}"; ${consent.skipped.join(', ')}`,
+    );
+
+    /*
+     * And the answer is the answer, not the words around it.
+     *
+     * "Yes, but not until 2027" is a yes. Read by looking for negation words
+     * it comes out a no, which is the wrong declaration about needing a visa
+     * — made in the applicant's name, on the question an employer forwards to
+     * an immigration lawyer. So a leading Yes or No wins over everything, and
+     * this is the case where the two rules disagree.
+     */
+    const hedged = await page.goto(`${base}/consent`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm(profile);
+        return document.querySelector('input[name="spon"]:checked')?.value ?? '';
+      }, {
+        b: base,
+        profile: { ...PROFILE, requires_sponsorship: 'Yes, but not until 2027' },
+      }),
+    );
+    check('a hedged "Yes, but not until 2027" is still a yes', hedged === 'y', `checked "${hedged}"`);
 
     group('Values a framework will notice');
     // Only these two: the text input was already written through the
