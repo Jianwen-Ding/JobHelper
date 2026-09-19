@@ -1388,10 +1388,44 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * showing four ticks is worse than no sentence. So both read the same
    * source, which is the spec that gets compiled and filed.
    */
-  function appliedCount() {
-    const on = (analysis.rationale ?? []).filter((r) => r.key && r.from && wordingOn(r)).length;
-    return on + (analysis.skillChanges ?? []).filter((sc) => skillsOn(sc)).length;
+  function suggestions() {
+    const changeFor = new Map();
+    for (const r of analysis.rationale ?? []) if (r.toText) changeFor.set(plainish(r.toText), r);
+    const skillFor = new Map();
+    for (const sc of analysis.skillChanges ?? []) if (sc.groupName) skillFor.set(plainish(sc.groupName), sc);
+
+    /*
+     * What a row offers, if anything. A diff row with neither a wording
+     * behind it nor a narrowed group is something the base resume does rather
+     * than something this proposal is offering — it has no box, and it is in
+     * the document whatever anyone ticks.
+     */
+    const toggleFor = (c) => {
+      const change = changeFor.get(plainish(c.to ?? ''));
+      if (change?.key && change.from) return { kind: 'wording', change };
+      const skill = c.to ? undefined : skillFor.get(plainish(c.where ?? ''));
+      return skill ? { kind: 'skills', skill } : null;
+    };
+    const onFor = (c) => {
+      const t = toggleFor(c);
+      if (!t) return true;
+      return t.kind === 'wording' ? wordingOn(t.change) : skillsOn(t.skill);
+    };
+    const rows = analysis.diff ?? [];
+    return { rows, toggleFor, onFor, on: rows.filter(onFor).length, total: rows.length };
   }
+
+  /**
+   * How many suggestions are switched on.
+   *
+   * The same walk the list itself does, deliberately: this was counting the
+   * rationale and the skill changes while the heading counted the diff rows,
+   * and the two sets are not the same — a diff row with nothing behind it is
+   * in the document and has no box, so one walk saw it and the other did not.
+   * A sentence saying "three switched on" over a list showing four ticks is
+   * worse than no sentence.
+   */
+  const appliedCount = () => suggestions().on;
 
   function builtSummary() {
     const base = analysis.baseLabel ?? 'your base resume';
@@ -1638,33 +1672,6 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     }
 
     /*
-     * The change behind each diff row, matched by the text it swapped in.
-     *
-     * This was a map to the keywords alone, which was all the row needed when
-     * all it did was explain itself. Undoing one needs the change itself: the
-     * key it is recorded under and the wording that was there before.
-     */
-    const changeFor = new Map();
-    for (const r of rationale) {
-      if (r.toText) changeFor.set(plainish(r.toText), r);
-    }
-
-    /*
-     * And the skills change behind each skills row, matched by the group's
-     * name.
-     *
-     * Not by the swapped text, which is how the rows above are matched,
-     * because a skills row has no `from`/`to` to match on — the diff writes it
-     * as one sentence ("Languages: dropped Ruby, PHP — keeping Python, Go").
-     * The name is what both sides have: the diff labels the row with it and
-     * the server sends it beside the group's id for exactly this.
-     */
-    const skillFor = new Map();
-    for (const sc of analysis.skillChanges ?? []) {
-      if (sc.groupName) skillFor.set(plainish(sc.groupName), sc);
-    }
-
-    /*
      * Every row stays, whether or not it is switched on.
      *
      * A change turned off used to be removed from the list, which is a
@@ -1677,13 +1684,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      */
     const shown = diff;
     const shownRationale = rationale;
-    const onFor = (c) => {
-      const change = changeFor.get(plainish(c.to ?? ''));
-      if (change?.key && change.from) return wordingOn(change);
-      const skill = c.to ? undefined : skillFor.get(plainish(c.where ?? ''));
-      return skill ? skillsOn(skill) : true;
-    };
-    const live = shown.filter(onFor).length;
+    const { toggleFor, onFor, on: live } = suggestions();
 
     /*
      * Collapsed until asked for.
@@ -1752,10 +1753,16 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     ]);
 
     for (const c of shown) {
-      const change = changeFor.get(plainish(c.to ?? ''));
-      // A row is one or the other, never both: a wording swap carries `to`,
-      // a narrowed skills group carries a group name and no `to` at all.
-      const skill = c.to ? undefined : skillFor.get(plainish(c.where ?? ''));
+      /*
+       * What this row offers, from the same walk that counted them.
+       *
+       * It used to work this out again from its own copies of the two maps,
+       * which is one more place for the box and the count to disagree about
+       * the same row — and they are read side by side.
+       */
+      const toggle = toggleFor(c);
+      const change = toggle?.kind === 'wording' ? toggle.change : undefined;
+      const skill = toggle?.kind === 'skills' ? toggle.skill : undefined;
       const because = (change?.because ?? []).length ? change.because : undefined;
       // `text` is a self-contained sentence, which means it repeats the place
       // it happened — and the place is already the label above it.
