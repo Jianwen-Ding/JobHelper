@@ -20,6 +20,7 @@
 
 import { chromium } from 'playwright-core';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -547,6 +548,198 @@ async function main() {
         await drop('job-zzzother-data-scientist');
       }
     }
+    /* ---------------------------------------------------------------- *
+     * The popup saying something true about itself                       *
+     * ---------------------------------------------------------------- */
+
+    group('A resume the picker was set to and the save no longer has');
+    {
+      /*
+       * Nothing in the list matches the stored choice, so the browser quietly
+       * selects the first option — and because that is not a change anybody
+       * made, no `change` event fires and nothing is written back. The picker
+       * then read confidently as one resume while every page's card failed
+       * with `No resume "newgrad"`, naming an id its owner had never typed
+       * and pointing at a picker that looked correctly set.
+       *
+       * Set and put back, because this store is shared with the suites
+       * running beside this one.
+       */
+      const worker0 = context.serviceWorkers()[0];
+      const before = await worker0.evaluate(async () => (await chrome.storage.sync.get(['baseResumeId'])).baseResumeId);
+      await worker0.evaluate(async () => chrome.storage.sync.set({ baseResumeId: 'no-such-resume-here' }));
+      try {
+        const popup = await openPopup();
+        const said = (await popup.locator('#status').textContent())?.trim() ?? '';
+        check(
+          'the popup says the resume it was set to has gone',
+          /not in this save any more/i.test(said),
+          said.slice(0, 120),
+        );
+        check('and says so as a problem, not as "Connected"', !/^Connected —/.test(said), said.slice(0, 60));
+
+        // And nothing valid is left looking chosen, which the status line
+        // alone cannot fix: a picker reading a real resume is a claim.
+        const chosen = await popup.locator('#baseResumeId').evaluate((sel) => {
+          const o = sel.selectedOptions[0];
+          return { text: o?.textContent ?? '', disabled: Boolean(o?.disabled) };
+        });
+        check(
+          'and the picker does not claim one of them is in force',
+          chosen.disabled && /pick a resume/i.test(chosen.text),
+          JSON.stringify(chosen),
+        );
+        await popup.close();
+      } finally {
+        await worker0.evaluate(
+          async (id) => chrome.storage.sync.set({ baseResumeId: id }),
+          before ?? 'base',
+        );
+      }
+    }
+
+    group('A page that is running, and has a reason of its own');
+    {
+      /*
+       * `sendMessage` rejecting means there is nobody to receive it, and
+       * reloading really does fix that. A content script that answers
+       * `{ok: false, error}` is running and saying what went wrong — and that
+       * sentence used to be thrown inside the same `try` as the bare `catch`
+       * for the other failure, so it was swallowed and replaced with
+       * "JobHelper is not running on this page. Reload the tab and try
+       * again." Reloading changes nothing and the message never changes, so
+       * the one instruction on screen is the one that cannot work.
+       *
+       * Everything goes to the real store except the one call autofill makes,
+       * which is refused with a sentence only the store could have written.
+       */
+      const REFUSAL = 'Your profile has no name or email in it yet.';
+      const proxy = await new Promise((resolve) => {
+        const server = http.createServer(async (req, res) => {
+          if (req.url.startsWith('/api/autofill')) {
+            res.writeHead(400, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ error: REFUSAL }));
+            return;
+          }
+          const chunks = [];
+          for await (const chunk of req) chunks.push(chunk);
+          const upstream = await fetch(`${SERVER}${req.url}`, {
+            method: req.method,
+            headers: { 'content-type': req.headers['content-type'] ?? 'application/json' },
+            body: req.method === 'GET' || req.method === 'HEAD' ? undefined : Buffer.concat(chunks),
+          }).catch(() => null);
+          if (!upstream) {
+            res.writeHead(502).end('{}');
+            return;
+          }
+          const body = Buffer.from(await upstream.arrayBuffer());
+          res.writeHead(upstream.status, {
+            'content-type': upstream.headers.get('content-type') ?? 'application/json',
+          });
+          res.end(body);
+        });
+        server.listen(0, '127.0.0.1', () => resolve({
+          url: `http://127.0.0.1:${server.address().port}`,
+          close: () => server.close(),
+        }));
+      });
+
+      try {
+        await pointExtensionAt(context, context.serviceWorkers()[0], proxy.url);
+        const page = await context.newPage();
+        await page.goto(fixtures.urlFor(HELIOS_FORM), { waitUntil: 'domcontentloaded' });
+        await settled(page);
+
+        await page.bringToFront();
+        const popup = await openPopup();
+        await popup.locator('#autofill').click();
+        await popup.waitForTimeout(2000);
+        const said = (await popup.locator('#status').textContent())?.trim() ?? '';
+        check('the page’s own reason is what the popup shows', /no name or email/i.test(said), said.slice(0, 140));
+        check(
+          'and not advice to reload a page that is already running',
+          !/not running on this page/i.test(said),
+          said.slice(0, 140),
+        );
+        await popup.close();
+        await page.close();
+      } finally {
+        proxy.close();
+        await pointExtensionAt(context, context.serviceWorkers()[0], SERVER);
+      }
+    }
+
+    group('A server that is there but not answering with its settings');
+    {
+      /*
+       * `aiStatus` is the one server call in the worker that does not go
+       * through `serverFetch`, and it had neither of the two things
+       * `serverFetch` gives everything else: a deadline, and a check that the
+       * reply says it worked.
+       *
+       * So a 503 carrying `{"error": "The store is still starting up."}` was
+       * parsed as a health payload. It has no `ai` in it, so the panel
+       * concluded no AI was configured — about a server that has one and was
+       * merely restarting — and offered a button to go and set up what was
+       * already set up, directly above a status line reporting the real
+       * problem.
+       */
+      const proxy = await new Promise((resolve) => {
+        const server = http.createServer((req, res) => {
+          if (req.url.startsWith('/health')) {
+            res.writeHead(503, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ error: 'The store is still starting up.' }));
+            return;
+          }
+          res.writeHead(503, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'The store is still starting up.' }));
+        });
+        server.listen(0, '127.0.0.1', () => resolve({
+          url: `http://127.0.0.1:${server.address().port}`,
+          close: () => server.close(),
+        }));
+      });
+
+      try {
+        await pointExtensionAt(context, context.serviceWorkers()[0], proxy.url);
+        const popup = await openPopup();
+        await popup.waitForTimeout(1500);
+
+        const ai = (await popup.locator('#aiState').textContent())?.trim() ?? '';
+        const hint = (await popup.locator('#aiHint').textContent())?.trim() ?? '';
+        check('it does not claim the AI is unconfigured', !/no ai set up/i.test(ai), `${ai} / ${hint}`);
+        check('it says the setting could not be read', /AI unknown/i.test(ai), ai);
+        check(
+          'and does not offer to set up what is already set up',
+          !/set (one )?up/i.test(hint),
+          hint.slice(0, 120),
+        );
+        await popup.close();
+      } finally {
+        proxy.close();
+        await pointExtensionAt(context, context.serviceWorkers()[0], SERVER);
+      }
+    }
+
+    group('The AI hint before anything is known about it');
+    {
+      /*
+       * `popup.html` shipped the "off" hint as its initial text — and not the
+       * current one either, but the sentence `AI_STATE.off` documents as
+       * retired, about an automatic decision that no longer happens. The one
+       * moment the panel is certain to be read, before it has any news, was
+       * the moment it was wrong twice over.
+       */
+      const html = fs.readFileSync(path.join(extensionRoot, 'src/popup/popup.html'), 'utf8');
+      const initial = /id="aiHint"[^>]*>([^<]*)</.exec(html)?.[1]?.trim() ?? '';
+      check(
+        'it does not ship the retired sentence about tag matching',
+        !/tag matching is instant and free/i.test(initial),
+        initial.slice(0, 120),
+      );
+      check('it says it is still reading it', /reading/i.test(initial), initial.slice(0, 120));
+    }
+
     group('A resume that will not fit on one page');
     {
       /*

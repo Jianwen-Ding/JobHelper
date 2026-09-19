@@ -915,7 +915,28 @@ const handlers = {
     const { useAi, serverUrl } = await getSettings();
     let server;
     try {
-      const res = await fetch(`${serverUrl.replace(/\/$/, '')}/health`);
+      /*
+       * With a deadline, and only a reply that says it worked.
+       *
+       * This is the one server call in here that does not go through
+       * `serverFetch`, and it had neither of those. A server that accepts the
+       * socket and then never answers — wedged, paused, behind a proxy that
+       * has lost its upstream — left this promise unsettled for ever, and the
+       * popup's AI panel awaits it: it sat on whatever `popup.html` had
+       * painted before anything was known, while the status line underneath
+       * correctly reported that the server had not answered. The window
+       * contradicted itself and never stopped.
+       *
+       * And `res.ok` was never looked at, so a 503 carrying `{"error": "The
+       * store is still starting up."}` was read as a health payload. That has
+       * no `ai` in it, so "no AI is configured" is what the panel concluded —
+       * about a server that has one and was merely restarting — and it
+       * offered a button to go and set up what was already set up.
+       */
+      const res = await fetch(`${serverUrl.replace(/\/$/, '')}/health`, {
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      if (!res.ok) throw new Error(`the server answered ${res.status}`);
       server = await res.json();
     } catch {
       return { active: false, useAi, reachable: false, serverEnabled: false, state: 'offline' };

@@ -67,13 +67,32 @@ function hostOf(url) {
 async function tellContentScript(type) {
   const tab = await activeTab();
   if (!tab?.id) return;
+
+  /*
+   * Two different failures, and only one of them is "not running here".
+   *
+   * `sendMessage` rejects when there is no content script to receive it — a
+   * chrome:// page, a page loaded before the extension, a tab that has not
+   * finished loading. Reloading genuinely fixes that one.
+   *
+   * A content script that answers `{ok: false, error}` is running and telling
+   * us exactly what went wrong. That sentence used to be thrown a line above
+   * a bare `catch` inside the same `try`, so it was caught by the handler
+   * meant for the other failure and replaced with a diagnosis of a problem
+   * the user did not have: press Autofill with no name in your profile and
+   * the popup said JobHelper was not running and to reload the tab. Reloading
+   * changes nothing, the message never changes, and the one sentence that
+   * said what to do — "Your profile has no name or email in it yet" — was
+   * the thing discarded.
+   */
+  let response;
   try {
-    const response = await chrome.tabs.sendMessage(tab.id, { type });
-    if (!response?.ok) throw new Error(response?.error ?? 'Failed');
-    return response.data;
+    response = await chrome.tabs.sendMessage(tab.id, { type });
   } catch {
     throw new Error('JobHelper is not running on this page. Reload the tab and try again.');
   }
+  if (!response?.ok) throw new Error(response?.error ?? 'That did not work, and the page did not say why.');
+  return response.data;
 }
 
 /**
@@ -189,7 +208,15 @@ const AI_STATE = {
   offline: {
     text: 'AI unknown',
     className: 'ai off',
-    hint: 'ResumeM-M is not reachable, so its AI setting could not be read.',
+    /*
+     * Two ways to get here and the sentence has to be true of both: the
+     * server is not there at all, or it is there and answered something that
+     * was not its settings — starting up, restarting, a proxy in front of it.
+     * "Not reachable" was a claim about the first that was simply false in
+     * the second, said directly above a status line reporting the real
+     * problem.
+     */
+    hint: 'ResumeM-M did not say what its AI setting is, so this could not be read.',
   },
 };
 
@@ -372,8 +399,39 @@ async function check() {
     } else {
       picker.replaceChildren(...resumes.map(option));
     }
+    /*
+     * A stored choice naming a resume this save does not have.
+     *
+     * Nothing gets `selected`, so the browser quietly selects the first
+     * option — and because that is not a change the user made, no `change`
+     * event fires and nothing is written back. The picker then read
+     * confidently as one resume while every page's card failed with
+     * `No resume "newgrad"`, naming an id its owner had never typed and
+     * pointing at a picker that looked correctly set.
+     *
+     * Not repaired silently either: which resume to start from is the user's
+     * choice, and picking a different one on their behalf is how the card
+     * ends up built from something they did not ask for. Said plainly, and
+     * they choose.
+     */
     const n = resumes.length;
-    setStatus(`Connected — ${n} ${n === 1 ? 'resume' : 'resumes'} in the store.`, 'ok');
+    const stale = resumes.length > 0 && !resumes.some((r) => r.id === settings.baseResumeId);
+    if (stale) {
+      // And nothing valid left looking chosen, which is the half of this the
+      // status line cannot fix: a picker reading "Software Engineer 2025" is
+      // a claim, and it was not true.
+      const placeholder = document.createElement('option');
+      placeholder.textContent = '— pick a resume —';
+      placeholder.disabled = true;
+      placeholder.selected = true;
+      picker.prepend(placeholder);
+      setStatus(
+        `Connected, but the resume this was set to is not in this save any more — pick one to start from.`,
+        'err',
+      );
+    } else {
+      setStatus(`Connected — ${n} ${n === 1 ? 'resume' : 'resumes'} in the store.`, 'ok');
+    }
   } catch (err) {
     setStatus(err.message, 'err');
   }
