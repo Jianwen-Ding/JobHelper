@@ -2074,6 +2074,195 @@ async function main() {
     JSON.stringify(rebased),
   );
 
+  console.log('\nWhich resume to start from, ranked and marked');
+
+  /*
+   * The store fills up — a new grad one, a summer intern one, one built for a
+   * posting last March — and the picker listed them in whatever order they
+   * were written. So the first decision of every application was made from
+   * labels alone, and the label is the one thing that does not say what is in
+   * the document.
+   *
+   * The store works out how much of the posting each resume already uses and
+   * says which, if any, is clearly ahead. Marking is deliberately rare: a
+   * star that is always somewhere is one nobody reads.
+   */
+  const picker = await inPage(async (createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Helios' },
+        spec: { id: 'job-helios', label: 'Helios' },
+        baseResumeId: 'newgrad',
+        rationale: [],
+        diff: [],
+        // Written worst-first on purpose, so passing cannot be the order the
+        // list arrived in.
+        /*
+         * Written worst-first, and with two pairs tied, so passing cannot be
+         * the order the list arrived in and the tiebreak has something to
+         * break. Two are marked: they are level at the top, and `recommend`
+         * marks everything level rather than choosing between equals.
+         */
+        resumeFit: [
+          { id: 'lab', hits: 0, because: [], share: 0 },
+          { id: 'newgrad', hits: 1, because: ['Go'], share: 0.1 },
+          { id: 'systems', hits: 4, because: ['Go', 'Kafka'], share: 0.4 },
+          { id: 'platform', hits: 6, because: ['Kafka', 'Kubernetes', 'Go'], share: 0.6 },
+          { id: 'streaming', hits: 6, because: ['Kafka', 'Kubernetes', 'Go'], share: 0.6 },
+          { id: 'job-acme-role', hits: 0, because: [], share: 0 },
+          { id: 'job-vega-old', hits: 5, because: ['Kafka'], share: 0.5 },
+          { id: 'job-helios-old', hits: 2, because: ['Go'], share: 0.2 },
+          // Level with the Helios one, which is what the tiebreak is for.
+          { id: 'job-orion-old', hits: 2, because: ['Go'], share: 0.2 },
+        ],
+        recommended: ['platform', 'streaming'],
+      },
+      resumes: [
+        { id: 'newgrad', label: 'New grad', base: true },
+        { id: 'lab', label: 'Lab', base: true },
+        { id: 'platform', label: 'Platform', base: true },
+        { id: 'streaming', label: 'Streaming', base: true },
+        { id: 'systems', label: 'Systems', base: true },
+        { id: 'job-acme-role', label: 'Role — Acme' },
+        { id: 'job-vega-old', label: 'Platform Engineer — Vega' },
+        /*
+         * Orion before Helios on purpose. `sort` is stable, so with these the
+         * other way round the expected order falls out of the array order
+         * and the tiebreak could be deleted without a single check noticing.
+         */
+        { id: 'job-orion-old', label: 'Platform Engineer — Orion' },
+        { id: 'job-helios-old', label: 'Platform Engineer — Helios' },
+      ],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    void handle;
+    await new Promise((r) => setTimeout(r, 80));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const groups = [...root.querySelectorAll('select optgroup')].map((g) => ({
+      label: g.label,
+      options: [...g.querySelectorAll('option')].map((o) => o.textContent),
+    }));
+    return { groups };
+  });
+
+  const ownGroup = picker.groups?.find((g) => /Bases|Your resumes/.test(g.label));
+  const builtGroup = picker.groups?.find((g) => /Built for a posting/.test(g.label));
+
+  /** The label of each option, with the star and the count taken off. */
+  const named = (group) =>
+    (group?.options ?? []).map((o) => o.replace(/^★ /, '').replace(/ — uses .*$/, ''));
+  /** The score each option reports, in the order they are listed. */
+  const scores = (group) =>
+    (group?.options ?? []).map((o) => Number(/uses (\d+) word/.exec(o)?.[1] ?? 0));
+
+  check('the list is still grouped by what the resumes are', Boolean(ownGroup && builtGroup), JSON.stringify(picker.groups));
+
+  /*
+   * The whole order, not the first row. A check on position 0 alone passes
+   * against a list that is right at the top and arbitrary underneath, which
+   * is most of the list.
+   */
+  check(
+    'yours are listed best-fit first, the whole way down',
+    JSON.stringify(named(ownGroup)) === JSON.stringify(['Platform', 'Streaming', 'Systems', 'New grad', 'Lab']),
+    JSON.stringify(named(ownGroup)),
+  );
+  check(
+    'and the scores they report fall from top to bottom',
+    JSON.stringify(scores(ownGroup)) === JSON.stringify([6, 6, 4, 1, 0]),
+    JSON.stringify(scores(ownGroup)),
+  );
+  /*
+   * Both of the two that are level at the top are marked — `recommend`
+   * refuses to choose between equals — and both sit above everything they
+   * beat. A star is not a substitute for the ordering: the marked ones have
+   * to be the highest-scoring ones, or the two say different things about
+   * the same list.
+   */
+  check(
+    'everything the store marked is marked, and nothing else',
+    JSON.stringify((ownGroup?.options ?? []).map((o) => o.startsWith('★'))) === JSON.stringify([true, true, false, false, false]),
+    JSON.stringify(ownGroup?.options),
+  );
+  check(
+    'each says how much of the posting it uses, so the mark explains itself',
+    /uses 6 words from this posting/.test(ownGroup?.options?.[0] ?? ''),
+    String(ownGroup?.options?.[0]),
+  );
+
+  /*
+   * Fit decides here too, and this company only breaks the ties.
+   *
+   * Vega scores 5 and Helios 2, so Vega leads even though Helios is the
+   * employer being applied to — lifting Helios outright put a resume with
+   * nothing to do with this posting above one written for exactly it. Where
+   * the numbers *are* level, at 2 apiece, Helios beats Orion.
+   */
+  check(
+    'the ones built for a posting are ranked by fit, not by employer',
+    JSON.stringify(named(builtGroup)) === JSON.stringify([
+      'Platform Engineer — Vega',
+      'Platform Engineer — Helios',
+      'Platform Engineer — Orion',
+      'Role — Acme',
+    ]),
+    JSON.stringify(named(builtGroup)),
+  );
+  check(
+    'with this employer winning only where the fit is the same',
+    scores(builtGroup)[1] === scores(builtGroup)[2] && /Helios/.test(builtGroup?.options?.[1] ?? ''),
+    JSON.stringify(builtGroup?.options),
+  );
+  /*
+   * Nothing in the group the store did not mark. A star on a second-best
+   * would read as "start here" about a resume the numbers do not support.
+   */
+  check(
+    'nothing else is marked',
+    (builtGroup?.options ?? []).every((o) => !o.startsWith('★')),
+    JSON.stringify(builtGroup?.options),
+  );
+
+  /*
+   * And a store the server could not rank — an older one, or a page that was
+   * never analysed — keeps the order it had. A list that cannot be ranked is
+   * still a list.
+   */
+  const unranked = await inPage(async (createCard) => {
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Helios' },
+        spec: { id: 'job-helios', label: 'Helios' },
+        baseResumeId: 'newgrad',
+        rationale: [],
+        diff: [],
+      },
+      resumes: [
+        { id: 'newgrad', label: 'New grad', base: true },
+        { id: 'lab', label: 'Lab', base: true },
+        { id: 'job-acme-role', label: 'Role — Acme' },
+      ],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    return [...root.querySelectorAll('select option')].map((o) => o.textContent);
+  });
+
+  check(
+    'a store with no ranking keeps its order and its plain labels',
+    JSON.stringify(unranked) === JSON.stringify(['New grad', 'Lab', 'Role — Acme']),
+    JSON.stringify(unranked),
+  );
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);

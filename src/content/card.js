@@ -2391,8 +2391,53 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
 
   function drawProposeView() {
     const baseSelect = h('select', { title: 'Which resume to start from' });
-    const option = (r) =>
-      h('option', { value: r.id, textContent: `${r.label}`, selected: r.id === analysis.baseResumeId });
+
+    /*
+     * How much of this posting each resume already uses, worked out by the
+     * store against the untouched documents. Absent on an older server or on
+     * a page that was never analysed, and everything below falls back to the
+     * order it had before — a list that cannot be ranked is still a list.
+     */
+    const fitOf = new Map((analysis.resumeFit ?? []).map((f) => [f.id, f]));
+    const picked = new Set(analysis.recommended ?? []);
+
+    /*
+     * The mark, and what it is allowed to claim.
+     *
+     * A star on a row in a picker reads as "start here", so it is only drawn
+     * where the store says one resume is genuinely ahead of the others — see
+     * `recommend` in ResumeM-M, which marks nothing on a flat field, nothing
+     * on a bad one, and everything level at the top rather than choosing
+     * between equals. Most postings get no star at all, and that is the
+     * point: a mark that is always somewhere is one nobody reads.
+     *
+     * A character rather than an icon, because this is an `<option>` and an
+     * option holds text. The count is in the label for the same reason — it
+     * is the whole of the explanation, and there is no room for a tooltip in
+     * a native picker.
+     */
+    const option = (r) => {
+      const fit = fitOf.get(r.id);
+      const star = picked.has(r.id) ? '★ ' : '';
+      const says = fit?.hits ? ` — uses ${plural(fit.hits, 'word')} from this posting` : '';
+      return h('option', {
+        value: r.id,
+        textContent: `${star}${r.label}${says}`,
+        selected: r.id === analysis.baseResumeId,
+      });
+    };
+
+    /**
+     * Best fit first, and the order they were in where nothing separates them.
+     *
+     * Sorting inside each group rather than across them: which resumes are
+     * yours and which were built for a posting is a fact about the store, and
+     * a good match is not a reason to hide that. `sort` is stable, so equal
+     * scores keep the order the group already had.
+     */
+    const hitsOf = (r) => fitOf.get(r.id)?.hits ?? 0;
+    const byFit = (list, first = () => false) =>
+      [...list].sort((a, b) => hitsOf(b) - hitsOf(a) || Number(first(b)) - Number(first(a)));
 
     /*
      * Your starting points at the top, whatever else has piled up under them.
@@ -2419,7 +2464,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
 
     if (mine.length > 0 && rest.length > 0) {
       const bases = h('optgroup', { label: pinned.length > 0 ? 'Bases' : 'Your resumes' });
-      for (const r of mine) bases.append(option(r));
+      for (const r of byFit(mine)) bases.append(option(r));
 
       /*
        * And within the rest, this company first. Applying to a company you
@@ -2428,14 +2473,25 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
        * alphabetical among every other posting.
        */
       const here = (analysis?.job?.company ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-      const sameEmployer = here ? rest.filter((r) => r.id.startsWith(`job-${here}-`)) : [];
-      const others = rest.filter((r) => !sameEmployer.includes(r));
+      const sameEmployer = (r) => Boolean(here) && r.id.startsWith(`job-${here}-`);
 
+      /*
+       * Fit decides, and this company breaks the ties.
+       *
+       * Applying somewhere you have applied before, what you sent them last
+       * time is the most useful thing to start from — so it used to be
+       * lifted to the top of the group outright. That put a resume with
+       * nothing to do with this posting above one written for exactly it,
+       * which is the opposite of what a ranked list is for. As a tiebreaker
+       * it still wins every time the numbers cannot separate them, which is
+       * the case it was really about: two resumes that suit the posting
+       * equally, one of which this employer has already seen.
+       */
       const built = h('optgroup', { label: 'Built for a posting' });
-      for (const r of [...sameEmployer, ...others]) built.append(option(r));
+      for (const r of byFit(rest, sameEmployer)) built.append(option(r));
       baseSelect.append(bases, built);
     } else {
-      for (const r of resumes) baseSelect.append(option(r));
+      for (const r of byFit(resumes)) baseSelect.append(option(r));
     }
     /*
      * A different base, worked out again for this posting.
