@@ -1719,8 +1719,28 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    */
   async function compile() {
     const of = state.spec;
+    /*
+     * A compile that comes back with nothing is a failure, not a silence.
+     *
+     * `state.render = r` with `r` undefined leaves the fit box reading "Not
+     * compiled yet." and the error strip empty — so pressing Build resume
+     * looked like a button that does nothing at all, with nowhere to go
+     * next. Every way this can happen is worth reporting: a reply that is
+     * not a compile, a spec the card never had, a worker that answered
+     * without answering.
+     */
+    if (!of) {
+      state.error = 'There is no resume to build yet. Choose one to start from.';
+      draw();
+      return null;
+    }
     return act('render', { spec: of }, (r) => {
-      if (state.spec === of) state.render = r;
+      if (state.spec !== of) return;
+      if (!r) {
+        state.error = 'ResumeM-M answered, but sent back no compiled resume. Check its log.';
+        return;
+      }
+      state.render = r;
     });
   }
 
@@ -1938,15 +1958,42 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       );
     }
 
-    // A proposal the server could not resolve still has something to say.
+    /*
+     * A proposal whose document diff came back empty still has something to
+     * say: the match recorded what it swapped even where resolving the two
+     * resumes to compare them did not work.
+     *
+     * These rows used to be a different shape — `where` and `ba` straight
+     * under `.change`, with no body and no box. That was survivable while
+     * `.change` stacked its children; it stopped being so the moment the box
+     * arrived and made `.change` a flex row, which laid the heading out as a
+     * squeezed column beside the text. And with no box they could not be
+     * switched off, while counting as on, so a card in this state claimed
+     * changes that the spec had already reverted.
+     *
+     * Same shape as the rows above, and the same box: a rationale entry
+     * carries the key and both wordings, which is everything a wording
+     * toggle needs. The only thing it lacks is the diff row's `kind`, and
+     * nothing here reads that.
+     */
     if (shown.length === 0) {
       for (const c of shownRationale) {
+        const on = c.key && c.from ? wordingOn(c) : true;
+        const settable = c.key && c.from ? () => setWording(c, !(c.key && c.from ? wordingOn(c) : true)) : null;
         list.append(
-          h('div', { className: 'change' }, [
-            h('div', { className: 'where', textContent: c.where ?? 'On the resume' }),
-            h('div', { className: 'ba' }, [
-              c.fromText ? h('del', { textContent: c.fromText }) : null,
-              c.toText ? h('ins', { textContent: c.toText }) : null,
+          h('div', { className: `change${settable && !on ? ' off' : ''}` }, [
+            settable
+              ? h('label', { className: 'pick' }, [
+                  h('input', { type: 'checkbox', checked: on, disabled: busyIn('compile'), onchange: settable }),
+                  h('span', { className: 'box' }),
+                ])
+              : null,
+            h('div', { className: 'change-body' }, [
+              h('div', { className: 'where', textContent: c.where ?? 'On the resume' }),
+              h('div', { className: 'ba' }, [
+                c.fromText ? h('del', { className: on ? 'aside' : '', textContent: c.fromText }) : null,
+                c.toText ? h('ins', { className: on ? '' : 'aside', textContent: c.toText }) : null,
+              ]),
             ]),
           ]),
         );
@@ -2757,9 +2804,23 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             // `compile`, not `resume`: the proposal on screen can be built
             // while the AI is off reading the posting about a different one.
             disabled: busyIn('compile'),
+            /*
+             * Stage only what actually built.
+             *
+             * These ran one after the other unconditionally, and `act` clears
+             * `state.error` as it starts — so a compile that failed had its
+             * message wiped by the staging call a moment later, and the
+             * button looked like one that does nothing at all. Which is the
+             * worst way for this to fail: the resume is not built, nothing
+             * says why, and there is nowhere to go next.
+             *
+             * Staging a resume that did not compile was never useful anyway:
+             * the whole point of the flat folder is that what is in it is
+             * the thing you can attach.
+             */
             onclick: async () => {
-              await compile();
-              stageFiles();
+              const built = await compile();
+              if (built) stageFiles();
             },
           }),
           state.render

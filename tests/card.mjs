@@ -2387,6 +2387,137 @@ async function main() {
     JSON.stringify(halves.cutOnly),
   );
 
+  console.log('\nA proposal whose diff came back empty');
+
+  /*
+   * The match records what it swapped even where resolving the two resumes
+   * to compare them did not work, so there is something to show — and these
+   * rows used to be a different shape: `where` and `ba` straight under
+   * `.change`, no body and no box. Survivable while `.change` stacked its
+   * children; not once the box made it a flex row, which laid the heading
+   * out as a squeezed column beside the text. And with no box they could not
+   * be switched off while counting as on, so the card claimed changes the
+   * spec had already reverted.
+   */
+  const noDiff = await inPage(async (createCard) => {
+    const sent = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Engine Programmer', company: 'Storm Flag' },
+        spec: { id: 'job-sfg', label: 'Storm Flag', choices: { b_bounds: 'v_long' } },
+        baseLabel: 'New grad resume',
+        tailor: 'match',
+        // Nothing the server could resolve into a document comparison…
+        diff: [],
+        // …but it still knows what it swapped.
+        rationale: [
+          {
+            key: 'b_bounds',
+            from: 'v_long',
+            to: 'v_short',
+            where: 'Storm Flag Games',
+            fromText: 'Created system for adjusting bounding boxes of models to encompass animations.',
+            toText: 'Created system for accurate bounding of animated models.',
+            because: ['performance'],
+          },
+        ],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        return action === 'render' ? { pages: 1, fits: true } : {};
+      },
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    root.querySelector('.fold-changes')?.click();
+
+    const row = () => root.querySelector('.change');
+    const before = {
+      rows: root.querySelectorAll('.change').length,
+      // The shape: a body wrapping the heading and the text, as every other
+      // row has. Side by side is what the missing wrapper looked like.
+      bodied: Boolean(row()?.querySelector('.change-body .where') && row()?.querySelector('.change-body .ba')),
+      boxes: root.querySelectorAll('.pick input').length,
+      ticked: root.querySelector('.pick input')?.checked ?? null,
+    };
+
+    root.querySelector('.pick')?.click();
+    await new Promise((r) => setTimeout(r, 60));
+    return {
+      before,
+      ticked: root.querySelector('.pick input')?.checked ?? null,
+      choices: sent.filter((c) => c.action === 'render').at(-1)?.payload?.spec?.choices ?? null,
+    };
+  });
+
+  check('the row is still shown', noDiff.before.rows === 1, JSON.stringify(noDiff.before));
+  check(
+    'in the same shape as every other row, not laid out sideways',
+    noDiff.before.bodied === true,
+    JSON.stringify(noDiff.before),
+  );
+  check('and it gets a box like the others', noDiff.before.boxes === 1, JSON.stringify(noDiff.before));
+  check(
+    'which starts off, because the spec has the original pinned',
+    noDiff.before.ticked === false,
+    JSON.stringify(noDiff.before),
+  );
+  check(
+    'and ticking it reaches the resume that is compiled',
+    noDiff.ticked === true && noDiff.choices?.b_bounds === 'v_short',
+    JSON.stringify(noDiff),
+  );
+
+  console.log('\nA build that comes back with nothing says so');
+
+  /*
+   * `state.render = r` with `r` undefined left the fit box reading "Not
+   * compiled yet." and the error strip empty, so pressing Build resume
+   * looked like a button that does nothing at all, with nowhere to go next.
+   */
+  const emptyBuild = await inPage(async (createCard) => {
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      // A worker that answers without answering.
+      onAction: async (action) => (action === 'render' ? undefined : {}),
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    [...root.querySelectorAll('button')].find((b) => /Build resume/.test(b.textContent))?.click();
+    await new Promise((r) => setTimeout(r, 120));
+    return {
+      said: root.querySelector('.err')?.textContent ?? null,
+      pressed: Boolean([...root.querySelectorAll('button')].find((b) => /Build resume|Recompile/.test(b.textContent))),
+      stillWaiting: /Not compiled yet/.test(root.textContent ?? ''),
+    };
+  });
+
+  check(
+    'a compile that answers with nothing is reported, not swallowed',
+    /no compiled resume/i.test(emptyBuild.said ?? ''),
+    String(emptyBuild.said),
+  );
+  check(
+    'and the card still says it has nothing to show',
+    emptyBuild.stillWaiting === true,
+    JSON.stringify(emptyBuild),
+  );
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);
