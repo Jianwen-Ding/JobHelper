@@ -772,6 +772,126 @@ async function main() {
         await pointExtensionAt(context, context.serviceWorkers()[0], SERVER);
       }
     }
+
+    /* ---------------------------------------------------------------- *
+     * …and the browser stops the worker in between                       *
+     * ---------------------------------------------------------------- */
+
+    group('Another save is opened, and the worker is stopped in between');
+    {
+      /*
+       * The same thing again, with the one event that happens on the way.
+       *
+       * Which save the application was built from was held in a variable on
+       * the worker, and this worker is stopped after about half a minute of
+       * no extension events — which reading a posting and writing a letter
+       * produce none of. So by the time Submit was pressed the variable was
+       * routinely gone, no `X-RMM-Project` header went with the write, and
+       * the store's guard only refuses a save it disagrees with: a forgotten
+       * one was not a refusal, it was the protection above switching itself
+       * off silently, in the ordinary case rather than a rare one.
+       *
+       * The group before this proves the guard works while the worker is
+       * alive, which is the condition a test runs under and not the one a
+       * person applies under.
+       *
+       * Worth being straight about what this catches. Against the code
+       * without the fix it failed one run in four, not four in four: the
+       * re-analysis that picks up the wrong save has to land after the switch
+       * for the fault to show, and when that happens is a race this cannot
+       * set. Reloading the page to force the order leaves the card unable to
+       * come back at all — which is its own question, and not this one. So
+       * this is a sampling check over a real browser rather than a guard that
+       * cannot be got past; the argument that the fix is right is in
+       * `saveOf`, and this is the evidence that it holds end to end.
+       */
+      const mine = await (await fetch(`${SERVER}/health`)).json();
+      const own = await ownServer(mine.dataDir);
+      const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'rmm-other-save-'));
+      try {
+        /*
+         * The group above left its Helios application staged in this save —
+         * building files it as `applying` so the documents are in the upload
+         * folder before a portal's dialog opens. The card would come up on
+         * that one, which is a different card with different buttons.
+         */
+        await cleanStore(own.url, MINE);
+        await pointExtensionAt(context, context.serviceWorkers()[0], own.url);
+
+        const page = await context.newPage();
+        const errors = [];
+        page.on('pageerror', (e) => errors.push(String(e).slice(0, 120)));
+        await page.goto(fixtures.urlFor(HELIOS_FORM), { waitUntil: 'domcontentloaded' });
+        await settled(page);
+        const card = cardOf(page);
+        /*
+         * Built only if it is not already. The card rescues the work left by
+         * the group above — that is what the orphan sweep is for — and comes
+         * up on this posting with the resume already compiled, which is the
+         * state this group wants anyway. Pressing a button that is not there
+         * would fail for a reason that has nothing to do with saves.
+         */
+        const build = card.getByRole('button', { name: 'Build resume' });
+        if (await build.count()) await build.click();
+        await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
+
+        /*
+         * Marked first, so the stop is proved rather than assumed: without
+         * this, a `stopAllWorkers` that quietly did nothing would leave this
+         * group passing while testing the group above a second time.
+         */
+        await context.serviceWorkers()[0].evaluate(() => {
+          self.__sameWorkerAsBefore = true;
+        });
+        const cdp = await context.newCDPSession(page);
+        await cdp.send('ServiceWorker.enable').catch(() => undefined);
+        await cdp.send('ServiceWorker.stopAllWorkers').catch(() => undefined);
+        await page.waitForTimeout(1500);
+
+        let switched;
+        for (let i = 0; i < 30; i++) {
+          switched = await fetch(`${own.url}/api/projects/switch`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dir: elsewhere, mode: 'create' }),
+          });
+          if (switched.ok || switched.status !== 409) break;
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+        check('the editor changed save', switched.ok, String(switched.status));
+
+        await card.getByRole('button', { name: 'Submit' }).click();
+        await card.locator('.err, .done-box').first().waitFor({ timeout: 120_000 });
+
+        const revived = context.serviceWorkers()[0];
+        const stillMarked = await revived
+          .evaluate(() => Boolean(self.__sameWorkerAsBefore))
+          .catch(() => false);
+        check('the worker really was stopped and came back', !stillMarked);
+
+        const said = await card.innerText();
+        const refusal = said.split('\n').find((line) => /open now|open that save again/i.test(line));
+        check(
+          'the card still says the save changed, with the worker restarted under it',
+          Boolean(refusal),
+          refusal ?? said.slice(0, 160),
+        );
+        check('and no folder is reported as written', !(await card.locator('.done-box').count()));
+
+        const landed = await fetch(`${own.url}/api/applications`).then((r) => r.json());
+        check(
+          'the other save is untouched',
+          !(landed.applications ?? []).some((a) => /helios/i.test(a.company ?? '')),
+          (landed.applications ?? []).map((a) => a.company).join(', ') || '(empty)',
+        );
+        check('nothing was thrown at the page', errors.length === 0, errors.join('; '));
+        await page.close();
+      } finally {
+        own.kill();
+        fs.rmSync(elsewhere, { recursive: true, force: true });
+        await pointExtensionAt(context, context.serviceWorkers()[0], SERVER);
+      }
+    }
   } finally {
     if (doomed) doomed.kill();
     await context.close();
