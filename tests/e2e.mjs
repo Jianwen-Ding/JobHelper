@@ -124,11 +124,44 @@ async function main() {
     const diffHead = await card.locator('.diff-head').innerText();
     check('the diff names what it is comparing', /New grad/.test(diffHead), diffHead.replace(/\n/g, ' '));
 
-    const firstRow = card.locator('.change').first();
-    const wasText = await firstRow.locator('del').innerText();
-    const nowText = await firstRow.locator('ins').innerText();
-    check('each change shows the sentence it replaced', wasText.length > 20, wasText.slice(0, 50));
-    check('each change shows the sentence it chose', nowText.length > 20 && nowText !== wasText, nowText.slice(0, 50));
+    /*
+     * Every row, and in whichever of the two shapes it takes.
+     *
+     * This used to read the first row and ask whether each half was longer
+     * than twenty characters — a stand-in for "a sentence", which held only
+     * while the first row happened to be a bullet. A graduation date is a
+     * perfectly good change and "Sep. 2022 – May 2026" is twenty exactly.
+     *
+     * And a row is not always a pair. A swapped wording is struck-through
+     * before and chosen after; a narrowed skills group is one sentence
+     * ("Languages: dropped Ruby, PHP — keeping Python, Go"), because there is
+     * no single phrasing it replaced. Both are readable rows; neither is ever
+     * a bare id, which is the thing this is really guarding.
+     */
+    const rows = await Promise.all(
+      (await card.locator('.change').all()).map(async (row) => ({
+        was: await row.locator('del').innerText().catch(() => ''),
+        now: await row.locator('ins').innerText().catch(() => ''),
+        plain: await row.locator('.plain').innerText().catch(() => ''),
+      })),
+    );
+    const wasText = rows[0]?.was ?? '';
+    const readable = (t) => t.trim().length > 0 && !/^[a-z][a-z0-9_]*$/.test(t.trim());
+    check(
+      'every change is readable rather than a pair of ids',
+      rows.length > 0 && rows.every((r) => (r.was || r.now ? readable(r.was) || readable(r.now) : readable(r.plain))),
+      JSON.stringify(rows.map((r) => (r.plain || `${r.was} → ${r.now}`).slice(0, 34))),
+    );
+    check(
+      'a swapped wording shows both the one it replaced and the one it chose',
+      rows.some((r) => r.was && r.now) && rows.every((r) => !(r.was || r.now) || (readable(r.was) && readable(r.now) && r.was !== r.now)),
+      JSON.stringify(rows.filter((r) => r.was || r.now).map((r) => `${r.was.slice(0, 20)} → ${r.now.slice(0, 20)}`)),
+    );
+    check(
+      'and a narrowed skills group says what it kept, not only what it cut',
+      rows.every((r) => !r.plain || !/dropped/.test(r.plain) || /keeping|will not print/.test(r.plain)),
+      JSON.stringify(rows.map((r) => r.plain).filter(Boolean)),
+    );
     check('the rename to the posting is not shown as a change', !/^New grad$/m.test(wasText));
 
     /*

@@ -694,7 +694,24 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    */
   const LANE = {
     rebuild: 'resume',
-    render: 'resume',
+    /*
+     * Compiling has its own lane, because it is the one thing on this card
+     * that works on the resume you already have.
+     *
+     * It sat in `resume` with the three rebuild modes, so an AI pass — a model
+     * reading a posting, minutes of it — greyed out "Build resume" as well.
+     * That is the wrong way round: the proposal on screen is complete and
+     * compilable the whole time the scan runs, and wanting the file while the
+     * AI thinks about a better one is the ordinary case, not a mistake. The
+     * scan is an offer, and nobody should have to wait for an offer.
+     *
+     * What the shared lane was really protecting is `renderedFrom` below: a
+     * compile of one proposal must not be shown as a picture of another.
+     * Guarding that directly is both narrower and stricter — it also catches
+     * the rebuild landing *during* a compile, which sharing a lane never did,
+     * because by then the compile had already started.
+     */
+    render: 'compile',
     refine: 'resume',
     setBase: 'resume',
     coverLetter: 'letter',
@@ -998,11 +1015,28 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     openWorkspace: [3, 'Opening ResumeM-M…'],
   };
 
+  /** What `rebuild` is doing, which depends on which of the three was pressed. */
+  const REBUILDING = {
+    none: 'Copying it across…',
+    match: 'Matching on keywords…',
+    ai: 'Reading the posting…',
+  };
+
   /** A progress bar for `step`, when that is what the card is busy doing. */
   function progressFor(step) {
     const entry = WORKING[state.busy];
     if (!entry || entry[0] !== step) return null;
-    const label = running.has('rebuild') && state.rebuilding === 'ai' ? 'Reading the posting…' : entry[1];
+    /*
+     * One action, three jobs, and the bar has to name the one you asked for.
+     *
+     * `rebuild` is the same call whether you pressed "Use it unchanged",
+     * "Match by keyword" or "Let the AI tailor it", so a single label meant
+     * the bar said "Choosing what to change…" to someone who had just asked
+     * for nothing to be changed. Read against the button they pressed: the
+     * only reason to watch this bar is to find out whether what you asked for
+     * is happening.
+     */
+    const label = (running.has('rebuild') && REBUILDING[state.rebuilding]) || entry[1];
 
     /*
      * And how long it has been going.
@@ -1097,10 +1131,44 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     // The compiled PDF is now of a resume nobody has: recompile before the
     // preview or the fit badge claim to be about this one.
     state.render = null;
-    await act('render', { spec: state.spec }, (r) => {
-      state.render = r;
-    });
+    await compile();
   }
+
+  /**
+   * The same, for a skills group that was narrowed.
+   *
+   * A different write because it is a different kind of change: a wording is
+   * one of several the entry holds, recorded in `choices`; a skills group is a
+   * set of items, recorded under `sections[skills].items`. Putting one back
+   * means putting that list back, and `null` means the base asked for nothing
+   * — which is not "no answer" but a real one, the group printing all of its
+   * items, and the way to say it is to leave the key out.
+   *
+   * Written into `state.spec` like the other undo, for the same reason: the
+   * spec is what is compiled and what is filed, so this survives both instead
+   * of being a correction to the list on screen.
+   */
+  async function undoSkill(change) {
+    const sections = (state.spec?.sections ?? []).map((section) => {
+      if (section.kind !== 'skills') return section;
+      const items = { ...(section.items ?? {}) };
+      if (change.from) items[change.groupId] = change.from;
+      else delete items[change.groupId];
+      return { ...section, items };
+    });
+    state.spec = { ...state.spec, sections };
+    state.undone = [...(state.undone ?? []), skillKey(change.groupId)];
+    state.render = null;
+    await compile();
+  }
+
+  /*
+   * Undone changes are remembered by key, and a group id is not a choice key.
+   * Prefixed so a skills group can never collide with a bullet that happens to
+   * share its id — which is not hypothetical, since both are free-form ids the
+   * user types in the editor.
+   */
+  const skillKey = (groupId) => `skills:${groupId}`;
 
   /**
    * Put the built files where the upload dialog will be, as soon as they are
@@ -1123,6 +1191,29 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * preview is already on screen; its own lane means it blocks nothing while
    * it runs, and a failure is reported without taking the build with it.
    */
+  /**
+   * Compile the proposal on screen, and only keep the result if it is still
+   * the proposal on screen when it comes back.
+   *
+   * Compiling runs in its own lane, so it can be pressed while an AI pass is
+   * reading the posting. That makes a race real that the shared lane used to
+   * hide: the scan lands, `update` swaps in a different proposal and clears
+   * the preview, and then the compile of the *old* one arrives and puts a
+   * picture back. The card would then show a page, a page count and a fit
+   * badge belonging to a resume nobody had chosen.
+   *
+   * `state.spec` is replaced wholesale whenever it changes, so its identity is
+   * the whole test. A compile that loses the race is dropped rather than
+   * retried: the thing that replaced it clears the preview and the next
+   * compile is a button press away.
+   */
+  async function compile() {
+    const of = state.spec;
+    return act('render', { spec: of }, (r) => {
+      if (state.spec === of) state.render = r;
+    });
+  }
+
   function stageFiles() {
     if (!state.spec) return;
     act('stage', { spec: state.spec, coverLetter: state.letter, answers: collectedAnswers() }, (staged) => {
@@ -1155,10 +1246,28 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     for (const r of rationale) {
       if (r.toText) changeFor.set(plainish(r.toText), r);
     }
+
+    /*
+     * And the skills change behind each skills row, matched by the group's
+     * name.
+     *
+     * Not by the swapped text, which is how the rows above are matched,
+     * because a skills row has no `from`/`to` to match on — the diff writes it
+     * as one sentence ("Languages: dropped Ruby, PHP — keeping Python, Go").
+     * The name is what both sides have: the diff labels the row with it and
+     * the server sends it beside the group's id for exactly this.
+     */
+    const skillFor = new Map();
+    for (const sc of analysis.skillChanges ?? []) {
+      if (sc.groupName) skillFor.set(plainish(sc.groupName), sc);
+    }
+
     const undone = new Set(state.undone ?? []);
     const stillThere = (c) => {
       const key = changeFor.get(plainish(c.to ?? ''))?.key;
-      return !key || !undone.has(key);
+      if (key && undone.has(key)) return false;
+      const group = skillFor.get(plainish(c.where ?? ''))?.groupId;
+      return !group || !undone.has(skillKey(group));
     };
     const shown = diff.filter(stillThere);
     const shownRationale = rationale.filter((r) => !undone.has(r.key));
@@ -1198,6 +1307,9 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
 
     for (const c of shown) {
       const change = changeFor.get(plainish(c.to ?? ''));
+      // A row is one or the other, never both: a wording swap carries `to`,
+      // a narrowed skills group carries a group name and no `to` at all.
+      const skill = c.to ? undefined : skillFor.get(plainish(c.where ?? ''));
       const because = (change?.because ?? []).length ? change.because : undefined;
       // `text` is a self-contained sentence, which means it repeats the place
       // it happened — and the place is already the label above it.
@@ -1233,8 +1345,29 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 className: 'link undo-one',
                 textContent: 'Keep the original',
                 title: 'Put this one line back the way your base resume has it',
-                disabled: busyIn('resume'),
+                // Also `compile`: undoing recompiles, and two compiles at once
+                // would leave whichever finished second describing the card.
+                disabled: busyIn('resume', 'compile'),
                 onclick: () => undoOne(change),
+              })
+            : null,
+          /*
+           * And the same offer on a skills row.
+           *
+           * These are the rows most likely to be wrong — four groups narrowed
+           * at once off the same handful of keywords — and they were the only
+           * rows with no way back, because the test above asks for a `key` and
+           * a `from` and a skills change has neither. So the one kind of
+           * change you would most want to argue with was the one kind you
+           * could only accept or throw the whole proposal away over.
+           */
+          skill
+            ? h('button', {
+                className: 'link undo-one',
+                textContent: 'Keep the original',
+                title: `Show ${skill.groupName} the way your base resume has it`,
+                disabled: busyIn('resume', 'compile'),
+                onclick: () => undoSkill(skill),
               })
             : null,
         ]),
@@ -1828,9 +1961,11 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           h('button', {
             className: 'primary',
             textContent: busyLabel('render', state.render ? 'Recompile' : 'Build resume', 'Compiling…'),
-            disabled: busyIn('resume'),
+            // `compile`, not `resume`: the proposal on screen can be built
+            // while the AI is off reading the posting about a different one.
+            disabled: busyIn('compile'),
             onclick: async () => {
-              await act('render', { spec: state.spec }, (r) => (state.render = r));
+              await compile();
               stageFiles();
             },
           }),
@@ -1849,7 +1984,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
               const refined = await act('refine', { spec: state.spec, feedback: state.feedback });
               if (refined?.parsed?.choices) {
                 state.spec = { ...state.spec, choices: { ...state.spec.choices, ...refined.parsed.choices } };
-                await act('render', { spec: state.spec }, (r) => (state.render = r));
+                await compile();
               } else if (refined && !refined.executed) {
                 state.error =
                   'The AI is switched off, so written feedback cannot be applied automatically. Turn it on in ResumeM-M’s config.yaml, or change the wording in the editor.';
@@ -2087,7 +2222,10 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           h('button', {
             className: 'primary',
             textContent: busyLabel('bundle', 'Submit', 'Filing…'),
-            disabled: busyIn('submit', 'resume', 'letter') || !state.render,
+            // `compile` is in the list now that it is its own lane: filing
+            // while the preview is being recompiled files a resume the card
+            // is in the middle of changing its mind about.
+            disabled: busyIn('submit', 'resume', 'letter', 'compile') || !state.render,
             title: state.render ? 'Compile, name the files properly, and snapshot what was sent' : 'Build the resume first',
             onclick: () =>
               act(
@@ -2655,6 +2793,17 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     /** The analysis, whether this is the first one or a later rebuild. */
     update(next) {
       analysis = analysis ? Object.assign(analysis, next) : next;
+      /*
+       * A new proposal, so nothing is undone on it yet.
+       *
+       * `undone` is a list of keys whose rows have been put back, and it only
+       * means anything against the spec those keys were undone on. A rebuild
+       * hands over a different spec — every swap made afresh — and carrying
+       * the old list across hid rows the new proposal really had changed. The
+       * undo itself is not lost by this: it was written into the spec, and the
+       * spec is what has just been replaced.
+       */
+      if (next.spec) state.undone = [];
       state.spec = next.spec ?? state.spec;
       state.builtWith = next.tailor ?? (next.aiUsed ? 'ai' : state.builtWith);
       state.render = null;

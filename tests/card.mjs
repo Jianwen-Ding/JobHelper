@@ -149,6 +149,171 @@ async function main() {
   check('which clears with the work rather than counting on', timing.after === false);
 
   /*
+   * And it has to name the job you asked for.
+   *
+   * All three mode buttons call the same `rebuild`, so the bar read
+   * "Choosing what to change…" to somebody who had just pressed "Use it
+   * unchanged" and asked for nothing to be changed. The bar's only purpose is
+   * telling you whether what you asked for is under way.
+   */
+  console.log('\nThe bar names the mode you pressed');
+
+  const labelFor = (button) => inPage(
+    new Function('createCard', `return (${(async (createCard, want) => {
+      let release;
+      const held = new Promise((r) => (release = r));
+      createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Platform Engineer', company: 'Acme' },
+          spec: { id: 'job-acme', label: 'Acme' },
+          rationale: [],
+        },
+        resumes: [{ id: 'base', label: 'New grad', base: true }],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        // The AI button stays disabled until the card has asked and been told
+        // the AI is on, so the status read has to answer before it can be
+        // pressed.
+        onAction: async (action) =>
+          action === 'rebuild' ? held : action === 'aiStatus' ? { active: true, state: 'on' } : {},
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      await new Promise((r) => setTimeout(r, 100));
+      const button = [...root.querySelectorAll('button.mode')].find((b) => new RegExp(want).test(b.textContent));
+      if (!button) return { error: `no ${want} button` };
+      button.click();
+      await new Promise((r) => setTimeout(r, 300));
+      const label = root.querySelector('.progress-label span')?.textContent ?? null;
+      release({});
+      return { label };
+    }).toString()})(createCard, ${JSON.stringify(button)})`),
+  );
+
+  const unchanged = await labelFor('Use it unchanged');
+  const byKeyword = await labelFor('Match by keyword');
+  const byAi = await labelFor('Let the AI tailor it');
+  check(
+    'asking for it unchanged does not say it is choosing what to change',
+    unchanged.label != null && !/choosing what to change/i.test(unchanged.label),
+    JSON.stringify(unchanged),
+  );
+  check('it says it is copying it across', /copying/i.test(unchanged.label ?? ''), JSON.stringify(unchanged));
+  check('a keyword match says so', /keyword/i.test(byKeyword.label ?? ''), JSON.stringify(byKeyword));
+  check('and the AI says it is reading the posting', /reading the posting/i.test(byAi.label ?? ''), JSON.stringify(byAi));
+
+  /*
+   * Building what is already there, while the AI reads the posting.
+   *
+   * Compiling shared a lane with the three rebuild modes, so an AI pass —
+   * minutes of it — greyed out "Build resume" as well. The proposal on screen
+   * is complete and compilable the whole time that runs; waiting for an offer
+   * is not something anyone should have to do.
+   */
+  console.log('\nBuilding while the AI is still reading');
+
+  const duringScan = await inPage(async (createCard) => {
+    let releaseScan;
+    const scan = new Promise((r) => (releaseScan = r));
+    const calls = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+      },
+      resumes: [{ id: 'base', label: 'New grad', base: true }],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        calls.push(action);
+        if (action === 'rebuild') return scan;
+        if (action === 'render') return { pages: 1, absolutePdfUrl: 'about:blank', spec: payload.spec };
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    await new Promise((r) => setTimeout(r, 100));
+
+    const named = (re) => [...root.querySelectorAll('button')].find((b) => re.test(b.textContent));
+    named(/Let the AI tailor it/).click();
+    await new Promise((r) => setTimeout(r, 200));
+
+    const build = named(/Build resume|Recompile|Compiling/);
+    const buildable = Boolean(build) && !build.disabled;
+    if (buildable) build.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const compiled = calls.includes('render');
+
+    releaseScan({});
+    await new Promise((r) => setTimeout(r, 200));
+    return { buildable, compiled, calls };
+  });
+
+  check(
+    'the build button stays live while the AI reads the posting',
+    duringScan.buildable === true,
+    JSON.stringify(duringScan.calls),
+  );
+  check('and pressing it actually compiles', duringScan.compiled === true, JSON.stringify(duringScan.calls));
+
+  /*
+   * And the race that opens up once it can: the scan lands, swaps the
+   * proposal and clears the preview, and then the compile of the *old* one
+   * arrives. Showing that picture would mean a page, a page count and a fit
+   * badge belonging to a resume nobody chose.
+   */
+  const raced = await inPage(async (createCard) => {
+    let releaseRender;
+    const held = new Promise((r) => (releaseRender = r));
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', choices: { b: 'old' } },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action) =>
+        action === 'render' ? held : action === 'aiStatus' ? { active: true, state: 'on' } : {},
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    await new Promise((r) => setTimeout(r, 100));
+    [...root.querySelectorAll('button')].find((b) => /Build resume|Recompile/.test(b.textContent))?.click();
+    await new Promise((r) => setTimeout(r, 200));
+
+    // The scan lands with a different proposal while that compile is in flight.
+    handle.update({
+      spec: { id: 'job-acme', label: 'Acme', choices: { b: 'new' } },
+      rationale: [],
+      diff: [],
+      tailor: 'ai',
+      aiUsed: true,
+    });
+    releaseRender({ pages: 3, absolutePdfUrl: 'about:blank' });
+    await new Promise((r) => setTimeout(r, 400));
+
+    return {
+      // A preview on screen now could only be the one compiled from the spec
+      // that has since been replaced.
+      shown: Boolean(root.querySelector('canvas.pdf-page')) || /3 pages/.test(root.textContent),
+      offersBuild: Boolean(
+        [...root.querySelectorAll('button')].find((b) => /Build resume/.test(b.textContent)),
+      ),
+    };
+  });
+
+  check('a compile that lost its proposal is not shown as a picture of the new one', raced.shown === false, JSON.stringify(raced));
+  check('and the card asks to be built again instead', raced.offersBuild === true, JSON.stringify(raced));
+
+  /*
    * What the card says when the AI you asked for did not happen.
    *
    * Two ways that goes and they want different words. The model ran and came
@@ -264,7 +429,13 @@ async function main() {
       return b ? b.disabled : null;
     };
     const state = {
-      // The one that is actually running, and the others in its lane.
+      /*
+       * Building is deliberately *not* in that lane any more: the proposal on
+       * screen is compilable the whole time a scan runs, and waiting for an
+       * offer is not something anyone should have to do. Applying written
+       * feedback is, because it rewrites the same choices the pass is about
+       * to replace.
+       */
       building: named('Build resume') ?? named('Recompile'),
       applyFeedback: named('Apply feedback'),
       // Filing waits for the two things it files.
@@ -290,8 +461,13 @@ async function main() {
     JSON.stringify(whileTailoring),
   );
   check(
-    'and the other buttons in its lane wait, because they would collide',
-    whileTailoring.building === true && whileTailoring.applyFeedback === true,
+    'written feedback waits, because it rewrites what the pass is replacing',
+    whileTailoring.applyFeedback === true,
+    JSON.stringify(whileTailoring),
+  );
+  check(
+    'but the resume you already have can still be built',
+    whileTailoring.building === false,
     JSON.stringify(whileTailoring),
   );
   check(
@@ -497,6 +673,129 @@ async function main() {
     undoing.recompiled.at(-1)?.b_pipeline === 'v_kafka',
     JSON.stringify(undoing.recompiled.at(-1)),
   );
+
+  /*
+   * And the skills rows, which had no way back at all.
+   *
+   * The button above tests for a `key` and a `from`, which is the shape of a
+   * wording swap: one of several phrasings an entry holds, recorded in
+   * `choices`. A narrowed skills group is a set of items under
+   * `sections[skills].items` and has neither, so every skills row came up
+   * without an undo — and those are the rows most likely to be wrong, four
+   * groups cut at once off the same handful of keywords. The only answer on
+   * offer was to throw the whole proposal away.
+   */
+  console.log('\nKeeping a skills group the way it was');
+
+  const skillUndo = await inPage(async (createCard) => {
+    const sent = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: {
+          id: 'job-acme',
+          label: 'Acme',
+          choices: { b_pipeline: 'v_kafka' },
+          sections: [
+            { kind: 'skills', groups: ['sk_lang', 'sk_tools'], items: { sk_lang: ['s_py', 's_go'], sk_tools: ['t_k8s'] } },
+          ],
+        },
+        baseLabel: 'New grad resume',
+        tailor: 'match',
+        diff: [
+          { kind: 'changed', where: 'Acme Co.', from: 'Built a pipeline', to: 'Built a Kafka pipeline' },
+          { kind: 'removed', where: 'Languages', text: 'Languages: dropped Ruby, PHP — keeping Python, Go' },
+          { kind: 'removed', where: 'Developer Tools', text: 'Developer Tools: dropped Docker — keeping Kubernetes' },
+        ],
+        rationale: [
+          { key: 'b_pipeline', from: 'v_base', to: 'v_kafka', toText: 'Built a Kafka pipeline', because: ['kafka'] },
+        ],
+        skillChanges: [
+          // The base named its own list for this one.
+          { groupId: 'sk_lang', groupName: 'Languages', from: ['s_py', 's_go', 's_rb', 's_php'], to: ['s_py', 's_go'] },
+          // And expressed no preference for this one, which prints them all.
+          { groupId: 'sk_tools', groupName: 'Developer Tools', from: null, to: ['t_k8s'] },
+        ],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        return action === 'render' ? { pages: 1, fits: true } : {};
+      },
+    });
+
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const rows = () => root.querySelectorAll('.change').length;
+    const undoButtons = () => [...root.querySelectorAll('.undo-one')];
+    const text = () => root.querySelector('.changes')?.textContent ?? '';
+
+    const offered = undoButtons().length;
+    const before = rows();
+
+    // Between the two, because undoing recompiles and the rest of the undo
+    // buttons are held while it does — a second click landing on a disabled
+    // button would do nothing and this would pass for the wrong reason.
+    const settle = () => new Promise((r) => setTimeout(r, 50));
+
+    // Guarded rather than assumed: without the fix there are no skills undo
+    // buttons at all, and this has to report that rather than throw.
+    const clickUndo = async (at) => {
+      const button = undoButtons()[at < 0 ? undoButtons().length + at : at];
+      if (!button) return false;
+      button.click();
+      await settle();
+      return true;
+    };
+
+    // The group whose base list was explicit.
+    const clicked = await clickUndo(1);
+    const afterFirst = { rows: rows(), stillNames: /dropped Ruby/.test(text()), clicked };
+    // And the one where the base said nothing.
+    await clickUndo(-1);
+
+    const last = sent.filter((c) => c.action === 'render').at(-1)?.payload?.spec;
+    const skills = (last?.sections ?? []).find((x) => x.kind === 'skills');
+    return {
+      offered,
+      before,
+      afterFirst,
+      after: rows(),
+      items: skills?.items ?? null,
+      hasTools: skills ? Object.prototype.hasOwnProperty.call(skills.items ?? {}, 'sk_tools') : null,
+      choices: last?.choices ?? null,
+    };
+  });
+
+  check('a skills row offers to be put back, like every other row', skillUndo.offered === 3, JSON.stringify(skillUndo));
+  check(
+    'putting one back takes that row off the list',
+    skillUndo.afterFirst.rows === skillUndo.before - 1 && skillUndo.afterFirst.stillNames === false,
+    JSON.stringify(skillUndo.afterFirst),
+  );
+  /*
+   * The half that matters, as with the wordings: taking the row off the screen
+   * and compiling the narrowed group anyway would be worse than no button.
+   */
+  check(
+    'the group the base named is compiled with its own list back',
+    JSON.stringify(skillUndo.items?.sk_lang) === JSON.stringify(['s_py', 's_go', 's_rb', 's_php']),
+    JSON.stringify(skillUndo.items),
+  );
+  /*
+   * `null` from the base is an answer, not a gap: a group with no entry under
+   * `items` prints all of its items, and the way to say that is to leave the
+   * key out. Writing an empty list instead would print nothing.
+   */
+  check(
+    'and the group it named nothing for goes back to having no entry at all',
+    skillUndo.hasTools === false,
+    JSON.stringify(skillUndo.items),
+  );
+  check('both rows are gone and the wording swap is untouched', skillUndo.after === 1 && skillUndo.choices?.b_pipeline === 'v_kafka', JSON.stringify(skillUndo));
 
   /*
    * Building puts the files where the upload dialog will be.

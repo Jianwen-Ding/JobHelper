@@ -54,6 +54,17 @@ async function loadPdfjs() {
    * route comes back — noisy again, but not broken.
    */
   pdfjs.PDFWorker._isSameOrigin = () => true;
+  /*
+   * And the wrapper itself, in case the check above is not the lever.
+   *
+   * `_createCDNWrapper` is the function that builds the blob; the check above
+   * only decides whether it is called. Neutering both means no blob is made
+   * even if a version of pdf.js reaches it another way, and it costs one
+   * assignment. If either is gone in a later version the other still holds,
+   * and if both are gone the worst case is the old behaviour: a violation
+   * reported, then the fake worker, then the resume drawn anyway.
+   */
+  pdfjs.PDFWorker._createCDNWrapper = (url) => url;
   return pdfjs;
 }
 
