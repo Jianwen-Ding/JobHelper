@@ -426,9 +426,18 @@ async function main() {
       const offer = card.locator('.hint.warn button');
       const offered = ((await offer.textContent().catch(() => '')) ?? '').trim();
       check('and offers to redo it rather than doing it', (await offer.count()) === 1, offered);
+      /*
+       * By what it does, not by the words it used to use. The button was
+       * renamed to "Work out the suggestions again" and this went on
+       * matching the old wording, so it failed for a rename rather than for
+       * a behaviour — which is the wrong thing for a check to be sensitive
+       * to. What has to hold is that it offers the keyword match, which can
+       * reach the alternate just written, and not "Build it again", which
+       * rebuilds the resume unchanged and never could.
+       */
       check(
         'naming the mode that would actually use what was just written',
-        /match by keyword/i.test(offered) && !/build it again/i.test(offered),
+        /suggestions again/i.test(offered) && !/build it again/i.test(offered),
         offered,
       );
       await editor.close();

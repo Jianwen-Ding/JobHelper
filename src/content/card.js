@@ -2594,11 +2594,13 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      * pin nobody had found.
      *
      * A resume with no tier at all is one from a save this version has not
-     * opened yet. It is read as kept, which is what it is: a file written
-     * before any of this existed is not something to file under "about to be
-     * deleted".
+     * opened yet — an older ResumeM-M on the other end of the round trip, or
+     * one that has not been migrated. `base: true` was the tier there was, so
+     * it is read as one; anything else is kept, which is what it is. A file
+     * written before any of this existed is not something to file under
+     * "about to be deleted".
      */
-    const tierOf = (r) => r.tier ?? 'extended';
+    const tierOf = (r) => r.tier ?? (r.base ? 'base' : 'extended');
     const GROUPS = [
       ['base', 'Bases'],
       ['extended', 'Kept'],

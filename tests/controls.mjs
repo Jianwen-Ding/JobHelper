@@ -461,11 +461,33 @@ async function main() {
        * Two resumes are added here and removed again, because this store is
        * shared with every other suite.
        */
-      const put = (id, label) =>
+      /*
+       * `tier: 'temporary'` because that is what the store puts on a resume
+       * it builds for a posting, and this is standing in for two of those.
+       * A bare PUT gets no tier and is therefore kept, which is the right
+       * default for a resume created by hand or from the CLI — it is just
+       * not what these two are pretending to be.
+       */
+      /*
+       * With the base's own sections, not empty ones.
+       *
+       * Fit decides the order and this company only breaks a tie — which is
+       * the right way round, and means a resume with nothing in it scores
+       * nothing and sorts last however well the employer matches. An empty
+       * stand-in therefore tests the tiebreak by never reaching it. These two
+       * carry what the base carries, so they are level with everything else
+       * in the group and the employer is what separates them.
+       */
+      const sections = await fetch(`${SERVER}/api/resumes`)
+        .then((r) => r.json())
+        .then((all) => all.find((r) => r.id === 'base')?.sections ?? [])
+        .catch(() => []);
+
+      const put = (id, label, tier = 'temporary') =>
         fetch(`${SERVER}/api/resumes/${encodeURIComponent(id)}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ label, sections: [] }),
+          body: JSON.stringify({ label, sections, tier }),
         });
       const drop = (id) =>
         fetch(`${SERVER}/api/resumes/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => undefined);
@@ -485,24 +507,38 @@ async function main() {
             .map((g) => ({ label: g.label, options: [...g.children].map((o) => o.textContent) }));
         });
 
-        check('the list is grouped rather than one flat run', (shape?.length ?? 0) === 2, JSON.stringify(shape?.map((g) => g.label)));
+        // By name rather than by position: the save this runs against also
+        // holds whatever other suites left in it, so which groups exist is
+        // not something this check should be asserting.
+        const labels = (shape ?? []).map((g) => g.label);
+        check(
+          'the list is grouped rather than one flat run',
+          labels.includes('Bases') && labels.includes('Built for a posting'),
+          JSON.stringify(labels),
+        );
 
-        const yours = shape?.[0];
+        const yours = shape?.find((g) => g.label === 'Bases');
         check(
           'your own resumes come first',
-          Boolean(yours) && yours.options.includes('Base resume') && !yours.options.some((o) => /—\s(Helios|ZzzOther)$/.test(o)),
+          Boolean(yours)
+            && labels.indexOf('Bases') === 0
+            && yours.options.some((o) => /^Base resume/.test(o))
+            && !yours.options.some((o) => /—\s(Helios|ZzzOther)\b/.test(o)),
           JSON.stringify(yours?.options),
         );
 
         /*
-         * And the one built for this company at the top of the rest: applying
-         * to somewhere you have applied before, what you sent them last time
-         * is the most useful thing to start from and was the hardest to find.
+         * And the one built for this company at the top of the rest, among
+         * the ones it is level with: applying to somewhere you have applied
+         * before, what you sent them last time is the most useful thing to
+         * start from and was the hardest to find. Only a tiebreak, though —
+         * a resume that suits this posting better still sorts above it,
+         * which is what a ranked list is for.
          */
-        const built = shape?.[1];
+        const built = shape?.find((g) => g.label === 'Built for a posting');
         check(
           'and this company is first among the ones built for a posting',
-          built?.options?.[0] === 'Platform Engineer — Helios',
+          built?.options?.[0]?.startsWith('Platform Engineer — Helios'),
           JSON.stringify(built?.options?.slice(0, 3)),
         );
         await page.close();
