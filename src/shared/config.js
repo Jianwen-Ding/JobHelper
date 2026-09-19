@@ -11,7 +11,11 @@ export const DEFAULTS = {
   baseResumeId: 'newgrad',
   /**
    * Send the posting to the configured AI CLI as well as the local tag match.
-   * Off by default: the deterministic match is free, instant, and usually right.
+   *
+   * Off by default. The local match is free and instant, but it is no longer
+   * applied on its own: it arrives as a list of suggestions with every box
+   * off, so the resume is the one you keep until you say otherwise. The AI is
+   * the only thing that decides anything, and only when asked.
    */
   useAi: false,
   /** Show the card automatically, or wait to be asked from the toolbar. */
