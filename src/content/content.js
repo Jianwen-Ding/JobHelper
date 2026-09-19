@@ -383,6 +383,10 @@
    */
   let letterInFrame = false;
 
+  /** Stopping and restarting the one-send-per-document watcher on this page. */
+  let stopSending = null;
+  let restartSending = null;
+
   /** The questions on this page, wherever on it they are. */
   async function findEverywhere() {
     const { findQuestions, isRequired } = await imports.autofill();
@@ -727,6 +731,10 @@
       // that is reaching for it.
       case 'setAiEnabled':
         return send('setAiEnabled', { enabled: Boolean(payload.enabled) });
+
+      /** The other switch of the pair: this extension's own opt-in. */
+      case 'setUseAi':
+        return send('setUseAi', { enabled: Boolean(payload.enabled) });
 
       /** The pages of this application, and the two ways to correct them. */
       case 'forgetPage':
@@ -1245,7 +1253,7 @@
    */
   async function watchForSending() {
     const { watchForSending: watch } = await imports.sending();
-    const stop = watch(document, (how) => {
+    const took = (how) => {
       /*
        * Only on the page where an application is actually sent.
        *
@@ -1254,13 +1262,16 @@
        * anywhere, it filed every posting you so much as opened as one you had
        * sent, which is the worst thing this could do: a job marked as done
        * comes off the list of things to finish.
+       *
+       * Said out loud, because the watcher only has one send to give and a
+       * press this declined must not be the one that spends it.
        */
-      if (analysis?.kind !== 'application') return;
+      if (analysis?.kind !== 'application') return false;
 
       const named = analysis?.spec?.generatedFor;
       // Nothing to file it under. The card knows a posting by what the
       // analysis made of it, and without that this is just a form.
-      if (!named?.company || !named?.role) return;
+      if (!named?.company || !named?.role) return false;
 
       send('applicationSent', {
         company: named.company,
@@ -1269,8 +1280,25 @@
         note: how,
       }).catch(() => undefined);
       cardHandle?.setStatus?.('Recorded as sent.');
-    });
-    teardown.push(stop);
+      return true;
+    };
+
+    stopSending = watch(document, took);
+    /*
+     * And begun again at each posting, because the watcher is one send per
+     * document and a single-page board is one document for the afternoon.
+     *
+     * Without this, sending the first application on a board latched it: every
+     * posting applied to after that one, in that tab, went out unrecorded and
+     * stayed on the list of things still to do. The document never goes away
+     * to take the latch with it — a route change is the only navigation there
+     * is here.
+     */
+    restartSending = () => {
+      stopSending?.();
+      stopSending = watch(document, took);
+    };
+    teardown.push(() => stopSending?.());
   }
 
   function keepWorkSafe() {
@@ -1580,6 +1608,10 @@
        * `coverLetterRequired: true` handed to the editor.
        */
       letterInFrame = false;
+
+      // And the one send this document's watcher had to give, which the
+      // posting you have just left may already have spent.
+      restartSending?.();
 
       // Before the await, not after: the pass still running belongs to the url
       // that just went away, and it must stop being able to write to the card

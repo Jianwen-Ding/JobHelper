@@ -1021,6 +1021,25 @@ const handlers = {
     return handlers.aiStatus();
   },
 
+  /**
+   * And this extension's own switch, from the same chip.
+   *
+   * The other half of the pair above, and the half that had no way out at
+   * all. Turn the AI on in ResumeM-M — which is where somebody who has just
+   * set one up is sitting — and the card still reads "AI off", because this
+   * extension has its own opt-in and it starts off. The chip said so in a
+   * tooltip and did nothing when pressed, and there is nothing on the card to
+   * say the remaining switch is behind the toolbar icon.
+   *
+   * Answers the fresh status rather than `{ ok: true }`, so the chip redraws
+   * from what is now true of both switches instead of assuming its own press
+   * was the whole story.
+   */
+  async setUseAi({ enabled }) {
+    await chrome.storage.sync.set({ useAi: Boolean(enabled) });
+    return handlers.aiStatus();
+  },
+
   async getSettings() {
     return getSettings();
   },

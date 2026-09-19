@@ -985,16 +985,41 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    */
   const AI_CHIP = {
     on: { text: 'AI on', className: 'ai on', title: 'This posting can be tailored by your configured AI CLI.' },
+    /*
+     * This extension's own switch, off.
+     *
+     * The dead end, and the one somebody who has just set an AI up walks
+     * straight into: you turn the AI on in ResumeM-M — which is where the
+     * command, the model and the effort all live, so it is where you are
+     * sitting — and the card still says "AI off". Both switches have to
+     * agree, the second one is behind the toolbar icon, and nothing on the
+     * card said so or could be pressed. `server-off` below is the mirror of
+     * this and has been clickable all along; this side was a tooltip.
+     *
+     * Named by which switch it is, because "AI off" with the AI on in the
+     * other window reads as the card being wrong rather than as a second
+     * switch existing.
+     */
     off: {
+      text: 'AI off in JobHelper',
+      className: 'ai warn',
+      title: "This extension's own AI switch is off, so nothing is sent to an AI. Click to turn it on.",
+      turnOn: 'setUseAi',
+    },
+    /** Neither switch on: the same click, and the chip then offers the other. */
+    'both-off': {
       text: 'AI off',
       className: 'ai off',
-      title: 'Nothing is sent to an AI. Tailoring is keyword matching against your own stored phrasings.',
+      title:
+        'Nothing is sent to an AI. Tailoring is keyword matching against your own stored phrasings. ' +
+        "Click to turn this extension's switch on; ResumeM-M has its own, and the chip will offer it next.",
+      turnOn: 'setUseAi',
     },
     'server-off': {
       text: 'AI off in ResumeM-M',
       className: 'ai warn',
       title: 'Set to use the AI, but ResumeM-M has it switched off. Click to turn it on.',
-      turnOn: true,
+      turnOn: 'setAiEnabled',
     },
     unconfigured: {
       text: 'No AI set up',
@@ -1015,7 +1040,15 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    */
   function drawAiChip() {
     if (!state.ai) return null;
-    const look = AI_CHIP[state.ai.state] ?? AI_CHIP.off;
+    /*
+     * "Off" is two different states and they need different words. Off here
+     * with ResumeM-M's AI on is one switch away from working and says so;
+     * off in both places is the ordinary quiet default and reads as one.
+     */
+    const named = state.ai.state === 'off' && !state.ai.serverEnabled ? 'both-off' : state.ai.state;
+    // A state this version does not know is not an invitation to press
+    // anything, so the fallback is the quiet one.
+    const look = AI_CHIP[named] ?? AI_CHIP['both-off'];
     const chip = h('span', {
       className: `${look.className}${look.turnOn ? ' actionable' : ''}`,
       title: look.title,
@@ -1025,7 +1058,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     if (look.turnOn) {
       chip.onclick = () => {
         chip.textContent = 'Turning on…';
-        act('setAiEnabled', { enabled: true }, (ai) => {
+        act(look.turnOn, { enabled: true }, (ai) => {
           state.ai = ai ?? state.ai;
         });
       };
