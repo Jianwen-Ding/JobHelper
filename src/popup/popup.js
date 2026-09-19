@@ -119,7 +119,13 @@ async function showOpenApplication() {
   // The reassurance is the point of the whole panel, so it is said in the
   // words someone worried would use — and only about what is actually there.
   if (trail.holdingWriting) what.push('your writing is being held, and comes back when you return');
-  else if (trail.holdingResume) what.push('the tailored resume is ready and waiting');
+  /*
+   * "Tailored" is a claim, and this cannot make it. `holdingResume` is true
+   * of any proposal at all, and a proposal is now the resume exactly as it is
+   * kept until somebody ticks something — so on every ordinary application
+   * this line said the AI had been at work when nothing had.
+   */
+  else if (trail.holdingResume) what.push('the resume for it is ready and waiting');
   $('openWhat').textContent = `${what.join(' — ')}.`;
   panel.hidden = false;
 
@@ -158,7 +164,15 @@ const AI_STATE = {
   off: {
     text: 'AI off',
     className: 'ai off',
-    hint: 'Off by default — tag matching is instant and free, and usually right.',
+    /*
+     * What the off state actually gets you, which is not nothing.
+     *
+     * It said "tag matching is instant and free, and usually right" — a
+     * sentence about an automatic decision that no longer happens. The match
+     * is a list of suggestions now: worked out on arrival, applied to
+     * nothing, and taken one box at a time.
+     */
+    hint: 'Off by default. Keyword suggestions are still worked out — free and instant — and you pick the ones you want.',
   },
   'server-off': {
     text: 'Switched off in ResumeM-M',

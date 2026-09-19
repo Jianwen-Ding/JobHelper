@@ -121,7 +121,9 @@ button.mode.on {
 }
 button.mode.on:hover { background: #d2e3fc; }
 /* A third way out, offered quietly beside the two that rebuild the resume. */
-button.mode.ghost { flex: 0 0 auto; color: #5f6368; }
+/* The way out to the builder, quiet and on its own line: it is not a third
+   way to build, and it used to look like one. */
+.to-builder { padding: 2px 0; font-size: 12px; }
 
 /*
  * Pressing one of these costs minutes and, depending on the command, money;
@@ -288,6 +290,19 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 }
 .change.off .ba del { text-decoration: none; color: var(--ink); background: var(--good-bg); }
 .change.off .ba .plain { text-decoration: line-through; color: var(--muted); }
+
+/* The half that is not in the document, kept short.
+   Both sides were drawn at full length, so a row offering a four-line
+   rewrite spent eight lines saying so — and half of that was a sentence
+   nobody had chosen. Struck through over four lines is also genuinely hard
+   to read. Two lines is enough to recognise which wording it is, and the
+   whole of it is one click away in the builder. Clamped rather than hidden:
+   a row with one side missing cannot be compared, which is the only reason
+   to open this list. */
+.change .ba .aside {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden; font-size: 11.5px; line-height: 1.4;
+}
 /* The folder the upload dialog wants, while it is still wanted. */
 .staged {
   background: var(--panel-sunk); border: 1px solid var(--line-soft); border-radius: 8px;
@@ -487,8 +502,23 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   root.append(card);
   document.documentElement.append(host);
 
+  /*
+   * Whether what arrived is a decision or a set of offers.
+   *
+   * Only a run where the model actually answered is a decision — it read the
+   * posting and chose, and undoing its choices one at a time is what the
+   * boxes are for. Everything else is the keyword match, which is now a list
+   * of suggestions: it arrives computed and switched off, over the resume
+   * exactly as it is kept. An AI run that fell back to the match is in the
+   * second group, not the first, because nothing decided anything.
+   */
+  const isDecision = (a) => a?.tailor === 'ai' && a?.aiUsed;
+
   const state = {
-    spec: analysis?.spec ?? null,
+    // Hoisted, so this can call a function declared further down.
+    spec: isDecision(analysis)
+      ? analysis.spec
+      : withAllOff(analysis?.spec ?? null, analysis?.rationale, analysis?.skillChanges),
     /** The pages this application is being written from. See drawTrail. */
     trail: null,
     render: null,
@@ -506,15 +536,6 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      * the box you are typing in.
      */
     folded: false,
-    /**
-     * Changes this proposal made that you have put back.
-     *
-     * Kept by key rather than by rebuilding without them, because the match
-     * is deterministic: ask for it again and it proposes the same swap again.
-     * So the decision has to be remembered on this side, and it is carried in
-     * `spec.choices` — which is what gets compiled, and what gets filed.
-     */
-    undone: [],
     letter: null,
     /** True once the letter step is open, even if the draft came back empty. */
     letterStarted: false,
@@ -545,7 +566,15 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     /** And you did come back, so what is on screen may be out of date. */
     editedElsewhere: false,
     /** How the proposal on screen was produced: 'none', 'match' or 'ai'. */
-    builtWith: analysis?.tailor ?? (analysis?.aiUsed ? 'ai' : 'match'),
+    /*
+     * Where this proposal came from, in the two values that now exist.
+     *
+     * The default used to be `'match'`, which was a guess that stopped being
+     * right the moment arriving stopped changing anything: a card given an
+     * analysis with no `tailor` claimed a keyword match had been applied and
+     * lit that button, over a resume nothing had touched.
+     */
+    builtWith: isDecision(analysis) ? 'ai' : 'none',
     /** Which compiled PDF is on screen per kind, and the canvases drawn. */
     shownPdf: { resume: null, letter: null },
     pdfPages: new Map(),
@@ -725,12 +754,12 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   /*
    * Counted, not a set.
    *
-   * The three build modes no longer wait for each other, so two `rebuild`s can
-   * genuinely be in flight — press "Match by keyword" while the AI reads and
-   * the match finishes in a third of a second. A set holds one entry for the
-   * name, so the fast one's `delete` cleared it, the bar came down and every
-   * button came back while a model was still running. Which is precisely the
-   * thing the bar exists to be honest about.
+   * The build buttons no longer wait for each other, so two runs can
+   * genuinely be in flight — press "Use Original" while the AI reads and its
+   * recompile finishes in a moment. A set holds one entry per name, so the
+   * fast one's `delete` cleared it, the bar came down and every button came
+   * back while a model was still running. Which is precisely the thing the
+   * bar exists to be honest about.
    *
    * `running` is kept as the set of names that have at least one run in
    * flight; `depth` is how many.
@@ -792,12 +821,25 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     render: 'compile',
     refine: 'resume',
     setBase: 'resume',
-    coverLetter: 'letter',
+    /*
+     * Drafting is its own lane, separate from working on what is in the box.
+     *
+     * It sat in `letter` with Save to store and See it typeset, so asking for
+     * a draft greyed out both — under a box you had already written in. That
+     * is the AI holding up work it is not touching, which is the same fault
+     * the lanes exist to prevent, one level down: a run that takes minutes
+     * must not be able to stop you keeping what you already have.
+     *
+     * Nothing is lost by letting them run together. Saving mid-draft saves
+     * the text that was in the box, which is the text you were looking at;
+     * the draft still lands afterwards, and the box says so.
+     */
+    coverLetter: 'drafting',
     renderLetter: 'letter',
     saveLetter: 'letter',
     saveAnswer: 'answers',
     // Both, because it writes both — see `writeEverything`.
-    writeApplication: ['letter', 'answers'],
+    writeApplication: 'drafting',
     autofill: 'page',
     bundle: 'submit',
     trackStatus: 'submit',
@@ -810,8 +852,21 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   };
   // An action may hold more than one lane: the one-run write holds the letter
   // and the answers, because it is writing both.
+  /**
+   * Which lanes an action holds.
+   *
+   * `answer:<the question>` is one action per question rather than a fixed
+   * name, so it could never appear in `LANE` and fell through to the default
+   * — which is `resume`. Drafting one answer therefore greyed out the build
+   * buttons and the tailoring modes, none of which it touches, and did not
+   * grey out the other draft buttons, which it does collide with. Both the
+   * wrong way round.
+   */
+  const lanesOf = (action) =>
+    [].concat(action?.startsWith('answer:') ? 'drafting' : LANE[action] ?? 'resume');
+
   const busyIn = (...lanes) =>
-    [...running].some((a) => [].concat(LANE[a] ?? 'resume').some((held) => lanes.includes(held)));
+    [...running].some((a) => lanesOf(a).some((held) => lanes.includes(held)));
 
   /**
    * A later rebuild beats an earlier one, however long the earlier takes.
@@ -875,13 +930,13 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     running.has('rebuild') && state.rebuilding === mode ? working : idle;
 
   /**
-   * Build the proposal one of the three ways, superseding whatever was already
-   * being built.
+   * Build the proposal from the base, superseding whatever was already being
+   * built.
    *
-   * The three were written out wherever they were offered, and they waited for
-   * each other. Waiting is right between two that take a moment and wrong when
-   * one of them is a model reading a posting: being unable to say "never mind,
-   * match it by keyword" for three minutes is the scan holding the card. So a
+   * The modes were written out wherever they were offered, and they waited
+   * for each other. Waiting is right between two that take a moment and wrong
+   * when one of them is a model reading a posting: being unable to say "never
+   * mind, send what I have" for three minutes is the scan holding the card. So a
    * later press wins, and the token is what keeps the loser from landing on
    * top of it — the slow reply still arrives, finds its number stale, and is
    * dropped.
@@ -890,9 +945,19 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     const mine = ++rebuildToken;
     state.rebuilding = mode;
     try {
-      return await act('rebuild', { tailor: mode }, () => {
+      return await act('rebuild', { tailor: mode }, (result) => {
         if (mine !== rebuildToken) return;
-        state.builtWith = mode;
+        /*
+         * What came back, not what was asked for.
+         *
+         * This recorded `mode`, so pressing "Have AI Tailor" lit the AI
+         * button whether or not a model had answered — a run that never
+         * started, or came back with prose instead of choices, falls through
+         * to the suggestions and changes nothing, and the card said the AI
+         * had tailored it. The same reading as everywhere else: only a run
+         * the model actually answered is a decision.
+         */
+        state.builtWith = isDecision(result) ? 'ai' : 'none';
         state.render = null;
       });
     } finally {
@@ -1235,14 +1300,15 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     const athome = aiIsReading() ? 'ai' : HOMED.has(action) ? action : null;
     if (opts.here ? opts.here !== athome : athome) return null;
     /*
-     * One action, three jobs, and the bar has to name the one you asked for.
+     * One action, more than one job, and the bar has to name the one you
+     * asked for.
      *
-     * `rebuild` is the same call whether you pressed "Use it unchanged",
-     * "Match by keyword" or "Let the AI tailor it", so a single label meant
-     * the bar said "Choosing what to change…" to someone who had just asked
-     * for nothing to be changed. Read against the button they pressed: the
-     * only reason to watch this bar is to find out whether what you asked for
-     * is happening.
+     * `rebuild` was the same call whichever mode button was pressed, so a
+     * single label meant the bar said "Choosing what to change…" to someone
+     * who had just asked for nothing to be changed. Read against what was
+     * asked for: the only reason to watch this bar is to find out whether
+     * that is what is happening. It still matters — the offer to work the
+     * suggestions out again comes through here as `match`.
      */
     const label = (running.has('rebuild') && REBUILDING[state.rebuilding]) || entry[1];
 
@@ -1320,11 +1386,67 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * The keywords that drove each pick are kept, collapsed underneath, because
    * "why did it choose that?" is the next question after "what changed?".
    */
-  /** One line naming the resume being sent and what, if anything, was done to it. */
+  /**
+   * One line naming the resume being sent and what, if anything, was done
+   * to it.
+   *
+   * Two modes and a count, now that the keyword match is a list of offers
+   * rather than somewhere you can be. "Which version am I actually sending?"
+   * is answered by naming the base, saying whether the AI decided anything,
+   * and saying how many suggestions are switched on — because a resume with
+   * four boxes ticked is not the base resume, whatever mode the card is in.
+   */
+  /**
+   * How many suggestions are switched on, counted off the proposal itself.
+   *
+   * Asked by the summary line as well as by the list, and the two must not
+   * be able to disagree — a sentence saying "three switched on" over a list
+   * showing four ticks is worse than no sentence. So both read the same
+   * source, which is the spec that gets compiled and filed.
+   */
+  function suggestions() {
+    const changeFor = new Map();
+    for (const r of analysis.rationale ?? []) if (r.toText) changeFor.set(plainish(r.toText), r);
+    const skillFor = new Map();
+    for (const sc of analysis.skillChanges ?? []) if (sc.groupName) skillFor.set(plainish(sc.groupName), sc);
+
+    /*
+     * What a row offers, if anything. A diff row with neither a wording
+     * behind it nor a narrowed group is something the base resume does rather
+     * than something this proposal is offering — it has no box, and it is in
+     * the document whatever anyone ticks.
+     */
+    const toggleFor = (c) => {
+      const change = changeFor.get(plainish(c.to ?? ''));
+      if (change?.key && change.from) return { kind: 'wording', change };
+      const skill = c.to ? undefined : skillFor.get(plainish(c.where ?? ''));
+      return skill ? { kind: 'skills', skill } : null;
+    };
+    const onFor = (c) => {
+      const t = toggleFor(c);
+      if (!t) return true;
+      return t.kind === 'wording' ? wordingOn(t.change) : skillsOn(t.skill);
+    };
+    const rows = analysis.diff ?? [];
+    return { rows, toggleFor, onFor, on: rows.filter(onFor).length, total: rows.length };
+  }
+
+  /**
+   * How many suggestions are switched on.
+   *
+   * The same walk the list itself does, deliberately: this was counting the
+   * rationale and the skill changes while the heading counted the diff rows,
+   * and the two sets are not the same — a diff row with nothing behind it is
+   * in the document and has no box, so one walk saw it and the other did not.
+   * A sentence saying "three switched on" over a list showing four ticks is
+   * worse than no sentence.
+   */
+  const appliedCount = () => suggestions().on;
+
   function builtSummary() {
     const base = analysis.baseLabel ?? 'your base resume';
     const copy = ` Your ${base} is untouched — this is a copy, saved under this posting's name.`;
-    if (state.builtWith === 'none') return `${base}, exactly as it is. Nothing was swapped, dropped or added.${copy}`;
+
     if (state.builtWith === 'ai' && analysis.aiUsed) {
       return `${base}, with the changes the AI chose below.${copy}`;
     }
@@ -1334,44 +1456,36 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      * Two ways that goes, and they need different words. It ran and came back
      * with something unusable — a bad minute, try again. Or it never started,
      * which is almost always the configured command not being on the path the
-     * builder runs with, and trying again will do exactly the same thing until
-     * the setting is fixed. The server says which by sending `aiFailed`.
+     * builder runs with, and trying again will do exactly the same thing
+     * until the setting is fixed. The server says which by sending
+     * `aiFailed`.
      *
-     * Read before `builtWith`, because `builtWith` is what was *done* — the
-     * server reports `tailor: 'match'` in both of these — so the branch below
-     * that tested it could never fire and this read as an ordinary keyword
-     * match, with nothing to say the AI you asked for had not run.
+     * Neither leaves a tailored resume behind any more. Both used to say "so
+     * this is your resume with the keyword match applied", which was true
+     * while a failed run fell through to the match; it falls through to the
+     * suggestions now, switched off like any others, so the sentence would
+     * have been describing changes nobody had accepted.
      */
     if (analysis.aiFailed) {
-      return `The AI could not be started, so this is ${base} with the keyword match applied. ` +
-        `It said: ${analysis.aiFailed}${copy}`;
+      return `The AI could not be started, so nothing was tailored. It said: ${analysis.aiFailed}${copy}`;
     }
     if (state.builtWith === 'ai' || analysis.aiRaw) {
-      return `The AI returned nothing usable, so this is ${base} with the keyword match applied.${copy}`;
+      return `The AI returned nothing usable, so nothing was tailored.${copy}`;
     }
+
     /*
-     * What the match actually did, not what it is capable of doing.
+     * Otherwise this is the resume as it is kept, plus whatever is ticked.
      *
-     * This said "with wordings swapped by keyword match against phrasings you
-     * already wrote" over every keyword match, and on most stores that is
-     * false. The two levers are not equally likely to fire: narrowing a
-     * skills group needs nothing from the store but the group, while swapping
-     * a wording needs a line that *has* a second wording and an alternate
-     * that beats the current one by a clear margin. So the ordinary keyword
-     * match on a store whose lines have one phrasing each is a skills cut and
-     * nothing else — and telling somebody their sentences were rewritten when
-     * they were not is how they stop reading this line.
+     * Counted rather than described. The match's two levers are not equally
+     * likely to fire — narrowing a skills group needs nothing but the group,
+     * while swapping a wording needs a line that has a second phrasing and an
+     * alternate that clearly beats the current one — so a sentence about what
+     * "the keyword match" does was false on most stores. A count is true on
+     * all of them.
      */
-    const swaps = (analysis.rationale ?? []).length;
-    const cuts = (analysis.skillChanges ?? []).length;
-    const did = swaps && cuts
-      ? 'with wordings swapped and skills narrowed to what this posting asks for'
-      : swaps
-        ? 'with wordings swapped for phrasings you already wrote'
-        : cuts
-          ? 'with the skills narrowed to what this posting asks for — no wording changed'
-          : 'which the keyword match found nothing to change in';
-    return `${base}, ${did}.${copy}`;
+    const on = appliedCount();
+    if (on === 0) return `${base}, exactly as you keep it. Nothing is swapped, dropped or added.${copy}`;
+    return `${base}, with ${plural(on, 'keyword suggestion')} switched on below.${copy}`;
   }
 
   /**
@@ -1395,6 +1509,62 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     const items = (state.spec?.sections ?? []).find((s) => s.kind === 'skills')?.items ?? {};
     return sameItems(items[change.groupId], change.to);
   };
+
+  /**
+   * The proposal with every keyword suggestion turned off.
+   *
+   * The keyword match stopped being a mode and became a list of
+   * suggestions. It still runs on arrival — it is local, free and measured
+   * at two seconds against the worst page set worth having — but what it
+   * produces is a set of offers, not a decision: the resume on screen is the
+   * one you keep, and each suggestion is a box you can tick.
+   *
+   * That is the shape the match was always better suited to. Its two levers
+   * are not equally likely to fire: narrowing a skills group needs nothing
+   * but the group, while swapping a wording needs a line that has a second
+   * phrasing and an alternate that clearly beats the current one. So on most
+   * stores "match by keyword" was a skills cut arriving as a fait accompli,
+   * under a name that promised a rewrite. Offered one at a time, it is
+   * honest at any store size — including the one where it has nothing to
+   * say.
+   *
+   * Computed here rather than asked for, because the server has already sent
+   * everything needed: `from` on each change is what the base was using.
+   * A second round trip to be told what we can work out is a second wait.
+   */
+  function withAllOff(spec, rationale = [], skillChanges = []) {
+    if (!spec) return spec;
+    const choices = { ...(spec.choices ?? {}) };
+    for (const r of rationale ?? []) if (r.key && r.from) choices[r.key] = r.from;
+    const sections = (spec.sections ?? []).map((section) => {
+      if (section.kind !== 'skills') return section;
+      const items = { ...(section.items ?? {}) };
+      for (const sc of skillChanges ?? []) {
+        // `null` from the base is an answer, not a gap: a group with no entry
+        // under `items` prints all of its items, and the way to say that is
+        // to leave the key out.
+        if (sc.from) items[sc.groupId] = sc.from;
+        else delete items[sc.groupId];
+      }
+      return { ...section, items };
+    });
+    return { ...spec, choices, ...(spec.sections ? { sections } : {}) };
+  }
+
+  /**
+   * Back to the resume exactly as it is kept, without asking the server.
+   *
+   * A round trip would fetch a spec we can compute from one already in hand,
+   * and would take the suggestion list down with it while it ran. Local, the
+   * list stays up and the boxes simply all come off — which is what "use the
+   * original" means once the match is a list of offers.
+   */
+  async function useOriginal() {
+    state.spec = withAllOff(state.spec, analysis.rationale, analysis.skillChanges);
+    state.builtWith = 'none';
+    state.render = null;
+    await compile();
+  }
 
   /**
    * Take one swapped wording, or put it back.
@@ -1503,37 +1673,18 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       return h(
         'div',
         { className: 'no-change' },
-        state.builtWith === 'none'
-          ? 'Unchanged, as you asked — this is your resume exactly as you keep it.'
-          : 'Nothing needed changing — your base resume already suits this posting.',
+        /*
+         * Two reasons there is nothing here, and they need different words.
+         * The AI read the posting and found nothing worth changing, which is
+         * a verdict. The keyword match having nothing to offer is not a
+         * verdict about the posting — it means the store has no alternate
+         * wording this posting's vocabulary reaches, which is a fact about
+         * the store and is fixed in the builder, not here.
+         */
+        state.builtWith === 'ai'
+          ? 'Nothing needed changing — your base resume already suits this posting.'
+          : 'No suggestions for this posting. Add another phrasing in ResumeM-M and there will be more to offer.',
       );
-    }
-
-    /*
-     * The change behind each diff row, matched by the text it swapped in.
-     *
-     * This was a map to the keywords alone, which was all the row needed when
-     * all it did was explain itself. Undoing one needs the change itself: the
-     * key it is recorded under and the wording that was there before.
-     */
-    const changeFor = new Map();
-    for (const r of rationale) {
-      if (r.toText) changeFor.set(plainish(r.toText), r);
-    }
-
-    /*
-     * And the skills change behind each skills row, matched by the group's
-     * name.
-     *
-     * Not by the swapped text, which is how the rows above are matched,
-     * because a skills row has no `from`/`to` to match on — the diff writes it
-     * as one sentence ("Languages: dropped Ruby, PHP — keeping Python, Go").
-     * The name is what both sides have: the diff labels the row with it and
-     * the server sends it beside the group's id for exactly this.
-     */
-    const skillFor = new Map();
-    for (const sc of analysis.skillChanges ?? []) {
-      if (sc.groupName) skillFor.set(plainish(sc.groupName), sc);
     }
 
     /*
@@ -1549,13 +1700,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      */
     const shown = diff;
     const shownRationale = rationale;
-    const onFor = (c) => {
-      const change = changeFor.get(plainish(c.to ?? ''));
-      if (change?.key && change.from) return wordingOn(change);
-      const skill = c.to ? undefined : skillFor.get(plainish(c.where ?? ''));
-      return skill ? skillsOn(skill) : true;
-    };
-    const live = shown.filter(onFor).length;
+    const { toggleFor, onFor, on: live } = suggestions();
 
     /*
      * Collapsed until asked for.
@@ -1601,23 +1746,39 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
          * modes. This is where you find out what was changed, so this is where
          * "actually, none of it" belongs.
          */
-        state.builtWith === 'none'
+        /*
+         * Offered whenever anything is on, rather than only in a mode.
+         *
+         * It used to test `builtWith !== 'none'`, from when the match was a
+         * mode you were in. It is a list of offers now: you can be on the
+         * original resume with three suggestions ticked, and that is exactly
+         * when "actually, none of it" is worth one press.
+         */
+        live === 0
           ? null
           : h('button', {
               className: 'link undo-all',
               textContent: 'Undo all',
-              title: 'Throw these changes away and send the resume exactly as you keep it',
-              disabled: busyIn('resume'),
-              onclick: () => rebuildAs('none'),
+              title: 'Take every suggestion off and send the resume exactly as you keep it',
+              // `compile` only: this is a local revert and a recompile, and
+              // it must stay live while the AI reads.
+              disabled: busyIn('compile'),
+              onclick: () => useOriginal(),
             }),
       ]),
     ]);
 
     for (const c of shown) {
-      const change = changeFor.get(plainish(c.to ?? ''));
-      // A row is one or the other, never both: a wording swap carries `to`,
-      // a narrowed skills group carries a group name and no `to` at all.
-      const skill = c.to ? undefined : skillFor.get(plainish(c.where ?? ''));
+      /*
+       * What this row offers, from the same walk that counted them.
+       *
+       * It used to work this out again from its own copies of the two maps,
+       * which is one more place for the box and the count to disagree about
+       * the same row — and they are read side by side.
+       */
+      const toggle = toggleFor(c);
+      const change = toggle?.kind === 'wording' ? toggle.change : undefined;
+      const skill = toggle?.kind === 'skills' ? toggle.skill : undefined;
       const because = (change?.because ?? []).length ? change.because : undefined;
       // `text` is a self-contained sentence, which means it repeats the place
       // it happened — and the place is already the label above it.
@@ -1672,9 +1833,14 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           box,
           h('div', { className: 'change-body' }, [
             c.where ? h('div', { className: 'where', textContent: c.where }) : null,
+            /*
+             * Which side is the aside depends on which way the box is set:
+             * switched on, the original is the one nobody is sending;
+             * switched off, it is the suggestion.
+             */
             h('div', { className: 'ba' }, [
-              c.from ? h('del', { textContent: c.from }) : null,
-              c.to ? h('ins', { textContent: c.to }) : null,
+              c.from ? h('del', { className: on ? 'aside' : '', textContent: c.from }) : null,
+              c.to ? h('ins', { className: on ? '' : 'aside', textContent: c.to }) : null,
               !c.from && !c.to ? h('span', { className: 'plain', textContent: detail }) : null,
             ]),
             because?.length ? why : null,
@@ -2225,8 +2391,53 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
 
   function drawProposeView() {
     const baseSelect = h('select', { title: 'Which resume to start from' });
-    const option = (r) =>
-      h('option', { value: r.id, textContent: `${r.label}`, selected: r.id === analysis.baseResumeId });
+
+    /*
+     * How much of this posting each resume already uses, worked out by the
+     * store against the untouched documents. Absent on an older server or on
+     * a page that was never analysed, and everything below falls back to the
+     * order it had before — a list that cannot be ranked is still a list.
+     */
+    const fitOf = new Map((analysis.resumeFit ?? []).map((f) => [f.id, f]));
+    const picked = new Set(analysis.recommended ?? []);
+
+    /*
+     * The mark, and what it is allowed to claim.
+     *
+     * A star on a row in a picker reads as "start here", so it is only drawn
+     * where the store says one resume is genuinely ahead of the others — see
+     * `recommend` in ResumeM-M, which marks nothing on a flat field, nothing
+     * on a bad one, and everything level at the top rather than choosing
+     * between equals. Most postings get no star at all, and that is the
+     * point: a mark that is always somewhere is one nobody reads.
+     *
+     * A character rather than an icon, because this is an `<option>` and an
+     * option holds text. The count is in the label for the same reason — it
+     * is the whole of the explanation, and there is no room for a tooltip in
+     * a native picker.
+     */
+    const option = (r) => {
+      const fit = fitOf.get(r.id);
+      const star = picked.has(r.id) ? '★ ' : '';
+      const says = fit?.hits ? ` — uses ${plural(fit.hits, 'word')} from this posting` : '';
+      return h('option', {
+        value: r.id,
+        textContent: `${star}${r.label}${says}`,
+        selected: r.id === analysis.baseResumeId,
+      });
+    };
+
+    /**
+     * Best fit first, and the order they were in where nothing separates them.
+     *
+     * Sorting inside each group rather than across them: which resumes are
+     * yours and which were built for a posting is a fact about the store, and
+     * a good match is not a reason to hide that. `sort` is stable, so equal
+     * scores keep the order the group already had.
+     */
+    const hitsOf = (r) => fitOf.get(r.id)?.hits ?? 0;
+    const byFit = (list, first = () => false) =>
+      [...list].sort((a, b) => hitsOf(b) - hitsOf(a) || Number(first(b)) - Number(first(a)));
 
     /*
      * Your starting points at the top, whatever else has piled up under them.
@@ -2253,7 +2464,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
 
     if (mine.length > 0 && rest.length > 0) {
       const bases = h('optgroup', { label: pinned.length > 0 ? 'Bases' : 'Your resumes' });
-      for (const r of mine) bases.append(option(r));
+      for (const r of byFit(mine)) bases.append(option(r));
 
       /*
        * And within the rest, this company first. Applying to a company you
@@ -2262,16 +2473,39 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
        * alphabetical among every other posting.
        */
       const here = (analysis?.job?.company ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-      const sameEmployer = here ? rest.filter((r) => r.id.startsWith(`job-${here}-`)) : [];
-      const others = rest.filter((r) => !sameEmployer.includes(r));
+      const sameEmployer = (r) => Boolean(here) && r.id.startsWith(`job-${here}-`);
 
+      /*
+       * Fit decides, and this company breaks the ties.
+       *
+       * Applying somewhere you have applied before, what you sent them last
+       * time is the most useful thing to start from — so it used to be
+       * lifted to the top of the group outright. That put a resume with
+       * nothing to do with this posting above one written for exactly it,
+       * which is the opposite of what a ranked list is for. As a tiebreaker
+       * it still wins every time the numbers cannot separate them, which is
+       * the case it was really about: two resumes that suit the posting
+       * equally, one of which this employer has already seen.
+       */
       const built = h('optgroup', { label: 'Built for a posting' });
-      for (const r of [...sameEmployer, ...others]) built.append(option(r));
+      for (const r of byFit(rest, sameEmployer)) built.append(option(r));
       baseSelect.append(bases, built);
     } else {
-      for (const r of resumes) baseSelect.append(option(r));
+      for (const r of byFit(resumes)) baseSelect.append(option(r));
     }
-    baseSelect.onchange = () => act('setBase', { baseResumeId: baseSelect.value, tailor: state.builtWith ?? 'none' });
+    /*
+     * A different base, worked out again for this posting.
+     *
+     * This asked for `state.builtWith`, which is now `'none'` unless the AI
+     * decided something — and `'none'` comes back with no rationale and no
+     * skill changes at all, so choosing a different resume emptied the
+     * suggestion list and left nothing to tick. The suggestions belong to the
+     * pair (base, posting): change either and they have to be computed again.
+     * An AI proposal is the one thing that cannot be, so that one repeats
+     * what was asked for.
+     */
+    baseSelect.onchange = () =>
+      act('setBase', { baseResumeId: baseSelect.value, tailor: state.builtWith === 'ai' ? 'ai' : 'match' });
 
     const feedback = h('textarea', {
       value: state.feedback,
@@ -2307,19 +2541,12 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         h('div', { className: 'row build-modes' }, [
           h('button', {
             className: state.builtWith === 'none' ? 'mode on' : 'mode',
-            textContent: rebuildLabel('none', 'Use it unchanged', 'Copying…'),
-            title: 'Send this resume exactly as it is. Nothing is swapped, dropped or added.',
-            // Live while the AI reads — see `supersede`.
-            disabled: aiIsReading() ? false : busyIn('resume'),
-            onclick: () => rebuildAs('none'),
-          }),
-          h('button', {
-            className: state.builtWith === 'match' ? 'mode on' : 'mode',
-            textContent: rebuildLabel('match', 'Match by keyword', 'Matching…'),
+            textContent: 'Use Original',
             title:
-              'Swap in phrasings you already wrote, picked by the keywords in this posting. Nothing is sent to an AI, and nothing new is written.',
-            disabled: aiIsReading() ? false : busyIn('resume'),
-            onclick: () => rebuildAs('match'),
+              'Send this resume exactly as you keep it. Every keyword suggestion below comes off.',
+            // Live while the AI reads — see `supersede`.
+            disabled: aiIsReading() ? false : busyIn('compile'),
+            onclick: () => useOriginal(),
           }),
           aiButton({
             className: state.builtWith === 'ai' ? 'mode on' : 'mode',
@@ -2329,25 +2556,40 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 ? 'ResumeM-M has its AI switched off — turn it on under Voice & AI.'
                 : 'Switch the AI on from the JobHelper toolbar icon to use this.',
             disabled: busyIn('resume') || !state.ai?.active,
+            /*
+             * From the resume as it is kept, not from whatever boxes happen
+             * to be ticked. The AI is being asked to decide what to change,
+             * and handing it a proposal half-built out of keyword guesses
+             * makes its answer a correction to those rather than a reading
+             * of the posting — and makes "why did it keep that?" unanswerable.
+             */
             onclick: () => rebuildAs('ai'),
-          }, rebuildLabel('ai', 'Let the AI tailor it', 'Reading the posting…')),
+          }, rebuildLabel('ai', 'Have AI Tailor', 'Reading the posting…')),
           /*
            * And the bar for it, here rather than at the top of the step. The
            * question "is the AI what I am waiting for?" should be answerable
            * by looking at the AI button, not by reading a label.
            */
           progressFor(1, { here: 'ai' }),
-          /*
-           * Neither matching nor AI: going and writing the sentence yourself.
-           *
-           * Looking at a posting is exactly when you notice the store has no
-           * bullet for the thing it is asking about — and the answer to that is
-           * two minutes in the builder, not another pass over the phrasings
-           * that already exist. Without a way through, it meant finding the
-           * editor by hand, finding the resume in it, and losing the card.
-           */
+        ]),
+        /*
+         * Neither of the two: going and writing the sentence yourself.
+         *
+         * Looking at a posting is exactly when you notice the store has no
+         * bullet for the thing it is asking about — and the answer to that is
+         * two minutes in the builder, not another pass over the phrasings
+         * that already exist. Without a way through, it meant finding the
+         * editor by hand, finding the resume in it, and losing the card.
+         *
+         * On its own line and drawn as a link, not in the row above wearing
+         * `mode`. There are two ways to build and this is not one of them —
+         * sitting between them, at the same weight, it read as a third, and
+         * the row was supposed to be the whole answer to "what happens to my
+         * resume".
+         */
+        h('div', { className: 'row' }, [
           h('button', {
-            className: 'mode ghost',
+            className: 'link to-builder',
             textContent: 'Edit in ResumeM-M',
             title: 'Open this resume in the builder to add a bullet or another phrasing',
             disabled: !state.spec?.id,
@@ -2376,27 +2618,28 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
            * What the offer is depends on what this proposal is.
            *
            * A wording added in the builder is an *alternate*, and an alternate
-           * is only reached by something choosing it. So on an untailored
-           * proposal — which is now where every application starts — "build it
-           * again" in the same mode can never use what you just wrote: it
-           * rebuilds the resume exactly as you keep it, which is what it was
-           * already showing. The sentence promised otherwise.
+           * is only reached by something choosing it. On a proposal the AI
+           * decided, the thing that would choose it is the AI, so the offer
+           * repeats what was asked for. Otherwise what is on screen is the
+           * resume as it is kept with a list of suggestions beside it, and
+           * that list was computed before the new wording existed — so what
+           * has to happen is the list being worked out again.
            *
-           * So the offer names the thing that would actually pick it up, and
-           * on a proposal that was already matched or tailored it repeats what
-           * was asked for rather than quietly changing the mode.
+           * Either way the offer names what it would actually do. It used to
+           * say "Build it again" over an untailored proposal, where building
+           * it again produced the same untouched resume and could never reach
+           * the wording just written.
            */
-          const mode = state.builtWith && state.builtWith !== 'none' ? state.builtWith : 'match';
-          const same = mode === state.builtWith;
+          const again = state.builtWith === 'ai';
           return h('div', { className: 'hint warn' }, [
             h('span', { textContent: 'You have been editing the store. ' }),
             h('button', {
               className: 'link',
-              textContent: same ? 'Build it again' : 'Match by keyword',
+              textContent: again ? 'Build it again' : 'Work out the suggestions again',
               disabled: busyIn('resume'),
               onclick: () => {
                 state.editedElsewhere = false;
-                return rebuildAs(mode);
+                return rebuildAs(again ? 'ai' : 'match');
               },
             }),
             h('span', { textContent: ' to use anything you added.' }),
@@ -2481,7 +2724,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             aiButton(
               {
                 title: 'One run of your AI writes the cover letter and every answer together.',
-                disabled: busyIn('letter', 'answers') || !state.ai?.active,
+                disabled: busyIn('drafting') || !state.ai?.active,
                 onclick: writeEverything,
               },
               busyLabel(
@@ -2528,7 +2771,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                       {
                         title:
                           'Write a first draft from this posting and the letters you have written before. Runs your AI command.',
-                        disabled: busyIn('letter'),
+                        disabled: busyIn('drafting'),
                         onclick: draftLetter,
                       },
                       busyLabel('coverLetter', 'Draft a letter', 'Drafting…'),
@@ -2657,10 +2900,20 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             className: 'link',
             textContent: '+ Cover letter',
             title: 'This posting does not appear to ask for one — add it anyway',
+            /*
+             * Opens the space; does not write in it.
+             *
+             * This called the model as well, so pressing "+ Cover letter" —
+             * which says it is adding a step the page did not ask for —
+             * started a paid run of minutes that nobody had asked for either.
+             * Adding the step and asking for a draft are two decisions, and
+             * "Draft a letter" inside the step is where the second one is
+             * made, exactly as it is when the page did ask.
+             */
             onclick: () => {
               state.letterAsked = true;
+              state.letterStarted = true;
               draw();
-              draftLetter();
             },
           })
         : null,
@@ -2995,7 +3248,9 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             : aiButton(
             {
               className: 'tiny',
-              disabled: busyIn('answers'),
+              // Starting a draft, so it waits for a draft — not for the save
+              // of the answer beside it, which is a different kind of work.
+              disabled: busyIn('drafting'),
               onclick: () => {
                 // What is in the box now, so the reply can tell its own work
                 // from anything written during the minutes it takes.
@@ -3255,6 +3510,22 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     const focused = active && active !== card ? active.dataset?.field : null;
     const caret = focused ? { start: active.selectionStart, end: active.selectionEnd } : null;
 
+    /*
+     * Where you were reading.
+     *
+     * `.body` is the scroller and it is destroyed and rebuilt on every
+     * redraw, so every redraw put you back at the top — and the card redraws
+     * for things that have nothing to do with where you are looking: a status
+     * read landing, a compile finishing, a tailoring pass arriving minutes
+     * later, opening any panel. Working on the questions at the bottom of a
+     * long card meant being thrown to the header over and over, and the cost
+     * lands hardest on the longest cards, which are the ones where scrolling
+     * back is most work.
+     *
+     * Saved and put back for the same reason the caret is, a few lines down.
+     */
+    const wasScrolled = card.querySelector('.body')?.scrollTop ?? 0;
+
     // Provisional until the analysis lands: what is on screen is the page's
     // own title, not anything this has worked out yet.
     card.classList.toggle('loading', !analysis);
@@ -3282,9 +3553,17 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             : drawProposeView(),
     );
 
+    if (wasScrolled) {
+      const body = card.querySelector('.body');
+      // `scrollTop` clamps itself to what the element can actually scroll, so
+      // a shorter body simply lands at its own bottom rather than throwing.
+      if (body) body.scrollTop = wasScrolled;
+    }
+
     if (!focused) return;
     const again = card.querySelector(`[data-field="${CSS.escape(focused)}"]`);
     if (!again) return;
+    // `preventScroll`, or focusing the box would undo the line above.
     again.focus({ preventScroll: true });
     try {
       again.setSelectionRange(caret.start, caret.end);
@@ -3323,8 +3602,17 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
        * Nothing has to be forgotten alongside it: which changes are in is
        * read off the spec, so replacing the spec is the whole of the reset.
        */
-      state.spec = next.spec ?? state.spec;
-      state.builtWith = next.tailor ?? (next.aiUsed ? 'ai' : state.builtWith);
+      state.spec = next.spec
+        ? (isDecision(next) ? next.spec : withAllOff(next.spec, next.rationale, next.skillChanges))
+        : state.spec;
+      /*
+       * Two modes now, not three. You are either on the resume as you keep it
+       * — whatever boxes are ticked on top of it — or on what the AI decided.
+       * "match" stopped being somewhere you could be when it became a list of
+       * offers, and leaving it as a value here made the card claim a mode
+       * nothing can put you in.
+       */
+      if (next.spec) state.builtWith = isDecision(next) ? 'ai' : 'none';
       state.render = null;
       draw();
       maybeAutoDraft();
@@ -3380,8 +3668,9 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       if (mode !== 'ai' && mode !== 'match') return null;
       state.rebuilding = mode;
       try {
-        return await act('rebuild', { tailor: mode }, () => {
-          state.builtWith = mode;
+        return await act('rebuild', { tailor: mode }, (result) => {
+          // What came back, not what was asked for — see `rebuildAs`.
+          state.builtWith = isDecision(result) ? 'ai' : 'none';
           state.render = null;
         });
       } finally {

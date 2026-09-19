@@ -122,13 +122,18 @@ async function main() {
       settings: {},
       questions: [],
       needsCoverLetter: false,
-      onAction: async (action) => (action === 'rebuild' ? held : {}),
+      onAction: async (action) =>
+        action === 'rebuild' ? held : action === 'aiStatus' ? { active: true, state: 'on' } : {},
     });
     const root = document.querySelector('#jobhelper-card-host').shadowRoot;
 
-    const match = [...root.querySelectorAll('button.mode')].find((b) => /Match by keyword/.test(b.textContent));
-    if (!match) return { error: 'no match button' };
-    match.click();
+    // The AI is the run worth timing, and the only one that goes to the
+    // server now — "Use Original" is a local revert and a recompile. Its
+    // button is dead until the status read answers.
+    await new Promise((r) => setTimeout(r, 100));
+    const ai = [...root.querySelectorAll('button.mode')].find((b) => /Have AI Tailor/.test(b.textContent));
+    if (!ai) return { error: 'no AI button' };
+    ai.click();
 
     const read = () => root.querySelector('.progress-label .elapsed')?.textContent ?? null;
     await new Promise((r) => setTimeout(r, 400));
@@ -173,11 +178,22 @@ async function main() {
         settings: {},
         questions: [],
         needsCoverLetter: false,
-        // The AI button stays disabled until the card has asked and been told
-        // the AI is on, so the status read has to answer before it can be
-        // pressed.
+        /*
+         * Both long calls are held, because the two buttons no longer make
+         * the same one: the AI goes to the server as `rebuild`, and "Use
+         * Original" puts the suggestions back locally and recompiles. Holding
+         * only `rebuild` left the second one's bar up for the length of an
+         * immediate reply, which is not long enough to read.
+         *
+         * The AI button also stays disabled until the card has asked and been
+         * told the AI is on, so the status read has to answer first.
+         */
         onAction: async (action) =>
-          action === 'rebuild' ? held : action === 'aiStatus' ? { active: true, state: 'on' } : {},
+          action === 'rebuild' || action === 'render'
+            ? held
+            : action === 'aiStatus'
+              ? { active: true, state: 'on' }
+              : {},
       });
       const root = document.querySelector('#jobhelper-card-host').shadowRoot;
       await new Promise((r) => setTimeout(r, 100));
@@ -191,16 +207,20 @@ async function main() {
     }).toString()})(createCard, ${JSON.stringify(button)})`),
   );
 
-  const unchanged = await labelFor('Use it unchanged');
-  const byKeyword = await labelFor('Match by keyword');
-  const byAi = await labelFor('Let the AI tailor it');
+  const unchanged = await labelFor('Use Original');
+  const byAi = await labelFor('Have AI Tailor');
+  /*
+   * Two buttons, and the bar has to tell them apart. "Use Original" never
+   * leaves the machine — it puts every suggestion back and recompiles — so a
+   * bar saying "Choosing what to change…" over it would be describing work
+   * nobody asked for and nothing is doing.
+   */
   check(
-    'asking for it unchanged does not say it is choosing what to change',
-    unchanged.label != null && !/choosing what to change/i.test(unchanged.label),
+    'asking for the original does not say it is choosing what to change',
+    unchanged.label != null && !/choosing what to change|reading the posting/i.test(unchanged.label),
     JSON.stringify(unchanged),
   );
-  check('it says it is copying it across', /copying/i.test(unchanged.label ?? ''), JSON.stringify(unchanged));
-  check('a keyword match says so', /keyword/i.test(byKeyword.label ?? ''), JSON.stringify(byKeyword));
+  check('it says it is compiling', /compil/i.test(unchanged.label ?? ''), JSON.stringify(unchanged));
   check('and the AI says it is reading the posting', /reading the posting/i.test(byAi.label ?? ''), JSON.stringify(byAi));
 
   /*
@@ -235,7 +255,7 @@ async function main() {
 
     const modes = () => [...root.querySelectorAll('button.mode')];
     const named = (re) => modes().find((b) => re.test(b.textContent));
-    named(/Let the AI tailor it/).click();
+    named(/Have AI Tailor/).click();
     await new Promise((r) => setTimeout(r, 200));
 
     const row = root.querySelector('.build-modes');
@@ -243,9 +263,8 @@ async function main() {
       // The bar is inside the row the buttons are in, not above them.
       barBesideButtons: Boolean(row?.querySelector('.progress')),
       barAtTopOfStep: Boolean(root.querySelector('.step > .progress, .step > div > .progress')),
-      aiDisabled: named(/Reading the posting|Let the AI tailor it/)?.disabled ?? null,
-      unchangedLive: named(/Use it unchanged/)?.disabled === false,
-      matchLive: named(/Match by keyword/)?.disabled === false,
+      aiDisabled: named(/Reading the posting|Have AI Tailor/)?.disabled ?? null,
+      unchangedLive: named(/Use Original/)?.disabled === false,
     };
     release({});
     await new Promise((r) => setTimeout(r, 150));
@@ -255,7 +274,7 @@ async function main() {
   check('the bar sits with the button that started it', aiHoldup.barBesideButtons === true, JSON.stringify(aiHoldup));
   check('and not at the top of the step, where a compile would put it', aiHoldup.barAtTopOfStep === false, JSON.stringify(aiHoldup));
   check('the AI button is the one that waits', aiHoldup.aiDisabled === true, JSON.stringify(aiHoldup));
-  check('the other two ways to build stay live', aiHoldup.unchangedLive && aiHoldup.matchLive, JSON.stringify(aiHoldup));
+  check('the other way to build stays live', aiHoldup.unchangedLive === true, JSON.stringify(aiHoldup));
 
   /*
    * Building what is already there, while the AI reads the posting.
@@ -294,7 +313,7 @@ async function main() {
     await new Promise((r) => setTimeout(r, 100));
 
     const named = (re) => [...root.querySelectorAll('button')].find((b) => re.test(b.textContent));
-    named(/Let the AI tailor it/).click();
+    named(/Have AI Tailor/).click();
     await new Promise((r) => setTimeout(r, 200));
 
     const build = named(/Build resume|Recompile|Compiling/);
@@ -431,52 +450,51 @@ async function main() {
   );
 
   /*
-   * And a keyword match says which of its two levers actually moved.
+   * And a proposal nobody has tailored says so by counting, not by
+   * describing.
    *
-   * It used to claim "wordings swapped" over every match, which on most
-   * stores is false: narrowing a skills group needs nothing but the group,
-   * while swapping a wording needs a line that has a second wording and an
-   * alternate that clearly beats the current one. A match that only cut
-   * skills read as one that had rewritten your sentences.
+   * This used to claim "wordings swapped by keyword match" over every match,
+   * which on most stores is false: narrowing a skills group needs nothing but
+   * the group, while swapping a wording needs a line that has a second
+   * phrasing and an alternate that clearly beats the current one. Now that
+   * the match is a list of offers that arrive switched off, the only honest
+   * sentence is how many of them are on — and on arrival that is none.
    */
-  const swapsOnly = await summaryFor({
+  const arrived = await summaryFor({
     tailor: 'match',
     aiUsed: false,
+    spec: { id: 'job-acme', label: 'Acme', choices: { b1: 'v_b' } },
     rationale: [{ key: 'b1', from: 'v_a', to: 'v_b', toText: 'Built a Kafka pipeline', because: ['kafka'] }],
   });
   check(
-    'a match that swapped a wording says so',
-    /wordings swapped/i.test(swapsOnly) && !/skills/i.test(swapsOnly),
-    swapsOnly.slice(0, 140),
+    'a proposal with every suggestion off says the resume is untouched',
+    /exactly as you keep it/i.test(arrived) && !/switched on/i.test(arrived),
+    arrived.slice(0, 140),
   );
 
-  const cutsOnly = await summaryFor({
-    tailor: 'match',
-    aiUsed: false,
-    skillChanges: [{ groupId: 'sk_lang', groupName: 'Languages', from: null, to: ['s_py'] }],
-  });
-  check(
-    'and one that only narrowed skills does not claim to have rewritten anything',
-    /skills/i.test(cutsOnly) && /no wording changed/i.test(cutsOnly),
-    cutsOnly.slice(0, 140),
-  );
-
-  const both = await summaryFor({
-    tailor: 'match',
-    aiUsed: false,
+  /*
+   * And one with a suggestion accepted counts it. The fixture puts the
+   * swapped wording in `choices` *and* leaves it out of the rationale, which
+   * is the shape of a change already in the base rather than one this
+   * proposal is offering — so the count comes from what is ticked, not from
+   * what was offered.
+   */
+  const withOne = await summaryFor({
+    tailor: 'ai',
+    aiUsed: true,
+    spec: { id: 'job-acme', label: 'Acme', choices: { b1: 'v_b' } },
     rationale: [{ key: 'b1', from: 'v_a', to: 'v_b', toText: 'Built a Kafka pipeline', because: ['kafka'] }],
-    skillChanges: [{ groupId: 'sk_lang', groupName: 'Languages', from: null, to: ['s_py'] }],
   });
   check(
-    'and one that did both names both',
-    /wordings swapped/i.test(both) && /skills narrowed/i.test(both),
-    both.slice(0, 140),
+    'and one the AI decided says the AI decided it',
+    /the AI chose/i.test(withOne),
+    withOne.slice(0, 140),
   );
 
   const plainMatch = await summaryFor({ tailor: 'match', aiUsed: false });
   check(
-    'a keyword match that found nothing says that, rather than nothing',
-    /found nothing to change/i.test(plainMatch) && !/could not be started|nothing usable/i.test(plainMatch),
+    'a posting with no suggestions at all still names the resume being sent',
+    /exactly as you keep it/i.test(plainMatch) && !/could not be started|nothing usable/i.test(plainMatch),
     plainMatch.slice(0, 140),
   );
 
@@ -492,7 +510,7 @@ async function main() {
    */
   console.log('\nWhile the AI is reading the posting');
 
-  const whileTailoring = await inPage((createCard) => {
+  const whileTailoring = await inPage(async (createCard) => {
     let release;
     const handle = createCard({
       analysis: {
@@ -511,18 +529,29 @@ async function main() {
       settings: {},
       questions: [{ question: 'Why us?', answer: '', confident: false }],
       needsCoverLetter: true,
-      // `rebuild` is the tailoring pass. Held open, so the card is caught
-      // mid-run rather than after it.
+      /*
+       * `rebuild` is the tailoring pass. Held open, so the card is caught
+       * mid-run rather than after it. The status read has to answer as well,
+       * because the AI button — which is now the only one that starts a pass
+       * — stays disabled until it does.
+       */
       onAction: (action) =>
-        action === 'rebuild' ? new Promise((r) => { release = r; }) : Promise.resolve({}),
+        action === 'rebuild'
+          ? new Promise((r) => { release = r; })
+          : Promise.resolve(action === 'aiStatus' ? { active: true, state: 'on' } : {}),
     });
     handle.setLetter?.('Dear Acme, I am writing about the Platform Engineer role.');
+    await new Promise((r) => setTimeout(r, 100));
 
     const root = document.querySelector('#jobhelper-card-host').shadowRoot;
     const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
 
-    // Start the pass the way the card does.
-    byText('Match by keyword')?.click();
+    /*
+     * Start the pass the way the card does — with the AI, which is the only
+     * button that goes to the server now. "Use Original" is a local revert
+     * and a recompile, and would not put the card in the state this is about.
+     */
+    [...root.querySelectorAll('button.mode')].find((b) => /Have AI Tailor/.test(b.textContent))?.click();
 
     const named = (t) => {
       const b = byText(t);
@@ -778,9 +807,17 @@ async function main() {
     const hiddenAtFirst = root.querySelector('.change')?.checkVisibility?.() === false;
     root.querySelector('.fold-changes')?.click();
 
-    const before = { rows: rows(), count: count(), offered: boxes().length, ticks: ticks(), shutAtFirst, hiddenAtFirst };
+    const before = {
+      rows: rows(),
+      count: count(),
+      offered: boxes().length,
+      ticks: ticks(),
+      struck: Boolean(root.querySelectorAll('.change')[1]?.classList.contains('off')),
+      shutAtFirst,
+      hiddenAtFirst,
+    };
 
-    // Take out the second one — the degree line.
+    // Turn on the second one — the degree line.
     boxes()[1].click();
     await settle();
     const after = {
@@ -793,7 +830,7 @@ async function main() {
       choices: sent.filter((c) => c.action === 'render').at(-1)?.payload?.spec?.choices ?? null,
     };
 
-    // And back in again, which is the thing the old link could not do.
+    // And off again, which is the thing the one-way link could not do.
     boxes()[1].click();
     await settle();
     return {
@@ -816,51 +853,59 @@ async function main() {
    */
   check('the list of changes starts shut', undoing.before.shutAtFirst === true, JSON.stringify(undoing.before));
   check('and its rows really are out of the way', undoing.before.hiddenAtFirst === true, JSON.stringify(undoing.before));
-  check('every proposed change gets a box', undoing.before.offered === 2, JSON.stringify(undoing.before));
+  check('every suggestion gets a box', undoing.before.offered === 2, JSON.stringify(undoing.before));
+  /*
+   * Off, over the resume as it is kept. The match is a list of offers now,
+   * not a mode: arriving used to alter the document and leave "send what I
+   * have" as the thing you undid.
+   */
   check(
-    'and they start ticked, because the changes start applied',
-    JSON.stringify(undoing.before.ticks) === '[true,true]',
+    'and they start switched off',
+    JSON.stringify(undoing.before.ticks) === '[false,false]',
     JSON.stringify(undoing.before.ticks),
   );
+  check('with the rows marked as not in the document', undoing.before.struck === true, JSON.stringify(undoing.before));
+  check('and a count that says none are in', undoing.before.count === '0 of 2 changes', String(undoing.before.count));
   check(
-    'unticking one leaves the row where it is',
+    'ticking one leaves the row where it is',
     undoing.after.rows === undoing.before.rows,
     `${undoing.before.rows} → ${undoing.after.rows}`,
   );
-  check('still naming what it would have said', undoing.after.stillNames === true);
-  check('but marked as not in the document', undoing.after.struck === true, JSON.stringify(undoing.after));
+  check('still naming what it swaps', undoing.after.stillNames === true);
+  check('and marked as in the document now', undoing.after.struck === false, JSON.stringify(undoing.after));
   check(
-    'and only that one comes off',
-    JSON.stringify(undoing.after.ticks) === '[true,false]',
+    'and only that one goes on',
+    JSON.stringify(undoing.after.ticks) === '[false,true]',
     JSON.stringify(undoing.after.ticks),
   );
   check('the count says how many are in', undoing.after.count === '1 of 2 changes', String(undoing.after.count));
   /*
-   * The half that matters. Marking the row on screen and sending the swapped
-   * wording anyway would be worse than not offering the box.
+   * The half that matters. Ticking the box on screen and compiling the
+   * original anyway would be worse than not offering the box.
    */
   check(
-    'the resume is recompiled with the original wording pinned back',
-    undoing.after.choices?.['edu_neu.subtitle'] === 'v_plain',
+    'the resume is recompiled with the suggested wording in it',
+    undoing.after.choices?.['edu_neu.subtitle'] === 'v_systems',
     JSON.stringify(undoing.after.choices),
   );
   check(
-    'and the change that was left alone is left alone',
-    undoing.after.choices?.b_pipeline === 'v_kafka',
+    'and the one left alone is left alone',
+    undoing.after.choices?.b_pipeline === 'v_base',
     JSON.stringify(undoing.after.choices),
   );
   /*
-   * And the direction the old one-way link had no answer for at all.
+   * And back off again — the direction the one-way "Keep the original" link
+   * had no answer for at all.
    */
   check(
-    'ticking it again puts the change back',
-    JSON.stringify(undoing.back.ticks) === '[true,true]',
+    'unticking it takes the change out again',
+    JSON.stringify(undoing.back.ticks) === '[false,false]',
     JSON.stringify(undoing.back.ticks),
   );
-  check('and the count with it', undoing.back.count === '2 changes', String(undoing.back.count));
+  check('and the count with it', undoing.back.count === '0 of 2 changes', String(undoing.back.count));
   check(
     'in the resume that is compiled, not only on the screen',
-    undoing.back.choices?.['edu_neu.subtitle'] === 'v_systems',
+    undoing.back.choices?.['edu_neu.subtitle'] === 'v_plain',
     JSON.stringify(undoing.back.choices),
   );
 
@@ -943,45 +988,64 @@ async function main() {
       return true;
     };
 
-    // The group whose base list was explicit.
-    const clicked = await flip(1);
-    const afterFirst = { rows: rows(), stillNames: /dropped Ruby/.test(text()), ticks: ticks(), clicked };
-    // And the one where the base said nothing.
-    await flip(-1);
-
+    const startTicks = ticks();
     const specAt = (n) => sent.filter((c) => c.action === 'render').at(n)?.payload?.spec;
     const itemsOf = (spec) => (spec?.sections ?? []).find((x) => x.kind === 'skills')?.items;
-    const off = specAt(-1);
 
-    // Both back on, which is the direction the one-way link never had.
-    await flip(1);
+    // On: the group whose base list was explicit.
+    const clicked = await flip(1);
+    const afterFirst = { rows: rows(), stillNames: /dropped Ruby/.test(text()), ticks: ticks(), clicked };
+    // And the one where the base said nothing, which is the awkward case.
     await flip(-1);
     const on = specAt(-1);
+
+    // Both off again — the direction the one-way link never had.
+    await flip(1);
+    await flip(-1);
+    const off = specAt(-1);
 
     return {
       offered,
       before,
+      startTicks,
       afterFirst,
       after: rows(),
+      // Narrowed, with both suggestions switched on.
+      onLang: itemsOf(on)?.sk_lang ?? null,
+      onTools: itemsOf(on)?.sk_tools ?? null,
+      // And back to what the base asked for, with both switched off.
       items: itemsOf(off) ?? null,
       hasTools: itemsOf(off) ? Object.prototype.hasOwnProperty.call(itemsOf(off), 'sk_tools') : null,
       choices: off?.choices ?? null,
       backTicks: ticks(),
-      backLang: itemsOf(on)?.sk_lang ?? null,
-      backTools: itemsOf(on)?.sk_tools ?? null,
     };
   });
 
   check('a skills row gets a box, like every other row', skillUndo.offered === 3, JSON.stringify(skillUndo));
   check(
-    'unticking one leaves the row, and the reasoning on it, in place',
+    'and starts off, like every other row',
+    JSON.stringify(skillUndo.startTicks) === '[false,false,false]',
+    JSON.stringify(skillUndo.startTicks),
+  );
+  check(
+    'ticking one leaves the row, and the reasoning on it, in place',
     skillUndo.afterFirst.rows === skillUndo.before && skillUndo.afterFirst.stillNames === true,
     JSON.stringify(skillUndo.afterFirst),
   );
   check(
-    'and takes only that one off',
-    JSON.stringify(skillUndo.afterFirst.ticks) === '[true,false,true]',
+    'and puts only that one on',
+    JSON.stringify(skillUndo.afterFirst.ticks) === '[false,true,false]',
     JSON.stringify(skillUndo.afterFirst.ticks),
+  );
+  /*
+   * Switched on, the narrowing reaches the resume that is compiled — the
+   * whole point of the box, and the half a screen reading cannot establish.
+   */
+  check(
+    'switching them on narrows both groups in the compiled resume',
+    JSON.stringify(skillUndo.onLang) === JSON.stringify(['s_py', 's_go'])
+      && JSON.stringify(skillUndo.onTools) === JSON.stringify(['t_k8s']),
+    JSON.stringify([skillUndo.onLang, skillUndo.onTools]),
   );
   /*
    * The half that matters, as with the wordings: taking the row off the screen
@@ -1003,8 +1067,8 @@ async function main() {
     JSON.stringify(skillUndo.items),
   );
   check(
-    'all three rows are still there and the wording swap is untouched',
-    skillUndo.after === 3 && skillUndo.choices?.b_pipeline === 'v_kafka',
+    'all three rows are still there and the wording suggestion is untouched',
+    skillUndo.after === 3 && skillUndo.choices?.b_pipeline === 'v_base',
     JSON.stringify(skillUndo),
   );
   /*
@@ -1014,15 +1078,9 @@ async function main() {
    * ever be pressed once.
    */
   check(
-    'ticking them again narrows both groups back',
-    JSON.stringify(skillUndo.backTicks) === '[true,true,true]',
+    'and unticking them puts both groups back',
+    JSON.stringify(skillUndo.backTicks) === '[false,false,false]',
     JSON.stringify(skillUndo.backTicks),
-  );
-  check(
-    'to exactly what the match picked, including the one the base said nothing about',
-    JSON.stringify(skillUndo.backLang) === JSON.stringify(['s_py', 's_go'])
-      && JSON.stringify(skillUndo.backTools) === JSON.stringify(['t_k8s']),
-    JSON.stringify([skillUndo.backLang, skillUndo.backTools]),
   );
 
   /*
@@ -1209,10 +1267,15 @@ async function main() {
       needsCoverLetter: false,
       onAction: async (action, payload) => {
         if (action === 'aiStatus') return { active: true, state: 'on' };
+        // The AI is slow; going back to the original is not — it is a local
+        // revert and a recompile, and the compile answers at once.
         if (action === 'rebuild') {
           seen += 1;
-          // The AI is slow; the keyword match is not.
           return payload.tailor === 'ai' ? slowAi : {};
+        }
+        if (action === 'render') {
+          seen += 1;
+          return { pages: 1, fits: true };
         }
         return {};
       },
@@ -1221,9 +1284,9 @@ async function main() {
     await new Promise((r) => setTimeout(r, 120));
     const named = (re) => [...root.querySelectorAll('button.mode')].find((b) => re.test(b.textContent));
 
-    named(/Let the AI tailor it/).click();
+    named(/Have AI Tailor/).click();
     await new Promise((r) => setTimeout(r, 150));
-    named(/Match by keyword/).click();
+    named(/Use Original/).click();
     await new Promise((r) => setTimeout(r, 400));
 
     const during = { runs: seen, bar: Boolean(root.querySelector('.progress')) };
@@ -1277,7 +1340,7 @@ async function main() {
       handle.cameBack?.();
       // `cameBack` only fires where the card sent you to the builder.
       if (!root.querySelector('.hint.warn')) {
-        root.querySelector('button.mode.ghost')?.click();
+        root.querySelector('.to-builder')?.click();
         handle.cameBack?.();
       }
       await new Promise((r) => setTimeout(r, 80));
@@ -1291,7 +1354,7 @@ async function main() {
 
   check(
     'on an untailored proposal the offer names the thing that would pick it up',
-    cameBack.label === 'Match by keyword',
+    cameBack.label === 'Work out the suggestions again',
     JSON.stringify(cameBack),
   );
   check(
@@ -1311,6 +1374,10 @@ async function main() {
           rationale: [],
           diff: [],
           tailor: builtWith,
+          // A run the model actually answered. `tailor: 'ai'` on its own is
+          // what a *failed* one reports, and that is not a decision — it
+          // falls through to the suggestions like anything else.
+          aiUsed: builtWith === 'ai',
         },
         resumes: [],
         settings: {},
@@ -1325,7 +1392,7 @@ async function main() {
       await new Promise((r) => setTimeout(r, 80));
       handle.cameBack?.();
       if (!root.querySelector('.hint.warn')) {
-        root.querySelector('button.mode.ghost')?.click();
+        root.querySelector('.to-builder')?.click();
         handle.cameBack?.();
       }
       await new Promise((r) => setTimeout(r, 80));
@@ -1598,12 +1665,16 @@ async function main() {
     const root = document.querySelector('#jobhelper-card-host').shadowRoot;
     const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
     const stop = () => root.querySelector('.progress-label .stop');
+    // Carries the AI star, so match on the words rather than the whole label.
+    const byAi = () => [...root.querySelectorAll('button')].find((b) => /Have AI Tailor/.test(b.textContent));
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
     return (async () => {
       // The status arrives out of band; the AI button is dead until it does.
       await wait(20);
-      byText('Match by keyword').click();
+      // The AI, which is the only run that goes to the server now — and the
+      // one worth being able to walk away from.
+      byAi().click();
       await wait(20);
       const offered = Boolean(stop());
       stop()?.click();
@@ -1627,19 +1698,23 @@ async function main() {
        * not to have lands on top of the thing you kept.
        */
       crossing = true;
-      // Carries the AI star, so match on the words rather than the whole label.
-      [...root.querySelectorAll('button')]
-        .find((b) => /Let the AI tailor it/.test(b.textContent))
-        .click();
+      byAi().click();
       await wait(20);
       const late = release;
       stop()?.click();
       await wait(20);
+      /*
+       * A reply the card would act on. `aiUsed` is what makes it a decision
+       * rather than a fallback, and without it the card lands on the same
+       * mode either way — which would make the check below pass whether or
+       * not the reply was dropped.
+       */
       late.resolve({
         spec: { id: 'job-acme-late', label: 'Late' },
         diff: [],
         rationale: [],
         tailor: 'ai',
+        aiUsed: true,
       });
       await wait(40);
       /*
@@ -1662,8 +1737,530 @@ async function main() {
   );
   check(
     'a reply that crossed the stop is dropped, not applied late',
-    stopped.lateClaimed === 'Use it unchanged',
+    stopped.lateClaimed === 'Use Original',
     String(stopped.lateClaimed),
+  );
+
+  console.log('\nDrafting does not lock what you already wrote');
+
+  /*
+   * A draft is a model run of minutes. It used to hold the same lane as Save
+   * to store and See it typeset, so asking for one greyed out both — under a
+   * box the user had already written in. That is the AI holding up work it is
+   * not touching, one level down from the fault the lanes exist to prevent:
+   * a run you started must never be able to stop you keeping what you have.
+   *
+   * Nothing is lost by letting them run together. Saving mid-draft saves the
+   * text that was in the box, which is the text on screen.
+   */
+  const whileDrafting = await inPage(async (createCard) => {
+    let release;
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [{ question: 'Why us?', answer: '', confident: false }],
+      needsCoverLetter: true,
+      onAction: async (action) =>
+        action === 'coverLetter'
+          ? new Promise((r) => { release = r; })
+          : action === 'aiStatus'
+            ? { active: true, state: 'on' }
+            : {},
+    });
+    void handle;
+    await new Promise((r) => setTimeout(r, 100));
+
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => new RegExp(t).test(b.textContent));
+
+    /*
+     * Typed, not planted. There is no `setLetter` on the handle — an earlier
+     * version of this wrote `handle.setLetter?.(…)`, which is a silent no-op,
+     * so the box was empty and every control under it was disabled for the
+     * ordinary reason rather than the one being tested.
+     */
+    const box = root.querySelector('textarea[data-field="letter"]');
+    if (!box) return { error: 'no letter box' };
+    box.value = 'Something I wrote myself.';
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+
+    const draft = byText('Draft a letter');
+    if (!draft) return { error: 'no draft button' };
+    draft.click();
+    await new Promise((r) => setTimeout(r, 120));
+
+    const state = {
+      // The run really is going; without this the rest proves nothing.
+      drafting: Boolean(root.querySelector('.progress')),
+      save: byText('Save to store')?.disabled ?? null,
+      typeset: byText('See it typeset')?.disabled ?? null,
+      copy: byText('^Copy$')?.disabled ?? null,
+      /*
+       * And the button that would start a second run does wait — that is the
+       * real collision, and the lane still has to catch it.
+       *
+       * Not "Draft a letter": that offer is only shown over an empty box, so
+       * once something is written it is not in the DOM at all and reading its
+       * `disabled` gives `null` whatever the lanes do. The one-run write is
+       * always there.
+       */
+      writeBoth: byText('Write the letter and')?.disabled ?? null,
+    };
+    release?.({ body: '' });
+    return state;
+  });
+
+  check('the draft really is running', whileDrafting.drafting === true, JSON.stringify(whileDrafting));
+  check(
+    'what you wrote can still be saved while it runs',
+    whileDrafting.save === false,
+    JSON.stringify(whileDrafting),
+  );
+  check(
+    'and still be typeset',
+    whileDrafting.typeset === false,
+    JSON.stringify(whileDrafting),
+  );
+  check('and still be copied', whileDrafting.copy === false, JSON.stringify(whileDrafting));
+  check(
+    'while a second run does wait, because that is the collision',
+    whileDrafting.writeBoth === true,
+    JSON.stringify(whileDrafting),
+  );
+
+  console.log('\nA redraw does not throw you back to the top');
+
+  /*
+   * `.body` is the scroller and it is destroyed and rebuilt on every redraw,
+   * so every redraw put you back at the header — and the card redraws for
+   * things that have nothing to do with where you are looking: a status read
+   * landing, a compile finishing, a tailoring pass arriving minutes later,
+   * opening any panel. Working on the questions at the bottom of a long card
+   * meant being thrown to the top over and over.
+   */
+  const scrolled = await inPage(async (createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      // Enough of them that the card is longer than it is tall, which is the
+      // only state in which any of this is observable.
+      questions: Array.from({ length: 12 }, (_, i) => ({
+        question: `Question number ${i + 1}?`,
+        answer: '',
+        confident: false,
+      })),
+      needsCoverLetter: true,
+      onAction: async () => ({}),
+    });
+    await new Promise((r) => setTimeout(r, 80));
+
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const body = () => root.querySelector('.body');
+    const room = body().scrollHeight - body().clientHeight;
+    if (room < 50) return { error: `card is not scrollable (${room}px of room)` };
+
+    body().scrollTop = Math.round(room / 2);
+    const before = body().scrollTop;
+
+    // A redraw with nothing to do with where the user is looking: one more
+    // question arriving, which is what a form finishing its own render does.
+    handle.setQuestions([
+      ...Array.from({ length: 12 }, (_, i) => ({ question: `Question number ${i + 1}?`, answer: '', confident: false })),
+      { question: 'One that turned up late?', answer: '', confident: false },
+    ]);
+    await new Promise((r) => setTimeout(r, 60));
+
+    return { room, before, after: body().scrollTop, rebuilt: body() !== null };
+  });
+
+  check('the card really is long enough to scroll', !scrolled.error, String(scrolled.error ?? `${scrolled.room}px`));
+
+  console.log('\nThe wording nobody is sending takes less room');
+
+  /*
+   * Both sides of a row were drawn at full length, so a suggestion that
+   * rewrites four lines spent eight saying so — half of it a sentence nobody
+   * had chosen, struck through, which is also the half that is hardest to
+   * read. The one not in the document is clamped to two lines.
+   *
+   * Clamped rather than hidden: a row with one side missing cannot be
+   * compared, and comparing is the only reason to open this list.
+   */
+  const clamped = await inPage(async (createCard) => {
+    const long = 'Created system for adjusting bounding boxes of models to encompass animations, polling animations for large changes and storing bounding box offsets in frames in order to reduce initial 20-30 ms freeze to 2 ms overhead.';
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Engine Programmer', company: 'Storm Flag Games' },
+        spec: { id: 'job-sfg', label: 'Storm Flag', choices: { b_bounds: 'v_short' } },
+        baseLabel: 'New grad resume',
+        tailor: 'match',
+        diff: [{ kind: 'changed', where: 'Storm Flag Games', from: long, to: 'Created system for accurate bounding of animated models, optimized away 20ms load time freeze into 2ms cost.' }],
+        rationale: [{ key: 'b_bounds', from: 'v_long', to: 'v_short', toText: 'Created system for accurate bounding of animated models, optimized away 20ms load time freeze into 2ms cost.', because: ['performance'] }],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action) => (action === 'render' ? { pages: 1, fits: true } : {}),
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    root.querySelector('.fold-changes')?.click();
+    const row = () => root.querySelector('.change');
+    const heightOf = (sel) => row()?.querySelector(sel)?.getBoundingClientRect().height ?? null;
+
+    // Off, so the suggestion is the one nobody is sending.
+    const off = { kept: heightOf('del'), offered: heightOf('ins'), aside: Boolean(row()?.querySelector('ins.aside')) };
+
+    root.querySelector('.pick')?.click();
+    await new Promise((r) => setTimeout(r, 80));
+    // On, so it is the original that is the aside now.
+    const on = { kept: heightOf('del'), offered: heightOf('ins'), aside: Boolean(row()?.querySelector('del.aside')) };
+    return { off, on };
+  });
+
+  check(
+    'the longer wording really is the one being clamped',
+    clamped.off.offered !== null && clamped.off.kept !== null,
+    JSON.stringify(clamped),
+  );
+  check(
+    'switched off, the suggestion is the short one on screen',
+    clamped.off.aside === true && clamped.off.offered < clamped.off.kept,
+    JSON.stringify(clamped.off),
+  );
+  check(
+    'and switched on, it is the original that shrinks instead',
+    clamped.on.aside === true && clamped.on.kept < clamped.off.kept,
+    JSON.stringify(clamped),
+  );
+  check('and it really was scrolled', scrolled.before > 0, String(scrolled.before));
+  check(
+    'a redraw leaves you where you were reading',
+    scrolled.after === scrolled.before,
+    `${scrolled.before} → ${scrolled.after}`,
+  );
+
+  console.log('\nAsking for the AI is not the same as getting it');
+
+  /*
+   * A run that never started, or came back with prose instead of choices,
+   * falls through to the suggestions and changes nothing. The card used to
+   * record the mode that was *asked for*, so the AI button lit up either way
+   * and the card claimed a tailoring that had not happened.
+   */
+  const aiFailedRun = await inPage(async (createCard) => {
+    /*
+     * What the server sends when the command could not be started: the
+     * keyword match's shape, with the reason attached.
+     */
+    const failed = {
+      spec: { id: 'job-acme', label: 'Acme' },
+      rationale: [],
+      diff: [],
+      tailor: 'match',
+      aiUsed: false,
+      aiFailed: 'spawn claude ENOENT',
+    };
+    let handle;
+    handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action) => {
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action !== 'rebuild') return {};
+        /*
+         * The content script hands every rebuild reply to `update` before
+         * returning it, and that is what puts the reason on the analysis the
+         * summary reads. Without it this harness would be asking the card
+         * about a failure it was never told about.
+         */
+        handle.update(failed);
+        return failed;
+      },
+    });
+    await new Promise((r) => setTimeout(r, 100));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    [...root.querySelectorAll('button.mode')].find((b) => /Have AI Tailor/.test(b.textContent))?.click();
+    await new Promise((r) => setTimeout(r, 150));
+    return {
+      lit: root.querySelector('.mode.on')?.textContent?.trim() ?? null,
+      // Every `.hint` on the card: the first one is the "Start from" label
+      // above the base picker, not the sentence this is about.
+      said: [...root.querySelectorAll('.hint')].map((n) => n.textContent).join(' | '),
+    };
+  });
+
+  check(
+    'a run that never started does not light the AI button',
+    aiFailedRun.lit === 'Use Original',
+    String(aiFailedRun.lit),
+  );
+  check(
+    'and the card says what actually happened',
+    /could not be started/i.test(aiFailedRun.said),
+    aiFailedRun.said.slice(0, 90),
+  );
+
+  console.log('\nChanging the base resume keeps the suggestions');
+
+  /*
+   * The suggestions belong to the pair (base, posting): change either and
+   * they have to be worked out again. This asked for `state.builtWith`, which
+   * is `none` on everything the AI has not touched — and `none` comes back
+   * with no rationale and no skill changes at all, so choosing a different
+   * resume emptied the list and left nothing to tick.
+   */
+  const rebased = await inPage(async (createCard) => {
+    const sent = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [
+        { id: 'base', label: 'New grad', base: true },
+        { id: 'intern', label: 'Summer intern', base: true },
+      ],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, tailor: payload?.tailor });
+        return action === 'aiStatus' ? { active: true, state: 'on' } : {};
+      },
+    });
+    void handle;
+    await new Promise((r) => setTimeout(r, 100));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const picker = root.querySelector('select');
+    if (!picker) return { error: 'no base picker' };
+    picker.value = 'intern';
+    picker.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 120));
+    return { asked: sent.filter((c) => c.action === 'setBase').map((c) => c.tailor) };
+  });
+
+  check(
+    'choosing another resume works the suggestions out for it',
+    rebased.asked?.[0] === 'match',
+    JSON.stringify(rebased),
+  );
+
+  console.log('\nWhich resume to start from, ranked and marked');
+
+  /*
+   * The store fills up — a new grad one, a summer intern one, one built for a
+   * posting last March — and the picker listed them in whatever order they
+   * were written. So the first decision of every application was made from
+   * labels alone, and the label is the one thing that does not say what is in
+   * the document.
+   *
+   * The store works out how much of the posting each resume already uses and
+   * says which, if any, is clearly ahead. Marking is deliberately rare: a
+   * star that is always somewhere is one nobody reads.
+   */
+  const picker = await inPage(async (createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Helios' },
+        spec: { id: 'job-helios', label: 'Helios' },
+        baseResumeId: 'newgrad',
+        rationale: [],
+        diff: [],
+        // Written worst-first on purpose, so passing cannot be the order the
+        // list arrived in.
+        /*
+         * Written worst-first, and with two pairs tied, so passing cannot be
+         * the order the list arrived in and the tiebreak has something to
+         * break. Two are marked: they are level at the top, and `recommend`
+         * marks everything level rather than choosing between equals.
+         */
+        resumeFit: [
+          { id: 'lab', hits: 0, because: [], share: 0 },
+          { id: 'newgrad', hits: 1, because: ['Go'], share: 0.1 },
+          { id: 'systems', hits: 4, because: ['Go', 'Kafka'], share: 0.4 },
+          { id: 'platform', hits: 6, because: ['Kafka', 'Kubernetes', 'Go'], share: 0.6 },
+          { id: 'streaming', hits: 6, because: ['Kafka', 'Kubernetes', 'Go'], share: 0.6 },
+          { id: 'job-acme-role', hits: 0, because: [], share: 0 },
+          { id: 'job-vega-old', hits: 5, because: ['Kafka'], share: 0.5 },
+          { id: 'job-helios-old', hits: 2, because: ['Go'], share: 0.2 },
+          // Level with the Helios one, which is what the tiebreak is for.
+          { id: 'job-orion-old', hits: 2, because: ['Go'], share: 0.2 },
+        ],
+        recommended: ['platform', 'streaming'],
+      },
+      resumes: [
+        { id: 'newgrad', label: 'New grad', base: true },
+        { id: 'lab', label: 'Lab', base: true },
+        { id: 'platform', label: 'Platform', base: true },
+        { id: 'streaming', label: 'Streaming', base: true },
+        { id: 'systems', label: 'Systems', base: true },
+        { id: 'job-acme-role', label: 'Role — Acme' },
+        { id: 'job-vega-old', label: 'Platform Engineer — Vega' },
+        /*
+         * Orion before Helios on purpose. `sort` is stable, so with these the
+         * other way round the expected order falls out of the array order
+         * and the tiebreak could be deleted without a single check noticing.
+         */
+        { id: 'job-orion-old', label: 'Platform Engineer — Orion' },
+        { id: 'job-helios-old', label: 'Platform Engineer — Helios' },
+      ],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    void handle;
+    await new Promise((r) => setTimeout(r, 80));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const groups = [...root.querySelectorAll('select optgroup')].map((g) => ({
+      label: g.label,
+      options: [...g.querySelectorAll('option')].map((o) => o.textContent),
+    }));
+    return { groups };
+  });
+
+  const ownGroup = picker.groups?.find((g) => /Bases|Your resumes/.test(g.label));
+  const builtGroup = picker.groups?.find((g) => /Built for a posting/.test(g.label));
+
+  /** The label of each option, with the star and the count taken off. */
+  const named = (group) =>
+    (group?.options ?? []).map((o) => o.replace(/^★ /, '').replace(/ — uses .*$/, ''));
+  /** The score each option reports, in the order they are listed. */
+  const scores = (group) =>
+    (group?.options ?? []).map((o) => Number(/uses (\d+) word/.exec(o)?.[1] ?? 0));
+
+  check('the list is still grouped by what the resumes are', Boolean(ownGroup && builtGroup), JSON.stringify(picker.groups));
+
+  /*
+   * The whole order, not the first row. A check on position 0 alone passes
+   * against a list that is right at the top and arbitrary underneath, which
+   * is most of the list.
+   */
+  check(
+    'yours are listed best-fit first, the whole way down',
+    JSON.stringify(named(ownGroup)) === JSON.stringify(['Platform', 'Streaming', 'Systems', 'New grad', 'Lab']),
+    JSON.stringify(named(ownGroup)),
+  );
+  check(
+    'and the scores they report fall from top to bottom',
+    JSON.stringify(scores(ownGroup)) === JSON.stringify([6, 6, 4, 1, 0]),
+    JSON.stringify(scores(ownGroup)),
+  );
+  /*
+   * Both of the two that are level at the top are marked — `recommend`
+   * refuses to choose between equals — and both sit above everything they
+   * beat. A star is not a substitute for the ordering: the marked ones have
+   * to be the highest-scoring ones, or the two say different things about
+   * the same list.
+   */
+  check(
+    'everything the store marked is marked, and nothing else',
+    JSON.stringify((ownGroup?.options ?? []).map((o) => o.startsWith('★'))) === JSON.stringify([true, true, false, false, false]),
+    JSON.stringify(ownGroup?.options),
+  );
+  check(
+    'each says how much of the posting it uses, so the mark explains itself',
+    /uses 6 words from this posting/.test(ownGroup?.options?.[0] ?? ''),
+    String(ownGroup?.options?.[0]),
+  );
+
+  /*
+   * Fit decides here too, and this company only breaks the ties.
+   *
+   * Vega scores 5 and Helios 2, so Vega leads even though Helios is the
+   * employer being applied to — lifting Helios outright put a resume with
+   * nothing to do with this posting above one written for exactly it. Where
+   * the numbers *are* level, at 2 apiece, Helios beats Orion.
+   */
+  check(
+    'the ones built for a posting are ranked by fit, not by employer',
+    JSON.stringify(named(builtGroup)) === JSON.stringify([
+      'Platform Engineer — Vega',
+      'Platform Engineer — Helios',
+      'Platform Engineer — Orion',
+      'Role — Acme',
+    ]),
+    JSON.stringify(named(builtGroup)),
+  );
+  check(
+    'with this employer winning only where the fit is the same',
+    scores(builtGroup)[1] === scores(builtGroup)[2] && /Helios/.test(builtGroup?.options?.[1] ?? ''),
+    JSON.stringify(builtGroup?.options),
+  );
+  /*
+   * Nothing in the group the store did not mark. A star on a second-best
+   * would read as "start here" about a resume the numbers do not support.
+   */
+  check(
+    'nothing else is marked',
+    (builtGroup?.options ?? []).every((o) => !o.startsWith('★')),
+    JSON.stringify(builtGroup?.options),
+  );
+
+  /*
+   * And a store the server could not rank — an older one, or a page that was
+   * never analysed — keeps the order it had. A list that cannot be ranked is
+   * still a list.
+   */
+  const unranked = await inPage(async (createCard) => {
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Helios' },
+        spec: { id: 'job-helios', label: 'Helios' },
+        baseResumeId: 'newgrad',
+        rationale: [],
+        diff: [],
+      },
+      resumes: [
+        { id: 'newgrad', label: 'New grad', base: true },
+        { id: 'lab', label: 'Lab', base: true },
+        { id: 'job-acme-role', label: 'Role — Acme' },
+      ],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    return [...root.querySelectorAll('select option')].map((o) => o.textContent);
+  });
+
+  check(
+    'a store with no ranking keeps its order and its plain labels',
+    JSON.stringify(unranked) === JSON.stringify(['New grad', 'Lab', 'Role — Acme']),
+    JSON.stringify(unranked),
   );
 
   await browser.close();

@@ -886,12 +886,13 @@ const handlers = {
         /*
          * The long deadline belongs to the AI and nothing else.
          *
-         * All three modes came through here on `SLOW_TIMEOUT_MS`, which is ten
-         * minutes, because one of them runs a model. The other two read the
-         * pages and pick among phrasings already written — no model, no LaTeX,
-         * no network beyond this one call. Measured against the worst case
-         * worth having, eight pages totalling 17.6MB against a real save, that
-         * is two seconds.
+         * Every mode came through here on `SLOW_TIMEOUT_MS`, which is ten
+         * minutes, because one of them runs a model. The keyword match reads
+         * the pages and picks among phrasings already written — no model, no
+         * LaTeX, no network beyond this one call. Measured against the worst
+         * case worth having, eight pages totalling 17.6MB against a real save,
+         * that is two seconds. It runs on arrival now, so that deadline is the
+         * one every ordinary page lands on.
          *
          * So a keyword match or a straight copy that went wrong sat there
          * looking like work for ten minutes before saying anything, which is

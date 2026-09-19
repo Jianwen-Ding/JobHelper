@@ -14,11 +14,12 @@
  * to prevent.
  *
  * So this walks three applications at once and never finishes one before
- * starting the next. Each tab reads a posting, asks for a keyword match, walks
- * its own Apply link to a form that names nobody, asks for the match again
- * there — where the description can only have come from this tab's trail —
- * builds, and writes a letter naming its own employer. Every step happens in
- * tab 1, then tab 2, then tab 3, and only then does the next step begin.
+ * starting the next. Each tab reads a posting and is offered a keyword match
+ * of its own, walks its own Apply link to a form that names nobody, reads the
+ * match offered there — where the description can only have come from this
+ * tab's trail — takes it, builds, and writes a letter naming its own employer.
+ * Every step happens in tab 1, then tab 2, then tab 3, and only then does the
+ * next step begin.
  *
  * Two of the three postings are the case that actually breaks: their forms are
  * a number on a shared host (`/gh/j/4821`, `/gh/j/9912`, `/gh/j/7730`) and say
@@ -156,7 +157,14 @@ async function openChanges(card) {
 }
 
 /**
- * Ask for the keyword match, and wait for the proposal it makes.
+ * Wait for the keyword match this card was offered, and open it.
+ *
+ * There was a "Match by keyword" button here to press. The match is not a mode
+ * any more — it runs on arrival and what it produces is a list of offers — so
+ * the rows are already on the card and all that is left is unfolding them.
+ * Which loses nothing this suite cared about: the rows are still worked out
+ * from this tab's description, so which skills they say they would keep is
+ * still a direct reading of whose posting this card thinks it is on.
  *
  * Tolerant of never getting one, on purpose. A card whose trail has been taken
  * from it proposes nothing at all, and a `waitFor` that throws there ends the
@@ -164,11 +172,46 @@ async function openChanges(card) {
  * unasked, including the ones about the store. A proposal that does not arrive
  * is an empty list, which the checks below have plenty to say about.
  */
-async function matchByKeyword(card) {
-  await card.locator('button.mode', { hasText: 'Match by keyword' }).click();
+async function suggestionsOn(card) {
   await card.locator('.diff-head').first().waitFor({ timeout: 60_000 }).catch(() => undefined);
   await openChanges(card);
   await card.locator('.change').first().waitFor({ timeout: 30_000 }).catch(() => undefined);
+}
+
+/** Every row that is a decision, and whether it is switched off. */
+const pickableIn = (card) => card.locator('.change:has(.pick)');
+const offFlags = async (card) => {
+  const rows = await pickableIn(card).all();
+  return Promise.all(rows.map(async (r) => (await r.getAttribute('class'))?.includes('off') === true));
+};
+
+/**
+ * Tick every box, which is what pressing "Match by keyword" used to do in one
+ * go.
+ *
+ * Needed because the suggestions arrive switched off. Without this the resume
+ * each tab builds is its base resume untouched, identical in all three — so
+ * the checks at the bottom, which ask whether the *filed* document keeps this
+ * posting's skill and neither of the other two's, would be reading a document
+ * no tab had tailored. Those checks would fail rather than pass quietly, but
+ * failing for want of a click is not what they are there to catch.
+ *
+ * Waited on the box rather than on a clock or a fit badge: ticking one
+ * recompiles and the boxes are dead for the length of it, so a click landing
+ * mid-compile is a click on a disabled input — it does nothing and says
+ * nothing.
+ */
+async function takeEverySuggestion(card, page) {
+  const rows = await pickableIn(card).all();
+  for (const [i, row] of rows.entries()) {
+    const box = row.locator('.pick input');
+    for (let w = 0; w < 800 && !(await box.isEnabled().catch(() => false)); w++) await page.waitForTimeout(150);
+    await row.locator('.pick').click();
+    for (let w = 0; w < 800 && (await pickableIn(card).nth(i).getAttribute('class'))?.includes('off'); w++) {
+      await page.waitForTimeout(150);
+    }
+  }
+  return rows.length;
 }
 
 /**
@@ -301,23 +344,38 @@ async function main() {
       check(`tab ${tab.n} is reading ${tab.company}`, role.includes(tab.title) && co.includes(tab.company), `${role} · ${co}`);
     });
 
-    await inTurn('Nothing is tailored until it is asked for', async (tab) => {
+    /*
+     * The match runs on arrival now, so "nothing is tailored yet" stopped
+     * being "there are no rows" and became "every row is switched off".
+     *
+     * Read off the boxes and the count for that reason. Counting rows was the
+     * old proof and it is no proof at all here — six rows on arrival is the
+     * correct state — while a card that had quietly applied them would look
+     * exactly the same to it.
+     */
+    await inTurn('Nothing is applied until it is asked for', async (tab) => {
       const card = cardOf(tab.page);
-      const rows = await card.locator('.change').count();
-      const said = (await card.locator('.no-change').innerText().catch(() => '')).trim();
+      const off = await offFlags(card);
+      const count = (await card.locator('.diff-head .count').innerText().catch(() => '')).trim();
+      const said = (await card.locator('.step .hint', { hasText: /untouched/ }).first().innerText().catch(() => '')).trim();
+      check(
+        `tab ${tab.n} was offered a match without asking`,
+        off.length > 0,
+        `${off.length} suggestions`,
+      );
       check(
         `tab ${tab.n} arrived with the resume unchanged`,
-        rows === 0 && /exactly as you keep it/i.test(said),
-        `${rows} changes — ${said.slice(0, 48)}`,
+        off.length > 0 && off.every(Boolean) && /^0 of \d+ changes$/.test(count) && /exactly as you keep it/i.test(said),
+        `${off.filter(Boolean).length}/${off.length} off · ${count} · ${said.slice(0, 48)}`,
       );
       // These two are description pages; the letter step belongs to the form
       // they link to, and typing one here would be typing into the notes box.
       check(`and with no letter to write yet`, (await card.locator('textarea.tall').count()) === 0);
     });
 
-    await inTurn('"Match by keyword", pressed in each tab in turn', async (tab) => {
+    await inTurn('The match each tab was offered, read in turn', async (tab) => {
       const card = cardOf(tab.page);
-      await matchByKeyword(card);
+      await suggestionsOn(card);
       tab.keptOnPosting = await kept(card);
       check(
         `tab ${tab.n} proposes a resume for ${tab.company}`,
@@ -341,14 +399,44 @@ async function main() {
       await saysWhose(tab, 'on the form,');
     });
 
-    await inTurn('Matching again on the form, against the posting behind it', async (tab) => {
+    await inTurn('The match offered on the form, worked out from the posting behind it', async (tab) => {
       const card = cardOf(tab.page);
-      await matchByKeyword(card);
+      await suggestionsOn(card);
       tab.keptOnForm = await kept(card);
       check(
         `tab ${tab.n} matched against ${tab.company}'s posting, not another tab's`,
         ownsIt(tab, tab.keptOnForm),
         listed(tab.keptOnForm),
+      );
+    });
+
+    /*
+     * And taken, one box at a time, before anything is built.
+     *
+     * The rows above are what the card *says*; from here on this suite is
+     * about what each tab *sends*, and until the boxes are on those are two
+     * different documents. Three tabs building their untouched base resume
+     * would file three identical resumes, which is the shape of the bug this
+     * whole suite exists to catch — so the taking is a step of its own, and it
+     * is checked, rather than being assumed as a side effect of a mode.
+     */
+    await inTurn('Taking every suggestion, in each tab in turn', async (tab) => {
+      const card = cardOf(tab.page);
+      const offered = await takeEverySuggestion(card, tab.page);
+      const off = await offFlags(card);
+      const count = (await card.locator('.diff-head .count').innerText().catch(() => '')).trim();
+      check(
+        `tab ${tab.n} switched on all ${offered} of them`,
+        offered > 0 && off.length === offered && off.every((x) => !x) && count === `${offered} changes`,
+        `${off.filter((x) => !x).length}/${off.length} on · ${count}`,
+      );
+      // The rows are a record of what was offered, not of what was taken, so
+      // they say the same thing before and after — and this tab's reading of
+      // its own posting has to have survived the ticking.
+      check(
+        `and tab ${tab.n} is still holding ${tab.company}'s match`,
+        ownsIt(tab, await kept(card)),
+        listed(await kept(card)),
       );
     });
 
@@ -411,13 +499,14 @@ async function main() {
       );
 
       /*
-       * And the proposal, asked for once more. The card comes back from a
-       * navigation holding the tailored resume but not the list of changes it
-       * made, so the rows have to be asked for again — which suits this
-       * perfectly, because the description the match runs against is by then
-       * only in the trail.
+       * And the proposal, read once more. The card works the match out again
+       * when it comes back from a navigation, and by then the description it
+       * is matching against is only in the trail — so which skills these rows
+       * say they would keep is, again, a reading of whose posting this tab
+       * thinks it is on. The rows used to have to be asked for by hand; they
+       * arrive with the card now, and only the fold is left to open.
        */
-      await matchByKeyword(card);
+      await suggestionsOn(card);
       const now = await kept(card);
       check(`tab ${tab.n} still holds ${tab.company}'s proposal`, ownsIt(tab, now), listed(now));
       check(

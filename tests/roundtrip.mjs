@@ -301,14 +301,32 @@ async function main() {
       )
       .catch(() => undefined);
     check('the card knows the store moved under it', /been editing the store/i.test((await card.textContent()) ?? ''));
+    /*
+     * Which offer it is depends on what this proposal is, and that is what
+     * this checks. Arriving applies nothing now, so what is on screen is the
+     * resume exactly as it is kept with a list of suggestions beside it — and
+     * "build it again" over that would rebuild it unchanged and could never
+     * reach the alternate just written in the builder, while the sentence
+     * beside it promised otherwise. The offer has to name the thing that
+     * would actually pick it up, and what would is the suggestion list being
+     * worked out again over a store that now has the new wording in it.
+     */
+    const offer = card.locator('.hint.warn button');
+    const offered = ((await offer.textContent().catch(() => '')) ?? '').trim();
     check(
       'and offers to redo the match rather than doing it behind your back',
-      /build it again/i.test((await card.textContent()) ?? ''),
+      (await offer.count()) === 1,
+      offered,
+    );
+    check(
+      'naming the thing that would actually use what was just written',
+      /work out the suggestions again/i.test(offered) && !/build it again/i.test(offered),
+      offered,
     );
 
     group('And the sentence arrives in what gets sent');
     {
-      await card.getByRole('button', { name: 'Build it again' }).click();
+      await offer.click();
       await page.waitForTimeout(3000);
       check(
         'rebuilding clears the notice rather than leaving it up for good',
@@ -316,27 +334,50 @@ async function main() {
       );
 
       /*
-       * And then ask for the match, because arriving tailors nothing now.
+       * And then take the suggestion, because being offered one changes
+       * nothing.
        *
-       * The opening analysis sends `tailor: 'none'`, so the card comes up with
-       * the resume unchanged and "Build it again" repeats the mode it was
-       * built with — which is 'none'. The new wording lives on an alternate
-       * phrasing of the pipeline bullet (`v_kafka`, tagged kafka/streaming)
-       * and only the keyword match selects it, so without this the resume that
-       * was filed printed the neutral phrasing — "Built an event-processing
+       * There was a "Match by keyword" button here, pressed because arriving
+       * tailored nothing and the match was a mode. The match runs on arrival
+       * now — the row below is already on the card, worked out again over the
+       * store as the builder left it — but it arrives switched off, and a
+       * suggestion switched off is not in the document. The new wording lives
+       * on an alternate phrasing of the pipeline bullet (`v_kafka`, tagged
+       * kafka/streaming), so with the box left alone the resume that gets
+       * filed prints the neutral phrasing — "Built an event-processing
        * pipeline handling 2M events/day…", no Kafka, no marker — and the last
-       * check below failed while the round trip itself was working. Clicking
-       * the mode button is what a person does now; the walk has to do it too.
+       * check below fails while the round trip itself is working. Ticking the
+       * box is what a person does now; the walk has to do it too.
+       *
+       * The row is found by the wording itself rather than by position. That
+       * one sentence is the entire subject of this suite: a row somewhere in
+       * the list offering the words just typed next door is the proof the trip
+       * arrived, and picking row zero would have been a guess about ordering
+       * that says nothing about which wording it holds.
        */
-      await card.locator('button.mode', { hasText: 'Match by keyword' }).click();
       await card.locator('.diff-head').first().waitFor({ timeout: 60_000 });
+      if (await card.locator('.changes.shut').count()) await card.locator('button.fold-changes').click();
+      const swap = card.locator('.change').filter({ hasText: MARKER }).first();
+      const offersIt = await swap.count();
       check(
-        'and the match asked for has something to swap in',
-        (await card.locator('.change').count()) > 0,
-        `${await card.locator('.change').count()} changes`,
+        'and the match worked out again offers the wording written next door',
+        offersIt === 1,
+        `${await card.locator('.change').count()} suggestions, ${offersIt} of them this one`,
       );
+      if (offersIt === 1) {
+        check('switched off, like every other suggestion', (await swap.getAttribute('class'))?.includes('off') === true);
+        await swap.locator('.pick').click();
+        await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 90_000 });
+        check(
+          'and ticking it puts that wording in the document',
+          (await swap.getAttribute('class'))?.includes('off') === false,
+          (await swap.innerText()).replace(/\s+/g, ' ').slice(0, 80),
+        );
+      }
 
-      await card.getByRole('button', { name: 'Build resume' }).click();
+      // "Recompile" once the tick above has compiled something. Same button,
+      // same lane — and this is the press the Submit below files.
+      await card.getByRole('button', { name: /^(Build resume|Recompile)$/ }).click();
       await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 90_000 });
       const fit = await card.locator('.fit.ok, .fit.bad').innerText();
       check('the rebuilt resume still compiles onto one page', /Fits on one page/.test(fit), fit);

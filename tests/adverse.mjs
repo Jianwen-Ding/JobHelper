@@ -316,10 +316,25 @@ async function main() {
        * The deadline is twenty seconds, so this waits at most thirty for a
        * message. Deliberately not a check on the wording: what matters is
        * that it stops, says something, and gives the buttons back.
+       *
+       * Asked for through "Work out the suggestions again", because there is
+       * no "Match by keyword" button any more. The match is not a mode: it
+       * runs once on arrival and what it produces is a list of offers. The
+       * one thing that still asks a wedged store to work it out afresh is
+       * coming back from the builder — you went to write a phrasing the store
+       * did not have, and the list beside the resume was computed before it
+       * existed — and that link is a `rebuild` on `tailor: 'match'`, which is
+       * exactly the request whose deadline this is about.
+       *
+       * Which is also why the store is only wedged after the card has
+       * arrived, rather than on the second call through a `skip`. Counting
+       * calls was fragile once the opening analysis stopped being the only
+       * one before the click: the trip to the builder opens a page of its own
+       * on the same server, and a test that depends on how many requests that
+       * costs is measuring the builder.
        */
-      const stalled = await serveSlowProxy(SERVER, { slowRoute: /extension\/analyze/, ms: 90_000, skip: 1 });
+      const stalled = await serveSlowProxy(SERVER, { slowRoute: /extension\/analyze/, ms: 90_000 });
       try {
-        await useServer(context, stalled.base);
         const page = await context.newPage();
         const errors = [];
         page.on('pageerror', (e) => errors.push(String(e).slice(0, 120)));
@@ -327,8 +342,25 @@ async function main() {
         await settled(page);
 
         const card = cardOf(page);
+        // Out to the builder and back, which is what puts the offer on the
+        // card. Nothing is typed there: the notice is about having been away,
+        // not about what was done while away.
+        await useServer(context, stalled.base);
+        const builder = context.waitForEvent('page');
+        await card.locator('.to-builder').click();
+        await (await builder).waitForLoadState('domcontentloaded').catch(() => undefined);
+        await page.bringToFront();
+
+        const offer = card.locator('.hint.warn button');
+        await offer.waitFor({ timeout: 20_000 });
+        check(
+          'coming back from the builder offers the match again',
+          /work out the suggestions again/i.test(((await offer.textContent()) ?? '').trim()),
+          ((await offer.textContent()) ?? '').trim(),
+        );
+
         const began = Date.now();
-        await card.getByRole('button', { name: 'Match by keyword' }).click();
+        await offer.click();
         const failed = await card
           .locator('.err')
           .first()
@@ -339,8 +371,8 @@ async function main() {
 
         check('it gives up rather than waiting out the AI deadline', failed, `${took}s`);
         check(
-          'and the buttons come back, so another mode can be tried',
-          await card.getByRole('button', { name: 'Use it unchanged' }).isEnabled(),
+          'and the buttons come back, so the resume can still be sent as it is',
+          await card.locator('button.mode', { hasText: 'Use Original' }).isEnabled(),
         );
         check('nothing thrown while it gave up', errors.length === 0, errors.join('; '));
         await page.close();

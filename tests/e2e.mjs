@@ -88,19 +88,37 @@ async function main() {
     check('the card says whether AI is on', /^AI (on|off)/.test(aiText), aiText);
 
     /*
-     * Three ways to tailor — leave it alone, match by keyword, let the AI
-     * decide — and a fourth way out: going to write the sentence yourself in
-     * the builder, which is none of them.
+     * Two ways to build — leave it alone, or let the AI decide — and a third
+     * way out: going to write the sentence yourself in the builder, which is
+     * neither.
+     *
+     * There were three. The keyword match was the middle one, and it stopped
+     * being a mode: what it produces is a list of suggestions beside the
+     * resume, each with a box, and ticking one is not entering a mode. So the
+     * bar is down to the two things that really are exclusive — the resume as
+     * you keep it, or the one the AI wrote.
      */
-    const modes = card.locator('button.mode:not(.ghost)');
-    check('all three ways to tailor are offered', (await modes.count()) === 3, `${await modes.count()} modes`);
+    /*
+     * Every `.mode` there is. The `:not(.ghost)` this carried was excluding
+     * the builder link, which wore `mode` and read as a third way to build —
+     * it is a link on its own line now, so there is nothing to exclude and
+     * the count is a straight reading of the row.
+     */
+    const modes = card.locator('button.mode');
+    check('both ways to build are offered', (await modes.count()) === 2, `${await modes.count()} modes`);
     check(
       'including leaving the resume exactly as it is',
-      (await card.locator('button.mode', { hasText: 'Use it unchanged' }).count()) === 1,
+      (await card.locator('button.mode', { hasText: 'Use Original' }).count()) === 1,
+    );
+    // Matched on the words, not the whole string: the AI button is drawn with
+    // a leading ✦, so an exact-name match finds nothing.
+    check(
+      'and asking the AI to tailor it',
+      (await card.locator('button.mode', { hasText: 'Have AI Tailor' }).count()) === 1,
     );
     check(
       'and a way through to the builder, for what none of them can do',
-      (await card.locator('button.mode.ghost').count()) === 1,
+      (await card.locator('.to-builder').count()) === 1,
     );
     // Found by what it is, not by where it sits: adding a mode in front of it
     // used to point this check at the button next door, which passes for the
@@ -112,22 +130,52 @@ async function main() {
       await aiMode.getAttribute('title'),
     );
 
-    /*
-     * Nothing has been tailored yet, and that is the point.
-     *
-     * Arriving on a posting used to run the keyword match, so the card came up
-     * with the resume already altered and "send what I have" was the thing you
-     * undid. Now it comes up unchanged and the three modes are how you ask.
-     */
-    check(
-      'nothing is changed until it is asked for',
-      (await card.locator('.no-change').count()) === 1 && (await card.locator('.change').count()) === 0,
-      (await card.locator('.no-change').innerText().catch(() => '')).slice(0, 60),
-    );
-
-    // And from here the walk is about what the keyword match does, so ask.
-    await card.locator('button.mode', { hasText: 'Match by keyword' }).click();
     await card.locator('.diff-head').first().waitFor({ timeout: 60_000 });
+
+    /*
+     * The match has run, and none of it has been applied.
+     *
+     * Arriving used to run the match and *apply* it, so the card came up with
+     * the resume already altered and "send what I have" was the thing you
+     * undid. Then it came up with nothing at all, which meant the card could
+     * not say what the match would do without a round trip. It runs on
+     * arrival now and offers the result: the rows are there without a click,
+     * every box is off, and the document is still the one you keep.
+     *
+     * Which is why this reads the boxes rather than counting rows. "No rows"
+     * was the old proof that nothing had been done; rows on screen prove
+     * nothing either way now, and a check that only counted them would pass
+     * over a card that had silently ticked all six.
+     */
+    // Only the rows that are a decision: a row with no box is something the
+    // base resume already does, and `off` would mean nothing on it.
+    const pickable = card.locator('.change:has(.pick)');
+    const offNow = async () => {
+      const rows = await pickable.all();
+      return Promise.all(rows.map(async (r) => (await r.getAttribute('class'))?.includes('off') === true));
+    };
+    const arrivedOff = await offNow();
+    const countText = () => card.locator('.diff-head .count').innerText();
+    check(
+      'the match has already run, with no click',
+      (await card.locator('.change').count()) > 0,
+      `${await card.locator('.change').count()} suggestions on arrival`,
+    );
+    check(
+      'and nothing is changed until it is asked for',
+      arrivedOff.length > 0 && arrivedOff.every(Boolean),
+      `${arrivedOff.filter(Boolean).length}/${arrivedOff.length} rows marked off`,
+    );
+    check(
+      'the count says how many of them are in, not just how many there are',
+      /^0 of \d+ changes$/.test((await countText()).trim()),
+      await countText(),
+    );
+    check(
+      'and the bar says the resume is the original',
+      (await card.locator('button.mode.on').innerText()).includes('Use Original'),
+      await card.locator('button.mode.on').innerText(),
+    );
 
     /*
      * The rows are shut until asked for — the count is what the card leads
@@ -193,39 +241,92 @@ async function main() {
 
     /*
      * And the way out of all of it. Tailoring is the feature; it was never
-     * supposed to be compulsory, and until there was a third mode every
-     * proposal arrived already altered with nothing to undo it.
+     * supposed to be compulsory, and until there was a way back every proposal
+     * arrived already altered with nothing to undo it.
+     *
+     * Switched on first, because there is nothing to undo otherwise. This
+     * block used to press "Undo all" straight off the match, which applied
+     * itself the moment it was asked for; the suggestions arrive off now, so
+     * the press would have been on a button the card does not even draw —
+     * "actually, none of it" is offered only while something is in.
      */
     {
-      const before = await card.locator('.change').count();
+      const boxes = await pickable.all();
+      /*
+       * Waited on the box, not on the fit badge.
+       *
+       * Ticking one recompiles, and the boxes are dead for the length of it —
+       * so a second click that lands mid-compile is a click on a disabled
+       * input, which does nothing and says nothing. The badge is no use as
+       * the signal either: after the first tick there is always one on screen,
+       * so waiting for it returns instantly from then on.
+       */
+      for (const [i, row] of boxes.entries()) {
+        const box = row.locator('.pick input');
+        for (let w = 0; w < 600 && !(await box.isEnabled()); w++) await page.waitForTimeout(150);
+        await row.locator('.pick').click();
+        for (let w = 0; w < 600 && (await pickable.nth(i).getAttribute('class'))?.includes('off'); w++) {
+          await page.waitForTimeout(150);
+        }
+      }
+      const before = (await offNow()).filter((x) => !x).length;
+      check('every suggestion can be switched on', before === boxes.length, `${before}/${boxes.length} on`);
+      check(
+        'and the count follows what is in rather than what was offered',
+        (await countText()).trim() === `${before} changes`,
+        await countText(),
+      );
+
       await card.locator('.diff-head button.undo-all').click();
-      await card.locator('.no-change').waitFor({ timeout: 60_000 });
-      const said = await card.locator('.no-change').innerText();
+      await page.waitForFunction(
+        () =>
+          /^0 of /.test(
+            document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelector('.diff-head .count')?.textContent ?? '',
+          ),
+        null,
+        { timeout: 60_000 },
+      );
+      await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 90_000 });
+      /*
+       * Read off the summary line rather than a `.no-change` placeholder. That
+       * element is for a proposal with no rows in it at all, and undoing does
+       * not empty the list any more — the rows stay as the record of what was
+       * offered, and what is undone is the boxes.
+       */
+      const said = await card.locator('.step .hint', { hasText: /untouched/ }).first().innerText();
       check('undoing every change leaves the resume alone', /exactly as you keep it/i.test(said), said);
       check('and the changes it undid were real', before > 0, `${before} undone`);
       check(
         'the card says which resume that is, and that the base is untouched',
         /untouched/i.test((await card.innerText()) ?? ''),
       );
-
-      // Back to the match, which is what the rest of this walk is about.
-      await card.locator('button.mode', { hasText: 'Match by keyword' }).click();
-      await card.locator('.diff-head').first().waitFor({ timeout: 60_000 });
+      const afterUndo = await offNow();
+      check(
+        'the rows stay, as the record of what was offered',
+        afterUndo.length === boxes.length && afterUndo.every(Boolean),
+        `${afterUndo.filter(Boolean).length}/${afterUndo.length} back off`,
+      );
       await openChanges();
-      await card.locator('.change').first().waitFor({ timeout: 60_000 });
-      check('and the match can be asked for again', (await card.locator('.change').count()) > 0);
     }
 
     /*
-     * Putting one narrowed skills group back.
+     * Switching one narrowed skills group on.
      *
-     * The card's own harness proves the button writes the group's list into
-     * the spec. The half that matters is further down, once this walk has
-     * built and staged: that the spec is what gets compiled and filed, so the
-     * resume the employer receives has the group back. Undone here, checked
-     * against the saved resume there — no extra build, because a second one
-     * would stage the application early and leave the staging checks below
-     * with nothing new to see.
+     * The card's own harness proves the box writes the group's list into the
+     * spec. The half that matters is further down, once this walk has built
+     * and staged: that the spec is what gets compiled and filed, so the group
+     * the employer receives is the narrowed one. Ticked here, checked against
+     * the saved resume there — no extra build, because a second one would
+     * stage the application early and leave the staging checks below with
+     * nothing new to see.
+     *
+     * Ticked, where this used to untick. The narrowing arrived applied while
+     * the match was a mode, so "does the box reach the document?" was asked by
+     * taking it off. It arrives off now, and asking it that way round would be
+     * asking whether an untouched group is full — which it is on any resume,
+     * including one where the box is wired to nothing at all. The check has to
+     * be able to tell a working box from a dead one, so it goes the way that
+     * changes the document: on.
      */
     const putBack = await (async () => {
       const row = card.locator('.change').filter({ hasText: /dropped/ }).first();
@@ -236,28 +337,32 @@ async function main() {
       const offered = await box.count();
       check('a narrowed skills group gets a box', offered === 1, `${offered} boxes`);
       if (offered !== 1) return null;
-      check('ticked, because the narrowing is in the proposal', await box.isChecked());
+      check('unticked, because a suggestion is an offer and not a decision', (await box.isChecked()) === false);
 
       // The group's name is its own element; the sentence beside it has had
       // that prefix stripped, so it cannot be split back out of the text.
       const group = (await row.locator('.where').innerText()).trim();
       const said = (await row.innerText()).replace(/\s+/g, ' ');
-      const cut = (said.match(/dropped ([^—]+)/)?.[1] ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+      const listed = (part) =>
+        (said.match(part)?.[1] ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+      const cut = listed(/dropped ([^—]+)/);
+      const kept = listed(/keeping (.+)$/);
 
       await pick.click();
       await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 90_000 });
       /*
-       * The row stays and the box comes off. It used to be the row that went,
-       * which put the evidence for the decision out of reach at the moment it
-       * was made — and left no way back from a misclick but rebuilding.
+       * The row stays, and is now marked as in. Switching one used to remove
+       * its row, which put the evidence for the decision out of reach at the
+       * moment it was made — and left no way back from a misclick but
+       * rebuilding.
        */
       check(
-        'the row stays, marked as not in the document',
-        (await row.count()) === 1 && (await row.getAttribute('class'))?.includes('off') === true,
+        'the row stays, marked as in the document',
+        (await row.count()) === 1 && (await row.getAttribute('class'))?.includes('off') === false,
         `${group}: ${said.slice(0, 40)}`,
       );
-      check('with its box unticked', (await box.isChecked()) === false);
-      return { group, cut };
+      check('with its box ticked', (await box.isChecked()) === true);
+      return { group, cut, kept };
     })();
 
     /*
@@ -276,8 +381,8 @@ async function main() {
     };
 
     /*
-     * "Recompile" once anything has been compiled — which the skills undo
-     * above does, because putting a line back and leaving the old picture on
+     * "Recompile" once anything has been compiled — which every box ticked
+     * above does, because switching a line and leaving the old picture on
      * screen would be showing a resume nobody has. Same button, same lane,
      * and this is the press that stages.
      */
@@ -293,7 +398,7 @@ async function main() {
      *
      * The badge was the signal that the build had finished, and it stopped
      * meaning that the moment anything compiled earlier in the walk — the
-     * skills undo above does — because that compile's badge is still on screen
+     * skills box above does — because that compile's badge is still on screen
      * when the next build starts. So the wait returned at once and the check
      * ran mid-build, failing on a bar that was doing its job.
      *
@@ -347,9 +452,9 @@ async function main() {
     })();
 
     /*
-     * And the other half of the skills undo: what was staged, not what the
+     * And the other half of the skills box: what was staged, not what the
      * card claims. The build above saved this posting's resume, so the group
-     * put back has to be back on the document that would be attached.
+     * switched on has to be narrowed on the document that would be attached.
      */
     if (putBack) {
       /*
@@ -364,29 +469,53 @@ async function main() {
        */
       const groupNow = async () => {
         /*
-         * The resume this application actually points at, not the first one
-         * whose id mentions the company. A run leaves its tailored copy
-         * behind, so "the Helios one" can be last week's — which is what this
-         * read reported while the spec being posted was perfectly correct.
+         * The application this walk is on, which is Streamly.
+         *
+         * This looked for Helios — a company this suite never visits, filed
+         * by `controls`, `carrying` and `roundtrip` instead. So it read some
+         * other suite's resume, and passed because the thing it asserts
+         * (Languages holds the items this proposal dropped) is true of almost
+         * any resume: an untouched group holds them all. It only ever failed
+         * when no Helios row existed on this server at all, which is how it
+         * was noticed. Checking the wrong application is worse than not
+         * checking: it reports green on a build where the undo does nothing.
+         *
+         * The resume the application points at, not the first one whose id
+         * mentions the company — a run leaves its tailored copy behind, so
+         * "the Streamly one" can be last week's.
          */
         const apps = await (await fetch(`${SERVER}/api/applications`)).json();
-        const row = (apps.applications ?? []).find((a) => /helios/i.test(a.company ?? ''));
+        const row = (apps.applications ?? []).find((a) => /streamly/i.test(a.company ?? ''));
         if (!row?.resumeId) return null;
         const resolved = await (await fetch(`${SERVER}/api/resumes/${encodeURIComponent(row.resumeId)}/resolved`)).json();
         return (resolved?.sections ?? [])
           .flatMap((sec) => sec.skillGroups ?? [])
           .find((g) => (g.name ?? '').toUpperCase() === putBack.group.toUpperCase()) ?? null;
       };
+      /*
+       * Narrowed, and narrowed to exactly what the row said.
+       *
+       * Both halves are load-bearing, and only one of them can fail for the
+       * boring reason. "The dropped items are gone" is what a working box
+       * does and a dead one cannot fake — an untouched group prints all of
+       * them. "The kept items are still there" is the guard against passing
+       * because the group came out empty, or because the resume read was some
+       * other run's.
+       */
+      const narrowed = (g) =>
+        Boolean(g) &&
+        putBack.cut.every((item) => !g.items.includes(item)) &&
+        putBack.kept.every((item) => g.items.includes(item));
       let printed = null;
       for (let wait = 0; wait < 60; wait++) {
         printed = await groupNow();
-        if (printed && putBack.cut.every((item) => printed.items.includes(item))) break;
+        if (narrowed(printed)) break;
         await new Promise((r) => setTimeout(r, 1000));
       }
       check(
-        'and the resume that would be sent has that group back in full',
-        Boolean(printed) && putBack.cut.every((item) => printed.items.includes(item)),
-        `${putBack.group}: ${JSON.stringify(printed?.items)} — should hold ${JSON.stringify(putBack.cut)}`,
+        'and the resume that would be sent has that group narrowed to match',
+        putBack.cut.length > 0 && putBack.kept.length > 0 && narrowed(printed),
+        `${putBack.group}: ${JSON.stringify(printed?.items)} — should drop ${JSON.stringify(putBack.cut)} and hold ${JSON.stringify(putBack.kept)}`,
       );
     }
 

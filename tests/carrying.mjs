@@ -415,7 +415,22 @@ async function main() {
 
       const after = (await card.textContent()) ?? '';
       check('on returning, the card says the match may be out of date', /been editing the store/i.test(after));
-      check('and offers to redo it rather than doing it', /build it again/i.test(after));
+      /*
+       * Offered, not done — and named for what it would actually do.
+       *
+       * Arriving tailors nothing now, so this proposal is the resume exactly
+       * as it is kept. "Build it again" in that mode rebuilds it unchanged
+       * and could never reach the alternate just written in the builder, so
+       * the offer names the mode that would pick it up instead.
+       */
+      const offer = card.locator('.hint.warn button');
+      const offered = ((await offer.textContent().catch(() => '')) ?? '').trim();
+      check('and offers to redo it rather than doing it', (await offer.count()) === 1, offered);
+      check(
+        'naming the mode that would actually use what was just written',
+        /match by keyword/i.test(offered) && !/build it again/i.test(offered),
+        offered,
+      );
       await editor.close();
     }
 
