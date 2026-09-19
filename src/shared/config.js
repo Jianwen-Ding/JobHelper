@@ -34,9 +34,49 @@ export const DEFAULTS = {
   mutedHosts: [],
 };
 
+/**
+ * The server address, as something that can actually be fetched and opened.
+ *
+ * The box in the popup took whatever was typed and stored it verbatim, and
+ * three ordinary slips each turned into a problem that pointed somewhere
+ * else:
+ *
+ *   - `localhost:4600`, with no scheme, is what half of everyone types. It
+ *     was stored as-is, every fetch failed, and the popup blamed the server:
+ *     "ResumeM-M is not open. Start it, then try again." The server was open.
+ *     The one instruction on screen could not work.
+ *   - Clearing the box stored `""`. `chrome.storage.sync.get(DEFAULTS)`
+ *     returns a stored value whenever the key is present, so `""` beats the
+ *     default for ever — while the greyed-out placeholder reads exactly as
+ *     though the default were in force.
+ *   - And `""` reached `chrome.tabs.create`, so "Open editor" opened
+ *     `chrome-error://chromewebdata/` rather than saying anything at all.
+ *
+ * Normalised on the way out rather than on the way in, because that repairs
+ * the value somebody has already stored — no migration to run, and the worker
+ * and the content script get the same answer as the popup.
+ */
+export function normaliseServerUrl(value) {
+  const said = String(value ?? '').trim();
+  if (!said) return DEFAULTS.serverUrl;
+  // Loopback with no auth is what this talks to, so http is the right guess
+  // for an address that did not say.
+  const full = /^[a-z][a-z0-9+.-]*:\/\//i.test(said) ? said : `http://${said}`;
+  try {
+    new URL(full);
+  } catch {
+    // Not an address at all even with a scheme in front of it. The default is
+    // somewhere real, which is worth more here than honouring a typo: every
+    // caller of this fetches it or opens it in a tab.
+    return DEFAULTS.serverUrl;
+  }
+  return full.replace(/\/+$/, '');
+}
+
 export async function getSettings() {
   const stored = await chrome.storage.sync.get(DEFAULTS);
-  return { ...DEFAULTS, ...stored };
+  const settings = { ...DEFAULTS, ...stored };
+  return { ...settings, serverUrl: normaliseServerUrl(settings.serverUrl) };
 }
 
 export async function setSettings(patch) {

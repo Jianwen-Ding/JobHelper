@@ -276,7 +276,15 @@ async function boot() {
   };
 
   $('serverUrl').onchange = async () => {
-    await save({ serverUrl: $('serverUrl').value.trim() });
+    /*
+     * And put back what is actually in force, which is not always what was
+     * typed: `localhost:4600` gains the scheme it needs, an emptied box goes
+     * back to the default rather than storing nothing. Showing the typed text
+     * while using something else is the disagreement this whole window keeps
+     * getting wrong — see `normaliseServerUrl`.
+     */
+    const after = await send('setSettings', { patch: { serverUrl: $('serverUrl').value.trim() } });
+    $('serverUrl').value = after.serverUrl;
     check();
   };
   $('autoPrompt').onchange = () => save({ autoPrompt: $('autoPrompt').checked });

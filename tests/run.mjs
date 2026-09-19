@@ -78,6 +78,7 @@ const SUITES = [
   { name: 'autofill', file: 'autofill.mjs', cost: 2 },
   { name: 'ats', file: 'ats.mjs', cost: 1, nodeTest: true },
   { name: 'trail', file: 'trail.mjs', cost: 1, nodeTest: true },
+  { name: 'config', file: 'config.mjs', cost: 1, nodeTest: true },
 ];
 
 const pool = (process.env.RMM_SERVERS ?? process.env.RMM_SERVER ?? 'http://127.0.0.1:4600')
