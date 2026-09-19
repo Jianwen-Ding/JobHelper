@@ -121,14 +121,6 @@ const NOT_ABOUT_YOU = [
   /\b(gender|race|ethnicit\w*|hispanic|latin[ox]|veteran|disabilit\w*|sexual[\s_-]orientation|pronouns)\b/i,
   /\b(eeoc?|self[\s_-]?identification|equal[\s_-]employment)\b/i,
   /*
-   * The box beside a telephone number that wants "+1", not a telephone
-   * number. `phone` matched "Phone Country Code" first and wrote the whole
-   * number into it; where the word "phone" was absent, `address_country`
-   * matched and wrote "United States". Neither is a dialling code, and a
-   * telephone number an employer cannot ring is worse than a blank one.
-   */
-  /\b(country|area|dial(?:l?ing)?)[\s_-]?code\b/i,
-  /*
    * A consent question, which is not a fact about the applicant at all — it
    * is a decision about what the employer may send them.
    *
@@ -149,7 +141,34 @@ const NOT_ABOUT_YOU = [
   /\b(?:may|can)[\s_-]we\b[\s\S]{0,40}\babout\b/i,
 ];
 
-const isNotAboutYou = (description) => NOT_ABOUT_YOU.some((re) => re.test(description));
+/**
+ * The box beside a telephone number that wants "+1", not a telephone number.
+ *
+ * `phone` matched "Phone Country Code" first and wrote the whole number into
+ * it; where the word "phone" was absent, `address_country` matched and wrote
+ * "United States". Neither is a dialling code, and a telephone number an
+ * employer cannot ring is worse than a blank one.
+ *
+ * Read with the parentheses taken out, and kept out of the list above for
+ * that reason alone. A parenthetical is an instruction about how to answer,
+ * not a change of subject: "Phone Number (include country code)" is the
+ * telephone box — asked for in exactly those words because international
+ * applicants are expected to write the `+` — and excluding it left the
+ * number, usually a required field, blank with nothing said about it. "Phone
+ * Country Code" still reads as the code box, because nothing there is an
+ * aside.
+ *
+ * Only parentheses. "Phone number, including country code" is still read as
+ * the code box and still goes unfilled; that shape is rarer, and guessing at
+ * where a label stops being its subject is how the first version of this
+ * went wrong.
+ */
+const DIALLING_CODE = /\b(country|area|dial(?:l?ing)?)[\s_-]?code\b/i;
+const asksForADiallingCode = (description) =>
+  DIALLING_CODE.test(description.replace(/\([^)]*\)/g, ' '));
+
+const isNotAboutYou = (description) =>
+  asksForADiallingCode(description) || NOT_ABOUT_YOU.some((re) => re.test(description));
 
 /*
  * "Are you legally authorized to work in the United States without
@@ -169,6 +188,33 @@ const AUTHORIZATION = FIELD_PATTERNS.find(([key]) => key === 'work_authorization
 const SPONSORSHIP = FIELD_PATTERNS.find(([key]) => key === 'requires_sponsorship')[1];
 const asksBothAtOnce = (description) =>
   AUTHORIZATION.test(description) && SPONSORSHIP.test(description);
+
+/**
+ * Handing it back, wherever it turns up.
+ *
+ * Asked before `isNotAboutYou`, because the commonest wording of this
+ * question is
+ *
+ *   Are you a U.S. citizen or otherwise authorized to work in the United
+ *   States for any employer without sponsorship?
+ *
+ * and the word "citizen" in it matched the pattern that keeps "Country of
+ * citizenship" from being filled with where somebody lives. An exclusion
+ * says nothing — deliberately, because an excluded field is not the user's
+ * to fill — so this one disappeared: not filled, not reported, not on the
+ * card. The same sentence with the word "citizen" taken out was handed back
+ * properly, which is what this restores. A question about the applicant's own
+ * right to work is theirs however it is phrased.
+ */
+const handBack = (description, skipped) => {
+  if (!asksBothAtOnce(description)) return false;
+  skipped.push({
+    key: 'work_authorization',
+    reason: 'this one asks two things at once',
+    description: description.slice(0, 60),
+  });
+  return true;
+};
 
 /**
  * A label that is just "Name" wants the whole name.
@@ -571,6 +617,9 @@ export function fillForm(fields, { overwrite = false } = {}) {
     // Somebody else's details, or a question this profile does not answer —
     // see `NOT_ABOUT_YOU`. Not reported: there is nothing here for the user to
     // do about it, and naming it would imply the field is theirs to fill.
+    // Before the exclusions, which say nothing, and before the match, which
+    // this question does not need. See `handBack`.
+    if (handBack(description, skipped)) continue;
     if (isNotAboutYou(description)) continue;
 
     let match = FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key]);
@@ -582,11 +631,6 @@ export function fillForm(fields, { overwrite = false } = {}) {
 
     const [key] = match;
     const value = fields[key];
-
-    if (asksBothAtOnce(description)) {
-      skipped.push({ key, reason: 'this one asks two things at once', description: description.slice(0, 60) });
-      continue;
-    }
 
     const answered = input instanceof HTMLSelectElement ? selectIsAnswered(input) : Boolean(input.value);
     if (answered && !overwrite) {
@@ -684,6 +728,22 @@ function groupLabelFor(radios) {
   const aria = clean(first.getAttribute('aria-label'));
   if (aria) return aria;
 
+  /*
+   * A row header, which is how the older enterprise systems lay out a
+   * questionnaire: the question in a `<th scope="row">`, the buttons in the
+   * `<td>` beside it. `labelFor` learned this for text boxes — see the `th`
+   * in its ancestor search — and groups had not, so the question came back
+   * empty, the group's whole description was a name like `q_998877`, and it
+   * matched nothing. Skipped in silence, on the question most likely to
+   * matter.
+   *
+   * Taken from this row rather than added to the climb below, which would
+   * reach the table and could take a column heading from some other row as
+   * the question for this one.
+   */
+  const header = clean(first.closest('tr')?.querySelector('th')?.textContent);
+  if (header) return header;
+
   let group = first.parentElement;
   for (let i = 0; i < 5 && group; i++, group = group.parentElement) {
     if (!radios.every((radio) => group.contains(radio))) continue;
@@ -770,6 +830,10 @@ function answerRadioGroups(fields, overwrite) {
   for (const radios of groups.values()) {
     const description = clean([groupLabelFor(radios), radios[0].name].filter(Boolean).join(' '));
     if (!description) continue;
+    // Before the exclusions and before the match, as in `fillForm`. Radios
+    // are the commoner shape for this question: Workable and Teamtailor ask
+    // "legally authorized to work without sponsorship" as a pair of buttons.
+    if (handBack(description, skipped)) continue;
     if (isNotAboutYou(description)) continue;
 
     /*
@@ -787,14 +851,6 @@ function answerRadioGroups(fields, overwrite) {
 
     const [key] = match;
     const value = fields[key];
-
-    // Two declarations in one question — see `asksBothAtOnce`. Radios are the
-    // commoner shape for it: Workable and Teamtailor ask "legally authorized
-    // to work without sponsorship" as a pair of buttons.
-    if (asksBothAtOnce(description)) {
-      skipped.push({ key, reason: 'this one asks two things at once', description: description.slice(0, 60) });
-      continue;
-    }
 
     if (radios.some((radio) => radio.checked) && !overwrite) {
       skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });

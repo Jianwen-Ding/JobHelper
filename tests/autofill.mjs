@@ -301,7 +301,46 @@ const LABELS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</t
   <label for="auth_n">No</label>
 </form></body></html>`;
 
-const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS };
+
+/*
+ * Three shapes that filled nothing and said nothing, which is the worst
+ * outcome this file has: a required box left blank on a form the card has
+ * just reported as filled.
+ */
+const LEGACY = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <!-- The commonest wording of the right-to-work question on the hosted
+       boards, which puts citizenship and sponsorship in one sentence. -->
+  <fieldset>
+    <legend>Are you a U.S. citizen or otherwise authorized to work in the United States for any employer without sponsorship?</legend>
+    <label><input type="radio" name="citwork" value="Y"> Yes</label>
+    <label><input type="radio" name="citwork" value="N"> No</label>
+  </fieldset>
+
+  <!-- The question the citizenship rule exists for, which must stay excluded. -->
+  <label for="cob">Country of citizenship</label><input id="cob" name="citizenship">
+
+  <!-- A telephone box that asks for the code inside its own label. -->
+  <label for="ph1">Phone Number (include country code)</label><input id="ph1" name="phone" type="tel">
+
+  <!-- And the box the dialling-code rule exists for, beside a real one. -->
+  <label for="cc">Phone Country Code</label><input id="cc" name="phone_country_code">
+  <label for="ph2">Mobile</label><input id="ph2" name="mobile" type="tel">
+</form>
+
+<!-- Taleo Classic: the question in a row header, the buttons in the cell. -->
+<form><table><tbody>
+  <tr>
+    <th scope="row">Are you legally authorized to work in the United States?</th>
+    <td>
+      <label><input type="radio" name="q_998877" value="Y"> Yes</label>
+      <label><input type="radio" name="q_998877" value="N"> No</label>
+    </td>
+  </tr>
+</tbody></table></form>
+</body></html>`;
+
+const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -740,6 +779,77 @@ async function main() {
       'a radio group labelled by a separate node is still answered',
       labels.auth === '1',
       `checked "${labels.auth}"`,
+    );
+
+    const legacy = await page.goto(`${base}/legacy`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(profile);
+        return {
+          values: Object.fromEntries(
+            ['cob', 'ph1', 'cc', 'ph2'].map((id) => [id, document.getElementById(id).value]),
+          ),
+          citwork: document.querySelector('input[name="citwork"]:checked')?.value ?? '',
+          table: document.querySelector('input[name="q_998877"]:checked')?.value ?? '',
+          filled: report.filled.map((f) => f.key),
+          skipped: report.skipped.map((s) => `${s.key}:${s.reason}`),
+        };
+      }, { b: base, profile: PROFILE }),
+    );
+
+    group('Three shapes that filled nothing and said nothing');
+    /*
+     * "Are you a U.S. citizen or otherwise authorized to work … without
+     * sponsorship?" is the same two-declarations question as the one above,
+     * and the word "citizen" in it matched the rule that keeps "Country of
+     * citizenship" from being filled with where somebody lives. An exclusion
+     * says nothing, by design, so the question disappeared: not filled, not
+     * reported, not on the card — on the declaration most likely to have an
+     * application rejected without a person reading it.
+     */
+    check(
+      'a right-to-work question that mentions citizenship is handed back, not dropped',
+      legacy.citwork === '' &&
+        legacy.skipped.includes('work_authorization:this one asks two things at once'),
+      `checked "${legacy.citwork}"; ${legacy.skipped.join(', ') || '(nothing reported)'}`,
+    );
+    // And the rule it was colliding with still holds, or the fix is a
+    // different bug: this box asks which country somebody is a citizen of.
+    check(
+      'while country of citizenship is still not where they live',
+      legacy.values.cob === '',
+      `"${legacy.values.cob}"`,
+    );
+
+    /*
+     * "Phone Number (include country code)" is asked for in exactly those
+     * words because international applicants are expected to write the `+`.
+     * It matched the rule for the little box that wants "+1" and nothing
+     * else, so the telephone number — usually required — came out blank with
+     * nothing said about it.
+     */
+    check(
+      'a phone box that asks for the country code inside it is still the phone box',
+      legacy.values.ph1 === PROFILE.phone,
+      `"${legacy.values.ph1}"`,
+    );
+    check(
+      'and the dialling-code box beside a real one is still left alone',
+      legacy.values.cc === '' && legacy.values.ph2 === PROFILE.phone,
+      `code "${legacy.values.cc}", mobile "${legacy.values.ph2}"`,
+    );
+
+    /*
+     * Taleo Classic and its descendants lay a questionnaire out as a table:
+     * the question in a row header, the buttons in the cell beside it.
+     * `labelFor` learned to read a `th` for text boxes; radio groups had not,
+     * so the group's whole description was a name like `q_998877`, it matched
+     * nothing, and it was skipped in silence.
+     */
+    check(
+      'a question in a table row header is read, and answered',
+      legacy.table === 'Y',
+      `checked "${legacy.table}"; filled ${legacy.filled.join(', ') || 'nothing'}`,
     );
 
     group('Values a framework will notice');
