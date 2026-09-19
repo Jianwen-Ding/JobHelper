@@ -188,6 +188,39 @@ async function main() {
     }
 
     /*
+     * Putting one narrowed skills group back.
+     *
+     * The card's own harness proves the button writes the group's list into
+     * the spec. The half that matters is further down, once this walk has
+     * built and staged: that the spec is what gets compiled and filed, so the
+     * resume the employer receives has the group back. Undone here, checked
+     * against the saved resume there — no extra build, because a second one
+     * would stage the application early and leave the staging checks below
+     * with nothing new to see.
+     */
+    const putBack = await (async () => {
+      const row = card.locator('.change').filter({ hasText: /dropped/ }).first();
+      const undoable = await row.locator('button.undo-one').count();
+      check('a narrowed skills group offers to be put back', undoable === 1, `${undoable} buttons`);
+      if (undoable !== 1) return null;
+
+      // The group's name is its own element; the sentence beside it has had
+      // that prefix stripped, so it cannot be split back out of the text.
+      const group = (await row.locator('.where').innerText()).trim();
+      const said = (await row.innerText()).replace(/\s+/g, ' ');
+      const cut = (said.match(/dropped ([^—]+)/)?.[1] ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+
+      await row.locator('button.undo-one').click();
+      await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 90_000 });
+      check(
+        'the row goes once it is put back',
+        (await card.locator('.change').filter({ hasText: /dropped/ }).filter({ hasText: group }).count()) === 0,
+        `${group}: ${said.slice(0, 40)}`,
+      );
+      return { group, cut };
+    })();
+
+    /*
      * What the tracker and the upload folder held before this build.
      *
      * Scoped deliberately: the suites share a save, `cleanStore` only clears
@@ -202,14 +235,39 @@ async function main() {
       files: (((await (await fetch(`${SERVER}/current`)).text()).match(/href="\/current\//g)) ?? []).length,
     };
 
-    await card.getByRole('button', { name: 'Build resume' }).click();
+    /*
+     * "Recompile" once anything has been compiled — which the skills undo
+     * above does, because putting a line back and leaving the old picture on
+     * screen would be showing a resume nobody has. Same button, same lane,
+     * and this is the press that stages.
+     */
+    await card.getByRole('button', { name: /^(Build resume|Recompile)$/ }).click();
 
     // Compiling takes seconds; the card has to show it is working.
-    await card.locator('.progress').first().waitFor({ timeout: 15_000 });
-    check('progress is shown while the resume compiles', true, await card.locator('.progress-label').innerText());
+    const bar = card.locator('.step').first().locator('.progress');
+    await bar.waitFor({ timeout: 15_000 });
+    check('progress is shown while the resume compiles', true, await card.locator('.progress-label').first().innerText());
 
+    /*
+     * Waited for the bar to go, rather than for a fit badge to exist.
+     *
+     * The badge was the signal that the build had finished, and it stopped
+     * meaning that the moment anything compiled earlier in the walk — the
+     * skills undo above does — because that compile's badge is still on screen
+     * when the next build starts. So the wait returned at once and the check
+     * ran mid-build, failing on a bar that was doing its job.
+     *
+     * This step's bar, too. The cover letter drafts itself as soon as the
+     * proposal lands and its bar belongs to step 2; counting every bar on the
+     * card says nothing about whether the compile finished.
+     */
+    await bar.waitFor({ state: 'detached', timeout: 120_000 }).catch(() => undefined);
+    check(
+      'progress clears when the work finishes',
+      (await bar.count()) === 0,
+      await card.locator('.step').first().locator('.progress-label').innerText().catch(() => ''),
+    );
     await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 90_000 });
-    check('progress clears when the work finishes', (await card.locator('.progress').count()) === 0);
     const fitText = await card.locator('.fit.ok, .fit.bad').innerText();
     check('resume compiled and fits one page', /Fits on one page/.test(fitText), fitText);
 
@@ -247,6 +305,50 @@ async function main() {
         `${before.files} files before, ${listed} after — newest row ${made?.company ?? 'none'} ${made?.status ?? ''}`,
       );
     })();
+
+    /*
+     * And the other half of the skills undo: what was staged, not what the
+     * card claims. The build above saved this posting's resume, so the group
+     * put back has to be back on the document that would be attached.
+     */
+    if (putBack) {
+      /*
+       * Waited for, not assumed. Staging is deliberately not awaited by the
+       * button — the preview is already on screen and the real compile takes
+       * as long as a real compile — so the resume reaches disk a moment after
+       * the files do. Reading once raced that and reported the previous run's
+       * copy, which is a fault in the reading, not in the undo.
+       *
+       * Both endpoints come back bare: a list of resumes, and the resolved
+       * resume itself. Neither is wrapped in a named field.
+       */
+      const groupNow = async () => {
+        /*
+         * The resume this application actually points at, not the first one
+         * whose id mentions the company. A run leaves its tailored copy
+         * behind, so "the Helios one" can be last week's — which is what this
+         * read reported while the spec being posted was perfectly correct.
+         */
+        const apps = await (await fetch(`${SERVER}/api/applications`)).json();
+        const row = (apps.applications ?? []).find((a) => /helios/i.test(a.company ?? ''));
+        if (!row?.resumeId) return null;
+        const resolved = await (await fetch(`${SERVER}/api/resumes/${encodeURIComponent(row.resumeId)}/resolved`)).json();
+        return (resolved?.sections ?? [])
+          .flatMap((sec) => sec.skillGroups ?? [])
+          .find((g) => (g.name ?? '').toUpperCase() === putBack.group.toUpperCase()) ?? null;
+      };
+      let printed = null;
+      for (let wait = 0; wait < 60; wait++) {
+        printed = await groupNow();
+        if (printed && putBack.cut.every((item) => printed.items.includes(item))) break;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      check(
+        'and the resume that would be sent has that group back in full',
+        Boolean(printed) && putBack.cut.every((item) => printed.items.includes(item)),
+        `${putBack.group}: ${JSON.stringify(printed?.items)} — should hold ${JSON.stringify(putBack.cut)}`,
+      );
+    }
 
     // You can see what you are about to send without leaving the posting.
     await card.locator('.pdf-pane canvas').first().waitFor({ timeout: 30_000 });
