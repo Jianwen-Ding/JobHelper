@@ -635,6 +635,136 @@ export const SYSTEMS = [
   },
 
   {
+    /*
+     * The question Greenhouse forms ask more often than either half of it on
+     * its own, and it is two declarations joined: authorized, *and* not needing
+     * sponsorship. It was answered from `work_authorization` alone, so an
+     * applicant who is authorized and does need sponsorship — anyone here on a
+     * student visa — had their application state the opposite, and the card
+     * counted it as a field filled. Handed back instead, and reported.
+     */
+    name: 'Authorization and sponsorship asked as one question',
+    html: `
+      <label for="one-fn">First Name <span class="asterisk">*</span></label>
+      <input type="text" id="one-fn" name="job_application[first_name]">
+      <label for="one-ln">Last Name <span class="asterisk">*</span></label>
+      <input type="text" id="one-ln" name="job_application[last_name]">
+      <label for="one-em">Email <span class="asterisk">*</span></label>
+      <input type="text" id="one-em" name="job_application[email]">
+      <label for="one-auth">
+        Are you legally authorized to work in the United States without sponsorship,
+        now or in the future? <span class="asterisk">*</span>
+      </label>
+      <select id="one-auth" name="job_application[answers_attributes][0][boolean_value]">
+        <option value="">--</option><option value="1">Yes</option><option value="0">No</option>
+      </select>`,
+    want: {
+      '#one-fn': 'Jianwen',
+      '#one-ln': 'Ding',
+      '#one-em': 'ding.jianw@northeastern.edu',
+      // Neither "Yes" nor "No" is a thing this profile says.
+      '#one-auth': '',
+    },
+    reportsUnfillable: ['work_authorization'],
+    questions: [],
+    wantsLetter: false,
+  },
+
+  {
+    /*
+     * References and an emergency contact, which Taleo and BrassRing ask for on
+     * the same page as the applicant's own details — in fields with the same
+     * words in them. Every one of these was filled with the applicant: a
+     * referee whose email address and telephone number are the candidate's, an
+     * emergency contact who is the person having the emergency.
+     */
+    name: 'A form that asks for references',
+    html: `
+      <table><tbody>
+        <tr><td><label for="rr-fn">First Name</label></td><td><input id="rr-fn" name="TEXT1" type="text"></td></tr>
+        <tr><td><label for="rr-ln">Last Name</label></td><td><input id="rr-ln" name="TEXT2" type="text"></td></tr>
+        <tr><td><label for="rr-em">E-mail Address</label></td><td><input id="rr-em" name="TEXT3" type="text"></td></tr>
+        <tr><td><label for="rr-ph">Home Phone</label></td><td><input id="rr-ph" name="TEXT4" type="text"></td></tr>
+        <tr><td colspan="2"><b>Professional references</b></td></tr>
+        <tr><td><label for="rr-rn">Reference 1 Full Name</label></td><td><input id="rr-rn" name="TEXT5" type="text"></td></tr>
+        <tr><td><label for="rr-re">Reference 1 E-mail</label></td><td><input id="rr-re" name="TEXT6" type="text"></td></tr>
+        <tr><td><label for="rr-rp">Reference 1 Home Phone</label></td><td><input id="rr-rp" name="TEXT7" type="text"></td></tr>
+        <tr><td colspan="2"><b>In case of emergency</b></td></tr>
+        <tr><td><label for="rr-en">Emergency Contact Name</label></td><td><input id="rr-en" name="TEXT8" type="text"></td></tr>
+        <tr><td><label for="rr-ep">Emergency Contact Number</label></td><td><input id="rr-ep" name="TEXT9" type="text"></td></tr>
+      </tbody></table>`,
+    want: {
+      '#rr-fn': 'Jianwen',
+      '#rr-ln': 'Ding',
+      '#rr-em': 'ding.jianw@northeastern.edu',
+      '#rr-ph': '555-0100',
+      '#rr-rn': '',
+      '#rr-re': '',
+      '#rr-rp': '',
+      '#rr-en': '',
+      '#rr-ep': '',
+    },
+    questions: [],
+    wantsLetter: false,
+  },
+
+  {
+    /*
+     * The block at the foot of a Greenhouse form, which is on nearly every one
+     * of them. Three of these fields read like fields autofill knows: the
+     * signature line under "Voluntary Self-Identification of Disability" is a
+     * box labelled "Your Name", which `full_name` matches, and "Country of
+     * Birth" is a country dropdown like any other.
+     *
+     * Filling them is not a convenience. Typing the applicant's legal name
+     * onto the signature line completes, in their name, a federal form whose
+     * whole premise is that completing it is voluntary; and answering "Country
+     * of Birth" from where they live now is false for anyone who has moved,
+     * on the part of the form an employer hands to an immigration lawyer.
+     */
+    name: 'Voluntary self-identification',
+    html: `
+      <label for="vsi-fn">First Name <span class="asterisk">*</span></label>
+      <input type="text" id="vsi-fn" name="job_application[first_name]">
+      <label for="vsi-ph">Phone <span class="asterisk">*</span></label>
+      <input type="text" id="vsi-ph" name="job_application[phone]">
+      <label for="vsi-ctry">Country <span class="asterisk">*</span></label>
+      <select id="vsi-ctry" name="job_application[country]">
+        <option value="">Please select</option><option>United States</option><option>India</option>
+      </select>
+
+      <h3>U.S. Equal Opportunity Employment Information (Completion is voluntary)</h3>
+      <label for="vsi-gender">Gender</label>
+      <select id="vsi-gender" name="job_application[gender]">
+        <option value="">Please select</option><option>Male</option><option>Female</option>
+        <option>Decline To Self Identify</option>
+      </select>
+      <label for="vsi-birth">Country of Birth</label>
+      <select id="vsi-birth" name="job_application[country_of_birth]">
+        <option value="">Please select</option><option>United States</option><option>India</option>
+      </select>
+
+      <h3>Voluntary Self-Identification of Disability</h3>
+      <label for="vsi-sig">Your Name</label>
+      <input type="text" id="vsi-sig" name="job_application[disability_signature]">
+      <label for="vsi-date">Today's Date</label>
+      <input type="text" id="vsi-date" name="job_application[disability_date]">`,
+    want: {
+      // The application's own fields, filled as usual — including a country
+      // dropdown two lines above one that must not be.
+      '#vsi-fn': 'Jianwen',
+      '#vsi-ph': '555-0100',
+      '#vsi-ctry': 'United States',
+      '#vsi-gender': '',
+      '#vsi-birth': '',
+      '#vsi-sig': '',
+      '#vsi-date': '',
+    },
+    questions: [],
+    wantsLetter: false,
+  },
+
+  {
     name: 'BrassRing',
     // Old-school: a table, and labels in the cell to the left.
     html: `
