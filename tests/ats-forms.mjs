@@ -844,6 +844,40 @@ const NOT_APPLICATIONS = {
 const shell = (body) =>
   `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>${body}</form></body></html>`;
 
+/*
+ * A form whose fields accept the value now and the browser refuses at the end.
+ *
+ * The check after a fill was that the value stuck, which catches the field
+ * that throws it away. It missed the other half: `pattern` and `type` are
+ * enforced when Submit is pressed, not when a value is assigned, so the field
+ * holds the text happily, the card says "Filled 4 fields", and the form will
+ * not go. Measured on this markup before the fix:
+ *
+ *   filled      : phone=(555) 555-5555, website=github.com/Jianwen-Ding
+ *   skipped     : []
+ *   phone field : valid false, "Please match the requested format."
+ *   url field   : valid false, "Please enter a URL."
+ *   form would submit: false
+ *
+ * Both constraints are ones the enterprise systems really impose — Workday,
+ * Taleo and iCIMS all ship a digits-only phone pattern — and both answers are
+ * the same answer written another way, which is the point: reformatting a
+ * phone or adding a scheme to a link changes nothing about what was said.
+ */
+/* `shell` supplies the <form>; a nested one is dropped by the parser. */
+const CONSTRAINED = `
+  <label for="fn">First name</label>
+  <input id="fn" name="first_name">
+  <label for="tel">Phone</label>
+  <input id="tel" type="tel" name="phone" pattern="\\d{10}" required>
+  <label for="em">Email</label>
+  <input id="em" type="email" name="email" required>
+  <label for="site">Portfolio</label>
+  <input id="site" type="url" name="website">
+  <label for="li">LinkedIn</label>
+  <input id="li" type="url" name="linkedin">
+  <button type="submit">Submit Application</button>`;
+
 async function main() {
   const source = fs.readFileSync(path.join(root, 'src/content/autofill.js'), 'utf8');
   const server = http.createServer((req, res) => {
@@ -851,6 +885,11 @@ async function main() {
     if (url === '/autofill.js') {
       res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
       res.end(source);
+      return;
+    }
+    if (url === '/constrained') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(shell(CONSTRAINED));
       return;
     }
     const negative = url.startsWith('/not/') && NOT_APPLICATIONS[decodeURIComponent(url.slice(5))];
@@ -992,6 +1031,74 @@ async function main() {
      * posting, and the cost of reading one is the user's details typed into
      * somebody else's form.
      */
+    /*
+     * The fields that take a value now and refuse it at Submit. See
+     * `CONSTRAINED`. The assertion that matters is the last one: not whether
+     * each box holds text, but whether the form would actually go.
+     */
+    console.log('\nA form whose fields have something to say about the format');
+    {
+      const page = await browser.newPage();
+      await page.goto(`${base}/constrained`, { waitUntil: 'load' });
+      const out = await page.evaluate(
+        async ({ b, profile }) => {
+          const { fillForm } = await import(`${b}/autofill.js`);
+          const report = fillForm(profile);
+          const look = (id) => {
+            const el = document.getElementById(id);
+            return { value: el.value, valid: el.checkValidity(), says: el.validationMessage };
+          };
+          /*
+           * Every field the report claims, judged by the browser. Asserting
+           * that nothing was skipped does not say this: in the broken build
+           * nothing is skipped either, and two of the fields are invalid.
+           */
+          const claimed = [...document.querySelectorAll('input')]
+            .filter((el) => report.filled.some((f) => f.value === el.value) && el.value)
+            .map((el) => ({ id: el.id, valid: el.checkValidity(), says: el.validationMessage }));
+
+          return {
+            filled: report.filled.map((f) => `${f.key}=${f.value}`),
+            skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+            rejected: claimed.filter((c) => !c.valid).map((c) => `${c.id}: ${c.says}`),
+            tel: look('tel'),
+            site: look('site'),
+            li: look('li'),
+            em: look('em'),
+            submits: document.querySelector('form').checkValidity(),
+          };
+        },
+        {
+          b: base,
+          profile: {
+            first_name: 'Jianwen',
+            phone: '(555) 555-5555',
+            email: 'ding.jianw@northeastern.edu',
+            website: 'github.com/Jianwen-Ding',
+            linkedin: 'linkedin.com/in/jianwen',
+          },
+        },
+      );
+
+      check('the phone is written in the shape the pattern demands', out.tel.value === '5555555555', out.tel.value);
+      check('and the browser is content with it', out.tel.valid, out.tel.says);
+      check(
+        'a bare link is given the scheme a url field insists on',
+        out.site.value === 'https://github.com/Jianwen-Ding',
+        out.site.value,
+      );
+      check('for every link field, not just one', out.li.valid && out.li.value.startsWith('https://'), out.li.value);
+      check('an address that was already fine is left alone', out.em.value === 'ding.jianw@northeastern.edu', out.em.value);
+      check(
+        'nothing was reported as filled that the browser will reject',
+        out.rejected.length === 0,
+        out.rejected.join(' | '),
+      );
+      check('and nothing had to be given up on', out.skipped.length === 0, out.skipped.join(' | '));
+      check('and so the form would actually submit', out.submits === true);
+      await page.close();
+    }
+
     console.log('\nNot an application form');
     for (const [what, body] of Object.entries(NOT_APPLICATIONS)) {
       const page = await browser.newPage();
