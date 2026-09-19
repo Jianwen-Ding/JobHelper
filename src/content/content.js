@@ -981,16 +981,23 @@
       payload = await applicationPayload();
       if (!current()) return;
       /*
-       * Read the page, decide whether it is a posting, and change nothing.
+       * Read the page, work out what the match would offer, and apply none
+       * of it.
        *
-       * This said `'match'`, so arriving on a job advert swapped wordings in
-       * the resume before anyone had asked for anything — and every page of an
-       * application did it again. The verdict this call exists for (is this a
-       * posting? whose? which role?) does not depend on tailoring, so asking
-       * for none costs nothing and leaves the proposal as the resume you
-       * actually keep. The three build modes are how you change it.
+       * This asked for `'none'` for a while, and before that for `'match'`.
+       * `'match'` was wrong because it swapped wordings in the resume before
+       * anyone had asked — arriving on a job advert altered the document, so
+       * "send what I have" was the thing you undid. `'none'` was wrong in the
+       * other direction: it meant the card could not say what the match
+       * *would* do without a round trip and a wait.
+       *
+       * Asking for the match and applying nothing is both. The work is local,
+       * free and measured at two seconds against the worst page set worth
+       * having — no model, no LaTeX, no network past this call — and what
+       * comes back is a list of offers the card shows with every box off. The
+       * resume on screen is still the one you keep.
        */
-      found = await send('analyze', { ...payload, tailor: 'none' });
+      found = await send('analyze', { ...payload, tailor: 'match' });
     } catch (err) {
       /*
        * A server that is down is worth saying on a page that is certainly a
