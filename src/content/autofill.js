@@ -121,16 +121,54 @@ const NOT_ABOUT_YOU = [
   /\b(gender|race|ethnicit\w*|hispanic|latin[ox]|veteran|disabilit\w*|sexual[\s_-]orientation|pronouns)\b/i,
   /\b(eeoc?|self[\s_-]?identification|equal[\s_-]employment)\b/i,
   /*
-   * The box beside a telephone number that wants "+1", not a telephone
-   * number. `phone` matched "Phone Country Code" first and wrote the whole
-   * number into it; where the word "phone" was absent, `address_country`
-   * matched and wrote "United States". Neither is a dialling code, and a
-   * telephone number an employer cannot ring is worse than a blank one.
+   * A consent question, which is not a fact about the applicant at all — it
+   * is a decision about what the employer may send them.
+   *
+   * Measured: a group headed "Marketing: may we email you about sponsorship
+   * webinars?" was answered "No", from `requires_sponsorship`, because
+   * `sponsor\w*` matched the word "sponsorship" in it. That is the visa
+   * answer written onto a mailing-list question — and the same shape reaches
+   * any of these patterns, because a consent question is free to mention
+   * whatever it is consenting about.
+   *
+   * Two rules rather than one long list of words, and both are deliberately
+   * narrow. The nouns are ones no profile field is ever called. The second
+   * wants "may we"/"can we" *and* an "about" within a phrase of it, so it
+   * catches "may we email you about openings" and not "How can we contact
+   * you?", which is the heading over a real email box.
    */
-  /\b(country|area|dial(?:l?ing)?)[\s_-]?code\b/i,
+  /\b(marketing|newsletter|mailing[\s_-]?list|promotional?|webinars?|subscribe|unsubscribe|opt[\s_-]?(?:in|out)|communications?[\s_-]?preferences?)\b/i,
+  /\b(?:may|can)[\s_-]we\b[\s\S]{0,40}\babout\b/i,
 ];
 
-const isNotAboutYou = (description) => NOT_ABOUT_YOU.some((re) => re.test(description));
+/**
+ * The box beside a telephone number that wants "+1", not a telephone number.
+ *
+ * `phone` matched "Phone Country Code" first and wrote the whole number into
+ * it; where the word "phone" was absent, `address_country` matched and wrote
+ * "United States". Neither is a dialling code, and a telephone number an
+ * employer cannot ring is worse than a blank one.
+ *
+ * Read with the parentheses taken out, and kept out of the list above for
+ * that reason alone. A parenthetical is an instruction about how to answer,
+ * not a change of subject: "Phone Number (include country code)" is the
+ * telephone box — asked for in exactly those words because international
+ * applicants are expected to write the `+` — and excluding it left the
+ * number, usually a required field, blank with nothing said about it. "Phone
+ * Country Code" still reads as the code box, because nothing there is an
+ * aside.
+ *
+ * Only parentheses. "Phone number, including country code" is still read as
+ * the code box and still goes unfilled; that shape is rarer, and guessing at
+ * where a label stops being its subject is how the first version of this
+ * went wrong.
+ */
+const DIALLING_CODE = /\b(country|area|dial(?:l?ing)?)[\s_-]?code\b/i;
+const asksForADiallingCode = (description) =>
+  DIALLING_CODE.test(description.replace(/\([^)]*\)/g, ' '));
+
+const isNotAboutYou = (description) =>
+  asksForADiallingCode(description) || NOT_ABOUT_YOU.some((re) => re.test(description));
 
 /*
  * "Are you legally authorized to work in the United States without
@@ -150,6 +188,33 @@ const AUTHORIZATION = FIELD_PATTERNS.find(([key]) => key === 'work_authorization
 const SPONSORSHIP = FIELD_PATTERNS.find(([key]) => key === 'requires_sponsorship')[1];
 const asksBothAtOnce = (description) =>
   AUTHORIZATION.test(description) && SPONSORSHIP.test(description);
+
+/**
+ * Handing it back, wherever it turns up.
+ *
+ * Asked before `isNotAboutYou`, because the commonest wording of this
+ * question is
+ *
+ *   Are you a U.S. citizen or otherwise authorized to work in the United
+ *   States for any employer without sponsorship?
+ *
+ * and the word "citizen" in it matched the pattern that keeps "Country of
+ * citizenship" from being filled with where somebody lives. An exclusion
+ * says nothing — deliberately, because an excluded field is not the user's
+ * to fill — so this one disappeared: not filled, not reported, not on the
+ * card. The same sentence with the word "citizen" taken out was handed back
+ * properly, which is what this restores. A question about the applicant's own
+ * right to work is theirs however it is phrased.
+ */
+const handBack = (description, skipped) => {
+  if (!asksBothAtOnce(description)) return false;
+  skipped.push({
+    key: 'work_authorization',
+    reason: 'this one asks two things at once',
+    description: description.slice(0, 60),
+  });
+  return true;
+};
 
 /**
  * A label that is just "Name" wants the whole name.
@@ -233,27 +298,66 @@ const rootOf = (node) => {
  * outright, and the positional fallback only looks at what immediately precedes
  * the field.
  */
+/**
+ * What `aria-labelledby` points at, as one piece of text.
+ *
+ * Its own function because a radio needs it and cannot use `labelFor`: a
+ * radio's own `label[for]` is its *answer* — "Yes" — and the question is
+ * somewhere else entirely, so the chain that is right for a text box gives
+ * exactly the wrong string for a group.
+ */
+function fromLabelledBy(element) {
+  const ids = element.getAttribute?.('aria-labelledby');
+  if (!ids) return '';
+  const text = ids
+    .split(/\s+/)
+    /*
+     * Never the field itself, which `aria-labelledby` does sometimes name.
+     *
+     * Defensive rather than fixing anything measured, and worth being plain
+     * about: an `<input>` has no `textContent`, so on the field this is
+     * really about it changes nothing, and no test here falsifies it. It
+     * earns its line on a `<textarea>`, whose `textContent` is whatever the
+     * applicant typed — labelling a field with its own contents is not a
+     * description of anything.
+     */
+    .filter((id) => id !== element.id)
+    // Scoped to this field's own root: ids inside a component are not in the
+    // document's id map, so Workday-style labelling breaks there otherwise.
+    .map((id) => rootOf(element).getElementById?.(id)?.textContent
+      ?? rootOf(element).querySelector(`#${CSS.escape(id)}`)?.textContent
+      ?? '')
+    .join(' ');
+  return clean(text);
+}
+
 function labelFor(input) {
+  /*
+   * Each of these answers only when it has something to say.
+   *
+   * `if (label) return clean(label.textContent)` returned the empty string
+   * for a label that exists and is empty — and an empty `<label for=…>` is
+   * ordinary markup: a styling hook, an icon slot, a label a framework
+   * renders before its text arrives. Returning it ended the search, so
+   * `aria-labelledby` and `aria-label` below were never reached on exactly
+   * the forms that use them, and the field was described by its `name`
+   * attribute alone. On a system whose names are `field_0192` that is no
+   * description at all.
+   *
+   * A wrapping `<label>` has the same shape: one that holds only the input
+   * cleans down to nothing.
+   */
   if (input.id) {
     const label = rootOf(input).querySelector(`label[for="${CSS.escape(input.id)}"]`);
-    if (label) return clean(label.textContent);
+    const said = clean(label?.textContent);
+    if (said) return said;
   }
 
-  const wrapping = input.closest('label');
-  if (wrapping) return clean(wrapping.textContent);
+  const wrapping = clean(input.closest('label')?.textContent);
+  if (wrapping) return wrapping;
 
-  const describedBy = input.getAttribute('aria-labelledby');
-  if (describedBy) {
-    const text = describedBy
-      .split(/\s+/)
-      // Scoped to this field's own root: ids inside a component are not in the
-      // document's id map, so Workday-style labelling breaks there otherwise.
-      .map((id) => rootOf(input).getElementById?.(id)?.textContent
-        ?? rootOf(input).querySelector(`#${CSS.escape(id)}`)?.textContent
-        ?? '')
-      .join(' ');
-    if (clean(text)) return clean(text);
-  }
+  const described = fromLabelledBy(input);
+  if (described) return described;
 
   const aria = clean(input.getAttribute('aria-label'));
   if (aria) return aria;
@@ -430,6 +534,73 @@ function setValue(input, value) {
 const sameOption = (a, b) => clean(a).toLowerCase() === clean(b).toLowerCase();
 
 /**
+ * Reading a yes/no answer out of a profile that holds a sentence.
+ *
+ * Measured, and it is the worst miss in the file: a form asking "Are you
+ * legally authorized to work in the US?" with Yes and No beside it, against a
+ * profile whose `work_authorization` reads "Authorized to work in the US",
+ * matched no option and was left blank. That is the one question most likely
+ * to get an application rejected without a person reading it, and it was
+ * being skipped on every form that asks it as a choice rather than a box —
+ * which is nearly all of them, because it is a legal declaration.
+ *
+ * The profile holds a sentence because the field is a free-text box and a
+ * sentence is what people type in one.
+ *
+ * Deliberately narrow, because the cost here is not a blank field but a false
+ * declaration about the applicant's right to work, made in their name:
+ *
+ *   Only where the options really are a yes/no pair. A three-way list, or a
+ *   list of visa categories, is not this question and is left alone.
+ *
+ *   Only for the two keys that *are* yes/no questions. Nothing else in the
+ *   profile is a declaration, and a city is never "yes".
+ *
+ *   A leading Yes or No wins over everything, because that is the answer and
+ *   the rest of the sentence is its explanation. "Yes, but not until 2027"
+ *   is a yes; read for negation words instead it comes out a no.
+ *
+ *   Then an explicit negation. Then an explicit affirmation. A phrase that is
+ *   neither is skipped and reported, exactly as it is today — "it needs you"
+ *   is a fine answer and a wrong declaration is not.
+ */
+const YES_NO_KEYS = new Set(['work_authorization', 'requires_sponsorship']);
+const NEGATED = /\b(no|not|never|non|cannot|can't|don'?t|does'?nt|doesn't|without|un(?:authori[sz]ed|able)|ineligible)\b/i;
+const AFFIRMED = /\b(yes|authori[sz]ed|eligible|permitted|allowed|able|citizen|permanent[\s_-]resident|require[sd]?|need(?:s|ed)?|do)\b/i;
+
+/** Yes, no, or "cannot tell" — for a value against a yes/no pair. */
+function yesNoFrom(value) {
+  const said = clean(value).toLowerCase();
+  if (!said) return undefined;
+
+  const lead = /^(yes|no)\b/i.exec(said)?.[1]?.toLowerCase();
+  if (lead) return lead;
+
+  if (NEGATED.test(said)) return 'no';
+  if (AFFIRMED.test(said)) return 'yes';
+  return undefined;
+}
+
+/**
+ * The option that answers a yes/no question, where the labels are yes and no
+ * and the profile's answer is a phrase. `undefined` unless all of that holds.
+ */
+function yesNoOption(key, value, options) {
+  if (!YES_NO_KEYS.has(key)) return undefined;
+
+  const labelled = options.map((o) => ({ o, said: clean(o.label).toLowerCase() }));
+  const yes = labelled.find((x) => x.said === 'yes');
+  const no = labelled.find((x) => x.said === 'no');
+  // A yes/no *pair* and nothing else. "Yes / No / Prefer not to say" is a
+  // different question with a third answer, and guessing between three is
+  // exactly what this file does not do.
+  if (!yes || !no || labelled.length !== 2) return undefined;
+
+  const answer = yesNoFrom(value);
+  return answer === 'yes' ? yes.o : answer === 'no' ? no.o : undefined;
+}
+
+/**
  * Fill what we can. Returns a report of what was filled and what was skipped,
  * so the user can see the difference between "done" and "done silently wrong".
  */
@@ -446,6 +617,9 @@ export function fillForm(fields, { overwrite = false } = {}) {
     // Somebody else's details, or a question this profile does not answer —
     // see `NOT_ABOUT_YOU`. Not reported: there is nothing here for the user to
     // do about it, and naming it would imply the field is theirs to fill.
+    // Before the exclusions, which say nothing, and before the match, which
+    // this question does not need. See `handBack`.
+    if (handBack(description, skipped)) continue;
     if (isNotAboutYou(description)) continue;
 
     let match = FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key]);
@@ -457,11 +631,6 @@ export function fillForm(fields, { overwrite = false } = {}) {
 
     const [key] = match;
     const value = fields[key];
-
-    if (asksBothAtOnce(description)) {
-      skipped.push({ key, reason: 'this one asks two things at once', description: description.slice(0, 60) });
-      continue;
-    }
 
     const answered = input instanceof HTMLSelectElement ? selectIsAnswered(input) : Boolean(input.value);
     if (answered && !overwrite) {
@@ -478,9 +647,16 @@ export function fillForm(fields, { overwrite = false } = {}) {
        * was reported as having no option for the user's country while sitting
        * two lines above the one that did.
        */
-      const option = [...input.options].find(
-        (o) => sameOption(o.textContent, value) || sameOption(o.value, value),
-      );
+      const option =
+        [...input.options].find(
+          (o) => sameOption(o.textContent, value) || sameOption(o.value, value),
+        ) ??
+        // And, failing that, a yes/no pair against a phrase. See `yesNoOption`.
+        yesNoOption(
+          key,
+          value,
+          [...input.options].map((o) => ({ label: o.textContent, el: o })),
+        )?.el;
       if (option) {
         nativeSet(input, 'value', option.value);
         // Both, because choosing from a list fires both. `change` alone is
@@ -530,8 +706,43 @@ export function fillForm(fields, { overwrite = false } = {}) {
  */
 function groupLabelFor(radios) {
   const first = radios[0];
-  const legend = first.closest('fieldset')?.querySelector('legend');
-  if (legend) return clean(legend.textContent);
+  const legend = clean(first.closest('fieldset')?.querySelector('legend')?.textContent);
+  if (legend) return legend;
+
+  /*
+   * Then whatever the buttons themselves point at, which is how the
+   * enterprise systems mark a radio question: no fieldset, no heading inside
+   * a wrapper, just `aria-labelledby` on each button naming the div that
+   * holds the question. Read from `labelFor` so the same chain — several
+   * ids, a missing one, one naming the field itself — applies here too.
+   *
+   * Only the parts every button agrees on, because each one also carries its
+   * own answer: taking the first button's whole label would make the question
+   * "Are you legally authorized to work in the US? Yes".
+   */
+  const shared = radios.map((radio) => radio.getAttribute('aria-labelledby')).filter(Boolean);
+  if (shared.length === radios.length && new Set(shared).size === 1) {
+    const said = fromLabelledBy(first);
+    if (said) return said;
+  }
+  const aria = clean(first.getAttribute('aria-label'));
+  if (aria) return aria;
+
+  /*
+   * A row header, which is how the older enterprise systems lay out a
+   * questionnaire: the question in a `<th scope="row">`, the buttons in the
+   * `<td>` beside it. `labelFor` learned this for text boxes — see the `th`
+   * in its ancestor search — and groups had not, so the question came back
+   * empty, the group's whole description was a name like `q_998877`, and it
+   * matched nothing. Skipped in silence, on the question most likely to
+   * matter.
+   *
+   * Taken from this row rather than added to the climb below, which would
+   * reach the table and could take a column heading from some other row as
+   * the question for this one.
+   */
+  const header = clean(first.closest('tr')?.querySelector('th')?.textContent);
+  if (header) return header;
 
   let group = first.parentElement;
   for (let i = 0; i < 5 && group; i++, group = group.parentElement) {
@@ -619,6 +830,10 @@ function answerRadioGroups(fields, overwrite) {
   for (const radios of groups.values()) {
     const description = clean([groupLabelFor(radios), radios[0].name].filter(Boolean).join(' '));
     if (!description) continue;
+    // Before the exclusions and before the match, as in `fillForm`. Radios
+    // are the commoner shape for this question: Workable and Teamtailor ask
+    // "legally authorized to work without sponsorship" as a pair of buttons.
+    if (handBack(description, skipped)) continue;
     if (isNotAboutYou(description)) continue;
 
     /*
@@ -637,22 +852,21 @@ function answerRadioGroups(fields, overwrite) {
     const [key] = match;
     const value = fields[key];
 
-    // Two declarations in one question — see `asksBothAtOnce`. Radios are the
-    // commoner shape for it: Workable and Teamtailor ask "legally authorized
-    // to work without sponsorship" as a pair of buttons.
-    if (asksBothAtOnce(description)) {
-      skipped.push({ key, reason: 'this one asks two things at once', description: description.slice(0, 60) });
-      continue;
-    }
-
     if (radios.some((radio) => radio.checked) && !overwrite) {
       skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
       continue;
     }
 
-    const wanted = radios.find(
-      (radio) => sameOption(optionLabelFor(radio), value) || sameOption(radio.value, value),
-    );
+    const wanted =
+      radios.find(
+        (radio) => sameOption(optionLabelFor(radio), value) || sameOption(radio.value, value),
+      ) ??
+      // And, failing that, a yes/no pair against a phrase. See `yesNoOption`.
+      yesNoOption(
+        key,
+        value,
+        radios.map((radio) => ({ label: optionLabelFor(radio), el: radio })),
+      )?.el;
     if (!wanted) {
       skipped.push({ key, reason: 'no matching option', description: description.slice(0, 60) });
       continue;

@@ -476,8 +476,29 @@
     }
   };
 
-  /** Which rebuild is the current one; see `case 'rebuild'`. */
+  /**
+   * Which proposal is the current one, on two axes at once.
+   *
+   * `rebuildSeq` answers "has another build started since this one" and
+   * `pass` answers "is this still the page that asked". Both are needed and
+   * neither is enough:
+   *
+   *   Only the sequence, and a build begun on one posting lands on the next.
+   *   A route change on a single-page board bumps `pass` and removes the
+   *   card, but the number an in-flight build is holding still matches — so
+   *   when the reply finally arrives it writes a different company's proposal
+   *   onto the card in front of you, and the files are built from it.
+   *
+   *   Only the pass, and two builds on one page race: the slower reply
+   *   arrives last and wins, which is the wrong one by definition.
+   *
+   * `setBase` had neither, so both failures applied to it — and it is the
+   * one people press repeatedly, because trying two bases against a posting
+   * is what the picker is for.
+   */
   let rebuildSeq = 0;
+  const startProposal = () => ({ build: ++rebuildSeq, on: pass });
+  const stillWanted = (token) => token.build === rebuildSeq && token.on === pass;
 
   async function onAction(action, payload = {}) {
     if (action.startsWith('answer:')) {
@@ -657,8 +678,14 @@
         });
 
       case 'setBase': {
+        const mine = startProposal();
         await send('setSettings', { patch: { baseResumeId: payload.baseResumeId } });
-        analysis = await send('analyze', { ...(await applicationPayload()), ...tailoring(payload) });
+        const next = await send('analyze', { ...(await applicationPayload()), ...tailoring(payload) });
+        // See `startProposal`. Picking two bases in quick succession is
+        // ordinary, and so is walking to the next posting while one is still
+        // being worked out.
+        if (!stillWanted(mine)) return next;
+        analysis = next;
         cardHandle?.update(analysis);
         return analysis;
       }
@@ -680,9 +707,9 @@
          * proposal and `update` is what puts it on screen. A superseded run
          * still finishes, still costs whatever it cost, and is then dropped.
          */
-        const mine = ++rebuildSeq;
+        const mine = startProposal();
         const next = await send('analyze', { ...(await applicationPayload()), ...tailoring(payload) });
-        if (mine !== rebuildSeq) return next;
+        if (!stillWanted(mine)) return next;
         analysis = next;
         cardHandle?.update(analysis);
         return analysis;

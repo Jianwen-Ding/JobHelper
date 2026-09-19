@@ -206,7 +206,141 @@ const AWKWARD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply �
   <textarea name="q1" placeholder="Why do you want to work at Lever?"></textarea>
 </form></body></html>`;
 
-const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD };
+/*
+ * A consent question, and a declaration answered from a sentence.
+ *
+ * Both measured against the real filler. The first is a marketing group that
+ * happens to say "sponsorship", which was answered from the applicant's visa
+ * status — the shape reaches any pattern, because a consent question is free
+ * to mention whatever it is consenting about. The second is the opposite
+ * failure: "Are you legally authorized to work in the US?" beside Yes and No,
+ * against a profile that holds a sentence, matched no option and was left
+ * blank. That is the question most likely to get an application rejected
+ * without a person reading it.
+ */
+const CONSENT = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <fieldset>
+    <legend>Marketing: may we email you about sponsorship webinars?</legend>
+    <label><input type="radio" name="mkt" value="yes"> Yes</label>
+    <label><input type="radio" name="mkt" value="no"> No</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Would you like to subscribe to our newsletter about visa status changes?</legend>
+    <label><input type="radio" name="news" value="yes"> Yes</label>
+    <label><input type="radio" name="news" value="no"> No</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Are you legally authorized to work in the US?</legend>
+    <label><input type="radio" name="auth" value="y"> Yes</label>
+    <label><input type="radio" name="auth" value="n"> No</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Will you now or in the future require sponsorship?</legend>
+    <label><input type="radio" name="spon" value="y"> Yes</label>
+    <label><input type="radio" name="spon" value="n"> No</label>
+  </fieldset>
+
+  <!-- Three answers, not two. Guessing between three is not this file's job. -->
+  <label for="spon3">Will you now or in the future require sponsorship?</label>
+  <select id="spon3" name="spon3">
+    <option value="">Choose</option><option>Yes</option><option>No</option><option>Prefer not to say</option>
+  </select>
+
+  <!-- The applicant's own email, so none of this can pass by the filler
+       having simply stopped touching the page. -->
+  <label for="own">Email</label><input id="own" name="email">
+</form></body></html>`;
+
+/*
+ * How a field says what it is, on the systems that do not use a plain label.
+ *
+ * Every one of these is how a real applicant tracking system marks its
+ * fields, and a branch map of autofill.js against this suite found that none
+ * of them was reached by any fixture: `aria-labelledby`, `aria-label`, and a
+ * radio with a separate `label[for]` rather than a wrapping one. Untested
+ * paths that real forms take are where the next bug is.
+ *
+ * Writing them down found one. The chain answered with the *empty string* for
+ * a label that exists and is empty — an ordinary thing in generated markup: a
+ * styling hook, an icon slot, a label whose text has not arrived. An empty
+ * answer still counted as an answer, so it ended the search and everything
+ * below it was unreachable on exactly the forms that use it.
+ */
+const LABELS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <!-- Workday: the question is in one node, the hint in another. -->
+  <span id="q1">Email</span><span id="h1">Address</span>
+  <input id="wd" name="f_0192" aria-labelledby="q1 h1">
+
+  <!-- Named ids that are not there. Ought to fall through, not stop. -->
+  <input id="gone" name="f_0193" aria-labelledby="no-such-node" aria-label="First Name">
+
+  <!-- Pointing at itself, which happens. The plain label wins anyway, which
+       is the behaviour worth pinning; the guard against self-reference in
+       fromLabelledBy is defensive and this does not exercise it. -->
+  <label for="selfref">Last Name</label>
+  <input id="selfref" name="f_0194" aria-labelledby="selfref">
+
+  <!-- The empty label. Without the fix it ends the search and the aria-label
+       below it is never read. -->
+  <label for="styled"></label>
+  <input id="styled" name="f_0195" aria-label="GitHub">
+
+  <!-- And a wrapping label holding only the field, which cleans to nothing. -->
+  <label><input id="wrapped" name="f_0196" aria-label="Phone"></label>
+
+  <!-- A radio group labelled the way SuccessFactors does it. -->
+  <div id="auth-q">Are you legally authorized to work in the US?</div>
+  <input type="radio" id="auth_y" name="auth" value="1" aria-labelledby="auth-q">
+  <label for="auth_y">Yes</label>
+  <input type="radio" id="auth_n" name="auth" value="0" aria-labelledby="auth-q">
+  <label for="auth_n">No</label>
+</form></body></html>`;
+
+
+/*
+ * Three shapes that filled nothing and said nothing, which is the worst
+ * outcome this file has: a required box left blank on a form the card has
+ * just reported as filled.
+ */
+const LEGACY = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <!-- The commonest wording of the right-to-work question on the hosted
+       boards, which puts citizenship and sponsorship in one sentence. -->
+  <fieldset>
+    <legend>Are you a U.S. citizen or otherwise authorized to work in the United States for any employer without sponsorship?</legend>
+    <label><input type="radio" name="citwork" value="Y"> Yes</label>
+    <label><input type="radio" name="citwork" value="N"> No</label>
+  </fieldset>
+
+  <!-- The question the citizenship rule exists for, which must stay excluded. -->
+  <label for="cob">Country of citizenship</label><input id="cob" name="citizenship">
+
+  <!-- A telephone box that asks for the code inside its own label. -->
+  <label for="ph1">Phone Number (include country code)</label><input id="ph1" name="phone" type="tel">
+
+  <!-- And the box the dialling-code rule exists for, beside a real one. -->
+  <label for="cc">Phone Country Code</label><input id="cc" name="phone_country_code">
+  <label for="ph2">Mobile</label><input id="ph2" name="mobile" type="tel">
+</form>
+
+<!-- Taleo Classic: the question in a row header, the buttons in the cell. -->
+<form><table><tbody>
+  <tr>
+    <th scope="row">Are you legally authorized to work in the United States?</th>
+    <td>
+      <label><input type="radio" name="q_998877" value="Y"> Yes</label>
+      <label><input type="radio" name="q_998877" value="N"> No</label>
+    </td>
+  </tr>
+</tbody></table></form>
+</body></html>`;
+
+const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -509,6 +643,213 @@ async function main() {
           checked: document.querySelector('input[name="rf_auth"]:checked')?.value ?? '',
         };
       }, { b: base, profile: { ...PROFILE, work_authorization: 'Yes' } }),
+    );
+
+
+    /* ------------------------------------------------------------------ */
+
+    const consent = await page.goto(`${base}/consent`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(profile);
+        const picked = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value ?? '';
+        return {
+          mkt: picked('mkt'),
+          news: picked('news'),
+          auth: picked('auth'),
+          spon: picked('spon'),
+          spon3: document.getElementById('spon3').value,
+          own: document.getElementById('own').value,
+          skipped: report.skipped.map((s) => `${s.key}:${s.reason}`),
+        };
+      }, {
+        b: base,
+        // A sentence, which is what people type into a free-text box — and
+        // the whole point of the second half of this group.
+        profile: {
+          ...PROFILE,
+          work_authorization: 'Authorized to work in the US',
+          requires_sponsorship: 'No, I do not need sponsorship',
+        },
+      }),
+    );
+
+    group('A consent question, which is not a fact about the applicant');
+    check(
+      'a marketing group that says "sponsorship" is not given the visa answer',
+      consent.mkt === '',
+      `checked "${consent.mkt}"`,
+    );
+    check(
+      'nor is a newsletter question that says "visa status"',
+      consent.news === '',
+      `checked "${consent.news}"`,
+    );
+    // Paired with the real question, so this cannot pass by the filler having
+    // stopped answering sponsorship at all.
+    check(
+      'while the question that really asks it is still answered',
+      consent.spon === 'n',
+      `checked "${consent.spon}"`,
+    );
+    check('and the applicant\'s own email is still filled', consent.own === PROFILE.email, consent.own);
+
+    group('A declaration answered from a sentence');
+    check(
+      '"Authorized to work in the US" answers Yes beside a Yes/No pair',
+      consent.auth === 'y',
+      `checked "${consent.auth}"`,
+    );
+    /*
+     * And not beside three. A wrong declaration about the right to work is
+     * made in the applicant's name and is worse than a blank one, so a list
+     * with a third answer is handed back rather than guessed at.
+     */
+    check(
+      'but a three-answer list is left for the user, and reported',
+      consent.spon3 === '' && consent.skipped.includes('requires_sponsorship:no matching option'),
+      `"${consent.spon3}"; ${consent.skipped.join(', ')}`,
+    );
+
+    /*
+     * And the answer is the answer, not the words around it.
+     *
+     * "Yes, but not until 2027" is a yes. Read by looking for negation words
+     * it comes out a no, which is the wrong declaration about needing a visa
+     * — made in the applicant's name, on the question an employer forwards to
+     * an immigration lawyer. So a leading Yes or No wins over everything, and
+     * this is the case where the two rules disagree.
+     */
+    const hedged = await page.goto(`${base}/consent`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm(profile);
+        return document.querySelector('input[name="spon"]:checked')?.value ?? '';
+      }, {
+        b: base,
+        profile: { ...PROFILE, requires_sponsorship: 'Yes, but not until 2027' },
+      }),
+    );
+    check('a hedged "Yes, but not until 2027" is still a yes', hedged === 'y', `checked "${hedged}"`);
+
+
+    /* ------------------------------------------------------------------ */
+
+    const labels = await page.goto(`${base}/labels`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm(profile);
+        return {
+          values: Object.fromEntries(
+            ['wd', 'gone', 'selfref', 'styled', 'wrapped'].map((id) => [id, document.getElementById(id).value]),
+          ),
+          auth: document.querySelector('input[name="auth"]:checked')?.value ?? '',
+        };
+      }, { b: base, profile: { ...PROFILE, work_authorization: 'Authorized to work in the US' } }),
+    );
+
+    group('Fields labelled the way the enterprise systems label them');
+    check(
+      'aria-labelledby naming two nodes is read as one question',
+      labels.values.wd === PROFILE.email,
+      `"${labels.values.wd}"`,
+    );
+    check(
+      'an id that is not in the page falls through to the aria-label',
+      labels.values.gone === PROFILE.first_name,
+      `"${labels.values.gone}"`,
+    );
+    check(
+      'and one naming the field itself falls through to the plain label',
+      labels.values.selfref === PROFILE.last_name,
+      `"${labels.values.selfref}"`,
+    );
+    /* The two the fix is actually for. */
+    check(
+      'an empty label does not hide the aria-label under it',
+      labels.values.styled === PROFILE.github,
+      `"${labels.values.styled}"`,
+    );
+    check(
+      'nor does a wrapping label holding only the field',
+      labels.values.wrapped === PROFILE.phone,
+      `"${labels.values.wrapped}"`,
+    );
+    check(
+      'a radio group labelled by a separate node is still answered',
+      labels.auth === '1',
+      `checked "${labels.auth}"`,
+    );
+
+    const legacy = await page.goto(`${base}/legacy`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(profile);
+        return {
+          values: Object.fromEntries(
+            ['cob', 'ph1', 'cc', 'ph2'].map((id) => [id, document.getElementById(id).value]),
+          ),
+          citwork: document.querySelector('input[name="citwork"]:checked')?.value ?? '',
+          table: document.querySelector('input[name="q_998877"]:checked')?.value ?? '',
+          filled: report.filled.map((f) => f.key),
+          skipped: report.skipped.map((s) => `${s.key}:${s.reason}`),
+        };
+      }, { b: base, profile: PROFILE }),
+    );
+
+    group('Three shapes that filled nothing and said nothing');
+    /*
+     * "Are you a U.S. citizen or otherwise authorized to work … without
+     * sponsorship?" is the same two-declarations question as the one above,
+     * and the word "citizen" in it matched the rule that keeps "Country of
+     * citizenship" from being filled with where somebody lives. An exclusion
+     * says nothing, by design, so the question disappeared: not filled, not
+     * reported, not on the card — on the declaration most likely to have an
+     * application rejected without a person reading it.
+     */
+    check(
+      'a right-to-work question that mentions citizenship is handed back, not dropped',
+      legacy.citwork === '' &&
+        legacy.skipped.includes('work_authorization:this one asks two things at once'),
+      `checked "${legacy.citwork}"; ${legacy.skipped.join(', ') || '(nothing reported)'}`,
+    );
+    // And the rule it was colliding with still holds, or the fix is a
+    // different bug: this box asks which country somebody is a citizen of.
+    check(
+      'while country of citizenship is still not where they live',
+      legacy.values.cob === '',
+      `"${legacy.values.cob}"`,
+    );
+
+    /*
+     * "Phone Number (include country code)" is asked for in exactly those
+     * words because international applicants are expected to write the `+`.
+     * It matched the rule for the little box that wants "+1" and nothing
+     * else, so the telephone number — usually required — came out blank with
+     * nothing said about it.
+     */
+    check(
+      'a phone box that asks for the country code inside it is still the phone box',
+      legacy.values.ph1 === PROFILE.phone,
+      `"${legacy.values.ph1}"`,
+    );
+    check(
+      'and the dialling-code box beside a real one is still left alone',
+      legacy.values.cc === '' && legacy.values.ph2 === PROFILE.phone,
+      `code "${legacy.values.cc}", mobile "${legacy.values.ph2}"`,
+    );
+
+    /*
+     * Taleo Classic and its descendants lay a questionnaire out as a table:
+     * the question in a row header, the buttons in the cell beside it.
+     * `labelFor` learned to read a `th` for text boxes; radio groups had not,
+     * so the group's whole description was a name like `q_998877`, it matched
+     * nothing, and it was skipped in silence.
+     */
+    check(
+      'a question in a table row header is read, and answered',
+      legacy.table === 'Y',
+      `checked "${legacy.table}"; filled ${legacy.filled.join(', ') || 'nothing'}`,
     );
 
     group('Values a framework will notice');

@@ -56,7 +56,7 @@ async function main() {
       analysis: {
         isJobPosting: true,
         job: { title: 'Platform Engineer', company: 'Acme' },
-        spec: { id: 'job-acme', label: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
         rationale: [],
       },
       resumes: [],
@@ -115,7 +115,7 @@ async function main() {
       analysis: {
         isJobPosting: true,
         job: { title: 'Platform Engineer', company: 'Acme' },
-        spec: { id: 'job-acme', label: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
         rationale: [],
       },
       resumes: [{ id: 'base', label: 'New grad', base: true }],
@@ -171,7 +171,7 @@ async function main() {
         analysis: {
           isJobPosting: true,
           job: { title: 'Platform Engineer', company: 'Acme' },
-          spec: { id: 'job-acme', label: 'Acme' },
+          spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
           rationale: [],
         },
         resumes: [{ id: 'base', label: 'New grad', base: true }],
@@ -240,7 +240,7 @@ async function main() {
       analysis: {
         isJobPosting: true,
         job: { title: 'Platform Engineer', company: 'Acme' },
-        spec: { id: 'job-acme', label: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
         rationale: [],
       },
       resumes: [{ id: 'base', label: 'New grad', base: true }],
@@ -294,7 +294,7 @@ async function main() {
       analysis: {
         isJobPosting: true,
         job: { title: 'Platform Engineer', company: 'Acme' },
-        spec: { id: 'job-acme', label: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
         rationale: [],
       },
       resumes: [{ id: 'base', label: 'New grad', base: true }],
@@ -408,7 +408,7 @@ async function main() {
         analysis: {
           isJobPosting: true,
           job: { title: 'Platform Engineer', company: 'Acme' },
-          spec: { id: 'job-acme', label: 'Acme' },
+          spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
           baseLabel: 'New grad resume',
           rationale: [],
           diff: [],
@@ -516,7 +516,7 @@ async function main() {
       analysis: {
         isJobPosting: true,
         job: { title: 'Platform Engineer', company: 'Acme' },
-        spec: { id: 'job-acme', label: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
         baseLabel: 'New grad resume',
         // One swapped wording, so there is a switch to try while the pass runs.
         rationale: [
@@ -649,7 +649,7 @@ async function main() {
       analysis: {
         isJobPosting: true,
         job: { title: 'Platform Engineer', company: 'Acme' },
-        spec: { id: 'job-acme', label: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
         rationale: [],
         diff: [],
       },
@@ -1264,7 +1264,7 @@ async function main() {
       analysis: {
         isJobPosting: true,
         job: { title: 'Platform Engineer', company: 'Acme' },
-        spec: { id: 'job-acme', label: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
         rationale: [],
       },
       resumes: [{ id: 'base', label: 'New grad', base: true }],
@@ -1327,7 +1327,7 @@ async function main() {
         analysis: {
           isJobPosting: true,
           job: { title: 'Platform Engineer', company: 'Acme' },
-          spec: { id: 'job-acme', label: 'Acme' },
+          spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
           rationale: [],
           diff: [],
           tailor: builtWith,
@@ -1376,7 +1376,7 @@ async function main() {
         analysis: {
           isJobPosting: true,
           job: { title: 'Platform Engineer', company: 'Acme' },
-          spec: { id: 'job-acme', label: 'Acme' },
+          spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
           rationale: [],
           diff: [],
           tailor: builtWith,
@@ -1519,7 +1519,7 @@ async function main() {
       analysis: {
         isJobPosting: true,
         job: { title: 'Platform Engineer', company: 'Acme' },
-        spec: { id: 'job-acme', label: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
         rationale: [],
         diff: [],
       },
@@ -1573,7 +1573,7 @@ async function main() {
       analysis: {
         isJobPosting: true,
         job: { title: 'Platform Engineer', company: 'Acme' },
-        spec: { id: 'job-acme', label: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
         rationale: [],
         diff: [],
       },
@@ -1631,7 +1631,7 @@ async function main() {
       analysis: {
         isJobPosting: true,
         job: { title: 'Platform Engineer', company: 'Acme' },
-        spec: { id: 'job-acme', label: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
         rationale: [],
         diff: [],
         // Arriving untailored, which is what landing on a posting now does.
@@ -1716,7 +1716,7 @@ async function main() {
        * not the reply was dropped.
        */
       late.resolve({
-        spec: { id: 'job-acme-late', label: 'Late' },
+        spec: { id: 'job-acme-late', label: 'Late', tier: 'temporary' },
         diff: [],
         rationale: [],
         tailor: 'ai',
@@ -1856,7 +1856,7 @@ async function main() {
       analysis: {
         isJobPosting: true,
         job: { title: 'Platform Engineer', company: 'Acme' },
-        spec: { id: 'job-acme', label: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
         rationale: [],
         diff: [],
       },
@@ -1976,7 +1976,7 @@ async function main() {
      * keyword match's shape, with the reason attached.
      */
     const failed = {
-      spec: { id: 'job-acme', label: 'Acme' },
+      spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
       rationale: [],
       diff: [],
       tailor: 'match',
@@ -1988,7 +1988,7 @@ async function main() {
       analysis: {
         isJobPosting: true,
         job: { title: 'Platform Engineer', company: 'Acme' },
-        spec: { id: 'job-acme', label: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
         rationale: [],
         diff: [],
       },
@@ -2047,7 +2047,7 @@ async function main() {
       analysis: {
         isJobPosting: true,
         job: { title: 'Platform Engineer', company: 'Acme' },
-        spec: { id: 'job-acme', label: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
         rationale: [],
         diff: [],
       },
@@ -2098,7 +2098,7 @@ async function main() {
       analysis: {
         isJobPosting: true,
         job: { title: 'Platform Engineer', company: 'Helios' },
-        spec: { id: 'job-helios', label: 'Helios' },
+        spec: { id: 'job-helios', label: 'Helios', tier: 'temporary' },
         baseResumeId: 'newgrad',
         rationale: [],
         diff: [],
@@ -2130,15 +2130,15 @@ async function main() {
         { id: 'platform', label: 'Platform', base: true },
         { id: 'streaming', label: 'Streaming', base: true },
         { id: 'systems', label: 'Systems', base: true },
-        { id: 'job-acme-role', label: 'Role — Acme' },
-        { id: 'job-vega-old', label: 'Platform Engineer — Vega' },
+        { id: 'job-acme-role', label: 'Role — Acme', tier: 'temporary' },
+        { id: 'job-vega-old', label: 'Platform Engineer — Vega', tier: 'temporary' },
         /*
          * Orion before Helios on purpose. `sort` is stable, so with these the
          * other way round the expected order falls out of the array order
          * and the tiebreak could be deleted without a single check noticing.
          */
-        { id: 'job-orion-old', label: 'Platform Engineer — Orion' },
-        { id: 'job-helios-old', label: 'Platform Engineer — Helios' },
+        { id: 'job-orion-old', label: 'Platform Engineer — Orion', tier: 'temporary' },
+        { id: 'job-helios-old', label: 'Platform Engineer — Helios', tier: 'temporary' },
       ],
       settings: {},
       questions: [],
@@ -2243,7 +2243,7 @@ async function main() {
       analysis: {
         isJobPosting: true,
         job: { title: 'Platform Engineer', company: 'Helios' },
-        spec: { id: 'job-helios', label: 'Helios' },
+        spec: { id: 'job-helios', label: 'Helios', tier: 'temporary' },
         baseResumeId: 'newgrad',
         rationale: [],
         diff: [],
@@ -2251,7 +2251,7 @@ async function main() {
       resumes: [
         { id: 'newgrad', label: 'New grad', base: true },
         { id: 'lab', label: 'Lab', base: true },
-        { id: 'job-acme-role', label: 'Role — Acme' },
+        { id: 'job-acme-role', label: 'Role — Acme', tier: 'temporary' },
       ],
       settings: {},
       questions: [],
@@ -2485,7 +2485,7 @@ async function main() {
       analysis: {
         isJobPosting: true,
         job: { title: 'Platform Engineer', company: 'Acme' },
-        spec: { id: 'job-acme', label: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
         rationale: [],
         diff: [],
       },
