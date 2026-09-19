@@ -72,6 +72,39 @@ async function saveFor(tabId) {
 }
 
 /**
+ * The save this application belongs to, or a refusal to write without one.
+ *
+ * The store refuses a write whose `X-RMM-Project` disagrees with the save it
+ * has open. It does not refuse one that carries no header at all — it cannot,
+ * because the editor's own pages and every other caller are headerless and
+ * legitimate. So "which save is this?" being unanswerable did not mean the
+ * write stopped; it meant the write went to whichever save happened to be
+ * open, agreed with nothing, and was accepted.
+ *
+ * That is the same failure `saveOf` and the header exist to prevent, reached
+ * by not knowing rather than by knowing wrongly. Seen end to end: stop the
+ * worker mid-application, change save in the editor, press Submit. The final
+ * filing still remembered the save and was refused — the card said so, in the
+ * store's own words — while the staging write that puts the files in the
+ * upload folder had already landed a row in the other save's tracker, marked
+ * `applying`, because it went out with no header.
+ *
+ * Refusing is right rather than harsh. There is no save to guess at here: the
+ * work on screen was built from one, and picking a different one silently is
+ * the outcome this whole mechanism is about. A reload rebuilds the
+ * application against the save that is actually open, which is a few seconds
+ * and no surprises.
+ */
+async function saveOrRefuse(tabId) {
+  const save = await saveFor(tabId);
+  if (save) return save;
+  throw new Error(
+    'JobHelper has lost track of which save this application was built from, so it will not file it — ' +
+      'it could go into the wrong one. Reload this page to start it again.',
+  );
+}
+
+/**
  * Work the user is allowed to walk away from, by tab.
  *
  * A tailoring pass is a model reading a posting — minutes of it — and until
@@ -1142,7 +1175,7 @@ const handlers = {
     return serverFetch('/api/applications/bundle', {
       method: 'POST',
       timeoutMs: SLOW_TIMEOUT_MS,
-      save: await saveFor(tab?.id),
+      save: await saveOrRefuse(tab?.id),
       body: JSON.stringify({ ...payload, status: 'applying' }),
     });
   },
@@ -1151,7 +1184,7 @@ const handlers = {
     return serverFetch('/api/applications/bundle', {
       method: 'POST',
       timeoutMs: SLOW_TIMEOUT_MS,
-      save: await saveFor(tab?.id),
+      save: await saveOrRefuse(tab?.id),
       body: JSON.stringify(payload),
     });
   },
@@ -1311,7 +1344,7 @@ const handlers = {
       // The same rule as `bundle`: this writes a space, a tracker row and a
       // tailored resume into a save, and it has to be the save the proposal
       // was built from.
-      save: await saveFor(tab?.id),
+      save: await saveOrRefuse(tab?.id),
       body: JSON.stringify(payload),
     });
     const { serverUrl } = await getSettings();
