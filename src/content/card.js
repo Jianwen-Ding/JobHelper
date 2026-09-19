@@ -168,6 +168,13 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .row.gap { margin-top: 10px; }
 .grow { flex: 1 1 auto; }
 .hint { color: var(--muted); font-size: 12px; line-height: 1.55; }
+/*
+ * Where a draft would come from, under the button that would ask for one.
+ * Set off with a rule rather than left as another grey line, because it is
+ * the answer to the question people actually have about an AI writing their
+ * letter, and it has to be findable at a glance.
+ */
+.voice-from { margin: 2px 0 8px; padding-left: 8px; border-left: 2px solid var(--line, #e3e3e3); }
 /* A hint you are meant to act on, rather than one that just explains. */
 .hint.warn {
   color: var(--warn); background: var(--warn-bg); border: 1px solid var(--warn-line);
@@ -1099,6 +1106,39 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * how to say it. The rule about a posting that names a role but no company
    * lives there, with the applications.
    */
+  /**
+   * What the AI would be writing from, said where it is offered.
+   *
+   * A model writing a cover letter is the part of this people are rightly
+   * wariest of, and the answer to that wariness is the whole reason the
+   * letter bank, the answer bank and the writing notes exist: it works from
+   * their letters, their samples and their own account of how they write. The
+   * card asked for a letter and never said where one would come from, so the
+   * button read as "have a machine write this" — which is the thing it does
+   * not do.
+   *
+   * Counted, because a count is something somebody can go and check, and
+   * because zero is the honest answer on a first application and the one most
+   * worth showing: a letter written with nothing of yours to learn from is a
+   * different offer, and should look like one.
+   */
+  function drawVoiceFrom(kind) {
+    const v = analysis?.voice;
+    if (!v) return null;
+    const bank = kind === 'letter' ? v.letters : v.answers;
+    const written = kind === 'letter' ? 'letter' : 'answer';
+
+    const from = [];
+    if (bank > 0) from.push(`${bank} ${written}${bank === 1 ? '' : 's'} you have written`);
+    if (v.samples > 0) from.push(`${v.samples} writing sample${v.samples === 1 ? '' : 's'}`);
+    if (v.notes) from.push('your notes on how you write');
+
+    const said = from.length === 0
+      ? `In your voice — but there is nothing of yours to learn it from yet. Add a ${written} you have written under Voice & AI.`
+      : `In your voice, from ${from.length > 1 ? `${from.slice(0, -1).join(', ')} and ${from[from.length - 1]}` : from[0]} — not from nothing.`;
+    return h('div', { className: 'hint voice-from', textContent: said });
+  }
+
   function drawSentBefore() {
     const past = analysis?.applied;
     if (!past?.at) return null;
@@ -2913,6 +2953,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       h('div', { className: 'step' }, [
         stepHead(2, 'Cover letter', Boolean(state.letter?.trim())),
         progressFor(2),
+        drawVoiceFrom('letter'),
         h('div', {}, [
               /*
                * The space is open whether or not anything has been written in
@@ -3294,6 +3335,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     const step = h('div', { className: 'step' }, [
       stepHead(3, 'Application questions', Object.keys(state.answers).length > 0),
       progressFor(3),
+      drawVoiceFrom('answer'),
       /*
        * What a run wrote and could not use, said out loud.
        *
