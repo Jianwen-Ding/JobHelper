@@ -476,6 +476,9 @@
     }
   };
 
+  /** Which rebuild is the current one; see `case 'rebuild'`. */
+  let rebuildSeq = 0;
+
   async function onAction(action, payload = {}) {
     if (action.startsWith('answer:')) {
       // With the job, like every other drafting call. Without it the prompt
@@ -518,6 +521,18 @@
         const { insertAnswer } = await imports.autofill();
         return insertAnswer(payload.fieldId, payload.text);
       }
+
+      /*
+       * Not named with the `answer:` prefix, which is claimed above for the
+       * one-question-at-a-time route and would swallow this.
+       */
+      case 'writeApplication':
+        return send('writeApplication', {
+          spec: payload.spec,
+          job: analysis.job,
+          letter: payload.letter,
+          questions: payload.questions,
+        });
 
       case 'coverLetter':
         return send('coverLetter', { spec: payload.spec, job: analysis.job });
@@ -646,7 +661,21 @@
        * so the three paths cannot drift apart.
        */
       case 'rebuild': {
-        analysis = await send('analyze', { ...(await applicationPayload()), ...tailoring(payload) });
+        /*
+         * The newest press wins, and an older one lands nowhere.
+         *
+         * The three build modes no longer wait for each other — an AI pass is
+         * minutes long and being unable to change your mind for the whole of
+         * one is the scan holding the card. That freedom is only safe if the
+         * slow reply cannot arrive afterwards and overwrite the fast one, and
+         * this is where it would: `analysis` is the page's record of the
+         * proposal and `update` is what puts it on screen. A superseded run
+         * still finishes, still costs whatever it cost, and is then dropped.
+         */
+        const mine = ++rebuildSeq;
+        const next = await send('analyze', { ...(await applicationPayload()), ...tailoring(payload) });
+        if (mine !== rebuildSeq) return next;
+        analysis = next;
         cardHandle?.update(analysis);
         return analysis;
       }
@@ -943,7 +972,17 @@
     try {
       payload = await applicationPayload();
       if (!current()) return;
-      found = await send('analyze', { ...payload, tailor: 'match' });
+      /*
+       * Read the page, decide whether it is a posting, and change nothing.
+       *
+       * This said `'match'`, so arriving on a job advert swapped wordings in
+       * the resume before anyone had asked for anything — and every page of an
+       * application did it again. The verdict this call exists for (is this a
+       * posting? whose? which role?) does not depend on tailoring, so asking
+       * for none costs nothing and leaves the proposal as the resume you
+       * actually keep. The three build modes are how you change it.
+       */
+      found = await send('analyze', { ...payload, tailor: 'none' });
     } catch (err) {
       /*
        * A server that is down is worth saying on a page that is certainly a
@@ -1027,22 +1066,33 @@
     workRestored = true;
 
     /*
-     * If the user asked for AI tailoring, it runs now — after the
-     * deterministic proposal is on screen, with the card's progress bar
-     * showing. Never before: waiting minutes at a blank page for a guess
-     * nobody has seen yet is the behaviour this replaced.
+     * Whatever was asked for on the last page of this application, asked for
+     * again here — and nothing at all if nothing was.
+     *
+     * Arriving at the form with more of the posting read than when the
+     * proposal was made is exactly the moment to make it again, so following
+     * Apply after asking the AI to tailor does put the new page in front of
+     * it. The carried proposal stays on screen meanwhile, so nothing appears
+     * to be lost while it thinks.
+     *
+     * `settings.useAi` used to be an alternative here, which meant the switch
+     * being on started a model on every page of every posting you so much as
+     * looked at. The switch says the AI is *available*; pressing something
+     * says to use it. Only this application's own history counts now.
      */
     /*
-     * Also when the last page was tailored by the AI, whatever the global
-     * setting says: arriving at the form with more of the posting read than
-     * when the AI last looked is exactly the moment to look again. The carried
-     * proposal stays on screen meanwhile, so nothing appears to be lost while
-     * it thinks.
+     * The AI, and only the AI.
+     *
+     * A keyword match is deterministic: run again on the next page it lands on
+     * much the same answer, and gets there by throwing away the compiled
+     * resume and any wording you had switched back by hand. Not worth it. The
+     * AI is the opposite — it reads, and the thing it reads is exactly what
+     * grew when you followed Apply — so it is the one worth asking again.
      */
-    if (settings.useAi || carried?.work?.builtWith === 'ai') {
+    if (carried?.work?.builtWith === 'ai') {
       const ai = await send('aiStatus', {}).catch(() => null);
       if (!current()) return;
-      if (ai?.active) cardHandle?.tailorWithAi();
+      if (ai?.active) cardHandle?.retailor('ai');
     }
 
     // The rest arrives in its own time, each piece landing as it is ready.

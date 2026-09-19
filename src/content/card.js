@@ -226,6 +226,13 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 
 /* What the tailoring changed, in words. */
 .changes { display: grid; gap: 6px; margin: 8px 0 2px; }
+/* Shut, the list is its heading: the count, and the way back to all of it. */
+.changes.shut .change { display: none; }
+.fold-changes {
+  background: none; border: 0; padding: 0 4px 0 0; margin: 0; cursor: pointer;
+  color: var(--faint); font-size: 13px; line-height: 1; min-width: 14px;
+}
+.fold-changes:hover { color: var(--ink); }
 .change { background: var(--panel-sunk); border: 1px solid var(--line-soft); border-radius: 8px; padding: 8px 10px; }
 .change .where {
   font-size: 10px; color: var(--faint); text-transform: uppercase; letter-spacing: .07em; font-weight: 650;
@@ -667,7 +674,30 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * cleared it: the progress bar vanished and every button came back while
    * the other was still thinking.
    */
-  const running = new Set();
+  /*
+   * Counted, not a set.
+   *
+   * The three build modes no longer wait for each other, so two `rebuild`s can
+   * genuinely be in flight — press "Match by keyword" while the AI reads and
+   * the match finishes in a third of a second. A set holds one entry for the
+   * name, so the fast one's `delete` cleared it, the bar came down and every
+   * button came back while a model was still running. Which is precisely the
+   * thing the bar exists to be honest about.
+   *
+   * `running` is kept as the set of names that have at least one run in
+   * flight; `depth` is how many.
+   */
+  const depth = new Map();
+  const running = {
+    add: (a) => depth.set(a, (depth.get(a) ?? 0) + 1),
+    delete: (a) => {
+      const left = (depth.get(a) ?? 1) - 1;
+      if (left > 0) depth.set(a, left);
+      else depth.delete(a);
+    },
+    has: (a) => depth.has(a),
+    [Symbol.iterator]: () => depth.keys(),
+  };
   /** When each in-flight action started, so the card can say how long. */
   const startedAt = new Map();
 
@@ -718,6 +748,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     renderLetter: 'letter',
     saveLetter: 'letter',
     saveAnswer: 'answers',
+    // Both, because it writes both — see `writeEverything`.
+    writeApplication: ['letter', 'answers'],
     autofill: 'page',
     bundle: 'submit',
     trackStatus: 'submit',
@@ -728,11 +760,26 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     setAiEnabled: 'settings',
     openWorkspace: 'elsewhere',
   };
-  const busyIn = (...lanes) => [...running].some((a) => lanes.includes(LANE[a] ?? 'resume'));
+  // An action may hold more than one lane: the one-run write holds the letter
+  // and the answers, because it is writing both.
+  const busyIn = (...lanes) =>
+    [...running].some((a) => [].concat(LANE[a] ?? 'resume').some((held) => lanes.includes(held)));
+
+  /**
+   * A later rebuild beats an earlier one, however long the earlier takes.
+   *
+   * The three mode buttons used to wait for each other, which was right while
+   * they all took a moment. An AI pass takes minutes, and being unable to say
+   * "never mind, match it by keyword" for the whole of one is the scan holding
+   * the card hostage. So they no longer wait — and this is what stops the
+   * loser landing on top of the winner: every rebuild takes a number, and a
+   * reply whose number is no longer the current one is dropped on arrival.
+   */
+  let rebuildToken = 0;
 
   async function act(action, payload, apply) {
     running.add(action);
-    startedAt.set(action, Date.now());
+    if (!startedAt.has(action)) startedAt.set(action, Date.now());
     state.busy = action;
     state.error = null;
     state.errorFix = null;
@@ -748,7 +795,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       return null;
     } finally {
       running.delete(action);
-      startedAt.delete(action);
+      // The clock belongs to the run still going, not to the one that ended.
+      if (!running.has(action)) startedAt.delete(action);
       // Keep showing progress for whatever is still going.
       state.busy = [...running].pop() ?? null;
       draw();
@@ -765,6 +813,34 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    */
   const rebuildLabel = (mode, idle, working) =>
     running.has('rebuild') && state.rebuilding === mode ? working : idle;
+
+  /**
+   * Build the proposal one of the three ways, superseding whatever was already
+   * being built.
+   *
+   * The three were written out wherever they were offered, and they waited for
+   * each other. Waiting is right between two that take a moment and wrong when
+   * one of them is a model reading a posting: being unable to say "never mind,
+   * match it by keyword" for three minutes is the scan holding the card. So a
+   * later press wins, and the token is what keeps the loser from landing on
+   * top of it — the slow reply still arrives, finds its number stale, and is
+   * dropped.
+   */
+  async function rebuildAs(mode) {
+    const mine = ++rebuildToken;
+    state.rebuilding = mode;
+    try {
+      return await act('rebuild', { tailor: mode }, () => {
+        if (mine !== rebuildToken) return;
+        state.builtWith = mode;
+        state.render = null;
+      });
+    } finally {
+      // Only the current one clears the label; a superseded reply arriving
+      // late must not say the winner has finished.
+      if (mine === rebuildToken) state.rebuilding = null;
+    }
+  }
 
   /* ---------------------------------------------------------------- */
 
@@ -1013,6 +1089,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     bundle: [4, 'Building the files…'],
     autofill: [4, 'Filling the form…'],
     openWorkspace: [3, 'Opening ResumeM-M…'],
+    writeApplication: [2, 'Writing the letter and the answers…'],
   };
 
   /** What `rebuild` is doing, which depends on which of the three was pressed. */
@@ -1023,9 +1100,39 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   };
 
   /** A progress bar for `step`, when that is what the card is busy doing. */
-  function progressFor(step) {
-    const entry = WORKING[state.busy];
+  /** Whether the AI is the thing holding this card up right now. */
+  const aiIsReading = () => running.has('rebuild') && state.rebuilding === 'ai';
+
+  /**
+   * Actions whose bar is drawn beside the button that started them rather than
+   * at the top of their step. Long AI work, in other words: the question "is
+   * the AI what I am waiting for?" should be answerable by looking at the
+   * button, not by reading a label under a heading.
+   */
+  const HOMED = new Set(['writeApplication']);
+
+  /**
+   * @param step which numbered step this bar belongs under
+   * @param opts `{ ai: true }` for the bar that sits beside the AI button.
+   *
+   * The AI's bar is drawn where the AI is, not at the top of the step.
+   * Everything in step one shared one bar, so a model reading the posting for
+   * three minutes looked exactly like a compile — the same bar in the same
+   * place, under a heading that says "Resume". Whether the AI is what you are
+   * waiting for is the question worth answering without reading anything, so
+   * the bar for it lives next to the button that started it and the rest of
+   * the step keeps its own.
+   */
+  function progressFor(step, opts = {}) {
+    const action = state.busy;
+    const entry = WORKING[action];
     if (!entry || entry[0] !== step) return null;
+
+    // `here` names the action this bar is the home of — or `'ai'` for the
+    // tailoring pass, which is one action wearing three hats. A bar with a
+    // home of its own is never also drawn at the top of its step.
+    const athome = aiIsReading() ? 'ai' : HOMED.has(action) ? action : null;
+    if (opts.here ? opts.here !== athome : athome) return null;
     /*
      * One action, three jobs, and the bar has to name the one you asked for.
      *
@@ -1272,8 +1379,28 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     const shown = diff.filter(stillThere);
     const shownRationale = rationale.filter((r) => !undone.has(r.key));
 
-    const list = h('div', { className: 'changes' }, [
+    /*
+     * Collapsed until asked for.
+     *
+     * Six rows of before-and-after is the most detailed thing on the card, and
+     * it was the first thing under the resume — so the ordinary case, reading
+     * what is proposed and accepting it, meant scrolling past every line of
+     * reasoning to reach the build button. The count is the part you always
+     * want; the rows are the part you want when one of them looks wrong.
+     */
+    const open = state.changesOpen ?? false;
+    const list = h('div', { className: `changes${open ? '' : ' shut'}` }, [
       h('div', { className: 'diff-head' }, [
+        h('button', {
+          className: `fold-changes${open ? ' open' : ''}`,
+          textContent: open ? '⌄' : '›',
+          title: open ? 'Hide what was changed' : 'Show what was changed',
+          'aria-expanded': String(open),
+          onclick: () => {
+            state.changesOpen = !open;
+            draw();
+          },
+        }),
         h('span', { className: 'from-label', textContent: analysis.baseLabel ?? 'Base' }),
         h('span', { className: 'arrow', textContent: '→' }),
         h('span', { className: 'to-label', textContent: 'this posting' }),
@@ -1290,17 +1417,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
               textContent: 'Undo all',
               title: 'Throw these changes away and send the resume exactly as you keep it',
               disabled: busyIn('resume'),
-              onclick: async () => {
-                state.rebuilding = 'none';
-                try {
-                  await act('rebuild', { tailor: 'none' }, () => {
-                    state.builtWith = 'none';
-                    state.render = null;
-                  });
-                } finally {
-                  state.rebuilding = null;
-                }
-              },
+              onclick: () => rebuildAs('none'),
             }),
       ]),
     ]);
@@ -1345,9 +1462,18 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 className: 'link undo-one',
                 textContent: 'Keep the original',
                 title: 'Put this one line back the way your base resume has it',
-                // Also `compile`: undoing recompiles, and two compiles at once
-                // would leave whichever finished second describing the card.
-                disabled: busyIn('resume', 'compile'),
+                /*
+                 * `compile` only, deliberately — not `resume`.
+                 *
+                 * Undoing recompiles, so two at once would leave whichever
+                 * finished second describing the card, and that is worth
+                 * waiting for. An AI pass is not: it is minutes of a model
+                 * reading the posting, and greying out the switches on the
+                 * proposal already in front of you for the whole of it is the
+                 * scan interfering with work it has nothing to do with. When
+                 * it lands it brings a proposal of its own, and says so.
+                 */
+                disabled: busyIn('compile'),
                 onclick: () => undoOne(change),
               })
             : null,
@@ -1366,7 +1492,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 className: 'link undo-one',
                 textContent: 'Keep the original',
                 title: `Show ${skill.groupName} the way your base resume has it`,
-                disabled: busyIn('resume', 'compile'),
+                // `compile` only, for the reason given on the button above.
+                disabled: busyIn('compile'),
                 onclick: () => undoSkill(skill),
               })
             : null,
@@ -1537,10 +1664,31 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     const pages = h('div', { className: 'pdf-pages' });
     const pane = h('div', { className: 'pdf-pane' }, [pages]);
 
-    // Already drawn once: reuse the bitmap so a re-render does not refetch.
+    /*
+     * Already drawn once: put the drawn node back, so a re-render does not
+     * refetch — and does not blank the page either.
+     *
+     * This cloned. A canvas clones its size, its inline width and height and
+     * its class, and *not one pixel of its bitmap*: `cloneNode` copies the
+     * element, and the backing store is not part of the element. Measured in
+     * the same Chromium this is tested in — read a pixel from the original and
+     * you get the colour, read it from the clone and you get transparent
+     * black. Over `.pdf-page { background: #fff }` that is a correctly sized,
+     * perfectly white page.
+     *
+     * So the first render looked right and every repaint after it went blank,
+     * which is every button press, every AI status arriving, every fold and
+     * unfold — twenty-four of them in this file. Sometimes the repaint landed
+     * during the render instead, and then it was white immediately. That is
+     * the "some of the time" in the report, and why it always came back on
+     * "Open full size": nothing there had been through a clone.
+     *
+     * Moving the node is what was wanted all along. `draw()` throws the old
+     * subtree away, so there is nobody left to take it from.
+     */
     const cached = state.pdfPages.get(url);
     if (cached) {
-      pane.replaceChildren(cached.cloneNode(true));
+      pane.replaceChildren(cached);
       return pane;
     }
     if (state.pdfError?.url === url) {
@@ -1583,10 +1731,21 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           const { drawPdf } = await import(chrome.runtime.getURL('src/content/pdfview.js'));
           if (state.shownPdf[kind] !== wanted) return; // a newer compile won
           await drawPdf(pages, base64, { width: 372 });
-          state.pdfPages.set(wanted, pages.cloneNode(true));
-          // Each of these is a page-sized bitmap. Keeping one per compile
-          // meant a session of small edits quietly holding a dozen of them.
-          for (const old of [...state.pdfPages.keys()].slice(0, -4)) state.pdfPages.delete(old);
+          // The node that was actually drawn into, not a copy of it.
+          state.pdfPages.set(wanted, pages);
+          /*
+           * Each of these is a page-sized bitmap. Keeping one per compile
+           * meant a session of small edits quietly holding a dozen of them.
+           *
+           * Dropping the entry a pane is currently showing would leave that
+           * pane with no cache to read and no fetch to start — `shownPdf`
+           * still names the url, so the guard below refuses — and the strip
+           * stays empty for good. So the slot in use is never evicted.
+           */
+          const inUse = new Set(Object.values(state.shownPdf));
+          for (const old of [...state.pdfPages.keys()].slice(0, -4)) {
+            if (!inUse.has(old)) state.pdfPages.delete(old);
+          }
           if (!pages.isConnected) draw();
         } catch (err) {
           // Kept in state rather than appended: appending to a node a
@@ -1643,14 +1802,24 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * Whichever of the two arrives second runs this, so it happens once, as
    * late as it can and no later.
    */
+  /**
+   * The letter space, opened — and nothing written in it.
+   *
+   * This used to call the model the moment a form with a cover letter field
+   * came up, which is a paid run and minutes of it, started by arriving on a
+   * page. Landing on the application you are going to write is not the same
+   * as asking for it to be written, and the draft that arrived unasked was
+   * often the one you then deleted.
+   *
+   * So the step opens with the box and the buttons in it, and "Draft a letter"
+   * is a button like every other AI action on this card. The flag is still set
+   * because everything downstream reads it as "this step is open".
+   */
   function maybeAutoDraft() {
     if (!carriedSettled) return;
     if (!state.letterNeeded || state.letterAutoStarted || !state.spec) return;
-    // A letter is already here. It came from the page before, or from the tab
-    // that closed; either way there is nothing to draft.
-    if (state.letter?.trim()) return;
     state.letterAutoStarted = true;
-    draftLetter();
+    state.letterStarted = true;
   }
 
   /**
@@ -1675,7 +1844,20 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      */
     const mine = state.letter ?? '';
 
-    return act('coverLetter', { spec: state.spec }, (r) => {
+    return act('coverLetter', { spec: state.spec }, (r) => applyLetterReply(mine, r));
+  }
+
+  /**
+   * What to do with a drafted letter, wherever it came from.
+   *
+   * Lifted out of `draftLetter` so the one-run write can land its letter by
+   * exactly the same rules. Every branch here is a guard somebody's paragraph
+   * needed, and two paths reimplementing them is two paths that drift.
+   *
+   * @param mine what was in the box when the run was asked for
+   * @param r `{ body, priorLetters }` — `body` is the drafted letter, if any
+   */
+  function applyLetterReply(mine, r) {
       if (!r) return;
       state.priorLetters = r.priorLetters ?? [];
       state.letterStarted = true;
@@ -1745,7 +1927,115 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         state.letter = '';
         state.letterSource = 'No previous letters yet. Write one here and the next draft starts from it.';
       }
-    });
+  }
+
+  /**
+   * The letter and every answer, written by one run of the model.
+   *
+   * They used to be a run each: one for the letter, one per question, so a
+   * form with three was four runs — each reading the same posting, the same
+   * resume and the same corpus from scratch, four times the tokens and four
+   * times the wait, and none of them able to see what the others wrote. Which
+   * is how an application ends up saying two different things about why you
+   * want the job.
+   *
+   * The per-item buttons stay. They are what redrafting one thing is now.
+   */
+  function writeEverything() {
+    const wantsLetter = Boolean(state.letterNeeded || state.letterAsked);
+    /*
+     * Positional ids, made here and thrown away after the reply.
+     *
+     * The server keys the answers it writes by the id it was handed, and this
+     * card has no id to hand it — answers live under the question's *text*,
+     * deliberately, because that is the only thing that survives the walk from
+     * a description page to a form on another host. So an id is minted for the
+     * round trip and mapped straight back.
+     *
+     * Deduplicated by text: two identical questions on one form already share
+     * one answer box, and giving them two ids would mean two slots writing to
+     * the same place.
+     */
+    const seen = new Set();
+    const slots = [];
+    for (const q of state.questions ?? []) {
+      if (seen.has(q.question)) continue;
+      seen.add(q.question);
+      /*
+       * An answer borrowed from the bank for somebody else is not this
+       * person's draft, and must not be handed over as work in progress —
+       * the run would build on another company's text. See the same rule
+       * where the box is filled.
+       */
+      const borrowed = Boolean(q.namesAnother) && !state.answers[q.question];
+      const before = state.answers[q.question] ?? (borrowed ? '' : q.answer ?? '');
+      slots.push({ id: `q${slots.length + 1}`, question: q.question, answer: before, before });
+    }
+
+    const mine = state.letter ?? '';
+    // A new run, so last run's tally of discarded drafts is not this one's.
+    state.kept = [];
+    state.answerNote = null;
+    return act(
+      'writeApplication',
+      {
+        spec: state.spec,
+        letter: { required: wantsLetter, body: mine },
+        questions: slots.map(({ id, question, answer }) => ({ id, question, answer })),
+      },
+      async (r) => {
+        if (!r) return;
+        /*
+         * `=== false`, not `!r.oneRun`. The endpoint leaves the field off
+         * entirely when there was nothing to write, and treating that as "it
+         * could not be done in one run" would send the whole fallback after a
+         * request that asked for nothing.
+         */
+        if (r.oneRun === false) {
+          state.error = `${r.why} Writing them one at a time instead.`;
+          state.priorLetters = r.priorLetters ?? [];
+          if (wantsLetter) await draftLetter();
+          for (const slot of slots) {
+            const before = state.answers[slot.question] ?? slot.before;
+            await act(`answer:${slot.question}`, { question: slot.question, force: true }, (one) => {
+              if (one?.executed && one.output) applyAnswer(slot.question, before, one.output);
+            });
+          }
+          return;
+        }
+
+        if (wantsLetter) applyLetterReply(mine, { body: r.letter, priorLetters: r.priorLetters });
+        else state.priorLetters = r.priorLetters ?? [];
+        for (const slot of slots) applyAnswer(slot.question, slot.before, r.answers?.[slot.id]);
+        if (r.aiFailed) state.error = r.aiFailed;
+      },
+    );
+  }
+
+  /**
+   * Put a drafted answer in its box — unless somebody wrote there meanwhile.
+   *
+   * The box stays enabled on purpose: the obvious thing to do with a wait of
+   * minutes is write the answer yourself. The reply used to replace that
+   * outright, with no merge, no confirmation and no copy kept. Shared with the
+   * one-run write, which can land several of these at once and has exactly the
+   * same duty to each of them.
+   *
+   * @param before what was in the box when the run was asked for
+   */
+  function applyAnswer(question, before, text) {
+    if (!text?.trim()) return false;
+    if ((state.answers[question] ?? '') !== before) {
+      state.kept = [...new Set([...(state.kept ?? []), question])];
+      const n = state.kept.length;
+      state.answerNote =
+        n === 1
+          ? 'You were writing while that ran, so what you wrote was kept.'
+          : `You were writing while that ran, so what you wrote was kept — ${n} answers.`;
+      return false;
+    }
+    state.answers[question] = text;
+    return true;
   }
 
   function drawProposeView() {
@@ -1796,7 +2086,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     } else {
       for (const r of resumes) baseSelect.append(option(r));
     }
-    baseSelect.onchange = () => act('setBase', { baseResumeId: baseSelect.value, tailor: state.builtWith ?? 'match' });
+    baseSelect.onchange = () => act('setBase', { baseResumeId: baseSelect.value, tailor: state.builtWith ?? 'none' });
 
     const feedback = h('textarea', {
       value: state.feedback,
@@ -1834,38 +2124,17 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             className: state.builtWith === 'none' ? 'mode on' : 'mode',
             textContent: rebuildLabel('none', 'Use it unchanged', 'Copying…'),
             title: 'Send this resume exactly as it is. Nothing is swapped, dropped or added.',
-            disabled: busyIn('resume'),
-            onclick: async () => {
-              state.rebuilding = 'none';
-              try {
-                await act('rebuild', { tailor: 'none' }, () => {
-                  state.builtWith = 'none';
-                  state.render = null;
-                });
-              } finally {
-                state.rebuilding = null;
-              }
-            },
+            // Live while the AI reads — see `supersede`.
+            disabled: aiIsReading() ? false : busyIn('resume'),
+            onclick: () => rebuildAs('none'),
           }),
           h('button', {
             className: state.builtWith === 'match' ? 'mode on' : 'mode',
             textContent: rebuildLabel('match', 'Match by keyword', 'Matching…'),
             title:
               'Swap in phrasings you already wrote, picked by the keywords in this posting. Nothing is sent to an AI, and nothing new is written.',
-            disabled: busyIn('resume'),
-            onclick: async () => {
-              state.rebuilding = 'match';
-              try {
-                await act('rebuild', { tailor: 'match' }, () => {
-                  state.builtWith = 'match';
-                  state.render = null;
-                });
-              } finally {
-                // Cleared however it ended: a failure used to leave the label
-                // for the next run describing the wrong thing.
-                state.rebuilding = null;
-              }
-            },
+            disabled: aiIsReading() ? false : busyIn('resume'),
+            onclick: () => rebuildAs('match'),
           }),
           aiButton({
             className: state.builtWith === 'ai' ? 'mode on' : 'mode',
@@ -1875,18 +2144,14 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 ? 'ResumeM-M has its AI switched off — turn it on under Voice & AI.'
                 : 'Switch the AI on from the JobHelper toolbar icon to use this.',
             disabled: busyIn('resume') || !state.ai?.active,
-            onclick: async () => {
-              state.rebuilding = 'ai';
-              try {
-                await act('rebuild', { tailor: 'ai' }, () => {
-                  state.builtWith = 'ai';
-                  state.render = null;
-                });
-              } finally {
-                state.rebuilding = null;
-              }
-            },
+            onclick: () => rebuildAs('ai'),
           }, rebuildLabel('ai', 'Let the AI tailor it', 'Reading the posting…')),
+          /*
+           * And the bar for it, here rather than at the top of the step. The
+           * question "is the AI what I am waiting for?" should be answerable
+           * by looking at the AI button, not by reading a label.
+           */
+          progressFor(1, { here: 'ai' }),
           /*
            * Neither matching nor AI: going and writing the sentence yourself.
            *
@@ -1997,6 +2262,45 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     );
 
     /*
+     * Everything the form wants written, in one go.
+     *
+     * Above both steps because it belongs to both: one run of the model writes
+     * the letter and every answer together, which is a quarter of the tokens
+     * of doing them one at a time on a form with three questions, a quarter of
+     * the wait, and — the part that is not about cost — one piece of writing
+     * rather than four that never saw each other.
+     *
+     * Offered only when there is more than one thing to write. For a single
+     * answer it would be the same run under a longer name, and the button
+     * beside that answer already says what it does.
+     */
+    {
+      const wants = Boolean(state.letterNeeded || state.letterAsked);
+      const asked = (state.questions ?? []).length;
+      if (asked + (wants ? 1 : 0) > 1) {
+        body.append(
+          h('div', { className: 'row gap write-all' }, [
+            aiButton(
+              {
+                title: 'One run of your AI writes the cover letter and every answer together.',
+                disabled: busyIn('letter', 'answers') || !state.ai?.active,
+                onclick: writeEverything,
+              },
+              busyLabel(
+                'writeApplication',
+                wants
+                  ? `Write the letter and ${asked} ${asked === 1 ? 'answer' : 'answers'}`
+                  : `Write all ${asked} answers`,
+                'Writing…',
+              ),
+            ),
+            progressFor(2, { here: 'writeApplication' }),
+          ]),
+        );
+      }
+    }
+
+    /*
      * 2. Cover letter — only when the posting asks for one.
      *
      * Every posting used to get this step and a button to press, which made
@@ -2009,9 +2313,34 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       h('div', { className: 'step' }, [
         stepHead(2, 'Cover letter', Boolean(state.letter?.trim())),
         progressFor(2),
-        state.letterStarted
-          ? h('div', {}, [
+        h('div', {}, [
+              /*
+               * The space is open whether or not anything has been written in
+               * it. It used to be a placeholder with one button, swapped for
+               * the editor once a draft arrived — which only made sense while
+               * the draft started itself. Now that drafting is a button, the
+               * placeholder was standing between the person and a box they
+               * could have typed into, and hiding the previous-letter offer
+               * behind an AI run they may not want.
+               */
               state.letterSource ? h('div', { className: 'hint', textContent: state.letterSource }) : null,
+              !state.letter?.trim()
+                ? h('div', { className: 'row gap' }, [
+                    aiButton(
+                      {
+                        title:
+                          'Write a first draft from this posting and the letters you have written before. Runs your AI command.',
+                        disabled: busyIn('letter'),
+                        onclick: draftLetter,
+                      },
+                      busyLabel('coverLetter', 'Draft a letter', 'Drafting…'),
+                    ),
+                    h('span', {
+                      className: 'faint',
+                      textContent: 'or write it yourself — nothing is sent to an AI until you press it.',
+                    }),
+                  ])
+                : null,
               state.letterOffer && !state.letter?.trim()
                 ? h('button', {
                     className: 'tiny',
@@ -2112,22 +2441,6 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                     h('span', { className: 'faint', textContent: 'A preview; the attached copy is compiled when you prepare it.' }),
                   ])
                 : null,
-            ])
-          : h('div', {}, [
-              h('div', {
-                className: 'hint',
-                textContent: 'Drafted from the letters you have already written for similar roles.',
-              }),
-              h('div', { className: 'row gap' }, [
-                aiButton(
-                  {
-                    title: 'Write a first draft from this posting and the letters you have written before. Runs your AI command.',
-                    disabled: busyIn('letter'),
-                    onclick: draftLetter,
-                  },
-                  busyLabel('coverLetter', 'Draft a letter', 'Drafting…'),
-                ),
-              ]),
             ]),
       ]),
     );
@@ -2371,6 +2684,17 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     const step = h('div', { className: 'step' }, [
       stepHead(3, 'Application questions', Object.keys(state.answers).length > 0),
       progressFor(3),
+      /*
+       * What a run wrote and could not use, said out loud.
+       *
+       * The box stays enabled while an answer is being written — the obvious
+       * thing to do with a wait of minutes is write it yourself — and what you
+       * type wins. That was already true and it was already recorded, in a
+       * field nothing rendered: `answerNote` was assigned and read nowhere, so
+       * a discarded draft was discarded in silence. A run that writes every
+       * answer at once can discard several, which makes the silence worse.
+       */
+      state.answerNote ? h('div', { className: 'hint', textContent: state.answerNote }) : null,
     ]);
     step.append(
       h('div', { className: 'row', style: 'margin-bottom:8px' }, [
@@ -2478,18 +2802,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                    * it here, and this no longer reaches for it either.
                    */
                   if (r?.executed && r.output) {
-                    /*
-                     * And not over what was typed while it ran. The box stays
-                     * enabled on purpose — the obvious thing to do with a wait
-                     * of minutes is write the answer yourself — and the reply
-                     * used to replace it outright, with no merge, no
-                     * confirmation and no copy kept.
-                     */
-                    if ((state.answers[q.question] ?? '') !== typedBefore) {
-                      state.answerNote = 'You were writing while that ran, so what you wrote was kept.';
-                    } else {
-                      state.answers[q.question] = r.output;
-                    }
+                    applyAnswer(q.question, typedBefore, r.output);
                   } else if (r && !r.executed) {
                     state.error =
                       'The AI is off, so a new answer cannot be drafted. Anything you type here is saved for next time.';
@@ -2844,10 +3157,25 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      * something to read and something to see happening.
      */
     async tailorWithAi() {
-      state.rebuilding = 'ai';
+      return this.retailor('ai');
+    },
+
+    /**
+     * Do again, on this page, what was asked for on the last one.
+     *
+     * An application is several pages, and the posting is only whole once you
+     * have walked them — so a proposal made from the description page was made
+     * from less than there is now. Whichever way it was made is the way it is
+     * made again: nothing new is started, the same thing is brought up to
+     * date. Called only where a mode was already chosen for this application;
+     * arriving on a posting having asked for nothing still does nothing.
+     */
+    async retailor(mode) {
+      if (mode !== 'ai' && mode !== 'match') return null;
+      state.rebuilding = mode;
       try {
-        return await act('rebuild', { tailor: 'ai' }, () => {
-          state.builtWith = 'ai';
+        return await act('rebuild', { tailor: mode }, () => {
+          state.builtWith = mode;
           state.render = null;
         });
       } finally {

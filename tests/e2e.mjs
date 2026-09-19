@@ -112,6 +112,33 @@ async function main() {
       await aiMode.getAttribute('title'),
     );
 
+    /*
+     * Nothing has been tailored yet, and that is the point.
+     *
+     * Arriving on a posting used to run the keyword match, so the card came up
+     * with the resume already altered and "send what I have" was the thing you
+     * undid. Now it comes up unchanged and the three modes are how you ask.
+     */
+    check(
+      'nothing is changed until it is asked for',
+      (await card.locator('.no-change').count()) === 1 && (await card.locator('.change').count()) === 0,
+      (await card.locator('.no-change').innerText().catch(() => '')).slice(0, 60),
+    );
+
+    // And from here the walk is about what the keyword match does, so ask.
+    await card.locator('button.mode', { hasText: 'Match by keyword' }).click();
+    await card.locator('.diff-head').first().waitFor({ timeout: 60_000 });
+
+    /*
+     * The rows are shut until asked for — the count is what the card leads
+     * with — so everything below reads them with the list open, which is what
+     * a person looking at one of them has done.
+     */
+    const openChanges = async () => {
+      if (await card.locator('.changes.shut').count()) await card.locator('button.fold-changes').click();
+    };
+    await openChanges();
+
     const changes = await card.locator('.change').all();
     check('tailoring proposed changes', changes.length > 0, `${changes.length} changes`);
 
@@ -183,6 +210,8 @@ async function main() {
 
       // Back to the match, which is what the rest of this walk is about.
       await card.locator('button.mode', { hasText: 'Match by keyword' }).click();
+      await card.locator('.diff-head').first().waitFor({ timeout: 60_000 });
+      await openChanges();
       await card.locator('.change').first().waitFor({ timeout: 60_000 });
       check('and the match can be asked for again', (await card.locator('.change').count()) > 0);
     }
@@ -350,10 +379,55 @@ async function main() {
       );
     }
 
-    // You can see what you are about to send without leaving the posting.
+    /*
+     * You can see what you are about to send without leaving the posting —
+     * and "see" means ink, not a canvas of the right size.
+     *
+     * This asked whether the canvas was bigger than 100×100, which is exactly
+     * what a blank one is: the pane was cached with `cloneNode`, a clone keeps
+     * a canvas's dimensions and none of its pixels, and `.pdf-page` has a
+     * white background. So the check passed against a pane that had gone
+     * completely white — the bug as reported, invisible to the test that was
+     * supposed to be watching for it. Count the dark pixels instead.
+     */
+    const inkOf = async () =>
+      card
+        .locator('.pdf-pane canvas')
+        .first()
+        .evaluate((c) => {
+          const px = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+          let dark = 0;
+          for (let i = 0; i < px.length; i += 4) if (px[i] < 200 && px[i + 3] > 0) dark++;
+          return { w: c.width, h: c.height, dark };
+        });
+
     await card.locator('.pdf-pane canvas').first().waitFor({ timeout: 30_000 });
-    const drawn = await card.locator('.pdf-pane canvas').first().evaluate((c) => c.width > 100 && c.height > 100);
-    check('the resume is drawn in the card, on the same tab', drawn);
+    const drawn = await inkOf();
+    check(
+      'the resume is drawn in the card, on the same tab',
+      drawn.w > 100 && drawn.h > 100 && drawn.dark > 500,
+      JSON.stringify(drawn),
+    );
+
+    /*
+     * And it survives a repaint, which is the case that actually broke.
+     *
+     * The card rebuilds its whole subtree constantly — every action starting
+     * and finishing, the AI status arriving, the resume list arriving. Folding
+     * and unfolding is the one a person can ask for on demand, and it goes
+     * through the same path as all the rest.
+     */
+    const fold = card.locator('button.icon[aria-label*="JobHelper"]').first();
+    await fold.click();
+    await page.waitForTimeout(250);
+    await fold.click();
+    await card.locator('.pdf-pane canvas').first().waitFor({ timeout: 30_000 });
+    const afterFold = await inkOf();
+    check(
+      'and it is still there after the card repaints',
+      afterFold.dark > 500,
+      `${JSON.stringify(afterFold)} (was ${drawn.dark} dark)`,
+    );
 
     /* The posting asks for a cover letter, so the card drafts one unasked. */
     await card.locator('textarea.tall').waitFor({ timeout: 60_000 });
