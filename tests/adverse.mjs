@@ -66,6 +66,32 @@ const group = (name) => console.log(`\n${name}`);
 
 const cardOf = (page) => page.locator(`${HOST} .card`);
 
+/**
+ * Press a button on the card, and say what the card said if it is not there.
+ *
+ * Playwright's own message for this is "waiting for getByRole('button', {
+ * name: 'Build resume' })", repeated until the timeout. It says what was
+ * wanted and nothing whatever about what was in front of it — and a card with
+ * no Build button on it is never blank: it is a card saying the save cannot
+ * be reached, or that this has been applied to already, or that something is
+ * still running. That sentence is the whole diagnosis, and throwing it away
+ * has cost several runs.
+ */
+async function press(card, name) {
+  const button = card.getByRole('button', { name });
+  try {
+    await button.click();
+  } catch (err) {
+    const said = await card.innerText().catch(() => '(the card could not be read)');
+    const buttons = await card.getByRole('button').allInnerTexts().catch(() => []);
+    throw new Error(
+      `No "${name}" button to press.\n` +
+        `The buttons on the card were: ${buttons.length ? buttons.map((b) => JSON.stringify(b)).join(', ') : '(none)'}\n` +
+        `And the card said:\n${said}\n\n${err.message}`,
+    );
+  }
+}
+
 async function settled(page) {
   await page.locator(HOST).waitFor({ state: 'attached', timeout: 30_000 });
   await page.locator(`${HOST} .card .role`).waitFor({ timeout: 30_000 });
@@ -124,7 +150,7 @@ const freePort = () =>
  * the same; it is a second front door, and closing it does not disturb
  * whatever else is using the first.
  */
-async function ownServer(dataDir) {
+async function ownServer(dataDir, poolBuild) {
   const port = await freePort();
   const child = spawn('npx', ['tsx', 'src/server/index.ts'], {
     cwd: path.resolve(extensionRoot, '..', 'ResumeM-M'),
@@ -133,15 +159,58 @@ async function ownServer(dataDir) {
     stdio: 'ignore',
   });
   const url = `http://127.0.0.1:${port}`;
+  let mine;
   for (let attempt = 0; attempt < 60; attempt++) {
     try {
       const health = await (await fetch(`${url}/health`)).json();
-      if (health.projectOpen && health.dataDir === dataDir) break;
+      if (health.projectOpen && health.dataDir === dataDir) {
+        mine = health;
+        break;
+      }
     } catch {
       // Not up yet.
     }
     await new Promise((go) => setTimeout(go, 500));
   }
+
+  /*
+   * Say so when this server and the pool's are different builds.
+   *
+   * This is the only suite that starts a second ResumeM-M, and it starts it
+   * from source while the pool runs the built copy. The runner's guard checks
+   * the pool against the code on disk before anything begins, which is the
+   * right check and covers the ordinary case — but this server is started
+   * minutes later, and stamps itself from the files as they are then. Edit a
+   * source file while a run is going and only this suite sees two builds of
+   * the same application arguing over one save.
+   *
+   * It fails when that happens, which is correct, but it fails as a thirty
+   * second wait for a button that never appears — and three runs were spent
+   * today reading that as a product bug and then as a concurrency flake. One
+   * sentence is the difference between those and the truth.
+   */
+  if (mine && poolBuild && mine.build !== poolBuild) {
+    console.error(
+      [
+        '',
+        'This suite started a ResumeM-M from source and it is a different build',
+        'from the one the pool is serving:',
+        `  pool    ${poolBuild}`,
+        `  ours    ${mine.build}`,
+        '',
+        'Both are pointed at the same save, so whichever answers gets a say in',
+        'what the other is looking at. The usual cause is a source file edited',
+        'after the run began. Let the run finish, then start it again.',
+      ].join('\n'),
+    );
+    try {
+      process.kill(-child.pid);
+    } catch {
+      child.kill();
+    }
+    process.exit(2);
+  }
+
   return {
     url,
     kill: () => {
@@ -217,7 +286,7 @@ async function main() {
 
     group('The store goes away while you are using it');
     {
-      doomed = await ownServer(health.dataDir);
+      doomed = await ownServer(health.dataDir, health.build);
       await useServer(context, doomed.url);
 
       const page = await context.newPage();
@@ -230,7 +299,7 @@ async function main() {
       doomed = null;
       await page.waitForTimeout(1500);
 
-      await cardOf(page).getByRole('button', { name: 'Build resume' }).click();
+      await press(cardOf(page), 'Build resume');
       await page.waitForTimeout(9000);
 
       const body = (await cardOf(page).innerText()).replace(/\s+/g, ' ');
@@ -276,7 +345,7 @@ async function main() {
         await letter.click();
         await letter.pressSequentially('Typed before the slow build started.', { delay: 6 });
 
-        await card.getByRole('button', { name: 'Build resume' }).click();
+        await press(card, 'Build resume');
         await page.waitForTimeout(1200);
         const during = (await card.innerText()).replace(/\s+/g, ' ');
         check('the wait is explained while it happens', /compil/i.test(during), during.slice(0, 120));
@@ -648,7 +717,7 @@ async function main() {
          */
         if (drew && policy.includes("script-src 'self'")) {
           const card = cardOf(page);
-          await card.getByRole('button', { name: 'Build resume' }).click();
+          await press(card, 'Build resume');
           await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
           await page.waitForTimeout(1500);
           const drawn = await page
@@ -703,7 +772,7 @@ async function main() {
       // own: switching saves on the shared one would disturb every other
       // suite running beside this.
       const mine = await (await fetch(`${SERVER}/health`)).json();
-      const own = await ownServer(mine.dataDir);
+      const own = await ownServer(mine.dataDir, mine.build);
       const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'rmm-other-save-'));
       try {
         await pointExtensionAt(context, context.serviceWorkers()[0], own.url);
@@ -714,7 +783,7 @@ async function main() {
         await page.goto(fixtures.urlFor(HELIOS_FORM), { waitUntil: 'domcontentloaded' });
         await settled(page);
         const card = cardOf(page);
-        await card.getByRole('button', { name: 'Build resume' }).click();
+        await press(card, 'Build resume');
         await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
 
         /*
@@ -742,7 +811,7 @@ async function main() {
         check('the editor changed save', switched.ok, String(switched.status));
 
         // And then presses the button that files it.
-        await card.getByRole('button', { name: 'Submit' }).click();
+        await press(card, 'Submit');
         await card.locator('.err, .done-box').first().waitFor({ timeout: 120_000 });
 
         /*
@@ -759,10 +828,19 @@ async function main() {
 
         // Nothing of this application reached the save that is open.
         const landed = await fetch(`${own.url}/api/applications`).then((r) => r.json());
+        /*
+         * Named, not just counted. A row that got in here came through some
+         * request that went out without `X-RMM-Project`, and the store does
+         * not refuse those — so which row it is, and what state it is in, is
+         * the only thing that says which request lost the save.
+         */
+        const strays = (landed.applications ?? []).filter((a) => /helios/i.test(a.company ?? ''));
         check(
           'the other save is untouched',
-          !(landed.applications ?? []).some((a) => /helios/i.test(a.company ?? '')),
-          (landed.applications ?? []).map((a) => a.company).join(', ') || '(empty)',
+          strays.length === 0,
+          strays.length
+            ? strays.map((a) => `${a.id} [${a.status}] role=${JSON.stringify(a.role ?? '')}`).join(' | ')
+            : (landed.applications ?? []).map((a) => a.company).join(', ') || '(empty)',
         );
         check('nothing was thrown at the page', errors.length === 0, errors.join('; '));
         await page.close();
@@ -806,7 +884,7 @@ async function main() {
        * `saveOf`, and this is the evidence that it holds end to end.
        */
       const mine = await (await fetch(`${SERVER}/health`)).json();
-      const own = await ownServer(mine.dataDir);
+      const own = await ownServer(mine.dataDir, mine.build);
       const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'rmm-other-save-'));
       try {
         /*
@@ -860,7 +938,7 @@ async function main() {
         }
         check('the editor changed save', switched.ok, String(switched.status));
 
-        await card.getByRole('button', { name: 'Submit' }).click();
+        await press(card, 'Submit');
         await card.locator('.err, .done-box').first().waitFor({ timeout: 120_000 });
 
         const revived = context.serviceWorkers()[0];
@@ -879,10 +957,19 @@ async function main() {
         check('and no folder is reported as written', !(await card.locator('.done-box').count()));
 
         const landed = await fetch(`${own.url}/api/applications`).then((r) => r.json());
+        /*
+         * Named, not just counted. A row that got in here came through some
+         * request that went out without `X-RMM-Project`, and the store does
+         * not refuse those — so which row it is, and what state it is in, is
+         * the only thing that says which request lost the save.
+         */
+        const strays = (landed.applications ?? []).filter((a) => /helios/i.test(a.company ?? ''));
         check(
           'the other save is untouched',
-          !(landed.applications ?? []).some((a) => /helios/i.test(a.company ?? '')),
-          (landed.applications ?? []).map((a) => a.company).join(', ') || '(empty)',
+          strays.length === 0,
+          strays.length
+            ? strays.map((a) => `${a.id} [${a.status}] role=${JSON.stringify(a.role ?? '')}`).join(' | ')
+            : (landed.applications ?? []).map((a) => a.company).join(', ') || '(empty)',
         );
         check('nothing was thrown at the page', errors.length === 0, errors.join('; '));
         await page.close();
