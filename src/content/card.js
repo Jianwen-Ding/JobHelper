@@ -589,6 +589,17 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     letterRender: null,
     /** Why the last one could not be drawn, if it could not. */
     pdfError: null,
+    /**
+     * Something that happened and went well, said in words.
+     *
+     * Apart from `error`, everything the card tells you is a description of
+     * what is on it — the summary, the counts, the buttons. That leaves no
+     * way to report an *event*, and the event that most needed reporting was
+     * the longest one: a tailoring pass finishing. Putting it in `error`
+     * would be the red strip, which is the wrong sentence in the wrong
+     * colour.
+     */
+    note: null,
     /** Whether the person said afterwards that they did not send it. */
     unsent: false,
     /** The text that was saved to the store, so an edit after it can be saved too. */
@@ -3294,6 +3305,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       ]),
     );
 
+    if (state.note) body.append(h('div', { className: 'ok-note', textContent: state.note }));
     if (state.error) body.append(drawError());
     return body;
   }
@@ -3875,6 +3887,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     /** The analysis, whether this is the first one or a later rebuild. */
     update(next) {
       analysis = analysis ? Object.assign(analysis, next) : next;
+      // A note is about the run that has just ended, not about the next one.
+      state.note = null;
       /*
        * A new proposal replaces the old one whole, every swap made afresh.
        * Nothing has to be forgotten alongside it: which changes are in is
@@ -3981,6 +3995,12 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
 
     /** Put back the work from the page this one continues. */
     restoreWork,
+    /** Something that happened and went well. See `state.note`. */
+    say(text) {
+      state.note = text;
+      draw();
+    },
+
     setStatus(text, fix = null) {
       state.error = text;
       // The first pass failing is the commonest way to meet this, and the

@@ -504,6 +504,77 @@
   const startProposal = () => ({ build: ++rebuildSeq, on: pass });
   const stillWanted = (token) => token.build === rebuildSeq && token.on === pass;
 
+  /**
+   * A proposal that finished after the card had moved on.
+   *
+   * `stillWanted` is right about what it refuses — a pass belonging to a page
+   * you have left must not write to the card in front of you. What was wrong
+   * was the other half: the reply was dropped where it stood, in silence.
+   *
+   * A keyword match costs a second, and losing one costs nothing. An AI pass
+   * is minutes — measured at 178 seconds for one posting — and the thing that
+   * supersedes it is usually not a different job at all: `startOver` fires on
+   * any change to the url, and a single-page board ticks its url while you
+   * wait. So three minutes of a model's work, and of somebody's patience,
+   * ended with the card saying nothing and showing the proposal from before
+   * the run. "I don't know what it even did" is the accurate description of
+   * that, and it is the only thing the card left room to think.
+   *
+   * Kept instead. If the posting on screen is the same one the run was for,
+   * it lands and says so. If it is not, it is said out loud and dropped —
+   * which is an answer, and the silence was not.
+   */
+  let lateProposal = null;
+  /** Older than this and nobody is still waiting for it. */
+  const LATE_PROPOSAL_MS = 10 * 60 * 1000;
+
+  /** Two analyses about the same opening, by what they say it is. */
+  const sameJob = (a, b) =>
+    Boolean(a?.job && b?.job) &&
+    (a.job.company ?? '') === (b.job.company ?? '') &&
+    (a.job.title ?? '') === (b.job.title ?? '');
+
+  /** Whether a model actually chose something, as the card reads it. */
+  const wasDecided = (a) => a?.tailor === 'ai' && a?.aiUsed;
+
+  const nameOf = (a) => [a?.job?.title, a?.job?.company].filter(Boolean).join(' at ') || 'that posting';
+
+  /**
+   * Put a finished-too-late proposal somewhere, rather than nowhere.
+   *
+   * Straight onto the card when the card is showing the same posting, which
+   * is the ordinary case; otherwise held for the next card to collect in
+   * `takeLateProposal`, because the pass that superseded this one may still
+   * be reading the page.
+   */
+  function landLate(result) {
+    if (cardHandle && sameJob(result, analysis)) {
+      analysis = Object.assign(analysis ?? {}, result);
+      cardHandle.update(result);
+      if (wasDecided(result)) cardHandle.say('The AI finished tailoring this posting. Its changes are below.');
+      return result;
+    }
+    lateProposal = { at: Date.now(), result };
+    return result;
+  }
+
+  /** And the collection, once a new card has its own analysis. */
+  function takeLateProposal() {
+    const late = lateProposal;
+    lateProposal = null;
+    if (!late || Date.now() - late.at > LATE_PROPOSAL_MS) return;
+
+    if (!sameJob(late.result, analysis)) {
+      if (wasDecided(late.result)) {
+        cardHandle?.say(`The AI finished tailoring ${nameOf(late.result)}, which is not this posting, so it was not used.`);
+      }
+      return;
+    }
+    analysis = Object.assign(analysis ?? {}, late.result);
+    cardHandle?.update(late.result);
+    if (wasDecided(late.result)) cardHandle?.say('The AI finished tailoring this posting. Its changes are below.');
+  }
+
   async function onAction(action, payload = {}) {
     if (action.startsWith('answer:')) {
       // With the job, like every other drafting call. Without it the prompt
@@ -687,8 +758,8 @@
         const next = await send('analyze', { ...(await applicationPayload()), ...tailoring(payload) });
         // See `startProposal`. Picking two bases in quick succession is
         // ordinary, and so is walking to the next posting while one is still
-        // being worked out.
-        if (!stillWanted(mine)) return next;
+        // being worked out. See `landLate` for where a superseded one goes.
+        if (!stillWanted(mine)) return landLate(next);
         analysis = next;
         cardHandle?.update(analysis);
         return analysis;
@@ -713,7 +784,7 @@
          */
         const mine = startProposal();
         const next = await send('analyze', { ...(await applicationPayload()), ...tailoring(payload) });
-        if (!stillWanted(mine)) return next;
+        if (!stillWanted(mine)) return landLate(next);
         analysis = next;
         cardHandle?.update(analysis);
         return analysis;
@@ -1062,6 +1133,8 @@
     }
     putUpCard();
     cardHandle?.update(analysis);
+    // An AI pass that outlived the card it was started from. See `landLate`.
+    takeLateProposal();
 
     /*
      * The page is already part of an application by the time this line runs.

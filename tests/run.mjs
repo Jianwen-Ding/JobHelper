@@ -82,6 +82,7 @@ const SUITES = [
   { name: 'carrying', file: 'carrying.mjs', cost: 84 },
   { name: 'controls', file: 'controls.mjs', cost: 82 },
   { name: 'quiet', file: 'quiet.mjs', cost: 46 },
+  { name: 'late', file: 'late.mjs', cost: 45 },
   { name: 'worker', file: 'worker.mjs', cost: 42 },
   { name: 'stopping', file: 'stopping.mjs', cost: 37 },
   { name: 'tabs', file: 'tabs.mjs', cost: 22 },
