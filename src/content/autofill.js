@@ -1013,6 +1013,28 @@ function groupLabelFor(radios) {
   return '';
 }
 
+/**
+ * Can a person see this button — the button, or the thing drawn in its place?
+ *
+ * Nearly every modern form hides the native radio (`display:none`,
+ * `appearance:none`, a 1px clip) and styles a `<span>` inside its `<label>`
+ * instead. Asking the input alone whether it occupies space therefore
+ * answers "no" about a control the user is looking straight at, and the whole
+ * group was skipped before anything was reported: `{filled: [], skipped: []}`
+ * on a visible work-authorisation question, which reads exactly like a form
+ * with nothing to do. Clicking a hidden input works perfectly well, so the
+ * only thing the old test bought was silence.
+ *
+ * The label still has to be somewhere, though. A group inside a closed
+ * accordion or an unmounted step is not this question yet, and both the
+ * input and its label have no box at all.
+ */
+function onScreen(radio) {
+  if (radio.getClientRects().length > 0) return true;
+  const label = radio.closest('label');
+  return Boolean(label && label.getClientRects().length > 0);
+}
+
 /** What one button of a group means, which is what a human reads beside it. */
 function optionLabelFor(radio) {
   const wrapping = radio.closest('label');
@@ -1076,7 +1098,7 @@ function answerRadioGroups(fields, overwrite) {
 
   const groups = new Map();
   for (const radio of deepQueryAll('input[type=radio]')) {
-    if (isDisabled(radio) || radio.getClientRects().length === 0) continue;
+    if (isDisabled(radio) || !onScreen(radio)) continue;
     const key = radio.name ? `${scopeOf(radio)}\u0000${radio.name}` : radio.closest('fieldset');
     if (!key) continue;
     if (!groups.has(key)) groups.set(key, []);

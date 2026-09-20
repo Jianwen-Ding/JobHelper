@@ -452,7 +452,39 @@ const FLAT_QUESTIONS = `<!doctype html><html><head><meta charset="utf-8"><title>
 </div></form>
 </body></html>`;
 
-const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS };
+/*
+ * The native radio hidden, and a styled span drawn in its place.
+ *
+ * This is how nearly every modern form does it — `display:none` on the input
+ * and a `<span>` inside the `<label>` with the tick drawn on it. Asking the
+ * input whether it occupies space therefore answered "no" about a control the
+ * user is looking straight at, and the group was dropped before anything was
+ * reported: `{filled: [], skipped: []}` on a visible work-authorisation
+ * question, which reads exactly like a form with nothing to do.
+ *
+ * The second group is inside a collapsed step, which genuinely is not on
+ * screen: neither the input nor its label has a box, and that one must still
+ * be left alone.
+ */
+const STYLED_RADIOS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title>
+<style>.opt input { display: none } .step.closed { display: none }</style></head><body>
+<form id="f">
+  <fieldset>
+    <legend>Are you legally authorized to work in the United States?</legend>
+    <label class="opt"><input type="radio" name="auth" value="Yes"><span class="dot"></span> Yes</label>
+    <label class="opt"><input type="radio" name="auth" value="No"><span class="dot"></span> No</label>
+  </fieldset>
+  <div class="step closed">
+    <fieldset>
+      <legend>Will you now or in the future require visa sponsorship?</legend>
+      <label class="opt"><input type="radio" name="spon" value="Yes"><span class="dot"></span> Yes</label>
+      <label class="opt"><input type="radio" name="spon" value="No"><span class="dot"></span> No</label>
+    </fieldset>
+  </div>
+</form>
+</body></html>`;
+
+const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -1216,6 +1248,32 @@ async function main() {
       'and the report names both questions rather than one of them twice',
       flat.filled.includes('work_authorization=Yes') && flat.filled.includes('requires_sponsorship=No'),
       flat.filled.join(', ') || 'nothing',
+    );
+
+    /* ------------------------------------------------------------------ */
+
+    const styled = await page.goto(`${base}/styled`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(profile);
+        return {
+          filled: report.filled.map((f) => `${f.key}=${f.value}`),
+          ticked: [...document.querySelectorAll('input[type=radio]:checked')].map((r) => `${r.name}=${r.value}`),
+          sent: [...new FormData(document.getElementById('f'))].map(([k, v]) => `${k}=${v}`),
+        };
+      }, { b: base, profile: { ...PROFILE, work_authorization: 'Yes', requires_sponsorship: 'No' } }),
+    );
+
+    group('A radio the form draws itself');
+    check(
+      'a question whose native buttons are hidden is still answered',
+      styled.ticked.includes('auth=Yes') && styled.sent.includes('auth=Yes'),
+      `ticked ${styled.ticked.join(', ') || 'nothing'}; submitted ${styled.sent.join(', ') || 'nothing'}`,
+    );
+    check(
+      'while a question in a step that is closed is left for later',
+      !styled.ticked.some((t) => t.startsWith('spon=')),
+      styled.ticked.join(', ') || 'nothing',
     );
 
     /* ------------------------------------------------------------------ */
