@@ -103,9 +103,19 @@ async function main() {
      * the builder link, which wore `mode` and read as a third way to build —
      * it is a link on its own line now, so there is nothing to exclude and
      * the count is a straight reading of the row.
+     *
+     * Three, since the two readings of a posting stopped sharing one slot:
+     * the resume as you keep it, the keyword list taken whole, and whatever
+     * the AI decided. They are places you can be rather than a record of how
+     * the thing on screen was built, and you can move between them without
+     * running anything again.
      */
     const modes = card.locator('button.mode');
-    check('both ways to build are offered', (await modes.count()) === 2, `${await modes.count()} modes`);
+    check('all three ways to build are offered', (await modes.count()) === 3, `${await modes.count()} modes`);
+    check(
+      'and the keyword list is one of them',
+      (await card.locator('button.mode', { hasText: 'Keyword match' }).count()) === 1,
+    );
     check(
       'including leaving the resume exactly as it is',
       (await card.locator('button.mode', { hasText: 'Use Original' }).count()) === 1,

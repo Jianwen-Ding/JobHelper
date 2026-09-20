@@ -268,19 +268,77 @@ async function main() {
         throw err;
       }
 
-      const line = editor.locator('.master-source-variant .editable', { hasText: 'Kafka' }).first();
-      await line.waitFor({ timeout: 20_000 });
-      const shown = (await line.textContent()) ?? '';
-      check('found the line this posting is about', /kafka/i.test(shown), shown.slice(0, 60));
-
-      // Where it lives, before it is changed — so it can be put back through
-      // the API afterwards rather than by driving the editor a second time.
+      /*
+       * The store is asked first, and the line is resolved last.
+       *
+       * Where the wording lives has to be known before it is changed, so it
+       * can be put back through the API afterwards rather than by driving the
+       * editor a second time. That read is a round trip, and it used to sit
+       * between finding the line on screen and double-clicking it — and the
+       * editor draws this list wholesale, so a handle taken before a pending
+       * render lands points at a node that is about to be replaced. Under a
+       * loaded machine that is exactly what happened: "element was detached
+       * from the DOM, retrying", then the next match not visible.
+       */
       const where = await locate('Kafka');
       check('and the shared source agrees that is where it lives', Boolean(where), where?.variantId ?? 'not found');
       restore = where;
 
-      await line.dblclick();
-      const raw = await line.textContent();
+      /*
+       * And the view is left to settle before it is touched.
+       *
+       * Switching to Master paints it three times — measured: the container
+       * holding `.master-source-variant` is added three times around the
+       * switch and then not again, because the switch saves first and the
+       * save and the preview each schedule a render. Waiting for the first
+       * paint and acting on it means acting on a node that is replaced twice
+       * underneath: "element was detached from the DOM, retrying", for the
+       * whole of the click's timeout.
+       */
+      const line = () => editor.locator('.master-source-variant .editable', { hasText: 'Kafka' }).first();
+      await line().waitFor({ timeout: 20_000 });
+
+      /*
+       * The same node, still there a moment later.
+       *
+       * Counting the rows cannot see this: every one of those renders draws
+       * the same number of them. What changes is which nodes they are — so
+       * the test holds one and asks whether it survived, which is exactly
+       * what the double-click needs of it.
+       */
+      const steady = async () => {
+        for (let i = 0; i < 80; i++) {
+          const held = await line().elementHandle({ timeout: 20_000 }).catch(() => null);
+          if (held) {
+            await editor.waitForTimeout(500);
+            const alive = await held
+              .evaluate((n) => n.isConnected && n.getClientRects().length > 0)
+              .catch(() => false);
+            if (alive) return held;
+          }
+          await editor.waitForTimeout(250);
+        }
+        /*
+         * Said as itself rather than as a selector that ran out.
+         *
+         * Measured: switching to Master paints the list three times — the
+         * switch saves first, and the save and the preview each schedule a
+         * render — and it then goes quiet, with no API traffic behind it. But
+         * about one run in five it keeps going long past that, and a
+         * double-click cannot land on a node that is replaced underneath it.
+         * Whatever that turns out to be, "the list never stopped being
+         * redrawn" is the fact worth reporting; "waiting for locator(…)" is
+         * not.
+         */
+        throw new Error('the Master source list never stopped being redrawn');
+      };
+      const held = await steady();
+
+      const shown = (await held.textContent()) ?? '';
+      check('found the line this posting is about', /kafka/i.test(shown), shown.slice(0, 60));
+
+      await held.dblclick();
+      const raw = shown;
       await editor.keyboard.press('Control+A');
       await editor.keyboard.type(`${raw} with ${MARKER}`);
       await editor.keyboard.press('Enter');

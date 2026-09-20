@@ -583,6 +583,27 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      * lit that button, over a resume nothing had touched.
      */
     builtWith: isDecision(analysis) ? 'ai' : 'none',
+    /**
+     * Both readings of this posting, kept side by side.
+     *
+     * There are two, they are made differently, and they used to share one
+     * slot: whichever arrived last was the proposal, and the other was gone.
+     * That is wrong in both directions. Asking the AI threw away a keyword
+     * list somebody had already been through and ticked; and the opening
+     * read, which lands on its own a few seconds later, could overwrite three
+     * minutes of a model's work with a match nobody asked for.
+     *
+     * Comparing them is the interesting part anyway — the whole question a
+     * person has in front of a tailored resume is "what did it do that I
+     * would not have done?", and that needs both answers present.
+     *
+     * Each slot holds the proposal-bearing half of an analysis plus the spec
+     * as it currently stands, so the boxes ticked on one survive a trip to
+     * the other and back.
+     */
+    offers: { match: null, ai: null },
+    /** Which of them is on screen. Null until the first one arrives. */
+    showing: null,
     /** Which compiled PDF is on screen per kind, and the canvases drawn. */
     shownPdf: { resume: null, letter: null },
     pdfPages: new Map(),
@@ -657,8 +678,30 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       maybeAutoDraft();
       return;
     }
-    if (work.spec) state.spec = work.spec;
-    if (work.builtWith) state.builtWith = work.builtWith;
+    /*
+     * What was carried is a starting point, not a correction.
+     *
+     * `builtWith` used to be written straight in, and with both readings kept
+     * that became visible: work saved on the previous page while the keyword
+     * list was showing would land on a card already showing the AI's version
+     * — the AI's button lit, its rows underneath, and the summary between
+     * them saying the resume was exactly as it is kept. Restoring is only
+     * ever the *first* proposal on a card, so it is skipped once one has
+     * arrived on its own.
+     */
+    if (work.spec && !state.showing) {
+      state.spec = work.spec;
+      if (work.builtWith) state.builtWith = work.builtWith;
+      state.showing = work.builtWith === 'ai' ? 'ai' : 'match';
+      state.offers[state.showing] = {
+        analysis: proposalOf(analysis ?? {}),
+        spec: work.spec,
+        full: work.spec,
+        none: withAllOff(work.spec, analysis?.rationale, analysis?.skillChanges),
+      };
+    } else if (work.spec && !state.offers[state.showing]) {
+      state.spec = work.spec;
+    }
     if (work.render) state.render = work.render;
     if (work.letter != null) state.letter = work.letter;
     if (work.letterSource) state.letterSource = work.letterSource;
@@ -946,7 +989,18 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * was working.
    */
   const rebuildLabel = (mode, idle, working) =>
-    running.has('rebuild') && state.rebuilding === mode ? working : idle;
+    proposing() && state.rebuilding === mode ? working : idle;
+
+  /**
+   * Whether what is on screen is the resume exactly as it is kept.
+   *
+   * Read off the proposal rather than remembered, because the boxes can be
+   * ticked and unticked one at a time: "Use Original" is not a mode you are
+   * put into, it is the state of being on the keyword list with none of it
+   * taken. An AI decision is never this, whatever it chose — it is a
+   * different document by construction.
+   */
+  const onOriginal = () => state.showing !== 'ai' && appliedCount() === 0;
 
   /**
    * Build the proposal from the base, superseding whatever was already being
@@ -976,12 +1030,40 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
          * had tailored it. The same reading as everywhere else: only a run
          * the model actually answered is a decision.
          */
-        state.builtWith = isDecision(result) ? 'ai' : 'none';
-        state.render = null;
+        // This one *was* asked for, so it takes the screen. `update` has
+        // already filed it; see there for why filing and showing are apart.
+        if (result?.spec) showOffer(slotOf(result));
       });
     } finally {
       // Only the current one clears the label; a superseded reply arriving
       // late must not say the winner has finished.
+      if (mine === rebuildToken) state.rebuilding = null;
+    }
+  }
+
+  /**
+   * The same work, started from the picker instead of the buttons.
+   *
+   * The mode is the one the proposal is already in, because the suggestions
+   * belong to the pair (base, posting) and changing either means working them
+   * out again — and on an AI proposal that is a fresh model pass, which is
+   * minutes. That is the whole reason this goes through the same bookkeeping
+   * as `rebuildAs` rather than dispatching `act` directly: the label, the
+   * Stop and the AI indicator are all read off `state.rebuilding`, and a base
+   * switch that set none of them started the longest run on the card wearing
+   * the clothes of the shortest.
+   */
+  async function switchBaseTo(baseResumeId) {
+    const mode = state.builtWith === 'ai' ? 'ai' : 'match';
+    const mine = ++rebuildToken;
+    state.rebuilding = mode;
+    try {
+      return await act('setBase', { baseResumeId, tailor: mode }, (result) => {
+        if (mine !== rebuildToken) return;
+        // What came back, not what was asked for — see `rebuildAs`.
+        if (result?.spec) showOffer(slotOf(result));
+      });
+    } finally {
       if (mine === rebuildToken) state.rebuilding = null;
     }
   }
@@ -1309,6 +1391,20 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     ai: 'Reading the posting…',
   };
 
+  /*
+   * And the same three from the picker, which starts the same work.
+   *
+   * "Starting from that resume…" was said whichever mode the switch was in,
+   * including the one that runs a model for minutes: a bar that reads like a
+   * copy, with a clock on it passing thirteen seconds and climbing, and
+   * nothing saying an AI was involved at all.
+   */
+  const SWITCHING = {
+    none: 'Starting from that resume…',
+    match: 'Starting from that resume, matching on keywords…',
+    ai: 'Reading the posting again, from that resume…',
+  };
+
   /**
    * Runs the worker can be told to let go of, and what it calls each one.
    *
@@ -1318,6 +1414,16 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    */
   const STOPPABLE = {
     rebuild: 'rebuild',
+    /*
+     * Switching base is the same run under another name.
+     *
+     * The picker asks for the mode the proposal is already in, so on an
+     * AI-built one it starts a fresh model pass — minutes — and the worker
+     * registers it under `rebuild` like any other analysis. Everything that
+     * exists for a long run was keyed on the *card's* action name, though, so
+     * a base switch got the short bar, the wrong sentence and no way out.
+     */
+    setBase: 'rebuild',
     coverLetter: 'coverLetter',
     writeApplication: 'writeApplication',
   };
@@ -1351,8 +1457,11 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     await onAction('cancelWork', { what: [what] }).catch(() => undefined);
   }
 
+  /** The two actions that put a proposal together, either of which may be the AI. */
+  const proposing = () => running.has('rebuild') || running.has('setBase');
+
   /** Whether the AI is the thing holding this card up right now. */
-  const aiIsReading = () => running.has('rebuild') && state.rebuilding === 'ai';
+  const aiIsReading = () => proposing() && state.rebuilding === 'ai';
 
   /**
    * Actions whose bar is drawn beside the button that started them rather than
@@ -1395,7 +1504,10 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      * that is what is happening. It still matters — the offer to work the
      * suggestions out again comes through here as `match`.
      */
-    const label = (running.has('rebuild') && REBUILDING[state.rebuilding]) || entry[1];
+    const label =
+      (running.has('rebuild') && REBUILDING[state.rebuilding]) ||
+      (running.has('setBase') && SWITCHING[state.rebuilding]) ||
+      entry[1];
 
     /*
      * And how long it has been going.
@@ -1712,11 +1824,122 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * list stays up and the boxes simply all come off — which is what "use the
    * original" means once the match is a list of offers.
    */
+  /**
+   * The half of an analysis that belongs to one proposal rather than to the
+   * posting. Everything else — the job, the voice counts, which resumes fit
+   * — is true of the page and is shared by both.
+   */
+  const PROPOSAL_KEYS = [
+    'spec',
+    'diff',
+    'rationale',
+    'skillChanges',
+    'entryByBullet',
+    'suggestions',
+    'baseResumeId',
+    'baseLabel',
+    'aiUsed',
+    'tailor',
+    'aiFailed',
+    'aiFailedKind',
+    'aiRaw',
+  ];
+
+  const proposalOf = (a) => Object.fromEntries(PROPOSAL_KEYS.filter((k) => k in a).map((k) => [k, a[k]]));
+
+  /** The same analysis with its proposal taken out. See `update`. */
+  const aboutThePage = (a) => Object.fromEntries(Object.entries(a).filter(([k]) => !PROPOSAL_KEYS.includes(k)));
+
+  /** Which slot an analysis belongs in. See `isDecision`. */
+  const slotOf = (a) => (isDecision(a) ? 'ai' : 'match');
+
+  /**
+   * File a proposal without putting it on screen.
+   *
+   * Separating the two is the point: an analysis arriving is not the same
+   * event as somebody asking for it. The opening read lands on its own while
+   * you may be three minutes into an AI pass, and it belongs in its slot and
+   * nowhere near the view.
+   */
+  function fileOffer(next) {
+    if (!next?.spec) return null;
+    const which = slotOf(next);
+    const none = withAllOff(next.spec, next.rationale, next.skillChanges);
+    state.offers[which] = {
+      analysis: proposalOf(next),
+      // A decision arrives applied; offers arrive over the resume as it is
+      // kept, with every box off. Same reading as `state.spec`'s initialiser.
+      spec: which === 'ai' ? next.spec : none,
+      /* The two ends of the list, so the buttons that jump to them can. */
+      full: next.spec,
+      none,
+    };
+    return which;
+  }
+
+  /** Park what is on screen, so its ticks are there when you come back. */
+  function parkShown() {
+    const held = state.showing && state.offers[state.showing];
+    if (held && state.spec) held.spec = state.spec;
+  }
+
+  /**
+   * Put one of the two proposals on screen. Free: no server, no model.
+   *
+   * Switching used to mean running the thing again, which for the AI is
+   * minutes and a bill, so in practice you could not go back and look.
+   */
+  function showOffer(which) {
+    const offer = state.offers[which];
+    if (!offer) return false;
+    if (state.showing !== which) parkShown();
+    state.showing = which;
+    state.spec = offer.spec;
+    Object.assign(analysis, offer.analysis);
+    state.builtWith = which === 'ai' ? 'ai' : 'none';
+    state.render = null;
+    draw();
+    return true;
+  }
+
   async function useOriginal() {
+    // "As you keep it" is the match's list with nothing ticked, so it is that
+    // proposal you are on — not a third state of its own.
+    if (state.offers.match && state.showing !== 'match') showOffer('match');
     state.spec = withAllOff(state.spec, analysis.rationale, analysis.skillChanges);
     state.builtWith = 'none';
+    if (state.offers.match) state.offers.match.spec = state.spec;
     state.render = null;
     await compile();
+  }
+
+  /**
+   * The keyword list, with every suggestion in.
+   *
+   * The counterpart of "Use Original", and the other end of the same list.
+   * Without it the only ways to see what the match would actually do were to
+   * tick six boxes by hand or to have arrived before anything else did.
+   */
+  async function useKeywordMatch() {
+    const offer = state.offers.match;
+    if (!offer) return rebuildAs('match');
+    showOffer('match');
+    state.spec = offer.full ?? state.spec;
+    offer.spec = state.spec;
+    state.render = null;
+    await compile();
+  }
+
+  /**
+   * The AI's reading, run if there is not one yet and simply shown if there
+   * is. Looking at it again used to mean paying for it again.
+   */
+  async function useAiTailoring() {
+    if (state.offers.ai) {
+      showOffer('ai');
+      return compile();
+    }
+    return rebuildAs('ai');
   }
 
   /**
@@ -2780,8 +3003,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      * An AI proposal is the one thing that cannot be, so that one repeats
      * what was asked for.
      */
-    baseSelect.onchange = () =>
-      act('setBase', { baseResumeId: baseSelect.value, tailor: state.builtWith === 'ai' ? 'ai' : 'match' });
+    baseSelect.onchange = () => switchBaseTo(baseSelect.value);
 
     const feedback = h('textarea', {
       value: state.feedback,
@@ -2814,9 +3036,19 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
          * these, send what I already have". Tailoring is the feature; it was
          * never supposed to be compulsory.
          */
+        /*
+         * Three readings of the same posting, and you can be on any of them.
+         *
+         * These used to describe how the proposal had been built, which made
+         * them a record rather than a control: the AI's version and the
+         * keyword list shared one slot, so arriving at one meant losing the
+         * other, and going back to look meant running it again. Both are kept
+         * now (see `state.offers`), so these switch between them and only
+         * start work when there is nothing to switch to.
+         */
         h('div', { className: 'row build-modes' }, [
           h('button', {
-            className: state.builtWith === 'none' ? 'mode on' : 'mode',
+            className: onOriginal() ? 'mode on' : 'mode',
             textContent: 'Use Original',
             title:
               'Send this resume exactly as you keep it. Every keyword suggestion below comes off.',
@@ -2824,14 +3056,25 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             disabled: aiIsReading() ? false : busyIn('compile'),
             onclick: () => useOriginal(),
           }),
+          h('button', {
+            className: state.showing === 'match' && !onOriginal() ? 'mode on' : 'mode',
+            textContent: rebuildLabel('match', 'Keyword match', 'Matching on keywords…'),
+            title: state.offers.match
+              ? 'Take every keyword suggestion below. No AI: this posting’s words against the phrasings already in your save.'
+              : 'Match this posting’s words against the phrasings already in your save.',
+            disabled: aiIsReading() ? false : busyIn('compile'),
+            onclick: () => useKeywordMatch(),
+          }),
           aiButton({
-            className: state.builtWith === 'ai' ? 'mode on' : 'mode',
-            title: state.ai?.active
-              ? 'The AI reads this posting and decides which phrasings and bullets to use.'
-              : state.ai?.state === 'server-off'
+            className: state.showing === 'ai' ? 'mode on' : 'mode',
+            title: !state.ai?.active
+              ? state.ai?.state === 'server-off'
                 ? 'ResumeM-M has its AI switched off — turn it on under Voice & AI.'
-                : 'Switch the AI on from the JobHelper toolbar icon to use this.',
-            disabled: busyIn('resume') || !state.ai?.active,
+                : 'Switch the AI on from the JobHelper toolbar icon to use this.'
+              : state.offers.ai
+                ? 'Show what the AI decided. It has already read this posting — nothing runs again.'
+                : 'The AI reads this posting and decides which phrasings and bullets to use.',
+            disabled: busyIn('resume') || (!state.ai?.active && !state.offers.ai),
             /*
              * From the resume as it is kept, not from whatever boxes happen
              * to be ticked. The AI is being asked to decide what to change,
@@ -2839,8 +3082,24 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
              * makes its answer a correction to those rather than a reading
              * of the posting — and makes "why did it keep that?" unanswerable.
              */
-            onclick: () => rebuildAs('ai'),
-          }, rebuildLabel('ai', 'Have AI Tailor', 'Reading the posting…')),
+            onclick: () => useAiTailoring(),
+          }, rebuildLabel('ai', state.offers.ai ? 'AI tailoring' : 'Have AI Tailor', 'Reading the posting…')),
+          /*
+           * Running it again is a separate press from looking at it.
+           *
+           * Once there is an AI proposal the button beside this one shows it,
+           * which is free; a second pass costs minutes and money and should
+           * not be one misclick away from somebody who only wanted to compare.
+           */
+          state.offers.ai && state.ai?.active
+            ? h('button', {
+                className: 'link run-again',
+                textContent: 'Run again',
+                title: 'Read the posting again from the resume as you keep it',
+                disabled: busyIn('resume'),
+                onclick: () => rebuildAs('ai'),
+              })
+            : null,
           /*
            * And the bar for it, here rather than at the top of the step. The
            * question "is the AI what I am waiting for?" should be answerable
@@ -3907,28 +4166,45 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   return {
     remove: removeCard,
     /** The analysis, whether this is the first one or a later rebuild. */
-    update(next) {
-      analysis = analysis ? Object.assign(analysis, next) : next;
+    /**
+     * @param next the analysis that arrived
+     * @param show true when somebody asked for this one, so it takes the
+     *   screen. A run that finished after the card moved on is still a run
+     *   somebody asked for — see `landLate` in the content script.
+     */
+    update(next, { show = false } = {}) {
+      /*
+       * Filed, and only shown if there is nothing to displace.
+       *
+       * An analysis arriving is not the same event as somebody asking for
+       * one. The opening read lands a few seconds after the card goes up and
+       * used to write itself over whatever was there — which, when an AI pass
+       * had finished in the meantime, meant a keyword match silently
+       * replacing three minutes of a model's work.
+       */
+      const filed = fileOffer(next);
+      const takeScreen = Boolean(filed) && (show || !state.showing || state.showing === filed);
+
+      /*
+       * And the merge below is split for the same reason.
+       *
+       * `analysis` is one object serving two purposes: what this posting is —
+       * the job, the voice counts, which resumes fit — and what one proposal
+       * did to the resume. The first is always the newest answer. The second
+       * belongs to whichever proposal is on screen, so merging a whole
+       * analysis in while showing the other one put the match's rationale
+       * under the AI's heading: the button said the AI had chosen and the
+       * rows underneath it said they came from keyword matching.
+       */
+      analysis = Object.assign(analysis ?? {}, filed && !takeScreen ? aboutThePage(next) : next);
       // A note is about the run that has just ended, not about the next one.
       state.note = null;
-      /*
-       * A new proposal replaces the old one whole, every swap made afresh.
-       * Nothing has to be forgotten alongside it: which changes are in is
-       * read off the spec, so replacing the spec is the whole of the reset.
-       */
-      state.spec = next.spec
-        ? (isDecision(next) ? next.spec : withAllOff(next.spec, next.rationale, next.skillChanges))
-        : state.spec;
-      /*
-       * Two modes now, not three. You are either on the resume as you keep it
-       * — whatever boxes are ticked on top of it — or on what the AI decided.
-       * "match" stopped being somewhere you could be when it became a list of
-       * offers, and leaving it as a value here made the card claim a mode
-       * nothing can put you in.
-       */
-      if (next.spec) state.builtWith = isDecision(next) ? 'ai' : 'none';
-      state.render = null;
-      draw();
+
+      if (takeScreen) showOffer(filed);
+      else {
+        state.render = null;
+        draw();
+      }
       maybeAutoDraft();
     },
 
@@ -3983,9 +4259,16 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       state.rebuilding = mode;
       try {
         return await act('rebuild', { tailor: mode }, (result) => {
-          // What came back, not what was asked for — see `rebuildAs`.
-          state.builtWith = isDecision(result) ? 'ai' : 'none';
-          state.render = null;
+          /*
+           * What came back, not what was asked for — see `rebuildAs`. And
+           * nothing at all when nothing came back: this wrote `'none'` on a
+           * run that had failed or been superseded, which is a claim about
+           * the proposal on screen made by a run that never produced one.
+           * With both readings kept it was visible — the AI's version on
+           * screen, its button lit, and the summary under it saying the
+           * resume was exactly as it is kept.
+           */
+          if (result?.spec) showOffer(slotOf(result));
         });
       } finally {
         state.rebuilding = null;

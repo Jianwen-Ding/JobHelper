@@ -371,6 +371,20 @@
   let pass = 0;
   const supersede = () => ++pass;
 
+  /**
+   * The pass whose analysis `analysis` actually holds.
+   *
+   * Between a look starting and its verdict arriving, `analysis` is still the
+   * *previous* page's — and on a board that swaps postings without a
+   * navigation, the card on screen is already the provisional one for the new
+   * job, drawn from its title. So for those few seconds the card says one
+   * posting and `analysis` says another, and anything that asks "is this
+   * reply about what is in front of me?" by reading `analysis` gets the wrong
+   * answer with nothing looking wrong. `landLate` is exactly that question.
+   */
+  let analysed = 0;
+  const analysisIsCurrent = () => analysed === pass;
+
   /** The settings as last read, so a second look can be decided without asking. */
   let lastSettings = null;
 
@@ -548,9 +562,12 @@
    * be reading the page.
    */
   function landLate(result) {
-    if (cardHandle && sameJob(result, analysis)) {
+    // Only against an analysis that belongs to the page on screen; see
+    // `analysed`. Otherwise this is held and `takeLateProposal` decides once
+    // the look in flight has landed.
+    if (cardHandle && analysisIsCurrent() && sameJob(result, analysis)) {
       analysis = Object.assign(analysis ?? {}, result);
-      cardHandle.update(result);
+      cardHandle.update(result, { show: true });
       if (wasDecided(result)) cardHandle.say('The AI finished tailoring this posting. Its changes are below.');
       return result;
     }
@@ -571,7 +588,7 @@
       return;
     }
     analysis = Object.assign(analysis ?? {}, late.result);
-    cardHandle?.update(late.result);
+    cardHandle?.update(late.result, { show: true });
     if (wasDecided(late.result)) cardHandle?.say('The AI finished tailoring this posting. Its changes are below.');
   }
 
@@ -1118,6 +1135,7 @@
     }
     if (!current()) return;
     analysis = found;
+    analysed = mine;
 
     if (!analysis.isJobPosting && !force) {
       removeCard();
@@ -1617,6 +1635,37 @@
     if (message?.type === 'jh-application-frame') {
       if (!cardHandle) show({ viaFrame: true }).catch(() => undefined);
       sendResponse({ ok: true });
+      return false;
+    }
+    /*
+     * "Which application is this page, as far as you know?"
+     *
+     * Asked by the worker when a form inside a frame has just been sent. A
+     * frame has no card and no analysis of its own, so it cannot name what it
+     * has just submitted; the worker reads the trail instead, and the trail
+     * is written by a keeper on a two-second interval. Press Submit inside an
+     * embedded form faster than that — which is what happens when the resume
+     * was already built and the fields were already filled — and the send
+     * found nothing to file it under and was dropped. The top document has
+     * known the answer since the card went up.
+     */
+    if (message?.type === 'jh-what-is-this') {
+      /*
+       * No `kind === 'application'` guard here, deliberately.
+       *
+       * That guard belongs on *this* document's own watcher, where it stops
+       * "Apply Now" on a description page being read as the application going
+       * out. This question is only ever asked after a frame has already
+       * decided a form was submitted, and on an embedded board the outer page
+       * is precisely the description — it holds a heading and an iframe. The
+       * frame gets no second opinion by design; refusing to name what it sent
+       * was one anyway, and the answer was always no.
+       */
+      const named = analysis?.spec?.generatedFor;
+      sendResponse({
+        ok: true,
+        data: named?.company && named?.role ? { company: named.company, role: named.role } : null,
+      });
       return false;
     }
     if (message?.type === 'autofill') {

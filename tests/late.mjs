@@ -62,11 +62,15 @@ async function main() {
    * analysis.
    */
   let stoodIn = 0;
+  /** Every analysis that reached the proxy, however it was answered. */
+  let analyses = 0;
   const slow = await serveSlowProxy(SERVER, {
     slowRoute: /extension\/analyze/,
     ms: 9000,
     respondInstead: (url, body, lastReply) => {
-      if (!/extension\/analyze/.test(url) || !lastReply) return null;
+      if (!/extension\/analyze/.test(url)) return null;
+      analyses++;
+      if (!lastReply) return null;
       try {
         if (JSON.parse(body).tailor !== 'ai') return null;
       } catch {
@@ -108,8 +112,13 @@ async function main() {
     const card = page.locator(`${HOST} .card`);
     await page.locator(`${HOST} .card .role`).waitFor({ timeout: 40_000 });
 
-    const aiButton = card.locator('button.mode', { hasText: 'Have AI Tailor' });
-    const aiOn = card.locator('button.mode.on', { hasText: 'Have AI Tailor' });
+    /*
+     * Found by what it is, not by what it says: the AI button's label changes
+     * once there is a proposal to go back to — it stops offering to run and
+     * starts offering to show.
+     */
+    const aiButton = card.locator('button.mode.ai-action');
+    const aiOn = card.locator('button.mode.ai-action.on');
 
     console.log('\nThe url moves while the model is still reading');
     // Waited for rather than slept on: the button appears with the proposal,
@@ -160,6 +169,48 @@ async function main() {
       'and says out loud that it finished',
       /finished tailoring/i.test(said),
       said.slice(0, 140) || '(nothing said)',
+    );
+
+    /* ---------------------------------------------------------------- *
+     * Both readings at once, and moving between them                    *
+     * ---------------------------------------------------------------- */
+
+    /*
+     * There are two answers to "what should this resume say for this job",
+     * they are made in completely different ways, and they used to share one
+     * slot — so arriving at one meant losing the other, and going back to
+     * compare meant running it again. For the AI that is minutes and a bill,
+     * which in practice means you never do.
+     */
+    console.log('\nThe keyword list and the AI’s version, side by side');
+
+    const matchButton = card.locator('button.mode', { hasText: 'Keyword match' });
+    const provenance = async () => (await card.locator('.from-what').allTextContents()).join(' ');
+
+    check('the AI’s version is the one on screen', (await aiOn.count()) === 1);
+    check('and the rows say who chose them', /chosen by the ai/i.test(await provenance()), (await provenance()).slice(0, 80));
+
+    /*
+     * Switching is looking, not working.
+     *
+     * Measured on the stand-in counter rather than on the clock or on the
+     * total number of requests: it fires for `tailor: "ai"` and nothing else,
+     * so it counts model passes exactly, and the card's own opening reads —
+     * which are still landing around these clicks — cannot move it.
+     */
+    const passesBefore = stoodIn;
+    await matchButton.click();
+    await card.locator('.from-what', { hasText: 'keyword matching' }).waitFor({ timeout: 8000 }).catch(() => undefined);
+    check('the keyword list is still there to go back to', /keyword matching/i.test(await provenance()), (await provenance()).slice(0, 80));
+
+    await aiButton.click();
+    await card.locator('.from-what', { hasText: 'Chosen by the AI' }).waitFor({ timeout: 8000 }).catch(() => undefined);
+    check('and back again to what the AI decided', (await aiOn.count()) === 1);
+    check('with the rows saying so', /chosen by the ai/i.test(await provenance()), (await provenance()).slice(0, 80));
+    check(
+      'and neither switch ran the model again',
+      stoodIn === passesBefore,
+      `${stoodIn - passesBefore} extra passes`,
     );
   } finally {
     await context.close();
