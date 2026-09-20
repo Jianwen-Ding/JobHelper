@@ -82,6 +82,7 @@ const SUITES = [
   { name: 'carrying', file: 'carrying.mjs', cost: 84 },
   { name: 'controls', file: 'controls.mjs', cost: 82 },
   { name: 'quiet', file: 'quiet.mjs', cost: 46 },
+  { name: 'asking', file: 'asking.mjs', cost: 46 },
   { name: 'late', file: 'late.mjs', cost: 45 },
   { name: 'worker', file: 'worker.mjs', cost: 42 },
   { name: 'stopping', file: 'stopping.mjs', cost: 37 },
@@ -96,6 +97,7 @@ const SUITES = [
   { name: 'harness', file: 'harness.mjs', cost: 1, nodeTest: true },
   { name: 'ats', file: 'ats.mjs', cost: 1, nodeTest: true },
   { name: 'trail', file: 'trail.mjs', cost: 1, nodeTest: true },
+  { name: 'sites', file: 'sites.mjs', cost: 1, nodeTest: true },
   { name: 'config', file: 'config.mjs', cost: 1, nodeTest: true },
 ];
 
