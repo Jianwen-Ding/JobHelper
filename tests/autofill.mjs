@@ -340,7 +340,49 @@ const LEGACY = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</t
 </tbody></table></form>
 </body></html>`;
 
-const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY };
+/*
+ * Hidden fields, where every framework actually puts them.
+ *
+ * A CSRF token, a Workday state blob, a phone country code: every real form
+ * carries several, and they land wherever the framework likes — very often
+ * immediately before the box a person types into. The fields here are named
+ * the way the enterprise systems name them, so their label is the only signal
+ * there is; the control below is the same markup with the hidden inputs taken
+ * out, which is what says the hidden input is the cause.
+ */
+const HIDDEN = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div>First Name</div>
+  <input type="hidden" name="csrf" value="abc123">
+  <input id="hfn" name="q_00281">
+
+  <div>Email</div>
+  <span><input type="hidden" name="state" value="x"></span>
+  <input id="hem" name="q_00282">
+
+  <div class="field">
+    <label for="hph">Phone *</label>
+    <input type="hidden" name="ph_country" value="1">
+    <input id="hph" name="q_00283">
+  </div>
+
+  <!--
+    A question whose only mark of being required is a star in a label that is
+    not associated with it: no "for" attribute, and not wrapping it. Which is
+    the shape that reaches the group walk at all — an associated label
+    short-circuits it.
+  -->
+  <div class="field">
+    <label>Why do you want to work here? *</label>
+    <input type="hidden" name="q_meta" value="{}">
+    <textarea id="hq" name="q_00284"></textarea>
+  </div>
+</form>
+</body></html>`;
+/** The same form with nothing hidden in it — the control. */
+const UNHIDDEN = HIDDEN.replace(/<input type="hidden"[^>]*>/g, '').replace(/id="h/g, 'id="u');
+
+const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -795,6 +837,67 @@ async function main() {
           skipped: report.skipped.map((s) => `${s.key}:${s.reason}`),
         };
       }, { b: base, profile: PROFILE }),
+    );
+
+    const read = (path, ids) =>
+      page.goto(`${base}${path}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, profile, ids: which }) => {
+          const m = await import(`${b}/autofill.js`);
+          const report = m.fillForm(profile);
+          return {
+            values: Object.fromEntries(which.map((id) => [id, document.getElementById(id).value])),
+            filled: report.filled.map((f) => f.key),
+            questions: m.findQuestions().map((q) => ({ q: q.question, required: m.isRequired(q.fieldId) })),
+          };
+        }, { b: base, profile: PROFILE, ids }),
+      );
+    const hidden = await read('/hidden', ['hfn', 'hem', 'hph']);
+    const unhidden = await read('/unhidden', ['ufn', 'uem', 'uph']);
+
+    group('Hidden fields, where the frameworks put them');
+    /*
+     * Both walks that look for a label stop when they reach another field,
+     * which is right — the label before that field belongs to it. A hidden
+     * input is not a field anybody can see or label, and counting it as one
+     * cost two of these three: only the box with a real `<label for>` was
+     * filled, and nothing was reported, so it looked exactly like a form the
+     * tool was never confident about.
+     */
+    check(
+      'a CSRF token between a label and its box does not cost the label',
+      hidden.values.hfn === 'Jianwen',
+      hidden.values.hfn,
+    );
+    check(
+      'nor does one wrapped in a span, as Workday writes them',
+      hidden.values.hem === 'ding.jianw@northeastern.edu',
+      hidden.values.hem,
+    );
+    check(
+      'a country-code field inside the group does not hide the phone label',
+      hidden.values.hph === '555-0100',
+      hidden.values.hph,
+    );
+    /*
+     * And the same rule in `isRequired`, which walks the field's group looking
+     * for the label that carries the star. A hidden sibling made the group
+     * look like it held two fields, so the walk stopped and the question came
+     * out optional — on the one the employer will reject the application for
+     * leaving blank.
+     */
+    const starred = hidden.questions.find((q) => /want to work here/.test(q.q));
+    check(
+      'a hidden sibling does not make a required question look optional',
+      starred?.required === true,
+      JSON.stringify(starred),
+    );
+    // The control: the same form without them fills exactly the same fields,
+    // which is what makes the three above about hidden inputs and not about
+    // opaque field names.
+    check(
+      'and the same form with nothing hidden fills no more than that',
+      JSON.stringify(hidden.filled.sort()) === JSON.stringify(unhidden.filled.sort()),
+      `${hidden.filled.join(',')} vs ${unhidden.filled.join(',')}`,
     );
 
     group('Three shapes that filled nothing and said nothing');

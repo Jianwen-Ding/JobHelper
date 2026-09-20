@@ -331,6 +331,27 @@ function fromLabelledBy(element) {
   return clean(text);
 }
 
+/**
+ * A field that could own a label of its own — which a hidden input cannot.
+ *
+ * Both walks in `labelFor`, and the one in `isRequired`, stop when they reach
+ * another field: the label before it belongs to that field, not to this one,
+ * and stepping over it is how somebody's first name gets typed into a
+ * reference-code box. That rule is right and it must not count hidden inputs,
+ * because a hidden input is not a field anybody can see, label or fill.
+ *
+ * Every real application form carries several — a CSRF token, a Workday state
+ * blob, a phone country code, a Greenhouse tracking id — and the framework
+ * puts them wherever it likes, which is very often immediately before the box
+ * a person types into. Measured, on a form whose fields are named `q_00281`
+ * and labelled only by a preceding `<div>`: one `<input type=hidden>` between
+ * the label and the box, and the first-name and email fields came out empty.
+ * Take the hidden inputs out of the same form and all three fill. Nothing is
+ * reported, because from the outside it looks exactly like a form the tool was
+ * never confident about.
+ */
+const ANOTHER_FIELD = 'input:not([type=hidden]), textarea, select';
+
 function labelFor(input) {
   /*
    * Each of these answers only when it has something to say.
@@ -375,7 +396,7 @@ function labelFor(input) {
    */
   let node = input.previousElementSibling;
   for (let i = 0; i < 3 && node; i++, node = node.previousElementSibling) {
-    if (node.matches?.('input, textarea, select') || node.querySelector?.('input, textarea, select')) break;
+    if (node.matches?.(ANOTHER_FIELD) || node.querySelector?.(ANOTHER_FIELD)) break;
     const text = clean(node.textContent);
     if (text && text.length < 160) return text;
   }
@@ -396,7 +417,7 @@ function labelFor(input) {
    */
   let group = input.parentElement;
   for (let i = 0; i < 4 && group; i++, group = group.parentElement) {
-    if (group.querySelectorAll('input:not([type=hidden]), textarea, select').length !== 1) break;
+    if (group.querySelectorAll(ANOTHER_FIELD).length !== 1) break;
     const heading = group.querySelector('label,legend,th,.label,[class*="label"]');
     if (heading && !heading.contains(input)) return clean(heading.textContent);
   }
@@ -1282,7 +1303,7 @@ export function isRequired(fieldId) {
 
   let group = field.parentElement;
   for (let i = 0; i < 3 && group; i++, group = group.parentElement) {
-    if (group.querySelectorAll('input, textarea, select').length > 1) break;
+    if (group.querySelectorAll(ANOTHER_FIELD).length > 1) break;
     const label = group.querySelector('label,legend');
     if (label) return marked(label.textContent);
   }
