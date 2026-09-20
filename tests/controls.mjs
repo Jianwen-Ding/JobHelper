@@ -97,6 +97,22 @@ async function heldPages(worker, page) {
   }, page.url());
 }
 
+/**
+ * The whole stored trail, not only its pages.
+ *
+ * `save` — which store this application is being built from — is kept in the
+ * trail rather than in the worker, precisely so it survives the worker being
+ * stopped. Reading only `pages` cannot see it go missing.
+ */
+async function storedTrail(worker, page) {
+  return worker.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    if (!tab) return null;
+    const key = `trail:${tab.id}`;
+    return (await (chrome.storage.session ?? chrome.storage.local).get(key))[key] ?? null;
+  }, page.url());
+}
+
 /** The cap `sweepOrphans` holds the count to, plus the one it just wrote. */
 const ORPHAN_BOUND = 21;
 
@@ -319,6 +335,27 @@ async function main() {
       }, page.url());
       check('the toolbar still says an application is open', mark.text === '1', `badge "${mark.text}"`);
       check('and still names it', /helios/i.test(mark.title), mark.title);
+
+      /*
+       * And it still knows which save it is being built from.
+       *
+       * That binding is held in the trail rather than in the worker so that
+       * it survives the worker being stopped, and this was the one writer
+       * that rebuilt the trail from scratch instead of spreading it — so the
+       * binding was dropped and lived on only in the worker's memory. It went
+       * on working until the worker was stopped, and then "Build resume"
+       * produced a perfectly good document and refused to file it: "JobHelper
+       * has lost track of which save this application was built from."
+       *
+       * Which save you are working in is not something "use only this page"
+       * says anything about. The pages are what is being forgotten.
+       */
+      const kept = await storedTrail(worker, page);
+      check(
+        'and which save it is being built from survives the pages being dropped',
+        Boolean(kept?.save),
+        `save ${JSON.stringify(kept?.save ?? null)}`,
+      );
 
       /*
        * The popup's button means the other thing, and says so: "Start fresh",

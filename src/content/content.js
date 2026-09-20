@@ -1368,14 +1368,31 @@
     // is least likely to have just run.
     const onHide = () => save();
     window.addEventListener('pagehide', onHide);
-    // Coming back is the worker's news to break, not this listener's — see
-    // the `jh-came-back` message. Leaving is all this one is for.
+    // Coming back from the builder is the worker's news to break, not this
+    // listener's — see the `jh-came-back` message.
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') onHide();
     };
     document.addEventListener('visibilitychange', onVisibility);
+
+    /*
+     * Coming back with the Back button is this listener's, though, and there
+     * was nothing listening for it.
+     *
+     * `persisted` is the whole of the difference: false is an ordinary load,
+     * where the script is running from the top anyway and has already done all
+     * of this. True means the document was restored whole from the back /
+     * forward cache — nothing re-ran, and the tab's trail has moved on to
+     * whatever was visited in between. See `startOver`.
+     */
+    const onShow = (event) => {
+      if (event.persisted) void startOver();
+    };
+    window.addEventListener('pageshow', onShow);
+
     teardown.push(() => {
       window.removeEventListener('pagehide', onHide);
+      window.removeEventListener('pageshow', onShow);
       document.removeEventListener('visibilitychange', onVisibility);
     });
   }
@@ -1602,60 +1619,90 @@
   let looking = false;
 
   let lastUrl = location.href;
+  /**
+   * Start this page again, as though it had just been opened.
+   *
+   * Two things arrive here. A route change on a single-page board, which is
+   * the only kind of navigation those have. And a restore from the back /
+   * forward cache, which looks like nothing at all from in here: the document,
+   * the card and the half-written letter all come back exactly as they were
+   * frozen, no script re-runs, and `location.href` is what it already was —
+   * it changed and changed back while this document sat still.
+   *
+   * The tab did not sit still. Going to the next posting made the trail that
+   * posting's, so a card restored onto the previous one is a card writing into
+   * an application the tab has moved on from: every two-second save is refused
+   * by `sameApplication` and the refusal is caught and dropped, so the letter
+   * stays on screen and nothing holds it. The toolbar names the other posting
+   * while the user is looking at this one.
+   *
+   * Reloading was the only path that ever worked, and it worked because it
+   * runs all of this. So a restore runs it too.
+   *
+   * Not visible to the suite, which is why it lasted: Playwright launches
+   * Chromium with `--disable-back-forward-cache`, so every `goBack()` in the
+   * tests is a reload. Measured both ways on the same page — as the suite
+   * launches it, `pageshow.persisted` is false and JavaScript state is gone;
+   * with the flag left off, `persisted` is true and the state is still there.
+   */
+  const startOver = () => {
+    /*
+     * Save before anything else. On a single-page board this is the only
+     * kind of navigation there is — `pagehide` never fires — and the card
+     * was torn down here without a save, so up to two seconds of letter or
+     * answer went with it.
+     */
+    saveWorkNow?.();
+
+    // Saved, and now shut again until the next page's card has been offered
+    // what that save just put away. Without this a route change kept the
+    // open gate from the page before, which is the race this closes.
+    workRestored = false;
+
+    /*
+     * And what the *previous* posting's form asked for, which is not a fact
+     * about this one.
+     *
+     * `letterInFrame` is learnt from a frame scan and never went back to
+     * false, so on a single-page board — LinkedIn, Workday, Ashby, where
+     * this is the only kind of navigation there is — one posting whose
+     * embedded form wanted a cover letter made every posting looked at
+     * afterwards in that tab demand one too.
+     *
+     * Measured against the same posting two ways. Loaded fresh it offers
+     * the letter as something to add; reached by route change from a
+     * posting that wanted one, it asserts a letter is required and drops
+     * the offer:
+     *
+     *   fresh tab      {"role":"Data Scientist","addLetter":true}
+     *   after the hop  {"role":"Data Scientist","addLetter":false}
+     *
+     * Downstream that is an unrequested letter drafted by `maybeAutoDraft`,
+     * a Submit blocked for "missing a cover letter", and
+     * `coverLetterRequired: true` handed to the editor.
+     */
+    letterInFrame = false;
+
+    // And the one send this document's watcher had to give, which the
+    // posting you have just left may already have spent.
+    restartSending?.();
+
+    // Before the await, not after: the pass still running belongs to the url
+    // that just went away, and it must stop being able to write to the card
+    // from this instant rather than from whenever the import resolves.
+    supersede();
+    return (async () => {
+      const { removeCard } = await imports.card();
+      removeCard();
+      cardHandle = null;
+      await show().catch(quietly);
+    })();
+  };
+
   every(1000, () => {
     if (location.href !== lastUrl) {
       lastUrl = location.href;
-      /*
-       * Save before anything else. On a single-page board this is the only
-       * kind of navigation there is — `pagehide` never fires — and the card
-       * was torn down here without a save, so up to two seconds of letter or
-       * answer went with it.
-       */
-      saveWorkNow?.();
-
-      // Saved, and now shut again until the next page's card has been offered
-      // what that save just put away. Without this a route change kept the
-      // open gate from the page before, which is the race this closes.
-      workRestored = false;
-
-      /*
-       * And what the *previous* posting's form asked for, which is not a fact
-       * about this one.
-       *
-       * `letterInFrame` is learnt from a frame scan and never went back to
-       * false, so on a single-page board — LinkedIn, Workday, Ashby, where
-       * this is the only kind of navigation there is — one posting whose
-       * embedded form wanted a cover letter made every posting looked at
-       * afterwards in that tab demand one too.
-       *
-       * Measured against the same posting two ways. Loaded fresh it offers
-       * the letter as something to add; reached by route change from a
-       * posting that wanted one, it asserts a letter is required and drops
-       * the offer:
-       *
-       *   fresh tab      {"role":"Data Scientist","addLetter":true}
-       *   after the hop  {"role":"Data Scientist","addLetter":false}
-       *
-       * Downstream that is an unrequested letter drafted by `maybeAutoDraft`,
-       * a Submit blocked for "missing a cover letter", and
-       * `coverLetterRequired: true` handed to the editor.
-       */
-      letterInFrame = false;
-
-      // And the one send this document's watcher had to give, which the
-      // posting you have just left may already have spent.
-      restartSending?.();
-
-      // Before the await, not after: the pass still running belongs to the url
-      // that just went away, and it must stop being able to write to the card
-      // from this instant rather than from whenever the import resolves.
-      supersede();
-      return (async () => {
-        const { removeCard } = await imports.card();
-        removeCard();
-        cardHandle = null;
-        await show().catch(quietly);
-      })();
+      return startOver();
     }
 
     if (Date.now() - loadedAt > RESCORE_WINDOW_MS) {

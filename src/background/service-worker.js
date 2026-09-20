@@ -946,7 +946,8 @@ const handlers = {
    */
   async clearTrail({ tabId, keep } = {}, tab, sender) {
     const id = whichTab(tabId, tab, sender);
-    const held = keep?.url ? (await readTrail(id)).pages.filter((p) => p.url === keep.url) : [];
+    const trail = await readTrail(id);
+    const held = keep?.url ? trail.pages.filter((p) => p.url === keep.url) : [];
 
     if (held.length === 0) {
       await session().remove(trailKey(id));
@@ -954,7 +955,25 @@ const handlers = {
       return { pages: [] };
     }
 
-    const next = { pages: held, at: Date.now() };
+    /*
+     * The save binding survives, because it is not part of the application.
+     *
+     * Every other writer spreads `...trail`; this one built a fresh object,
+     * so `save` — the one field kept here specifically to outlive the worker,
+     * see `saveOf` — was dropped. It went on working while the worker lived,
+     * because `saveFor` finds it in the map first, and the map is memory.
+     *
+     * Measured, with one variable changed at a time: read a posting, follow
+     * Apply, press "Start a new application here", let the worker be stopped,
+     * then Build. The resume compiles and the preview appears, and then the
+     * automatic filing is refused under a perfectly good document — "JobHelper
+     * has lost track of which save this application was built from". Leave the
+     * button unpressed, or leave the worker alive, and neither happens.
+     *
+     * Which save you are working in is not something "use only this page"
+     * says anything about. The pages are what is being forgotten.
+     */
+    const next = { pages: held, save: trail.save, at: Date.now() };
     await writeTrail(id, next);
     await markTab(id, next);
     return summarise(next);
