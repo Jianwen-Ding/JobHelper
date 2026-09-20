@@ -21,8 +21,17 @@
  *
  *   for p in 4788 4789 4790; do
  *     cp -r /path/to/store /tmp/store-$p
- *     node dist/src/cli.js serve --port $p --data /tmp/store-$p &
+ *     RMM_COMPILE_CACHE=/tmp/rmm-compiled \
+ *       node dist/src/cli.js serve --port $p --data /tmp/store-$p &
  *   done
+ *
+ * `RMM_COMPILE_CACHE` is worth the line. Nearly every suite here presses
+ * "Build resume" on the same base resume, and each press is a real LaTeX
+ * compile of a couple of seconds; pointing every server in the pool at one
+ * cache directory means the first suite to build a given document pays and
+ * the rest do not. It is keyed on the document itself, so a suite that
+ * tailors the resume still compiles it — see `cacheKey` in ResumeM-M's
+ * `src/render/compile.ts`. Leave it out and everything still works, slower.
  *
  * ## Choosing how many
  *
@@ -57,30 +66,36 @@ const root = path.resolve(here, '..');
  * else finished early. They do not need to be exact, only ordered — but they
  * are kept roughly honest, because a number that is wrong by a factor of ten
  * schedules the wrong suite first and nobody notices.
+ *
+ * Which is what happened. `e2e` was written down as 21 seconds and had grown
+ * to 178, the longest suite here by some way, so the scheduler started it
+ * third from last and everything else was finished while it ran. These are
+ * the numbers a two-worker run actually measured; the summary this prints at
+ * the end is where to get fresh ones.
  */
 const SUITES = [
-  { name: 'nav', file: 'navigation.mjs', cost: 125 },
-  { name: 'sending', file: 'sending.mjs', cost: 90 },
-  { name: 'ats-journey', file: 'ats-journey.mjs', cost: 75 },
-  { name: 'adverse', file: 'adverse.mjs', cost: 53 },
-  { name: 'carrying', file: 'carrying.mjs', cost: 45 },
-  { name: 'controls', file: 'controls.mjs', cost: 40 },
-  { name: 'worker', file: 'worker.mjs', cost: 40 },
-  { name: 'tabs', file: 'tabs.mjs', cost: 40 },
-  { name: 'stopping', file: 'stopping.mjs', cost: 25 },
-  { name: 'quiet', file: 'quiet.mjs', cost: 35 },
-  { name: 'e2e', file: 'e2e.mjs', cost: 21 },
-  { name: 'journey', file: 'journey.mjs', cost: 18 },
-  { name: 'roundtrip', file: 'roundtrip.mjs', cost: 12 },
-  { name: 'joins', file: 'joins.mjs', cost: 12 },
-  { name: 'card', file: 'card.mjs', cost: 6 },
-  { name: 'csp', file: 'csp.mjs', cost: 6 },
-  { name: 'ats-forms', file: 'ats-forms.mjs', cost: 6 },
+  { name: 'e2e', file: 'e2e.mjs', cost: 178 },
+  { name: 'sending', file: 'sending.mjs', cost: 164 },
+  { name: 'adverse', file: 'adverse.mjs', cost: 135 },
+  { name: 'nav', file: 'navigation.mjs', cost: 121 },
+  { name: 'ats-journey', file: 'ats-journey.mjs', cost: 106 },
+  { name: 'carrying', file: 'carrying.mjs', cost: 84 },
+  { name: 'controls', file: 'controls.mjs', cost: 82 },
+  { name: 'quiet', file: 'quiet.mjs', cost: 46 },
+  { name: 'worker', file: 'worker.mjs', cost: 42 },
+  { name: 'stopping', file: 'stopping.mjs', cost: 37 },
+  { name: 'tabs', file: 'tabs.mjs', cost: 22 },
+  { name: 'journey', file: 'journey.mjs', cost: 17 },
+  { name: 'card', file: 'card.mjs', cost: 16 },
+  { name: 'roundtrip', file: 'roundtrip.mjs', cost: 13 },
+  { name: 'joins', file: 'joins.mjs', cost: 8 },
+  { name: 'ats-forms', file: 'ats-forms.mjs', cost: 7 },
   { name: 'autofill', file: 'autofill.mjs', cost: 2 },
+  { name: 'csp', file: 'csp.mjs', cost: 2 },
+  { name: 'harness', file: 'harness.mjs', cost: 1, nodeTest: true },
   { name: 'ats', file: 'ats.mjs', cost: 1, nodeTest: true },
   { name: 'trail', file: 'trail.mjs', cost: 1, nodeTest: true },
   { name: 'config', file: 'config.mjs', cost: 1, nodeTest: true },
-  { name: 'harness', file: 'harness.mjs', cost: 1, nodeTest: true },
 ];
 
 const pool = (process.env.RMM_SERVERS ?? process.env.RMM_SERVER ?? 'http://127.0.0.1:4600')
