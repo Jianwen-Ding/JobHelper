@@ -71,6 +71,38 @@ describe('the server address, as typed', () => {
   it('keeps a path rather than guessing which part was surplus', () => {
     assert.equal(normaliseServerUrl('http://127.0.0.1:4600/api'), 'http://127.0.0.1:4600/api');
   });
+
+  /*
+   * A scheme is not the same as a scheme this can be fetched from.
+   *
+   * The test was for *a* scheme, so anything with `://` in it went straight
+   * into storage: `ftp://127.0.0.1:4600`, `file:///etc/passwd`,
+   * `chrome://settings`. The box then echoed it back as what is in force, the
+   * status line blamed a server that was running, and both buttons offering to
+   * fix it — "Open editor" and the one in the status line — call
+   * `chrome.tabs.create`, which rejects such a URL. The second closes the
+   * popup on its way to doing nothing, so the only way out of the window
+   * simply vanished.
+   */
+  it('refuses a scheme nothing here could fetch or open', () => {
+    for (const said of [
+      'ftp://127.0.0.1:4600',
+      'file:///etc/passwd',
+      'chrome://settings',
+      'ws://127.0.0.1:4600',
+      'javascript://x%0aalert(1)',
+      'data:text/html,hi',
+    ]) {
+      assert.equal(normaliseServerUrl(said), DEFAULTS.serverUrl, said);
+    }
+  });
+
+  it('and still takes the two it can', () => {
+    // The guard has to leave the ordinary cases exactly as they were.
+    assert.equal(normaliseServerUrl('HTTP://127.0.0.1:4600'), 'HTTP://127.0.0.1:4600');
+    assert.equal(normaliseServerUrl('https://rmm.example'), 'https://rmm.example');
+    assert.equal(normaliseServerUrl('[::1]:4600'), 'http://[::1]:4600');
+  });
 });
 
 /*
