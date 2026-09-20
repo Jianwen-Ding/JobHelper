@@ -237,6 +237,7 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .changes { display: grid; gap: 6px; margin: 8px 0 2px; }
 /* Shut, the list is its heading: the count, and the way back to all of it. */
 .changes.shut .change { display: none; }
+.from-what { margin: 2px 0 4px; }
 .fold-changes {
   background: none; border: 0; padding: 0 4px 0 0; margin: 0; cursor: pointer;
   color: var(--faint); font-size: 13px; line-height: 1; min-width: 14px;
@@ -589,6 +590,17 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     letterRender: null,
     /** Why the last one could not be drawn, if it could not. */
     pdfError: null,
+    /**
+     * Something that happened and went well, said in words.
+     *
+     * Apart from `error`, everything the card tells you is a description of
+     * what is on it — the summary, the counts, the buttons. That leaves no
+     * way to report an *event*, and the event that most needed reporting was
+     * the longest one: a tailoring pass finishing. Putting it in `error`
+     * would be the red strip, which is the wrong sentence in the wrong
+     * colour.
+     */
+    note: null,
     /** Whether the person said afterwards that they did not send it. */
     unsent: false,
     /** The text that was saved to the store, so an edit after it can be saved too. */
@@ -1866,8 +1878,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
          * the store and is fixed in the builder, not here.
          */
         state.builtWith === 'ai'
-          ? 'Nothing needed changing — your base resume already suits this posting.'
-          : 'No suggestions for this posting. Add another phrasing in ResumeM-M and there will be more to offer.',
+          ? 'The AI read this posting and found nothing worth changing — your base resume already suits it.'
+          : 'Keyword matching found nothing to suggest: none of this posting’s words reach an alternate phrasing in your save. Add another phrasing in ResumeM-M and there will be more to offer.',
       );
     }
 
@@ -1950,6 +1962,27 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
               onclick: () => useOriginal(),
             }),
       ]),
+      /*
+       * Where these rows came from, above the rows themselves.
+       *
+       * The two lists look identical — the same boxes, the same before and
+       * after — and they are not the same kind of thing at all. One is a
+       * model that read the posting and chose; the other is this posting's
+       * words matched against the alternate phrasings already in your save,
+       * with no model anywhere near it. Which one you are looking at decides
+       * how much weight a row deserves, and the card had left you to infer
+       * it from which button happened to be lit.
+       *
+       * Outside the fold, because it is true of the list whether or not the
+       * list is open.
+       */
+      h('div', {
+        className: 'hint from-what',
+        textContent:
+          state.builtWith === 'ai'
+            ? 'Chosen by the AI, after reading this posting.'
+            : 'Found by keyword matching: this posting’s words against the alternate phrasings already in your save. No AI was involved.',
+      }),
     ]);
 
     for (const c of shown) {
@@ -3294,6 +3327,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       ]),
     );
 
+    if (state.note) body.append(h('div', { className: 'ok-note', textContent: state.note }));
     if (state.error) body.append(drawError());
     return body;
   }
@@ -3875,6 +3909,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     /** The analysis, whether this is the first one or a later rebuild. */
     update(next) {
       analysis = analysis ? Object.assign(analysis, next) : next;
+      // A note is about the run that has just ended, not about the next one.
+      state.note = null;
       /*
        * A new proposal replaces the old one whole, every swap made afresh.
        * Nothing has to be forgotten alongside it: which changes are in is
@@ -3981,6 +4017,12 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
 
     /** Put back the work from the page this one continues. */
     restoreWork,
+    /** Something that happened and went well. See `state.note`. */
+    say(text) {
+      state.note = text;
+      draw();
+    },
+
     setStatus(text, fix = null) {
       state.error = text;
       // The first pass failing is the commonest way to meet this, and the

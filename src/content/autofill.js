@@ -451,8 +451,32 @@ function isWidgetChoice(element) {
   );
 }
 
+/**
+ * Would the browser refuse this control, whoever turned it off?
+ *
+ * `matches` because a disabled `<fieldset>` disables everything inside it
+ * without touching a single descendant's own `disabled` attribute, and an
+ * `<option>` inside a disabled `<optgroup>` is the same trick one level down.
+ * Guarded because `matches` is not on every node this file walks — a widget's
+ * `<div>` reaches `looksLikePlaceholder` too.
+ */
+function isDisabled(node) {
+  return typeof node?.matches === 'function' ? node.matches(':disabled') : Boolean(node?.disabled);
+}
+
 function isFillable(input) {
-  if (input.disabled || input.readOnly) return false;
+  /*
+   * `:disabled`, not `.disabled`.
+   *
+   * The property reflects the element's own attribute and nothing else, so a
+   * control inside `<fieldset disabled>` reads `false` while the browser
+   * treats it as disabled in every way that counts. Forms use that fieldset
+   * for the section you have not unlocked yet — "US applicants only", a step
+   * you have not reached — and the whole section was filled, reported as
+   * filled, and then submitted as nothing at all: `FormData` skips a disabled
+   * control. "Filled 3 fields", three empty fields.
+   */
+  if (isDisabled(input) || input.readOnly) return false;
   if (input.type === 'hidden' || input.type === 'file' || input.type === 'password') return false;
   // Radios are answered as a group, below; checkboxes are consent and are
   // nobody's to tick but the applicant's.
@@ -805,18 +829,41 @@ export function fillForm(fields, { overwrite = false } = {}) {
        * was reported as having no option for the user's country while sitting
        * two lines above the one that did.
        */
+      /*
+       * Only the ones the control would actually let a person choose.
+       *
+       * A disabled `<option>`, and every option under a disabled
+       * `<optgroup>`, is in `input.options` and reads `value` like any other —
+       * but `FormData` takes nothing from a select sitting on one. Country
+       * lists do this: the places a company is hiring in one group, the rest
+       * greyed out underneath. Setting the greyed-out one left the dropdown
+       * reading "United States" on screen, the form reporting itself valid,
+       * and the country submitted as nothing.
+       */
+      const choosable = [...input.options].filter((o) => !isDisabled(o));
       const option =
-        [...input.options].find(
-          (o) => sameOption(o.textContent, value) || sameOption(o.value, value),
-        ) ??
+        choosable.find((o) => sameOption(o.textContent, value) || sameOption(o.value, value)) ??
         // And, failing that, a yes/no pair against a phrase. See `yesNoOption`.
         yesNoOption(
           key,
           value,
-          [...input.options].map((o) => ({ label: o.textContent, el: o })),
+          choosable.map((o) => ({ label: o.textContent, el: o })),
         )?.el;
       if (option) {
         nativeSet(input, 'value', option.value);
+        /*
+         * Check it went in, exactly as the text path below does.
+         *
+         * Setting `value` selects the *first* option carrying it, and two
+         * options sharing a value is ordinary — a placeholder with `value=""`
+         * above a real entry whose value the form fills in later. The write
+         * then lands on the placeholder, the dropdown still reads "Select a
+         * country…", and the card says it filled it.
+         */
+        if (input.selectedOptions[0] !== option) {
+          skipped.push({ key, reason: 'the field would not take it', description: description.slice(0, 60) });
+          continue;
+        }
         // Both, because choosing from a list fires both. `change` alone is
         // what a script fires, and some widgets only listen for `input`.
         input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -934,12 +981,58 @@ function groupLabelFor(radios) {
     if (!radios.every((radio) => group.contains(radio))) continue;
     // Another field in here means this is the form, not this question.
     if (group.querySelectorAll('input:not([type=radio]):not([type=hidden]), textarea, select').length > 0) break;
-    const heading = [...group.querySelectorAll('label,legend,.label,[class*="label"]')].find(
+    const headings = [...group.querySelectorAll('label,legend,.label,[class*="label"]')].filter(
       (el) => !el.querySelector('input, textarea, select'),
     );
+    /*
+     * Somebody else's buttons are in here too.
+     *
+     * The guard above only counts fields that are *not* radios, so a plain
+     * `<div>` holding several yes/no questions one after another — question
+     * text, Yes, No, next question text, Yes, No, with no fieldset and no
+     * wrapper each, which is how hand-rolled career forms are written — looks
+     * exactly like one question's own group. Taking the first heading then
+     * gave every group in it the *first* question's words.
+     *
+     * Measured: sponsorship asked first and work authorisation second, profile
+     * saying "may not need sponsorship" and "yes, authorised". Both groups
+     * were labelled "require visa sponsorship", both were answered No, and the
+     * form submitted "No, I am not legally authorised to work in the United
+     * States" over the applicant's own answer. The report never mentioned the
+     * question at all — it listed sponsorship twice.
+     *
+     * So when the container is shared, take the nearest heading *above* these
+     * buttons instead: the question text a person reads them under.
+     */
+    const shared = [...group.querySelectorAll('input[type=radio]')].some((el) => !radios.includes(el));
+    const heading = shared
+      ? headings.filter((el) => el.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).pop()
+      : headings[0];
     if (heading) return clean(heading.textContent);
   }
   return '';
+}
+
+/**
+ * Can a person see this button — the button, or the thing drawn in its place?
+ *
+ * Nearly every modern form hides the native radio (`display:none`,
+ * `appearance:none`, a 1px clip) and styles a `<span>` inside its `<label>`
+ * instead. Asking the input alone whether it occupies space therefore
+ * answers "no" about a control the user is looking straight at, and the whole
+ * group was skipped before anything was reported: `{filled: [], skipped: []}`
+ * on a visible work-authorisation question, which reads exactly like a form
+ * with nothing to do. Clicking a hidden input works perfectly well, so the
+ * only thing the old test bought was silence.
+ *
+ * The label still has to be somewhere, though. A group inside a closed
+ * accordion or an unmounted step is not this question yet, and both the
+ * input and its label have no box at all.
+ */
+function onScreen(radio) {
+  if (radio.getClientRects().length > 0) return true;
+  const label = radio.closest('label');
+  return Boolean(label && label.getClientRects().length > 0);
 }
 
 /** What one button of a group means, which is what a human reads beside it. */
@@ -1005,7 +1098,7 @@ function answerRadioGroups(fields, overwrite) {
 
   const groups = new Map();
   for (const radio of deepQueryAll('input[type=radio]')) {
-    if (radio.disabled || radio.getClientRects().length === 0) continue;
+    if (isDisabled(radio) || !onScreen(radio)) continue;
     const key = radio.name ? `${scopeOf(radio)}\u0000${radio.name}` : radio.closest('fieldset');
     if (!key) continue;
     if (!groups.has(key)) groups.set(key, []);
@@ -1057,12 +1150,29 @@ function answerRadioGroups(fields, overwrite) {
       continue;
     }
 
-    // Through the prototype's setter, for the same reason a text input is —
-    // see `nativeSet`. A React form ignored the change event outright, left its
-    // own state unset, and submitted the question unanswered.
-    nativeSet(wanted, 'checked', true);
-    wanted.dispatchEvent(new Event('input', { bubbles: true }));
-    wanted.dispatchEvent(new Event('change', { bubbles: true }));
+    /*
+     * Clicked, not set.
+     *
+     * A text input is filled through the prototype's setter and told about it
+     * with `input`/`change` (see `nativeSet`), and doing the same to a radio
+     * looked right and was not: React listens for **click** on checkboxes and
+     * radios, not change — `shouldUseClickEvent` in its own event plugin — so
+     * `onChange` never ran, the component's state stayed empty, and its next
+     * render put `checked` back to what its state said. Measured against React
+     * 18 with a controlled group: the button ticked, one unrelated keystroke
+     * re-rendered the form, the tick vanished, and the work-authorisation
+     * question submitted blank. The card said "Filled 3 fields".
+     *
+     * A click is what a person does, so every framework is listening for it.
+     * The setter stays as the way back for a form that cancels the click:
+     * ticking the box is better than nothing, and it is what used to happen.
+     */
+    wanted.click();
+    if (!wanted.checked) {
+      nativeSet(wanted, 'checked', true);
+      wanted.dispatchEvent(new Event('input', { bubbles: true }));
+      wanted.dispatchEvent(new Event('change', { bubbles: true }));
+    }
     filled.push({ key, value: fields[key] });
   }
 

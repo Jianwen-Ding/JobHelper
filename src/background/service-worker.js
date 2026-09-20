@@ -64,11 +64,34 @@ const saveOf = new Map();
  * where there is genuinely nothing to know.
  */
 async function saveFor(tabId) {
-  const known = saveOf.get(tabId);
-  if (known) return known;
+  /*
+   * The trail first, because the trail is the true one — which is what the
+   * note above says and what this used to get backwards.
+   *
+   * Reading the map first meant nothing ever invalidated it. `remember`
+   * writes the *new* save into the trail when an application starts, and the
+   * map went on answering with the old one: read a posting with "work" open,
+   * switch save in the editor, read a different posting in the same tab, and
+   * the second application — proposed, tailored and written entirely in
+   * "personal" — was filed into "work" with a 200. The store's own guard
+   * could not help, because the header it was sent said "work" too.
+   *
+   * Worse, it disappears when the worker is stopped, so the same sequence
+   * behaves correctly after half a minute of idling and wrongly when it does
+   * not — and the refusal it does produce ("this was written against work,
+   * reload the editor or open that save again") offers the user the action
+   * that then files a personal-built proposal into the work save.
+   *
+   * The map stays as the fallback for the case it was written for: a worker
+   * that remembers an application whose trail has been cleared out from under
+   * it.
+   */
   const trail = await readTrail(tabId);
-  if (trail.save) saveOf.set(tabId, trail.save);
-  return trail.save;
+  if (trail.save) {
+    saveOf.set(tabId, trail.save);
+    return trail.save;
+  }
+  return saveOf.get(tabId);
 }
 
 /**
@@ -222,6 +245,29 @@ async function serverFetch(path, options = {}) {
   try {
     body = await res.json();
   } catch (cause) {
+    /*
+     * The two deadlines again, because neither of them stops at the headers.
+     *
+     * A reply is "received" the moment its status line arrives, and the body
+     * can take as long as it likes after that — so both the Stop button and
+     * the ceiling can fire in here, and both arrived as a parse failure.
+     * Measured: press Stop while the body is stalled and the card put up a
+     * red strip reading "ResumeM-M sent something that is not JSON (200)."
+     * about a run the user had just cancelled; a server that wedges
+     * mid-body got the same sentence with no way out on it, twenty seconds
+     * later, instead of the "did not answer" message that carries the button.
+     *
+     * Checked before the status, because a stop is a stop whatever the server
+     * had already managed to say.
+     */
+    if (init.signal?.aborted && init.signal.reason?.jobhelper?.stopped) {
+      throw stopReason();
+    }
+    if (cause?.name === 'TimeoutError' || cause?.name === 'AbortError') {
+      const wedged = new Error('ResumeM-M did not answer. Check it is still running, then try again.', { cause });
+      wedged.jobhelper = { fix: 'start-server', serverUrl };
+      throw wedged;
+    }
     if (res.ok) {
       throw new Error(`ResumeM-M sent something that is not JSON (${res.status}).`, { cause });
     }
@@ -843,9 +889,20 @@ const handlers = {
     // written without it reads back as a trail from another sitting.
     const next = { ...trail, work, at: Date.now() };
     const written = await writeTrail(tab?.id, next);
-    // So the toolbar starts saying "your writing is being held" the moment it
-    // is, rather than at the next page of the application.
-    await markTab(tab?.id, next);
+    /*
+     * The toolbar says "your writing is being held" the moment it is — and
+     * only then.
+     *
+     * `writeTrail` returns null when session storage refuses the write, which
+     * this file budgets for, and the badge was drawn from the in-memory
+     * `next` regardless. Measured with the quota filled: `saveWork` answered
+     * `{ok: false}`, the letter was in no storage anywhere, and the tooltip
+     * read "1 page read, your writing is being held". The only caller
+     * discards the reply, so that tooltip was the whole of what the user had
+     * to go on — and the note on `markTab` says the purpose of this line is
+     * to be believed when it says nothing was lost.
+     */
+    await markTab(tab?.id, written === null ? trail : next);
     void holdASpace(next, tab?.id);
     return { ok: written !== null };
   },
@@ -946,15 +1003,45 @@ const handlers = {
    */
   async clearTrail({ tabId, keep } = {}, tab, sender) {
     const id = whichTab(tabId, tab, sender);
-    const held = keep?.url ? (await readTrail(id)).pages.filter((p) => p.url === keep.url) : [];
+    const trail = await readTrail(id);
+    const held = keep?.url ? trail.pages.filter((p) => p.url === keep.url) : [];
 
     if (held.length === 0) {
       await session().remove(trailKey(id));
+      /*
+       * And the remembered binding with it, or the next application in this
+       * tab inherits the last one's save.
+       *
+       * `saveFor` falls back to the map when the trail has no save, which is
+       * exactly what this branch leaves behind: the trail is gone and the map
+       * still answers. "Start fresh", open another save in the editor, read a
+       * posting — and the new application was filed into the save the
+       * forgotten one came from.
+       */
+      saveOf.delete(id);
       await markTab(id, { pages: [] });
       return { pages: [] };
     }
 
-    const next = { pages: held, at: Date.now() };
+    /*
+     * The save binding survives, because it is not part of the application.
+     *
+     * Every other writer spreads `...trail`; this one built a fresh object,
+     * so `save` — the one field kept here specifically to outlive the worker,
+     * see `saveOf` — was dropped. It went on working while the worker lived,
+     * because `saveFor` finds it in the map first, and the map is memory.
+     *
+     * Measured, with one variable changed at a time: read a posting, follow
+     * Apply, press "Start a new application here", let the worker be stopped,
+     * then Build. The resume compiles and the preview appears, and then the
+     * automatic filing is refused under a perfectly good document — "JobHelper
+     * has lost track of which save this application was built from". Leave the
+     * button unpressed, or leave the worker alive, and neither happens.
+     *
+     * Which save you are working in is not something "use only this page"
+     * says anything about. The pages are what is being forgotten.
+     */
+    const next = { pages: held, save: trail.save, at: Date.now() };
     await writeTrail(id, next);
     await markTab(id, next);
     return summarise(next);
@@ -1310,7 +1397,27 @@ const handlers = {
   async pdfBytes({ url }) {
     const { serverUrl } = await getSettings();
     const absolute = url.startsWith('http') ? url : `${serverUrl.replace(/\/$/, '')}${url}`;
-    const res = await fetch(absolute);
+    /*
+     * With a ceiling, like every other call to the store.
+     *
+     * This one went round `serverFetch` because it wants bytes rather than
+     * JSON, and took its deadline with it: a bare `fetch` against a server
+     * that accepts the socket and never answers never settles. Measured at
+     * 75 seconds and still waiting, with the worker held alive by the
+     * in-flight request — and the card had already latched
+     * `state.shownPdf[kind]`, so the preview pane stayed a grey strip with no
+     * message and never asked for that url again.
+     */
+    let res;
+    try {
+      res = await fetch(absolute, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    } catch (cause) {
+      const failed = new Error('ResumeM-M did not answer with the PDF. Check it is still running, then try again.', {
+        cause,
+      });
+      failed.jobhelper = { fix: 'start-server', serverUrl };
+      throw failed;
+    }
     if (!res.ok) throw new Error(`Could not load the PDF (${res.status})`);
 
     // Messaging is JSON, so the bytes travel as base64. A one-page resume is

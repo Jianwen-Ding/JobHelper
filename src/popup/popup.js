@@ -65,8 +65,31 @@ async function activeTab() {
    * acting on, it is never itself.
    */
   if (tab?.url?.startsWith('chrome-extension://')) {
-    const [behind] = await chrome.tabs.query({ currentWindow: true, url: ['http://*/*', 'https://*/*'] });
-    return behind ?? tab;
+    /*
+     * The one you were last on, not the one furthest left.
+     *
+     * `chrome.tabs.query` hands its results back in tab-strip order, so taking
+     * the first of them picks the leftmost page in the window — which has
+     * nothing to do with "the page behind the popup". With two job pages open
+     * and the right-hand one in front, Autofill typed the user's name, email
+     * and phone into the *other* site's form in a background tab, and the
+     * popup reported "Filled 4 fields." over a form that was still empty.
+     * Mute silenced a host the user was not on, and the open-application panel
+     * described somebody else's posting.
+     *
+     * `lastAccessed` is the browser's own answer to "which of these were you
+     * just looking at". Where it is missing, the tab next to this one is a
+     * better guess than the first in the strip: the popup opens beside the
+     * page it was opened from.
+     */
+    const open = await chrome.tabs.query({ currentWindow: true, url: ['http://*/*', 'https://*/*'] });
+    if (open.length === 0) return tab;
+    const recent = open.filter((t) => typeof t.lastAccessed === 'number');
+    if (recent.length > 0) {
+      return recent.reduce((best, t) => (t.lastAccessed > best.lastAccessed ? t : best));
+    }
+    const mine = typeof tab.index === 'number' ? tab.index : 0;
+    return open.reduce((best, t) => (Math.abs(t.index - mine) < Math.abs(best.index - mine) ? t : best));
   }
   return tab;
 }
@@ -412,6 +435,16 @@ async function boot() {
 }
 
 async function check() {
+  /*
+   * Say so while it is being asked.
+   *
+   * `check` runs on boot and again on every address change, and until it
+   * answers the window kept whatever the last server said. Pointed at an
+   * address that swallows packets, the popup reported "Connected — 13 resumes
+   * in the store" about a server it was no longer talking to, for the twenty
+   * seconds the fetch took to give up.
+   */
+  setStatus('Checking…');
   try {
     await send('ping');
     const resumes = await send('listResumes');
@@ -479,6 +512,28 @@ async function check() {
     }
   } catch (err) {
     failed(err);
+    /*
+     * And nothing left on screen describing the server that did not answer.
+     *
+     * The picker kept the previous server's resumes, so the window said "not
+     * open" over a list of thirteen — and choosing one of them writes a
+     * `baseResumeId` the new save may well not have, which is precisely the
+     * stale-base trap the block above exists to catch.
+     */
+    const picker = $('baseResumeId');
+    const nothing = document.createElement('option');
+    nothing.textContent = '— not connected —';
+    nothing.disabled = true;
+    nothing.selected = true;
+    picker.replaceChildren(nothing);
+  } finally {
+    /*
+     * The AI panel describes the same server, so it is read at the same time.
+     * It was painted once at boot and never again, so changing the address
+     * left it asserting "AI on — your AI command will be asked to tailor
+     * resumes" directly under a status line saying the server was not running.
+     */
+    await showAiState();
   }
 }
 

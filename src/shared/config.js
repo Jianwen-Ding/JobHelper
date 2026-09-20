@@ -63,7 +63,20 @@ export function normaliseServerUrl(value) {
   // for an address that did not say.
   const full = /^[a-z][a-z0-9+.-]*:\/\//i.test(said) ? said : `http://${said}`;
   try {
-    new URL(full);
+    /*
+     * And a scheme this can actually be fetched from.
+     *
+     * The test above only asks whether *a* scheme is there, so `ftp://…`,
+     * `file:///etc/passwd`, `chrome://settings` and `ws://…` were all stored
+     * as the server address. Every fetch then failed and the popup blamed a
+     * server that was running — the same wrong diagnosis a missing scheme used
+     * to produce — and worse, both buttons offering to fix it call
+     * `chrome.tabs.create`, which rejects such a URL: "Open editor" became a
+     * silent no-op, and the one in the status line closed the popup on its way
+     * to doing nothing.
+     */
+    const { protocol } = new URL(full);
+    if (protocol !== 'http:' && protocol !== 'https:') return DEFAULTS.serverUrl;
   } catch {
     // Not an address at all even with a scheme in front of it. The default is
     // somewhere real, which is worth more here than honouring a typo: every

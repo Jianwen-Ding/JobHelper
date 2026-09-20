@@ -1475,8 +1475,19 @@ export function serveFixtures(
  * minutes. Putting a deliberate delay in front of one route makes it a fact
  * rather than a matter of timing luck.
  */
-export function serveSlowProxy(target, { slowRoute = /analyze/, ms = 4000, skip = 0 } = {}) {
+/**
+ * `respondInstead(url, requestBody, lastReply)` lets a suite answer a slowed
+ * route itself instead of forwarding it. Two things need that. A tailoring
+ * pass with the AI on starts a real model on the server — minutes, a bill,
+ * and an answer nobody can predict — which is not something a test should
+ * cause; and the interesting replies here are the ones a healthy server never
+ * sends. `lastReply` is the last body this proxy passed through for the same
+ * route, so a stand-in can be the real shape with one field changed rather
+ * than a hand-written imitation that drifts.
+ */
+export function serveSlowProxy(target, { slowRoute = /analyze/, ms = 4000, skip = 0, respondInstead } = {}) {
   let seen = 0;
+  let lastReply = null;
   /*
    * Requests the client walked away from, by route.
    *
@@ -1520,6 +1531,14 @@ export function serveSlowProxy(target, { slowRoute = /analyze/, ms = 4000, skip 
          */
         if (res.writableEnded || res.destroyed) return;
 
+        const standIn = respondInstead?.(req.url, Buffer.concat(chunks).toString(), lastReply);
+        if (standIn) {
+          answered = true;
+          res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+          res.end(JSON.stringify(standIn));
+          return;
+        }
+
         const upstream = await fetch(`${target}${req.url}`, {
           method: req.method,
           headers: { 'content-type': req.headers['content-type'] ?? 'application/json' },
@@ -1534,7 +1553,15 @@ export function serveSlowProxy(target, { slowRoute = /analyze/, ms = 4000, skip 
           'content-type': upstream.headers.get('content-type') ?? 'application/json',
           'access-control-allow-origin': '*',
         });
-        res.end(Buffer.from(await upstream.arrayBuffer()));
+        const body = Buffer.from(await upstream.arrayBuffer());
+        if (slowRoute.test(req.url) && /json/.test(upstream.headers.get('content-type') ?? '')) {
+          try {
+            lastReply = JSON.parse(body.toString());
+          } catch {
+            // Not something a stand-in could be built from; leave the last one.
+          }
+        }
+        res.end(body);
       };
       forward().catch((err) => {
         if (res.writableEnded || res.destroyed) return;

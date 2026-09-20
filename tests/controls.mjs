@@ -97,6 +97,22 @@ async function heldPages(worker, page) {
   }, page.url());
 }
 
+/**
+ * The whole stored trail, not only its pages.
+ *
+ * `save` — which store this application is being built from — is kept in the
+ * trail rather than in the worker, precisely so it survives the worker being
+ * stopped. Reading only `pages` cannot see it go missing.
+ */
+async function storedTrail(worker, page) {
+  return worker.evaluate(async (url) => {
+    const [tab] = await chrome.tabs.query({ url });
+    if (!tab) return null;
+    const key = `trail:${tab.id}`;
+    return (await (chrome.storage.session ?? chrome.storage.local).get(key))[key] ?? null;
+  }, page.url());
+}
+
 /** The cap `sweepOrphans` holds the count to, plus the one it just wrote. */
 const ORPHAN_BOUND = 21;
 
@@ -319,6 +335,27 @@ async function main() {
       }, page.url());
       check('the toolbar still says an application is open', mark.text === '1', `badge "${mark.text}"`);
       check('and still names it', /helios/i.test(mark.title), mark.title);
+
+      /*
+       * And it still knows which save it is being built from.
+       *
+       * That binding is held in the trail rather than in the worker so that
+       * it survives the worker being stopped, and this was the one writer
+       * that rebuilt the trail from scratch instead of spreading it — so the
+       * binding was dropped and lived on only in the worker's memory. It went
+       * on working until the worker was stopped, and then "Build resume"
+       * produced a perfectly good document and refused to file it: "JobHelper
+       * has lost track of which save this application was built from."
+       *
+       * Which save you are working in is not something "use only this page"
+       * says anything about. The pages are what is being forgotten.
+       */
+      const kept = await storedTrail(worker, page);
+      check(
+        'and which save it is being built from survives the pages being dropped',
+        Boolean(kept?.save),
+        `save ${JSON.stringify(kept?.save ?? null)}`,
+      );
 
       /*
        * The popup's button means the other thing, and says so: "Start fresh",
@@ -1031,6 +1068,92 @@ async function main() {
       check('and the count is held to a bound', left.length <= ORPHAN_BOUND, `${left.length} left`);
       check('while the fresh ones are kept', left.filter((k) => k.includes('new.example')).length === 5);
       check('including the one just rescued', left.some((k) => k.includes('/helios')), left.join(' ').slice(0, 120));
+    }
+
+    /*
+     * Which tab the popup's buttons act on.
+     *
+     * `activeTab` steps around the popup's own page and used to take the
+     * first result of `chrome.tabs.query`, which comes back in tab-strip
+     * order — so it picked the *leftmost* page in the window rather than the
+     * one behind the popup. With two job pages open and the right-hand one in
+     * front, Autofill typed a name, an email address and a phone number into
+     * the other site's form in a background tab and reported "Filled 4
+     * fields." over a form that was still empty; Mute silenced a host the
+     * user was not on; and the open-application panel described a posting
+     * from somewhere else.
+     *
+     * Two loopback spellings of the same fixture server, because the host is
+     * what every one of those controls is keyed on and it is the only part
+     * that has to differ.
+     */
+    group('The tab the popup is acting on');
+    {
+      const left = await context.newPage();
+      await left.goto(fixtures.urlFor(HELIOS_ROLE), { waitUntil: 'domcontentloaded' });
+      const right = await context.newPage();
+      await right.goto(fixtures.urlFor(HELIOS_ROLE).replace('127.0.0.1', 'localhost'), {
+        waitUntil: 'domcontentloaded',
+      });
+      await right.bringToFront();
+
+      const popup = await openPopup();
+      const offer = (await popup.locator('#mute').getAttribute('title')) ?? '';
+      check(
+        'the mute button names the page you were on, not the leftmost one',
+        /localhost/.test(offer) && !/127\.0\.0\.1/.test(offer),
+        offer,
+      );
+
+      await popup.locator('#mute').click();
+      await popup.waitForTimeout(800);
+      const said = (await popup.locator('#status').textContent())?.trim() ?? '';
+      check('and mutes that one', /muted localhost/i.test(said), said);
+
+      // Put it back, so nothing after this runs against a muted host.
+      await popup.locator('#mute').click();
+      await popup.waitForTimeout(800);
+      await popup.close();
+      await left.close();
+      await right.close();
+    }
+
+    /*
+     * The AI panel describes the server, so it has to be re-read when the
+     * server changes.
+     *
+     * It was painted once at boot and never again: typing a new address
+     * called `check()` alone, so the window ended up asserting "AI on — your
+     * AI command will be asked to tailor resumes" in the present tense
+     * directly under a status line saying ResumeM-M was not running. The
+     * resume picker went the same way, still listing the previous server's
+     * resumes — and choosing one of those writes a base this save may not
+     * have, which is the stale-base trap two groups above.
+     */
+    group('Pointing it somewhere else does not leave the panel behind');
+    {
+      const popup = await openPopup();
+      const before = (await popup.locator('#aiState').textContent())?.trim() ?? '';
+      check('it says something definite about the AI to begin with', before.length > 0 && before !== 'AI unknown', before);
+      const listed = await popup.locator('#baseResumeId option').count();
+      check('and lists the resumes it found', listed > 0, `${listed}`);
+
+      // Nothing listens there; the fetch runs out of time.
+      await popup.locator('#serverUrl').fill('http://127.0.0.1:1');
+      await popup.locator('#serverUrl').press('Enter');
+      await popup.waitForTimeout(3000);
+
+      const after = (await popup.locator('#aiState').textContent())?.trim() ?? '';
+      const hint = (await popup.locator('#aiHint').textContent())?.trim() ?? '';
+      check('the AI chip stops describing the old server', after === 'AI unknown', `${after} / ${hint}`);
+      const stale = await popup.locator('#baseResumeId option:not([disabled])').count();
+      check('and so does the resume picker', stale === 0, `${stale} still listed`);
+
+      await popup.locator('#serverUrl').fill(SERVER);
+      await popup.locator('#serverUrl').press('Enter');
+      await popup.waitForTimeout(1500);
+      await popup.close();
+      await pointExtensionAt(context, context.serviceWorkers()[0], SERVER);
     }
   } finally {
     await context.close();

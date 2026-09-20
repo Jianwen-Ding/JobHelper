@@ -382,7 +382,109 @@ const HIDDEN = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</t
 /** The same form with nothing hidden in it — the control. */
 const UNHIDDEN = HIDDEN.replace(/<input type="hidden"[^>]*>/g, '').replace(/id="h/g, 'id="u');
 
-const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN };
+/*
+ * Forms that took the value and submitted nothing.
+ *
+ * Every shape here reported a field as filled while `FormData` — the thing the
+ * employer actually receives — came back without it. That is the worst of the
+ * failures this file hunts, because the card says the work is done: a form
+ * left plainly blank at least gets looked at.
+ *
+ *  - a section inside `<fieldset disabled>`, which is how a form greys out the
+ *    part you have not unlocked. `input.disabled` is false on every control in
+ *    it, and the browser refuses all of them.
+ *  - an option under a disabled `<optgroup>`: a country list with the places
+ *    the company hires in one group and the rest greyed out below.
+ *  - two options carrying the same value, the first of them the placeholder.
+ *
+ * Asserted through `new FormData(form)` rather than through `.value`, because
+ * `.value` is exactly what was right in all three.
+ */
+const SUBMITS_NOTHING = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="locked">
+  <fieldset disabled>
+    <label for="lk-ph">Phone</label><input id="lk-ph" name="phone">
+    <fieldset>
+      <legend>Are you legally authorized to work in the United States?</legend>
+      <label><input type="radio" name="lk_auth" value="Yes"> Yes</label>
+      <label><input type="radio" name="lk_auth" value="No"> No</label>
+    </fieldset>
+  </fieldset>
+</form>
+<form id="greyed">
+  <label for="gr-country">Country</label>
+  <select id="gr-country" name="country" required>
+    <option value="">Select a country…</option>
+    <optgroup label="Where we are hiring"><option value="CA">Canada</option></optgroup>
+    <optgroup label="Not currently hiring" disabled><option value="US">United States</option></optgroup>
+  </select>
+</form>
+<form id="twinned">
+  <label for="tw-country">Country</label>
+  <select id="tw-country" name="country">
+    <option value="">Select a country…</option>
+    <option value="">United States</option>
+    <option value="CA">Canada</option>
+  </select>
+</form>
+</body></html>`;
+
+/*
+ * Several yes/no questions in one plain container, which is how a hand-rolled
+ * careers form is written: question text, Yes, No, next question text, Yes,
+ * No. No fieldset, no wrapper each.
+ *
+ * The group walk only counted fields that are *not* radios when deciding
+ * whether a container was one question's own, so this looked like one — and
+ * every group in it was labelled with the *first* question's words. Both were
+ * answered from the sponsorship line, which is a false legal declaration
+ * submitted over the applicant's own answer.
+ */
+const FLAT_QUESTIONS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="f"><div class="questions">
+  <div class="label">Will you now or in the future require visa sponsorship? *</div>
+  <label><input type="radio" name="q1" value="Yes"> Yes</label>
+  <label><input type="radio" name="q1" value="No"> No</label>
+
+  <div class="label">Are you legally authorized to work in the United States? *</div>
+  <label><input type="radio" name="q2" value="Yes"> Yes</label>
+  <label><input type="radio" name="q2" value="No"> No</label>
+</div></form>
+</body></html>`;
+
+/*
+ * The native radio hidden, and a styled span drawn in its place.
+ *
+ * This is how nearly every modern form does it — `display:none` on the input
+ * and a `<span>` inside the `<label>` with the tick drawn on it. Asking the
+ * input whether it occupies space therefore answered "no" about a control the
+ * user is looking straight at, and the group was dropped before anything was
+ * reported: `{filled: [], skipped: []}` on a visible work-authorisation
+ * question, which reads exactly like a form with nothing to do.
+ *
+ * The second group is inside a collapsed step, which genuinely is not on
+ * screen: neither the input nor its label has a box, and that one must still
+ * be left alone.
+ */
+const STYLED_RADIOS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title>
+<style>.opt input { display: none } .step.closed { display: none }</style></head><body>
+<form id="f">
+  <fieldset>
+    <legend>Are you legally authorized to work in the United States?</legend>
+    <label class="opt"><input type="radio" name="auth" value="Yes"><span class="dot"></span> Yes</label>
+    <label class="opt"><input type="radio" name="auth" value="No"><span class="dot"></span> No</label>
+  </fieldset>
+  <div class="step closed">
+    <fieldset>
+      <legend>Will you now or in the future require visa sponsorship?</legend>
+      <label class="opt"><input type="radio" name="spon" value="Yes"><span class="dot"></span> Yes</label>
+      <label class="opt"><input type="radio" name="spon" value="No"><span class="dot"></span> No</label>
+    </fieldset>
+  </div>
+</form>
+</body></html>`;
+
+const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -656,6 +758,7 @@ async function main() {
         const seen = new Map();
         const sawChange = {};
         const sawInput = {};
+        const sawClick = {};
         for (const el of document.querySelectorAll('input, select')) {
           const prop = el.type === 'radio' || el.type === 'checkbox' ? 'checked' : 'value';
           const descriptor = Object.getOwnPropertyDescriptor(el.constructor.prototype, prop);
@@ -674,6 +777,16 @@ async function main() {
           // And separately, whether an `input` event arrived at all: the
           // widgets that wrap a native select listen for that one.
           el.addEventListener('input', () => { sawInput[name] = true; });
+          /*
+           * For a checkbox or a radio, React does not listen to `change` at
+           * all — `shouldUseClickEvent` in its own event plugin routes those
+           * two through **click**, because that is the event a person's tick
+           * actually produces. So this is the question React asks about this
+           * control, and `sawChange` is the question it asks about the others.
+           */
+          if (el.type === 'radio' || el.type === 'checkbox') {
+            el.addEventListener('click', () => { sawClick[name] = true; });
+          }
         }
 
         const m = await import(`${b}/autofill.js`);
@@ -681,6 +794,7 @@ async function main() {
         return {
           sawChange,
           sawInput,
+          sawClick,
           country: document.getElementById('rf-country').value,
           checked: document.querySelector('input[name="rf_auth"]:checked')?.value ?? '',
         };
@@ -1020,10 +1134,21 @@ async function main() {
       react.sawChange.country === true && react.country === 'US',
       `saw ${react.sawChange.country}, value "${react.country}"`,
     );
+    /*
+     * A radio has to be *clicked*, and this used to ask the wrong question.
+     *
+     * `sawChange` is right for a text box and a dropdown and wrong here:
+     * React routes checkboxes and radios through click, so a `change` event
+     * it never listens for satisfied this check while React's own state
+     * stayed empty. Measured against React 18 with a controlled group — the
+     * button ticked, one unrelated keystroke re-rendered the form, the tick
+     * vanished, and the work-authorisation question submitted blank under a
+     * card reading "Filled 3 fields".
+     */
     check(
-      'and so does a radio button',
-      react.sawChange.rf_auth === true && react.checked === 'Yes',
-      `saw ${react.sawChange.rf_auth}, checked "${react.checked}"`,
+      'and a radio button is clicked, which is the event React listens to',
+      react.sawClick.rf_auth === true && react.checked === 'Yes',
+      `click ${react.sawClick.rf_auth}, change ${react.sawChange.rf_auth}, checked "${react.checked}"`,
     );
     /*
      * Choosing from a dropdown by hand fires `input` and then `change`. A
@@ -1036,6 +1161,119 @@ async function main() {
       'and a dropdown is announced the way choosing from one is',
       react.sawInput.country === true,
       `input ${react.sawInput.country}, change ${react.sawChange.country}`,
+    );
+
+    /* ------------------------------------------------------------------ */
+
+    const nothing = await page.goto(`${base}/submits-nothing`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(profile);
+        const sent = (id) => [...new FormData(document.getElementById(id))].map(([k, v]) => `${k}=${v}`);
+        return {
+          filled: report.filled.map((f) => f.key),
+          skipped: report.skipped.map((s) => `${s.key}:${s.reason}`),
+          locked: sent('locked'),
+          greyed: sent('greyed'),
+          twinned: sent('twinned'),
+          // What a person would see, which is right in all three of these.
+          shows: document.getElementById('tw-country').selectedOptions[0]?.textContent ?? '',
+        };
+      }, { b: base, profile: PROFILE }),
+    );
+
+    group('Forms that took the value and submitted nothing');
+    /*
+     * Asserted on `FormData`, not on `.value`. `.value` was correct in every
+     * one of these — that is the whole difficulty: the page looked filled, the
+     * card said filled, and the employer received an empty field.
+     */
+    check(
+      'a section the form has greyed out is left alone, not filled invisibly',
+      nothing.locked.length === 0 && !nothing.filled.includes('phone'),
+      `filled ${nothing.filled.join(', ') || 'nothing'}; submitted ${nothing.locked.join(', ') || 'nothing'}`,
+    );
+    check(
+      'and its work-authorisation buttons are left alone too',
+      !nothing.filled.includes('work_authorization'),
+      nothing.filled.join(', ') || 'nothing',
+    );
+    // `country=` with nothing after it is the placeholder still selected,
+    // which is the honest outcome here: the control was never going to carry
+    // this answer. What must not happen is the card claiming otherwise.
+    check(
+      'an option under a greyed-out group is not chosen, and is said to be',
+      nothing.greyed.every((f) => f === 'country=') && nothing.skipped.some((s) => s.startsWith('address_country:')),
+      `submitted ${nothing.greyed.join(', ') || 'nothing'}; skipped ${nothing.skipped.join(', ') || 'nothing'}`,
+    );
+    check(
+      'a value two options share does not count as filled when it lands on the placeholder',
+      nothing.twinned.every((f) => f === 'country=') && !nothing.filled.includes('address_country'),
+      `shows "${nothing.shows}", submitted ${nothing.twinned.join(', ') || 'nothing'}, filled ${nothing.filled.join(', ') || 'nothing'}`,
+    );
+
+    /* ------------------------------------------------------------------ */
+
+    const flat = await page.goto(`${base}/flat`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(profile);
+        return {
+          filled: report.filled.map((f) => `${f.key}=${f.value}`),
+          ticked: [...document.querySelectorAll('input[type=radio]:checked')].map((r) => `${r.name}=${r.value}`),
+        };
+      }, {
+        b: base,
+        // The two answers that disagree, which is what makes a borrowed label
+        // visible: a question answered from its neighbour's words comes out
+        // backwards rather than merely repeated.
+        profile: { ...PROFILE, work_authorization: 'Yes', requires_sponsorship: 'No' },
+      }),
+    );
+
+    group('Several questions in one plain container');
+    /*
+     * Question text, Yes, No, next question text, Yes, No — no fieldset and no
+     * wrapper each, which is how a hand-rolled careers form is written. Both
+     * groups used to be labelled from the first question, so both were
+     * answered "No": a declaration that the applicant is not authorised to
+     * work, submitted over their own answer, and never mentioned in the report.
+     */
+    check(
+      'each group is answered from its own question, not from the one above it',
+      flat.ticked.includes('q1=No') && flat.ticked.includes('q2=Yes'),
+      flat.ticked.join(', ') || 'nothing ticked',
+    );
+    check(
+      'and the report names both questions rather than one of them twice',
+      flat.filled.includes('work_authorization=Yes') && flat.filled.includes('requires_sponsorship=No'),
+      flat.filled.join(', ') || 'nothing',
+    );
+
+    /* ------------------------------------------------------------------ */
+
+    const styled = await page.goto(`${base}/styled`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(profile);
+        return {
+          filled: report.filled.map((f) => `${f.key}=${f.value}`),
+          ticked: [...document.querySelectorAll('input[type=radio]:checked')].map((r) => `${r.name}=${r.value}`),
+          sent: [...new FormData(document.getElementById('f'))].map(([k, v]) => `${k}=${v}`),
+        };
+      }, { b: base, profile: { ...PROFILE, work_authorization: 'Yes', requires_sponsorship: 'No' } }),
+    );
+
+    group('A radio the form draws itself');
+    check(
+      'a question whose native buttons are hidden is still answered',
+      styled.ticked.includes('auth=Yes') && styled.sent.includes('auth=Yes'),
+      `ticked ${styled.ticked.join(', ') || 'nothing'}; submitted ${styled.sent.join(', ') || 'nothing'}`,
+    );
+    check(
+      'while a question in a step that is closed is left for later',
+      !styled.ticked.some((t) => t.startsWith('spon=')),
+      styled.ticked.join(', ') || 'nothing',
     );
 
     /* ------------------------------------------------------------------ */
