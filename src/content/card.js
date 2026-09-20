@@ -237,6 +237,7 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .changes { display: grid; gap: 6px; margin: 8px 0 2px; }
 /* Shut, the list is its heading: the count, and the way back to all of it. */
 .changes.shut .change { display: none; }
+.from-what { margin: 2px 0 4px; }
 .fold-changes {
   background: none; border: 0; padding: 0 4px 0 0; margin: 0; cursor: pointer;
   color: var(--faint); font-size: 13px; line-height: 1; min-width: 14px;
@@ -1877,8 +1878,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
          * the store and is fixed in the builder, not here.
          */
         state.builtWith === 'ai'
-          ? 'Nothing needed changing — your base resume already suits this posting.'
-          : 'No suggestions for this posting. Add another phrasing in ResumeM-M and there will be more to offer.',
+          ? 'The AI read this posting and found nothing worth changing — your base resume already suits it.'
+          : 'Keyword matching found nothing to suggest: none of this posting’s words reach an alternate phrasing in your save. Add another phrasing in ResumeM-M and there will be more to offer.',
       );
     }
 
@@ -1961,6 +1962,27 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
               onclick: () => useOriginal(),
             }),
       ]),
+      /*
+       * Where these rows came from, above the rows themselves.
+       *
+       * The two lists look identical — the same boxes, the same before and
+       * after — and they are not the same kind of thing at all. One is a
+       * model that read the posting and chose; the other is this posting's
+       * words matched against the alternate phrasings already in your save,
+       * with no model anywhere near it. Which one you are looking at decides
+       * how much weight a row deserves, and the card had left you to infer
+       * it from which button happened to be lit.
+       *
+       * Outside the fold, because it is true of the list whether or not the
+       * list is open.
+       */
+      h('div', {
+        className: 'hint from-what',
+        textContent:
+          state.builtWith === 'ai'
+            ? 'Chosen by the AI, after reading this posting.'
+            : 'Found by keyword matching: this posting’s words against the alternate phrasings already in your save. No AI was involved.',
+      }),
     ]);
 
     for (const c of shown) {
