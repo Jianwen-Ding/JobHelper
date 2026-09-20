@@ -157,10 +157,19 @@ async function main() {
       await card.locator('button.mode.on').allTextContents().then((t) => t.join(' | ')),
     );
 
+    /*
+     * Read off the provenance line rather than the summary.
+     *
+     * The summary used to carry this — "…, with the changes the AI chose
+     * below" — alongside the base's name twice and a sentence about the copy.
+     * The name and the provenance were both already on the card, so they came
+     * out of it; `.from-what` is the line that states where the changes came
+     * from, and it is the one this check was always really about.
+     */
     const summary = (await card.locator('.hint').allTextContents()).join(' ');
     check(
       'and the card says the changes are the AI’s',
-      /changes the AI chose/i.test(summary),
+      /chosen by the ai/i.test(summary),
       summary.slice(0, 140) || '(no summary)',
     );
 

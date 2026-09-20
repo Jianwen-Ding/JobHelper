@@ -1649,11 +1649,33 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   const appliedCount = () => suggestions().on;
 
   function builtSummary() {
-    const base = analysis.baseLabel ?? 'your base resume';
-    const copy = ` Your ${base} is untouched — this is a copy, saved under this posting's name.`;
+    /*
+     * One line, and only the part of it nothing else on the card says.
+     *
+     * This used to open by naming the base and what had been done to it:
+     * "Software Engineer Intern — Summer 2027, with the changes the AI chose
+     * below. Your Software Engineer Intern — Summer 2027 is untouched — this
+     * is a copy, saved under this posting's name." Three claims, and the
+     * first two are already on screen a few pixels away — the base is the
+     * selected option of the "Start from" picker directly above, and what
+     * changed it is the provenance line under the diff ("Chosen by the AI,
+     * after reading this posting", or "Found by keyword matching"). The name
+     * then appeared twice in one sentence, which is most of why it read as
+     * long as it did.
+     *
+     * What nothing else says is that this is a copy and the resume you keep
+     * is not being edited. That is the sentence worth having, and putting it
+     * behind a "what is this" button would have hidden the one part that was
+     * news while leaving the two duplicates in place.
+     *
+     * The three failure branches keep their full wording. They are not
+     * repeating anything, they are the only notice that a run did not
+     * happen, and they say what to do about it.
+     */
+    const copy = ` This is a copy, saved under this posting's name — the resume you keep is untouched.`;
 
     if (state.builtWith === 'ai' && analysis.aiUsed) {
-      return `${base}, with the changes the AI chose below.${copy}`;
+      return copy.trim();
     }
     /*
      * The AI was asked for and did not happen.
@@ -1714,8 +1736,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      * all of them.
      */
     const on = appliedCount();
-    if (on === 0) return `${base}, exactly as you keep it. Nothing is swapped, dropped or added.${copy}`;
-    return `${base}, with ${plural(on, 'keyword suggestion')} switched on below.${copy}`;
+    if (on === 0) return `Exactly as you keep it — nothing is swapped, dropped or added.${copy}`;
+    return `${plural(on, 'keyword suggestion')} switched on below.${copy}`;
   }
 
   /**
