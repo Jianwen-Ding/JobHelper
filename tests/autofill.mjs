@@ -774,6 +774,61 @@ async function main() {
     );
     check('a hedged "Yes, but not until 2027" is still a yes', hedged === 'y', `checked "${hedged}"`);
 
+    /*
+     * A negation has to be about the thing being asked about.
+     *
+     * Reading the whole sentence for any negation word made a bag of words
+     * out of it, and "Authorized to work in the US without sponsorship" — the
+     * documented example value plus the commonest suffix people write — came
+     * out No on the question about the right to work. Four of the phrasings
+     * below ticked the wrong box, and one true-but-two-sided sentence was
+     * reduced to a No it never said.
+     *
+     * A table, because the failure is not in any one phrasing: it is in how
+     * the sentence is read, and only a spread of them shows that.
+     */
+    const declared = async (key, value, name) =>
+      page.goto(`${base}/consent`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, k, v, n }) => {
+          const m = await import(`${b}/autofill.js`);
+          m.fillForm({ [k]: v });
+          return document.querySelector(`input[name="${n}"]:checked`)?.value ?? '';
+        }, { b: base, k: key, v: value, n: name }),
+      );
+
+    const AUTH = [
+      ['Authorized to work in the US', 'y'],
+      ['Authorized to work in the US without sponsorship', 'y'],
+      ['Authorized to work in the US with no restrictions', 'y'],
+      ['US citizen, no visa needed', 'y'],
+      ['Permanent resident; does not require sponsorship', 'y'],
+      ['Not authorized to work in the US', 'n'],
+      ['I am not eligible to work in the US', 'n'],
+      // Says two things. One box cannot hold it, so nothing is ticked and it
+      // is left for the person — which is the whole rule here: a blank costs
+      // them a moment, a wrong declaration costs them the application.
+      ['I am not a US citizen but am authorized to work', ''],
+    ];
+    for (const [value, want] of AUTH) {
+      const got = await declared('work_authorization', value, 'auth');
+      check(`right to work: ${JSON.stringify(value)}`, got === want, `ticked "${got}", wanted "${want}"`);
+    }
+
+    const SPON = [
+      ['Not immediately, but I will need H-1B sponsorship in 2027', 'y'],
+      ['I do not need it now but will require sponsorship later', 'y'],
+      ['I do not require sponsorship', 'n'],
+      ['No sponsorship needed', 'n'],
+      // The same sentence as above, read for the other question, and it has
+      // to come out the other way: "without" denies the sponsorship, not the
+      // authorisation.
+      ['Authorized to work in the US without sponsorship', 'n'],
+    ];
+    for (const [value, want] of SPON) {
+      const got = await declared('requires_sponsorship', value, 'spon');
+      check(`sponsorship: ${JSON.stringify(value)}`, got === want, `ticked "${got}", wanted "${want}"`);
+    }
+
 
     /* ------------------------------------------------------------------ */
 
