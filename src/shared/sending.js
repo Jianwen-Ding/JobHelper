@@ -196,9 +196,38 @@ export function watchForSending(doc, tell) {
    *
    * A caller that says nothing still spends it, which is what the frames do.
    */
+  let asking = false;
   const once = (how) => {
-    if (told) return;
-    told = tell(how) !== false;
+    if (told || asking) return;
+    const verdict = tell(how);
+    if (verdict === false) return;
+
+    /*
+     * A caller that has to go and ask is waited for.
+     *
+     * Recording a send means a message to the worker and a request to the
+     * store, and the answer is the only thing that says whether it happened.
+     * Latching on the *asking* rather than on the answer spent the one send
+     * this watcher has on a record that failed — and the card, which does not
+     * wait either, said it had been recorded.
+     *
+     * `asking` is what stops the second event of one press from sending
+     * again: a click and the submit it causes both arrive here, and `told`
+     * used to be set between them.
+     */
+    if (verdict && typeof verdict.then === 'function') {
+      asking = true;
+      verdict.then(
+        (ok) => {
+          told = ok !== false;
+        },
+        () => {},
+      ).finally(() => {
+        asking = false;
+      });
+      return;
+    }
+    told = true;
   };
 
   const onSubmit = (event) => {

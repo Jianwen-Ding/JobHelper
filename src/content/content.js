@@ -1273,14 +1273,42 @@
       // analysis made of it, and without that this is just a form.
       if (!named?.company || !named?.role) return false;
 
-      send('applicationSent', {
+      /*
+       * Said after it is true, not before.
+       *
+       * This fired the message, swallowed its rejection, and announced
+       * "Recorded as sent." on the next line whatever came back — and
+       * `applicationSent` answers `{ ok: false }` rather than throwing when
+       * the store cannot be reached, on the reasoning that a person who has
+       * just sent an application should not be interrupted by it. So with
+       * ResumeM-M closed, submitting a real form measured as:
+       *
+       *   card says           : "… | Recorded as sent."
+       *   tracker after       : applying
+       *
+       * Nothing recorded, the claim made anyway, and the old `return true`
+       * spent the one send this document had — so starting the store and
+       * pressing Submit again did nothing either. This file's header calls a
+       * wrong "yes" the worst failure available; that was one.
+       */
+      return send('applicationSent', {
         company: named.company,
         role: named.role,
         url: location.href,
         note: how,
-      }).catch(() => undefined);
-      cardHandle?.setStatus?.('Recorded as sent.');
-      return true;
+      })
+        .then((reply) => {
+          if (reply?.ok === false) {
+            cardHandle?.setStatus?.('Not recorded — ResumeM-M could not be reached.');
+            return false;
+          }
+          cardHandle?.setStatus?.('Recorded as sent.');
+          return true;
+        })
+        .catch(() => {
+          cardHandle?.setStatus?.('Not recorded — ResumeM-M could not be reached.');
+          return false;
+        });
     };
 
     stopSending = watch(document, took);
@@ -1386,9 +1414,14 @@
     imports
       .sending()
       .then(({ watchForSending }) =>
-        watchForSending(document, (how) => {
-          send('applicationSentHere', { note: how, url: location.href }).catch(() => undefined);
-        }),
+        // Answering whether it was taken, for the same reason the top
+        // document does: the one send a frame has must not be spent on a
+        // record that never reached the store.
+        watchForSending(document, (how) =>
+          send('applicationSentHere', { note: how, url: location.href })
+            .then((reply) => reply?.ok !== false)
+            .catch(() => false),
+        ),
       )
       .catch(() => undefined);
 
