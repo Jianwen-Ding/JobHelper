@@ -1547,8 +1547,33 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      * suggestions now, switched off like any others, so the sentence would
      * have been describing changes nobody had accepted.
      */
+    /*
+     * Three ways, and they are not the same thing to be told.
+     *
+     * This said "could not be started" about all of them, which is true of
+     * one and contradicts the evidence in the other two. What a person
+     * actually met:
+     *
+     *   The AI could not be started, so nothing was tailored. It said: AI
+     *   command "codex" ran for longer than 180s and was stopped.
+     *
+     * A command that ran for three minutes was started. The sentence argues
+     * with its own quotation, and the two halves suggest opposite fixes — one
+     * says check the command exists, the other says give it longer.
+     *
+     * The server knows which and now says so in `aiFailedKind`; matching on
+     * the message would mean parsing somebody else's English.
+     */
     if (analysis.aiFailed) {
-      return `The AI could not be started, so nothing was tailored. It said: ${analysis.aiFailed}${copy}`;
+      const how =
+        {
+          'not-installed': 'The AI could not be started',
+          timeout: 'The AI was stopped for taking too long',
+        }[analysis.aiFailedKind] ??
+        // Anything else, and anything from a server too old to say: a frame
+        // that is true whichever of the three it was.
+        'The AI did not finish';
+      return `${how}, so nothing was tailored. It said: ${analysis.aiFailed}${copy}`;
     }
     if (state.builtWith === 'ai' || analysis.aiRaw) {
       return `The AI returned nothing usable, so nothing was tailored.${copy}`;
@@ -3521,6 +3546,25 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                 question: q.question,
                 answer: state.answers[q.question] ?? value,
                 itemId: q.itemId,
+                /*
+                 * Who it was written for, which is what makes it safe to
+                 * reuse later.
+                 *
+                 * The store decides whether an answer is safe to send unread
+                 * partly by asking whether it names a *different* employer,
+                 * and it learns the employers from the labels on the answers
+                 * it holds. Sending none meant every answer saved here was
+                 * labelled "Saved", so the store's list of employers was the
+                 * word "Saved" and the check could never fire. An answer
+                 * written for Acme that opens "Acme is why I applied" came
+                 * back for Globex scored 1.0, badged "answered before", with
+                 * the text already in the box — which is the one failure the
+                 * whole answer bank is built to prevent.
+                 *
+                 * The Workspace has always labelled its own with the company.
+                 * This is the same fact, from the page that knows it first.
+                 */
+                label: analysis?.job?.company || undefined,
               }),
           }),
         ]),

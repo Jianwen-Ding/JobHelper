@@ -432,6 +432,7 @@ async function main() {
     tailor: 'match',
     aiUsed: false,
     aiFailed: 'spawn /usr/local/bin/claude ENOENT',
+    aiFailedKind: 'not-installed',
   });
   check(
     'a model that would not start is named as that, not as a keyword match',
@@ -442,6 +443,44 @@ async function main() {
     'and what the machine said is passed on, because it is what you would fix',
     /ENOENT/.test(failedToStart),
     failedToStart.slice(0, 120),
+  );
+
+  /*
+   * And a run that was stopped for taking too long is not one that could not
+   * be started. The sentence used to be the same for both, so it read:
+   *
+   *   The AI could not be started, so nothing was tailored. It said: AI
+   *   command "codex" ran for longer than 180s and was stopped.
+   *
+   * — which argues with its own quotation, and the two halves point at
+   * opposite fixes.
+   */
+  const timedOut = await summaryFor({
+    tailor: 'match',
+    aiUsed: false,
+    aiFailed: 'AI command "codex" ran for longer than 180s and was stopped.',
+    aiFailedKind: 'timeout',
+  });
+  check(
+    'a model that was stopped for taking too long is not called one that would not start',
+    /taking too long/i.test(timedOut) && !/could not be started/i.test(timedOut),
+    timedOut.slice(0, 140),
+  );
+  check(
+    'and it still passes on what the machine said, which is where the fix is',
+    /180s/.test(timedOut),
+    timedOut.slice(0, 140),
+  );
+
+  /*
+   * A server too old to say which way it failed still gets a sentence that is
+   * true of all three.
+   */
+  const unlabelled = await summaryFor({ tailor: 'match', aiUsed: false, aiFailed: 'something went wrong' });
+  check(
+    'and a failure that does not say which way is not called either one',
+    /did not finish/i.test(unlabelled) && !/could not be started|taking too long/i.test(unlabelled),
+    unlabelled.slice(0, 140),
   );
 
   const unusable = await summaryFor({ tailor: 'match', aiUsed: false, aiRaw: 'Sure! Here are some ideas.' });
@@ -1984,6 +2023,10 @@ async function main() {
       tailor: 'match',
       aiUsed: false,
       aiFailed: 'spawn claude ENOENT',
+      // Which way it failed, which the server sends alongside the reason: a
+      // command that is not there and one that was stopped for taking too
+      // long are not the same thing to be told. See `aiFailedKind`.
+      aiFailedKind: 'not-installed',
     };
     let handle;
     handle = createCard({
