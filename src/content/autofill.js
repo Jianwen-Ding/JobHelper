@@ -530,6 +530,83 @@ function setValue(input, value) {
   input.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
+/**
+ * A value the field took now and the browser will refuse at the end.
+ *
+ * The check after a fill was that the value stuck, which catches the field
+ * that throws it away — a phone number assigned to `type=number` leaves the
+ * box empty, and that is reported rather than claimed. It does not catch the
+ * other half: a field that accepts the text and then fails constraint
+ * validation when Submit is pressed.
+ *
+ *   <input type="tel" pattern="\d{10}" required>  <- Workday, Taleo, iCIMS
+ *   profile phone: "(555) 555-5555"
+ *
+ * `input.value` is exactly what was written, so the old check passes and the
+ * card says "Filled 5 fields". Press Submit and the browser refuses the form
+ * with "Please match the requested format" against a field the tool said it
+ * had done — and `refusedByTheBrowser` in sending.js then correctly declines
+ * to record a send, so the application quietly goes nowhere.
+ *
+ * Read off `validity` rather than `checkValidity()`, which dispatches an
+ * `invalid` event the page can see and act on; filling a form must not be
+ * something the page can notice.
+ *
+ * Only the flags this fill could have caused. `valueMissing` cannot be one of
+ * them — something was just written — and `customError` belongs to the page,
+ * which may have set it before anything here ran.
+ */
+function browserWouldRefuse(input) {
+  const v = input.validity;
+  if (!input.willValidate || !v) return false;
+  return Boolean(
+    v.patternMismatch ||
+      v.typeMismatch ||
+      v.tooShort ||
+      v.stepMismatch ||
+      v.rangeOverflow ||
+      v.rangeUnderflow ||
+      v.badInput,
+  );
+}
+
+/**
+ * The same phone number, written the other ways forms ask for it.
+ *
+ * Only phones, and deliberately: "(555) 555-5555" and "5555555555" are the
+ * same ten digits and every form wants its own punctuation, so rewriting is
+ * reading the field's mind rather than changing the answer. An email or a URL
+ * that fails validation is wrong rather than punctuated wrong, and guessing at
+ * one would put a different address on the application.
+ */
+const LINKS = new Set(['linkedin', 'github', 'website']);
+
+function otherWaysToWrite(key, value) {
+  const said = String(value).trim();
+
+  /*
+   * A link, with the scheme a `type=url` field insists on.
+   *
+   * A profile stores "github.com/Jianwen-Ding", because that is what goes on
+   * a resume — nobody prints the https://. A `type=url` input refuses it, and
+   * before this the field was filled, reported as filled, and then blocked the
+   * submit. Adding the scheme does not change where the link goes.
+   */
+  if (LINKS.has(key)) {
+    return /^[a-z][a-z0-9+.-]*:/i.test(said) ? [] : [`https://${said}`];
+  }
+
+  if (key !== 'phone') return [];
+  const digits = said.replace(/\D+/g, '');
+  if (!digits || digits === said) return [];
+  const out = [digits];
+  // A number stored with a country code keeps it where the form takes one.
+  if (said.startsWith('+')) out.unshift(`+${digits}`);
+  // And without it, for the forms that want exactly ten.
+  if (digits.length === 11 && digits.startsWith('1')) out.push(digits.slice(1));
+  return out;
+}
+
 /** Two option labels are the same answer if they read the same. */
 const sameOption = (a, b) => clean(a).toLowerCase() === clean(b).toLowerCase();
 
@@ -670,6 +747,7 @@ export function fillForm(fields, { overwrite = false } = {}) {
       continue;
     }
 
+    const before = input.value;
     setValue(input, value);
     /*
      * Check it went in. Assigning a value a typed input will not accept — a
@@ -681,6 +759,32 @@ export function fillForm(fields, { overwrite = false } = {}) {
      */
     if (input.value !== String(value)) {
       skipped.push({ key, reason: 'the field would not take it', description: description.slice(0, 60) });
+      continue;
+    }
+
+    /*
+     * And that the browser will still take it when Submit is pressed. See
+     * `browserWouldRefuse`: a `pattern` is checked then, not now, so a value
+     * the field holds happily can still stop the form going. Where the same
+     * answer can be written another way, write it that way; where it cannot,
+     * put the field back as it was rather than leave a value that blocks the
+     * submit, and say so.
+     */
+    if (browserWouldRefuse(input)) {
+      const took = otherWaysToWrite(key, value).find((spelling) => {
+        setValue(input, spelling);
+        return input.value === spelling && !browserWouldRefuse(input);
+      });
+      if (took === undefined) {
+        setValue(input, before);
+        skipped.push({
+          key,
+          reason: 'the field would not accept it in that form',
+          description: description.slice(0, 60),
+        });
+        continue;
+      }
+      filled.push({ key, value: took });
       continue;
     }
     filled.push({ key, value });

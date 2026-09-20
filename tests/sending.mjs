@@ -183,8 +183,19 @@ async function* inBatches(list, run) {
   }
 }
 
-/** What this suite files under; cleared before it starts as well as after. */
-const MINE = [...SENDS, ...DOES_NOT_SEND].map((f) => f.company).concat(['Novena']);
+/**
+ * What this suite files under; cleared before it starts as well as after.
+ *
+ * Exactly as the store spells them — `cleanStore` matches the company on the
+ * row, not a prefix of it. A probe of mine passed "Marlow" for a row filed
+ * under "Marlow Systems", so the row survived every run; the next run read it
+ * back and I spent an evening chasing an application that appeared to have
+ * been filed as sent before its form was submitted. It had been sent, the run
+ * before.
+ */
+const MINE = [...SENDS, ...DOES_NOT_SEND]
+  .map((f) => f.company)
+  .concat(['Novena', 'Larkspur', 'Marlow Systems']);
 
 async function main() {
   await requireOpenSave(SERVER);
@@ -300,6 +311,127 @@ async function main() {
       } finally {
         await page.close().catch(() => undefined);
         await second.close();
+      }
+    }
+
+    /*
+     * Two applications on one single-page board, in one tab.
+     *
+     * The watcher says a document was sent once and once only, which is right
+     * for a document and wrong for a board where a route change is the only
+     * navigation there is: LinkedIn, Workday, Ashby. One document, a whole
+     * afternoon, and any number of postings applied to in it. The first send
+     * latched `told` and every application after it in that tab went out
+     * unrecorded — and an application the tracker never heard about stays on
+     * the list of things still to do, which is the quiet half of the failure
+     * this file's header is about.
+     *
+     * Measured, second posting, same tab, form submitted:
+     *
+     *   with the watcher begun again   Marlow Systems/Data Scientist=applied
+     *   without it                     Marlow Systems/Data Scientist=applying
+     *
+     * The steps before the send are asserted too, because "applied" at the end
+     * only means something if it was not already applied at the start: the row
+     * has to be seen at `applying` after the route change and after the build,
+     * with nothing submitted yet.
+     */
+    group('A second application on the same single-page board');
+    {
+      const form = (id) => `<h2>Application</h2><form id="${id}">
+        <label>First name <input name="first_name"></label>
+        <label>Last name <input name="last_name"></label>
+        <label>Email <input name="email" type="email"></label>
+        <label>Why do you want to work here? <textarea name="q1"></textarea></label>
+        <label>Resume <input type="file" name="resume"></label>
+        <button type="submit">Submit Application</button></form>`;
+      const about = (what) => `<h2>About the role</h2>
+        <p>We are looking for a ${what} to own our systems. Responsibilities
+           include shipping to production.</p><h2>Minimum qualifications</h2>
+        <ul><li>Years of experience with distributed systems</li></ul>
+        <p>Equal opportunity employer. Full-time. Upload your resume to apply.</p>`;
+
+      const board = {
+        name: 'one-tab-board',
+        path: '/larkspur/jobs/platform-engineer',
+        company: 'Larkspur',
+        html: `<!doctype html><html><head><title>Platform Engineer at Larkspur</title></head><body>
+          <h1 id="co">Larkspur</h1><div id="sub">Platform Engineer</div>
+          <div id="view">${about('platform engineer')}</div>
+          <p><button id="go" type="button">Apply Now</button></p>
+          <script>
+            const hold = (id) => document.getElementById(id)
+              ?.addEventListener('submit', (e) => e.preventDefault());
+            document.getElementById('go').addEventListener('click', () => {
+              history.pushState({}, '', '/larkspur/jobs/platform-engineer/apply');
+              document.getElementById('go').remove();
+              document.getElementById('view').innerHTML = ${JSON.stringify(form('a'))};
+              hold('a');
+              const next = document.createElement('button');
+              next.id = 'to-b'; next.type = 'button';
+              next.textContent = 'Open the next role';
+              document.body.appendChild(next);
+              next.addEventListener('click', () => {
+                history.pushState({}, '', '/marlow/jobs/data-scientist');
+                document.title = 'Data Scientist at Marlow Systems';
+                document.getElementById('co').textContent = 'Marlow Systems';
+                document.getElementById('sub').textContent = 'Data Scientist';
+                document.getElementById('view').innerHTML =
+                  ${JSON.stringify(about('data scientist'))} + ${JSON.stringify(form('b'))};
+                hold('b');
+              });
+            });
+          </script></body></html>`,
+      };
+
+      const boardServer = await serveFixtures([board]);
+      const page = await context.newPage();
+      try {
+        const card = cardOf(page);
+        const build = async () => {
+          await card.locator('.role').waitFor({ timeout: 40_000 });
+          await card.getByRole('button', { name: 'Build resume' }).click({ timeout: 30_000 });
+          await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
+        };
+
+        await page.goto(boardServer.urlFor(board), { waitUntil: 'domcontentloaded' });
+        await settled(page);
+        await build();
+        await page.click('#go');
+        await page.waitForTimeout(3000);
+        await press(page, 'Submit Application');
+        const first = await awaitFiled('Larkspur', (f) => f.application?.status === 'applied');
+        check('the first application is recorded', first.application?.status === 'applied', first.application?.status ?? '(none)');
+
+        await page.click('#to-b');
+        await page.waitForTimeout(4000);
+        await settled(page);
+        await build();
+        const opened = await awaitFiled('Marlow Systems', (f) => f.application?.status === 'applying');
+        check(
+          'the second posting is held, not yet sent',
+          opened.application?.status === 'applying',
+          opened.application?.status ?? '(none)',
+        );
+
+        await press(page, 'Submit Application');
+        const second = await awaitFiled(
+          'Marlow Systems',
+          (f) => f.application?.status === 'applied' && f.draft?.status === 'submitted',
+        );
+        check(
+          'and pressing Submit on it is recorded too',
+          second.application?.status === 'applied',
+          second.application?.status ?? '(none)',
+        );
+        check(
+          'with its draft closed, like the first',
+          second.draft?.status === 'submitted',
+          second.draft?.status ?? '(none)',
+        );
+      } finally {
+        await page.close().catch(() => undefined);
+        await boardServer.close();
       }
     }
 

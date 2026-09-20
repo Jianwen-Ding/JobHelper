@@ -562,9 +562,38 @@ async function askFrames(tabId, message) {
  * of losing their sentence, not of holding their place.
  */
 const held = new Set();
-async function holdASpace(trail) {
+async function holdASpace(trail, tabId) {
   const work = trail?.work;
   if (!worthKeeping(work)) return;
+
+  /*
+   * Into the save this application was built from, and no other.
+   *
+   * This was the one write to `/api/workspace` that went out headerless.
+   * `openWorkspace` carries `save` and is refused when the editor has moved
+   * on; this one is the automatic version — it runs off the trail as work
+   * accumulates, with nobody pressing anything — so when the save changed
+   * underneath it, a row was opened in whichever save happened to be open.
+   * Every other write in the same moment was correctly refused, which is what
+   * made it hard to see: the card said "ResumeM-M has another save open now"
+   * and a tracker row for this application appeared in that other save
+   * regardless.
+   *
+   *   FAIL  the other save is untouched
+   *         2026-09-19-helios-platform-engineer [applying] role="Platform Engineer"
+   *
+   * Intermittent, because it only lands if this write is in flight across the
+   * change; one in six runs of the case that watches for it.
+   *
+   * Not written at all when the save cannot be named, rather than written
+   * without the header: headerless is exactly the thing the store cannot
+   * refuse, and `saveOrRefuse`'s own note says an unanswerable save must not
+   * mean the write goes somewhere. Holding a place is a convenience and this
+   * one is retried as the application grows; a row in a stranger's tracker is
+   * not undone by the next attempt.
+   */
+  const save = await saveFor(tabId);
+  if (!save) return;
   /*
    * Named by the spec, which is the only thing here that knows. A trail page
    * carries a url, a title and markup; the company and the role are what the
@@ -581,6 +610,7 @@ async function holdASpace(trail) {
     await serverFetch('/api/workspace', {
       method: 'POST',
       timeoutMs: SLOW_TIMEOUT_MS,
+      save,
       body: JSON.stringify({
         company,
         role,
@@ -816,7 +846,7 @@ const handlers = {
     // So the toolbar starts saying "your writing is being held" the moment it
     // is, rather than at the next page of the application.
     await markTab(tab?.id, next);
-    void holdASpace(next);
+    void holdASpace(next, tab?.id);
     return { ok: written !== null };
   },
 
