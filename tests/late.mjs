@@ -161,6 +161,7 @@ async function main() {
       /finished tailoring/i.test(said),
       said.slice(0, 140) || '(nothing said)',
     );
+
   } finally {
     await context.close();
     fixtures.close();

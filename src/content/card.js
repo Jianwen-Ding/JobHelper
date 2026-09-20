@@ -986,6 +986,34 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     }
   }
 
+  /**
+   * The same work, started from the picker instead of the buttons.
+   *
+   * The mode is the one the proposal is already in, because the suggestions
+   * belong to the pair (base, posting) and changing either means working them
+   * out again — and on an AI proposal that is a fresh model pass, which is
+   * minutes. That is the whole reason this goes through the same bookkeeping
+   * as `rebuildAs` rather than dispatching `act` directly: the label, the
+   * Stop and the AI indicator are all read off `state.rebuilding`, and a base
+   * switch that set none of them started the longest run on the card wearing
+   * the clothes of the shortest.
+   */
+  async function switchBaseTo(baseResumeId) {
+    const mode = state.builtWith === 'ai' ? 'ai' : 'match';
+    const mine = ++rebuildToken;
+    state.rebuilding = mode;
+    try {
+      return await act('setBase', { baseResumeId, tailor: mode }, (result) => {
+        if (mine !== rebuildToken) return;
+        // What came back, not what was asked for — see `rebuildAs`.
+        state.builtWith = isDecision(result) ? 'ai' : 'none';
+        state.render = null;
+      });
+    } finally {
+      if (mine === rebuildToken) state.rebuilding = null;
+    }
+  }
+
   /* ---------------------------------------------------------------- */
 
   /**
@@ -1309,6 +1337,20 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     ai: 'Reading the posting…',
   };
 
+  /*
+   * And the same three from the picker, which starts the same work.
+   *
+   * "Starting from that resume…" was said whichever mode the switch was in,
+   * including the one that runs a model for minutes: a bar that reads like a
+   * copy, with a clock on it passing thirteen seconds and climbing, and
+   * nothing saying an AI was involved at all.
+   */
+  const SWITCHING = {
+    none: 'Starting from that resume…',
+    match: 'Starting from that resume, matching on keywords…',
+    ai: 'Reading the posting again, from that resume…',
+  };
+
   /**
    * Runs the worker can be told to let go of, and what it calls each one.
    *
@@ -1318,6 +1360,16 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    */
   const STOPPABLE = {
     rebuild: 'rebuild',
+    /*
+     * Switching base is the same run under another name.
+     *
+     * The picker asks for the mode the proposal is already in, so on an
+     * AI-built one it starts a fresh model pass — minutes — and the worker
+     * registers it under `rebuild` like any other analysis. Everything that
+     * exists for a long run was keyed on the *card's* action name, though, so
+     * a base switch got the short bar, the wrong sentence and no way out.
+     */
+    setBase: 'rebuild',
     coverLetter: 'coverLetter',
     writeApplication: 'writeApplication',
   };
@@ -1351,8 +1403,11 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     await onAction('cancelWork', { what: [what] }).catch(() => undefined);
   }
 
+  /** The two actions that put a proposal together, either of which may be the AI. */
+  const proposing = () => running.has('rebuild') || running.has('setBase');
+
   /** Whether the AI is the thing holding this card up right now. */
-  const aiIsReading = () => running.has('rebuild') && state.rebuilding === 'ai';
+  const aiIsReading = () => proposing() && state.rebuilding === 'ai';
 
   /**
    * Actions whose bar is drawn beside the button that started them rather than
@@ -1395,7 +1450,10 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      * that is what is happening. It still matters — the offer to work the
      * suggestions out again comes through here as `match`.
      */
-    const label = (running.has('rebuild') && REBUILDING[state.rebuilding]) || entry[1];
+    const label =
+      (running.has('rebuild') && REBUILDING[state.rebuilding]) ||
+      (running.has('setBase') && SWITCHING[state.rebuilding]) ||
+      entry[1];
 
     /*
      * And how long it has been going.
@@ -2780,8 +2838,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      * An AI proposal is the one thing that cannot be, so that one repeats
      * what was asked for.
      */
-    baseSelect.onchange = () =>
-      act('setBase', { baseResumeId: baseSelect.value, tailor: state.builtWith === 'ai' ? 'ai' : 'match' });
+    baseSelect.onchange = () => switchBaseTo(baseSelect.value);
 
     const feedback = h('textarea', {
       value: state.feedback,
