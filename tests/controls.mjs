@@ -383,6 +383,26 @@ async function main() {
          */
         const kept = before.every((b) => after.some((a) => a.id === b.id));
         check('and every answer that was there is still there', kept, `${before.length} before, ${after.length} after`);
+
+        /*
+         * Labelled with the employer it was written for.
+         *
+         * The store works out which employers it has written answers for from
+         * the labels on them, and refuses to call an answer safe to send
+         * unread when it names a *different* one. The card sent no label, so
+         * everything it saved was filed as "Saved", the store's list of
+         * employers was the word "Saved", and that check could never fire —
+         * which is how an answer opening "Acme is why I applied" comes back
+         * for another company already in the box and badged "answered
+         * before".
+         */
+        const mine = after.find((a) => JSON.stringify(a).includes(said));
+        const label = mine?.variants?.find((v) => v.text === said)?.label ?? '';
+        check(
+          'and it is filed under the employer it was written for',
+          /helios/i.test(label),
+          `labelled "${label}"`,
+        );
         await page.close();
 
         /*

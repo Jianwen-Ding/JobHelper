@@ -331,6 +331,27 @@ function fromLabelledBy(element) {
   return clean(text);
 }
 
+/**
+ * A field that could own a label of its own — which a hidden input cannot.
+ *
+ * Both walks in `labelFor`, and the one in `isRequired`, stop when they reach
+ * another field: the label before it belongs to that field, not to this one,
+ * and stepping over it is how somebody's first name gets typed into a
+ * reference-code box. That rule is right and it must not count hidden inputs,
+ * because a hidden input is not a field anybody can see, label or fill.
+ *
+ * Every real application form carries several — a CSRF token, a Workday state
+ * blob, a phone country code, a Greenhouse tracking id — and the framework
+ * puts them wherever it likes, which is very often immediately before the box
+ * a person types into. Measured, on a form whose fields are named `q_00281`
+ * and labelled only by a preceding `<div>`: one `<input type=hidden>` between
+ * the label and the box, and the first-name and email fields came out empty.
+ * Take the hidden inputs out of the same form and all three fill. Nothing is
+ * reported, because from the outside it looks exactly like a form the tool was
+ * never confident about.
+ */
+const ANOTHER_FIELD = 'input:not([type=hidden]), textarea, select';
+
 function labelFor(input) {
   /*
    * Each of these answers only when it has something to say.
@@ -375,7 +396,7 @@ function labelFor(input) {
    */
   let node = input.previousElementSibling;
   for (let i = 0; i < 3 && node; i++, node = node.previousElementSibling) {
-    if (node.matches?.('input, textarea, select') || node.querySelector?.('input, textarea, select')) break;
+    if (node.matches?.(ANOTHER_FIELD) || node.querySelector?.(ANOTHER_FIELD)) break;
     const text = clean(node.textContent);
     if (text && text.length < 160) return text;
   }
@@ -396,7 +417,7 @@ function labelFor(input) {
    */
   let group = input.parentElement;
   for (let i = 0; i < 4 && group; i++, group = group.parentElement) {
-    if (group.querySelectorAll('input:not([type=hidden]), textarea, select').length !== 1) break;
+    if (group.querySelectorAll(ANOTHER_FIELD).length !== 1) break;
     const heading = group.querySelector('label,legend,th,.label,[class*="label"]');
     if (heading && !heading.contains(input)) return clean(heading.textContent);
   }
@@ -637,25 +658,85 @@ const sameOption = (a, b) => clean(a).toLowerCase() === clean(b).toLowerCase();
  *   the rest of the sentence is its explanation. "Yes, but not until 2027"
  *   is a yes; read for negation words instead it comes out a no.
  *
- *   Then an explicit negation. Then an explicit affirmation. A phrase that is
- *   neither is skipped and reported, exactly as it is today — "it needs you"
- *   is a fine answer and a wrong declaration is not.
+ *   Then the negation has to be *about the thing being asked about*. A
+ *   sentence is not a bag of words: scanning the whole of one for any
+ *   negation word read "Authorized to work in the US without sponsorship" —
+ *   the documented example value plus the commonest suffix people write — as
+ *   a No, and ticked No on the question about their right to work. That is
+ *   the false declaration this comment says it exists to prevent, made in
+ *   their name, on the form most likely to be rejected without a person
+ *   reading it. It went wrong in both directions at once: "without" negates
+ *   the sponsorship, and the sponsorship question then read the same phrase
+ *   as needing it.
+ *
+ *   A phrase that is neither, or that says both, is skipped and reported —
+ *   "it needs you" is a fine answer and a wrong declaration is not, and so is
+ *   "I am not a citizen but am authorized to work", which is a true sentence
+ *   this has no business reducing to one box.
  */
 const YES_NO_KEYS = new Set(['work_authorization', 'requires_sponsorship']);
-const NEGATED = /\b(no|not|never|non|cannot|can't|don'?t|does'?nt|doesn't|without|un(?:authori[sz]ed|able)|ineligible)\b/i;
-const AFFIRMED = /\b(yes|authori[sz]ed|eligible|permitted|allowed|able|citizen|permanent[\s_-]resident|require[sd]?|need(?:s|ed)?|do)\b/i;
 
-/** Yes, no, or "cannot tell" — for a value against a yes/no pair. */
-function yesNoFrom(value) {
+/**
+ * The thing each question is actually about.
+ *
+ * The answer turns on whether *this* is affirmed or denied, and nothing else
+ * in the sentence can settle it. Keeping the two lists apart is half the fix:
+ * "sponsorship" says nothing about a right to work, and "citizen" says
+ * nothing about needing a visa, so neither key can be decided by a word that
+ * belongs to the other.
+ */
+const CONCEPT = {
+  work_authorization:
+    /\b(unauthori[sz]ed|ineligible|authori[sz]ed|eligible|permitted|allowed|citizen|permanent[\s_-]resident|green[\s_-]card|work[\s_-]permit|right[\s_-]to[\s_-]work)\b/g,
+  requires_sponsorship: /\b(sponsorship|sponsored|sponsor|visa|h-?1b)\b/g,
+};
+
+/** Words that are their own denial, with no separate negation to find. */
+const FUSED_NO = /^(unauthori[sz]ed|ineligible)$/;
+
+/** A denial close enough in front of a word to be about that word. */
+const NEAR_NO = /\b(no|not|never|non|cannot|can't|don'?t|doesn'?t|without|nor|neither)\b/i;
+
+/** How much of what comes before a word can be said to be about it. */
+const LOOK_BACK_WORDS = 4;
+
+/**
+ * Yes, no, or "cannot tell" — for a value against a yes/no pair.
+ *
+ * `key` decides which words count, so this cannot be asked in the abstract.
+ */
+function yesNoFrom(value, key) {
   const said = clean(value).toLowerCase();
   if (!said) return undefined;
 
+  /*
+   * A leading Yes or No wins over everything, because that is the answer and
+   * the rest of the sentence is its explanation. "Yes, but not until 2027"
+   * is a yes; read for negation words instead it comes out a no.
+   */
   const lead = /^(yes|no)\b/i.exec(said)?.[1]?.toLowerCase();
   if (lead) return lead;
 
-  if (NEGATED.test(said)) return 'no';
-  if (AFFIRMED.test(said)) return 'yes';
-  return undefined;
+  const concept = CONCEPT[key];
+  if (!concept) return undefined;
+
+  const verdicts = new Set();
+  for (const hit of said.matchAll(concept)) {
+    if (FUSED_NO.test(hit[1])) {
+      verdicts.add('no');
+      continue;
+    }
+    // Only the few words in front of it: a denial further away than that is
+    // about some other clause. "…does not require sponsorship" denies the
+    // sponsorship; "I do not need it now but will require sponsorship in
+    // 2027" does not.
+    const before = said.slice(0, hit.index).split(/\s+/).slice(-LOOK_BACK_WORDS).join(' ');
+    verdicts.add(NEAR_NO.test(before) ? 'no' : 'yes');
+  }
+
+  // Nothing about this question in the sentence, or the sentence says both.
+  // Either way it is not this tool's to decide. See the note above.
+  return verdicts.size === 1 ? [...verdicts][0] : undefined;
 }
 
 /**
@@ -673,7 +754,7 @@ function yesNoOption(key, value, options) {
   // exactly what this file does not do.
   if (!yes || !no || labelled.length !== 2) return undefined;
 
-  const answer = yesNoFrom(value);
+  const answer = yesNoFrom(value, key);
   return answer === 'yes' ? yes.o : answer === 'no' ? no.o : undefined;
 }
 
@@ -1282,7 +1363,7 @@ export function isRequired(fieldId) {
 
   let group = field.parentElement;
   for (let i = 0; i < 3 && group; i++, group = group.parentElement) {
-    if (group.querySelectorAll('input, textarea, select').length > 1) break;
+    if (group.querySelectorAll(ANOTHER_FIELD).length > 1) break;
     const label = group.querySelector('label,legend');
     if (label) return marked(label.textContent);
   }

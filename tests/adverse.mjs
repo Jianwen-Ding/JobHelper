@@ -311,6 +311,122 @@ async function main() {
       await useServer(context, SERVER);
     }
 
+    /*
+     * The application really is sent, and the store is not there to be told.
+     *
+     * `applicationSent` answers `{ ok: false }` rather than throwing when
+     * ResumeM-M cannot be reached — the store being down is not a reason to
+     * interrupt somebody who has just sent an application. The content script
+     * never read that answer: it fired the message, swallowed the rejection,
+     * and announced "Recorded as sent." on the next line. Measured:
+     *
+     *   card says     : "… | Recorded as sent."
+     *   tracker after : applying
+     *
+     * Nothing recorded and the claim made anyway, which this file's subject
+     * — sending.js — calls the worst failure available. It compounded too:
+     * the old code latched the watcher on the same line, so starting the
+     * store and pressing Submit again did nothing.
+     *
+     * Both halves are checked: what it says when it cannot record, and that
+     * it will still record once it can.
+     */
+    group('The form is submitted while the store is away');
+    {
+      const posting = {
+        name: 'sent-while-away',
+        path: '/helios/jobs/staff-platform-engineer',
+        company: 'Helios',
+        html: `<!doctype html><html><head><title>Staff Platform Engineer at Helios</title></head>
+          <body><h1>Helios</h1><div>Staff Platform Engineer</div>
+          <h2>About the role</h2>
+          <p>We are looking for a platform engineer to own our systems.
+             Responsibilities include shipping to production.</p>
+          <h2>Minimum qualifications</h2>
+          <ul><li>Years of experience with distributed systems</li></ul>
+          <p>Equal opportunity employer. Full-time. Upload your resume to apply.</p>
+          <h2>Application</h2>
+          <form id="ap">
+            <label>First name <input name="first_name"></label>
+            <label>Last name <input name="last_name"></label>
+            <label>Email <input name="email" type="email"></label>
+            <label>Why do you want to work here? <textarea name="q1"></textarea></label>
+            <label>Resume <input type="file" name="resume"></label>
+            <button type="submit">Submit Application</button>
+          </form>
+          <script>document.getElementById('ap')
+            .addEventListener('submit', (e) => e.preventDefault());</script>
+          </body></html>`,
+      };
+
+      const statusOf = async (within = 12_000) => {
+        const until = Date.now() + within;
+        for (;;) {
+          const { applications } = await fetch(`${SERVER}/api/applications`).then((r) => r.json());
+          const rows = (applications ?? []).filter((a) => /helios/i.test(a.company ?? ''));
+          const row = rows.find((a) => /staff platform engineer/i.test(a.role ?? ''));
+          if (row?.status === 'applied' || Date.now() >= until) {
+            return row?.status ?? `(no row; helios rows: ${rows.map((a) => `${a.id}=${a.status}`).join(', ') || 'none'})`;
+          }
+          await new Promise((r) => setTimeout(r, 250));
+        }
+      };
+
+      const site = await serveFixtures([posting]);
+      const page = await context.newPage();
+      try {
+        doomed = await ownServer(health.dataDir, health.build);
+        await useServer(context, doomed.url);
+
+        await page.goto(site.urlFor(posting), { waitUntil: 'domcontentloaded' });
+        await settled(page);
+        await press(cardOf(page), 'Build resume');
+        await cardOf(page).locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
+
+        doomed.kill();
+        doomed = null;
+        await page.waitForTimeout(1500);
+
+        await page.getByRole('button', { name: 'Submit Application', exact: true }).click({ timeout: 15_000 });
+        await page.waitForTimeout(6000);
+
+        const said = (await cardOf(page).innerText()).replace(/\s+/g, ' ');
+        check('the card does not claim it was recorded', !/recorded as sent/i.test(said), said.slice(-120));
+        check('it says it was not recorded', /not recorded/i.test(said), said.slice(-120));
+
+        // And the watcher was not spent on the attempt that failed.
+        await useServer(context, SERVER);
+        await page.waitForTimeout(2500);
+        await page.getByRole('button', { name: 'Submit Application', exact: true }).click({ timeout: 15_000 });
+
+        /*
+         * The row first, then the card — in that order because that is the
+         * order they happen in. This polls the store directly, so it sees the
+         * commit land before the reply has travelled back to the page; read
+         * together, the card was still showing the previous attempt's failure
+         * and the check failed on timing rather than on behaviour.
+         */
+        const after = await statusOf(40_000);
+        check('and pressing Submit once the store is back records it', after === 'applied', after);
+
+        let nowSays = '';
+        for (let i = 0; i < 60; i++) {
+          nowSays = (await cardOf(page).innerText()).replace(/\s+/g, ' ');
+          if (/recorded as sent/i.test(nowSays)) break;
+          await page.waitForTimeout(250);
+        }
+        check('and the card says so then', /recorded as sent/i.test(nowSays), nowSays.slice(-120));
+      } finally {
+        await page.close().catch(() => undefined);
+        await site.close();
+        if (doomed) {
+          doomed.kill();
+          doomed = null;
+        }
+        await useServer(context, SERVER);
+      }
+    }
+
     /* ---------------------------------------------------------------- *
      * The store is there, but slow where it costs                       *
      * ---------------------------------------------------------------- */

@@ -1362,10 +1362,13 @@ const handlers = {
     );
   },
 
-  async saveAnswer({ question, answer, itemId }) {
+  async saveAnswer({ question, answer, itemId, label }) {
     return serverFetch('/api/answers/save', {
       method: 'POST',
-      body: JSON.stringify({ question, answer, itemId }),
+      // `label` is the employer this was written for. Dropping it here is how
+      // every answer the card saved ended up labelled "Saved" — see the note
+      // at the call site in card.js.
+      body: JSON.stringify({ question, answer, itemId, label }),
     });
   },
 
