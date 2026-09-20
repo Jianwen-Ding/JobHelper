@@ -1637,6 +1637,37 @@
       sendResponse({ ok: true });
       return false;
     }
+    /*
+     * "Which application is this page, as far as you know?"
+     *
+     * Asked by the worker when a form inside a frame has just been sent. A
+     * frame has no card and no analysis of its own, so it cannot name what it
+     * has just submitted; the worker reads the trail instead, and the trail
+     * is written by a keeper on a two-second interval. Press Submit inside an
+     * embedded form faster than that — which is what happens when the resume
+     * was already built and the fields were already filled — and the send
+     * found nothing to file it under and was dropped. The top document has
+     * known the answer since the card went up.
+     */
+    if (message?.type === 'jh-what-is-this') {
+      /*
+       * No `kind === 'application'` guard here, deliberately.
+       *
+       * That guard belongs on *this* document's own watcher, where it stops
+       * "Apply Now" on a description page being read as the application going
+       * out. This question is only ever asked after a frame has already
+       * decided a form was submitted, and on an embedded board the outer page
+       * is precisely the description — it holds a heading and an iframe. The
+       * frame gets no second opinion by design; refusing to name what it sent
+       * was one anyway, and the answer was always no.
+       */
+      const named = analysis?.spec?.generatedFor;
+      sendResponse({
+        ok: true,
+        data: named?.company && named?.role ? { company: named.company, role: named.role } : null,
+      });
+      return false;
+    }
     if (message?.type === 'autofill') {
       runAutofill()
         .then((report) => sendResponse({ ok: true, data: report }))

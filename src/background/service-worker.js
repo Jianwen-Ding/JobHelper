@@ -575,6 +575,14 @@ async function forgetFrame(tabId, frameId) {
  * back. A frame that has navigated away, or is cross-origin and gone, simply
  * does not answer — which is ordinary rather than an error.
  */
+/** What the top document of this tab says its application is, if anything. */
+async function askThePage(tabId) {
+  const reply = await chrome.tabs
+    .sendMessage(tabId, { type: 'jh-what-is-this' }, { frameId: 0 })
+    .catch(() => null);
+  return reply?.ok ? (reply.data ?? null) : null;
+}
+
 async function askFrames(tabId, message) {
   const key = framesKey(tabId);
   const ids = (await session().get(key))[key] ?? [];
@@ -1600,7 +1608,22 @@ const handlers = {
    */
   async applicationSentHere({ note, url }, tab) {
     const trail = await readTrail(tab?.id);
-    const named = trail?.work?.spec?.generatedFor;
+    /*
+     * The trail first, and the page itself when the trail has nothing yet.
+     *
+     * A frame has no card and no analysis, so it cannot say what it has just
+     * submitted — it asks here, and here used to read only the trail. The
+     * trail's `work` is written by a keeper running every two seconds, and
+     * pressing Submit inside an embedded form is faster than that when the
+     * resume is already built and the fields are already filled. So the one
+     * send a frame has went nowhere and the tracker kept saying `applying`
+     * for an application that had gone out. Measured on the ATS walk: the
+     * embedded board failed this on every run, while the same form served as
+     * its own page passed every time — the difference being which document
+     * held the answer.
+     */
+    const named =
+      trail?.work?.spec?.generatedFor ?? (tab?.id === undefined ? null : await askThePage(tab.id));
     if (!named?.company || !named?.role) return { ok: false };
     return handlers.applicationSent({ company: named.company, role: named.role, url, note });
   },

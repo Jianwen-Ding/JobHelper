@@ -268,19 +268,29 @@ async function main() {
         throw err;
       }
 
-      const line = editor.locator('.master-source-variant .editable', { hasText: 'Kafka' }).first();
-      await line.waitFor({ timeout: 20_000 });
-      const shown = (await line.textContent()) ?? '';
-      check('found the line this posting is about', /kafka/i.test(shown), shown.slice(0, 60));
-
-      // Where it lives, before it is changed — so it can be put back through
-      // the API afterwards rather than by driving the editor a second time.
+      /*
+       * The store is asked first, and the line is resolved last.
+       *
+       * Where the wording lives has to be known before it is changed, so it
+       * can be put back through the API afterwards rather than by driving the
+       * editor a second time. That read is a round trip, and it used to sit
+       * between finding the line on screen and double-clicking it — and the
+       * editor draws this list wholesale, so a handle taken before a pending
+       * render lands points at a node that is about to be replaced. Under a
+       * loaded machine that is exactly what happened: "element was detached
+       * from the DOM, retrying", then the next match not visible.
+       */
       const where = await locate('Kafka');
       check('and the shared source agrees that is where it lives', Boolean(where), where?.variantId ?? 'not found');
       restore = where;
 
-      await line.dblclick();
-      const raw = await line.textContent();
+      const line = () => editor.locator('.master-source-variant .editable', { hasText: 'Kafka' }).first();
+      await line().waitFor({ timeout: 20_000 });
+      const shown = (await line().textContent()) ?? '';
+      check('found the line this posting is about', /kafka/i.test(shown), shown.slice(0, 60));
+
+      await line().dblclick();
+      const raw = await line().textContent();
       await editor.keyboard.press('Control+A');
       await editor.keyboard.type(`${raw} with ${MARKER}`);
       await editor.keyboard.press('Enter');
