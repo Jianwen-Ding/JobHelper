@@ -284,13 +284,61 @@ async function main() {
       check('and the shared source agrees that is where it lives', Boolean(where), where?.variantId ?? 'not found');
       restore = where;
 
+      /*
+       * And the view is left to settle before it is touched.
+       *
+       * Switching to Master paints it three times — measured: the container
+       * holding `.master-source-variant` is added three times around the
+       * switch and then not again, because the switch saves first and the
+       * save and the preview each schedule a render. Waiting for the first
+       * paint and acting on it means acting on a node that is replaced twice
+       * underneath: "element was detached from the DOM, retrying", for the
+       * whole of the click's timeout.
+       */
       const line = () => editor.locator('.master-source-variant .editable', { hasText: 'Kafka' }).first();
       await line().waitFor({ timeout: 20_000 });
-      const shown = (await line().textContent()) ?? '';
+
+      /*
+       * The same node, still there a moment later.
+       *
+       * Counting the rows cannot see this: every one of those renders draws
+       * the same number of them. What changes is which nodes they are — so
+       * the test holds one and asks whether it survived, which is exactly
+       * what the double-click needs of it.
+       */
+      const steady = async () => {
+        for (let i = 0; i < 80; i++) {
+          const held = await line().elementHandle({ timeout: 20_000 }).catch(() => null);
+          if (held) {
+            await editor.waitForTimeout(500);
+            const alive = await held
+              .evaluate((n) => n.isConnected && n.getClientRects().length > 0)
+              .catch(() => false);
+            if (alive) return held;
+          }
+          await editor.waitForTimeout(250);
+        }
+        /*
+         * Said as itself rather than as a selector that ran out.
+         *
+         * Measured: switching to Master paints the list three times — the
+         * switch saves first, and the save and the preview each schedule a
+         * render — and it then goes quiet, with no API traffic behind it. But
+         * about one run in five it keeps going long past that, and a
+         * double-click cannot land on a node that is replaced underneath it.
+         * Whatever that turns out to be, "the list never stopped being
+         * redrawn" is the fact worth reporting; "waiting for locator(…)" is
+         * not.
+         */
+        throw new Error('the Master source list never stopped being redrawn');
+      };
+      const held = await steady();
+
+      const shown = (await held.textContent()) ?? '';
       check('found the line this posting is about', /kafka/i.test(shown), shown.slice(0, 60));
 
-      await line().dblclick();
-      const raw = await line().textContent();
+      await held.dblclick();
+      const raw = shown;
       await editor.keyboard.press('Control+A');
       await editor.keyboard.type(`${raw} with ${MARKER}`);
       await editor.keyboard.press('Enter');

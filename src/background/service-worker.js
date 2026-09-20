@@ -7,6 +7,7 @@
 
 import { getSettings } from '../shared/config.js';
 import {
+  keepPages,
   lighten,
   sameApplication,
   summarise,
@@ -570,11 +571,6 @@ async function forgetFrame(tabId, frameId) {
   );
 }
 
-/**
- * Put the same question to every sub-frame, and keep the answers that come
- * back. A frame that has navigated away, or is cross-origin and gone, simply
- * does not answer — which is ordinary rather than an error.
- */
 /** What the top document of this tab says its application is, if anything. */
 async function askThePage(tabId) {
   const reply = await chrome.tabs
@@ -583,6 +579,11 @@ async function askThePage(tabId) {
   return reply?.ok ? (reply.data ?? null) : null;
 }
 
+/**
+ * Put the same question to every sub-frame, and keep the answers that come
+ * back. A frame that has navigated away, or is cross-origin and gone, simply
+ * does not answer — which is ordinary rather than an error.
+ */
 async function askFrames(tabId, message) {
   const key = framesKey(tabId);
   const ids = (await session().get(key))[key] ?? [];
@@ -797,7 +798,7 @@ async function remember(tab, page) {
      * inherits nothing and this is the page that decides which save it is.
      */
     save: joins ? (trail.save ?? page.save) : page.save,
-    pages: pages.slice(-TRAIL_MAX),
+    pages: keepPages(pages, TRAIL_MAX),
     at: Date.now(),
   };
   await writeTrail(tab?.id, next);

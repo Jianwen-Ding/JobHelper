@@ -101,6 +101,15 @@ function namesAnotherJob(a, b) {
   return false;
 }
 
+/** Two addresses that name a job, and name the same one. */
+function namesTheSameJob(a, b) {
+  const theirs = jobIds(b);
+  for (const [key, value] of jobIds(a)) {
+    if (theirs.has(key) && theirs.get(key) === value) return true;
+  }
+  return false;
+}
+
 /**
  * Same site, and plainly the same posting on it rather than another one.
  *
@@ -165,15 +174,50 @@ export function relatedPath(a, b) {
     return Boolean(first) && (STEP_WORDS.test(first) || STEP_TAIL.test(first));
   }
 
-  // Siblings: everything matches but the last segment. Which they are depends
-  // on what they are siblings under — steps of a form, or entries in a list.
+  /*
+   * Siblings: everything matches but the last segment. Which they are depends
+   * on what they are siblings under — steps of a form, or entries in a list.
+   *
+   * Both ends have to look like a step, not either.
+   *
+   * "Either" is the rule that a shared apply page walks straight through. A
+   * great many sites have one — `/careers/apply`, `/jobs/apply` — and once
+   * that address is in the trail, every posting beside it is its sibling with
+   * one step-ish end, so `/careers/apply` joined `/careers/vega-engineer` and
+   * then `/careers/data-scientist`. Apply to one job, open another on the same
+   * site, and the second came up written from the first's description,
+   * carrying the first's letter. From a one-segment `/apply` it was worse
+   * still: `/pricing`, `/about` and `/blog` are all its siblings too.
+   *
+   * The parent clause is the one that was doing the real work — `/apply/eeo`
+   * beside `/apply/documents` — and it is untouched. What goes is the claim
+   * that a page named `apply` makes a *different* page beside it part of the
+   * same application. `/jobs/apply` and `/jobs/submit` still join, because
+   * both of those are steps.
+   */
   if (sa.length === sb.length && sa.slice(0, -1).every((seg, i) => seg === sb[i])) {
     const parent = bare(sa[sa.length - 2]);
-    return (
-      STEP_WORDS.test(parent) ||
-      STEP_WORDS.test(bare(sa[sa.length - 1])) ||
-      STEP_WORDS.test(bare(sb[sb.length - 1]))
-    );
+    if (STEP_WORDS.test(parent)) return true;
+
+    const stepA = STEP_WORDS.test(bare(sa[sa.length - 1]));
+    const stepB = STEP_WORDS.test(bare(sb[sb.length - 1]));
+    // Both ends are steps of the same form: /jobs/apply beside /jobs/submit.
+    if (stepA && stepB) return true;
+    /*
+     * Or one end is a step and the address says which job it is a step of.
+     *
+     * Taleo's form is a sibling *file* of its posting —
+     * `jobdetail.ftl?job=12345` then `application.ftl?job=12345` — so the
+     * posting side can never be a step word, and requiring both would
+     * separate a form from the job it belongs to. What makes that pair safe
+     * is the `job=12345` they agree on, which is the same thing
+     * `namesAnotherJob` uses to keep two Indeed postings apart.
+     *
+     * A shared apply page has nothing of the kind: `/careers/apply` and
+     * `/careers/vega-engineer` name no job at all, so there is nothing to
+     * agree about and they stay separate.
+     */
+    return (stepA || stepB) && namesTheSameJob(a, b);
   }
   return false;
 }
@@ -391,6 +435,34 @@ export function lighten(trail, keepTextFor = 2) {
     ...trail,
     pages: pages.map((p, i) => (i < cut ? { ...p, html: '' } : p)),
   };
+}
+
+/**
+ * Which pages survive when an application has more of them than the trail
+ * holds.
+ *
+ * Not simply the newest, which is what `pages.slice(-max)` did. An
+ * application is a description and then a form, and on the systems that
+ * paginate — Workday, Taleo, a government portal — the form is four or five
+ * steps on its own. So the page that gets pushed out first is the first one,
+ * which is the *description*: the only page that holds what the job actually
+ * is, and the one the cover letter and the essay answers are written from.
+ * Everything left is a list of form steps, and the letter is then written
+ * from the fields it is about to be pasted into.
+ *
+ * That is the failure this whole module exists to prevent — its own header
+ * says so: "the description that would answer them is on the page you just
+ * left". It simply took six pages instead of two.
+ *
+ * So the first page is kept and the newest fill the rest. The merge on the
+ * server takes the role and the company from the first page that knows them,
+ * which is the same page for the same reason.
+ */
+export function keepPages(pages, max) {
+  const all = pages ?? [];
+  if (max < 1) return [];
+  if (all.length <= max) return all;
+  return [all[0], ...all.slice(-(max - 1))];
 }
 
 /**

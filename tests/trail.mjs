@@ -14,6 +14,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   EXPECTATION_MS,
+  keepPages,
   lighten,
   relatedPath,
   sameApplication,
@@ -409,5 +410,104 @@ describe('an apply link on the page you came from', () => {
     const trail = { pages: [careers('<a href=https://boards.other.example/gh/acme/jobs/9910 >Apply</a><a href=>x')] };
     // Unquoted href is legal and is what a hand-written page often has.
     assert.equal(sameApplication(trail, form), true);
+  });
+});
+
+/*
+ * A shared apply page is one address that every posting on the site links to,
+ * and a great many sites have one: `/careers/apply`, `/jobs/apply`. Once it
+ * was in the trail it was a sibling of every posting beside it, and the rule
+ * accepted a sibling pair when *either* end looked like a step — so it joined
+ * them all. Apply to one job, open another on the same site, and the second
+ * came up written from the first's description, carrying the first's letter.
+ *
+ * This is the judgement whose mistakes are invisible, and that is the shape
+ * they take.
+ */
+describe('a page named "apply" is not a claim about its neighbours', () => {
+  const rp = (a, b) => relatedPath(`https://x.example${a}`, `https://x.example${b}`);
+
+  it('does not join a shared apply page to the postings beside it', () => {
+    assert.equal(rp('/careers/apply', '/careers/vega-engineer'), false);
+    assert.equal(rp('/careers/apply', '/careers/data-scientist'), false);
+  });
+
+  it('does not make every page on the site a sibling of /apply', () => {
+    assert.equal(rp('/apply', '/pricing'), false);
+    assert.equal(rp('/apply', '/about'), false);
+  });
+
+  it('still joins two steps that are siblings of each other', () => {
+    assert.equal(rp('/jobs/apply', '/jobs/submit'), true);
+    assert.equal(rp('/jobs/1234/apply/eeo', '/jobs/1234/apply/documents'), true);
+  });
+
+  it('and still joins a posting to its own form, and the form to its next step', () => {
+    assert.equal(rp('/jobs/1234', '/jobs/1234/apply'), true);
+    assert.equal(rp('/jobs/1234/apply', '/jobs/1234/apply/eeo'), true);
+  });
+
+  /*
+   * The boundary of the rule above, and the reason it is not simply "both
+   * ends must be steps".
+   *
+   * Taleo's form is a sibling *file* of its posting, so the posting side can
+   * never be a step word: `jobdetail.ftl` then `application.ftl`. What makes
+   * that pair safe is the `job=12345` they agree on — the same thing that
+   * keeps two Indeed postings apart, read the other way round. A shared apply
+   * page has nothing of the kind to agree about.
+   */
+  it('joins a sibling form to its posting when both name the same job', () => {
+    const taleo = (file, job) => `https://acme.taleo.net/careersection/ex/${file}.ftl?job=${job}`;
+    assert.equal(relatedPath(taleo('jobdetail', 12345), taleo('application', 12345)), true);
+    assert.equal(relatedPath(taleo('jobdetail', 12345), taleo('application', 67890)), false);
+    // And the shared apply page joins too, once the address says which job.
+    assert.equal(rp('/careers/apply?job=99', '/careers/vega-engineer?job=99'), true);
+  });
+});
+
+/*
+ * An application is a description and then a form, and on the systems that
+ * paginate — Workday, Taleo, a government portal — the form is four or five
+ * steps on its own. Keeping only the newest pages therefore pushed out the
+ * first one, which is the description: the only page that holds what the job
+ * actually is, and the one the cover letter and the essay answers are written
+ * from. Everything left is a list of form steps, and the letter is then
+ * written from the fields it is about to be pasted into.
+ */
+describe('which pages survive a long application', () => {
+  const walk = (n) => Array.from({ length: n }, (_, i) => ({ url: `https://x.example/step-${i}` }));
+
+  it('keeps everything while there is room', () => {
+    assert.deepEqual(keepPages(walk(3), 5).map((p) => p.url), [
+      'https://x.example/step-0',
+      'https://x.example/step-1',
+      'https://x.example/step-2',
+    ]);
+  });
+
+  it('keeps the description when the form outgrows the trail', () => {
+    const kept = keepPages(walk(8), 5).map((p) => p.url);
+    assert.equal(kept.length, 5);
+    // The page the letter is written from, whatever came after it.
+    assert.equal(kept[0], 'https://x.example/step-0');
+    // And the four most recent, which is where the questions are.
+    assert.deepEqual(kept.slice(1), [
+      'https://x.example/step-4',
+      'https://x.example/step-5',
+      'https://x.example/step-6',
+      'https://x.example/step-7',
+    ]);
+  });
+
+  it('never returns more than it was asked for, or a hole', () => {
+    for (const n of [0, 1, 2, 5, 6, 20]) {
+      const kept = keepPages(walk(n), 5);
+      assert.ok(kept.length <= 5, `${n} pages`);
+      assert.ok(kept.every(Boolean), `${n} pages`);
+      assert.equal(new Set(kept.map((p) => p.url)).size, kept.length, `${n} pages`);
+    }
+    assert.deepEqual(keepPages(undefined, 5), []);
+    assert.deepEqual(keepPages(walk(3), 0), []);
   });
 });
