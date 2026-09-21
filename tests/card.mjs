@@ -644,7 +644,7 @@ async function main() {
         return b ? b.disabled : null;
       })(),
       // Filing waits for the two things it files.
-      filing: named('Submit'),
+      filing: named('Mark as applied'),
       // Different lanes entirely: none of these touch the resume.
       draftLetter: named('✦Draft a letter'),
       draftAnswer: named('✦Draft an answer'),
@@ -1610,7 +1610,7 @@ async function main() {
     return new Promise((resolve) => setTimeout(() => resolve({
       actions: sent.map((c) => c.action),
       staged: sent.find((c) => c.action === 'stage')?.payload ?? null,
-      submitLabel: Boolean(byText('Submit')),
+      submitLabel: Boolean(byText('Mark as applied')),
       oldLabel: Boolean(byText('Prepare to submit')),
     }), 60));
   });

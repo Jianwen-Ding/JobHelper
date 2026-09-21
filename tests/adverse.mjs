@@ -973,7 +973,7 @@ async function main() {
         check('the editor changed save', switched.ok, String(switched.status));
 
         // And then presses the button that files it.
-        await press(card, 'Submit');
+        await press(card, 'Mark as applied');
         await card.locator('.err, .done-box').first().waitFor({ timeout: 120_000 });
 
         /*
@@ -1121,7 +1121,7 @@ async function main() {
         }
         check('the editor changed save', switched.ok, String(switched.status));
 
-        await press(card, 'Submit');
+        await press(card, 'Mark as applied');
         await card.locator('.err, .done-box').first().waitFor({ timeout: 120_000 });
 
         const revived = context.serviceWorkers()[0];

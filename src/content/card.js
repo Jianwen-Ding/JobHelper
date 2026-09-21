@@ -413,34 +413,82 @@ select {
 }
 /* Selectable, because pasting it is the point. */
 .staged .path { user-select: all; border-color: var(--line); margin-bottom: 8px; }
-.done-box .file { font-size: 12px; color: var(--ink-soft); margin-top: 5px; }
+.done-box .file, .staged .file { font-size: 12px; color: var(--ink-soft); margin-top: 5px; }
 /*
  * A file you can pick up. It has to look liftable before it is lifted —
  * nobody tries dragging a line of grey text — so it gets a grip, a border and
  * the grab cursor.
  */
-.done-box .file.liftable {
+.done-box .file.liftable, .staged .file.liftable {
   display: inline-flex; align-items: center; gap: 6px;
   background: #fff; border: 1px solid var(--good-line); border-radius: 6px;
   padding: 4px 8px; margin-right: 5px; cursor: grab; user-select: none;
   color: var(--ink);
 }
-.done-box .file.liftable:active { cursor: grabbing; }
-.done-box .file.liftable .grip { color: var(--ink-soft); font-size: 11px; line-height: 1; }
-.done-box .file.liftable.warming { opacity: .6; cursor: progress; }
-.done-box .file.liftable.asked { border-color: var(--accent, #1a73e8); }
-.done-box .file.liftable .asked-mark {
+.done-box .file.liftable:active, .staged .file.liftable:active { cursor: grabbing; }
+.done-box .file.liftable .grip, .staged .file.liftable .grip { color: var(--ink-soft); font-size: 11px; line-height: 1; }
+.done-box .file.liftable.warming, .staged .file.liftable.warming { opacity: .6; cursor: progress; }
+.done-box .file.liftable.asked, .staged .file.liftable.asked { border-color: var(--accent, #1a73e8); }
+.done-box .file.liftable .asked-mark, .staged .file.liftable .asked-mark {
   font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
   color: var(--accent, #1a73e8); border: 1px solid currentColor; border-radius: 4px; padding: 1px 4px;
 }
-.done-box .file.liftable.all .what { font-style: italic; }
-.done-box .file.liftable .open-file {
+.done-box .file.liftable.all .what, .staged .file.liftable.all .what { font-style: italic; }
+.done-box .file.liftable .open-file, .staged .file.liftable .open-file {
   font-size: 11px; padding: 1px 6px; border-radius: 4px; cursor: pointer;
   border: 1px solid var(--good-line); background: transparent; color: var(--ink-soft);
 }
-.done-box .file.liftable .open-file:hover { color: var(--ink); }
-.done-box .files { margin-top: 6px; }
-.done-box .drag-note { font-size: 11px; color: var(--ink-soft); margin-top: 7px; }
+.done-box .file.liftable .open-file:hover, .staged .file.liftable .open-file:hover { color: var(--ink); }
+.file.liftable .rename { position: relative; display: inline-block; }
+/*
+ * The card has no "hidden" class of its own — the editor does, and this was
+ * written against that memory. Without it every menu on the list was open at
+ * once, each one covering the chip under it and swallowing its clicks.
+ */
+.file.liftable .rename-menu.hidden,
+.file.liftable .rename-box.hidden { display: none; }
+.file.liftable .rename-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 4;
+  background: var(--paper, #fff);
+  border: 1px solid var(--line, #dadce0);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .14);
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+}
+.file.liftable .rename-menu button {
+  background: none;
+  border: 0;
+  text-align: left;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink, #202124);
+  cursor: pointer;
+  border-radius: 6px;
+}
+.file.liftable .rename-menu button:hover { background: var(--hover, #f1f3f4); }
+.file.liftable .rename-box {
+  font: inherit;
+  font-size: 12px;
+  margin: 4px;
+  padding: 5px 6px;
+  border: 1px solid var(--line, #dadce0);
+  border-radius: 6px;
+}
+.file.liftable.missing {
+  cursor: default;
+  opacity: .75;
+  border-style: dashed;
+}
+.file.liftable.missing .grip { opacity: .5; }
+.done-box .files, .staged .files { margin-top: 6px; }
+.done-box .drag-note, .staged .drag-note { font-size: 11px; color: var(--ink-soft); margin-top: 7px; }
 
 /*
  * What the form asked for and the folder does not have. Above the green box
@@ -982,7 +1030,21 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   }
 
   function warmFiles(application) {
-    if (carried?.application === application && (carried.files || carried.waiting)) return carried.waiting;
+    if (carried?.application === application && (carried.files || carried.waiting)) {
+      /*
+       * Already warm, and the chips asking may be new ones.
+       *
+       * `markChips` is what corrects a chip's label from the archive's name
+       * to the folder's — `Jianwen-Ding-Resume.pdf` against
+       * `Jianwen-Ding-Resume-Streamly.pdf` — and it used to be reached only
+       * by the fetch completing. Once the files are warmed before Submit,
+       * the panel after Submit builds its chips against a cache that has
+       * already resolved, so nothing renamed them and every chip promised a
+       * file it was not about to hand over.
+       */
+      if (carried.files) markChips();
+      return carried.waiting;
+    }
     carried = { application, files: null, waiting: null };
     const mine = carried;
     mine.waiting = onAction('attachmentFiles', { application })
@@ -1036,6 +1098,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       .then((wanted) => {
         if (!wanted?.kinds?.length) return;
         state.wanted = wanted;
+        // Knowing what the form asks for is the moment to have it ready.
+        prepareSoon();
         draw();
       })
       .catch(() => {
@@ -1043,9 +1107,38 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       });
   }
 
+  /**
+   * What is in the upload folder, before anything has been filed.
+   *
+   * The chips used to exist only in the panel after Submit — which is the
+   * step that files the application as sent. So dragging, the thing you reach
+   * for to get a document *into* a form, was offered only once you had told
+   * the tool you had already sent it. The files were there the whole time:
+   * building stages them, which is why the path and "Attach files" are both
+   * live on this screen.
+   *
+   * Asked through `warmFiles`, which is the same cache a drag uses, so this
+   * costs one fetch per application and leaves the first drag instant rather
+   * than fetching under somebody's cursor.
+   */
+  let askedWhatIsStaged = null;
+  function askWhatIsStaged(application) {
+    if (askedWhatIsStaged === application) return;
+    askedWhatIsStaged = application;
+    state.stagedFiles = state.stagedFiles ?? null;
+    warmFiles(application)?.then(() => {
+      const names = (carried?.files ?? []).map((f) => f.name).filter(Boolean);
+      const same =
+        state.stagedFiles?.length === names.length && (state.stagedFiles ?? []).every((n, i) => n === names[i]);
+      if (same) return;
+      state.stagedFiles = names;
+      draw();
+    });
+  }
+
   /** Say something about a drag, without rebuilding the card underneath it. */
   function sayAboutDragging(text) {
-    const note = root?.querySelector?.('.done-box .drag-note');
+    const note = root?.querySelector?.('.drag-note');
     if (note) note.textContent = text;
   }
 
@@ -1063,6 +1156,19 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * one: the card is loaded on every page the extension offers on, and
    * attach.js is loaded only when something is being placed.
    */
+  /**
+   * The name `bundleFileNames` knows a document by.
+   *
+   * The card thinks in kinds because that is what a form asks for; the store
+   * thinks in `DocumentKind` because that is what ends up in the filename.
+   * One map, in one place, rather than two vocabularies drifting.
+   */
+  const NAMED_TO_STORE = {
+    resume: 'Resume',
+    letter: 'Cover Letter',
+    other: 'Answers',
+  };
+
   function documentKind(name) {
     const text = String(name ?? '').replace(/[._-]+/g, ' ');
     for (const [kind, { test }] of Object.entries(DOCUMENT_KINDS)) if (test.test(text)) return kind;
@@ -1110,6 +1216,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             onAction('openTab', { url: `/current/${encodeURIComponent(name)}` });
           },
         }),
+        renameMenu(kind, name),
       ].filter(Boolean),
     );
     /*
@@ -1131,6 +1238,153 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         : files.filter((f) => documentKind(f.name) === kind),
     );
     return chip;
+  }
+
+  /**
+   * A document this form asks for that the folder has not got.
+   *
+   * Shown rather than left out, because an absence explains nothing: a form
+   * asking for a transcript next to two chips that are not one reads as the
+   * card having no opinion about transcripts. Named, greyed and not
+   * draggable, it says the one thing worth saying — this is wanted, it is not
+   * here, and nothing is going to produce it but you.
+   *
+   * ResumeM-M builds a resume and a letter and nothing else, so a transcript
+   * only ever reaches the folder by being put there. That is what the line
+   * points at.
+   */
+  function missingChip(kind) {
+    const says = DOCUMENT_KINDS[kind]?.says ?? kind;
+    return h(
+      'div',
+      {
+        className: 'file liftable missing',
+        draggable: false,
+        title: `This form asks for a ${says}, and there is none in the folder to drag`,
+        dataset: { kind },
+      },
+      [
+        h('span', { className: 'grip', textContent: '\u2014' }),
+        h('span', { className: 'what', textContent: `No ${says} in the folder` }),
+        /*
+         * Not "Open the folder", which is the button beside the path two
+         * lines up. Two controls with one name is one control as far as a
+         * screen reader is concerned, and as far as anything driving the
+         * card by its labels is concerned too — the walk that opens the
+         * folder matched both and stopped.
+         */
+        h('button', {
+          className: 'open-file',
+          draggable: false,
+          type: 'button',
+          textContent: 'Add one',
+          title: 'Put one in the folder, and it will be here to drag',
+          onclick: (event) => {
+            event.stopPropagation();
+            onAction('openTab', { url: '/current' });
+          },
+        }),
+      ],
+    );
+  }
+
+  /**
+   * Rename one document, for this application only.
+   *
+   * The store has a default shape and it is a setting — change it and every
+   * application after this one is called something different. This is the
+   * other need: this portal will only take `resume.pdf`, or this posting
+   * wants the title in the name, and neither is a reason to rename the next
+   * fifty. So the three things it can be are offered here, on the file they
+   * are about, and what is chosen is remembered on this application.
+   *
+   * An inline box rather than `prompt()`: the card lives in a shadow root on
+   * somebody else's page, and `prompt` is blocked on plenty of them — a
+   * rename that silently does nothing on a third of sites is worse than no
+   * rename.
+   */
+  function renameMenu(kind, name) {
+    const stored = NAMED_TO_STORE[kind] ?? 'Answers';
+    const put = (naming) => {
+      state.naming = {
+        shape: naming.shape ?? state.naming?.shape,
+        custom: { ...(state.naming?.custom ?? {}) },
+      };
+      if (naming.custom !== undefined) {
+        if (naming.custom === null) delete state.naming.custom[stored];
+        else state.naming.custom[stored] = naming.custom;
+      }
+      if (naming.reset) {
+        delete state.naming.custom[stored];
+        state.naming.shape = undefined;
+      }
+      // Straight to the folder, so the chip and the file agree. `prepareSoon`
+      // only fires on a change it can see, and naming is one.
+      lastPrepared = null;
+      prepareSoon();
+      draw();
+    };
+
+    return h('div', { className: 'rename' }, [
+      h('button', {
+        className: 'open-file',
+        draggable: false,
+        type: 'button',
+        textContent: '\u22ef',
+        title: `Change what the ${DOCUMENT_KINDS[kind]?.says ?? 'file'} is called`,
+        onclick: (event) => {
+          event.stopPropagation();
+          const open = event.currentTarget.parentElement?.querySelector('.rename-menu');
+          if (open) open.classList.toggle('hidden');
+        },
+      }),
+      h('div', { className: 'rename-menu hidden' }, [
+        h('button', {
+          type: 'button',
+          draggable: false,
+          textContent: 'Add the job title',
+          onclick: (event) => {
+            event.stopPropagation();
+            put({ shape: 'title-type', custom: null });
+          },
+        }),
+        h('button', {
+          type: 'button',
+          draggable: false,
+          textContent: 'Rename\u2026',
+          onclick: (event) => {
+            event.stopPropagation();
+            const box = event.currentTarget.parentElement?.querySelector('input');
+            if (box) {
+              box.classList.remove('hidden');
+              box.focus();
+              box.select();
+            }
+          },
+        }),
+        h('input', {
+          className: 'rename-box hidden',
+          draggable: false,
+          type: 'text',
+          value: name.replace(/\.[^.]+$/, ''),
+          title: 'The extension stays as it is — a portal checks it',
+          onkeydown: (event) => {
+            event.stopPropagation();
+            if (event.key === 'Enter') put({ custom: event.target.value });
+            if (event.key === 'Escape') event.target.classList.add('hidden');
+          },
+        }),
+        h('button', {
+          type: 'button',
+          draggable: false,
+          textContent: 'Back to the default',
+          onclick: (event) => {
+            event.stopPropagation();
+            put({ reset: true });
+          },
+        }),
+      ]),
+    ]);
   }
 
   /** Everything at once, for the form with one box that takes the lot. */
@@ -1397,12 +1651,31 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    */
   let rebuildToken = 0;
 
-  async function act(action, payload, apply) {
+  /**
+   * `quiet` is for work nobody asked for.
+   *
+   * Clearing the message on the way in is right for a press: the last failure
+   * belongs to the last thing you did, and doing something else should take
+   * it off the screen. It is wrong for staging, which now runs on its own
+   * whenever the letter or the answers change — that wiped whatever the card
+   * was in the middle of saying, about a second after it said it.
+   *
+   * Measured on the rescue after a closed tab: the letter came back, the card
+   * said "Recovered what you had written before this tab closed", the form
+   * answered what documents it wanted, staging started, and the sentence went
+   * — leaving somebody's writing restored with no account of where from.
+   *
+   * Only the clearing is skipped. A staging failure still reports: a folder
+   * that is a build behind is worth knowing about.
+   */
+  async function act(action, payload, apply, { quiet = false } = {}) {
     running.add(action);
     if (!startedAt.has(action)) startedAt.set(action, Date.now());
     state.busy = action;
-    state.error = null;
-    state.errorFix = null;
+    if (!quiet) {
+      state.error = null;
+      state.errorFix = null;
+    }
     draw();
     try {
       const result = await onAction(action, payload);
@@ -2635,9 +2908,58 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
 
   function stageFiles() {
     if (!state.spec) return;
-    act('stage', { spec: state.spec, coverLetter: state.letter, answers: collectedAnswers() }, (staged) => {
-      if (staged) state.staged = staged;
-    });
+    lastPrepared = whatWouldBeStaged();
+    act(
+      'stage',
+      { spec: state.spec, coverLetter: state.letter, answers: collectedAnswers(), naming: state.naming },
+      (staged) => {
+        if (staged) {
+          state.staged = staged;
+          // The folder has changed underneath the chips, so the names they are
+          // drawn from have to be asked for again. See `askWhatIsStaged`.
+          askedWhatIsStaged = null;
+          carried = null;
+        }
+      },
+      // Nobody pressed this, so it does not get to clear what the card is
+      // saying. See `act`.
+      { quiet: true },
+    );
+  }
+
+  /**
+   * Keep the folder matching what is on screen, without being asked.
+   *
+   * Preparing used to happen on one press — "Build resume" — and again at
+   * Submit. So a cover letter drafted afterwards, or an answer reworked, sat
+   * in the card and not in the folder, and the drag chips and "Attach files"
+   * both handed over a resume with no letter beside it. The folder is what
+   * the upload dialog opens on; it is worth nothing if it is a build behind.
+   *
+   * Debounced rather than immediate because the letter is a textarea and
+   * every keystroke would otherwise start a trusted-engine compile. Skipped
+   * outright when nothing that reaches a file has changed, which is what
+   * `lastPrepared` is for: redraws are constant and a stage is a compile.
+   */
+  let lastPrepared = null;
+  let preparing = null;
+  const whatWouldBeStaged = () =>
+    JSON.stringify([
+      state.spec?.id ?? null,
+      state.spec?.choices ?? null,
+      state.letter ?? '',
+      collectedAnswers(),
+      state.naming ?? null,
+    ]);
+
+  function prepareSoon() {
+    if (!state.spec) return;
+    if (whatWouldBeStaged() === lastPrepared) return;
+    clearTimeout(preparing);
+    preparing = setTimeout(() => {
+      if (whatWouldBeStaged() === lastPrepared) return;
+      stageFiles();
+    }, 1200);
   }
 
   function drawChanges() {
@@ -3298,6 +3620,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       if (r.body?.trim()) {
         state.letter = r.body;
         state.letterSource = 'Drafted in your voice from your previous letters.';
+        // Into the folder as soon as it exists, not at Submit. See `prepareSoon`.
+        prepareSoon();
       } else if (state.priorLetters.length > 0) {
         /*
          * Offered, not adopted.
@@ -3894,6 +4218,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                     textContent: `Start from "${state.letterOffer.title}"`,
                     onclick: () => {
                       state.letter = state.letterOffer.body;
+                      prepareSoon();
                       state.letterSource = `Copied from ${state.letterOffer.title}. It is addressed to another company — read it before sending.`;
                       state.letterOffer = null;
                       draw();
@@ -3920,6 +4245,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                  */
                 oninput: (e) => {
                   state.letter = e.target.value;
+                  prepareSoon();
                   // Editing after saving is a new letter to save.
                   if (state.letterSaved && state.letter !== state.letterSavedAs) state.letterSaved = false;
                   syncLetterControls();
@@ -3934,6 +4260,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                     act('saveLetter', { body: state.letter }, () => {
                       state.letterSaved = true;
                       state.letterSavedAs = state.letter;
+                      prepareSoon();
                     }),
                 })),
                 (letterControls.copy = h('button', {
@@ -4069,6 +4396,43 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                   onclick: () => onAction('openTab', { url: '/current' }),
                 }),
               ]),
+              /*
+               * And the files themselves, to pick up.
+               *
+               * "Attach files" is the quick way and stays the quick way. It
+               * cannot reach a drop zone that is not an `<input type=file>`,
+               * which is most of the pretty ones, and it decides for you
+               * which document goes in which box. Dragging is the other half
+               * of the same step and belongs beside it — not behind Submit,
+               * which is where it used to be and which files the application
+               * as sent.
+               */
+              ...(() => {
+                const application = state.staged?.application?.id ?? analysis?.application?.id ?? null;
+                chipsOnScreen = [];
+                askWhatTheFormWants();
+                askWhatIsStaged(application);
+
+                const names = state.stagedFiles ?? [];
+                if (names.length === 0) return [];
+                const chips = names.map((f) => liftable(f, application));
+                if (names.length > 1) chips.push(liftableAll(names, application));
+                const short = missingHere({ files: names });
+                for (const kind of state.wanted?.kinds ?? []) {
+                  if (!names.some((f) => documentKind(f) === kind) && DOCUMENT_KINDS[kind]) {
+                    chips.push(missingChip(kind));
+                  }
+                }
+                return [
+                  h('div', { className: 'files' }, chips),
+                  h('div', {
+                    className: 'drag-note',
+                    textContent: short
+                      ? `${short} Drag any of these into the form, or press Attach files below.`
+                      : 'Drag any of these into the form, or press Attach files below.',
+                  }),
+                ];
+              })(),
             ])
           : null,
         h('div', { className: 'row' }, [
@@ -4121,24 +4485,34 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
            * attach, the tracker row — and "save" suggests filing something
            * that already exists rather than compiling it.
            *
-           * This is the step that ends an application, so it is named for
-           * that and it files the application as sent (see `bundle` in
-           * content.js). The explanation of what lands on disk used to live
-           * in a `title`, which is to say nowhere; it is a line under the
-           * button now.
+           * And then it stopped being the step that prepares anything.
+           *
+           * "Submit" described four jobs — typeset, name, put in a folder,
+           * mark as sent — and by the time anybody read it, three had already
+           * happened. Building stages the files, and every later change to
+           * the letter or the answers re-stages them, so the folder matches
+           * the screen the whole way through; that is what makes the path,
+           * "Attach files" and the drag chips live on this step rather than
+           * behind this button.
+           *
+           * What is left is the one thing nothing else does: say this
+           * application went out. It still writes the archive copy and the
+           * tracker snapshot underneath — a record of what was sent is worth
+           * having and nothing else produces one — but silently, as a
+           * consequence of marking it, rather than as the headline.
            */
           h('button', {
             className: 'primary',
-            textContent: busyLabel('bundle', 'Submit', 'Filing…'),
+            textContent: busyLabel('bundle', 'Mark as applied', 'Filing…'),
             // `compile` is in the list now that it is its own lane: filing
             // while the preview is being recompiled files a resume the card
             // is in the middle of changing its mind about.
             disabled: busyIn('submit', 'resume', 'letter', 'compile') || !state.render,
-            title: state.render ? 'Compile, name the files properly, and snapshot what was sent' : 'Build the resume first',
+            title: state.render ? 'Record this as applied, and keep a copy of what was sent' : 'Build the resume first',
             onclick: () =>
               act(
                 'bundle',
-                { spec: state.spec, coverLetter: state.letter, answers: collectedAnswers() },
+                { spec: state.spec, coverLetter: state.letter, answers: collectedAnswers(), naming: state.naming },
                 (bundle) => {
                   if (bundle) {
                     state.bundle = bundle;
@@ -4166,8 +4540,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             ? h('div', {
                 className: 'hint',
                 textContent:
-                  'Typesets the resume and letter as PDFs, names them for this company, puts them in one folder to ' +
-                  'attach, and marks this one as sent.',
+                  'The files above are already named and in the folder. This records the application as applied and ' +
+                  'keeps a copy of exactly what was sent.',
               })
             : null,
         state.autofillReport
@@ -4624,6 +4998,12 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           askWhatTheFormWants();
           const chips = b.files.map((f) => liftable(f, application));
           if (b.files.length > 1) chips.push(liftableAll(b.files, application));
+          // Named as well as mentioned below: a form asking for a transcript,
+          // beside two chips that are not one, reads as no opinion about
+          // transcripts. See `missingChip`.
+          for (const kind of state.wanted?.kinds ?? []) {
+            if (!b.files.some((f) => documentKind(f) === kind) && DOCUMENT_KINDS[kind]) chips.push(missingChip(kind));
+          }
           return [
             h('div', { className: 'files' }, chips),
             /*

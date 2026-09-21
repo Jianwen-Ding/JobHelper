@@ -892,6 +892,11 @@
           status: 'applying',
           coverLetter: payload.coverLetter,
           answers: payload.answers,
+          // What this application calls its documents, when it has been told.
+          // Absent means "leave whatever the tracker already had" — see
+          // `buildBundleNow`, which is why a Recompile does not rename the
+          // file somebody has been dragging into this form.
+          naming: payload.naming,
         });
 
       case 'bundle':
@@ -923,6 +928,7 @@
           status: 'applied',
           coverLetter: payload.coverLetter,
           answers: payload.answers,
+          naming: payload.naming,
         });
 
       case 'setBase': {
