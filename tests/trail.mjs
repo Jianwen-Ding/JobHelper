@@ -576,3 +576,38 @@ describe('two employers, and two jobs at one employer', () => {
     assert.equal(wasExpected(clicked('https://acme.com/careers/data-analyst'), 'https://acme.com/careers/data-analyst'), true);
   });
 });
+
+/**
+ * "Start fresh" has to mean it for longer than two seconds.
+ *
+ * An absent trail and a forgotten one both read as `pages: []`, and the card
+ * does not stop writing when that button is pressed — its keeper re-sends the
+ * resume and the letter every two seconds. So the trail came back within two
+ * seconds holding the old job's work, and `sameApplication` handed it to the
+ * next posting opened in that tab, as "Carried over: the resume, the letter".
+ * The user had pressed a button that said Forgotten and been told it was.
+ */
+describe('a tab that was told to start fresh', () => {
+  const emptied = { pages: [], cleared: Date.now(), at: Date.now() };
+
+  it('claims no page, where an untouched tab claims any', () => {
+    const page = { url: 'https://acme.com/jobs/platform-engineer', title: '', company: 'Acme' };
+    assert.equal(sameApplication({ pages: [], at: Date.now() }, page), true);
+    assert.equal(sameApplication(emptied, page), false);
+  });
+
+  it('and says so however long the page list stays empty', () => {
+    assert.equal(sameApplication(emptied, { url: 'https://other.com/careers/x', title: '' }), false);
+  });
+
+  it('but is an ordinary trail again once it holds a page', () => {
+    const read = {
+      ...emptied,
+      pages: [{ url: 'https://acme.com/jobs/platform-engineer', title: '', company: 'Acme', at: Date.now() }],
+    };
+    // The mark only ever speaks for an empty trail; a page of its own settles
+    // it, and `remember` drops the mark because the fresh branch spreads
+    // nothing.
+    assert.equal(sameApplication(read, { url: 'https://acme.com/jobs/platform-engineer/apply', title: '' }), true);
+  });
+});

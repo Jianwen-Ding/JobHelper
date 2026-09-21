@@ -372,6 +372,20 @@ export function wasLinkedFrom(trail, url) {
  * then the company named on the page, then where the page lives.
  */
 export function sameApplication(trail, page, now = Date.now()) {
+  /*
+   * A tab told to start fresh belongs to nothing until it reads a page.
+   *
+   * "No pages yet" reads as "this could be anything's first page", which is
+   * right for a tab that has never held an application and wrong for one that
+   * was just emptied on purpose. The two were indistinguishable, and the card
+   * keeps writing: its keeper re-sends the resume and the letter every two
+   * seconds, so pressing "Start fresh" in the popup was undone within two
+   * seconds — the trail came back holding the old job's work under no pages —
+   * and the next posting opened in that tab was handed it, as "Carried over:
+   * the resume, the letter". The user had pressed a button that said Forgotten
+   * and been told it was.
+   */
+  if (trail?.cleared && !trail?.pages?.length) return false;
   if (!trail?.pages?.length) return true;
   if (!page?.url) return false;
 
