@@ -497,7 +497,14 @@ export function removeCard() {
  * @param {object} opts
  * @param {(action: string, payload?: any) => Promise<any>} opts.onAction
  */
-export function createCard({ analysis, resumes = [], settings, questions = [], needsCoverLetter = false, onAction }) {
+/**
+ * @param {object} opts
+ * @param {() => void} [opts.onClose] Called when the card takes itself off the
+ *   page — the × and the Done button. The caller holds a handle to this card
+ *   and checks it before building another, so a card that leaves without
+ *   saying so is a card that can never be put back. See `putUpCard`.
+ */
+export function createCard({ analysis, resumes = [], settings, questions = [], needsCoverLetter = false, onAction, onClose }) {
   removeCard();
 
   const host = document.createElement('div');
@@ -509,6 +516,26 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   card.className = 'card';
   root.append(card);
   document.documentElement.append(host);
+
+  /*
+   * Taking the card off the page, and saying so.
+   *
+   * `removeCard` only removes the element. The content script keeps a handle
+   * to the card and checks it before building another, so a card that left
+   * without a word was a card that could never come back: the toolbar button
+   * short-circuited on the stale handle and did nothing at all, and a frame
+   * that found an application form afterwards could not raise one either.
+   * Measured, in `tests/asking.mjs`: press ×, press the button, nothing.
+   */
+  const closeCard = () => {
+    removeCard();
+    try {
+      onClose?.();
+    } catch {
+      // The card is already gone; whatever the caller does with that is not
+      // worth an exception inside a click handler.
+    }
+  };
 
   /*
    * Whether what arrived is a decision or a set of offers.
@@ -1203,7 +1230,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         title: 'Not now',
         ariaLabel: 'Close JobHelper on this page',
         textContent: '×',
-        onclick: () => removeCard(),
+        onclick: () => closeCard(),
       }),
     ]);
   }
@@ -4056,7 +4083,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         h('button', {
           className: 'primary',
           textContent: 'Done',
-          onclick: () => removeCard(),
+          onclick: () => closeCard(),
         }),
       ]),
       state.unsent

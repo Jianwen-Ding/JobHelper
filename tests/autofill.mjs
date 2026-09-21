@@ -105,6 +105,9 @@ const NOT_YOURS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply
   <!-- A previous employer's address, from the employment-history section. -->
   <h3>Employment history</h3>
   <label for="emp-city">Employer City</label><input id="emp-city" name="emp_city">
+  <!-- What Workday, Greenhouse and iCIMS all call the same field. -->
+  <label for="emp-loc">Employer Location</label><input id="emp-loc" name="emp_loc">
+  <label for="emp-mail">Company Email</label><input id="emp-mail" name="emp_mail" type="email">
 
   <label for="source">Where did you hear about this job? (LinkedIn, Indeed, referral)</label>
   <input id="source" name="source">
@@ -629,7 +632,7 @@ async function main() {
         return {
           values: Object.fromEntries(
             ['own-email', 'own-phone', 'r-name', 'r-email', 'r-phone', 'mgr-email', 'ec-name', 'ec-phone',
-             'emp-city', 'source', 'citizenship', 'residence', 'b-country', 'b-city', 'cc', 'pref1',
+             'emp-city', 'emp-loc', 'emp-mail', 'source', 'citizenship', 'residence', 'b-country', 'b-city', 'cc', 'pref1',
              'pref2', 'reloc', 'st', 'sal', 'dis-sig', 'eeo-sig', 'auth-any', 'both']
               .map((id) => [id, document.getElementById(id).value]),
           ),
@@ -667,6 +670,14 @@ async function main() {
       `${mine.values['ec-name']} / ${mine.values['ec-phone']}`,
     );
     check("nor is the manager's email yours", mine.values['mgr-email'] === '', mine.values['mgr-email']);
+    /*
+     * The employment-history exclusion listed city, town, state and postal
+     * code but not `location` — which is the word Workday, Greenhouse and
+     * iCIMS use — so one line per past job was filled in with the applicant's
+     * own current city, as a stated fact about somebody else's office.
+     */
+    check("a past employer's location is not yours", mine.values['emp-loc'] === '', mine.values['emp-loc']);
+    check("nor is a past employer's email", mine.values['emp-mail'] === '', mine.values['emp-mail']);
     check(
       "nor is a previous employer's town your own",
       mine.values['emp-city'] === '',
@@ -958,6 +969,21 @@ async function main() {
       // is left for the person — which is the whole rule here: a blank costs
       // them a moment, a wrong declaration costs them the application.
       ['I am not a US citizen but am authorized to work', ''],
+      /*
+       * The way a visa holder actually describes themselves, and the one
+       * spelling that broke the reading of the whole sentence.
+       *
+       * `NEAR_NO` was bounded by `\b`, and a hyphen is a word boundary, so
+       * the `non` inside `non-citizen` counted as a negation four words
+       * deep — poisoning every concept word after it. Measured: this value
+       * ticked "No" on the right to work, for somebody who had written that
+       * they are authorised. `non-citizen` denies `citizen` and nothing
+       * else, so the sentence now says two things and nothing is ticked.
+       */
+      ['I am a non-citizen, but authorized to work in the US without restriction.', ''],
+      // And a sentence where both readings agree is still answered: the
+      // prefix denies `citizen`, `not` denies `authorized`, both say no.
+      ['Non-citizen. Not authorized to work in the US.', 'n'],
     ];
     for (const [value, want] of AUTH) {
       const got = await declared('work_authorization', value, 'auth');
@@ -973,6 +999,13 @@ async function main() {
       // to come out the other way: "without" denies the sponsorship, not the
       // authorisation.
       ['Authorized to work in the US without sponsorship', 'n'],
+      /*
+       * The mirror image, and the one that was outright wrong rather than
+       * merely unanswerable: `non-immigrant` made this read as a denial of
+       * the sponsorship, so the form was filled in with "No, I do not
+       * require sponsorship" for somebody who had written that they will.
+       */
+      ['I am a non-immigrant and will require sponsorship', 'y'],
     ];
     for (const [value, want] of SPON) {
       const got = await declared('requires_sponsorship', value, 'spon');
@@ -1434,6 +1467,17 @@ async function main() {
       ['Voluntary self-identification of disability', true],
       ['Please describe your veteran status', true],
       ['Have you ever been convicted of a felony?', true],
+      /*
+       * The same two questions `yesNoFrom` refuses to guess at when they are
+       * tick boxes, asked as a paragraph — which is how Greenhouse and Lever
+       * custom questions ask them. Neither was on this list, so the draft
+       * button was offered on the one answer this tool must never invent.
+       */
+      ['Please describe your current work authorization status.', true],
+      ['If you will require visa sponsorship now or in the future, please explain.', true],
+      ['Are you authorized to work in the United States? Please elaborate.', true],
+      // And not the ordinary essay questions that happen to sit near them.
+      ['Describe a project where you had to work around a legal constraint.', false],
       ['Why do you want to work here?', false],
       ['Tell us about a project you are proud of.', false],
       ['Describe a time you disagreed with a manager.', false],
@@ -1450,7 +1494,7 @@ async function main() {
     const wrong = yoursCases
       .map(([q, want], i) => (verdicts[i] === want ? null : `${verdicts[i] ? 'withheld' : 'offered'}: ${q}`))
       .filter(Boolean);
-    check('every question is judged the right way round', wrong.length === 0, wrong.join(' | ') || '13 phrasings');
+    check('every question is judged the right way round', wrong.length === 0, wrong.join(' | ') || `${yoursCases.length} phrasings`);
   } finally {
     await browser.close();
     server.close();

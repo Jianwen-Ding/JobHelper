@@ -309,6 +309,31 @@ async function main() {
       check('and the chip is gone', (await page.locator(ASK).count()) === 0);
       await page.close();
     }
+
+    /*
+     * The other way the card goes away, and the way back from it.
+     *
+     * The card's × takes the host element off the page and tells the content
+     * script nothing, so `cardHandle` — the thing `putUpCard` checks before
+     * building one — stayed pointing at a node that is no longer in the
+     * document. Every route back then short-circuited on it: pressing the
+     * toolbar button did nothing at all, and a frame reporting an application
+     * form later on could not raise one either. "Not now" is meant to mean
+     * not now, not never until you reload.
+     */
+    console.log('\nClosing the card, and asking for it again');
+    {
+      const page = await context.newPage();
+      await page.goto(postingUrl, { waitUntil: 'domcontentloaded' });
+      check('the card is up', await appears(page, `${CARD} .card`));
+
+      await page.locator(`${CARD} button[aria-label="Close JobHelper on this page"]`).click();
+      check('pressing × takes it away', await neverAppears(page, `${CARD} .card`, 2000));
+
+      await pressTheButton(context, worker, postingUrl);
+      check('and the toolbar button brings it back', await appears(page, `${CARD} .card`));
+      await page.close();
+    }
   } finally {
     await context.close();
     await fixtures.close();

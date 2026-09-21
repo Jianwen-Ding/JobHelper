@@ -97,8 +97,14 @@ const NOT_ABOUT_YOU = [
    * A previous employer's address, which the employment-history sections of
    * Taleo and BrassRing ask for field by field. "Employer City" matched
    * `address_city` and was filled with the applicant's own town.
+   *
+   * `location` and `email` were missing from the list, and "Employer
+   * Location" is what Workday, Greenhouse and iCIMS all call that field —
+   * one line per past job, filled in with the applicant's own current city as
+   * a stated fact about where somebody else's office was. Exactly the case
+   * above, on the word those three happen to use.
    */
-  /\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+(name|address|city|town|state|province|country|phone|telephone|zip|postal)\b/i,
+  /\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+(name|address|location|city|town|state|province|country|phone|telephone|email|zip|postal)\b/i,
   // Where you heard about the job, which is not a profile of yours.
   /\b(did[\s_-]you[\s_-]hear|hear[\s_-]about[\s_-](us|this)|referral)\b/i,
   // Citizenship, birth and residence are different questions with the same
@@ -738,8 +744,37 @@ const CONCEPT = {
 /** Words that are their own denial, with no separate negation to find. */
 const FUSED_NO = /^(unauthori[sz]ed|ineligible)$/;
 
-/** A denial close enough in front of a word to be about that word. */
-const NEAR_NO = /\b(no|not|never|non|cannot|can't|don'?t|doesn'?t|without|nor|neither)\b/i;
+/**
+ * A denial fixed to the front of the word it denies: "non-citizen".
+ *
+ * Its own case, because it is not a word in the sentence — it is part of the
+ * word that was matched, and it denies that word and nothing else. Read as a
+ * loose negation it poisoned everything after it; not read at all, it would
+ * make "non-citizen" an affirmation of citizenship.
+ */
+const FUSED_PREFIX = /(?:^|[^\w-])non-?$/i;
+
+/**
+ * A denial close enough in front of a word to be about that word.
+ *
+ * Bounded by `[^\w-]` rather than `\b`, because `\b` is a transition between
+ * a word character and anything else — and a hyphen is anything else. So
+ * `\bnon\b` matched the `non` inside `non-citizen`, and the window is four
+ * words wide, so one of those poisoned every concept word after it. Measured,
+ * running this function as written:
+ *
+ *   "I am a non-citizen, but authorized to work in the US without
+ *    restriction."                                            => no
+ *   "I am a non-immigrant and will require sponsorship."       => no
+ *
+ * The first says the applicant is not authorised to work, and the second says
+ * they do not need sponsorship. Both are the opposite of what was written,
+ * both are declarations made in somebody's name on a submitted form, and both
+ * are the exact failure the note above this function exists to prevent —
+ * arriving through the one spelling a visa holder is most likely to use about
+ * themselves. `non-citizen`, `non-immigrant`, `non-resident`.
+ */
+const NEAR_NO = /(?<![\w-])(no|not|never|non|cannot|can't|don'?t|doesn'?t|without|nor|neither)(?![\w-])/i;
 
 /** How much of what comes before a word can be said to be about it. */
 const LOOK_BACK_WORDS = 4;
@@ -787,7 +822,14 @@ function yesNoFrom(value, key) {
      * declaration the note above this function exists to prevent, made by the
      * function written to prevent it.
      */
-    const before = said.slice(0, hit.index).trim().split(/\s+/).slice(-LOOK_BACK_WORDS).join(' ');
+    const upTo = said.slice(0, hit.index);
+    // "non-citizen" is a denial of *this* word, wherever the rest of the
+    // sentence goes. See `FUSED_PREFIX`.
+    if (FUSED_PREFIX.test(upTo)) {
+      verdicts.add('no');
+      continue;
+    }
+    const before = upTo.trim().split(/\s+/).slice(-LOOK_BACK_WORDS).join(' ');
     verdicts.add(NEAR_NO.test(before) ? 'no' : 'yes');
   }
 
@@ -1470,6 +1512,20 @@ const YOURS_TO_ANSWER = [
   [/\b(disabilit|accommodat|impairment)\w*/i,
     'This one is yours to answer — nothing is written for you.'],
   [/\b(race|ethnicit|gender|veteran|disabled|sexual orientation|pronoun)\w*/i,
+    'This one is yours to answer — nothing is written for you.'],
+  /*
+   * And the two the rest of this file treats as the most damaging to get
+   * wrong, which were not on this list at all.
+   *
+   * `yesNoFrom` goes to great lengths so that a *tick box* about the right to
+   * work is never filled in against what the applicant wrote — the note above
+   * it calls a wrong answer there a false legal declaration made in their
+   * name. The same question asked as a paragraph ("Please describe your
+   * current work authorisation status", "If you will require sponsorship,
+   * please explain") is an ordinary custom question on Greenhouse and Lever,
+   * and it was offered to the model to invent an answer for.
+   */
+  [/\b(work[\s_-]authori[sz]ation|authori[sz]ed[\s_-]to[\s_-]work|right[\s_-]to[\s_-]work|sponsorship|sponsor|visa|h-?1b|opt|cpt|immigration|citizenship|work[\s_-]permit)\b/i,
     'This one is yours to answer — nothing is written for you.'],
   [/\b(criminal|conviction|felony|misdemeanou?r|background check)\b/i,
     'This one is yours to answer — nothing is written for you.'],

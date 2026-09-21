@@ -383,6 +383,19 @@
   }
 
   let cardHandle = null;
+  /*
+   * Whether this page's card was put away by hand.
+   *
+   * "Not now" has to mean not now — not "until the next DOM change puts it
+   * straight back" — and it also has to have a way out. Keeping it apart from
+   * `cardHandle` is what lets both be true: the automatic routes read it and
+   * stay quiet, the toolbar button clears it, and a new url starts over.
+   *
+   * It was neither: the × removed the element and left `cardHandle` pointing
+   * at it, so every route back short-circuited on a node that was no longer
+   * in the document, and the button did nothing for the life of the page.
+   */
+  let dismissed = false;
   let analysis = null;
 
   /**
@@ -1058,6 +1071,12 @@
      * muting recorded, and leaving the mute in place would mean the card
      * appears once and is gone again tomorrow with nothing saying why.
      */
+    /*
+     * Asking for the card is the way back from having put it away, exactly as
+     * it is the way back from having muted the site. Both were recorded by
+     * somebody pressing something; both are undone by them pressing this.
+     */
+    if (force) dismissed = false;
     if (force && (settings.mutedHosts ?? []).includes(location.hostname)) {
       await setMuted(false).catch(quietly);
       if (!current()) return;
@@ -1168,7 +1187,18 @@
       if (askedFor === location.href) return;
       const held = await send('trailPages', { page: pageIdentity() }).catch(() => ({ pages: [] }));
       if (!current()) return;
-      if ((held.pages ?? []).length > 0) return;
+      /*
+       * Recorded as settled, not merely skipped. The rescan tick runs every
+       * second for a minute and this branch is where it lands, so leaving the
+       * mark unset meant asking the worker the same question sixty times —
+       * and keeping it awake to answer. Nothing will change the answer: a
+       * page that grows a form or a posting stops reaching this branch at
+       * all, because `worthReading` answers yes before it.
+       */
+      if ((held.pages ?? []).length > 0) {
+        askedFor = location.href;
+        return;
+      }
       askedFor = location.href;
       createAsk({
         site: location.hostname,
@@ -1211,6 +1241,10 @@
         questions: [],
         needsCoverLetter: wantsCoverLetter(),
         onAction,
+        onClose: () => {
+          cardHandle = null;
+          dismissed = true;
+        },
       });
       return cardHandle;
     };
@@ -1237,7 +1271,7 @@
      * which is better than 700ms; a page that does neither is one we are only
      * guessing about, and the honest thing to do while guessing is nothing.
      */
-    if (showNow) putUpCard();
+    if (showNow && !dismissed) putUpCard();
 
     /*
      * The automatic pass is always the deterministic one. Tag matching takes
@@ -1303,6 +1337,9 @@
       ruledOut = { url: location.href, score: judgedScore };
       return;
     }
+    // And not back onto a page it was put away on, unless this pass is the
+    // button. `force` cleared `dismissed` on the way in.
+    if (dismissed) return;
     putUpCard();
     cardHandle?.update(analysis);
     // An AI pass that outlived the card it was started from. See `landLate`.
@@ -1787,7 +1824,7 @@
      * not, this is the only notice there will ever be.
      */
     if (message?.type === 'jh-application-frame') {
-      if (!cardHandle) show({ viaFrame: true }).catch(() => undefined);
+      if (!cardHandle && !dismissed) show({ viaFrame: true }).catch(() => undefined);
       sendResponse({ ok: true });
       return false;
     }
@@ -1973,6 +2010,8 @@
       // And the chip, which was asking about the page you have just left.
       removeAsk();
       cardHandle = null;
+      // A new page is not the page anything was put away on.
+      dismissed = false;
       await show().catch(quietly);
     })();
   };
@@ -1987,7 +2026,7 @@
       watcher.disconnect();
       return;
     }
-    if (cardHandle || !pageChanged) return;
+    if (cardHandle || dismissed || !pageChanged) return;
     pageChanged = false;
     if (ruledOut?.url === location.href && localScore() <= ruledOut.score) return;
     /*

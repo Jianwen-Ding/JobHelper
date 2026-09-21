@@ -21,11 +21,17 @@
  * the popup. This one ships with the extension and is about the handful of
  * sites nobody would ever want an offer on.
  *
- * It does not include the job boards that happen to be social networks.
- * LinkedIn is the obvious one — a network by any definition, and also one of
- * the largest job boards in the world — and Facebook and X both carry real
- * postings. LinkedIn stays off this list entirely. The rest are here because
- * the postings on them are incidental and the false positives are constant.
+ * It leaves off the one network that is also a job board. LinkedIn is a
+ * network by any definition and also one of the largest job boards in the
+ * world, and the page you are on there is as likely to be a posting as
+ * anything on Greenhouse; it stays off this list entirely.
+ *
+ * Facebook and X are on it, and that is a judgement rather than an oversight:
+ * both carry real postings, and both carry a thousand times as many posts
+ * *about* jobs, so an offer made without being asked is nearly always wrong
+ * there. The same reasoning as Reddit, which is the one the user reported.
+ * The rest are here because the postings on them are incidental and the false
+ * positives are constant.
  *
  * And it is never the last word. Pressing the extension's own button forces a
  * look at whatever is in front of you, on any site, because the user asking

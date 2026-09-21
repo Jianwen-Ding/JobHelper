@@ -1702,9 +1702,40 @@ export async function requireOpenSave(server) {
  * target to appear. Said plainly if it never arrives, because "chrome.tabs is
  * undefined" one call later is a sentence nobody can act on.
  */
-export async function extensionWorker(context, { timeout = 20_000 } = {}) {
-  const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker', { timeout }));
+export async function extensionWorker(context, { timeout = 60_000 } = {}) {
   const until = Date.now() + timeout;
+  /*
+   * Polled, not waited for once.
+   *
+   * `context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker')`
+   * reads the list once and then listens, and a worker that registers in the
+   * gap between those two is in neither: the list was empty when it was read
+   * and the event had already fired by the time anything was listening. The
+   * wait then runs its whole timeout and fails with an empty log — which is
+   * exactly how it failed, in three different suites, only ever when several
+   * browsers were starting at once.
+   *
+   *   browserContext.waitForEvent: Timeout 30000ms exceeded
+   *     while waiting for event "serviceworker"
+   *   log: []
+   *
+   * Re-reading the list every few seconds closes the gap, and the budget is
+   * generous because the thing being waited for is a browser starting on a
+   * machine running fifteen others.
+   */
+  let worker = context.serviceWorkers()[0];
+  while (!worker && Date.now() < until) {
+    const left = Math.max(500, Math.min(5000, until - Date.now()));
+    worker = await context
+      .waitForEvent('serviceworker', { timeout: left })
+      .catch(() => context.serviceWorkers()[0]);
+  }
+  if (!worker) {
+    throw new Error(
+      `The extension's service worker never started, after ${Math.round(timeout / 1000)}s. ` +
+        'That is the browser, not this suite: nothing here can proceed without it.',
+    );
+  }
   for (;;) {
     const ready = await worker.evaluate(() => Boolean(globalThis.chrome?.tabs?.query)).catch(() => false);
     if (ready) return worker;
