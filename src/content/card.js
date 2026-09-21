@@ -202,6 +202,18 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .job .before b { font-weight: 500; color: var(--ink); }
 
 /* The pages one application is spread across. */
+/*
+ * The strip that says a new application was started. Warm rather than red: a
+ * branch is a decision the extension made on the user's behalf and may have
+ * got wrong, which is a thing to notice, not a failure.
+ */
+.branch {
+  margin-top: 8px; padding: 8px 10px; font-size: 12px;
+  background: var(--warn-soft, #fff8e6); border: 1px solid var(--warn-line, #f0dca8);
+  border-radius: 8px; color: var(--ink);
+}
+.branch .row { margin-top: 6px; }
+
 .trail { margin-top: 7px; font-size: 12px; }
 .trail summary { cursor: pointer; color: var(--muted); }
 .trail summary:hover { color: var(--ink); }
@@ -1288,6 +1300,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       h('div', { className: 'role', textContent: job.title ?? 'This posting' }),
       h('div', { className: 'co', textContent: [job.company, job.location].filter(Boolean).join(' · ') }),
       drawSentBefore(),
+      drawBranch(),
       drawTrail(),
     ].filter(Boolean));
   }
@@ -1391,6 +1404,47 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * two pages would be worse than one that never merged at all. So it says
    * which, and both corrections are one click: drop a page, or start over.
    */
+  /**
+   * "This looked like a different job, so I started a new application."
+   *
+   * Said out loud, because the alternative is a tab quietly reorganising
+   * itself: the letter you were halfway through is parked, the card is empty,
+   * and the only evidence is that the resume on screen changed. The board
+   * this happens on — Indeed's results pane, any single-page board — is
+   * exactly the one where you click through several jobs in a row, so it
+   * happens often and has to be cheap to undo.
+   *
+   * Branching is the safe guess of the two. A split can be put back; a merge
+   * cannot, because once the second job's pages and the first job's letter
+   * are one application nothing can tell them apart again. So it branches,
+   * says so here, and keeps what it left whole until this is answered.
+   */
+  function drawBranch() {
+    const from = state.trail?.branchedFrom;
+    if (!from) return null;
+    const was = [from.role, from.company].filter(Boolean).join(' at ') || 'the application before this';
+
+    return h('div', { className: 'branch' }, [
+      h('div', { textContent: `This looks like a different job, so it is a new application. The last one was ${was}.` }),
+      h('div', { className: 'row gap' }, [
+        h('button', {
+          className: 'tiny',
+          textContent: 'Same job — put it back',
+          title: 'Join this page to the application before it, with everything you had written',
+          onclick: () => act('keepTogether', {}, (trail) => trail?.ok && (state.trail = trail)),
+        }),
+        h('button', {
+          className: 'link',
+          textContent: 'No, it is new',
+          onclick: () =>
+            act('keepApart', {}, () => {
+              state.trail = { ...(state.trail ?? {}), branchedFrom: undefined };
+            }),
+        }),
+      ]),
+    ]);
+  }
+
   function drawTrail() {
     const pages = state.trail?.pages ?? [];
     if (pages.length < 2) return null;

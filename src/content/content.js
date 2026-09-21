@@ -940,6 +940,20 @@
       case 'clearTrail':
         return send('clearTrail', { keep: pageIdentity() });
 
+      /*
+       * The two answers to "this looked like a different job, so I started a
+       * new application". Both write the trail, so both come back as a fresh
+       * summary for the card to draw from.
+       */
+      case 'keepTogether': {
+        const put = await send('keepTogether', {});
+        if (put?.ok) cardHandle?.setTrail(put);
+        return put;
+      }
+
+      case 'keepApart':
+        return send('keepApart', {});
+
       default:
         throw new Error(`Unknown card action "${action}"`);
     }
@@ -1414,7 +1428,16 @@
     // page before: finding your letter back without being told is its own
     // kind of unsettling.
     if (carried?.work && carried.recovered) {
-      cardHandle?.setStatus('Recovered what you had written before this tab closed.');
+      // Two rescues, two sentences. 'job' is this tab going back to a job it
+      // had already started — on a board that shows several at one address,
+      // that is a click, not an accident, and "before this tab closed" would
+      // read as the extension having lost track of a tab that never went
+      // anywhere.
+      cardHandle?.setStatus(
+        carried.recovered === 'job'
+          ? 'Brought back what you had written for this job.'
+          : 'Recovered what you had written before this tab closed.',
+      );
     }
     /*
      * And only now may the keeper write.

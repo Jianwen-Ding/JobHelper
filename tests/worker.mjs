@@ -48,7 +48,7 @@ const group = (name) => console.log(`\n${name}`);
  * the request looked successful.
  */
 function fakeStore() {
-  const state = { save: 'work', routes: {}, hits: [], open: [], strict: true };
+  const state = { save: 'work', routes: {}, hits: [], open: [], strict: true, role: 'Platform Engineer' };
   const readBody = (req) =>
     new Promise((done) => {
       const parts = [];
@@ -101,7 +101,7 @@ function fakeStore() {
         isJobPosting: true,
         kind: 'posting',
         save: state.save,
-        job: { company: page.company ?? 'Helios', title: 'Platform Engineer', description: 'A job.', keywords: [] },
+        job: { company: page.company ?? 'Helios', title: state.role, description: 'A job.', keywords: [] },
         spec: { id: 'job-fake', extends: 'newgrad' },
       });
     }
@@ -225,6 +225,135 @@ async function main() {
         lastSaveFor('/api/applications/bundle') === 'personal',
         lastSaveFor('/api/applications/bundle'),
       );
+    }
+
+    /* ---------------------------------------------------------------- *
+     * One board, several jobs                                           *
+     * ---------------------------------------------------------------- */
+
+    /*
+     * A board that keeps every posting at one address — Indeed's results
+     * pane, any single-page board — leaves the url saying "same page" when
+     * the pane has been swapped to a different job. Reading the second one as
+     * the first is how a cover letter comes out addressed to one company and
+     * written from another, and it is the failure the whole trail exists to
+     * prevent.
+     *
+     * The url cannot settle it there, so the role does, and a role title is
+     * thin evidence: the answer is "unsure", and unsure branches. Branching
+     * is the safe guess of the two, because a split can be put back and a
+     * merge cannot — once the second job's pages and the first job's letter
+     * are one application, nothing can tell them apart again.
+     */
+    group('One board showing several jobs');
+    {
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      store.role = 'Platform Engineer';
+      await ask(driver, 'analyze', { url: 'http://board.example/jobs?q=engineer', title: 'Engineer', html: '<p>one</p>', company: 'Helios' });
+      // Something written, so the branch has something to be careful with.
+      await ask(driver, 'saveWork', { work: { letter: 'Dear Helios, I have wanted this for years.' } });
+
+      store.role = 'Data Scientist';
+      const second = await ask(driver, 'analyze', { url: 'http://board.example/jobs?q=data', title: 'Data', html: '<p>two</p>', company: 'Helios' });
+      const trail = second.reply?.data?.trail;
+      check('the second job does not join the first', (trail?.pages ?? []).length === 1, `${trail?.pages?.length} pages`);
+      check('and the card is told a new application was started', trail?.branchedFrom?.role === 'Platform Engineer', JSON.stringify(trail?.branchedFrom));
+      check('the letter does not come with it', trail?.holdingWriting === false, JSON.stringify(trail?.holdingWriting));
+
+      // "That was the same job after all."
+      const back = await ask(driver, 'keepTogether', {});
+      check('putting it back joins the two pages', (back.reply?.data?.pages ?? []).length === 2, `${back.reply?.data?.pages?.length} pages`);
+      check('and the letter comes back with them', back.reply?.data?.holdingWriting === true, JSON.stringify(back.reply?.data));
+      // Both halves: the merge happened *and* the chip is gone. Without the
+      // first, "no chip" is what a call that failed outright also looks like.
+      check(
+        'and the card stops asking',
+        back.reply?.ok === true && back.reply?.data?.branchedFrom === undefined,
+        JSON.stringify(back.reply).slice(0, 80),
+      );
+    }
+
+    /*
+     * Branching is only half of it. The other half is what happens to the
+     * letter the branch left behind, and it was going straight to the new job
+     * one message later.
+     *
+     * `remember` parks the work it is about to replace under the address of
+     * every page it belonged to, so that going back to that page finds it.
+     * On a board that never changes its address, the page the new job is on
+     * *is* that page — so `takeWork`, sent by the content script immediately
+     * after the analysis, rescued the previous job's letter into the job that
+     * had just branched away from it, and the card announced it as
+     * "Recovered what you had written before this tab closed."
+     *
+     * Measured before it was fixed, on one url with two roles: the Data
+     * Scientist page was handed `LETTER-FOR-PLATFORM-ENGINEER`, and going
+     * back to the Platform Engineer page was handed the Data Scientist's. The
+     * branch was undone on the spot, both ways, and every job on the board
+     * came up holding the last one's writing.
+     *
+     * Two parts to the fix and both are checked below: a park knows which job
+     * it belongs to and is refused to any other, and one address holds more
+     * than one of them so the second job's park does not overwrite the
+     * first's.
+     */
+    group('Going back to the job before it, on a board with one address');
+    {
+      const BOARD = 'http://board.example/all';
+      const letterOn = (reply) => reply?.data?.work?.letter ?? null;
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+
+      store.role = 'Platform Engineer';
+      await ask(driver, 'analyze', { url: BOARD, title: 'Board', html: '<p>one</p>', company: 'Helios' });
+      await ask(driver, 'saveWork', { work: { letter: 'FOR-THE-PLATFORM-ENGINEER' } });
+
+      // The pane is swapped to another job. Same address, same employer.
+      store.role = 'Data Scientist';
+      await ask(driver, 'analyze', { url: BOARD, title: 'Board', html: '<p>two</p>', company: 'Helios' });
+      const atSecond = await ask(driver, 'takeWork', { page: { url: BOARD, title: 'Board' } });
+      check('the new job is not handed the last one’s letter', letterOn(atSecond.reply) === null, JSON.stringify(atSecond.reply?.data));
+      await ask(driver, 'saveWork', { work: { letter: 'FOR-THE-DATA-SCIENTIST' } });
+
+      // And back to the first, which is the click this whole branch is for.
+      store.role = 'Platform Engineer';
+      await ask(driver, 'analyze', { url: BOARD, title: 'Board', html: '<p>three</p>', company: 'Helios' });
+      const atFirst = await ask(driver, 'takeWork', { page: { url: BOARD, title: 'Board' } });
+      check('going back finds its own letter', letterOn(atFirst.reply) === 'FOR-THE-PLATFORM-ENGINEER', JSON.stringify(atFirst.reply?.data?.work));
+      /*
+       * And says so as what it is. "Before this tab closed" is the sentence
+       * for a tab that closed; this tab never went anywhere, and telling
+       * somebody their tab closed when it did not reads as the extension
+       * having lost track of them.
+       */
+      check('and says it is this job’s, not a closed tab’s', atFirst.reply?.data?.recovered === 'job', JSON.stringify(atFirst.reply?.data?.recovered));
+
+      // The second job's letter was not spent on the first: it is still there.
+      store.role = 'Data Scientist';
+      await ask(driver, 'analyze', { url: BOARD, title: 'Board', html: '<p>four</p>', company: 'Helios' });
+      const back = await ask(driver, 'takeWork', { page: { url: BOARD, title: 'Board' } });
+      check('and the other job’s letter is still waiting for it', letterOn(back.reply) === 'FOR-THE-DATA-SCIENTIST', JSON.stringify(back.reply?.data?.work));
+      store.role = 'Platform Engineer';
+    }
+
+    /*
+     * And the same role reworded is not a different job. A form page that
+     * calls itself "Platform Engineer (Remote)" must not split the
+     * application somebody is halfway through filling in.
+     */
+    group('The same job, described slightly differently');
+    {
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      store.role = 'Platform Engineer';
+      await ask(driver, 'analyze', { url: 'http://board.example/jobs?q=a', title: 'A', html: '<p>one</p>', company: 'Helios' });
+      store.role = 'Senior Platform Engineer (Remote)';
+      const next = await ask(driver, 'analyze', { url: 'http://board.example/jobs?q=b', title: 'B', html: '<p>two</p>', company: 'Helios' });
+      const trail = next.reply?.data?.trail;
+      check('it stays one application', (trail?.pages ?? []).length === 2, `${trail?.pages?.length} pages`);
+      check('and nothing is asked about it', trail?.branchedFrom === undefined, JSON.stringify(trail?.branchedFrom));
+      store.role = 'Platform Engineer';
     }
 
     /* ---------------------------------------------------------------- *
