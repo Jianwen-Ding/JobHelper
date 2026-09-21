@@ -505,6 +505,14 @@ const PHRASE_ANSWERS = `<!doctype html><html><head><meta charset="utf-8"><title>
     <option value="">Select...</option><option>Yes</option><option>No</option>
   </select>
 
+  <!-- A country select named for the ISO code it submits, which is
+       idiomatic, beside a real dialling-code box that must stay excluded. -->
+  <label for="ctry">Country</label>
+  <select id="ctry" name="countryCode">
+    <option value=""></option><option>United Kingdom</option><option>United States</option>
+  </select>
+  <label for="dial">Phone Country Code</label><input id="dial" name="phoneCountryCode">
+
   <!-- Three answers is still three answers, prompt or no prompt. -->
   <label for="three">Will you now or in the future require sponsorship?</label>
   <select id="three" name="three">
@@ -997,6 +1005,8 @@ async function main() {
           spon: document.querySelector('input[name="spon"]:checked')?.value ?? '',
           auth: document.getElementById('auth').value,
           three: document.getElementById('three').value,
+          ctry: document.getElementById('ctry').value,
+          dial: document.getElementById('dial').value,
           filled: report.filled.map((f) => f.key),
         };
       }, {
@@ -1040,6 +1050,24 @@ async function main() {
       'and three answers are still three answers, so it declines to guess',
       phrases.three === '',
       `"${phrases.three}"`,
+    );
+    /*
+     * The dialling-code exclusion reasons entirely about label wording and
+     * was asked of the label *plus* the name and the id — so a country select
+     * named `countryCode`, which is how anyone names the field that submits
+     * an ISO code, was dropped as though it had asked for a dialling code.
+     * Exclusions report nothing by design, so it was not in `skipped`
+     * either: a required dropdown left empty with the card silent about it.
+     */
+    check(
+      'a country select named for its code is still the country',
+      phrases.ctry === 'United States',
+      `"${phrases.ctry}"`,
+    );
+    check(
+      'and a box that really does ask for a dialling code is still left alone',
+      phrases.dial === '',
+      `"${phrases.dial}"`,
     );
 
     group('Fields labelled the way the enterprise systems label them');

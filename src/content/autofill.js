@@ -164,11 +164,31 @@ const NOT_ABOUT_YOU = [
  * went wrong.
  */
 const DIALLING_CODE = /\b(country|area|dial(?:l?ing)?)[\s_-]?code\b/i;
-const asksForADiallingCode = (description) =>
-  DIALLING_CODE.test(description.replace(/\([^)]*\)/g, ' '));
 
-const isNotAboutYou = (description) =>
-  asksForADiallingCode(description) || NOT_ABOUT_YOU.some((re) => re.test(description));
+/*
+ * A label that is only "Country", whatever the field is named underneath.
+ *
+ * The exclusion above reasons entirely about label wording — every line of
+ * its note is about what a label says — and it was being asked of the whole
+ * description, which is the label *plus* the name, the id and the
+ * placeholder. `[\s_-]?` allows no separator at all, so a `<select
+ * name="countryCode">` matched it, and naming a country select for the ISO
+ * code it submits is idiomatic. So a required dropdown labelled, plainly,
+ * "Country" was dropped as though it had asked for a dialling code — and
+ * exclusions report nothing, by design, so it was not in `skipped` either:
+ * an empty required field with the card saying nothing about it.
+ *
+ * The name is still read for every field whose label does not settle it,
+ * which is what keeps a `phone_country_code` box with no label out of the
+ * applicant's full telephone number.
+ */
+const PLAIN_COUNTRY = /^\s*country(\s+of\s+(residence|citizenship))?\s*[*:]*\s*$/i;
+
+const asksForADiallingCode = (description, label) =>
+  DIALLING_CODE.test(description.replace(/\([^)]*\)/g, ' ')) && !PLAIN_COUNTRY.test(label ?? '');
+
+const isNotAboutYou = (description, label) =>
+  asksForADiallingCode(description, label) || NOT_ABOUT_YOU.some((re) => re.test(description));
 
 /*
  * "Are you legally authorized to work in the United States without
@@ -815,7 +835,7 @@ export function fillForm(fields, { overwrite = false } = {}) {
     // Before the exclusions, which say nothing, and before the match, which
     // this question does not need. See `handBack`.
     if (handBack(description, skipped)) continue;
-    if (isNotAboutYou(description)) continue;
+    if (isNotAboutYou(description, clean(labelFor(input)))) continue;
 
     let match = FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key]);
 
@@ -1139,7 +1159,8 @@ function answerRadioGroups(fields, overwrite) {
     // are the commoner shape for this question: Workable and Teamtailor ask
     // "legally authorized to work without sponsorship" as a pair of buttons.
     if (handBack(description, skipped)) continue;
-    if (isNotAboutYou(description)) continue;
+    // The group's own words, on the same terms as `fillForm`.
+    if (isNotAboutYou(description, clean(groupLabelFor(radios)))) continue;
 
     /*
      * Only the keys that are a choice between options. A name, an email address
@@ -1233,7 +1254,7 @@ function unfillableChoices(fields, filled) {
 
     const description = describeField(widget);
     if (!description) continue;
-    if (isNotAboutYou(description)) continue;
+    if (isNotAboutYou(description, clean(labelFor(widget)))) continue;
 
     const match = FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key] && !already.has(key));
     if (!match) continue;
