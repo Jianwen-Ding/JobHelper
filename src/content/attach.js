@@ -21,20 +21,65 @@
  * both.
  */
 
+/**
+ * Every root on the page, the shadow ones included.
+ *
+ * A plain `querySelectorAll` stops at a shadow boundary, and the gate on this
+ * whole path — `looksLikeApplicationForm` in autofill.js — walks into them.
+ * So a web-component form passed the gate on evidence from inside a shadow
+ * root and then had every file refused for having no upload box, on the same
+ * form where Autofill had just filled every text field. Measured: `{placed:
+ * [], unplaced: [{why: "this page has no upload box the extension can
+ * reach"}], boxes: 0}` against a host whose shadow root holds a labelled
+ * resume input.
+ */
+function allRoots(root = document) {
+  const roots = [root];
+  for (const where of roots) {
+    for (const el of where.querySelectorAll('*')) {
+      if (el.shadowRoot) roots.push(el.shadowRoot);
+    }
+  }
+  return roots;
+}
+
+const deepAll = (selector, root = document) =>
+  allRoots(root).flatMap((where) => [...where.querySelectorAll(selector)]);
+
+/**
+ * Whether the page has hidden this, as opposed to hiding the input itself.
+ *
+ * The ordinary way to build an upload control is a styled button and a file
+ * input with `display:none` behind it, so refusing a hidden input throws away
+ * almost every real target. What is worth refusing is a hidden *container*: a
+ * closed modal, the "add another" prototype row, the mobile copy of a
+ * responsive form. Those hold a complete, correctly labelled upload control
+ * that nobody can see — and `boxFor` takes the first match in document order,
+ * so the invisible one wins.
+ *
+ * Measured, with a `display:none` modal before the real box: `placed: [{where:
+ * "decoy resume resume"}]`, `#decoy` holding the file and `#real` empty, under
+ * a green "Attached Jianwen-Ding-Resume.pdf".
+ */
+function putAwayByThePage(input) {
+  for (let el = input.parentElement; el; el = el.parentElement) {
+    const style = el.ownerDocument?.defaultView?.getComputedStyle?.(el);
+    if (!style) return false;
+    if (style.display === 'none' || style.visibility === 'hidden') return true;
+  }
+  return false;
+}
+
 /** A file input that is actually on the page, hidden behind a button or not. */
 function uploadBoxes(root = document) {
-  return [...root.querySelectorAll('input[type="file"]')].filter((input) => {
+  return deepAll('input[type="file"]', root).filter((input) => {
     if (input.disabled) return false;
     /*
-     * Not `offsetParent`, which is null for every one of these.
-     *
-     * The ordinary way to build an upload control is a styled button and a
-     * file input with `display:none` behind it, so a visibility test throws
-     * away almost every real target. What is worth refusing is an input the
-     * page has detached or put inside a hidden template — `isConnected`
-     * covers the first and `closest('[hidden]')` the second.
+     * `isConnected` covers an input the page has detached, `[hidden]` one
+     * inside a hidden template, and `putAwayByThePage` the container the page
+     * has hidden with CSS — see there.
      */
-    return input.isConnected && !input.closest('[hidden]');
+    return input.isConnected && !input.closest('[hidden]') && !putAwayByThePage(input);
   });
 }
 
@@ -45,7 +90,14 @@ function uploadBoxes(root = document) {
  * These belong to this control and nothing else.
  */
 function namedBy(input) {
-  const byFor = input.id ? document.querySelector(`label[for="${CSS.escape(input.id)}"]`) : null;
+  /*
+   * From this input's own root. A label inside a shadow root is not in the
+   * document, and `document.querySelector` would miss it — or, worse, find a
+   * different control's label that happens to share the id, since an id is
+   * only unique within its own root.
+   */
+  const where = input.getRootNode?.() ?? document;
+  const byFor = input.id ? where.querySelector?.(`label[for="${CSS.escape(input.id)}"]`) : null;
   return [
     input.name,
     input.id,
@@ -146,6 +198,49 @@ const WANTS = {
   portfolio: /\b(portfolio|work sample|writing sample|publication)\b/,
 };
 
+/**
+ * What a box is for when it is not for a document at all.
+ *
+ * An application form routinely has an upload control that has nothing to do
+ * with the documents: a profile photo, a headshot, a company logo, a scan of
+ * an identity document. `aroundIt` reads the text near a control, and on a
+ * form with one such control and a drop zone for the real resume, the photo
+ * input's surroundings included the word "Resume" — so the resume went into
+ * the avatar box and the report said, in green, "Attached
+ * Jianwen-Ding-Resume.pdf". Measured: `#ph` holding the resume, zero drop
+ * events at the zone.
+ *
+ * Read off the control's *own* name only. The text around it is the thing
+ * that was wrong, and a box that calls itself a photo is not a box for a
+ * resume however the form is laid out.
+ */
+const NOT_A_DOCUMENT = /\b(photo|photograph|headshot|avatar|picture|image|logo|selfie)\b/;
+
+/**
+ * And what a box will actually take, when it says.
+ *
+ * `accept=".doc,.docx"` on a box labelled "Resume (.doc or .docx only)" is
+ * the form saying it will not have a PDF. Putting one in anyway is placed,
+ * reported as attached, and refused by the portal at submit — after the
+ * person has stopped checking.
+ */
+function willTake(input, file) {
+  const accept = (input.getAttribute('accept') ?? '').trim();
+  if (!accept) return true;
+  const name = String(file?.name ?? '').toLowerCase();
+  const type = String(file?.type ?? '').toLowerCase();
+  return accept
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+    .some((want) => {
+      if (want === '*/*') return true;
+      if (want.startsWith('.')) return name.endsWith(want);
+      if (want.endsWith('/*')) return type.startsWith(want.slice(0, -1));
+      return type === want;
+    });
+}
+
 /** Which of the kinds above a file is, from the name it will be uploaded as. */
 export function kindOf(name) {
   const text = String(name ?? '').toLowerCase();
@@ -163,11 +258,19 @@ export function kindOf(name) {
  * the thing an employer opens first is the wrong document. So a file with no
  * box that asks for it is reported as unplaced and the person is told.
  */
-function boxFor(kind, boxes, taken) {
+function boxFor(kind, boxes, taken, file) {
   const pattern = WANTS[kind];
   if (!pattern) return null;
 
-  const free = boxes.filter((b) => !taken.has(b));
+  const free = boxes.filter(
+    (b) =>
+      !taken.has(b) &&
+      // A box that calls itself a photo is not this document's, whatever the
+      // text around it says. See `NOT_A_DOCUMENT`.
+      !NOT_A_DOCUMENT.test(namedBy(b)) &&
+      // And a box that has said what it takes is taken at its word.
+      willTake(b, file),
+  );
   /*
    * A box about this and nothing else, before one that mentions two things.
    *
@@ -186,9 +289,19 @@ function boxFor(kind, boxes, taken) {
   return only[0] ?? free.find((b) => pattern.test(saysWhat(b))) ?? null;
 }
 
-/** A real File, from bytes the worker fetched off the store. */
+/**
+ * A real File, from bytes the worker fetched off the store.
+ *
+ * Throws on an empty one, which the caller reports rather than attaches. A
+ * zero-byte body is what a file still being written looks like — the folder
+ * is streamed to as each document is built — and nothing downstream noticed:
+ * `atob('')` makes a `File` of size 0, `putIn` sees one file in the box and
+ * says so, and the card says "Attached Jianwen-Ding-Resume.pdf" over an empty
+ * PDF that an employer opens to nothing.
+ */
 function fileFrom({ name, base64, type }) {
   const binary = atob(base64);
+  if (binary.length === 0) throw new Error('empty');
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return new File([bytes], name, { type: type || 'application/pdf' });
@@ -203,8 +316,14 @@ function fileFrom({ name, base64, type }) {
  * listens for one and a plain one for the other, and a form that never hears
  * either shows the box still empty however correct `files` is.
  */
-function putIn(box, file) {
+function putIn(box, file, { alongside = false } = {}) {
   const carrier = new DataTransfer();
+  // What it is already holding, when the box takes several and this is the
+  // second or third. Replacing them is what a one-item `DataTransfer` does,
+  // and on a box labelled "resume, cover letter and transcript" that would
+  // leave only whichever file happened to be last.
+  const had = alongside ? [...(box.files ?? [])] : [];
+  for (const already of had) carrier.items.add(already);
   carrier.items.add(file);
   try {
     box.files = carrier.files;
@@ -213,7 +332,7 @@ function putIn(box, file) {
     // be done from here; the caller reports it as unplaced.
     return false;
   }
-  if (box.files?.length !== 1) return false;
+  if (box.files?.length !== had.length + 1) return false;
   box.dispatchEvent(new Event('input', { bubbles: true }));
   box.dispatchEvent(new Event('change', { bubbles: true }));
   return true;
@@ -268,7 +387,7 @@ const DROP_WORDS = /\b(drag|drop|dropzone|attach|upload)\b/i;
 
 /** A region that behaves like a drop target, for a file with no box to go in. */
 function dropZones(root = document) {
-  const found = [...root.querySelectorAll('div,section,label,form')].filter((el) => {
+  const found = deepAll('div,section,label,form', root).filter((el) => {
     if (!el.isConnected || el.closest('[hidden]')) return false;
     /*
      * `className` is not a string on an SVG element — it is an
@@ -317,13 +436,16 @@ export async function attachFiles(files) {
     let file;
     try {
       file = fileFrom(spec);
-    } catch {
-      unplaced.push({ name: spec?.name ?? 'a file', why: 'it could not be read' });
+    } catch (err) {
+      unplaced.push({
+        name: spec?.name ?? 'a file',
+        why: String(err?.message) === 'empty' ? 'it came back empty from the store' : 'it could not be read',
+      });
       continue;
     }
 
     const kind = kindOf(spec.name);
-    const box = boxFor(kind, boxes, taken);
+    const box = boxFor(kind, boxes, taken, file);
     if (box && putIn(box, file)) {
       taken.add(box);
       placed.push({ name: spec.name, where: saysWhat(box).slice(0, 60) });
@@ -331,23 +453,65 @@ export async function attachFiles(files) {
     }
 
     /*
-     * One unlabelled box is not ambiguous.
+     * One box that says nothing is not ambiguous. One box that says Resume
+     * is not this transcript's.
      *
      * Plenty of forms have exactly one upload control and no word anywhere
-     * near it — the heading two divs up says "Application" and that is all.
-     * With one file to place and one box free, there is nothing to get wrong.
-     * With more than one of either, guessing is how a transcript ends up
-     * where the resume should be, so it does not.
+     * near it — the heading two divs up says "Application" and that is all,
+     * and with one file to place there is nothing to get wrong. But this
+     * asked only how *many* boxes there were, never what the one box said,
+     * so on a form asking for a resume and nothing else the transcript took
+     * the resume box whenever the store happened to list it first. Measured:
+     * `placed: [{name: "Transcript.pdf", where: "the only upload box on the
+     * page"}]`, `#rs` holding the transcript, the resume reported as having
+     * nowhere to go — which is exactly the failure this file's header says it
+     * exists to prevent, arriving through the fallback.
+     *
+     * So the fallback is for a box that asks for nothing in particular. A box
+     * that named a kind has already been offered to that kind by `boxFor`.
      */
     const free = boxes.filter((b) => !taken.has(b));
-    if (free.length === 1 && (files.length === 1 || boxes.length === 1) && putIn(free[0], file)) {
+    const saysNothing = free.length === 1 && kindOf(saysWhat(free[0])) === 'other' && !NOT_A_DOCUMENT.test(namedBy(free[0]));
+    if (saysNothing && (files.length === 1 || boxes.length === 1) && willTake(free[0], file) && putIn(free[0], file)) {
       taken.add(free[0]);
       placed.push({ name: spec.name, where: 'the only upload box on the page' });
       continue;
     }
 
-    const zone = dropZones()[0];
-    if (boxes.length === 0 && zone) {
+    /*
+     * A box that takes several, when it has said so and said what it wants.
+     *
+     * "Attach your resume, cover letter and transcript" over one `multiple`
+     * input is an ordinary way to build the short version of a form, and
+     * every file after the first came back "no box here asks for it" — on a
+     * box that had named it. Added to what the box already holds rather than
+     * replacing it, which is what `multiple` means.
+     */
+    const several = boxes.find(
+      (b) =>
+        b.multiple &&
+        WANTS[kind]?.test(saysWhat(b)) &&
+        willTake(b, file) &&
+        !NOT_A_DOCUMENT.test(namedBy(b)),
+    );
+    if (several && putIn(several, file, { alongside: true })) {
+      placed.push({ name: spec.name, where: saysWhat(several).slice(0, 60) });
+      continue;
+    }
+
+    /*
+     * The drop area, when there is no box for this file anywhere.
+     *
+     * Not only when the page has no box at all, which was the old test: a
+     * form with one unrelated control — a profile photo — and a real drop
+     * zone for the resume has `boxes.length === 1`, so the zone was never
+     * tried and the resume went into the avatar box instead. But only when
+     * the zone says it wants this kind, or there is no box on the page at
+     * all: a zone beside a resume box is the resume's, and dropping a
+     * transcript on it is the same wrong-document failure by another route.
+     */
+    const zone = dropZones().find((z) => boxes.length === 0 || WANTS[kind]?.test((z.textContent ?? '').toLowerCase()));
+    if (zone) {
       /*
        * Said as what it is. A drop cannot be read back the way `input.files`
        * can, so "sure" means a box on the page is now holding this file and
@@ -361,9 +525,25 @@ export async function attachFiles(files) {
       continue;
     }
 
+    /*
+     * And why, in the words the person can act on.
+     *
+     * "No box here asks for it" is the right sentence for a form with no
+     * transcript box, and the wrong one when the box is on screen in front of
+     * them saying Resume — which is what a box asking for `.doc` produces.
+     * Naming what the form will take turns a puzzle into a decision: they
+     * export a Word copy, or upload it by hand from the folder.
+     */
+    const refusedType = boxes.find(
+      (b) => WANTS[kind]?.test(saysWhat(b)) && !NOT_A_DOCUMENT.test(namedBy(b)) && !willTake(b, file),
+    );
     unplaced.push({
       name: spec.name,
-      why: boxes.length === 0 ? 'this page has no upload box the extension can reach' : 'no box here asks for it',
+      why: refusedType
+        ? `this form only takes ${refusedType.getAttribute('accept')} there`
+        : boxes.length === 0
+          ? 'this page has no upload box the extension can reach'
+          : 'no box here asks for it',
     });
   }
 

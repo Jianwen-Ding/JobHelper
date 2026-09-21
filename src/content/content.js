@@ -703,8 +703,18 @@
       case 'attachFiles': {
         const got = await send('attachments', { application: payload.application ?? null });
         const files = got?.files ?? [];
+        /*
+         * The ones the store listed and could not hand over. They are not
+         * placed and they are not unplaceable — they never arrived — and
+         * until they were carried through here they were in neither list, so
+         * the card reported the two that worked and said nothing at all about
+         * the third.
+         */
+        const missing = (got?.missing ?? []).map((m) => ({ name: m.name, why: m.why }));
         if (files.length === 0) {
-          return { placed: [], unplaced: [], nothing: true, dir: got?.dir ?? null };
+          return missing.length > 0
+            ? { placed: [], unplaced: missing, dir: got?.dir ?? null }
+            : { placed: [], unplaced: [], nothing: true, dir: got?.dir ?? null };
         }
         const { attachFiles } = await imports.attach();
         const here = await attachFiles(files);
@@ -712,15 +722,31 @@
          * And whatever is left, offered to the frames. A form split across
          * the page and an embed is ordinary, and a resume that went nowhere
          * because the box was one level down is the case this is for.
+         *
+         * A file dropped on a zone that said nothing back counts as left, not
+         * as placed: `sure: false` means the event was delivered and nothing
+         * visible came of it, and the usual shape there is a marketing "drag
+         * your resume here" widget in the page with the real form in an
+         * iCIMS frame underneath. Trying the frame as well costs nothing; not
+         * trying it left the only real box on the page untouched.
          */
-        const left = files.filter((f) => !here.placed.some((p) => p.name === f.name));
-        if (left.length === 0) return { ...here, dir: got.dir };
+        const left = files.filter((f) => !here.placed.some((p) => p.name === f.name && p.sure !== false));
+        if (left.length === 0) return { ...here, unplaced: [...here.unplaced, ...missing], dir: got.dir };
 
         const inFrames = await send('attachInFrames', { files: left }).catch(() => ({ frames: [] }));
-        const alsoPlaced = (inFrames.frames ?? []).flatMap((f) => f.placed ?? []);
+        /*
+         * One frame's word each. Every frame is asked at once, so a page with
+         * two frames that both pass the gate — a responsive embed rendering a
+         * desktop and a mobile copy of one board — reported the same file
+         * twice: "Attached Resume.pdf and Resume.pdf".
+         */
+        const alsoPlaced = [];
+        for (const p of (inFrames.frames ?? []).flatMap((f) => f.placed ?? [])) {
+          if (!alsoPlaced.some((already) => already.name === p.name)) alsoPlaced.push(p);
+        }
         return {
-          placed: [...here.placed, ...alsoPlaced],
-          unplaced: here.unplaced.filter((u) => !alsoPlaced.some((p) => p.name === u.name)),
+          placed: [...here.placed.filter((p) => !alsoPlaced.some((a) => a.name === p.name)), ...alsoPlaced],
+          unplaced: [...here.unplaced.filter((u) => !alsoPlaced.some((p) => p.name === u.name)), ...missing],
           dir: got.dir,
         };
       }

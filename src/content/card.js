@@ -3774,7 +3774,18 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             onclick: () =>
               act(
                 'attachFiles',
-                { application: state.staged?.application?.id ?? null },
+                /*
+                 * The staged answer first, the analysis's second — the same
+                 * fallback as `uploadFolder`, and for the same reason. The
+                 * staged one came from the call that actually wrote the
+                 * files; the analysis answers from the first paint, which is
+                 * the only answer a card rebuilt by following Apply has. With
+                 * neither, this asked the store for the files of no
+                 * application in particular and was told, correctly, that
+                 * there were none — so Attach on the form said "Nothing is
+                 * built yet" over a resume built a minute earlier.
+                 */
+                { application: state.staged?.application?.id ?? analysis?.application?.id ?? null },
                 (r) => (state.attachReport = r),
               ),
           }),
@@ -3845,7 +3856,21 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           : null,
         state.attachReport
           ? h('div', {
-              className: `ok-note${(state.attachReport.unplaced?.length ?? 0) > 0 || state.attachReport.nothing ? ' warn' : ''}`,
+              /*
+               * Green only when everything landed and can be shown to have
+               * landed. A report whose one entry is an unverifiable drop has
+               * an empty `unplaced` and was painted green under a sentence
+               * asking the person to go and check — which is the two halves
+               * of the card disagreeing, and the green is the one they will
+               * believe.
+               */
+              className: `ok-note${
+                (state.attachReport.unplaced?.length ?? 0) > 0 ||
+                state.attachReport.nothing ||
+                (state.attachReport.placed ?? []).some((p) => p.sure === false)
+                  ? ' warn'
+                  : ''
+              }`,
               textContent: describeAttach(state.attachReport),
             })
           : null,

@@ -1770,10 +1770,23 @@ const handlers = {
     const base = serverUrl.replace(/\/$/, '');
 
     const files = [];
+    /*
+     * And the ones that would not come.
+     *
+     * A file that 404s or times out was dropped here and appeared in neither
+     * list afterwards — so the card said "Attached the resume and the letter"
+     * with the transcript unmentioned, as though it had never been asked for.
+     * The note above this loop has always said the card names what it got and
+     * what it did not; this is what lets it.
+     */
+    const missing = [];
     for (const item of list.attachments ?? []) {
       try {
         const res = await fetch(`${base}${item.url}`, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-        if (!res.ok) continue;
+        if (!res.ok) {
+          missing.push({ name: item.name, why: `the store answered ${res.status} for it` });
+          continue;
+        }
         const buffer = new Uint8Array(await res.arrayBuffer());
         let binary = '';
         for (let i = 0; i < buffer.length; i += 8192) {
@@ -1788,9 +1801,10 @@ const handlers = {
       } catch {
         // One file that would not come is not a reason to attach none of the
         // others. The card names what it got and what it did not.
+        missing.push({ name: item.name, why: 'the store did not hand it over' });
       }
     }
-    return { files, dir: list.dir, asked: (list.attachments ?? []).length };
+    return { files, missing, dir: list.dir, asked: (list.attachments ?? []).length };
   },
 
   /** Pair page questions with whatever the answer bank already holds. */

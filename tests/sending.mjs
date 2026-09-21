@@ -399,6 +399,29 @@ async function main() {
         await build();
         await page.click('#go');
         await page.waitForTimeout(3000);
+
+        /*
+         * Attach, against a form that really has an upload box and a resume
+         * that has really been built. Everything else about attaching is
+         * driven against the module in a bare page; this is the one check
+         * that the whole path holds together — the card asks the worker, the
+         * worker fetches the bytes off the store, and a file with the right
+         * name ends up in the box the employer reads.
+         */
+        await card.getByRole('button', { name: 'Attach files' }).click({ timeout: 30_000 });
+        await page.waitForTimeout(4000);
+        const inBox = await page.evaluate(
+          () => [...(document.querySelector('input[type=file]')?.files ?? [])].map((f) => f.name),
+        );
+        check('the built resume goes into the form’s upload box', inBox.some((n) => /\.pdf$/i.test(n)), JSON.stringify(inBox));
+        check('and it is named for this application', inBox.some((n) => /larkspur|resume/i.test(n)), JSON.stringify(inBox));
+        const said = (await card.innerText()).replace(/\s+/g, ' ');
+        const note = (await page.evaluate(() => {
+          const card = document.querySelector('#jobhelper-card-host')?.shadowRoot;
+          return [...(card?.querySelectorAll('.ok-note') ?? [])].map((n) => n.textContent).join(' | ');
+        })) || '(no note)';
+        check('and the card says what it attached', /Attached [^.]*\.pdf/i.test(said), note.slice(0, 200));
+
         await press(page, 'Submit Application');
         const first = await awaitFiled('Larkspur', (f) => f.application?.status === 'applied');
         check('the first application is recorded', first.application?.status === 'applied', first.application?.status ?? '(none)');

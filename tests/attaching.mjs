@@ -111,7 +111,52 @@ const DROPZONE_REAL = `<!doctype html><html><head><meta charset="utf-8"><title>A
   </script>
 </form></body></html>`;
 
+/**
+ * One box, and it says Resume. The transcript must not take it just for
+ * being first in the list — which is whatever order the store lists them in.
+ */
+const RESUME_ONLY_LABELLED = page(`<label for="rs">Resume</label><input id="rs" name="resume" type="file">`);
+
+/**
+ * A profile photo box and a real drop zone for the resume. The form's text
+ * says "Resume" near both, and only one of them is a document's.
+ */
+const PHOTO_AND_ZONE = page(`
+  <label for="ph">Profile photo</label><input id="ph" name="photo" type="file" accept="image/*">
+  <h3>Resume</h3>
+  <div data-automation-id="file-upload"><p>Drag and drop your resume here</p></div>
+`);
+
+/** A closed modal holding a complete, correctly labelled upload control. */
+const DECOY = page(`
+  <div class="modal" style="display:none"><label for="decoy">Resume</label><input id="decoy" type="file"></div>
+  <label for="real">Resume</label><input id="real" type="file">
+`);
+
+/** A form that has said, in the markup, that it will not have a PDF. */
+const DOC_ONLY = page(
+  `<label for="rs">Resume (.doc or .docx only)</label><input id="rs" type="file" accept=".doc,.docx">`,
+);
+
+/** The short version of a form: one box, asking for all three. */
+const ALL_IN_ONE = page(
+  `<label for="all">Attach your resume, cover letter and transcript</label><input id="all" type="file" multiple>`,
+);
+
+/** A form built as a web component, which is how a modern one is built. */
+const SHADOW = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head>
+<body><div id="host"></div><script>
+  const root = document.getElementById('host').attachShadow({ mode: 'open' });
+  root.innerHTML = '<label for="rs">Resume</label><input id="rs" type="file">';
+</script></body></html>`;
+
 const PAGES = {
+  '/resume-only-labelled': RESUME_ONLY_LABELLED,
+  '/photo-and-zone': PHOTO_AND_ZONE,
+  '/decoy': DECOY,
+  '/doc-only': DOC_ONLY,
+  '/all-in-one': ALL_IN_ONE,
+  '/shadow': SHADOW,
   '/menu': MENU,
   '/dropzone': DROPZONE,
   '/dropzone-real': DROPZONE_REAL,
@@ -163,10 +208,20 @@ async function main() {
             input.addEventListener('change', (e) => heard.push(e.target.id));
           }
           const report = await m.attachFiles(list);
+          /*
+           * Read back through the shadow roots as well. A form built as a web
+           * component keeps its boxes out of the document, and a readback
+           * that cannot see them cannot tell "placed correctly" from "placed
+           * nowhere".
+           */
           const inBoxes = {};
-          for (const input of document.querySelectorAll('input[type=file]')) {
-            inBoxes[input.id] = [...(input.files ?? [])].map((f) => f.name);
-          }
+          const walk = (root) => {
+            for (const input of root.querySelectorAll('input[type=file]')) {
+              inBoxes[input.id] = [...(input.files ?? [])].map((f) => f.name);
+            }
+            for (const el of root.querySelectorAll('*')) if (el.shadowRoot) walk(el.shadowRoot);
+          };
+          walk(document);
           return { report, inBoxes, heard };
         },
         { b: base, list: files },
@@ -296,6 +351,115 @@ async function main() {
       const { report, inBoxes } = await run('/dropzone-real', [filed('Jianwen-Ding-Resume.pdf')]);
       check('the page ends up holding it', inBoxes.made?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
       check('and it is reported as certain', report.placed[0]?.sure === true, JSON.stringify(report.placed[0]));
+    }
+
+    /* ---------------------------------------------------------------- *
+     * The six ways a file ended up in the wrong place, or nowhere        *
+     * ---------------------------------------------------------------- */
+
+    /*
+     * The fallback asked how many boxes there were, never what the one box
+     * said. So on a form asking for a resume and nothing else, the transcript
+     * took the resume box whenever the store happened to list it first — and
+     * the store's order is not something the person chose. Measured before
+     * the fix: `#rs` holding `Transcript.pdf`, the resume reported as having
+     * nowhere to go.
+     */
+    group('One box, and it says Resume');
+    {
+      const { report, inBoxes } = await run('/resume-only-labelled', [
+        filed('Transcript.pdf'),
+        filed('Jianwen-Ding-Resume.pdf'),
+      ]);
+      check('the resume takes it, whatever order they came in', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
+      check('and the transcript does not', report.unplaced[0]?.name === 'Transcript.pdf', JSON.stringify(report.unplaced));
+    }
+
+    /*
+     * A profile-photo box and a real drop zone for the resume. `aroundIt`
+     * reads the text near a control, and the word "Resume" was near both — so
+     * the resume went into the avatar box and the presence of that one box
+     * meant the drop zone was never tried. Measured: `#ph` holding the
+     * resume, zero drop events at the zone, under a green "Attached".
+     */
+    group('An upload box that is for a photograph');
+    {
+      const { report, inBoxes } = await run('/photo-and-zone', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('the resume does not go in the photo box', (inBoxes.ph ?? []).length === 0, JSON.stringify(inBoxes));
+      check('and the drop area is tried instead', report.placed[0]?.where === 'the drop area', JSON.stringify(report.placed));
+    }
+
+    /*
+     * A closed modal holds a complete, correctly labelled upload control, and
+     * `boxFor` took the first match in document order. The person sees an
+     * empty box and a note saying the file is attached.
+     */
+    group('A hidden copy of the form, in front of the real one');
+    {
+      const { inBoxes } = await run('/decoy', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('the file goes in the box that is on screen', inBoxes.real?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
+      check('and not in the one the page has hidden', (inBoxes.decoy ?? []).length === 0, JSON.stringify(inBoxes));
+    }
+
+    /*
+     * The form has said in the markup that it will not have a PDF. Putting
+     * one in anyway is placed, reported as attached, and refused by the
+     * portal at submit — after the person has stopped checking.
+     */
+    group('A box that has said what it will take');
+    {
+      const { report, inBoxes } = await run('/doc-only', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('a PDF is not forced into a .doc box', (inBoxes.rs ?? []).length === 0, JSON.stringify(inBoxes));
+      check(
+        'and the reason names what the form wants',
+        /\.doc/.test(report.unplaced[0]?.why ?? ''),
+        report.unplaced[0]?.why ?? '',
+      );
+    }
+
+    /*
+     * One `multiple` box asking for all three, which is how the short version
+     * of a form is built. Every file after the first came back "no box here
+     * asks for it" — on a box that had named it.
+     */
+    group('One box that asks for all three');
+    {
+      const { report, inBoxes } = await run('/all-in-one', [
+        filed('Jianwen-Ding-Resume.pdf'),
+        filed('Jianwen-Ding-Cover-Letter.pdf'),
+        filed('Transcript.pdf'),
+      ]);
+      check('all three go in', (inBoxes.all ?? []).length === 3, JSON.stringify(inBoxes));
+      check('in the order they were given', inBoxes.all?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
+      check('and none is reported as homeless', report.unplaced.length === 0, JSON.stringify(report.unplaced));
+    }
+
+    /*
+     * A form built as a web component. `looksLikeApplicationForm` — the gate
+     * on this whole path — walks into shadow roots, so the frame passes the
+     * gate and then every file was refused for having no upload box, on the
+     * same form where Autofill had just filled every text field.
+     */
+    group('A form built out of web components');
+    {
+      const { report, inBoxes } = await run('/shadow', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('a box inside a shadow root is still a box', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
+      check('and it is reported as placed', report.placed.length === 1, JSON.stringify(report));
+    }
+
+    /*
+     * A zero-byte body is what a file still being written looks like — the
+     * folder is streamed to as each document is built. Nothing noticed:
+     * `atob('')` makes a File of size 0, the box holds one file, and the card
+     * said "Attached Jianwen-Ding-Resume.pdf" over an empty PDF.
+     */
+    group('A file that comes back empty');
+    {
+      const { report, inBoxes } = await run('/resume-only-labelled', [
+        { name: 'Jianwen-Ding-Resume.pdf', type: 'application/pdf', base64: '' },
+      ]);
+      check('nothing is put in the box', (inBoxes.rs ?? []).length === 0, JSON.stringify(inBoxes));
+      check('and it is reported as empty, not as attached', /empty/.test(report.unplaced[0]?.why ?? ''), report.unplaced[0]?.why ?? '');
     }
 
     group('Reading a name for what kind of document it is');
