@@ -973,7 +973,20 @@
        */
       case 'keepTogether': {
         const put = await send('keepTogether', {});
-        if (put?.ok) cardHandle?.setTrail(put);
+        if (put?.ok) {
+          /*
+           * The writing first, then the pages. `setTrail` draws the panel and
+           * says nothing to the card about what it is now holding; without
+           * this the letter was merged into storage and never appeared, and
+           * the keeper wrote the card's empty version over it.
+           */
+          cardHandle?.restoreWork(put.work ?? null);
+          cardHandle?.setTrail(put);
+        } else if (put?.gone) {
+          cardHandle?.setStatus(
+            'That application is not being held any more. Its writing is still where it was left — go back to its page and it comes back.',
+          );
+        }
         return put;
       }
 

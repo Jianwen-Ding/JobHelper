@@ -408,9 +408,19 @@ async function parkWork(url, entry) {
  * page was ever analysed — are still offered, newest first, because that is
  * the case this rescue was built for and it has no better evidence to go on.
  */
-function pickParked(held, job) {
+function pickParked(held, job, tabId) {
   if (held.length === 0) return null;
-  if (!job) return held[held.length - 1];
+  /*
+   * This tab's own park first, whatever the page is called.
+   *
+   * Parks are keyed by address and trails are keyed by tab, so two tabs open
+   * on the same board share a park list. Without this, a page the analyser
+   * could not name took the newest thing parked there — which may be the
+   * other tab's half-written letter, handed over as "Recovered what you had
+   * written before this tab closed" on a tab that never closed.
+   */
+  const thisTabs = held.filter((p) => p.tab !== undefined && p.tab === tabId);
+  if (!job) return thisTabs[thisTabs.length - 1] ?? held[held.length - 1];
   const mine = held.filter((p) => sameJob(p.job, job));
   if (mine.length > 0) return mine[mine.length - 1];
   const possible = held.filter((p) => !plainlyOtherJob(p.job, job));
@@ -1151,7 +1161,7 @@ const handlers = {
      * Nothing else here knows: what the content script sends is an address
      * and a title.
      */
-    const rescued = pickParked(held, nameOfTrail(trail));
+    const rescued = pickParked(held, nameOfTrail(trail), tab?.id);
     if (rescued) {
       const fresh = Date.now() - (rescued.at ?? 0) < TRAIL_STALE_MS;
       // Claimed or expired, this one goes either way. Leaving the stale ones
@@ -1263,6 +1273,21 @@ const handlers = {
 
     const now = await readTrail(id);
     /*
+     * And only while both halves are still real.
+     *
+     * `held.at` was written and never read, and the chip lives in the content
+     * script's memory for as long as the page is open — so a branch left
+     * unanswered overnight still offered "Same job — put it back" in the
+     * morning. By then `readTrail` calls the live trail stale and answers
+     * `{pages: []}`, so the merge kept the *old* pages and dropped the page
+     * actually on screen: the card on job B, the toolbar naming job A, and
+     * A's hours-old description fed to whatever is written next.
+     */
+    if (Date.now() - (held.at ?? 0) > TRAIL_STALE_MS || (now.pages ?? []).length === 0) {
+      await session().remove(key).catch(() => undefined);
+      return { ok: false, gone: true };
+    }
+    /*
      * The page that is on screen, kept, and the old pages under it. Not the
      * other way round: `keepPages` drops the oldest first, and the page being
      * looked at is the one that must survive.
@@ -1287,7 +1312,17 @@ const handlers = {
     await writeTrail(id, merged);
     await markTab(id, merged);
     await session().remove(key).catch(() => undefined);
-    return { ok: true, ...summarise(merged) };
+    /*
+     * With the writing, which `summarise` deliberately strips.
+     *
+     * The merge put the letter back into the trail and answered with a
+     * summary — and a summary is booleans. Both callers did only `setTrail`,
+     * so nothing reached the screen: the panel grew to two pages, the letter
+     * did not come back, and two seconds later the card's keeper saved its
+     * own empty work over the restored trail. Pressing a button whose tooltip
+     * promises "with everything you had written" lost the writing for good.
+     */
+    return { ok: true, work: merged.work ?? null, ...summarise(merged) };
   },
 
   /**
@@ -2156,8 +2191,15 @@ const ORPHAN_LIMIT = 20;
 
 async function sweepOrphans() {
   const all = await session().get(null).catch(() => ({}));
+  /*
+   * Branch stashes too. Each holds a whole trail including the first page's
+   * markup — up to `TRAIL_HTML_MAX` — and until now nothing expired them: a
+   * branch nobody answered sat in a budget this file's own note calls full at
+   * five tabs of five pages. What degrades when it fills is page text, which
+   * is the feature the trail exists for.
+   */
   const mine = Object.entries(all ?? {})
-    .filter(([key]) => key.startsWith('jh-orphan:'))
+    .filter(([key]) => key.startsWith('jh-orphan:') || key.startsWith('jh-branched:'))
     .map(([key, value]) => ({ key, at: value?.at ?? 0 }));
 
   const now = Date.now();
@@ -2176,8 +2218,16 @@ async function sweepOrphans() {
 chrome.tabs?.onRemoved?.addListener(async (tabId) => {
   try {
     const trail = await readTrail(tabId);
-    const url = trail.pages?.[trail.pages.length - 1]?.url;
-    if (trail.work && url) {
+    /*
+     * Under every page of it, as `remember` does and for the reason given
+     * there: the trail's last page is the last page classified as a posting,
+     * not the page the tab was on. Read the description, follow Apply, go on
+     * to the form's second step — which is neither — and close the tab by
+     * accident: the rescue was filed under step one, Ctrl+Shift+T reopened
+     * step two, and the letter was unreachable while sitting in storage.
+     */
+    const where = [...new Set((trail.pages ?? []).map((p) => p?.url).filter(Boolean))];
+    if (trail.work && where.length > 0) {
       await sweepOrphans();
       /*
        * And which save it was built from. Without it the rescued application
@@ -2185,13 +2235,16 @@ chrome.tabs?.onRemoved?.addListener(async (tabId) => {
        * writes that follow go out with no `X-RMM-Project` at all — which the
        * store does not refuse. See `saveOf`.
        */
-      await parkWork(url, { work: trail.work, save: trail.save, job: nameOfTrail(trail), at: Date.now() });
+      const entry = { work: trail.work, save: trail.save, job: nameOfTrail(trail), at: Date.now() };
+      for (const url of where) await parkWork(url, entry);
     }
   } catch {
     // Storage full, or the trail already gone. Losing the rescue copy is not
     // worth failing the cleanup that follows.
   }
-  session().remove([trailKey(tabId), framesKey(tabId)]).catch(() => undefined);
+  // The branch stash goes with the tab it belonged to. It holds a whole
+  // trail, first page's markup and all, and nothing else ever removed it.
+  session().remove([trailKey(tabId), framesKey(tabId), branchKey(tabId)]).catch(() => undefined);
 });
 
 /*

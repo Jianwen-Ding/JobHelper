@@ -338,6 +338,97 @@ async function main() {
     }
 
     /*
+     * "Same job — put it back" has to put it back where it can be seen.
+     *
+     * The merge wrote the letter into the trail and answered with a summary,
+     * and a summary is booleans — `summarise` strips `work` deliberately, so
+     * the popup never holds a copy of anybody's letter. Both callers did only
+     * `setTrail`, so nothing reached the card: the panel grew to two pages,
+     * the letter did not come back on screen, and two seconds later the
+     * card's keeper saved its own empty work over the restored trail. The
+     * button's tooltip promises "with everything you had written", and
+     * pressing it was how you lost it.
+     */
+    group('Putting a branch back hands the writing over, not just the pages');
+    {
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      store.role = 'Platform Engineer';
+      await ask(driver, 'analyze', { url: 'http://board.example/two?q=a', title: 'A', html: '<p>one</p>', company: 'Helios' });
+      await ask(driver, 'saveWork', { work: { letter: 'PUT-THIS-BACK' } });
+
+      store.role = 'Data Scientist';
+      await ask(driver, 'analyze', { url: 'http://board.example/two?q=b', title: 'B', html: '<p>two</p>', company: 'Helios' });
+      const back = await ask(driver, 'keepTogether', {});
+      check('the merge answers with the writing itself', back.reply?.data?.work?.letter === 'PUT-THIS-BACK', JSON.stringify(back.reply?.data?.work));
+      check('and with the pages joined', (back.reply?.data?.pages ?? []).length === 2, `${back.reply?.data?.pages?.length} pages`);
+      store.role = 'Platform Engineer';
+    }
+
+    /*
+     * And refuses when there is no longer anything to put back, rather than
+     * dropping the page on screen. `held.at` was written and never read, so a
+     * branch left unanswered until the trail went stale merged the old pages
+     * over an empty live one — the card on the new job, the toolbar naming
+     * the old one.
+     */
+    group('Putting back a branch that is no longer there');
+    {
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      const lonely = await ask(driver, 'keepTogether', {});
+      check('says there is nothing being held', lonely.reply?.data?.gone === true, JSON.stringify(lonely.reply?.data));
+      check('and does not claim to have merged anything', lonely.reply?.data?.ok !== true, JSON.stringify(lonely.reply?.data));
+
+      /*
+       * And the two ways the stash outlives what it was going to be merged
+       * into. `held.at` was written and never read, and the chip lives in the
+       * content script's memory for as long as the page is open — so a branch
+       * left unanswered still offered "Same job — put it back" hours later,
+       * by which time `readTrail` calls the live trail stale and answers with
+       * no pages. The merge then kept the old pages and dropped the page
+       * actually on screen: the card on job B, the toolbar naming job A.
+       */
+      const branchAgain = async () => {
+        await ask(driver, 'clearTrail', {});
+        store.role = 'Platform Engineer';
+        await ask(driver, 'analyze', { url: 'http://board.example/three?q=a', title: 'A', html: '<p>one</p>', company: 'Helios' });
+        await ask(driver, 'saveWork', { work: { letter: 'STALE-BRANCH' } });
+        store.role = 'Data Scientist';
+        await ask(driver, 'analyze', { url: 'http://board.example/three?q=b', title: 'B', html: '<p>two</p>', company: 'Helios' });
+        store.role = 'Platform Engineer';
+      };
+
+      // "Start fresh" pressed in the popup while the chip is still up.
+      await branchAgain();
+      await ask(driver, 'clearTrail', {});
+      const emptied = await ask(driver, 'keepTogether', {});
+      check(
+        'a trail that has been forgotten is not merged over',
+        emptied.reply?.data?.gone === true,
+        JSON.stringify(emptied.reply?.data).slice(0, 90),
+      );
+
+      // And the same chip pressed long after the stash went stale.
+      await branchAgain();
+      const aged = await driver.evaluate(async () => {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const key = `jh-branched:${tab.id}`;
+        const held = (await chrome.storage.session.get(key))[key];
+        if (!held) return false;
+        await chrome.storage.session.set({ [key]: { ...held, at: Date.now() - 3 * 60 * 60 * 1000 } });
+        return true;
+      });
+      check('the stash really was aged', aged === true, String(aged));
+      const old = await ask(driver, 'keepTogether', {});
+      check(
+        'and one older than the trail it belongs to is refused',
+        old.reply?.data?.gone === true,
+        JSON.stringify(old.reply?.data).slice(0, 90),
+      );
+    }
+
+    /*
      * And the same role reworded is not a different job. A form page that
      * calls itself "Platform Engineer (Remote)" must not split the
      * application somebody is halfway through filling in.
