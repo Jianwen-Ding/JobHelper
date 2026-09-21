@@ -198,7 +198,24 @@ async function main() {
 
       // Built here, so there is a drawn resume to carry as well as writing.
       const card = cardOf(page);
-      await card.getByRole('button', { name: 'Build resume' }).click();
+      /*
+       * And tailored first, which is the part that has to survive the walk.
+       *
+       * A resume built with every suggestion still off is the resume as it is
+       * kept, and it is indistinguishable from one that was never carried at
+       * all — so a test that only builds cannot see whether the tailoring
+       * came with it.
+       */
+      if (await card.locator('.changes.shut').count()) await card.locator('button.fold-changes').click();
+      const picks = await card.locator('.change:has(.pick)').all();
+      for (const row of picks.slice(0, 2)) await row.locator('.pick').click();
+      await page.waitForTimeout(300);
+      const tailored = (await card.locator('.diff-head .count').innerText()).trim();
+      check('two suggestions are switched on before leaving', /^2 of \d+ changes$/.test(tailored), tailored);
+
+      // "Recompile" once something has been built or changed; "Build resume"
+      // on a card that has done neither.
+      await card.getByRole('button', { name: /^(Build resume|Recompile)$/ }).click();
       await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
       await page.waitForTimeout(1200);
       check('the resume is drawn on the card', (await drawnPages(page)) > 0, `${await drawnPages(page)} pages`);
@@ -238,6 +255,28 @@ async function main() {
       const drawn = await drawnPages(page);
       check('and the resume you built is still drawn, not an empty strip', drawn > 0, `${drawn} pages`);
       check('the pane is a page tall, not a sliver', (await paneHeight(page)) > 100, `${await paneHeight(page)}px`);
+
+      /*
+       * And the resume that would be sent is the one being shown.
+       *
+       * `restoreWork` puts the carried spec back only when nothing has
+       * arrived on its own — but the content script calls `update` with this
+       * page's own analysis *first*, and that always files a proposal and
+       * takes the screen, so both of the restore's conditions were false by
+       * the time it ran. The compiled preview was restored anyway, on the
+       * line below them and unconditionally.
+       *
+       * So the card showed the tailored PDF from the page before, with the
+       * Resume step lit and Submit enabled, over a spec that had reverted to
+       * the resume exactly as it is kept. Pressing Submit sent a different
+       * document from the one on screen, and nothing said so.
+       */
+      const carriedCount = (await card.locator('.diff-head .count').innerText()).trim();
+      check(
+        'and the resume it would send is the one it is showing',
+        /^2 of \d+ changes$/.test(carriedCount),
+        carriedCount,
+      );
     }
 
     /*

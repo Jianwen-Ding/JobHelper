@@ -631,6 +631,16 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     offers: { match: null, ai: null },
     /** Which of them is on screen. Null until the first one arrives. */
     showing: null,
+    /*
+     * Whether a proposal on screen is one somebody asked for.
+     *
+     * `restoreWork` needs to know the difference between "a proposal has
+     * arrived" and "a proposal has arrived because a button was pressed", and
+     * `showing` cannot tell it: the opening read of every page files one and
+     * takes the screen a moment before the carried work turns up. See the
+     * note there.
+     */
+    askedFor: false,
     /** Which compiled PDF is on screen per kind, and the canvases drawn. */
     shownPdf: { resume: null, letter: null },
     pdfPages: new Map(),
@@ -716,18 +726,43 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      * ever the *first* proposal on a card, so it is skipped once one has
      * arrived on its own.
      */
-    if (work.spec && !state.showing) {
+    /*
+     * Gated on whether anything was *asked for*, not on whether anything has
+     * arrived.
+     *
+     * This read `!state.showing`, and by the time it runs something is always
+     * showing: the content script calls `update` with the new page's own
+     * analysis first, and that files a proposal and takes the screen. So both
+     * halves of the old condition were false in the ordinary case and the
+     * carried spec was never installed — while the line below restored the
+     * compiled preview built from it, unconditionally.
+     *
+     * Measured, walking from a posting to its form with two suggestions
+     * switched on: the card showed the tailored PDF, the Resume step lit and
+     * Submit enabled, and the count underneath read "0 of 5 changes". The
+     * document that would have gone out was not the one on the screen.
+     *
+     * What the old condition was reaching for is real and is kept: an AI run
+     * started on the page before can land here through `takeLateProposal`,
+     * and that is a proposal somebody pressed a button for. It arrives with
+     * `show`, which is what `askedFor` records — so the keyword list saved on
+     * the last page no longer lands on top of the model's work, and nothing
+     * else is held back.
+     */
+    if (work.spec && !state.askedFor) {
+      const slot = work.builtWith === 'ai' ? 'ai' : 'match';
+      const filed = state.offers[slot];
       state.spec = work.spec;
       if (work.builtWith) state.builtWith = work.builtWith;
-      state.showing = work.builtWith === 'ai' ? 'ai' : 'match';
-      state.offers[state.showing] = {
-        analysis: proposalOf(analysis ?? {}),
+      state.showing = slot;
+      state.offers[slot] = {
+        // This page's own reading of the posting where there is one: it is
+        // the newer answer about the same job, and the rows come from it.
+        analysis: filed?.analysis ?? proposalOf(analysis ?? {}),
         spec: work.spec,
-        full: work.spec,
-        none: withAllOff(work.spec, analysis?.rationale, analysis?.skillChanges),
+        full: filed?.full ?? work.spec,
+        none: filed?.none ?? withAllOff(work.spec, analysis?.rationale, analysis?.skillChanges),
       };
-    } else if (work.spec && !state.offers[state.showing]) {
-      state.spec = work.spec;
     }
     if (work.render) state.render = work.render;
     if (work.letter != null) state.letter = work.letter;
@@ -4249,6 +4284,9 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       // A note is about the run that has just ended, not about the next one.
       state.note = null;
 
+      // A run somebody pressed a button for — including one that finished
+      // after the card moved on. See `restoreWork`.
+      if (takeScreen && show) state.askedFor = true;
       if (takeScreen) showOffer(filed);
       else {
         state.render = null;
