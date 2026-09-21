@@ -36,6 +36,8 @@ import {
   LEVER_ROLE,
   NEW_TAB_ROLE,
   ONE_ADDRESS_BOARD,
+  SOLO_ROLE,
+  SOLO_OTHER,
   OWN_SITE,
   SPA_BOARD,
   STEP_ONE,
@@ -811,16 +813,30 @@ async function main() {
     }
 
     /* ---- Work must not outlive the application it was done for ---- */
+    /*
+     * On two postings of its own, which is not fussiness.
+     *
+     * A tab that closes leaves its work parked under the pages it held, so
+     * that opening one of them again brings it back — the rescue every other
+     * group here depends on. This group is about the opposite question, and
+     * it asks it by looking at what a *fresh* card holds. Borrowing a posting
+     * an earlier group built on and closed means starting with that group's
+     * compiled resume on screen: the first `buildResume` finds a Recompile
+     * button, waits thirty seconds for one that says Build resume, and the
+     * suite reports a failure that is nothing to do with what is being
+     * measured. Measured, before these fixtures existed: "Fits on one page."
+     * on a card that had just been opened.
+     */
     group('A second job opened in the tab that just finished with the first');
     {
       const page = await context.newPage();
-      await page.goto(fixtures.urlFor(LEVER_ROLE), { waitUntil: 'domcontentloaded' });
+      await page.goto(fixtures.urlFor(SOLO_ROLE), { waitUntil: 'domcontentloaded' });
       await settled(page);
       await buildResume(page);
 
       // A different company, so this starts a new application — which the card
       // here gets right.
-      await page.goto(fixtures.urlFor(ASHBY_ROLE), { waitUntil: 'domcontentloaded' });
+      await page.goto(fixtures.urlFor(SOLO_OTHER), { waitUntil: 'domcontentloaded' });
       await settled(page);
       const fresh = (await cardOf(page).locator('.fit').textContent())?.trim() ?? '';
       check('the new posting does not open holding the old resume', /not compiled/i.test(fresh), fresh);

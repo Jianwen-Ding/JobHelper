@@ -280,6 +280,50 @@ async function main() {
       await reopened.close();
     }
 
+    /*
+     * And found from the posting, not only from the page it was typed on.
+     *
+     * A closed tab's work is parked under the pages the trail held, and that
+     * was the last one only — which is the form. But the form is not how
+     * anybody comes back: you search for the job again and land on the
+     * description, which is a different address, and the letter was
+     * unreachable while sitting in storage under the form's url. `remember`
+     * has parked under every page for exactly this reason, and says so; the
+     * close handler now does the same.
+     */
+    group('The tab is closed on the form, and the posting is opened again');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(HELIOS_ROLE), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      await page.goto(fixtures.urlFor(HELIOS_FORM), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+
+      const letter = cardOf(page).locator('textarea.tall').first();
+      await letter.waitFor({ timeout: 20_000 });
+      await letter.click();
+      await letter.pressSequentially('Written on the form, looked for on the posting.', { delay: 8 });
+      await page.waitForTimeout(2600);
+      await page.close();
+      await new Promise((go) => setTimeout(go, 1200));
+
+      // Back the way people come back: to the posting.
+      const again = await context.newPage();
+      await again.goto(fixtures.urlFor(HELIOS_ROLE), { waitUntil: 'domcontentloaded' });
+      await settled(again);
+      await again.waitForTimeout(1500);
+      // Read out of the box, not out of the card's text: a textarea's value
+      // is a property, so `innerText` never contains it and an assertion
+      // against the card's words can only ever fail.
+      const back = await cardOf(again).locator('textarea.tall').first().inputValue().catch(() => '(no box)');
+      check(
+        'the letter written on the form is findable from the posting',
+        /looked for on the posting/i.test(back),
+        back.slice(0, 80),
+      );
+      await again.close();
+    }
+
     /* ---------------------------------------------------------------- *
      * The store goes away halfway through                               *
      * ---------------------------------------------------------------- */

@@ -2220,11 +2220,14 @@ chrome.tabs?.onRemoved?.addListener(async (tabId) => {
     const trail = await readTrail(tabId);
     /*
      * Under every page of it, as `remember` does and for the reason given
-     * there: the trail's last page is the last page classified as a posting,
-     * not the page the tab was on. Read the description, follow Apply, go on
-     * to the form's second step — which is neither — and close the tab by
-     * accident: the rescue was filed under step one, Ctrl+Shift+T reopened
-     * step two, and the letter was unreachable while sitting in storage.
+     * there.
+     *
+     * The last page is the form, and the form is not how anybody comes back.
+     * Write half a letter on it, lose the tab, and what you do next is search
+     * for the job again and land on the description — a different address,
+     * under which nothing was filed, so the letter was unreachable while
+     * sitting in storage one key away. Measured: the letter parked under the
+     * form's url only, and the posting's card came up empty.
      */
     const where = [...new Set((trail.pages ?? []).map((p) => p?.url).filter(Boolean))];
     if (trail.work && where.length > 0) {

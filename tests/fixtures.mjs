@@ -268,6 +268,44 @@ export const LEVER_FORM = {
  * Ashby: same shape, different suffix, and the link says only "Apply" — the
  * href is what has to be recognised.
  */
+/*
+ * Two postings nothing else in the suite builds a resume on.
+ *
+ * "Work must not outlive the application it was done for" is about one tab
+ * moving from one job to another, and it needs both jobs to arrive with
+ * nothing already waiting for them. Every other posting here is built on by
+ * some earlier group whose tab is then closed — and a closed tab leaves its
+ * work parked under the pages it held, on purpose, so that coming back to one
+ * of them brings it back. That rescue is correct and it is somebody else's
+ * test; borrowing a posting from it makes this one start with a compiled
+ * resume on screen and measure nothing.
+ */
+export const SOLO_ROLE = {
+  name: 'solo-role',
+  path: '/mensa/roles/platform-engineer',
+  company: 'Mensa Labs',
+  title: 'Platform Engineer',
+  html: page('Platform Engineer at Mensa Labs', 'Mensa Labs', ROLE_BODY),
+};
+
+export const SOLO_OTHER = {
+  name: 'solo-other',
+  path: '/rigel/postings/platform-engineer',
+  company: 'Rigel',
+  title: 'Platform Engineer',
+  html: page(
+    'Platform Engineer at Rigel',
+    'Rigel',
+    `${ROLE_BODY}<p><a href="/rigel/postings/platform-engineer/application">Apply</a></p>`,
+  ),
+};
+
+export const SOLO_OTHER_FORM = {
+  name: 'solo-other-form',
+  path: '/rigel/postings/platform-engineer/application',
+  html: page('Application — Rigel', 'Rigel', FORM_BODY),
+};
+
 export const ASHBY_ROLE = {
   name: 'ashby-role',
   path: '/ashby/lyra/role-4c2',
@@ -1437,7 +1475,7 @@ export const NAVIGATION = [
   CROWDED_PAGE, CROWDED_PAGE_FORM,
   LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY,
   OWN_SITE, ATS_FORM, ATS_FORM_UNANSWERABLE, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, SPA_BOARD,
-  ONE_ADDRESS_BOARD,
+  ONE_ADDRESS_BOARD, SOLO_ROLE, SOLO_OTHER, SOLO_OTHER_FORM,
   LETTER_SPA, LETTER_SPA_FORM, LETTER_SPA_PLAIN,
 ];
 
