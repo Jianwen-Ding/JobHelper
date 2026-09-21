@@ -1269,6 +1269,44 @@ const handlers = {
     return { pages: trail.pages.map((p) => ({ url: p.url, title: p.title, html: p.html })) };
   },
 
+  /**
+   * Is there an application under way in this tab, and has anything been
+   * written into it?
+   *
+   * Asked by the score gate, and by nothing else. The gate is a guess about
+   * whether a page is a posting, and it is deliberately generous in one
+   * direction and silent in the other: below the threshold the card does not
+   * appear, no chip appears, and nothing is said.
+   *
+   * That is right on an ordinary page and wrong on the page after Apply.
+   * Reported from a real attempt — Indeed to a posting to a ByteDance
+   * application — where the last hop is on a host no pattern here knows, in a
+   * single-page form whose first paint carries almost no words. It scored
+   * under the threshold, so the card withdrew rather than asking whether this
+   * was the same application, and the letter and answers already written went
+   * with it as far as anybody could see. The work was still held; there was
+   * simply nothing on screen to reach it from, and the only way forward was
+   * to start again.
+   *
+   * So the gate asks this first. A guess does not get to bury work somebody
+   * has done: where there is an application open in this tab with something
+   * in it, the card comes up and `remember` decides whether this page joins,
+   * branches, or starts afresh — which is the question that was owed.
+   *
+   * Deliberately not about whether this page belongs. That is
+   * `sameApplication`'s judgement and it is made later, with the page read;
+   * this only says there is something here to be judged against.
+   */
+  async openHere(_payload, tab) {
+    await inheritIfNew(tab?.id, tab?.openerTabId);
+    const trail = await readTrail(tab?.id);
+    return {
+      open: (trail?.pages ?? []).length > 0,
+      made: madeSomething(trail?.work),
+      job: nameOfTrail(trail),
+    };
+  },
+
   /** Forget the trail — "this is a different application from the last one". */
   // Named tab honoured on the same terms as `getTrail`.
   /**

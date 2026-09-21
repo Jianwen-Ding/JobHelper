@@ -326,6 +326,50 @@ export const SOLO_OTHER_FORM = {
  * not one built here — so these get an employer of their own. A form on its
  * own is enough: the role comes off the path, as it does for `HELIOS_FORM`.
  */
+/*
+ * A posting, and the page Apply leads to on a form that says almost nothing.
+ *
+ * Reported from a real walk: Indeed, to a posting, to a ByteDance
+ * application. The last hop is on a host no pattern in the scorer knows, at
+ * an address with no "jobs" or "apply" segment in it, and the form is drawn
+ * by script — so the first paint is a heading and two boxes. It scores under
+ * `minScore` (3), and the card withdrew without a word rather than asking
+ * whether this was the same application, taking the letter written two pages
+ * back off the screen with it.
+ *
+ * Deliberately word-poor. Every telltale the scorer counts is left out: no
+ * "cover letter", no "work authorization", no "submit application", nothing
+ * in the path. A file input with the word "resume" beside it is worth three
+ * points and would carry it over on its own, so the upload box here says
+ * "Document" — which is what a form drawn before its labels arrive looks
+ * like, and the state the card has to survive.
+ */
+export const NIMBUS_ROLE = {
+  name: 'nimbus-role',
+  path: '/nimbus/roles/platform-engineer',
+  company: 'Nimbus',
+  title: 'Platform Engineer',
+  html: page(
+    'Platform Engineer at Nimbus',
+    'Nimbus',
+    `${ROLE_BODY}<p><a href="/n/c/8f2a1b">Apply now</a></p>`,
+  ),
+};
+
+export const NIMBUS_QUIET_FORM = {
+  name: 'nimbus-quiet-form',
+  path: '/n/c/8f2a1b',
+  html: `<!doctype html>
+<html><head><title>Nimbus</title><style>${CHROME}</style></head>
+<body><div class="hdr"><h1>Nimbus</h1></div><div class="wrap">
+  <form>
+    <label for="em">Email</label><input id="em" name="email" type="email">
+    <label for="doc">Document</label><input id="doc" name="doc" type="file">
+    <button type="button">Continue</button>
+  </form>
+</div></body></html>`,
+};
+
 export const SWAP_FORM = {
   name: 'swap-form',
   path: '/caelum/apply/platform-engineer',
@@ -1511,7 +1555,7 @@ export const NAVIGATION = [
   CROWDED_PAGE, CROWDED_PAGE_FORM,
   LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY,
   OWN_SITE, ATS_FORM, ATS_FORM_UNANSWERABLE, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, SPA_BOARD,
-  ONE_ADDRESS_BOARD, SOLO_ROLE, SOLO_OTHER, SOLO_OTHER_FORM,
+  ONE_ADDRESS_BOARD, SOLO_ROLE, SOLO_OTHER, SOLO_OTHER_FORM, NIMBUS_ROLE, NIMBUS_QUIET_FORM,
   LETTER_SPA, LETTER_SPA_FORM, LETTER_SPA_PLAIN,
 ];
 

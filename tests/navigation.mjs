@@ -36,6 +36,8 @@ import {
   LEVER_ROLE,
   NEW_TAB_ROLE,
   ONE_ADDRESS_BOARD,
+  NIMBUS_ROLE,
+  NIMBUS_QUIET_FORM,
   SOLO_ROLE,
   SOLO_OTHER,
   OWN_SITE,
@@ -809,6 +811,53 @@ async function main() {
       ]);
       const ownValue = own ? await page.locator(own).inputValue() : '';
       check("and the posting's own form was still filled", Boolean(ownValue), `${own ?? 'nothing on offer'} = ${ownValue}`);
+      await page.close();
+    }
+
+    /* ---- A guess must not bury work already done ---- */
+    /*
+     * Reported from a real walk: Indeed, to a posting, to a ByteDance
+     * application. The last page is on a host the scorer knows nothing about,
+     * at an address with no "jobs" or "apply" in it, and the form is drawn by
+     * script — so at first paint it is a heading and two boxes, which scores
+     * under `minScore`. The card withdrew without a word: no chip, no branch
+     * offer, no way back to the letter written two pages earlier. It was
+     * still held, and there was nothing on screen to reach it from.
+     *
+     * The score is a guess about the page. Whether this tab is in the middle
+     * of an application somebody has written into is a fact about the tab,
+     * and the fact wins. See `openHere` in the worker.
+     */
+    group('Following Apply onto a page that says almost nothing');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(NIMBUS_ROLE), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+
+      // Something built, because that is what makes hiding the card costly.
+      await buildResume(page);
+
+      await page.click('a[href="/n/c/8f2a1b"]');
+      await page.waitForLoadState('domcontentloaded');
+      await page.waitForTimeout(3000);
+
+      /*
+       * Checked first, because it is the claim: this page on its own is not
+       * one the tool would offer on. If the fixture ever starts scoring over
+       * the threshold, the checks below pass for the wrong reason.
+       */
+      const scored = await page.evaluate(() => {
+        const words = document.body.innerText.toLowerCase();
+        return ['cover letter', 'work authorization', 'submit application', 'job description'].filter((w) =>
+          words.includes(w),
+        ).length;
+      });
+      check('the page itself gives the scorer nothing to go on', scored === 0, `${scored} telltales`);
+
+      const card = cardOf(page);
+      check('the card is still there to ask with', (await card.count()) > 0);
+      const fit = (await card.locator('.fit').textContent().catch(() => '')) ?? '';
+      check('and the resume built two pages back is still on it', /page/i.test(fit), fit.trim().slice(0, 60));
       await page.close();
     }
 
