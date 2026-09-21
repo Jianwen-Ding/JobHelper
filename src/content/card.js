@@ -4308,12 +4308,27 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                   className: 'tiny',
                   textContent: busyLabel('saveLetter', state.letterSaved ? 'Saved' : 'Save to store', 'Saving…'),
                   disabled: busyIn('letter') || state.letterSaved || !state.letter?.trim(),
-                  onclick: () =>
-                    act('saveLetter', { body: state.letter }, () => {
-                      state.letterSaved = true;
-                      state.letterSavedAs = state.letter;
+                  /*
+                   * "Saved" is about the text that was saved.
+                   *
+                   * The request already carried a snapshot of the box; the
+                   * callback read `state.letter` again when the reply landed,
+                   * so a letter typed on in between was recorded as the saved
+                   * one. The button then read "Saved", disabled, under
+                   * "Future drafts will start from this one" — about a
+                   * paragraph the store had never seen. And because
+                   * `letterSavedAs` was the wrong baseline, the check in
+                   * `oninput` that would normally notice the drift compared
+                   * against it and never fired.
+                   */
+                  onclick: () => {
+                    const sent = state.letter;
+                    act('saveLetter', { body: sent }, () => {
+                      state.letterSavedAs = sent;
+                      state.letterSaved = sent === state.letter;
                       prepareSoon();
-                    }),
+                    });
+                  },
                 })),
                 (letterControls.copy = h('button', {
                   className: 'tiny',

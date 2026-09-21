@@ -1696,6 +1696,78 @@ async function main() {
     `${afterRefusal.afterRefused} by the refusal, ${afterRefusal.stages} in the end`,
   );
 
+  /*
+   * "Saved" has to be about the text that was saved.
+   *
+   * The request carries a snapshot of the box, which is right. The callback
+   * that runs when it comes back read `state.letter` *again* — so a letter
+   * typed on while the save was in flight was recorded as the saved one.
+   * The button then says "Saved", disabled, under "Future drafts will start
+   * from this one", about a paragraph the store has never seen; and the
+   * mismatch check that would normally catch it compares against the wrong
+   * baseline, so it never fires.
+   */
+  const savedLie = await inPage((createCard) => {
+    let release;
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: true,
+      onAction: async (action, payload) =>
+        action === 'saveLetter'
+          ? new Promise((r) => { release = () => r({ ok: true, sent: payload.body }); })
+          : action === 'aiStatus'
+            ? { active: true, state: 'on' }
+            : {},
+    });
+    void handle;
+    return (async () => {
+      await new Promise((r) => setTimeout(r, 100));
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      const byText = (t) => [...root.querySelectorAll('button')].find((b) => new RegExp(t).test(b.textContent));
+      const box = root.querySelector('textarea[data-field="letter"]');
+      if (!box) return { error: 'no letter box' };
+
+      box.value = 'A';
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 40));
+
+      const save = byText('Save to store');
+      if (!save) return { error: 'no save button' };
+      save.click();
+      await new Promise((r) => setTimeout(r, 40));
+
+      // Still typing while the save is out.
+      box.value = 'A and then some more.';
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 40));
+
+      release?.();
+      await new Promise((r) => setTimeout(r, 120));
+
+      const now = byText('Save to store') ?? byText('Saved');
+      return {
+        inTheBox: root.querySelector('textarea[data-field="letter"]')?.value ?? '',
+        label: now?.textContent?.trim() ?? '(gone)',
+        disabled: now?.disabled ?? null,
+      };
+    })();
+  });
+
+  check(
+    'a letter typed on while the save was out is not called saved',
+    savedLie.label === 'Save to store' && savedLie.disabled === false,
+    `${savedLie.error ?? ''} button says "${savedLie.label}", disabled ${savedLie.disabled}, box holds "${savedLie.inTheBox}"`,
+  );
+
   check('building still compiles the preview', staging.actions.includes('render'), JSON.stringify(staging.actions));
   check(
     'and puts the real files in the flat folder without being asked',
