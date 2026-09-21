@@ -1392,6 +1392,16 @@
     if (dismissed) return;
     putUpCard();
     cardHandle?.update(analysis);
+    /*
+     * What this page called itself when it was read, for the tick that
+     * watches boards which swap the job in place. Recorded here rather than
+     * at the top of the pass, because the employer's name is what makes the
+     * comparison mean anything and the analysis is where it comes from.
+     */
+    readAs = {
+      company: analysis?.job?.company,
+      said: withoutCompany(document.title, analysis?.job?.company),
+    };
     // An AI pass that outlived the card it was started from. See `landLate`.
     takeLateProposal();
 
@@ -1423,7 +1433,7 @@
      * not know whether it is starting an application or continuing one, and
      * it holds the automatic cover-letter draft back until it does.
      */
-    cardHandle?.restoreWork(carried?.work ?? null);
+    cardHandle?.restoreWork(carried?.work ?? null, carried?.recovered);
     // Say so when it came from a tab that was closed rather than from the
     // page before: finding your letter back without being told is its own
     // kind of unsettling.
@@ -2001,6 +2011,67 @@
   let looking = false;
 
   let lastUrl = location.href;
+
+  /*
+   * And the board that swaps the job without changing anything else.
+   *
+   * The tick below watched the url, which covers every board that routes —
+   * and Indeed's results pane does not route. The list is on the left, the
+   * posting is on the right, and clicking down the list replaces the posting
+   * in place. Nothing navigates, nothing pushes state, the url is the search
+   * you arrived on. So the card sat there showing the first job while
+   * somebody read the fourth, the trail held the first job's description, and
+   * a letter written from that card was written about a job the user had
+   * stopped looking at four clicks ago. This is the case every other rule in
+   * `trail.js` cannot reach, because all of them are about *where* pages are
+   * and here they are all in the same place.
+   *
+   * What is left to read is what the page calls itself. The employer's name
+   * comes out of it first — every one of these titles carries it, and leaving
+   * it in means two jobs at one company always have a word in common — and
+   * what remains goes to `plainlyAnotherRole`, which is the same conservative
+   * test the trail uses: an opinion only when the two share no word at all.
+   * "Platform Engineer" and "Data Scientist" is a different job; "Platform
+   * Engineer" and "Senior Platform Engineer (Remote)" is not, and a form page
+   * retitling itself mid-application is not either.
+   *
+   * Starting over is all this does. Whether the new job is a branch, or the
+   * same application after all, is `judgeApplication`'s to answer, on a page
+   * that has actually been read.
+   */
+  let readAs = null;
+
+  /** Loaded once and held, because the tick cannot await. */
+  let plainlyAnotherRole = null;
+  imports
+    .trail()
+    .then((m) => {
+      plainlyAnotherRole = m.plainlyAnotherRole;
+    })
+    .catch(quietly);
+
+  /**
+   * A title with the employer's name taken out of it.
+   *
+   * Substring rather than a pattern: a company name is arbitrary text and
+   * building a regular expression out of it is one `C++ Systems (Ltd.)` away
+   * from throwing on a page that did nothing wrong.
+   */
+  const withoutCompany = (text, company) => {
+    const said = String(text ?? '');
+    const co = String(company ?? '').trim().toLowerCase();
+    if (!co) return said;
+    const lower = said.toLowerCase();
+    let out = '';
+    let from = 0;
+    for (;;) {
+      const at = lower.indexOf(co, from);
+      if (at === -1) return out + said.slice(from);
+      out += `${said.slice(from, at)} `;
+      from = at + co.length;
+    }
+  };
+
   /**
    * Start this page again, as though it had just been opened.
    *
@@ -2088,6 +2159,18 @@
   every(1000, () => {
     if (location.href !== lastUrl) {
       lastUrl = location.href;
+      readAs = null;
+      return startOver();
+    }
+
+    // The board that swaps the job and changes nothing else. See `readAs`.
+    if (
+      cardHandle &&
+      readAs &&
+      plainlyAnotherRole &&
+      plainlyAnotherRole(withoutCompany(document.title, readAs.company), readAs.said)
+    ) {
+      readAs = null;
       return startOver();
     }
 

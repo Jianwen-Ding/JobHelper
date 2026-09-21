@@ -213,6 +213,15 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
   border-radius: 8px; color: var(--ink);
 }
 .branch .row { margin-top: 6px; }
+/*
+ * And the same strip when you have come back to a job you had already
+ * started. Nothing was decided on your behalf there and there is nothing to
+ * answer, so it drops the warm colour and reads as what it is: a note that
+ * your writing is where you left it.
+ */
+.branch.back {
+  background: var(--soft, #f1f3f4); border-color: var(--line, #dadce0); color: var(--muted);
+}
 
 .trail { margin-top: 7px; font-size: 12px; }
 .trail summary { cursor: pointer; color: var(--muted); }
@@ -655,6 +664,16 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      * note there.
      */
     askedFor: false,
+    /**
+     * Whether this tab has been on this job before.
+     *
+     * Set when the worker hands back writing it had parked for *this* job
+     * rather than for a closed tab — which, on a board showing several jobs
+     * at one address, is the click that goes back to the one you started.
+     * The branch chip reads it: "a new application" is the wrong sentence for
+     * a job whose own half-written letter is on the screen. See `drawBranch`.
+     */
+    returned: false,
     /** Which compiled PDF is on screen per kind, and the canvases drawn. */
     shownPdf: { resume: null, letter: null },
     pdfPages: new Map(),
@@ -732,8 +751,23 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * an application or continuing one — which is the difference between
    * drafting a letter and already having one.
    */
-  function restoreWork(work) {
+  /**
+   * @param {object|null} work
+   * @param {'job'|true|undefined} how  'job' when this tab is coming back to
+   *   a job it had already started, which the branch chip has to know about:
+   *   see `drawBranch`.
+   */
+  function restoreWork(work, how) {
     carriedSettled = true;
+    /*
+     * Assigned, not raised. The card outlives a pass — `putUpCard` hands back
+     * the one already on the page — so on a board that swaps its pane without
+     * navigating, a chip raised on the job you came back to would still be up
+     * on the next job you had never seen. This runs exactly once per pass,
+     * with nothing to restore as much as with something, so it is the place
+     * that answer belongs.
+     */
+    state.returned = how === 'job';
     if (!work) {
       maybeAutoDraft();
       return;
@@ -790,6 +824,18 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     if (work.render) state.render = work.render;
     if (work.staged) state.staged = work.staged;
     if (work.letter != null) state.letter = work.letter;
+    /*
+     * And the step it lives in, because a letter the card is holding and not
+     * showing is a letter the person believes they have lost.
+     *
+     * Only `letterNeeded` — the form asking for one — opened this step, so
+     * writing carried onto a page that does not ask was kept, saved, bundled
+     * and invisible. Which is the ordinary case on a board: you add a letter
+     * to a description page by pressing "+ Cover letter", read another job,
+     * and come back to a card that has your letter in `state` and no box on
+     * screen.
+     */
+    if (work.letter?.trim()) state.letterAsked = true;
     if (work.letterSource) state.letterSource = work.letterSource;
     state.letterStarted = state.letterStarted || Boolean(work.letterStarted);
     state.letterSaved = state.letterSaved || Boolean(work.letterSaved);
@@ -1423,6 +1469,30 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     const from = state.trail?.branchedFrom;
     if (!from) return null;
     const was = [from.role, from.company].filter(Boolean).join(' at ') || 'the application before this';
+
+    /*
+     * Coming back is not branching, and must not be offered as it.
+     *
+     * Go A, B, A on a board that shows every job at one address and the third
+     * page branches away from B — correctly — while the worker hands back the
+     * letter you had started for A. The chip then said "This looks like a
+     * different job, so it is a new application", on a card holding that
+     * job's own half-written letter, and offered to put *B* into it. Somebody
+     * reading "Same job — put it back" on the job they had just come back to
+     * would press it, and get the other job's pages and the other job's
+     * writing merged into this one — the exact merge the branch exists to
+     * prevent, made by the person, on the extension's invitation.
+     *
+     * So when this tab has been here before, it says that instead, and offers
+     * nothing to press.
+     */
+    if (state.returned) {
+      return h('div', { className: 'branch back' }, [
+        h('div', {
+          textContent: `Back on this one — what you had written for it is here. You were last on ${was}, which is kept separately.`,
+        }),
+      ]);
+    }
 
     return h('div', { className: 'branch' }, [
       h('div', { textContent: `This looks like a different job, so it is a new application. The last one was ${was}.` }),

@@ -35,6 +35,7 @@ import {
   LETTER_SPA_PLAIN,
   LEVER_ROLE,
   NEW_TAB_ROLE,
+  ONE_ADDRESS_BOARD,
   OWN_SITE,
   SPA_BOARD,
   STEP_ONE,
@@ -364,6 +365,73 @@ async function main() {
         !/platform engineer/i.test(trail),
         trail || '(no trail)',
       );
+      await page.close();
+    }
+
+    /* ---- One address, several jobs: the shape the branch exists for ---- */
+    /*
+     * Indeed's results pane, and every board built like it: the list on the
+     * left, the posting on the right, and clicking down the list swaps the
+     * posting without touching the url. Every rule the trail has for telling
+     * two jobs apart is about where the pages are, and here they are all in
+     * the same place.
+     *
+     * Three things have to happen and each is checked below. The card has to
+     * notice the swap at all — the tick only looked for the url changing, and
+     * on this board it never does, so the card sat there showing the first
+     * job while somebody read the second. It has to branch rather than fold
+     * the second job into the first. And going back to the first has to bring
+     * back the first's writing, not the second's.
+     */
+    group('One address, two jobs, and back to the first');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(ONE_ADDRESS_BOARD), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      check(
+        'the job showing when the page opened is the one on the card',
+        /platform engineer/i.test((await cardOf(page).locator('.role').textContent()) ?? ''),
+        (await cardOf(page).locator('.role').textContent()) ?? '',
+      );
+
+      // Something written, so the branch has something to be careful with.
+      await cardOf(page).getByRole('button', { name: '+ Cover letter' }).click();
+      const wrote = cardOf(page).locator('textarea.tall').first();
+      await wrote.waitFor({ timeout: 20_000 });
+      await wrote.fill('Dear Vela, about the platform.');
+      // The keeper saves on an interval; give it one.
+      await page.waitForTimeout(2600);
+
+      await page.click('#to-b');
+      await page.waitForTimeout(4000);
+      await settled(page);
+
+      const second = cardOf(page);
+      const secondRole = (await second.locator('.role').textContent())?.trim() ?? '';
+      check('the card notices the posting was swapped underneath it', /data scientist/i.test(secondRole), secondRole);
+      check(
+        'and says it started a new application rather than joining them',
+        /new application/i.test((await second.locator('.branch').textContent().catch(() => '')) ?? ''),
+        (await second.locator('.branch').textContent().catch(() => '')) ?? '(no chip)',
+      );
+      const carried = await second.locator('textarea.tall').first().inputValue().catch(() => '');
+      check('the letter written for the other job does not come with it', !/about the platform/.test(carried), carried || '(empty)');
+
+      // And back, which is the click this whole thing is for.
+      await page.click('#to-a');
+      await page.waitForTimeout(4000);
+      await settled(page);
+
+      const third = cardOf(page);
+      check(
+        'going back reads the first job again',
+        /platform engineer/i.test((await third.locator('.role').textContent()) ?? ''),
+        (await third.locator('.role').textContent()) ?? '',
+      );
+      const back = await third.locator('textarea.tall').first().inputValue().catch(() => '');
+      check('and its own letter is where it was left', /about the platform/.test(back), back || '(empty)');
+      const chip = (await third.locator('.branch').textContent().catch(() => '')) ?? '';
+      check('and it is not called a new application', !/new application/i.test(chip), chip || '(no chip)');
       await page.close();
     }
 

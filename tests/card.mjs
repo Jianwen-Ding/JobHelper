@@ -2652,6 +2652,59 @@ async function main() {
   const silent = await askCard(undefined);
   check('and nothing at all when the save did not say', silent.length === 0, JSON.stringify(silent));
 
+  /*
+   * The chip that says an application was branched, and the same chip when
+   * you have come back to the job you branched away from.
+   *
+   * The second one is why this exists. Go A, B, A on a board that shows every
+   * job at one address: the third page branches away from B, correctly, and
+   * the worker hands back the letter you had started for A. The chip then
+   * said "This looks like a different job, so it is a new application" over
+   * that job's own half-written letter, and offered "Same job — put it back"
+   * — which would merge *B* into it. Somebody reading that sentence on the
+   * job they had just returned to presses it, and the extension performs the
+   * one merge the whole branch exists to prevent, on their instruction.
+   */
+  console.log('\nThe chip that says an application was branched');
+
+  const branchChip = (how) => inPage((createCard, given) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Helios' },
+        spec: { id: 'job-helios', label: 'Helios' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    handle.setTrail({
+      pages: [{ url: 'http://board.example/all', title: 'Board', role: 'Platform Engineer', company: 'Helios' }],
+      branchedFrom: { role: 'Data Scientist', company: 'Helios' },
+    });
+    handle.restoreWork(given ? { letter: 'Half a letter.' } : null, given ?? undefined);
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const strip = root.querySelector('.branch');
+    return {
+      said: strip?.textContent ?? '',
+      back: Boolean(strip?.classList.contains('back')),
+      buttons: [...(strip?.querySelectorAll('button') ?? [])].map((b) => b.textContent),
+    };
+  }, how);
+
+  const branched = await branchChip(null);
+  check('a branch says what it did and names what it left', /new application/.test(branched.said) && /Data Scientist at Helios/.test(branched.said), branched.said);
+  check('and offers to put it back', branched.buttons.includes('Same job — put it back'), JSON.stringify(branched.buttons));
+
+  const returned = await branchChip('job');
+  check('coming back does not call it a new application', !/new application/.test(returned.said), returned.said);
+  check('it says the writing for this job is here', /what you had written for it is here/.test(returned.said), returned.said);
+  check('and offers nothing to press', returned.buttons.length === 0, JSON.stringify(returned.buttons));
+  check('and drops the warning colour', returned.back === true, String(returned.back));
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);

@@ -699,6 +699,60 @@ export const ADVERT_CONTENT = {
  * address is a prefix of both postings — which is how one job's description
  * used to arrive in the other's application, by way of the page between them.
  */
+/**
+ * The board that keeps every job at one address.
+ *
+ * Indeed's results pane is the one everybody has used: the list on the left,
+ * the posting on the right, and clicking down the list swaps the posting
+ * without touching the url. Every rule the trail has for telling two jobs
+ * apart is about where the pages are, and here they are all in the same
+ * place — so this is the shape that leaves nothing but the role title to go
+ * on, and the one branching exists for.
+ *
+ * Deliberately without `history.pushState`: `SPA_BOARD` above has that, and
+ * a changed path is enough on its own. What is being tested here is the case
+ * where nothing changes but the words.
+ */
+export const ONE_ADDRESS_BOARD = {
+  name: 'one-address-board',
+  path: '/vela/jobs',
+  company: 'Vela',
+  html: `<!doctype html>
+<html><head><title>Platform Engineer at Vela</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Vela</h1><div id="sub">Platform Engineer</div></div>
+  <div class="wrap">
+    <p>
+      <button id="to-b" type="button">Data Scientist</button>
+      <button id="to-a" type="button">Platform Engineer</button>
+    </p>
+    <div id="view">${ROLE_BODY}</div>
+  </div>
+  <script>
+    const views = {
+      a: { sub: 'Platform Engineer', html: document.getElementById('view').innerHTML },
+      b: {
+        sub: 'Data Scientist',
+        html:
+          '<h2>About the role</h2><p>We are looking for a data scientist to own ' +
+          'our forecasting models. Responsibilities include building models in ' +
+          'Python and SQL and shipping them to production.</p>' +
+          '<h2>Minimum qualifications</h2>' +
+          '<ul><li>Years of experience with statistics</li><li>Experience with SQL</li></ul>' +
+          '<p>Equal opportunity employer. Full-time. Compensation is competitive.</p>',
+      },
+    };
+    const swap = (which) => {
+      document.title = views[which].sub + ' at Vela';
+      document.getElementById('sub').textContent = views[which].sub;
+      document.getElementById('view').innerHTML = views[which].html;
+    };
+    document.getElementById('to-b').addEventListener('click', () => swap('b'));
+    document.getElementById('to-a').addEventListener('click', () => swap('a'));
+  </script>
+</body></html>`,
+};
+
 export const CYGNUS_BOARD = {
   name: 'cygnus-board',
   path: '/cygnus/openings',
@@ -1383,6 +1437,7 @@ export const NAVIGATION = [
   CROWDED_PAGE, CROWDED_PAGE_FORM,
   LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY,
   OWN_SITE, ATS_FORM, ATS_FORM_UNANSWERABLE, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, SPA_BOARD,
+  ONE_ADDRESS_BOARD,
   LETTER_SPA, LETTER_SPA_FORM, LETTER_SPA_PLAIN,
 ];
 
