@@ -4166,8 +4166,35 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             disabled: busyIn('resume'),
             onclick: async () => {
               if (!state.feedback.trim()) return;
+              /*
+               * Feedback is about the document that was on screen when it was
+               * sent, and only that one.
+               *
+               * This ran for as long as a model takes to read a resume, and
+               * "Use Original" is live for the whole of it — a local revert
+               * in a different lane, deliberately, so that a long run can
+               * never hold the card. So the two overlap, and the reply was
+               * merged into whatever `state.spec` had become: press both and
+               * the suggestion just taken off comes back on, ticked by a
+               * model that was looking at the other resume. `compile` has
+               * guarded this since it was written (`state.spec !== of`);
+               * refine, which changes the document rather than photographing
+               * it, did not.
+               *
+               * Compared by content rather than by identity, because the
+               * things that legitimately replace `state.spec` mid-run include
+               * rescued work being restored over an equivalent object — and
+               * refusing feedback because the same document arrived in a new
+               * wrapper would be the opposite fault.
+               */
+              const asked = JSON.stringify(state.spec);
               const refined = await act('refine', { spec: state.spec, feedback: state.feedback });
-              if (refined?.parsed?.choices) {
+              const moved = JSON.stringify(state.spec) !== asked;
+              if (refined?.parsed?.choices && moved) {
+                state.error =
+                  'That feedback was about the resume that was on screen when you pressed it, and this is a different one now. Press Apply feedback again to use it here.';
+                draw();
+              } else if (refined?.parsed?.choices) {
                 state.spec = { ...state.spec, choices: { ...state.spec.choices, ...refined.parsed.choices } };
                 await compile();
               } else if (refined && !refined.executed) {

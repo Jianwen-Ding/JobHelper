@@ -1379,6 +1379,108 @@ async function main() {
   check('and comes down when it finishes', overlap.barAfter === false, JSON.stringify(overlap));
 
   /*
+   * Feedback answered about a resume that is no longer the one on screen.
+   *
+   * "Apply feedback" sends the spec that is up when it is pressed, and a model
+   * reading it takes a while. "Use Original" is live for the whole of that —
+   * it is a local revert in a different lane, deliberately — so the two
+   * overlap, and what came back was merged into whatever `state.spec` had
+   * become by then. Press both and the boxes just taken off come back on,
+   * ticked by a model that was looking at the other document.
+   */
+  console.log('\nFeedback landing on a resume it was not about');
+
+  const lateFeedback = await inPage(async (createCard) => {
+    let release;
+    const renders = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: {
+          id: 'job-acme',
+          label: 'Acme',
+          tier: 'temporary',
+          choices: { b_pipeline: 'v_kafka' },
+        },
+        // One taken suggestion, so "Use Original" has something to put back.
+        rationale: [
+          { key: 'b_pipeline', from: 'v_base', to: 'v_kafka', toText: 'Built a Kafka pipeline', because: ['kafka'] },
+        ],
+        diff: [{ kind: 'changed', where: 'Acme Co.', from: 'Built a pipeline', to: 'Built a Kafka pipeline' }],
+        /*
+         * A decision, not a list of offers — a model read the posting and
+         * chose. That is the only arrival whose spec comes up with anything
+         * taken (see `isDecision`), so it is the only one where "Use Original"
+         * has work to do and the race is reachable at all.
+         */
+        tailor: 'ai',
+        aiUsed: true,
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'render') {
+          renders.push(payload?.spec?.choices?.b_pipeline ?? null);
+          return { pages: 1, fits: true };
+        }
+        // Held open, so the revert lands while the model is still reading.
+        if (action === 'refine') {
+          return new Promise((r) => {
+            release = () => r({ parsed: { choices: { b_pipeline: 'v_model' } } });
+          });
+        }
+        return {};
+      },
+    });
+    await new Promise((r) => setTimeout(r, 150));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
+    const mode = (re) => [...root.querySelectorAll('button.mode')].find((b) => re.test(b.textContent));
+
+    const box = root.querySelector('textarea');
+    box.value = 'lead with the distributed systems work';
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+
+    byText('Apply feedback').click();
+    await new Promise((r) => setTimeout(r, 100));
+    const started = Boolean(release);
+    mode(/Use Original/).click();
+    await new Promise((r) => setTimeout(r, 250));
+
+    // What the revert compiled, and everything the late reply compiles after it.
+    const reverted = renders.slice();
+    release();
+    await new Promise((r) => setTimeout(r, 300));
+    return {
+      started,
+      reverted,
+      after: renders.slice(reverted.length),
+      said: root.querySelector('.err')?.textContent ?? '',
+    };
+  });
+
+  check('the feedback really was in flight', lateFeedback.started === true, JSON.stringify(lateFeedback));
+  check(
+    'the revert put the original wording back',
+    lateFeedback.reverted.at(-1) === 'v_base',
+    JSON.stringify(lateFeedback),
+  );
+  check(
+    'and the late reply does not tick its choice onto the resume that replaced it',
+    !lateFeedback.after.includes('v_model'),
+    JSON.stringify(lateFeedback),
+  );
+  check(
+    'it says so, rather than dropping the feedback silently',
+    /different one now/.test(lateFeedback.said),
+    JSON.stringify(lateFeedback),
+  );
+
+  /*
    * Coming back from the builder having written something new.
    *
    * A wording added there is an *alternate*, and an alternate is only reached
