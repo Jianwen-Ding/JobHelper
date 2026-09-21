@@ -141,6 +141,7 @@
     ask: () => fromExtension('src/content/ask.js'),
     sites: () => fromExtension('src/shared/sites.js'),
     autofill: () => fromExtension('src/content/autofill.js'),
+    attach: () => fromExtension('src/content/attach.js'),
     trail: () => fromExtension('src/shared/trail.js'),
     sending: () => fromExtension('src/shared/sending.js'),
   };
@@ -688,6 +689,41 @@
 
       case 'autofill':
         return runAutofill();
+
+      /*
+       * The upload boxes, from the folder the card would otherwise ask you to
+       * paste a path to.
+       *
+       * The bytes come through the worker because the page's origin has no
+       * business reaching the local store, and the placing happens here
+       * because only a content script can touch the form. Frames too: the
+       * upload control on a good half of these portals is in one, exactly as
+       * the text fields are.
+       */
+      case 'attachFiles': {
+        const got = await send('attachments', { application: payload.application ?? null });
+        const files = got?.files ?? [];
+        if (files.length === 0) {
+          return { placed: [], unplaced: [], nothing: true, dir: got?.dir ?? null };
+        }
+        const { attachFiles } = await imports.attach();
+        const here = attachFiles(files);
+        /*
+         * And whatever is left, offered to the frames. A form split across
+         * the page and an embed is ordinary, and a resume that went nowhere
+         * because the box was one level down is the case this is for.
+         */
+        const left = files.filter((f) => !here.placed.some((p) => p.name === f.name));
+        if (left.length === 0) return { ...here, dir: got.dir };
+
+        const inFrames = await send('attachInFrames', { files: left }).catch(() => ({ frames: [] }));
+        const alsoPlaced = (inFrames.frames ?? []).flatMap((f) => f.placed ?? []);
+        return {
+          placed: [...here.placed, ...alsoPlaced],
+          unplaced: here.unplaced.filter((u) => !alsoPlaced.some((p) => p.name === u.name)),
+          dir: got.dir,
+        };
+      }
 
       case 'insertAnswer': {
         const inFrame = IN_FRAME_ID.exec(payload.fieldId ?? '');
@@ -1741,6 +1777,16 @@
                 wantsLetter: wantsCoverLetter(),
               };
             }),
+          );
+          return true;
+
+        /*
+         * And the upload boxes in this frame. Half the portals that split a
+         * form across an embed put the attachment control in the embed.
+         */
+        case 'jh-frame-attach':
+          answer(
+            imports.attach().then(({ attachFiles }) => attachFiles(message.payload?.files ?? [])),
           );
           return true;
 

@@ -970,6 +970,13 @@ const handlers = {
     return { frames: replies.map(({ frameId, data }) => ({ frameId, ...data })) };
   },
 
+  /** Put the files into whatever upload boxes the sub-frames hold. */
+  async attachInFrames({ files }, tab) {
+    if (tab?.id === undefined) return { frames: [] };
+    const replies = await askFrames(tab.id, { type: 'jh-frame-attach', payload: { files } });
+    return { frames: replies.map(({ frameId, data }) => ({ frameId, ...data })) };
+  },
+
   /** Fill the form in every sub-frame from the same profile. */
   async fillFrames({ fields }, tab) {
     if (tab?.id === undefined) return { frames: [] };
@@ -1580,6 +1587,48 @@ const handlers = {
 
   async autofillData() {
     return serverFetch('/api/autofill');
+  },
+
+  /**
+   * What this application could attach, with the bytes of each.
+   *
+   * One round trip rather than a list and then a fetch per file, because the
+   * card asks for this the moment somebody presses Attach and a second wait
+   * between the press and the files appearing is the whole of what the
+   * feature saves. A resume is about 30kB and there are rarely more than
+   * three; the messaging channel is JSON, so they travel as base64, the same
+   * way `pdfBytes` sends one.
+   */
+  async attachments({ application }, tab) {
+    const { serverUrl } = await getSettings();
+    const list = await serverFetch(
+      `/api/attachments${application ? `?application=${encodeURIComponent(application)}` : ''}`,
+      { save: await saveFor(tab?.id) },
+    );
+    const base = serverUrl.replace(/\/$/, '');
+
+    const files = [];
+    for (const item of list.attachments ?? []) {
+      try {
+        const res = await fetch(`${base}${item.url}`, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+        if (!res.ok) continue;
+        const buffer = new Uint8Array(await res.arrayBuffer());
+        let binary = '';
+        for (let i = 0; i < buffer.length; i += 8192) {
+          binary += String.fromCharCode(...buffer.subarray(i, i + 8192));
+        }
+        files.push({
+          name: item.name,
+          standing: Boolean(item.standing),
+          type: res.headers.get('content-type') ?? 'application/pdf',
+          base64: btoa(binary),
+        });
+      } catch {
+        // One file that would not come is not a reason to attach none of the
+        // others. The card names what it got and what it did not.
+      }
+    }
+    return { files, dir: list.dir, asked: (list.attachments ?? []).length };
   },
 
   /** Pair page questions with whatever the answer bank already holds. */

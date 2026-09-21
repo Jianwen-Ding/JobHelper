@@ -591,6 +591,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     answers: {},
     feedback: '',
     autofillReport: null,
+    /** What the last press of Attach put into the form, and what it could not. */
+    attachReport: null,
     workspaceOpened: false,
     /** Whether an AI is in play at all. Filled in below; never assumed. */
     ai: null,
@@ -3630,6 +3632,29 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             onclick: () => act('autofill', {}, (r) => (state.autofillReport = r)),
           }),
           /*
+           * The upload boxes, filled the same way the text boxes are.
+           *
+           * The flat folder and the path beside it were the answer to "how do
+           * I attach what this just built" — point the dialog at one place and
+           * pick the file out. That is two clicks and a paste, every time, and
+           * the same two clicks for the transcript that has not changed since
+           * September. A content script can put the file in the box directly;
+           * the page sees what it would have seen from the dialog, name and
+           * all. The path stays, for the boxes this cannot reach.
+           */
+          h('button', {
+            className: 'tiny',
+            textContent: busyLabel('attach', 'Attach files', 'Attaching…'),
+            title: 'Put the resume, letter and transcript into this form’s upload boxes',
+            disabled: busyIn('page'),
+            onclick: () =>
+              act(
+                'attachFiles',
+                { application: state.staged?.application?.id ?? null },
+                (r) => (state.attachReport = r),
+              ),
+          }),
+          /*
            * Named for what pressing it means, not for what it writes.
            *
            * It was "Save application folder", which is the implementation
@@ -3694,6 +3719,12 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
               textContent: describeAutofill(state.autofillReport),
             })
           : null,
+        state.attachReport
+          ? h('div', {
+              className: `ok-note${(state.attachReport.unplaced?.length ?? 0) > 0 || state.attachReport.nothing ? ' warn' : ''}`,
+              textContent: describeAttach(state.attachReport),
+            })
+          : null,
       ]),
     );
 
@@ -3736,6 +3767,36 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   /** True when the report names fields the form still needs from you. */
   function autofillLeftWork(r) {
     return r.skipped.some((skip) => skip.reason !== 'already filled');
+  }
+
+  /**
+   * What went into the form's upload boxes, and what did not.
+   *
+   * Named per file rather than counted, because the failure that matters is
+   * one specific document not being attached — and "2 of 3 files attached" is
+   * the sentence that gets skimmed past on the way to pressing Submit.
+   *
+   * A file with nowhere to go is not an error. Plenty of forms ask for a
+   * resume and nothing else, and the transcript having no box is the form
+   * saying it does not want one. It is said out loud anyway: the alternative
+   * is somebody assuming their transcript went and finding out later.
+   */
+  function describeAttach(r) {
+    if (r?.nothing) return 'Nothing is built yet, so there is nothing to attach.';
+    const placed = r?.placed ?? [];
+    const unplaced = r?.unplaced ?? [];
+    if (placed.length === 0 && unplaced.length === 0) return 'Nothing to attach.';
+
+    const parts = [];
+    if (placed.length > 0) parts.push(`Attached ${placed.map((p) => p.name).join(' and ')}`);
+    else parts.push('Nothing was attached');
+    if (unplaced.length > 0) {
+      parts.push(
+        `${unplaced.map((u) => u.name).join(' and ')} had nowhere to go — ${unplaced[0].why}. ` +
+          'The folder above has everything, for the boxes this cannot reach',
+      );
+    }
+    return `${parts.join('. ')}.`;
   }
 
   function describeAutofill(r) {
