@@ -1115,6 +1115,77 @@ async function main() {
     }
 
     /*
+     * An application is rescued whole, or not at all.
+     *
+     * A closed tab parks its writing under *every* page of the trail it was
+     * on — the posting, the form, whatever came between — because somebody
+     * coming back comes back to whichever of those they were last looking
+     * at. So one application is several keys, all written in the same breath
+     * and all carrying the same `at`.
+     *
+     * The sweep bounded the number of *keys*, newest first, and cut the list
+     * wherever the count ran out. That cut can fall inside one application:
+     * its letter stays reachable from three of its pages and not from the
+     * other two, and which page you come back through decides whether you
+     * find your own writing. Nothing says so either way.
+     */
+    group('An application is kept whole or let go whole');
+    {
+      const planted = await worker.evaluate(async () => {
+        const store = chrome.storage.session ?? chrome.storage.local;
+        // Four applications of five pages and one of two: twenty-two keys,
+        // so the cut has to fall somewhere, and where it falls is the point.
+        const sizes = [5, 5, 5, 5, 2];
+        const groups = [];
+        const put = {};
+        const now = Date.now();
+        sizes.forEach((pages, i) => {
+          const at = now - (sizes.length - i) * 1000; // oldest first
+          const keys = [];
+          for (let p = 0; p < pages; p++) {
+            const key = `jh-orphan:https://whole-${i}.example/page-${p}`;
+            put[key] = { parked: [{ work: { letter: `letter ${i}` }, at }], at };
+            keys.push(key);
+          }
+          groups.push(keys);
+        });
+        await store.set(put);
+        return groups;
+      });
+
+      // The sweep runs when a new orphan is written, which is a tab holding
+      // work closing.
+      const doomed = await context.newPage();
+      await doomed.goto(fixtures.urlFor(HELIOS_ROLE), { waitUntil: 'domcontentloaded' });
+      await cardAppears(doomed);
+      await worker.evaluate(async (url) => {
+        const [tab] = await chrome.tabs.query({ url });
+        const store = chrome.storage.session ?? chrome.storage.local;
+        await store.set({
+          [`trail:${tab.id}`]: { pages: [{ url, title: 'Helios' }], work: { letter: 'the newest one' }, at: Date.now() },
+        });
+      }, doomed.url());
+      await doomed.close();
+      await new Promise((r) => setTimeout(r, 1500));
+
+      const left = await worker.evaluate(async (groups) => {
+        const store = chrome.storage.session ?? chrome.storage.local;
+        const all = await store.get(null);
+        return groups.map((keys) => keys.filter((k) => all[k] !== undefined).length);
+      }, planted);
+
+      const partial = left.map((kept, i) => ({ kept, of: planted[i].length }))
+        .filter((g) => g.kept !== 0 && g.kept !== g.of);
+      check(
+        'no application is left reachable from only some of its pages',
+        partial.length === 0,
+        partial.length ? partial.map((g) => `${g.kept}/${g.of}`).join(', ') : left.join(', '),
+      );
+      // And something was actually let go, or the case proves nothing.
+      check('and the sweep did do something', left.some((kept) => kept === 0), left.join(', '));
+    }
+
+    /*
      * Which tab the popup's buttons act on.
      *
      * `activeTab` steps around the popup's own page and used to take the

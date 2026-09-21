@@ -2457,13 +2457,40 @@ async function sweepOrphans() {
     .map(([key, value]) => ({ key, at: value?.at ?? 0 }));
 
   const now = Date.now();
-  const expired = mine.filter((o) => now - o.at > TRAIL_STALE_MS).map((o) => o.key);
-  // Newest first, and anything past the limit goes with the expired ones.
-  const surplus = mine
-    .filter((o) => !expired.includes(o.key))
-    .sort((a, b) => b.at - a.at)
-    .slice(ORPHAN_LIMIT)
-    .map((o) => o.key);
+  const expired = new Set(mine.filter((o) => now - o.at > TRAIL_STALE_MS).map((o) => o.key));
+
+  /*
+   * By the moment each was written, because that is what an application is
+   * here.
+   *
+   * A closed tab parks its writing under *every* page of the trail it was on
+   * — the posting, the form, whatever came between — so that coming back to
+   * whichever of them you were last looking at finds it. One application is
+   * therefore several keys, written in one go and all carrying the same `at`.
+   *
+   * The count used to be of keys, newest first, cut wherever the number ran
+   * out. That cut falls inside an application as easily as between two: four
+   * of five pages kept and the fifth let go, so the letter is still there and
+   * which page you come back through decides whether you find it. Nothing
+   * says so either way, and the one page people actually return to — the
+   * posting they searched for again — is as likely to be the dropped one as
+   * not.
+   */
+  const groups = new Map();
+  for (const o of mine) {
+    if (expired.has(o.key)) continue;
+    groups.set(o.at, [...(groups.get(o.at) ?? []), o.key]);
+  }
+
+  const surplus = [];
+  let kept = 0;
+  for (const [, keys] of [...groups.entries()].sort((a, b) => b[0] - a[0])) {
+    // Whole or not at all — except that the newest is always kept, so a trail
+    // longer than the whole budget cannot throw away the thing that has just
+    // been rescued.
+    if (kept === 0 || kept + keys.length <= ORPHAN_LIMIT) kept += keys.length;
+    else surplus.push(...keys);
+  }
 
   const doomed = [...expired, ...surplus];
   if (doomed.length > 0) await session().remove(doomed).catch(() => undefined);
