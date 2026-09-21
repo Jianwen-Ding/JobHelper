@@ -30,6 +30,8 @@ import {
   HEAVY_POSTING,
   HELIOS_FORM,
   HELIOS_ROLE,
+  SWAP_FORM,
+  SWAP_FORM_TWO,
   cleanStore,
   findChromium,
   pointExtensionAt,
@@ -49,7 +51,7 @@ const HOST = '#jobhelper-card-host';
  * interrupted run otherwise leaves its applications for whoever gets that
  * store next — who then reports a bug in code that is behaving perfectly.
  */
-const MINE = ['Helios'];
+const MINE = ['Helios', 'Caelum', 'Tabor'];
 
 let passed = 0;
 let failed = 0;
@@ -940,7 +942,7 @@ async function main() {
         const page = await context.newPage();
         const errors = [];
         page.on('pageerror', (e) => errors.push(String(e).slice(0, 120)));
-        await page.goto(fixtures.urlFor(HELIOS_FORM), { waitUntil: 'domcontentloaded' });
+        await page.goto(fixtures.urlFor(SWAP_FORM), { waitUntil: 'domcontentloaded' });
         await settled(page);
         const card = cardOf(page);
         await press(card, 'Build resume');
@@ -994,13 +996,34 @@ async function main() {
          * not refuse those — so which row it is, and what state it is in, is
          * the only thing that says which request lost the save.
          */
-        const strays = (landed.applications ?? []).filter((a) => /helios/i.test(a.company ?? ''));
+        const strays = (landed.applications ?? []).filter((a) => /caelum/i.test(a.company ?? ''));
         check(
           'the other save is untouched',
           strays.length === 0,
           strays.length
             ? strays.map((a) => `${a.id} [${a.status}] role=${JSON.stringify(a.role ?? '')}`).join(' | ')
             : (landed.applications ?? []).map((a) => a.company).join(', ') || '(empty)',
+        );
+        /*
+         * And it is in the save it was built from, which is the half of the
+         * claim the check above cannot make on its own.
+         *
+         * "No Caelum row over there" passes just as well when nothing was ever
+         * filed anywhere — a posting the analysis could not name yields no
+         * company and no role, `holdASpace` returns before it writes, and the
+         * group reports a save protected from a write that never happened.
+         * That is not hypothetical here: this form was moved onto an employer
+         * of its own to stop an earlier group's work being rescued onto it,
+         * and a fixture with a new name is exactly the thing that can fail to
+         * be read.
+         */
+        const home = await fetch(`${SERVER}/api/applications`).then((r) => r.json());
+        const filed = (home.applications ?? []).filter((a) => /caelum/i.test(a.company ?? ''));
+        check(
+          'and it is in the save it was built from',
+          filed.length > 0,
+          filed.map((a) => `${a.id} [${a.status}]`).join(' | ') ||
+            (home.applications ?? []).map((a) => a.company).join(', ') || '(empty)',
         );
         check('nothing was thrown at the page', errors.length === 0, errors.join('; '));
         await page.close();
@@ -1048,10 +1071,10 @@ async function main() {
       const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'rmm-other-save-'));
       try {
         /*
-         * The group above left its Helios application staged in this save —
-         * building files it as `applying` so the documents are in the upload
-         * folder before a portal's dialog opens. The card would come up on
-         * that one, which is a different card with different buttons.
+         * The group above left its application staged in this save — building
+         * files it as `applying` so the documents are in the upload folder
+         * before a portal's dialog opens. The card would come up on that one,
+         * which is a different card with different buttons.
          */
         await cleanStore(own.url, MINE);
         await pointExtensionAt(context, context.serviceWorkers()[0], own.url);
@@ -1059,18 +1082,18 @@ async function main() {
         const page = await context.newPage();
         const errors = [];
         page.on('pageerror', (e) => errors.push(String(e).slice(0, 120)));
-        await page.goto(fixtures.urlFor(HELIOS_FORM), { waitUntil: 'domcontentloaded' });
+        await page.goto(fixtures.urlFor(SWAP_FORM_TWO), { waitUntil: 'domcontentloaded' });
         await settled(page);
         const card = cardOf(page);
         /*
-         * Built only if it is not already. The card rescues the work left by
-         * the group above — that is what the orphan sweep is for — and comes
-         * up on this posting with the resume already compiled, which is the
-         * state this group wants anyway. Pressing a button that is not there
-         * would fail for a reason that has nothing to do with saves.
+         * Built here, on a form no other group opens. This used to press
+         * "Build resume" only if it was there, because the card rescued the
+         * work left behind by an earlier group on the shared Helios form and
+         * came up already compiled — but a resume built two groups ago
+         * against the save that was open then is not what this group is about
+         * to watch the save change under. See `SWAP_FORM_TWO`.
          */
-        const build = card.getByRole('button', { name: 'Build resume' });
-        if (await build.count()) await build.click();
+        await press(card, 'Build resume');
         await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
 
         /*
@@ -1123,13 +1146,23 @@ async function main() {
          * not refuse those — so which row it is, and what state it is in, is
          * the only thing that says which request lost the save.
          */
-        const strays = (landed.applications ?? []).filter((a) => /helios/i.test(a.company ?? ''));
+        const strays = (landed.applications ?? []).filter((a) => /tabor/i.test(a.company ?? ''));
         check(
           'the other save is untouched',
           strays.length === 0,
           strays.length
             ? strays.map((a) => `${a.id} [${a.status}] role=${JSON.stringify(a.role ?? '')}`).join(' | ')
             : (landed.applications ?? []).map((a) => a.company).join(', ') || '(empty)',
+        );
+        // And in the save it was built from — see the group above, whose note
+        // says why a check for an absence needs the presence beside it.
+        const home = await fetch(`${SERVER}/api/applications`).then((r) => r.json());
+        const filed = (home.applications ?? []).filter((a) => /tabor/i.test(a.company ?? ''));
+        check(
+          'and it is in the save it was built from',
+          filed.length > 0,
+          filed.map((a) => `${a.id} [${a.status}]`).join(' | ') ||
+            (home.applications ?? []).map((a) => a.company).join(', ') || '(empty)',
         );
         check('nothing was thrown at the page', errors.length === 0, errors.join('; '));
         await page.close();

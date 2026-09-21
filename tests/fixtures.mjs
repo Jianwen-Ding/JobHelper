@@ -306,6 +306,42 @@ export const SOLO_OTHER_FORM = {
   html: page('Application — Rigel', 'Rigel', FORM_BODY),
 };
 
+/*
+ * Two more forms nobody else touches, for the same reason as the postings
+ * above and one step further along.
+ *
+ * `adverse` has two groups about the save changing underneath an application
+ * that is being written, and both of them have to *start* the build: what
+ * they measure is a compile that lands after the editor has moved on. Both
+ * were on `HELIOS_FORM`, which four earlier groups in the same file open and
+ * close — one of them after building — so the work parked by those closures
+ * was rescued onto the card before the group got to it, and the button it
+ * reaches for was already saying "Recompile":
+ *
+ *     Error: No "Build resume" button to press.
+ *     The buttons on the card were: … "Recompile", "Apply feedback", …
+ *
+ * Pressing "Recompile" instead would paper over it and measure the wrong
+ * thing — a resume compiled against the save that was open two groups ago is
+ * not one built here — so these get an employer of their own. A form on its
+ * own is enough: the role comes off the path, as it does for `HELIOS_FORM`.
+ */
+export const SWAP_FORM = {
+  name: 'swap-form',
+  path: '/caelum/apply/platform-engineer',
+  company: 'Caelum',
+  title: 'Apply — Caelum',
+  html: page('Apply — Caelum', 'Caelum', FORM_BODY),
+};
+
+export const SWAP_FORM_TWO = {
+  name: 'swap-form-two',
+  path: '/tabor/apply/platform-engineer',
+  company: 'Tabor',
+  title: 'Apply — Tabor',
+  html: page('Apply — Tabor', 'Tabor', FORM_BODY),
+};
+
 export const ASHBY_ROLE = {
   name: 'ashby-role',
   path: '/ashby/lyra/role-4c2',
@@ -1479,7 +1515,10 @@ export const NAVIGATION = [
   LETTER_SPA, LETTER_SPA_FORM, LETTER_SPA_PLAIN,
 ];
 
-export const ALL = [STREAMLY, NORTHWIND, HELIOS_ROLE, HELIOS_FORM, HEAVY_POSTING, ...QUIET, ...NAVIGATION];
+export const ALL = [
+  STREAMLY, NORTHWIND, HELIOS_ROLE, HELIOS_FORM, HEAVY_POSTING, SWAP_FORM, SWAP_FORM_TWO,
+  ...QUIET, ...NAVIGATION,
+];
 
 /**
  * Serve every fixture from one origin. Returns the base url and a `urlFor`
