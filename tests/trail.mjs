@@ -736,3 +736,107 @@ describe('two role titles', () => {
     assert.equal(plainlyAnotherRole('Senior', 'Remote'), false);
   });
 });
+
+/*
+ * The two ways a click or a referrer vouched for a job it knew nothing about.
+ *
+ * Both were measured against this module before they were fixed, and both
+ * produced the failure the file's header opens with: one application holding
+ * two jobs, no chip, the first job's letter and resume still on the card, and
+ * the first job's description handed to whatever is written next.
+ */
+describe('evidence about where you went, and not about which job', () => {
+  const now = Date.now();
+
+  /*
+   * `watchForApplyClicks` matches buttons as well as links, and a button has
+   * no href — so the expectation it sets is the page's own address. On a
+   * board showing every job at one address, pressing "Easy Apply", abandoning
+   * the modal and clicking the next job in the list arrived with an
+   * expectation that vouched for it.
+   */
+  describe('an Apply button that does not navigate', () => {
+    const board = 'http://board.example/jobs';
+    const trail = {
+      pages: [{ url: board, company: 'Acme', role: 'Platform Engineer', at: now }],
+      expecting: { to: board, at: now },
+      at: now,
+    };
+
+    it('does not vouch for a plainly different job at that address', () => {
+      assert.equal(
+        judgeApplication(trail, { url: board, company: 'Acme', role: 'Data Scientist' }, now),
+        'unsure',
+      );
+    });
+
+    it('and never for another employer', () => {
+      assert.equal(
+        judgeApplication(trail, { url: board, company: 'Helios', role: 'Data Scientist' }, now),
+        'different',
+      );
+    });
+
+    it('but still carries an application to its own form', () => {
+      const posting = 'http://x.example/jobs/7';
+      const form = 'http://x.example/jobs/7/apply';
+      const onIt = {
+        pages: [{ url: posting, company: 'Acme', role: 'Platform Engineer', at: now }],
+        expecting: { to: form, at: now },
+        at: now,
+      };
+      // The form calls itself "Application", which is not a different job.
+      assert.equal(judgeApplication(onIt, { url: form, company: 'Acme', role: 'Application' }, now), 'same');
+    });
+  });
+
+  /*
+   * A careers site is where every role at an employer is listed, and the first
+   * page of a trail is kept for its whole life — so one hand-off from that
+   * host vouched for every later job reached from it. The company veto cannot
+   * help: it is the same employer.
+   */
+  describe('a hand-off from a careers site to an applicant tracking system', () => {
+    const careers = 'https://careers.acme.com/jobs/platform-engineer';
+    const first = 'https://job-boards.greenhouse.io/acme/jobs/1111';
+    const second = 'https://job-boards.greenhouse.io/acme/jobs/2222';
+    const trail = {
+      pages: [
+        { url: careers, company: 'Acme', role: 'Platform Engineer', at: now },
+        { url: first, company: 'Acme', role: 'Platform Engineer', at: now },
+      ],
+      at: now,
+    };
+
+    it('does not keep vouching for the next role on that site', () => {
+      assert.equal(
+        judgeApplication(
+          trail,
+          { url: second, company: 'Acme', role: 'Data Scientist', referrerHost: 'careers.acme.com' },
+          now,
+        ),
+        'unsure',
+      );
+    });
+
+    it('and still joins the hand-off it was written for', () => {
+      const one = { pages: [{ url: careers, company: 'Acme', role: 'Platform Engineer', at: now }], at: now };
+      assert.equal(
+        judgeApplication(
+          one,
+          { url: first, company: 'Acme', role: 'Platform Engineer', referrerHost: 'careers.acme.com' },
+          now,
+        ),
+        'same',
+      );
+    });
+
+    it('including when the form does not say what job it is', () => {
+      const one = { pages: [{ url: careers, company: 'Acme', role: 'Platform Engineer', at: now }], at: now };
+      assert.equal(
+        judgeApplication(one, { url: first, company: 'Acme', referrerHost: 'careers.acme.com' }, now),
+        'same',
+      );
+    });
+  });
+});

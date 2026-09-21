@@ -468,13 +468,51 @@ export function judgeApplication(trail, page, now = Date.now()) {
     if (p?.url && namesAnotherJob(page.url, p.url)) return 'different';
   }
 
-  // The click is the strongest evidence there is, and the only evidence left
-  // when the referrer has been stripped — which plenty of sites do.
-  if (wasExpected(trail, page.url, now)) return 'same';
-
   const co = (c) => (c ?? '').trim().toLowerCase();
   const mine = co(page.company);
   const known = trail.pages.map((p) => co(p.company)).filter(Boolean);
+  const otherEmployer = Boolean(mine) && known.length > 0 && !known.includes(mine);
+
+  /*
+   * What the page says it is, against what the trail is already about.
+   *
+   * Hoisted above the click, because the click needed it. A role title is the
+   * weakest identity there is — forms retitle themselves, boards append the
+   * company — so it says "unsure" rather than "different", and a wrong split
+   * costs somebody the letter they were halfway through. But no opinion at
+   * all is what let two jobs become one below.
+   */
+  const knownRoles = trail.pages.map((p) => p?.role).filter(Boolean);
+  const looksNew = () =>
+    knownRoles.length > 0 && knownRoles.every((role) => plainlyAnotherRole(page.role, role));
+
+  /*
+   * The click is the strongest evidence there is, and the only evidence left
+   * when the referrer has been stripped — which plenty of sites do. It is
+   * evidence about *where you went*, though, and none at all about whether
+   * you went to the same job.
+   *
+   * `watchForApplyClicks` matches buttons as well as links, and a button has
+   * no href — so the expectation it sets is the page's own address. On a
+   * board that shows every job at one address, pressing "Easy Apply",
+   * abandoning the modal and clicking the next job in the list therefore
+   * arrived with an expectation that vouched for it. Measured against this
+   * module: trail "Acme / Platform Engineer" expecting board.example/jobs,
+   * page "Acme / Data Scientist" at board.example/jobs -> "same"; and with
+   * the page at "Helios / Data Scientist" -> "same" as well, because the
+   * company veto below had not run yet. Two employers in one application, no
+   * chip, the old letter and the old resume still on the card.
+   *
+   * So the click still vouches, and only for what it is evidence of: a
+   * plainly different employer is refused outright, a plainly different role
+   * is left unsure, and everything else — a form that calls itself
+   * "Application", a step with no title, the ordinary second page — joins as
+   * it always did.
+   */
+  if (wasExpected(trail, page.url, now)) {
+    if (otherEmployer) return 'different';
+    return looksNew() ? 'unsure' : 'same';
+  }
 
   // A different company is a different application, whatever else matches.
   //
@@ -483,24 +521,10 @@ export function judgeApplication(trail, page, now = Date.now()) {
   // name alone — no matter that they were plainly two different jobs at two
   // different addresses. The same name is a necessary condition for joining,
   // never a sufficient one; where the pages are still has to agree.
-  if (mine && known.length > 0 && !known.includes(mine)) return 'different';
+  if (otherEmployer) return 'different';
 
   const here = hostOf(page.url);
   if (!here) return 'different';
-
-  /*
-   * What the page says it is, against what the trail is already about.
-   *
-   * Only consulted where the address has already said "same page" — that is
-   * the case with no other evidence left, and the one a results pane
-   * produces. Unsure rather than different because a role title is the
-   * weakest identity there is: forms retitle themselves, boards append the
-   * company, and a wrong split costs somebody the letter they were halfway
-   * through.
-   */
-  const knownRoles = trail.pages.map((p) => p?.role).filter(Boolean);
-  const looksNew = () =>
-    knownRoles.length > 0 && knownRoles.every((role) => plainlyAnotherRole(page.role, role));
 
   for (const p of trail.pages) {
     const there = hostOf(p.url);
@@ -511,10 +535,29 @@ export function judgeApplication(trail, page, now = Date.now()) {
       if (relatedPath(page.url, p.url)) return looksNew() ? 'unsure' : 'same';
       continue;
     }
-    // Different site: only by having been sent there from the trail.
+    /*
+     * Different site: only by having been sent there from the trail — and
+     * only for the job it sent you to.
+     *
+     * The same-site branch above was given `looksNew()` and this one was not,
+     * and a careers site is precisely where every role at an employer is
+     * listed. `keepPages` always keeps the first page, so the vouching host
+     * stays in the trail for its whole two-hour life: read Platform Engineer
+     * on careers.acme.com, press Apply into Greenhouse, go back, click Data
+     * Scientist — which careers sites link straight at the ATS posting — and
+     * the referrer vouched for it. Measured against this module: trail
+     * [careers.acme.com/jobs/platform-engineer, greenhouse/acme/jobs/1111],
+     * page greenhouse/acme/jobs/2222 as "Data Scientist" with referrerHost
+     * careers.acme.com -> "same". No chip, the Platform Engineer resume and
+     * half-written letter carried over, and that description handed to
+     * whatever is written next.
+     *
+     * The company veto could not save it: it is the same employer. So the
+     * role is consulted here as it is there, on the same terms.
+     */
     const cameFromHere =
       page.referrerHost && (page.referrerHost === there || rootOf(page.referrerHost) === rootOf(there));
-    if (cameFromHere) return 'same';
+    if (cameFromHere) return looksNew() ? 'unsure' : 'same';
   }
 
   /*
