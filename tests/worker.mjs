@@ -515,9 +515,57 @@ async function main() {
      * applied for out of a second save was taken for one already held and
      * never got a row there at all.
      */
+    /*
+     * And not for a posting somebody only read.
+     *
+     * `worthKeeping` is true of a spec alone, and the opening read of every
+     * posting produces one — so the keeper, saving every couple of seconds,
+     * filed a tracker row for every job anybody looked at. Click down a board
+     * and a dozen drafts are waiting for jobs you read one line of. A row
+     * says an application is under way, so it takes something somebody did:
+     * a resume compiled, files staged, a letter started, an answer written.
+     */
+    group('A posting that was only read opens nothing');
+    {
+      const spaces = () => store.sentTo('/api/workspace').length;
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      await ask(driver, 'analyze', { url: 'http://g.example/jobs/read-only', title: 'Helios', html: '<p>read</p>', company: 'Helios' });
+
+      const before = spaces();
+      // What the card holds after an opening read and nothing else: the
+      // proposal it worked out, and no letter, no answers, nothing compiled.
+      await ask(driver, 'saveWork', {
+        // Its own company and role: `heldKey` is per save, company and role,
+        // so borrowing another group's would reserve the key it is about to
+        // test and suppress its push.
+        work: { spec: { id: 'job-read', generatedFor: { company: 'Solace', role: 'Reader' } } },
+      });
+      await new Promise((r) => setTimeout(r, 600));
+      check('reading a posting files no draft', spaces() === before, `${spaces() - before} opened`);
+
+      // And the moment something is built, it does.
+      await ask(driver, 'saveWork', {
+        work: {
+          spec: { id: 'job-read', generatedFor: { company: 'Solace', role: 'Reader' } },
+          render: { pages: 1 },
+        },
+      });
+      for (let i = 0; i < 60 && spaces() === before; i++) await new Promise((r) => setTimeout(r, 50));
+      check('and building one does', spaces() === before + 1, `${spaces() - before} opened`);
+    }
+
     group('Holding a space in the editor');
     {
-      const helios = { spec: { id: 'job-7', generatedFor: { company: 'Helios', role: 'Platform Engineer' } } };
+      /*
+       * With a compiled resume on it, because that is what opens a row at
+       * all: a spec alone is the card's opening read of a posting, and
+       * reading a posting no longer files anything. See `madeSomething`.
+       */
+      const helios = {
+        spec: { id: 'job-7', generatedFor: { company: 'Helios', role: 'Platform Engineer' } },
+        render: { pages: 1 },
+      };
       const spaces = () => store.sentTo('/api/workspace').length;
       /** Wait for the push, which is sent alongside the reply rather than before it. */
       const settle = async (want) => {

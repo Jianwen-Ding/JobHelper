@@ -774,9 +774,32 @@ async function askFrames(tabId, message) {
  * only.
  */
 const holding = new Set();
+/**
+ * Something the person made, as against something the card worked out.
+ *
+ * `worthKeeping` is true of a spec alone, and the opening read of every
+ * posting produces one — so the keeper, which saves every couple of seconds,
+ * opened a row in the tracker for every posting anybody *looked at*. Click
+ * down a board and you come back to a dozen drafts for jobs you read a line
+ * of and moved on from, each one a thing to notice and dismiss.
+ *
+ * A row is a claim that an application is under way, so what makes one is a
+ * deliberate act: a resume compiled, files staged for a form, a letter
+ * started, an answer written. Reading a posting is not one of those, and
+ * Submit files a row by its own route regardless.
+ */
+function madeSomething(work) {
+  return Boolean(
+    work?.render ||
+      work?.staged ||
+      work?.letter?.trim() ||
+      Object.keys(work?.answersByQuestion ?? {}).length > 0,
+  );
+}
+
 async function holdASpace(trail, tabId) {
   const work = trail?.work;
-  if (!worthKeeping(work)) return;
+  if (!madeSomething(work)) return;
 
   /*
    * Into the save this application was built from, and no other.
