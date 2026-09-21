@@ -484,7 +484,35 @@ const STYLED_RADIOS = `<!doctype html><html><head><meta charset="utf-8"><title>A
 </form>
 </body></html>`;
 
-const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS };
+/*
+ * A phrase for an answer, against the two shapes the same question comes in.
+ *
+ * Both of these are legal declarations, and both were got wrong in a way that
+ * looked like nothing: the radio pair was answered with the opposite of what
+ * the profile said, and the dropdown was not answered at all.
+ */
+const PHRASE_ANSWERS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="f">
+  <fieldset>
+    <legend>Will you now or in the future require sponsorship?</legend>
+    <label><input type="radio" name="spon" value="y"> Yes</label>
+    <label><input type="radio" name="spon" value="n"> No</label>
+  </fieldset>
+
+  <!-- The same question Greenhouse asks as a dropdown, prompt and all. -->
+  <label for="auth">Are you legally authorized to work in the United States?</label>
+  <select id="auth" name="auth">
+    <option value="">Select...</option><option>Yes</option><option>No</option>
+  </select>
+
+  <!-- Three answers is still three answers, prompt or no prompt. -->
+  <label for="three">Will you now or in the future require sponsorship?</label>
+  <select id="three" name="three">
+    <option value="">Choose</option><option>Yes</option><option>No</option><option>Prefer not to say</option>
+  </select>
+</form></body></html>`;
+
+const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -957,6 +985,61 @@ async function main() {
           auth: document.querySelector('input[name="auth"]:checked')?.value ?? '',
         };
       }, { b: base, profile: { ...PROFILE, work_authorization: 'Authorized to work in the US' } }),
+    );
+
+    /* ------------------------------------------------------------------ */
+
+    const phrases = await page.goto(`${base}/phrases`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(profile);
+        return {
+          spon: document.querySelector('input[name="spon"]:checked')?.value ?? '',
+          auth: document.getElementById('auth').value,
+          three: document.getElementById('three').value,
+          filled: report.filled.map((f) => f.key),
+        };
+      }, {
+        b: base,
+        profile: {
+          ...PROFILE,
+          requires_sponsorship: 'I do not at present require sponsorship',
+          work_authorization: 'Authorized to work in the US',
+        },
+      }),
+    );
+
+    group('A phrase for an answer, on a question you sign your name under');
+    /*
+     * The negation and the word it denies are four words apart, and the
+     * window that looks for it was three: what comes before a matched word
+     * always ends in the space between them, so `split` produced a trailing
+     * empty token and one of the four slots was spent on nothing. The profile
+     * says the applicant does not need sponsorship; the form came out saying
+     * they do, and it was counted as a field successfully answered.
+     */
+    check(
+      'a denial with words in the middle is still a denial',
+      phrases.spon === 'n',
+      `"${phrases.spon}" (y is a false declaration)`,
+    );
+    /*
+     * And the same question as a dropdown. `yesNoOption` wants a yes/no pair
+     * and nothing else, and the list it was handed dropped only the
+     * *disabled* options — so "Select…", which is almost never disabled, made
+     * every real yes/no dropdown a three-answer question and it was refused.
+     * The shape of the control was deciding whether the question got answered
+     * at all.
+     */
+    check(
+      'a dropdown with a prompt is still a yes/no question',
+      phrases.auth === 'Yes',
+      `"${phrases.auth}"`,
+    );
+    check(
+      'and three answers are still three answers, so it declines to guess',
+      phrases.three === '',
+      `"${phrases.three}"`,
     );
 
     group('Fields labelled the way the enterprise systems label them');

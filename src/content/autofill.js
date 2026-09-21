@@ -750,11 +750,24 @@ function yesNoFrom(value, key) {
       verdicts.add('no');
       continue;
     }
-    // Only the few words in front of it: a denial further away than that is
-    // about some other clause. "…does not require sponsorship" denies the
-    // sponsorship; "I do not need it now but will require sponsorship in
-    // 2027" does not.
-    const before = said.slice(0, hit.index).split(/\s+/).slice(-LOOK_BACK_WORDS).join(' ');
+    /*
+     * Only the few words in front of it: a denial further away than that is
+     * about some other clause. "…does not require sponsorship" denies the
+     * sponsorship; "I do not need it now but will require sponsorship in
+     * 2027" does not.
+     *
+     * Trimmed first, and that is the whole of this line's history. What comes
+     * before a matched word always ends in the space that separates them, so
+     * `split(/\s+/)` produced a trailing empty token and the window spent one
+     * of its four slots on it — three real words, not four. "I do not at
+     * present require sponsorship" put `not` one word outside a window that
+     * should have held it and came back `yes`, so the form was filled in with
+     * "Yes, I require sponsorship" for somebody who had written the opposite,
+     * and counted as a field successfully answered. That is the false legal
+     * declaration the note above this function exists to prevent, made by the
+     * function written to prevent it.
+     */
+    const before = said.slice(0, hit.index).trim().split(/\s+/).slice(-LOOK_BACK_WORDS).join(' ');
     verdicts.add(NEAR_NO.test(before) ? 'no' : 'yes');
   }
 
@@ -843,11 +856,25 @@ export function fillForm(fields, { overwrite = false } = {}) {
       const choosable = [...input.options].filter((o) => !isDisabled(o));
       const option =
         choosable.find((o) => sameOption(o.textContent, value) || sameOption(o.value, value)) ??
-        // And, failing that, a yes/no pair against a phrase. See `yesNoOption`.
+        /*
+         * And, failing that, a yes/no pair against a phrase. See
+         * `yesNoOption`, which wants a pair and nothing else — so the prompt
+         * has to come off first.
+         *
+         * `choosable` drops only the *disabled* options, and a dropdown's
+         * "Select…" is usually not disabled: every real yes/no `<select>`
+         * therefore arrived as three answers and was refused as a question
+         * with a third answer. So Greenhouse's work-authorisation dropdown
+         * was left blank against a profile saying "Authorized to work in the
+         * US", while the identical question asked as radio buttons on the
+         * same form was answered — the shape of the control decided whether
+         * the question got an answer. `looksLikePlaceholder` was already here
+         * and already knew what a prompt looks like.
+         */
         yesNoOption(
           key,
           value,
-          choosable.map((o) => ({ label: o.textContent, el: o })),
+          choosable.filter((o) => !looksLikePlaceholder(o, input)).map((o) => ({ label: o.textContent, el: o })),
         )?.el;
       if (option) {
         nativeSet(input, 'value', option.value);
