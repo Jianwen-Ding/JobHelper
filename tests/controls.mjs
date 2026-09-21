@@ -32,6 +32,7 @@ import {
   serveFixtures,
   requireOpenSave,
   pointExtensionAt,
+  serveSlowProxy,
 } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -153,6 +154,49 @@ async function main() {
       await popup.waitForTimeout(1000);
       return popup;
     };
+
+    /* ---------------------------------------------------------------- *
+     * Two looks at the server, and the slower one arriving last          *
+     * ---------------------------------------------------------------- */
+
+    /*
+     * `check` runs on boot and again every time the address changes, and a
+     * fetch against an address that swallows packets takes as long as its
+     * deadline to give up. Point the box at one of those, then at a server
+     * that is actually running: the second look answers in milliseconds and
+     * says "Connected", and then the first one's failure lands on top of it,
+     * blanks the picker to "— not connected —" and reports the live server as
+     * down. The function's own note is about the same disagreement in the
+     * other direction, which is what made this worth looking for.
+     */
+    group('The address is changed while the last look is still waiting');
+    {
+      // A proxy to nothing, slow to admit it: the shape of a server that is
+      // no longer there but whose socket still accepts.
+      const nowhere = await serveSlowProxy('http://127.0.0.1:1', { slowRoute: /health/, ms: 4000 });
+      const page = await openPopup();
+      try {
+        const setAddress = async (url) => {
+          await page.fill('#serverUrl', url);
+          await page.locator('#serverUrl').dispatchEvent('change');
+        };
+
+        await setAddress(nowhere.base);
+        // No wait: the point is that the first look is still in the air.
+        await setAddress(SERVER);
+
+        // Long enough for the slow one to give up and try to have its say.
+        await page.waitForTimeout(7000);
+        const said = (await page.locator('#status').textContent())?.trim() ?? '';
+        check('the live server is reported as connected', /connected/i.test(said), said);
+        check('and not as unreachable, by the look that was overtaken', !/not (running|connected)/i.test(said), said);
+        const picker = (await page.locator('#baseResumeId').textContent())?.trim() ?? '';
+        check('and the picker still holds its resumes', !/not connected/i.test(picker), picker.slice(0, 60));
+      } finally {
+        await page.close().catch(() => undefined);
+        nowhere.close();
+      }
+    }
 
     /* ---------------------------------------------------------------- *
      * Muting a site, and wanting it back                                 *

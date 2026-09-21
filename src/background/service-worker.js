@@ -658,6 +658,24 @@ const framesKey = (tabId) => `frames:${tabId}`;
  */
 const frameWrites = new Map();
 
+/**
+ * The same exclusion, for the settings — which are one object shared by the
+ * popup, the card and every tab, and are changed by reading them, altering
+ * one list and writing the whole thing back. See `muteHost`.
+ */
+let settingWrites = Promise.resolve();
+
+function changeSettings(change) {
+  const next = settingWrites
+    .then(async () => {
+      const patch = change(await getSettings());
+      if (patch) await chrome.storage.sync.set(patch);
+    })
+    .catch(() => undefined);
+  settingWrites = next;
+  return next;
+}
+
 function changeFrames(key, change) {
   const next = (frameWrites.get(key) ?? Promise.resolve())
     .then(async () => {
@@ -1515,6 +1533,33 @@ const handlers = {
 
   async setSettings({ patch }) {
     await chrome.storage.sync.set(patch);
+    return getSettings();
+  },
+
+  /**
+   * Mute a site, or stop muting it.
+   *
+   * Its own message because it is a read-modify-write of one shared list, and
+   * it had two callers doing it separately — the popup's button and the
+   * card's "never offer here" — each reading `mutedHosts`, adding its own
+   * host and writing the whole array back through `setSettings`. Mute one
+   * site from the card and another from the popup close together and the
+   * second read happens before the first write lands, so one of them is
+   * dropped: a button that said Muted and did nothing, and no way to tell
+   * except by meeting the site again.
+   *
+   * `chrome.storage.sync` has no compare-and-set, so the exclusion is the
+   * same promise chain `changeFrames` uses, and the note there applies here
+   * too: it is enough only because there is one service worker at a time.
+   */
+  async muteHost({ host, muted }) {
+    if (!host) return getSettings();
+    await changeSettings((settings) => {
+      const hosts = new Set(settings.mutedHosts ?? []);
+      if (muted) hosts.add(host);
+      else hosts.delete(host);
+      return { mutedHosts: [...hosts] };
+    });
     return getSettings();
   },
 

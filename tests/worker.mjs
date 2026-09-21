@@ -447,6 +447,53 @@ async function main() {
       store.role = 'Platform Engineer';
     }
 
+    /*
+     * Muting two sites at once, and neither of them going missing.
+     *
+     * `mutedHosts` is one array shared by the popup's button and every tab's
+     * card, and both changed it the same way: read the settings, add a host,
+     * write the whole array back. Two mutes close enough together and the
+     * second read happens before the first write lands, so one of them is
+     * dropped — a button that said Muted and did nothing, with no way to find
+     * out except by meeting the site again.
+     *
+     * Sent together on purpose: the worker is one process, so the only thing
+     * that can make this safe is the write chain inside it.
+     */
+    group('Two sites muted at the same moment');
+    {
+      await ask(driver, 'setSettings', { patch: { mutedHosts: [] } });
+      const both = await driver.evaluate(
+        () =>
+          Promise.all(
+            ['first.example', 'second.example'].map(
+              (host) =>
+                new Promise((done) =>
+                  chrome.runtime.sendMessage({ type: 'muteHost', payload: { host, muted: true } }, done),
+                ),
+            ),
+          ).then(() =>
+            new Promise((done) =>
+              chrome.runtime.sendMessage({ type: 'getSettings' }, (reply) => done(reply?.data?.mutedHosts ?? [])),
+            ),
+          ),
+      );
+      check('both are muted, not just the later one', both.length === 2, JSON.stringify(both));
+      check('and each by name', both.includes('first.example') && both.includes('second.example'), JSON.stringify(both));
+
+      // And unmuting is the same operation backwards.
+      const left = await driver.evaluate(
+        () =>
+          new Promise((done) =>
+            chrome.runtime.sendMessage(
+              { type: 'muteHost', payload: { host: 'first.example', muted: false } },
+              (reply) => done(reply?.data?.mutedHosts ?? []),
+            ),
+          ),
+      );
+      check('taking one off leaves the other', JSON.stringify(left) === JSON.stringify(['second.example']), JSON.stringify(left));
+    }
+
     /* ---------------------------------------------------------------- *
      * Holding a space in the editor                                     *
      * ---------------------------------------------------------------- */

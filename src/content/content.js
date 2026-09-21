@@ -449,11 +449,10 @@
    * site", which is the one place a person can see it and undo it.
    */
   async function setMuted(muted) {
-    const settings = await send('getSettings');
-    const hosts = new Set(settings.mutedHosts ?? []);
-    if (muted) hosts.add(location.hostname);
-    else hosts.delete(location.hostname);
-    lastSettings = await send('setSettings', { patch: { mutedHosts: [...hosts] } });
+    // One message, because the list is shared with the popup and reading it
+    // here to write it back there is how one of two mutes goes missing. See
+    // `muteHost` in the worker.
+    lastSettings = await send('muteHost', { host: location.hostname, muted });
   }
 
   /**
