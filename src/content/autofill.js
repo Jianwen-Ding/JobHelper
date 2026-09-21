@@ -253,6 +253,18 @@ const handBack = (description, skipped) => {
 const BARE_NAME = /^(full\s+)?name$/i;
 
 /**
+ * A label without the punctuation a form puts round it.
+ *
+ * `Name *` and `Name:` are how a required field and a colon-styled form
+ * write the commonest label on the page, and `BARE_NAME` is anchored at both
+ * ends — so the applicant's name was left out of every form that marks its
+ * required fields, silently, because no key matched and nothing that matches
+ * no key is reported. `cleanQuestion` has stripped exactly this from question
+ * text all along; the label handed to `BARE_NAME` never went through it.
+ */
+const withoutMarkers = (label) => clean(label).replace(/^[*:\s]+/, '').replace(/[*:\s]+$/, '');
+
+/**
  * Every document this page is really made of.
  *
  * `querySelectorAll` stops at a shadow boundary, so a careers site built out of
@@ -456,9 +468,51 @@ function labelFor(input) {
  */
 function describeField(input) {
   const label = labelFor(input);
-  const attrs = [input.name, input.id, input.placeholder].map(clean).filter(Boolean);
+  const attrs = [input.name, input.id, input.placeholder].flatMap(alsoAsWords).filter(Boolean);
   return clean([label, ...attrs].filter(Boolean).join(' ')).slice(0, 300);
 }
+
+/**
+ * An attribute value as the words it is made of.
+ *
+ * `\b` counts an underscore as a word character, so every pattern here that
+ * names a word failed against the snake_case half these systems use:
+ * `/\breferences?\b/` does not match `reference_email`, and
+ * `/\b(emergency|...)\b/` does not match `emergency_contact_phone`. The
+ * hyphenated spelling matched all along, which is what made the exclusion
+ * look covered — `reference-email` is kept out and `reference_email` was
+ * filled with the applicant's own address.
+ *
+ * camelCase for the same reason and the same systems: `referenceEmail` is one
+ * word to a regular expression and two to everybody else.
+ *
+ * Splitting can only add word boundaries, so nothing that matched before
+ * stops matching. What changes is that a name written the way a programmer
+ * writes it now reads the way its label does.
+ */
+const asWords = (value) => clean(String(value ?? '').replace(/_+/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2'));
+
+/**
+ * Both spellings, because splitting is not always right either.
+ *
+ * `urls[LinkedIn]` is Lever's name for the LinkedIn box, and the pattern for
+ * it is `/\b(linked-?in)\b/` — a hyphen is allowed and a space is not, so
+ * splitting the camel case and keeping only the split turned a field that had
+ * always been filled into one that never was. Measured:
+ *
+ *   FAIL  Lever: fills the fields it should
+ *         input[name="urls[LinkedIn]"] wanted "linkedin.com/in/jianwen", got ""
+ *
+ * A description is a bag of words rather than a sentence, so the answer is to
+ * carry both: the name as written, which every pattern was designed against,
+ * and the name as words, which is what the exclusions need. Nothing that
+ * matched before can stop matching, which is the property worth having here.
+ */
+const alsoAsWords = (value) => {
+  const raw = clean(value);
+  const split = asWords(value);
+  return split && split !== raw ? [raw, split] : [raw];
+};
 
 /** The label alone, for cases where attribute noise would mislead. */
 function questionFor(input) {
@@ -879,9 +933,27 @@ export function fillForm(fields, { overwrite = false } = {}) {
     if (handBack(description, skipped)) continue;
     if (isNotAboutYou(description, clean(labelFor(input)))) continue;
 
-    let match = FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key]);
+    /*
+     * The first pattern that matches, and then whether the profile has it —
+     * not the first pattern that matches *and* has a value.
+     *
+     * The order of `FIELD_PATTERNS` is load-bearing and says so: country sits
+     * above state precisely because "Country/Region" matches `region`. But
+     * `&& fields[key]` made the search walk past a pattern whose key the
+     * profile happened to be missing, so on a profile with a state and no
+     * country — an ordinary partial profile — "Country/Region" fell through
+     * to `address_state` and a Californian's application said Canada, the
+     * value "CA" having found `<option value="CA">Canada</option>`. Reported
+     * as filled, in green.
+     *
+     * What a field is asking for does not depend on what this profile
+     * happens to hold. Nothing here fills a field it has no value for; it
+     * simply no longer goes looking for a different question to answer.
+     */
+    const named = FIELD_PATTERNS.find(([, re]) => re.test(description));
+    let match = named && fields[named[0]] ? named : undefined;
 
-    if (!match && fields.full_name && BARE_NAME.test(clean(labelFor(input)))) {
+    if (!match && fields.full_name && BARE_NAME.test(withoutMarkers(labelFor(input)))) {
       match = ['full_name'];
     }
     if (!match) continue;
@@ -1046,10 +1118,21 @@ function groupLabelFor(radios) {
     const said = fromLabelledBy(first);
     if (said) return said;
   }
-  const aria = clean(first.getAttribute('aria-label'));
-  if (aria) return aria;
-
   /*
+   * Not the first button's own `aria-label`, which this used to take.
+   *
+   * The paragraph above says why the shared `aria-labelledby` is read and the
+   * first button's own label is not: "each one also carries its own answer".
+   * An `aria-label` is that own answer — on the markup every framework
+   * generates for an accessible radio group, `aria-label="Yes"` and
+   * `aria-label="No"` are the two buttons. Taking the first made the
+   * question "Yes", so the group's whole description was "Yes auth_q", no
+   * pattern matched, and `if (!match) continue` dropped it without even
+   * reporting it skipped: a required work-authorization question left blank
+   * under a card saying the form was done. It also returned before the `<th>`
+   * route and the ancestor climb below, which are the two branches written to
+   * find the real question.
+   *
    * A row header, which is how the older enterprise systems lay out a
    * questionnaire: the question in a `<th scope="row">`, the buttons in the
    * `<td>` beside it. `labelFor` learned this for text boxes — see the `th`
@@ -1212,9 +1295,10 @@ function answerRadioGroups(fields, overwrite) {
      * sponsorship webinars?" matched `email` and was reported as a field
      * waiting for the user.
      */
-    const match = FIELD_PATTERNS.find(
-      ([key, re]) => CHOOSABLE.has(key) && re.test(description) && fields[key],
-    );
+    // The first choosable pattern that matches, then whether the profile has
+    // it — see the same change in `fillForm` for why the two are separate.
+    const named = FIELD_PATTERNS.find(([key, re]) => CHOOSABLE.has(key) && re.test(description));
+    const match = named && fields[named[0]] ? named : undefined;
     if (!match) continue;
 
     const [key] = match;
@@ -1325,7 +1409,7 @@ function unfillableChoices(fields, filled) {
  * for, or enough of the form that nothing else would have it.
  */
 const APPLICATION_WORDS =
-  /\b(submit (your )?application|start your application|cover letter|work authorizat|legally authorized to work|require sponsorship|equal opportunity employer|voluntary self-identification)\b/i;
+  /\b(submit (your )?application|start your application|cover letter|work authoriz\w*|legally authorized to work|require sponsorship|equal opportunity employer|voluntary self-identification)\b/i;
 
 /**
  * A question only the employer would ask.
@@ -1383,7 +1467,7 @@ export function looksLikeApplicationForm() {
     if (match) keys.add(match[0]);
     // The same bare "Name" that `fillForm` fills — a real part of a person,
     // and on several systems the only place the name is asked for.
-    else if (BARE_NAME.test(clean(labelFor(input)))) keys.add('full_name');
+    else if (BARE_NAME.test(withoutMarkers(labelFor(input)))) keys.add('full_name');
   }
 
   let telltales = 0;

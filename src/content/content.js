@@ -699,6 +699,34 @@
        * upload control on a good half of these portals is in one, exactly as
        * the text fields are.
        */
+      /*
+       * The same files, handed to the card rather than put in a box.
+       *
+       * For dragging. A drag has to have its files in hand the instant
+       * `dragstart` fires — `dataTransfer` cannot be filled in after an await
+       * — so the card fetches them when the pointer arrives over the chip and
+       * holds them until the drop. Nothing is placed and nothing is reported;
+       * this is the bytes and their names, and what happens next is the
+       * page's business.
+       */
+      /*
+       * What this form is asking for, so the card can point at the right
+       * document rather than listing three and leaving you to decide.
+       */
+      case 'wantedDocuments': {
+        const { documentsWanted } = await imports.attach();
+        return documentsWanted();
+      }
+
+      case 'attachmentFiles': {
+        const got = await send('attachments', { application: payload.application ?? null });
+        return {
+          files: got?.files ?? [],
+          missing: (got?.missing ?? []).map((m) => ({ name: m.name, why: m.why })),
+          dir: got?.dir ?? null,
+        };
+      }
+
       case 'attachFiles': {
         const got = await send('attachments', { application: payload.application ?? null });
         const files = got?.files ?? [];
@@ -1096,6 +1124,43 @@
     return { ...here, framed, pages: [...earlier, ...framed, here] };
   }
 
+  /**
+   * Whether this tab is in the middle of an application somebody has written
+   * into.
+   *
+   * The one thing that outranks a low score. The score is a guess about the
+   * page; this is a fact about the tab, and a guess must not be allowed to
+   * bury work already done — see `openHere` in the worker, and the walk that
+   * produced it: Indeed, to a posting, to an application form on a host no
+   * pattern knows, whose first paint has almost no words in it. The card
+   * withdrew without a word, and the letter written two pages back had no
+   * route back to the screen.
+   *
+   * Carrying on here does not claim the page is a posting. It puts the card
+   * up so the question can be asked: `remember` still judges whether this
+   * page joins the application, branches from it, or starts a new one, and
+   * the branch chip is how it offers to undo a wrong guess.
+   *
+   * Quiet on failure, because a worker that will not answer is not a reason
+   * to start offering on every page.
+   */
+  let heldFor = { url: null, answer: false };
+  async function workIsOpenHere() {
+    /*
+     * Answered once per address, and the memo is correctness rather than
+     * thrift. Both gates ask, and between them `analyze` records this page
+     * into the trail — which, where the judge branched, replaces the work
+     * with a fresh empty one. Asking again after that would be asking about
+     * the application this page just started rather than the one it might
+     * have interrupted, and the answer would be "nothing here", which is the
+     * behaviour being fixed.
+     */
+    if (heldFor.url === location.href) return heldFor.answer;
+    const held = await send('openHere', {}).catch(() => null);
+    heldFor = { url: location.href, answer: Boolean(held?.open && held?.made) };
+    return heldFor.answer;
+  }
+
   /** Who this page is, as far as belonging to an application goes. */
   function pageIdentity() {
     let referrerHost;
@@ -1187,7 +1252,7 @@
       // the page around it, which on those pages is a heading and an iframe.
       // Everything else still applies: a muted host stays muted, and a page
       // the server does not think is a posting still loses its card below.
-      if (!viaFrame && localScore() < settings.minScore) return;
+      if (!viaFrame && localScore() < settings.minScore && !(await workIsOpenHere())) return;
     }
 
     const [
@@ -1248,12 +1313,29 @@
      * site as one not to offer on, which is the same switch the popup shows
      * and the same one a later yes undoes. See `ask.js`.
      */
-    const worthReading = () =>
+    const worthReading = async () =>
       showNow ||
       ON_A_TRACKER.test(location.href) ||
       ON_A_BOARD.test(location.href) ||
       IN_A_JOBS_AREA.test(location.href) ||
-      looksLikeApplicationForm();
+      looksLikeApplicationForm() ||
+      /*
+       * Or this tab is in the middle of an application somebody has written
+       * into, which is the one answer none of the four above can give.
+       *
+       * This is the gate that actually fired on the walk reported — Indeed,
+       * to a posting, to an application form at `/n/c/8f2a1b` on a host no
+       * pattern knows, whose form is drawn by script and says nothing at
+       * first paint. None of the four match, so the page was not read at
+       * all; and the branch below then either asked "is this a job page?"
+       * about the form the person was standing on, or, where the trail
+       * claimed the page, returned in silence. Both leave no card, and the
+       * resume built two pages earlier had nothing left to reach it from.
+       *
+       * Last, so the four cheap answers short-circuit it and the ordinary
+       * page never pays for the message. See `workIsOpenHere`.
+       */
+      (await workIsOpenHere());
     /*
      * And never in the middle of something already begun.
      *
@@ -1271,7 +1353,7 @@
      * Only reached once the cheap answers have all come back no, so the
      * ordinary path never pays for it.
      */
-    if (!worthReading()) {
+    if (!(await worthReading())) {
       if (askedFor === location.href) return;
       const held = await send('trailPages', { page: pageIdentity() }).catch(() => ({ pages: [] }));
       if (!current()) return;

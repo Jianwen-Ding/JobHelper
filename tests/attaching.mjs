@@ -230,6 +230,54 @@ async function main() {
 
     /* ---------------------------------------------------------------- */
 
+    /* ---------------------------------------------------------------- *
+     * What this form is asking for                                       *
+     * ---------------------------------------------------------------- */
+    /*
+     * The card draws one liftable chip per built file and says which of them
+     * this form actually wants — so "drag the transcript in" is a thing you
+     * can be told rather than a thing you work out by reading the form
+     * twice. The reading is `documentsWanted`, and it has to be read off the
+     * same words `boxFor` places by, or the card promises one thing and the
+     * attach does another.
+     */
+    const asked = (where) =>
+      p.goto(`${base}${where}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        p.evaluate(async (b) => (await import(`${b}/attach.js`)).documentsWanted(), base),
+      );
+
+    group('Which documents the form in front of you asks for');
+    {
+      const three = await asked('/labelled');
+      check(
+        'three labelled boxes name all three',
+        ['resume', 'letter', 'transcript'].every((k) => three.kinds.includes(k)),
+        JSON.stringify(three.kinds),
+      );
+
+      const one = await asked('/resume-only');
+      check('a form that wants only a resume says only that', one.kinds.join() === 'resume', JSON.stringify(one.kinds));
+      check('and does not invent a transcript', !one.kinds.includes('transcript'));
+
+      /*
+       * A box that says nothing is not evidence about any one kind — it takes
+       * whatever it is given, which `saysNothing` relies on. Counted rather
+       * than guessed at, so the card can tell "this form wants no transcript"
+       * from "this form has not said".
+       */
+      const bare = await asked('/bare');
+      check('an unnamed box names no kind', bare.kinds.length === 0, JSON.stringify(bare.kinds));
+      check('and is counted, so silence is not read as a no', bare.unnamed === 1, `${bare.unnamed} unnamed`);
+
+      /*
+       * And a photo box is not a document box. The card marking "this form
+       * asks for it" beside a resume because the page wants a headshot would
+       * be the same wrong-document mistake `boxFor` refuses to make.
+       */
+      const photo = await asked('/photo-and-zone');
+      check('a photo box is not asking for any of these', !photo.kinds.includes('resume'), JSON.stringify(photo.kinds));
+    }
+
     group('Three boxes that say what they want');
     {
       const { report, inBoxes, heard } = await run('/labelled', [
