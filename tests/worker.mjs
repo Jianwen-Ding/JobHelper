@@ -338,6 +338,50 @@ async function main() {
     }
 
     /*
+     * A rescue is not a rescue until the writing is somewhere other than a
+     * message.
+     *
+     * The park used to be deleted first and the letter returned only in the
+     * reply, so between the two there was exactly one copy of it — in flight.
+     * The caller drops that reply whenever the pass has been superseded,
+     * which on a single-page board is any url tick (`if (!current()) return;`
+     * sits on the line after the send), and the `.catch` beside it does the
+     * same when a navigation kills the response. The letter was then in
+     * neither place and the next pass found nothing.
+     *
+     * Asked by claiming it and then asking again as a fresh pass would: the
+     * park is gone, so the second answer can only come from the trail.
+     */
+    group('A rescued letter survives the reply being dropped');
+    {
+      const WHERE = 'http://board.example/durable';
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      store.role = 'Platform Engineer';
+      await ask(driver, 'analyze', { url: WHERE, title: 'Board', html: '<p>one</p>', company: 'Helios' });
+      await ask(driver, 'saveWork', { work: { letter: 'DURABLE-LETTER' } });
+
+      // Another job in the same pane parks the first one's work.
+      store.role = 'Data Scientist';
+      await ask(driver, 'analyze', { url: WHERE, title: 'Board', html: '<p>two</p>', company: 'Helios' });
+
+      // Back to it: the rescue happens, and this reply is the one we pretend
+      // never arrived.
+      store.role = 'Platform Engineer';
+      await ask(driver, 'analyze', { url: WHERE, title: 'Board', html: '<p>three</p>', company: 'Helios' });
+      const claimed = await ask(driver, 'takeWork', { page: { url: WHERE, title: 'Board' } });
+      check('the rescue answers with the letter', claimed.reply?.data?.work?.letter === 'DURABLE-LETTER', JSON.stringify(claimed.reply?.data?.work));
+
+      const again = await ask(driver, 'takeWork', { page: { url: WHERE, title: 'Board' } });
+      check(
+        'and asking again still finds it, with the park already spent',
+        again.reply?.data?.work?.letter === 'DURABLE-LETTER',
+        JSON.stringify(again.reply?.data?.work),
+      );
+      store.role = 'Platform Engineer';
+    }
+
+    /*
      * "Same job — put it back" has to put it back where it can be seen.
      *
      * The merge wrote the letter into the trail and answered with a summary,
@@ -362,6 +406,82 @@ async function main() {
       const back = await ask(driver, 'keepTogether', {});
       check('the merge answers with the writing itself', back.reply?.data?.work?.letter === 'PUT-THIS-BACK', JSON.stringify(back.reply?.data?.work));
       check('and with the pages joined', (back.reply?.data?.pages ?? []).length === 2, `${back.reply?.data?.pages?.length} pages`);
+      store.role = 'Platform Engineer';
+    }
+
+    /*
+     * And with what was written *after* the branch, which is the half it used
+     * to throw away.
+     *
+     * The merge took the stashed work whenever there was any, on the grounds
+     * that "the branch is seconds old, so anything under `work` now is what
+     * the card rebuilt on arrival". The staleness rule fifteen lines above it
+     * accepts a stash for two hours and the chip stays up as long as the page
+     * is open, so the ordinary shape is: the card branches, you keep writing,
+     * then you press the button. Every sentence written after the branch went
+     * — from a button whose tooltip promises "with everything you had
+     * written", and with nothing having parked it, because parking happens in
+     * `remember` and no `remember` ran in between.
+     */
+    group('Putting a branch back keeps what was written on both sides of it');
+    {
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      store.role = 'Platform Engineer';
+      await ask(driver, 'analyze', { url: 'http://board.example/both?q=a', title: 'A', html: '<p>one</p>', company: 'Helios' });
+      await ask(driver, 'saveWork', {
+        work: { letter: 'BEFORE-THE-BRANCH', answersByQuestion: { why: 'first answer', how: 'kept' } },
+      });
+
+      store.role = 'Data Scientist';
+      await ask(driver, 'analyze', { url: 'http://board.example/both?q=b', title: 'B', html: '<p>two</p>', company: 'Helios' });
+      // Written on the new page, before answering the chip.
+      await ask(driver, 'saveWork', {
+        work: { letter: 'AFTER-THE-BRANCH', answersByQuestion: { how: 'overwritten', extra: 'new answer' } },
+      });
+
+      const both = await ask(driver, 'keepTogether', {});
+      const work = both.reply?.data?.work ?? {};
+      check('the letter from before the branch is there', /BEFORE-THE-BRANCH/.test(work.letter ?? ''), work.letter ?? '');
+      check('and so is the one written after it', /AFTER-THE-BRANCH/.test(work.letter ?? ''), work.letter ?? '');
+      check(
+        'an answer written after the branch survives',
+        work.answersByQuestion?.extra === 'new answer',
+        JSON.stringify(work.answersByQuestion),
+      );
+      /*
+       * And the earlier answer wins where both answered the same question:
+       * the one from before the branch is the one somebody chose for this
+       * application, and the later one was typed for what looked like a
+       * different job.
+       */
+      check(
+        'and the earlier one wins where both answered the same question',
+        work.answersByQuestion?.how === 'kept',
+        JSON.stringify(work.answersByQuestion),
+      );
+      store.role = 'Platform Engineer';
+    }
+
+    /*
+     * The common shape, which must not be turned into a duplicate. The keeper
+     * saves every couple of seconds, so the copy on the new page is very
+     * often a prefix of — or identical to — the one that was stashed.
+     */
+    group('Putting back a branch nobody wrote on since');
+    {
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      store.role = 'Platform Engineer';
+      await ask(driver, 'analyze', { url: 'http://board.example/same?q=a', title: 'A', html: '<p>one</p>', company: 'Helios' });
+      await ask(driver, 'saveWork', { work: { letter: 'ONE COPY ONLY' } });
+      store.role = 'Data Scientist';
+      await ask(driver, 'analyze', { url: 'http://board.example/same?q=b', title: 'B', html: '<p>two</p>', company: 'Helios' });
+      await ask(driver, 'saveWork', { work: { letter: 'ONE COPY' } });
+
+      const once = await ask(driver, 'keepTogether', {});
+      const letter = once.reply?.data?.work?.letter ?? '';
+      check('the letter is not doubled', (letter.match(/ONE COPY/g) ?? []).length === 1, JSON.stringify(letter));
       store.role = 'Platform Engineer';
     }
 

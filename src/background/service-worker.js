@@ -389,13 +389,35 @@ const sameJob = (job, other) =>
  * Put an application's writing aside under an address, without displacing
  * another job's writing parked at the same one.
  */
+/** Take one entry out of an address's parked work, leaving the rest. */
+async function dropPark(key, held, gone) {
+  const left = held.filter((p) => p !== gone);
+  await (left.length > 0
+    ? session().set({ [key]: { parked: left, at: Date.now() } })
+    : session().remove(key)
+  ).catch(() => undefined);
+}
+
 async function parkWork(url, entry) {
   const key = orphanKey(url);
-  const held = parkedAt((await session().get(key).catch(() => ({})))[key]);
-  const kept = [...held.filter((p) => !sameJob(p.job, entry.job)), entry].slice(-PARK_MAX);
-  await session()
-    .set({ [key]: { parked: kept, at: Date.now() } })
-    .catch(() => undefined);
+  /*
+   * Through the same chain the frame lists use, because this is the same
+   * three-turn read-modify-write and this one holds somebody's prose.
+   *
+   * Two tabs closing together — a window shut, or one closed while another
+   * branches — run `onRemoved` twice, independently and asynchronously, and
+   * both begin with a full `sweepOrphans` read that guarantees the overlap.
+   * Their trails share the board or careers page they both started from, so
+   * both handlers read the same list, both add one entry, and the second
+   * write lands on top. One of the two letters is then unreachable at the
+   * address people actually come back to — `changeFrames` says exactly this
+   * about frame ids, which are cheaper to lose.
+   */
+  return changeStored(key, async (stored) => {
+    const held = parkedAt(stored);
+    const kept = [...held.filter((p) => !sameJob(p.job, entry.job)), entry].slice(-PARK_MAX);
+    return { parked: kept, at: Date.now() };
+  });
 }
 
 /**
@@ -673,6 +695,82 @@ function changeSettings(change) {
     })
     .catch(() => undefined);
   settingWrites = next;
+  return next;
+}
+
+/**
+ * One writer at a time for one key, whatever is in it.
+ *
+ * Lifted out of `changeFrames` when `parkWork` needed the same thing: read,
+ * modify, write is three turns, and the write that lands second has silently
+ * dropped the first. `change` is given the stored value and returns the next
+ * one, or `null` to leave it alone.
+ *
+ * A refused write is tried once more with the cupboard swept first. Session
+ * storage is 10MB across every tab and the thing being stored here can be a
+ * cover letter somebody typed, so "the quota said no" cannot be the end of
+ * it — see `writeTrail`, which carries less rather than failing for the same
+ * reason. Resolves to whether the value is stored.
+ */
+/**
+ * One application's work, out of the two halves a branch split it into.
+ *
+ * Everything but the writing comes from before the branch: the resume that
+ * was built, the files staged, the spec it came from. Those the card rebuilt
+ * on arrival and the older copy is the one somebody chose.
+ *
+ * The writing is added up instead. Answers merge by question, and the
+ * earlier answer wins where both answered the same one. A letter that
+ * contains the other is the other — the usual case, where the keeper saved a
+ * prefix a moment before the branch — and two that genuinely differ are
+ * both kept, one after the other, because a button that says "everything you
+ * had written" cannot quietly pick.
+ */
+function bothHalves(before, since) {
+  if (!before) return since ?? undefined;
+  if (!since) return before;
+  return {
+    ...since,
+    ...before,
+    letter: bothLetters(before.letter, since.letter),
+    answersByQuestion: { ...(since.answersByQuestion ?? {}), ...(before.answersByQuestion ?? {}) },
+  };
+}
+
+function bothLetters(before, since) {
+  const a = String(before ?? '');
+  const b = String(since ?? '');
+  if (!b.trim() || a.includes(b.trim())) return a;
+  if (!a.trim() || b.includes(a.trim())) return b;
+  return `${a.trimEnd()}\n\n${b.trimStart()}`;
+}
+
+function changeStored(key, change) {
+  const next = (frameWrites.get(key) ?? Promise.resolve())
+    .then(async () => {
+      const stored = (await session().get(key).catch(() => ({})))[key];
+      const wanted = await change(stored);
+      if (wanted === null || wanted === undefined) return true;
+      try {
+        await session().set({ [key]: wanted });
+        return true;
+      } catch {
+        await sweepOrphans().catch(() => undefined);
+        try {
+          await session().set({ [key]: wanted });
+          return true;
+        } catch {
+          return false;
+        }
+      }
+    })
+    .catch(() => false)
+    .finally(() => {
+      // Only the last change queued clears the slot, or a change queued while
+      // this one was running would be dropped from the chain.
+      if (frameWrites.get(key) === next) frameWrites.delete(key);
+    });
+  frameWrites.set(key, next);
   return next;
 }
 
@@ -1208,22 +1306,37 @@ const handlers = {
       // Claimed or expired, this one goes either way. Leaving the stale ones
       // behind is how the space fills up; see `sweepOrphans`. The others stay
       // for the job they belong to.
-      const left = held.filter((p) => p !== rescued);
-      await (left.length > 0
-        ? session().set({ [key]: { parked: left, at: Date.now() } })
-        : session().remove(key)
-      ).catch(() => undefined);
       if (rescued.work && fresh) {
         /*
-         * Onto this tab's trail, because the rescue is usually a different
-         * tab and this is the only moment the answer is in hand. `at` with
-         * it: a trail without one reads as stale on the next look, which
-         * would lose the save again a moment after finding it.
+         * Onto this tab's trail before the park is let go, and with the work
+         * in it.
+         *
+         * The park used to be deleted first and the writing returned only in
+         * the reply — so between the two there was exactly one copy of
+         * somebody's letter, in a message. The caller drops that message
+         * whenever the pass has been superseded, which on a single-page board
+         * is any url tick: `if (!current()) return;` sits on the line after
+         * the send, and the `.catch` beside it does the same thing when a
+         * real navigation kills the response. The letter was then in neither
+         * place, and the next pass asked again and found nothing.
+         *
+         * Written first, the worst case is a park that outlives its claim —
+         * the same work offered twice — which `sameJob` collapses and the
+         * sweep expires. Losing it is not recoverable at all.
+         *
+         * `at` with it: a trail without one reads as stale on the next look,
+         * which would lose the save again a moment after finding it.
          */
-        if (rescued.save && tab?.id !== undefined) {
-          saveOf.set(tab.id, rescued.save);
-          await writeTrail(tab.id, { ...trail, save: rescued.save, at: Date.now() });
+        if (tab?.id !== undefined) {
+          if (rescued.save) saveOf.set(tab.id, rescued.save);
+          await writeTrail(tab.id, {
+            ...trail,
+            work: rescued.work,
+            save: rescued.save ?? trail.save,
+            at: Date.now(),
+          });
         }
+        await dropPark(key, held, rescued);
         /*
          * And which of the two rescues this was, because they want different
          * sentences. A tab that closed and came back is a surprise worth
@@ -1233,6 +1346,10 @@ const handlers = {
          */
         return { work: rescued.work, recovered: rescued.tab !== undefined && rescued.tab === tab?.id ? 'job' : true };
       }
+      // Claimed or expired, this one goes either way. Leaving the stale ones
+      // behind is how the space fills up; see `sweepOrphans`. The others stay
+      // for the job they belong to.
+      await dropPark(key, held, rescued);
     }
     return { work: trail.work ?? null };
   },
@@ -1379,11 +1496,20 @@ const handlers = {
       ...held.trail,
       pages,
       /*
-       * The writing from before wins where both have some. The branch is
-       * seconds old, so anything under `work` now is what the card rebuilt on
-       * arrival; what was parked is what somebody typed.
+       * Both halves, not whichever is older.
+       *
+       * This took `held.trail.work` whenever there was any, on the grounds
+       * that "the branch is seconds old, so anything under `work` now is what
+       * the card rebuilt on arrival". The staleness check fifteen lines above
+       * accepts a stash for two hours, and the chip offering the merge stays
+       * up for as long as the page is open — so the ordinary shape is: the
+       * card branches, you keep writing, and then you press the button. Every
+       * sentence written after the branch went, from a button whose tooltip
+       * promises "with everything you had written". Nothing had parked it,
+       * because parking happens in `remember` and no `remember` ran in
+       * between.
        */
-      work: held.trail.work ?? now.work,
+      work: bothHalves(held.trail.work, now.work),
       save: held.trail.save ?? now.save,
       branchedFrom: undefined,
       at: Date.now(),
