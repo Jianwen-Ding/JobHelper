@@ -25,7 +25,34 @@ export const hostOf = (u) => {
   }
 };
 
-export const rootOf = (h) => h.split('.').slice(-2).join('.');
+/*
+ * Labels that are a registry's, not a company's.
+ *
+ * `slice(-2)` alone makes `careers.monzo.co.uk` into `co.uk`, and `co.uk` is
+ * every company in Britain. Two employers' careers sites then had the same
+ * root, which `sameApplication` reads as the same site — after which one
+ * matching path is enough, and `/jobs` on both is one. The cover letter is
+ * then written from the other employer's page, which is the failure this
+ * file's own header opens with.
+ *
+ * The company veto cannot save it where it matters most: `trailPages` is
+ * asked before the page has been analysed, so there is no company name yet.
+ *
+ * A short list rather than the public suffix list, because a list nobody
+ * updates is worse than a rule: these are the second-level labels that exist
+ * under a two-letter country, and the rule below only fires under one. Being
+ * wrong here takes *more* of the host, which makes two sites look different —
+ * the direction that starts a second application rather than merging two.
+ */
+const REGISTRY_LABEL = /^(co|com|net|org|gov|edu|ac|mil|govt|or|ne|in|sch)$/;
+
+export const rootOf = (h) => {
+  const labels = String(h ?? '').split('.').filter(Boolean);
+  if (labels.length <= 2) return labels.join('.');
+  const last = labels[labels.length - 1];
+  const under = labels[labels.length - 2];
+  return labels.slice(last.length === 2 && REGISTRY_LABEL.test(under) ? -3 : -2).join('.');
+};
 
 export const pathOf = (u) => {
   try {
@@ -234,8 +261,27 @@ export function wasExpected(trail, url, now = Date.now()) {
   const b = pathOf(url);
   if (!a || !b) return false;
   if (hostOf(expecting.to) !== hostOf(url)) return false;
-  return a.startsWith(b) || b.startsWith(a);
+  return sameOrUnder(a, b);
 }
+
+/*
+ * One path is the other, or a step below it — counted in segments.
+ *
+ * This was `a.startsWith(b) || b.startsWith(a)`, which has no boundary in it,
+ * so `/careers/data-analyst` was "near enough" to
+ * `/careers/data-analyst-intern`. Ordinary slug pairs do that to each other:
+ * `product-manager` and `product-manager-growth`, `platform-engineer` and
+ * `platform-engineer-ii`, and the `-2` Recruitee adds to a duplicate slug. So
+ * clicking Apply on one posting and then opening the next one in the same tab
+ * folded the second into the first — and because an expectation is checked
+ * *before* the company veto and before `relatedPath`, it overruled both of
+ * the things that would have said no.
+ *
+ * `pathOf` strips trailing slashes, so a single `/` is the whole boundary
+ * this needs. The case it is here for — an apply link landing a step below
+ * where it pointed, at `/careers/data-analyst/apply` — still passes.
+ */
+const sameOrUnder = (a, b) => a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 
 /**
  * A link on a page that plainly means "apply".
@@ -307,7 +353,10 @@ export function wasLinkedFrom(trail, url) {
       }
       if (hostOf(absolute) !== host) continue;
       const there = pathOf(absolute);
-      if (!there || !(there === target || target.startsWith(there) || there.startsWith(target))) continue;
+      // Anchored, for the reason given on `sameOrUnder`: an apply link on a
+      // posting for one job must not be read as pointing at another job whose
+      // slug happens to start with the same words.
+      if (!there || !sameOrUnder(there, target)) continue;
 
       const label = text.replace(/<[^>]*>/g, ' ').trim();
       if (MEANS_APPLY.test(href) || MEANS_APPLY.test(label)) return true;
@@ -430,10 +479,30 @@ export function trimForStorage(html, limit = 400_000) {
  */
 export function lighten(trail, keepTextFor = 2) {
   const pages = trail.pages ?? [];
-  const cut = Math.max(pages.length - keepTextFor, 0);
+  if (keepTextFor < 1) return { ...trail, pages: pages.map((p) => ({ ...p, html: '' })) };
+
+  /*
+   * The first page keeps its text, and the newest fill the rest.
+   *
+   * This used to shed the oldest first, on the reasoning that "the page you
+   * are on and the one before it are the ones that matter" — which is the
+   * argument `keepPages` a few lines down exists to refute, in as many words:
+   * page zero is the *description*, "the only page that holds what the job
+   * actually is, and the one the cover letter and the essay answers are
+   * written from". Everything after it is form steps.
+   *
+   * So the two halves of the same module disagreed, and the disagreement only
+   * showed under the condition this function is for. A trail too large to
+   * store went through `lighten`, which blanked page zero and kept
+   * `/apply/eeo` and `/apply/documents` — and the letter was then written
+   * from the fields it was about to be pasted into, which is the failure
+   * `keepPages` was written to prevent, arrived at by the other route.
+   */
+  const keep = new Set([0]);
+  for (let i = pages.length - 1; i >= 0 && keep.size < keepTextFor; i -= 1) keep.add(i);
   return {
     ...trail,
-    pages: pages.map((p, i) => (i < cut ? { ...p, html: '' } : p)),
+    pages: pages.map((p, i) => (keep.has(i) ? p : { ...p, html: '' })),
   };
 }
 

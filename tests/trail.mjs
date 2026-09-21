@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 import {
   EXPECTATION_MS,
   keepPages,
+  rootOf,
   lighten,
   relatedPath,
   sameApplication,
@@ -270,9 +271,23 @@ describe('carrying less when there is no room', () => {
     ],
   };
 
-  it('gives up the oldest pages first, since the newest are the ones in use', () => {
+  /*
+   * This used to assert the opposite — "gives up the oldest pages first,
+   * since the newest are the ones in use" — which is the argument `keepPages`
+   * exists to refute. Page zero is the description, the only page holding
+   * what the job actually is and the one the letter and the essay answers are
+   * written from; everything after it is form steps. Shedding it first meant
+   * a trail too large to store came out holding `/apply/eeo` and
+   * `/apply/documents` and no description, so the letter was written from the
+   * fields it was about to be pasted into.
+   */
+  it('keeps the description and the page you are on, and sheds the middle', () => {
     const lighter = lighten(trail);
-    assert.deepEqual(lighter.pages.map((p) => p.html), ['', 'bbb', 'ccc']);
+    assert.deepEqual(lighter.pages.map((p) => p.html), ['aaa', '', 'ccc']);
+  });
+
+  it('keeps the description even when there is room for only one', () => {
+    assert.deepEqual(lighten(trail, 1).pages.map((p) => p.html), ['aaa', '', '']);
   });
 
   it('can give up all of it and still name every page', () => {
@@ -509,5 +524,55 @@ describe('which pages survive a long application', () => {
     }
     assert.deepEqual(keepPages(undefined, 5), []);
     assert.deepEqual(keepPages(walk(3), 0), []);
+  });
+});
+
+/**
+ * Two employers are not one site, and two jobs are not one application.
+ *
+ * Both of these merged an application into a different one, which is the
+ * failure this module's own header opens with: the letter is then written
+ * from the other job's page, and the resume built for one posting is offered
+ * on the other.
+ */
+describe('two employers, and two jobs at one employer', () => {
+  it('does not read a country-code domain as a company', () => {
+  // `slice(-2)` made this `co.uk`, which is every company in Britain.
+  assert.equal(rootOf('careers.monzo.co.uk'), 'monzo.co.uk');
+  assert.equal(rootOf('jobs.deliveroo.co.uk'), 'deliveroo.co.uk');
+  assert.equal(rootOf('careers.example.com.au'), 'example.com.au');
+  assert.equal(rootOf('recruit.example.co.jp'), 'example.co.jp');
+
+  // And the ordinary shapes are untouched.
+  assert.equal(rootOf('careers.acme.com'), 'acme.com');
+  assert.equal(rootOf('boards.greenhouse.io'), 'greenhouse.io');
+  assert.equal(rootOf('acme.com'), 'acme.com');
+  });
+
+  it('keeps two British employers as two applications', () => {
+  const trail = {
+    at: Date.now(),
+    pages: [{ url: 'https://careers.monzo.co.uk/jobs', title: '', company: 'Monzo', at: Date.now() }],
+  };
+    assert.equal(sameApplication(trail, { url: 'https://jobs.deliveroo.co.uk/jobs', title: '' }), false);
+  });
+
+  it('does not let an apply link claim the next job along', () => {
+  const clicked = (to) => ({ expecting: { to, at: Date.now() } });
+
+  // The slug pairs that actually occur. Each of these is two postings.
+  for (const [a, b] of [
+    ['https://acme.com/careers/data-analyst', 'https://acme.com/careers/data-analyst-intern'],
+    ['https://acme.com/careers/platform-engineer', 'https://acme.com/careers/platform-engineer-ii'],
+    ['https://acme.com/o/designer', 'https://acme.com/o/designer-2'],
+  ]) {
+    assert.equal(wasExpected(clicked(a), b), false, `${a} → ${b}`);
+  }
+
+  // And the case the expectation exists for: the link landing a step below
+  // where it pointed, or exactly on it.
+  assert.equal(wasExpected(clicked('https://acme.com/careers/data-analyst'), 'https://acme.com/careers/data-analyst/apply'), true);
+  assert.equal(wasExpected(clicked('https://acme.com/careers/data-analyst/apply'), 'https://acme.com/careers/data-analyst'), true);
+    assert.equal(wasExpected(clicked('https://acme.com/careers/data-analyst'), 'https://acme.com/careers/data-analyst'), true);
   });
 });
