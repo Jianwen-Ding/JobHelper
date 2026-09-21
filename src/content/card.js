@@ -202,6 +202,27 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .job .before b { font-weight: 500; color: var(--ink); }
 
 /* The pages one application is spread across. */
+/*
+ * The strip that says a new application was started. Warm rather than red: a
+ * branch is a decision the extension made on the user's behalf and may have
+ * got wrong, which is a thing to notice, not a failure.
+ */
+.branch {
+  margin-top: 8px; padding: 8px 10px; font-size: 12px;
+  background: var(--warn-soft, #fff8e6); border: 1px solid var(--warn-line, #f0dca8);
+  border-radius: 8px; color: var(--ink);
+}
+.branch .row { margin-top: 6px; }
+/*
+ * And the same strip when you have come back to a job you had already
+ * started. Nothing was decided on your behalf there and there is nothing to
+ * answer, so it drops the warm colour and reads as what it is: a note that
+ * your writing is where you left it.
+ */
+.branch.back {
+  background: var(--soft, #f1f3f4); border-color: var(--line, #dadce0); color: var(--muted);
+}
+
 .trail { margin-top: 7px; font-size: 12px; }
 .trail summary { cursor: pointer; color: var(--muted); }
 .trail summary:hover { color: var(--ink); }
@@ -591,6 +612,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     answers: {},
     feedback: '',
     autofillReport: null,
+    /** What the last press of Attach put into the form, and what it could not. */
+    attachReport: null,
     workspaceOpened: false,
     /** Whether an AI is in play at all. Filled in below; never assumed. */
     ai: null,
@@ -641,6 +664,16 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      * note there.
      */
     askedFor: false,
+    /**
+     * Whether this tab has been on this job before.
+     *
+     * Set when the worker hands back writing it had parked for *this* job
+     * rather than for a closed tab — which, on a board showing several jobs
+     * at one address, is the click that goes back to the one you started.
+     * The branch chip reads it: "a new application" is the wrong sentence for
+     * a job whose own half-written letter is on the screen. See `drawBranch`.
+     */
+    returned: false,
     /** Which compiled PDF is on screen per kind, and the canvases drawn. */
     shownPdf: { resume: null, letter: null },
     pdfPages: new Map(),
@@ -683,6 +716,15 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       spec: state.spec,
       builtWith: state.builtWith,
       render: state.render,
+      /*
+       * And where the files went.
+       *
+       * The folder path is what you paste into an upload dialog, and it was
+       * shown on the page where the resume was built and nowhere else —
+       * because this list never carried it. So walking from the posting to
+       * its form, which is the only page the path is any use on, lost it.
+       */
+      staged: state.staged,
       letter: state.letter,
       letterSource: state.letterSource,
       letterStarted: state.letterStarted,
@@ -709,8 +751,23 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * an application or continuing one — which is the difference between
    * drafting a letter and already having one.
    */
-  function restoreWork(work) {
+  /**
+   * @param {object|null} work
+   * @param {'job'|true|undefined} how  'job' when this tab is coming back to
+   *   a job it had already started, which the branch chip has to know about:
+   *   see `drawBranch`.
+   */
+  function restoreWork(work, how) {
     carriedSettled = true;
+    /*
+     * Assigned, not raised. The card outlives a pass — `putUpCard` hands back
+     * the one already on the page — so on a board that swaps its pane without
+     * navigating, a chip raised on the job you came back to would still be up
+     * on the next job you had never seen. This runs exactly once per pass,
+     * with nothing to restore as much as with something, so it is the place
+     * that answer belongs.
+     */
+    state.returned = how === 'job';
     if (!work) {
       maybeAutoDraft();
       return;
@@ -765,7 +822,20 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       };
     }
     if (work.render) state.render = work.render;
+    if (work.staged) state.staged = work.staged;
     if (work.letter != null) state.letter = work.letter;
+    /*
+     * And the step it lives in, because a letter the card is holding and not
+     * showing is a letter the person believes they have lost.
+     *
+     * Only `letterNeeded` — the form asking for one — opened this step, so
+     * writing carried onto a page that does not ask was kept, saved, bundled
+     * and invisible. Which is the ordinary case on a board: you add a letter
+     * to a description page by pressing "+ Cover letter", read another job,
+     * and come back to a card that has your letter in `state` and no box on
+     * screen.
+     */
+    if (work.letter?.trim()) state.letterAsked = true;
     if (work.letterSource) state.letterSource = work.letterSource;
     state.letterStarted = state.letterStarted || Boolean(work.letterStarted);
     state.letterSaved = state.letterSaved || Boolean(work.letterSaved);
@@ -1276,6 +1346,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       h('div', { className: 'role', textContent: job.title ?? 'This posting' }),
       h('div', { className: 'co', textContent: [job.company, job.location].filter(Boolean).join(' · ') }),
       drawSentBefore(),
+      drawBranch(),
       drawTrail(),
     ].filter(Boolean));
   }
@@ -1379,6 +1450,71 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * two pages would be worse than one that never merged at all. So it says
    * which, and both corrections are one click: drop a page, or start over.
    */
+  /**
+   * "This looked like a different job, so I started a new application."
+   *
+   * Said out loud, because the alternative is a tab quietly reorganising
+   * itself: the letter you were halfway through is parked, the card is empty,
+   * and the only evidence is that the resume on screen changed. The board
+   * this happens on — Indeed's results pane, any single-page board — is
+   * exactly the one where you click through several jobs in a row, so it
+   * happens often and has to be cheap to undo.
+   *
+   * Branching is the safe guess of the two. A split can be put back; a merge
+   * cannot, because once the second job's pages and the first job's letter
+   * are one application nothing can tell them apart again. So it branches,
+   * says so here, and keeps what it left whole until this is answered.
+   */
+  function drawBranch() {
+    const from = state.trail?.branchedFrom;
+    if (!from) return null;
+    const was = [from.role, from.company].filter(Boolean).join(' at ') || 'the application before this';
+
+    /*
+     * Coming back is not branching, and must not be offered as it.
+     *
+     * Go A, B, A on a board that shows every job at one address and the third
+     * page branches away from B — correctly — while the worker hands back the
+     * letter you had started for A. The chip then said "This looks like a
+     * different job, so it is a new application", on a card holding that
+     * job's own half-written letter, and offered to put *B* into it. Somebody
+     * reading "Same job — put it back" on the job they had just come back to
+     * would press it, and get the other job's pages and the other job's
+     * writing merged into this one — the exact merge the branch exists to
+     * prevent, made by the person, on the extension's invitation.
+     *
+     * So when this tab has been here before, it says that instead, and offers
+     * nothing to press.
+     */
+    if (state.returned) {
+      return h('div', { className: 'branch back' }, [
+        h('div', {
+          textContent: `Back on this one — what you had written for it is here. You were last on ${was}, which is kept separately.`,
+        }),
+      ]);
+    }
+
+    return h('div', { className: 'branch' }, [
+      h('div', { textContent: `This looks like a different job, so it is a new application. The last one was ${was}.` }),
+      h('div', { className: 'row gap' }, [
+        h('button', {
+          className: 'tiny',
+          textContent: 'Same job — put it back',
+          title: 'Join this page to the application before it, with everything you had written',
+          onclick: () => act('keepTogether', {}, (trail) => trail?.ok && (state.trail = trail)),
+        }),
+        h('button', {
+          className: 'link',
+          textContent: 'No, it is new',
+          onclick: () =>
+            act('keepApart', {}, () => {
+              state.trail = { ...(state.trail ?? {}), branchedFrom: undefined };
+            }),
+        }),
+      ]),
+    ]);
+  }
+
   function drawTrail() {
     const pages = state.trail?.pages ?? [];
     if (pages.length < 2) return null;
@@ -2159,6 +2295,19 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       }
       state.render = r;
     });
+  }
+
+  /**
+   * The folder a file picker should be pointed at.
+   *
+   * Staging answers this once files have been written, and the analysis
+   * answers it from the first paint — the folder is a fixed place in the save
+   * and does not depend on anything having been built. Preferring the staged
+   * answer keeps this honest if the save is ever switched mid-application:
+   * that reply came from the save the files actually went to.
+   */
+  function uploadFolder() {
+    return state.staged?.currentDir ?? analysis?.currentDir ?? null;
   }
 
   function stageFiles() {
@@ -3575,16 +3724,20 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
          * location bar is the whole of what makes that reachable. An extension
          * cannot set where the dialog opens; this is what it can do instead.
          */
-        state.staged?.currentDir
+        uploadFolder()
           ? h('div', { className: 'staged' }, [
-              h('div', { textContent: 'Ready to attach, in one folder:' }),
-              h('div', { className: 'path', textContent: state.staged.currentDir }),
+              h('div', {
+                textContent: state.staged?.currentDir
+                  ? 'Ready to attach, in one folder:'
+                  : 'The folder to attach from:',
+              }),
+              h('div', { className: 'path', textContent: uploadFolder() }),
               h('div', { className: 'row gap' }, [
                 h('button', {
                   className: 'tiny',
                   textContent: 'Copy folder path',
                   title: 'Paste it into the upload dialog',
-                  onclick: () => navigator.clipboard?.writeText(state.staged.currentDir),
+                  onclick: () => navigator.clipboard?.writeText(uploadFolder()),
                 }),
                 h('button', {
                   className: 'tiny',
@@ -3601,6 +3754,40 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             textContent: busyLabel('autofill', 'Autofill this form', 'Filling…'),
             disabled: busyIn('page'),
             onclick: () => act('autofill', {}, (r) => (state.autofillReport = r)),
+          }),
+          /*
+           * The upload boxes, filled the same way the text boxes are.
+           *
+           * The flat folder and the path beside it were the answer to "how do
+           * I attach what this just built" — point the dialog at one place and
+           * pick the file out. That is two clicks and a paste, every time, and
+           * the same two clicks for the transcript that has not changed since
+           * September. A content script can put the file in the box directly;
+           * the page sees what it would have seen from the dialog, name and
+           * all. The path stays, for the boxes this cannot reach.
+           */
+          h('button', {
+            className: 'tiny',
+            textContent: busyLabel('attach', 'Attach files', 'Attaching…'),
+            title: 'Put the resume, letter and transcript into this form’s upload boxes',
+            disabled: busyIn('page'),
+            onclick: () =>
+              act(
+                'attachFiles',
+                /*
+                 * The staged answer first, the analysis's second — the same
+                 * fallback as `uploadFolder`, and for the same reason. The
+                 * staged one came from the call that actually wrote the
+                 * files; the analysis answers from the first paint, which is
+                 * the only answer a card rebuilt by following Apply has. With
+                 * neither, this asked the store for the files of no
+                 * application in particular and was told, correctly, that
+                 * there were none — so Attach on the form said "Nothing is
+                 * built yet" over a resume built a minute earlier.
+                 */
+                { application: state.staged?.application?.id ?? analysis?.application?.id ?? null },
+                (r) => (state.attachReport = r),
+              ),
           }),
           /*
            * Named for what pressing it means, not for what it writes.
@@ -3667,6 +3854,26 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
               textContent: describeAutofill(state.autofillReport),
             })
           : null,
+        state.attachReport
+          ? h('div', {
+              /*
+               * Green only when everything landed and can be shown to have
+               * landed. A report whose one entry is an unverifiable drop has
+               * an empty `unplaced` and was painted green under a sentence
+               * asking the person to go and check — which is the two halves
+               * of the card disagreeing, and the green is the one they will
+               * believe.
+               */
+              className: `ok-note${
+                (state.attachReport.unplaced?.length ?? 0) > 0 ||
+                state.attachReport.nothing ||
+                (state.attachReport.placed ?? []).some((p) => p.sure === false)
+                  ? ' warn'
+                  : ''
+              }`,
+              textContent: describeAttach(state.attachReport),
+            })
+          : null,
       ]),
     );
 
@@ -3709,6 +3916,54 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   /** True when the report names fields the form still needs from you. */
   function autofillLeftWork(r) {
     return r.skipped.some((skip) => skip.reason !== 'already filled');
+  }
+
+  /**
+   * What went into the form's upload boxes, and what did not.
+   *
+   * Named per file rather than counted, because the failure that matters is
+   * one specific document not being attached — and "2 of 3 files attached" is
+   * the sentence that gets skimmed past on the way to pressing Submit.
+   *
+   * A file with nowhere to go is not an error. Plenty of forms ask for a
+   * resume and nothing else, and the transcript having no box is the form
+   * saying it does not want one. It is said out loud anyway: the alternative
+   * is somebody assuming their transcript went and finding out later.
+   */
+  function describeAttach(r) {
+    if (r?.nothing) return 'Nothing is built yet, so there is nothing to attach.';
+    const placed = r?.placed ?? [];
+    const unplaced = r?.unplaced ?? [];
+    if (placed.length === 0 && unplaced.length === 0) return 'Nothing to attach.';
+
+    const parts = [];
+    /*
+     * A file put into a box is attached; a file dropped on a drop area may or
+     * may not be, and the two must not be said the same way.
+     *
+     * `input.files` can be read back, so "attached" there is a fact. A drop
+     * is an event: a page that took the file and uploaded it over the network
+     * looks exactly like a page that ignored it. Saying "attached" for both
+     * is how somebody submits a form with no resume in it, on the strength of
+     * a sentence from here.
+     */
+    const sure = placed.filter((p) => p.sure !== false);
+    const dropped = placed.filter((p) => p.sure === false);
+    if (sure.length > 0) parts.push(`Attached ${sure.map((p) => p.name).join(' and ')}`);
+    else if (dropped.length === 0) parts.push('Nothing was attached');
+    if (dropped.length > 0) {
+      parts.push(
+        `${dropped.map((p) => p.name).join(' and ')} went to this form’s drop area, which does not say ` +
+          'whether it took them — check the form before sending',
+      );
+    }
+    if (unplaced.length > 0) {
+      parts.push(
+        `${unplaced.map((u) => u.name).join(' and ')} had nowhere to go — ${unplaced[0].why}. ` +
+          'The folder above has everything, for the boxes this cannot reach',
+      );
+    }
+    return `${parts.join('. ')}.`;
   }
 
   function describeAutofill(r) {

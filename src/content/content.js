@@ -141,6 +141,7 @@
     ask: () => fromExtension('src/content/ask.js'),
     sites: () => fromExtension('src/shared/sites.js'),
     autofill: () => fromExtension('src/content/autofill.js'),
+    attach: () => fromExtension('src/content/attach.js'),
     trail: () => fromExtension('src/shared/trail.js'),
     sending: () => fromExtension('src/shared/sending.js'),
   };
@@ -448,11 +449,10 @@
    * site", which is the one place a person can see it and undo it.
    */
   async function setMuted(muted) {
-    const settings = await send('getSettings');
-    const hosts = new Set(settings.mutedHosts ?? []);
-    if (muted) hosts.add(location.hostname);
-    else hosts.delete(location.hostname);
-    lastSettings = await send('setSettings', { patch: { mutedHosts: [...hosts] } });
+    // One message, because the list is shared with the popup and reading it
+    // here to write it back there is how one of two mutes goes missing. See
+    // `muteHost` in the worker.
+    lastSettings = await send('muteHost', { host: location.hostname, muted });
   }
 
   /**
@@ -689,6 +689,67 @@
       case 'autofill':
         return runAutofill();
 
+      /*
+       * The upload boxes, from the folder the card would otherwise ask you to
+       * paste a path to.
+       *
+       * The bytes come through the worker because the page's origin has no
+       * business reaching the local store, and the placing happens here
+       * because only a content script can touch the form. Frames too: the
+       * upload control on a good half of these portals is in one, exactly as
+       * the text fields are.
+       */
+      case 'attachFiles': {
+        const got = await send('attachments', { application: payload.application ?? null });
+        const files = got?.files ?? [];
+        /*
+         * The ones the store listed and could not hand over. They are not
+         * placed and they are not unplaceable — they never arrived — and
+         * until they were carried through here they were in neither list, so
+         * the card reported the two that worked and said nothing at all about
+         * the third.
+         */
+        const missing = (got?.missing ?? []).map((m) => ({ name: m.name, why: m.why }));
+        if (files.length === 0) {
+          return missing.length > 0
+            ? { placed: [], unplaced: missing, dir: got?.dir ?? null }
+            : { placed: [], unplaced: [], nothing: true, dir: got?.dir ?? null };
+        }
+        const { attachFiles } = await imports.attach();
+        const here = await attachFiles(files);
+        /*
+         * And whatever is left, offered to the frames. A form split across
+         * the page and an embed is ordinary, and a resume that went nowhere
+         * because the box was one level down is the case this is for.
+         *
+         * A file dropped on a zone that said nothing back counts as left, not
+         * as placed: `sure: false` means the event was delivered and nothing
+         * visible came of it, and the usual shape there is a marketing "drag
+         * your resume here" widget in the page with the real form in an
+         * iCIMS frame underneath. Trying the frame as well costs nothing; not
+         * trying it left the only real box on the page untouched.
+         */
+        const left = files.filter((f) => !here.placed.some((p) => p.name === f.name && p.sure !== false));
+        if (left.length === 0) return { ...here, unplaced: [...here.unplaced, ...missing], dir: got.dir };
+
+        const inFrames = await send('attachInFrames', { files: left }).catch(() => ({ frames: [] }));
+        /*
+         * One frame's word each. Every frame is asked at once, so a page with
+         * two frames that both pass the gate — a responsive embed rendering a
+         * desktop and a mobile copy of one board — reported the same file
+         * twice: "Attached Resume.pdf and Resume.pdf".
+         */
+        const alsoPlaced = [];
+        for (const p of (inFrames.frames ?? []).flatMap((f) => f.placed ?? [])) {
+          if (!alsoPlaced.some((already) => already.name === p.name)) alsoPlaced.push(p);
+        }
+        return {
+          placed: [...here.placed.filter((p) => !alsoPlaced.some((a) => a.name === p.name)), ...alsoPlaced],
+          unplaced: [...here.unplaced.filter((u) => !alsoPlaced.some((p) => p.name === u.name)), ...missing],
+          dir: got.dir,
+        };
+      }
+
       case 'insertAnswer': {
         const inFrame = IN_FRAME_ID.exec(payload.fieldId ?? '');
         if (inFrame) {
@@ -903,6 +964,33 @@
        */
       case 'clearTrail':
         return send('clearTrail', { keep: pageIdentity() });
+
+      /*
+       * The two answers to "this looked like a different job, so I started a
+       * new application". Both write the trail, so both come back as a fresh
+       * summary for the card to draw from.
+       */
+      case 'keepTogether': {
+        const put = await send('keepTogether', {});
+        if (put?.ok) {
+          /*
+           * The writing first, then the pages. `setTrail` draws the panel and
+           * says nothing to the card about what it is now holding; without
+           * this the letter was merged into storage and never appeared, and
+           * the keeper wrote the card's empty version over it.
+           */
+          cardHandle?.restoreWork(put.work ?? null);
+          cardHandle?.setTrail(put);
+        } else if (put?.gone) {
+          cardHandle?.setStatus(
+            'That application is not being held any more. Its writing is still where it was left — go back to its page and it comes back.',
+          );
+        }
+        return put;
+      }
+
+      case 'keepApart':
+        return send('keepApart', {});
 
       default:
         throw new Error(`Unknown card action "${action}"`);
@@ -1342,6 +1430,16 @@
     if (dismissed) return;
     putUpCard();
     cardHandle?.update(analysis);
+    /*
+     * What this page called itself when it was read, for the tick that
+     * watches boards which swap the job in place. Recorded here rather than
+     * at the top of the pass, because the employer's name is what makes the
+     * comparison mean anything and the analysis is where it comes from.
+     */
+    readAs = {
+      company: analysis?.job?.company,
+      said: withoutCompany(document.title, analysis?.job?.company),
+    };
     // An AI pass that outlived the card it was started from. See `landLate`.
     takeLateProposal();
 
@@ -1373,12 +1471,21 @@
      * not know whether it is starting an application or continuing one, and
      * it holds the automatic cover-letter draft back until it does.
      */
-    cardHandle?.restoreWork(carried?.work ?? null);
+    cardHandle?.restoreWork(carried?.work ?? null, carried?.recovered);
     // Say so when it came from a tab that was closed rather than from the
     // page before: finding your letter back without being told is its own
     // kind of unsettling.
     if (carried?.work && carried.recovered) {
-      cardHandle?.setStatus('Recovered what you had written before this tab closed.');
+      // Two rescues, two sentences. 'job' is this tab going back to a job it
+      // had already started — on a board that shows several at one address,
+      // that is a click, not an accident, and "before this tab closed" would
+      // read as the extension having lost track of a tab that never went
+      // anywhere.
+      cardHandle?.setStatus(
+        carried.recovered === 'job'
+          ? 'Brought back what you had written for this job.'
+          : 'Recovered what you had written before this tab closed.',
+      );
     }
     /*
      * And only now may the keeper write.
@@ -1744,6 +1851,34 @@
           );
           return true;
 
+        /*
+         * And the upload boxes in this frame. Half the portals that split a
+         * form across an embed put the attachment control in the embed.
+         */
+        case 'jh-frame-attach':
+          answer(
+            Promise.all([imports.attach(), imports.autofill()]).then(
+              ([{ attachFiles }, { looksLikeApplicationForm }]) =>
+                /*
+                 * Behind the same guard as `jh-frame-fill`, and for a
+                 * stronger reason.
+                 *
+                 * Every frame on the page runs this script and every frame is
+                 * asked, so an advert, a chat widget or a survey embed with a
+                 * file input in it was a place the resume could land — and a
+                 * resume is a name, an address, a phone number and an
+                 * employment history in one file. `fillForm` has always
+                 * checked that the frame is actually an application before
+                 * giving it a single field; this gave a whole document to
+                 * anything with a box.
+                 */
+                looksLikeApplicationForm()
+                  ? attachFiles(message.payload?.files ?? [])
+                  : { placed: [], unplaced: [], boxes: 0 },
+            ),
+          );
+          return true;
+
         case 'jh-frame-fill':
           answer(
             imports.autofill().then(({ fillForm, looksLikeApplicationForm }) =>
@@ -1932,6 +2067,67 @@
   let looking = false;
 
   let lastUrl = location.href;
+
+  /*
+   * And the board that swaps the job without changing anything else.
+   *
+   * The tick below watched the url, which covers every board that routes —
+   * and Indeed's results pane does not route. The list is on the left, the
+   * posting is on the right, and clicking down the list replaces the posting
+   * in place. Nothing navigates, nothing pushes state, the url is the search
+   * you arrived on. So the card sat there showing the first job while
+   * somebody read the fourth, the trail held the first job's description, and
+   * a letter written from that card was written about a job the user had
+   * stopped looking at four clicks ago. This is the case every other rule in
+   * `trail.js` cannot reach, because all of them are about *where* pages are
+   * and here they are all in the same place.
+   *
+   * What is left to read is what the page calls itself. The employer's name
+   * comes out of it first — every one of these titles carries it, and leaving
+   * it in means two jobs at one company always have a word in common — and
+   * what remains goes to `plainlyAnotherRole`, which is the same conservative
+   * test the trail uses: an opinion only when the two share no word at all.
+   * "Platform Engineer" and "Data Scientist" is a different job; "Platform
+   * Engineer" and "Senior Platform Engineer (Remote)" is not, and a form page
+   * retitling itself mid-application is not either.
+   *
+   * Starting over is all this does. Whether the new job is a branch, or the
+   * same application after all, is `judgeApplication`'s to answer, on a page
+   * that has actually been read.
+   */
+  let readAs = null;
+
+  /** Loaded once and held, because the tick cannot await. */
+  let plainlyAnotherRole = null;
+  imports
+    .trail()
+    .then((m) => {
+      plainlyAnotherRole = m.plainlyAnotherRole;
+    })
+    .catch(quietly);
+
+  /**
+   * A title with the employer's name taken out of it.
+   *
+   * Substring rather than a pattern: a company name is arbitrary text and
+   * building a regular expression out of it is one `C++ Systems (Ltd.)` away
+   * from throwing on a page that did nothing wrong.
+   */
+  const withoutCompany = (text, company) => {
+    const said = String(text ?? '');
+    const co = String(company ?? '').trim().toLowerCase();
+    if (!co) return said;
+    const lower = said.toLowerCase();
+    let out = '';
+    let from = 0;
+    for (;;) {
+      const at = lower.indexOf(co, from);
+      if (at === -1) return out + said.slice(from);
+      out += `${said.slice(from, at)} `;
+      from = at + co.length;
+    }
+  };
+
   /**
    * Start this page again, as though it had just been opened.
    *
@@ -2019,6 +2215,18 @@
   every(1000, () => {
     if (location.href !== lastUrl) {
       lastUrl = location.href;
+      readAs = null;
+      return startOver();
+    }
+
+    // The board that swaps the job and changes nothing else. See `readAs`.
+    if (
+      cardHandle &&
+      readAs &&
+      plainlyAnotherRole &&
+      plainlyAnotherRole(withoutCompany(document.title, readAs.company), readAs.said)
+    ) {
+      readAs = null;
       return startOver();
     }
 

@@ -1,0 +1,495 @@
+/**
+ * Putting the files into the form, instead of telling you where they are.
+ *
+ * The flat folder and the path beside it were the answer to "how do I attach
+ * what this built": point the dialog at one place and pick the file out. Two
+ * clicks and a paste, every time, and the same two for a transcript that has
+ * not changed since September.
+ *
+ * What is checked here is the part that can go quietly wrong. `input.files`
+ * only accepts a `FileList` from a `DataTransfer` — hand it an array and the
+ * assignment is silently ignored, the box stays empty, and the report says it
+ * worked. And a file in the wrong box is worse than no file at all: a form
+ * that looks filled in, with the transcript as the thing an employer opens
+ * first. So every case below reads back what is actually in each box.
+ *
+ *   node tests/attaching.mjs
+ */
+
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { chromium } from 'playwright-core';
+import { findChromium } from './fixtures.mjs';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+let passed = 0;
+let failed = 0;
+const check = (what, ok, detail = '') => {
+  ok ? passed++ : failed++;
+  console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${what}${detail ? ` — ${detail}` : ''}`);
+};
+const group = (name) => console.log(`\n${name}`);
+
+const page = (body) => `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head>
+<body><form>${body}</form></body></html>`;
+
+/** Three boxes, each saying plainly what it wants. */
+const LABELLED = page(`
+  <label for="rs">Resume/CV</label><input id="rs" name="resume" type="file">
+  <label for="cl">Cover Letter</label><input id="cl" name="cover" type="file">
+  <label for="tr">Transcript</label><input id="tr" name="transcript" type="file">
+`);
+
+/** One box, no word anywhere near it — the commonest small form there is. */
+const BARE = page(`<p>Application</p><input id="only" name="file" type="file">`);
+
+/**
+ * The shape every real portal uses: a styled button, and the input behind it
+ * with `display:none`. A visibility test throws all of these away.
+ */
+const HIDDEN = page(`
+  <div>
+    <h3>Resume</h3>
+    <button type="button">Attach or drop files here</button>
+    <input id="rs" name="resume" type="file" style="display:none">
+  </div>
+`);
+
+/** Only a resume box, and a transcript with nowhere to go. */
+const RESUME_ONLY = page(`<label for="rs">Resume</label><input id="rs" name="resume" type="file">`);
+
+/** A box whose label names both, and a plainer letter box further down. */
+const SHARED = page(`
+  <label for="both">Resume and cover letter (one PDF)</label><input id="both" name="both" type="file">
+  <label for="cl">Cover letter</label><input id="cl" name="cover" type="file">
+`);
+
+/**
+ * Two controls with no labels, told apart only by the heading above each —
+ * and the transcript first, so taking the boxes in document order is wrong.
+ * This is how Workday and Greenhouse build them.
+ */
+const HEADINGS = page(`
+  <div class="fields">
+    <h3>Transcript</h3>
+    <button type="button">Attach or drop files here</button>
+    <input id="a" type="file" style="display:none">
+    <h3>Resume</h3>
+    <button type="button">Attach or drop files here</button>
+    <input id="b" type="file" style="display:none">
+  </div>
+`);
+
+/** An ordinary page with an account menu, and no upload box anywhere. */
+const MENU = `<!doctype html><html><head><meta charset="utf-8"><title>Careers</title></head>
+<body>
+  <div class="dropdown"><button type="button">Account</button><ul><li>Sign out</li></ul></div>
+  <h1>Platform Engineer</h1><p>Apply on our portal.</p>
+</body></html>`;
+
+/** Workday's shape: a region that listens for a drop, and no input at all. */
+const DROPZONE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head>
+<body><form>
+  <div class="upload-area" aria-label="Drop files to attach"><p>Drag and drop your resume here</p></div>
+</form></body></html>`;
+
+/** The same, on a page that does what Workday does with what it catches. */
+const DROPZONE_REAL = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head>
+<body><form>
+  <div id="zone" class="upload-area"><p>Drag and drop your resume here</p></div>
+  <script>
+    document.getElementById('zone').addEventListener('drop', (e) => {
+      e.preventDefault();
+      const made = document.createElement('input');
+      made.type = 'file'; made.id = 'made'; made.name = 'resume';
+      made.files = e.dataTransfer.files;
+      document.querySelector('form').append(made);
+    });
+  </script>
+</form></body></html>`;
+
+/**
+ * One box, and it says Resume. The transcript must not take it just for
+ * being first in the list — which is whatever order the store lists them in.
+ */
+const RESUME_ONLY_LABELLED = page(`<label for="rs">Resume</label><input id="rs" name="resume" type="file">`);
+
+/**
+ * A profile photo box and a real drop zone for the resume. The form's text
+ * says "Resume" near both, and only one of them is a document's.
+ */
+const PHOTO_AND_ZONE = page(`
+  <label for="ph">Profile photo</label><input id="ph" name="photo" type="file" accept="image/*">
+  <h3>Resume</h3>
+  <div data-automation-id="file-upload"><p>Drag and drop your resume here</p></div>
+`);
+
+/** A closed modal holding a complete, correctly labelled upload control. */
+const DECOY = page(`
+  <div class="modal" style="display:none"><label for="decoy">Resume</label><input id="decoy" type="file"></div>
+  <label for="real">Resume</label><input id="real" type="file">
+`);
+
+/** A form that has said, in the markup, that it will not have a PDF. */
+const DOC_ONLY = page(
+  `<label for="rs">Resume (.doc or .docx only)</label><input id="rs" type="file" accept=".doc,.docx">`,
+);
+
+/** The short version of a form: one box, asking for all three. */
+const ALL_IN_ONE = page(
+  `<label for="all">Attach your resume, cover letter and transcript</label><input id="all" type="file" multiple>`,
+);
+
+/** A form built as a web component, which is how a modern one is built. */
+const SHADOW = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head>
+<body><div id="host"></div><script>
+  const root = document.getElementById('host').attachShadow({ mode: 'open' });
+  root.innerHTML = '<label for="rs">Resume</label><input id="rs" type="file">';
+</script></body></html>`;
+
+const PAGES = {
+  '/resume-only-labelled': RESUME_ONLY_LABELLED,
+  '/photo-and-zone': PHOTO_AND_ZONE,
+  '/decoy': DECOY,
+  '/doc-only': DOC_ONLY,
+  '/all-in-one': ALL_IN_ONE,
+  '/shadow': SHADOW,
+  '/menu': MENU,
+  '/dropzone': DROPZONE,
+  '/dropzone-real': DROPZONE_REAL,
+  '/headings': HEADINGS,
+  '/labelled': LABELLED,
+  '/bare': BARE,
+  '/hidden': HIDDEN,
+  '/resume-only': RESUME_ONLY,
+  '/shared': SHARED,
+};
+
+/** A little PDF, as the worker would hand it over. */
+const filed = (name) => ({
+  name,
+  type: 'application/pdf',
+  base64: Buffer.from(`%PDF-1.7\n${name}\n`).toString('base64'),
+});
+
+async function main() {
+  const source = fs.readFileSync(path.join(root, 'src/content/attach.js'), 'utf8');
+  const server = http.createServer((req, res) => {
+    const url = req.url.split('?')[0];
+    if (url === '/attach.js') {
+      res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
+      res.end(source);
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(PAGES[url] ?? BARE);
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+  try {
+    const p = await browser.newPage();
+
+    /** Attach these files on that page, and read back what is in every box. */
+    const run = async (where, files) => {
+      await p.goto(`${base}${where}`, { waitUntil: 'domcontentloaded' });
+      return p.evaluate(
+        async ({ b, list }) => {
+          const m = await import(`${b}/attach.js`);
+          // Recorded as the page would see them: a form's own handler reads
+          // `event.target.files`, so a box that never fired is a box that did
+          // not happen as far as the page is concerned.
+          const heard = [];
+          for (const input of document.querySelectorAll('input[type=file]')) {
+            input.addEventListener('change', (e) => heard.push(e.target.id));
+          }
+          const report = await m.attachFiles(list);
+          /*
+           * Read back through the shadow roots as well. A form built as a web
+           * component keeps its boxes out of the document, and a readback
+           * that cannot see them cannot tell "placed correctly" from "placed
+           * nowhere".
+           */
+          const inBoxes = {};
+          const walk = (root) => {
+            for (const input of root.querySelectorAll('input[type=file]')) {
+              inBoxes[input.id] = [...(input.files ?? [])].map((f) => f.name);
+            }
+            for (const el of root.querySelectorAll('*')) if (el.shadowRoot) walk(el.shadowRoot);
+          };
+          walk(document);
+          return { report, inBoxes, heard };
+        },
+        { b: base, list: files },
+      );
+    };
+
+    /* ---------------------------------------------------------------- */
+
+    group('Three boxes that say what they want');
+    {
+      const { report, inBoxes, heard } = await run('/labelled', [
+        filed('Jianwen-Ding-Resume.pdf'),
+        filed('Jianwen-Ding-Cover-Letter.pdf'),
+        filed('Transcript.pdf'),
+      ]);
+      check('the resume goes in the resume box', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes.rs));
+      check('the letter goes in the letter box', inBoxes.cl?.[0] === 'Jianwen-Ding-Cover-Letter.pdf', JSON.stringify(inBoxes.cl));
+      check('the transcript goes in the transcript box', inBoxes.tr?.[0] === 'Transcript.pdf', JSON.stringify(inBoxes.tr));
+      check('all three are reported as placed', report.placed.length === 3, `${report.placed.length} placed`);
+      /*
+       * The events are the half that is easy to leave out. A form listens for
+       * `change`; without it `input.files` is right and the page has no idea.
+       */
+      check('and the form heard about each one', heard.length === 3, heard.join(', '));
+    }
+
+    group('One box and no words');
+    {
+      const { report, inBoxes } = await run('/bare', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('the one file goes in the one box', inBoxes.only?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes.only));
+      check('and says where it went', report.placed[0]?.where?.includes('only upload box'), report.placed[0]?.where ?? '');
+    }
+
+    group('A box behind a styled button, which is how they are all built');
+    {
+      const { inBoxes } = await run('/hidden', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('display:none is not a reason to skip it', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes.rs));
+    }
+
+    /*
+     * The case that must refuse. A form asking only for a resume is saying it
+     * does not want a transcript, and putting one in the resume box is worse
+     * than attaching nothing: the form looks complete and the first thing an
+     * employer opens is the wrong document.
+     */
+    group('A file with nowhere to go');
+    {
+      const { report, inBoxes } = await run('/resume-only', [
+        filed('Jianwen-Ding-Resume.pdf'),
+        filed('Transcript.pdf'),
+      ]);
+      check('the resume still lands', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes.rs));
+      check('the transcript is not put somewhere it does not belong', report.placed.length === 1, JSON.stringify(report.placed));
+      check('and is named as having nowhere to go', report.unplaced[0]?.name === 'Transcript.pdf', JSON.stringify(report.unplaced));
+    }
+
+    group('A box that names both, with a plainer one below it');
+    {
+      const { inBoxes } = await run('/shared', [
+        filed('Jianwen-Ding-Resume.pdf'),
+        filed('Jianwen-Ding-Cover-Letter.pdf'),
+      ]);
+      check('the resume takes the shared box', inBoxes.both?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes.both));
+      check('and the letter takes the one that is only its own', inBoxes.cl?.[0] === 'Jianwen-Ding-Cover-Letter.pdf', JSON.stringify(inBoxes.cl));
+    }
+
+    /*
+     * The case the ancestor bound exists for. Both controls are in one div, so
+     * an ancestor's text says "transcript resume" for each of them — and with
+     * the transcript's box first, a matcher that falls back to document order
+     * puts the resume where the transcript belongs and the transcript where
+     * the resume belongs. Two wrong documents, and a form that looks right.
+     */
+    group('Two unlabelled boxes, told apart by the heading above each');
+    {
+      const { inBoxes } = await run('/headings', [filed('Jianwen-Ding-Resume.pdf'), filed('Transcript.pdf')]);
+      check('the resume goes under the Resume heading', inBoxes.b?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
+      check('and the transcript under the Transcript one', inBoxes.a?.[0] === 'Transcript.pdf', JSON.stringify(inBoxes));
+    }
+
+    /*
+     * The page with no upload box at all, which is most of the web.
+     *
+     * The drop-zone fallback matched `/drag|drop|attach/` with no word
+     * boundaries, and `drop` is inside `dropdown` — which is on some element
+     * of nearly every page there is. So an ordinary page with an account menu
+     * reported the resume as attached, having dispatched a drop event at a
+     * menu. Measured before the fix: `{placed: [{name: "…Resume.pdf", where:
+     * "the drop area"}], boxes: 0}`.
+     *
+     * Telling somebody their resume is in the form when it is nowhere is the
+     * worst thing this file can do. It is worse than refusing, because they
+     * press Submit on the strength of it.
+     */
+    group('A page with a menu on it and nowhere to put anything');
+    {
+      const { report } = await run('/menu', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('a dropdown is not a drop area', report.placed.length === 0, JSON.stringify(report.placed));
+      check('and the file is named as having nowhere to go', report.unplaced[0]?.name === 'Jianwen-Ding-Resume.pdf', JSON.stringify(report.unplaced));
+    }
+
+    /*
+     * And the real one, which must still work. Workday's is a region with a
+     * drop handler and no input until a file has been chosen — so there is
+     * nothing to read back afterwards, and a drop that was ignored looks
+     * exactly like one that was taken and uploaded over the network. The
+     * honest answer is "not sure", said as that.
+     */
+    group('A drop area with no input behind it');
+    {
+      const { report } = await run('/dropzone', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('the file is offered to it', report.placed[0]?.where === 'the drop area', JSON.stringify(report.placed));
+      check(
+        'and it is not claimed as attached, because nothing can say it was',
+        report.placed[0]?.sure === false,
+        JSON.stringify(report.placed[0]),
+      );
+    }
+
+    /*
+     * The same zone, on a page that does what Workday does: takes the drop
+     * and puts the file into an input. That *can* be read back, so it is not
+     * hedged.
+     */
+    group('A drop area that really takes the file');
+    {
+      const { report, inBoxes } = await run('/dropzone-real', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('the page ends up holding it', inBoxes.made?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
+      check('and it is reported as certain', report.placed[0]?.sure === true, JSON.stringify(report.placed[0]));
+    }
+
+    /* ---------------------------------------------------------------- *
+     * The six ways a file ended up in the wrong place, or nowhere        *
+     * ---------------------------------------------------------------- */
+
+    /*
+     * The fallback asked how many boxes there were, never what the one box
+     * said. So on a form asking for a resume and nothing else, the transcript
+     * took the resume box whenever the store happened to list it first — and
+     * the store's order is not something the person chose. Measured before
+     * the fix: `#rs` holding `Transcript.pdf`, the resume reported as having
+     * nowhere to go.
+     */
+    group('One box, and it says Resume');
+    {
+      const { report, inBoxes } = await run('/resume-only-labelled', [
+        filed('Transcript.pdf'),
+        filed('Jianwen-Ding-Resume.pdf'),
+      ]);
+      check('the resume takes it, whatever order they came in', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
+      check('and the transcript does not', report.unplaced[0]?.name === 'Transcript.pdf', JSON.stringify(report.unplaced));
+    }
+
+    /*
+     * A profile-photo box and a real drop zone for the resume. `aroundIt`
+     * reads the text near a control, and the word "Resume" was near both — so
+     * the resume went into the avatar box and the presence of that one box
+     * meant the drop zone was never tried. Measured: `#ph` holding the
+     * resume, zero drop events at the zone, under a green "Attached".
+     */
+    group('An upload box that is for a photograph');
+    {
+      const { report, inBoxes } = await run('/photo-and-zone', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('the resume does not go in the photo box', (inBoxes.ph ?? []).length === 0, JSON.stringify(inBoxes));
+      check('and the drop area is tried instead', report.placed[0]?.where === 'the drop area', JSON.stringify(report.placed));
+    }
+
+    /*
+     * A closed modal holds a complete, correctly labelled upload control, and
+     * `boxFor` took the first match in document order. The person sees an
+     * empty box and a note saying the file is attached.
+     */
+    group('A hidden copy of the form, in front of the real one');
+    {
+      const { inBoxes } = await run('/decoy', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('the file goes in the box that is on screen', inBoxes.real?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
+      check('and not in the one the page has hidden', (inBoxes.decoy ?? []).length === 0, JSON.stringify(inBoxes));
+    }
+
+    /*
+     * The form has said in the markup that it will not have a PDF. Putting
+     * one in anyway is placed, reported as attached, and refused by the
+     * portal at submit — after the person has stopped checking.
+     */
+    group('A box that has said what it will take');
+    {
+      const { report, inBoxes } = await run('/doc-only', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('a PDF is not forced into a .doc box', (inBoxes.rs ?? []).length === 0, JSON.stringify(inBoxes));
+      check(
+        'and the reason names what the form wants',
+        /\.doc/.test(report.unplaced[0]?.why ?? ''),
+        report.unplaced[0]?.why ?? '',
+      );
+    }
+
+    /*
+     * One `multiple` box asking for all three, which is how the short version
+     * of a form is built. Every file after the first came back "no box here
+     * asks for it" — on a box that had named it.
+     */
+    group('One box that asks for all three');
+    {
+      const { report, inBoxes } = await run('/all-in-one', [
+        filed('Jianwen-Ding-Resume.pdf'),
+        filed('Jianwen-Ding-Cover-Letter.pdf'),
+        filed('Transcript.pdf'),
+      ]);
+      check('all three go in', (inBoxes.all ?? []).length === 3, JSON.stringify(inBoxes));
+      check('in the order they were given', inBoxes.all?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
+      check('and none is reported as homeless', report.unplaced.length === 0, JSON.stringify(report.unplaced));
+    }
+
+    /*
+     * A form built as a web component. `looksLikeApplicationForm` — the gate
+     * on this whole path — walks into shadow roots, so the frame passes the
+     * gate and then every file was refused for having no upload box, on the
+     * same form where Autofill had just filled every text field.
+     */
+    group('A form built out of web components');
+    {
+      const { report, inBoxes } = await run('/shadow', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('a box inside a shadow root is still a box', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
+      check('and it is reported as placed', report.placed.length === 1, JSON.stringify(report));
+    }
+
+    /*
+     * A zero-byte body is what a file still being written looks like — the
+     * folder is streamed to as each document is built. Nothing noticed:
+     * `atob('')` makes a File of size 0, the box holds one file, and the card
+     * said "Attached Jianwen-Ding-Resume.pdf" over an empty PDF.
+     */
+    group('A file that comes back empty');
+    {
+      const { report, inBoxes } = await run('/resume-only-labelled', [
+        { name: 'Jianwen-Ding-Resume.pdf', type: 'application/pdf', base64: '' },
+      ]);
+      check('nothing is put in the box', (inBoxes.rs ?? []).length === 0, JSON.stringify(inBoxes));
+      check('and it is reported as empty, not as attached', /empty/.test(report.unplaced[0]?.why ?? ''), report.unplaced[0]?.why ?? '');
+    }
+
+    group('Reading a name for what kind of document it is');
+    {
+      const kinds = await p.evaluate(async ({ b }) => {
+        const m = await import(`${b}/attach.js`);
+        return [
+          'Jianwen-Ding-Resume.pdf',
+          'Jianwen Ding CV.pdf',
+          'Jianwen-Ding-Cover-Letter.pdf',
+          'Transcript.pdf',
+          'UVA Academic Record.pdf',
+          'Portfolio.pdf',
+          'something-else.pdf',
+        ].map((n) => [n, m.kindOf(n)]);
+      }, { b: base });
+      const want = ['resume', 'resume', 'letter', 'transcript', 'transcript', 'portfolio', 'other'];
+      const got = kinds.map(([, k]) => k);
+      check('each name reads as what it is', JSON.stringify(got) === JSON.stringify(want), JSON.stringify(kinds));
+    }
+  } finally {
+    await browser.close();
+    server.close();
+  }
+
+  console.log(`\n${passed}/${passed + failed} checks passed`);
+  if (failed) process.exitCode = 1;
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

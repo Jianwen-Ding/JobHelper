@@ -48,7 +48,7 @@ const group = (name) => console.log(`\n${name}`);
  * the request looked successful.
  */
 function fakeStore() {
-  const state = { save: 'work', routes: {}, hits: [], open: [], strict: true };
+  const state = { save: 'work', routes: {}, hits: [], open: [], strict: true, role: 'Platform Engineer' };
   const readBody = (req) =>
     new Promise((done) => {
       const parts = [];
@@ -101,7 +101,7 @@ function fakeStore() {
         isJobPosting: true,
         kind: 'posting',
         save: state.save,
-        job: { company: page.company ?? 'Helios', title: 'Platform Engineer', description: 'A job.', keywords: [] },
+        job: { company: page.company ?? 'Helios', title: state.role, description: 'A job.', keywords: [] },
         spec: { id: 'job-fake', extends: 'newgrad' },
       });
     }
@@ -228,6 +228,273 @@ async function main() {
     }
 
     /* ---------------------------------------------------------------- *
+     * One board, several jobs                                           *
+     * ---------------------------------------------------------------- */
+
+    /*
+     * A board that keeps every posting at one address — Indeed's results
+     * pane, any single-page board — leaves the url saying "same page" when
+     * the pane has been swapped to a different job. Reading the second one as
+     * the first is how a cover letter comes out addressed to one company and
+     * written from another, and it is the failure the whole trail exists to
+     * prevent.
+     *
+     * The url cannot settle it there, so the role does, and a role title is
+     * thin evidence: the answer is "unsure", and unsure branches. Branching
+     * is the safe guess of the two, because a split can be put back and a
+     * merge cannot — once the second job's pages and the first job's letter
+     * are one application, nothing can tell them apart again.
+     */
+    group('One board showing several jobs');
+    {
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      store.role = 'Platform Engineer';
+      await ask(driver, 'analyze', { url: 'http://board.example/jobs?q=engineer', title: 'Engineer', html: '<p>one</p>', company: 'Helios' });
+      // Something written, so the branch has something to be careful with.
+      await ask(driver, 'saveWork', { work: { letter: 'Dear Helios, I have wanted this for years.' } });
+
+      store.role = 'Data Scientist';
+      const second = await ask(driver, 'analyze', { url: 'http://board.example/jobs?q=data', title: 'Data', html: '<p>two</p>', company: 'Helios' });
+      const trail = second.reply?.data?.trail;
+      check('the second job does not join the first', (trail?.pages ?? []).length === 1, `${trail?.pages?.length} pages`);
+      check('and the card is told a new application was started', trail?.branchedFrom?.role === 'Platform Engineer', JSON.stringify(trail?.branchedFrom));
+      check('the letter does not come with it', trail?.holdingWriting === false, JSON.stringify(trail?.holdingWriting));
+
+      // "That was the same job after all."
+      const back = await ask(driver, 'keepTogether', {});
+      check('putting it back joins the two pages', (back.reply?.data?.pages ?? []).length === 2, `${back.reply?.data?.pages?.length} pages`);
+      check('and the letter comes back with them', back.reply?.data?.holdingWriting === true, JSON.stringify(back.reply?.data));
+      // Both halves: the merge happened *and* the chip is gone. Without the
+      // first, "no chip" is what a call that failed outright also looks like.
+      check(
+        'and the card stops asking',
+        back.reply?.ok === true && back.reply?.data?.branchedFrom === undefined,
+        JSON.stringify(back.reply).slice(0, 80),
+      );
+    }
+
+    /*
+     * Branching is only half of it. The other half is what happens to the
+     * letter the branch left behind, and it was going straight to the new job
+     * one message later.
+     *
+     * `remember` parks the work it is about to replace under the address of
+     * every page it belonged to, so that going back to that page finds it.
+     * On a board that never changes its address, the page the new job is on
+     * *is* that page — so `takeWork`, sent by the content script immediately
+     * after the analysis, rescued the previous job's letter into the job that
+     * had just branched away from it, and the card announced it as
+     * "Recovered what you had written before this tab closed."
+     *
+     * Measured before it was fixed, on one url with two roles: the Data
+     * Scientist page was handed `LETTER-FOR-PLATFORM-ENGINEER`, and going
+     * back to the Platform Engineer page was handed the Data Scientist's. The
+     * branch was undone on the spot, both ways, and every job on the board
+     * came up holding the last one's writing.
+     *
+     * Two parts to the fix and both are checked below: a park knows which job
+     * it belongs to and is refused to any other, and one address holds more
+     * than one of them so the second job's park does not overwrite the
+     * first's.
+     */
+    group('Going back to the job before it, on a board with one address');
+    {
+      const BOARD = 'http://board.example/all';
+      const letterOn = (reply) => reply?.data?.work?.letter ?? null;
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+
+      store.role = 'Platform Engineer';
+      await ask(driver, 'analyze', { url: BOARD, title: 'Board', html: '<p>one</p>', company: 'Helios' });
+      await ask(driver, 'saveWork', { work: { letter: 'FOR-THE-PLATFORM-ENGINEER' } });
+
+      // The pane is swapped to another job. Same address, same employer.
+      store.role = 'Data Scientist';
+      await ask(driver, 'analyze', { url: BOARD, title: 'Board', html: '<p>two</p>', company: 'Helios' });
+      const atSecond = await ask(driver, 'takeWork', { page: { url: BOARD, title: 'Board' } });
+      check('the new job is not handed the last one’s letter', letterOn(atSecond.reply) === null, JSON.stringify(atSecond.reply?.data));
+      await ask(driver, 'saveWork', { work: { letter: 'FOR-THE-DATA-SCIENTIST' } });
+
+      // And back to the first, which is the click this whole branch is for.
+      store.role = 'Platform Engineer';
+      await ask(driver, 'analyze', { url: BOARD, title: 'Board', html: '<p>three</p>', company: 'Helios' });
+      const atFirst = await ask(driver, 'takeWork', { page: { url: BOARD, title: 'Board' } });
+      check('going back finds its own letter', letterOn(atFirst.reply) === 'FOR-THE-PLATFORM-ENGINEER', JSON.stringify(atFirst.reply?.data?.work));
+      /*
+       * And says so as what it is. "Before this tab closed" is the sentence
+       * for a tab that closed; this tab never went anywhere, and telling
+       * somebody their tab closed when it did not reads as the extension
+       * having lost track of them.
+       */
+      check('and says it is this job’s, not a closed tab’s', atFirst.reply?.data?.recovered === 'job', JSON.stringify(atFirst.reply?.data?.recovered));
+
+      // The second job's letter was not spent on the first: it is still there.
+      store.role = 'Data Scientist';
+      await ask(driver, 'analyze', { url: BOARD, title: 'Board', html: '<p>four</p>', company: 'Helios' });
+      const back = await ask(driver, 'takeWork', { page: { url: BOARD, title: 'Board' } });
+      check('and the other job’s letter is still waiting for it', letterOn(back.reply) === 'FOR-THE-DATA-SCIENTIST', JSON.stringify(back.reply?.data?.work));
+      store.role = 'Platform Engineer';
+    }
+
+    /*
+     * "Same job — put it back" has to put it back where it can be seen.
+     *
+     * The merge wrote the letter into the trail and answered with a summary,
+     * and a summary is booleans — `summarise` strips `work` deliberately, so
+     * the popup never holds a copy of anybody's letter. Both callers did only
+     * `setTrail`, so nothing reached the card: the panel grew to two pages,
+     * the letter did not come back on screen, and two seconds later the
+     * card's keeper saved its own empty work over the restored trail. The
+     * button's tooltip promises "with everything you had written", and
+     * pressing it was how you lost it.
+     */
+    group('Putting a branch back hands the writing over, not just the pages');
+    {
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      store.role = 'Platform Engineer';
+      await ask(driver, 'analyze', { url: 'http://board.example/two?q=a', title: 'A', html: '<p>one</p>', company: 'Helios' });
+      await ask(driver, 'saveWork', { work: { letter: 'PUT-THIS-BACK' } });
+
+      store.role = 'Data Scientist';
+      await ask(driver, 'analyze', { url: 'http://board.example/two?q=b', title: 'B', html: '<p>two</p>', company: 'Helios' });
+      const back = await ask(driver, 'keepTogether', {});
+      check('the merge answers with the writing itself', back.reply?.data?.work?.letter === 'PUT-THIS-BACK', JSON.stringify(back.reply?.data?.work));
+      check('and with the pages joined', (back.reply?.data?.pages ?? []).length === 2, `${back.reply?.data?.pages?.length} pages`);
+      store.role = 'Platform Engineer';
+    }
+
+    /*
+     * And refuses when there is no longer anything to put back, rather than
+     * dropping the page on screen. `held.at` was written and never read, so a
+     * branch left unanswered until the trail went stale merged the old pages
+     * over an empty live one — the card on the new job, the toolbar naming
+     * the old one.
+     */
+    group('Putting back a branch that is no longer there');
+    {
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      const lonely = await ask(driver, 'keepTogether', {});
+      check('says there is nothing being held', lonely.reply?.data?.gone === true, JSON.stringify(lonely.reply?.data));
+      check('and does not claim to have merged anything', lonely.reply?.data?.ok !== true, JSON.stringify(lonely.reply?.data));
+
+      /*
+       * And the two ways the stash outlives what it was going to be merged
+       * into. `held.at` was written and never read, and the chip lives in the
+       * content script's memory for as long as the page is open — so a branch
+       * left unanswered still offered "Same job — put it back" hours later,
+       * by which time `readTrail` calls the live trail stale and answers with
+       * no pages. The merge then kept the old pages and dropped the page
+       * actually on screen: the card on job B, the toolbar naming job A.
+       */
+      const branchAgain = async () => {
+        await ask(driver, 'clearTrail', {});
+        store.role = 'Platform Engineer';
+        await ask(driver, 'analyze', { url: 'http://board.example/three?q=a', title: 'A', html: '<p>one</p>', company: 'Helios' });
+        await ask(driver, 'saveWork', { work: { letter: 'STALE-BRANCH' } });
+        store.role = 'Data Scientist';
+        await ask(driver, 'analyze', { url: 'http://board.example/three?q=b', title: 'B', html: '<p>two</p>', company: 'Helios' });
+        store.role = 'Platform Engineer';
+      };
+
+      // "Start fresh" pressed in the popup while the chip is still up.
+      await branchAgain();
+      await ask(driver, 'clearTrail', {});
+      const emptied = await ask(driver, 'keepTogether', {});
+      check(
+        'a trail that has been forgotten is not merged over',
+        emptied.reply?.data?.gone === true,
+        JSON.stringify(emptied.reply?.data).slice(0, 90),
+      );
+
+      // And the same chip pressed long after the stash went stale.
+      await branchAgain();
+      const aged = await driver.evaluate(async () => {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const key = `jh-branched:${tab.id}`;
+        const held = (await chrome.storage.session.get(key))[key];
+        if (!held) return false;
+        await chrome.storage.session.set({ [key]: { ...held, at: Date.now() - 3 * 60 * 60 * 1000 } });
+        return true;
+      });
+      check('the stash really was aged', aged === true, String(aged));
+      const old = await ask(driver, 'keepTogether', {});
+      check(
+        'and one older than the trail it belongs to is refused',
+        old.reply?.data?.gone === true,
+        JSON.stringify(old.reply?.data).slice(0, 90),
+      );
+    }
+
+    /*
+     * And the same role reworded is not a different job. A form page that
+     * calls itself "Platform Engineer (Remote)" must not split the
+     * application somebody is halfway through filling in.
+     */
+    group('The same job, described slightly differently');
+    {
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      store.role = 'Platform Engineer';
+      await ask(driver, 'analyze', { url: 'http://board.example/jobs?q=a', title: 'A', html: '<p>one</p>', company: 'Helios' });
+      store.role = 'Senior Platform Engineer (Remote)';
+      const next = await ask(driver, 'analyze', { url: 'http://board.example/jobs?q=b', title: 'B', html: '<p>two</p>', company: 'Helios' });
+      const trail = next.reply?.data?.trail;
+      check('it stays one application', (trail?.pages ?? []).length === 2, `${trail?.pages?.length} pages`);
+      check('and nothing is asked about it', trail?.branchedFrom === undefined, JSON.stringify(trail?.branchedFrom));
+      store.role = 'Platform Engineer';
+    }
+
+    /*
+     * Muting two sites at once, and neither of them going missing.
+     *
+     * `mutedHosts` is one array shared by the popup's button and every tab's
+     * card, and both changed it the same way: read the settings, add a host,
+     * write the whole array back. Two mutes close enough together and the
+     * second read happens before the first write lands, so one of them is
+     * dropped — a button that said Muted and did nothing, with no way to find
+     * out except by meeting the site again.
+     *
+     * Sent together on purpose: the worker is one process, so the only thing
+     * that can make this safe is the write chain inside it.
+     */
+    group('Two sites muted at the same moment');
+    {
+      await ask(driver, 'setSettings', { patch: { mutedHosts: [] } });
+      const both = await driver.evaluate(
+        () =>
+          Promise.all(
+            ['first.example', 'second.example'].map(
+              (host) =>
+                new Promise((done) =>
+                  chrome.runtime.sendMessage({ type: 'muteHost', payload: { host, muted: true } }, done),
+                ),
+            ),
+          ).then(() =>
+            new Promise((done) =>
+              chrome.runtime.sendMessage({ type: 'getSettings' }, (reply) => done(reply?.data?.mutedHosts ?? [])),
+            ),
+          ),
+      );
+      check('both are muted, not just the later one', both.length === 2, JSON.stringify(both));
+      check('and each by name', both.includes('first.example') && both.includes('second.example'), JSON.stringify(both));
+
+      // And unmuting is the same operation backwards.
+      const left = await driver.evaluate(
+        () =>
+          new Promise((done) =>
+            chrome.runtime.sendMessage(
+              { type: 'muteHost', payload: { host: 'first.example', muted: false } },
+              (reply) => done(reply?.data?.mutedHosts ?? []),
+            ),
+          ),
+      );
+      check('taking one off leaves the other', JSON.stringify(left) === JSON.stringify(['second.example']), JSON.stringify(left));
+    }
+
+    /* ---------------------------------------------------------------- *
      * Holding a space in the editor                                     *
      * ---------------------------------------------------------------- */
 
@@ -248,9 +515,57 @@ async function main() {
      * applied for out of a second save was taken for one already held and
      * never got a row there at all.
      */
+    /*
+     * And not for a posting somebody only read.
+     *
+     * `worthKeeping` is true of a spec alone, and the opening read of every
+     * posting produces one — so the keeper, saving every couple of seconds,
+     * filed a tracker row for every job anybody looked at. Click down a board
+     * and a dozen drafts are waiting for jobs you read one line of. A row
+     * says an application is under way, so it takes something somebody did:
+     * a resume compiled, files staged, a letter started, an answer written.
+     */
+    group('A posting that was only read opens nothing');
+    {
+      const spaces = () => store.sentTo('/api/workspace').length;
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      await ask(driver, 'analyze', { url: 'http://g.example/jobs/read-only', title: 'Helios', html: '<p>read</p>', company: 'Helios' });
+
+      const before = spaces();
+      // What the card holds after an opening read and nothing else: the
+      // proposal it worked out, and no letter, no answers, nothing compiled.
+      await ask(driver, 'saveWork', {
+        // Its own company and role: `heldKey` is per save, company and role,
+        // so borrowing another group's would reserve the key it is about to
+        // test and suppress its push.
+        work: { spec: { id: 'job-read', generatedFor: { company: 'Solace', role: 'Reader' } } },
+      });
+      await new Promise((r) => setTimeout(r, 600));
+      check('reading a posting files no draft', spaces() === before, `${spaces() - before} opened`);
+
+      // And the moment something is built, it does.
+      await ask(driver, 'saveWork', {
+        work: {
+          spec: { id: 'job-read', generatedFor: { company: 'Solace', role: 'Reader' } },
+          render: { pages: 1 },
+        },
+      });
+      for (let i = 0; i < 60 && spaces() === before; i++) await new Promise((r) => setTimeout(r, 50));
+      check('and building one does', spaces() === before + 1, `${spaces() - before} opened`);
+    }
+
     group('Holding a space in the editor');
     {
-      const helios = { spec: { id: 'job-7', generatedFor: { company: 'Helios', role: 'Platform Engineer' } } };
+      /*
+       * With a compiled resume on it, because that is what opens a row at
+       * all: a spec alone is the card's opening read of a posting, and
+       * reading a posting no longer files anything. See `madeSomething`.
+       */
+      const helios = {
+        spec: { id: 'job-7', generatedFor: { company: 'Helios', role: 'Platform Engineer' } },
+        render: { pages: 1 },
+      };
       const spaces = () => store.sentTo('/api/workspace').length;
       /** Wait for the push, which is sent alongside the reply rather than before it. */
       const settle = async (want) => {

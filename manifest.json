@@ -40,6 +40,7 @@
         "src/content/ask.js",
         "src/shared/sites.js",
         "src/content/autofill.js",
+        "src/content/attach.js",
         "src/shared/trail.js",
         "src/shared/sending.js",
         "src/content/pdfview.js",

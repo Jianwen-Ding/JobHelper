@@ -268,6 +268,80 @@ export const LEVER_FORM = {
  * Ashby: same shape, different suffix, and the link says only "Apply" — the
  * href is what has to be recognised.
  */
+/*
+ * Two postings nothing else in the suite builds a resume on.
+ *
+ * "Work must not outlive the application it was done for" is about one tab
+ * moving from one job to another, and it needs both jobs to arrive with
+ * nothing already waiting for them. Every other posting here is built on by
+ * some earlier group whose tab is then closed — and a closed tab leaves its
+ * work parked under the pages it held, on purpose, so that coming back to one
+ * of them brings it back. That rescue is correct and it is somebody else's
+ * test; borrowing a posting from it makes this one start with a compiled
+ * resume on screen and measure nothing.
+ */
+export const SOLO_ROLE = {
+  name: 'solo-role',
+  path: '/mensa/roles/platform-engineer',
+  company: 'Mensa Labs',
+  title: 'Platform Engineer',
+  html: page('Platform Engineer at Mensa Labs', 'Mensa Labs', ROLE_BODY),
+};
+
+export const SOLO_OTHER = {
+  name: 'solo-other',
+  path: '/rigel/postings/platform-engineer',
+  company: 'Rigel',
+  title: 'Platform Engineer',
+  html: page(
+    'Platform Engineer at Rigel',
+    'Rigel',
+    `${ROLE_BODY}<p><a href="/rigel/postings/platform-engineer/application">Apply</a></p>`,
+  ),
+};
+
+export const SOLO_OTHER_FORM = {
+  name: 'solo-other-form',
+  path: '/rigel/postings/platform-engineer/application',
+  html: page('Application — Rigel', 'Rigel', FORM_BODY),
+};
+
+/*
+ * Two more forms nobody else touches, for the same reason as the postings
+ * above and one step further along.
+ *
+ * `adverse` has two groups about the save changing underneath an application
+ * that is being written, and both of them have to *start* the build: what
+ * they measure is a compile that lands after the editor has moved on. Both
+ * were on `HELIOS_FORM`, which four earlier groups in the same file open and
+ * close — one of them after building — so the work parked by those closures
+ * was rescued onto the card before the group got to it, and the button it
+ * reaches for was already saying "Recompile":
+ *
+ *     Error: No "Build resume" button to press.
+ *     The buttons on the card were: … "Recompile", "Apply feedback", …
+ *
+ * Pressing "Recompile" instead would paper over it and measure the wrong
+ * thing — a resume compiled against the save that was open two groups ago is
+ * not one built here — so these get an employer of their own. A form on its
+ * own is enough: the role comes off the path, as it does for `HELIOS_FORM`.
+ */
+export const SWAP_FORM = {
+  name: 'swap-form',
+  path: '/caelum/apply/platform-engineer',
+  company: 'Caelum',
+  title: 'Apply — Caelum',
+  html: page('Apply — Caelum', 'Caelum', FORM_BODY),
+};
+
+export const SWAP_FORM_TWO = {
+  name: 'swap-form-two',
+  path: '/tabor/apply/platform-engineer',
+  company: 'Tabor',
+  title: 'Apply — Tabor',
+  html: page('Apply — Tabor', 'Tabor', FORM_BODY),
+};
+
 export const ASHBY_ROLE = {
   name: 'ashby-role',
   path: '/ashby/lyra/role-4c2',
@@ -699,6 +773,60 @@ export const ADVERT_CONTENT = {
  * address is a prefix of both postings — which is how one job's description
  * used to arrive in the other's application, by way of the page between them.
  */
+/**
+ * The board that keeps every job at one address.
+ *
+ * Indeed's results pane is the one everybody has used: the list on the left,
+ * the posting on the right, and clicking down the list swaps the posting
+ * without touching the url. Every rule the trail has for telling two jobs
+ * apart is about where the pages are, and here they are all in the same
+ * place — so this is the shape that leaves nothing but the role title to go
+ * on, and the one branching exists for.
+ *
+ * Deliberately without `history.pushState`: `SPA_BOARD` above has that, and
+ * a changed path is enough on its own. What is being tested here is the case
+ * where nothing changes but the words.
+ */
+export const ONE_ADDRESS_BOARD = {
+  name: 'one-address-board',
+  path: '/vela/jobs',
+  company: 'Vela',
+  html: `<!doctype html>
+<html><head><title>Platform Engineer at Vela</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Vela</h1><div id="sub">Platform Engineer</div></div>
+  <div class="wrap">
+    <p>
+      <button id="to-b" type="button">Data Scientist</button>
+      <button id="to-a" type="button">Platform Engineer</button>
+    </p>
+    <div id="view">${ROLE_BODY}</div>
+  </div>
+  <script>
+    const views = {
+      a: { sub: 'Platform Engineer', html: document.getElementById('view').innerHTML },
+      b: {
+        sub: 'Data Scientist',
+        html:
+          '<h2>About the role</h2><p>We are looking for a data scientist to own ' +
+          'our forecasting models. Responsibilities include building models in ' +
+          'Python and SQL and shipping them to production.</p>' +
+          '<h2>Minimum qualifications</h2>' +
+          '<ul><li>Years of experience with statistics</li><li>Experience with SQL</li></ul>' +
+          '<p>Equal opportunity employer. Full-time. Compensation is competitive.</p>',
+      },
+    };
+    const swap = (which) => {
+      document.title = views[which].sub + ' at Vela';
+      document.getElementById('sub').textContent = views[which].sub;
+      document.getElementById('view').innerHTML = views[which].html;
+    };
+    document.getElementById('to-b').addEventListener('click', () => swap('b'));
+    document.getElementById('to-a').addEventListener('click', () => swap('a'));
+  </script>
+</body></html>`,
+};
+
 export const CYGNUS_BOARD = {
   name: 'cygnus-board',
   path: '/cygnus/openings',
@@ -1383,10 +1511,14 @@ export const NAVIGATION = [
   CROWDED_PAGE, CROWDED_PAGE_FORM,
   LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY,
   OWN_SITE, ATS_FORM, ATS_FORM_UNANSWERABLE, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, SPA_BOARD,
+  ONE_ADDRESS_BOARD, SOLO_ROLE, SOLO_OTHER, SOLO_OTHER_FORM,
   LETTER_SPA, LETTER_SPA_FORM, LETTER_SPA_PLAIN,
 ];
 
-export const ALL = [STREAMLY, NORTHWIND, HELIOS_ROLE, HELIOS_FORM, HEAVY_POSTING, ...QUIET, ...NAVIGATION];
+export const ALL = [
+  STREAMLY, NORTHWIND, HELIOS_ROLE, HELIOS_FORM, HEAVY_POSTING, SWAP_FORM, SWAP_FORM_TWO,
+  ...QUIET, ...NAVIGATION,
+];
 
 /**
  * Serve every fixture from one origin. Returns the base url and a `urlFor`

@@ -414,11 +414,10 @@ async function boot() {
       setStatus('This page does not belong to a site that can be muted.', 'warn');
       return;
     }
-    const muted = new Set((await send('getSettings')).mutedHosts ?? []);
-    const wasMuted = muted.has(host);
-    if (wasMuted) muted.delete(host);
-    else muted.add(host);
-    await save({ mutedHosts: [...muted] });
+    const wasMuted = ((await send('getSettings')).mutedHosts ?? []).includes(host);
+    // Through the worker, which serialises it: this list is shared with every
+    // tab's card and a read here plus a write there loses one of the two.
+    await send('muteHost', { host, muted: !wasMuted });
     await drawMute();
     setStatus(wasMuted ? `${host} is no longer muted — reload the page.` : `Muted ${host}.`, 'ok');
   };
@@ -434,7 +433,22 @@ async function boot() {
   drawMute().catch(() => undefined);
 }
 
+/**
+ * Which look at the server is the current one.
+ *
+ * `check` runs on boot and again on every address change, and a fetch against
+ * an address that swallows packets takes twenty seconds to give up. Point the
+ * box at a dead server, then at a live one: the second look answers in
+ * milliseconds and says "Connected — 13 resumes", and then the first one's
+ * failure lands on top of it, blanks the picker to "— not connected —" and
+ * reports the live server as down. The function's own note is about the same
+ * disagreement in the other direction.
+ */
+let looking = 0;
+
 async function check() {
+  const mine = ++looking;
+  const current = () => mine === looking;
   /*
    * Say so while it is being asked.
    *
@@ -449,6 +463,7 @@ async function check() {
     await send('ping');
     const resumes = await send('listResumes');
     const settings = await send('getSettings');
+    if (!current()) return;
 
     // Labels only. The id is how the store files a resume, not how its owner
     // thinks of it, and the picker is the owner's view. Pinned bases come
@@ -511,6 +526,9 @@ async function check() {
       setStatus(`Connected — ${n} ${n === 1 ? 'resume' : 'resumes'} in the store.`, 'ok');
     }
   } catch (err) {
+    // Nothing from a look that has been overtaken: the address it was asking
+    // about is not the one in the box any more.
+    if (!current()) return;
     failed(err);
     /*
      * And nothing left on screen describing the server that did not answer.
@@ -533,7 +551,9 @@ async function check() {
      * left it asserting "AI on — your AI command will be asked to tailor
      * resumes" directly under a status line saying the server was not running.
      */
-    await showAiState();
+    // Not from a look that has been overtaken either: the panel describes a
+    // server this call is no longer the current question about.
+    if (current()) await showAiState();
   }
 }
 
