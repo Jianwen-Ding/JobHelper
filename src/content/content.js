@@ -138,6 +138,8 @@
 
   const imports = {
     card: () => fromExtension('src/content/card.js'),
+    ask: () => fromExtension('src/content/ask.js'),
+    sites: () => fromExtension('src/shared/sites.js'),
     autofill: () => fromExtension('src/content/autofill.js'),
     trail: () => fromExtension('src/shared/trail.js'),
     sending: () => fromExtension('src/shared/sending.js'),
@@ -270,6 +272,34 @@
     return false;
   }
 
+  /*
+   * The systems a job page is actually served from.
+   *
+   * Lifted out of the scorer because the gate below asks the same question for
+   * a different reason. Being on one of these is not evidence that *this* page
+   * is a posting — the page after you press submit is on one, so is a board's
+   * own feed — which is why it is worth four points rather than a decision.
+   * What it is evidence of is that the page is part of a hiring system at all,
+   * and that is the question the chip exists to ask.
+   */
+  const ON_A_TRACKER =
+    /\b(greenhouse|lever|workday|myworkdayjobs|ashby|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite|bamboohr|rippling|breezy|recruitee|teamtailor|jazzhr|successfactors|brassring)\b/i;
+  const ON_A_BOARD = /\b(indeed|linkedin|glassdoor|monster|ziprecruiter|dice|wellfound|otta|builtin|simplyhired|seek)\b/i;
+
+  /*
+   * And a path that says, in the site's own words, that this is the hiring
+   * part of it.
+   *
+   * A whole segment, so `/r/cscareers/comments/...` is not a careers page and
+   * `/blog/why-we-are-hiring` is not a posting. Like the two above this is not
+   * evidence that the page is a posting — a careers landing page with nothing
+   * open matches it, and so does a board's search results — only that
+   * somebody put it where jobs go. Which is the question the chip asks, and
+   * the answer is on the address.
+   */
+  const IN_A_JOBS_AREA =
+    /\/(jobs?|careers?|opening|openings|position|positions|vacanc(y|ies)|apply|application|hiring|req|requisition)(\/|$|[?#])/i;
+
   function localScore() {
     let score = 0;
     const url = location.href;
@@ -284,13 +314,13 @@
         break;
       }
     }
-    if (/\b(greenhouse|lever|workday|myworkdayjobs|ashby|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite|bamboohr|rippling|breezy|recruitee|teamtailor|jazzhr|successfactors|brassring)\b/i.test(url)) {
+    if (ON_A_TRACKER.test(url)) {
       score += 4;
     }
-    if (/\b(indeed|linkedin|glassdoor|monster|ziprecruiter|dice|wellfound|otta|builtin|simplyhired|seek)\b/i.test(url)) {
+    if (ON_A_BOARD.test(url)) {
       score += 3;
     }
-    if (/\/(jobs?|careers?|opening|openings|position|positions|vacanc(y|ies)|apply|application|hiring|req|requisition)(\/|$|[?#])/i.test(url)) {
+    if (IN_A_JOBS_AREA.test(url)) {
       score += 2;
     }
 
@@ -353,6 +383,19 @@
   }
 
   let cardHandle = null;
+  /*
+   * Whether this page's card was put away by hand.
+   *
+   * "Not now" has to mean not now — not "until the next DOM change puts it
+   * straight back" — and it also has to have a way out. Keeping it apart from
+   * `cardHandle` is what lets both be true: the automatic routes read it and
+   * stay quiet, the toolbar button clears it, and a new url starts over.
+   *
+   * It was neither: the × removed the element and left `cardHandle` pointing
+   * at it, so every route back short-circuited on a node that was no longer
+   * in the document, and the button did nothing for the life of the page.
+   */
+  let dismissed = false;
   let analysis = null;
 
   /**
@@ -387,6 +430,30 @@
 
   /** The settings as last read, so a second look can be decided without asking. */
   let lastSettings = null;
+
+  /**
+   * The url the chip has already been put up for.
+   *
+   * The rescore tick runs every second while the page is still settling, and
+   * without this a board that rewrites its DOM would tear the chip down and
+   * build it again under the cursor each time — including out from under a
+   * click. Answering it leaves this set, so "no" and "not now" both mean not
+   * again on this page, which is the only reading of them that is not
+   * infuriating.
+   */
+  let askedFor = null;
+
+  /**
+   * Add or take this host off the list the popup's button calls "Mute this
+   * site", which is the one place a person can see it and undo it.
+   */
+  async function setMuted(muted) {
+    const settings = await send('getSettings');
+    const hosts = new Set(settings.mutedHosts ?? []);
+    if (muted) hosts.add(location.hostname);
+    else hosts.delete(location.hostname);
+    lastSettings = await send('setSettings', { patch: { mutedHosts: [...hosts] } });
+  }
 
   /**
    * Whether a form in a sub-frame asked for a cover letter.
@@ -994,9 +1061,40 @@
     // Kept so the re-score below can decide locally whether it is worth asking
     // again, rather than asking the worker once a second.
     lastSettings = settings;
+    /*
+     * Saying yes to a site you once said no to takes it off the list.
+     *
+     * The only yes available on a muted host is a deliberate one — the chip
+     * does not appear there, so this is the toolbar button, or the chip's own
+     * Yes on a host muted from another tab. Either way the person is looking
+     * at the site and asking for the card on it, which is the opposite of what
+     * muting recorded, and leaving the mute in place would mean the card
+     * appears once and is gone again tomorrow with nothing saying why.
+     */
+    /*
+     * Asking for the card is the way back from having put it away, exactly as
+     * it is the way back from having muted the site. Both were recorded by
+     * somebody pressing something; both are undone by them pressing this.
+     */
+    if (force) dismissed = false;
+    if (force && (settings.mutedHosts ?? []).includes(location.hostname)) {
+      await setMuted(false).catch(quietly);
+      if (!current()) return;
+    }
     if (!force) {
       if (!settings.autoPrompt) return;
       if ((settings.mutedHosts ?? []).includes(location.hostname)) return;
+      /*
+       * And the sites nobody would ever want an offer on, decided from the
+       * address. See `shared/sites.js`: on a social network the words on the
+       * page are the problem rather than the evidence, because the page is
+       * *about* jobs without being one. Checked here, inside the `!force`
+       * branch, so the toolbar button still reaches whatever is in front of
+       * you — a "who is hiring" thread is a real thing.
+       */
+      const { neverOffer } = await imports.sites();
+      if (!current()) return;
+      if (neverOffer(location.href)) return;
       // A frame saying it holds an application is worth more than the score of
       // the page around it, which on those pages is a heading and an iframe.
       // Everything else still applies: a muted host stays muted, and a page
@@ -1004,9 +1102,14 @@
       if (!viaFrame && localScore() < settings.minScore) return;
     }
 
-    const [{ createCard, removeCard }, { wantsCoverLetter }] = await Promise.all([
+    const [
+      { createCard, removeCard },
+      { wantsCoverLetter, looksLikeApplicationForm },
+      { createAsk, removeAsk },
+    ] = await Promise.all([
       imports.card(),
       imports.autofill(),
+      imports.ask(),
     ]);
     if (!current()) return;
 
@@ -1029,6 +1132,83 @@
     const showNow = force || viaFrame || decisiveSignal();
 
     /*
+     * Whether this page is worth reading without being asked.
+     *
+     * Not the same question as `showNow` above, and conflating the two was
+     * the mistake worth writing down: that one is "is this certainly a
+     * posting", which decides whether the card can go up *before* the
+     * verdict, and it is deliberately strict because a card that appears and
+     * leaves is worse than one that arrives late. This one is "is this page
+     * part of a hiring system at all", which decides whether the pass runs
+     * unasked, and it has to be broader — an application form names no role
+     * in its title and carries no structured data, and it is the single most
+     * important page this tool has.
+     *
+     * Three things answer yes. A signal that settles it on its own. Being on
+     * an applicant tracker or a job board, which does not make this page a
+     * posting — the page after you press submit is on one — but does mean
+     * somebody arrived here through a hiring system, and the server's
+     * classifier is the thing that decides the rest. And a real application
+     * form on the page, found the same way the frame branch finds one.
+     *
+     * Everything else is a guess, and the guesses were the whole problem: a
+     * forum thread about offers, a careers article, a salary page, a
+     * newsletter about hiring. Every one of those is *about* jobs without
+     * being one, and no amount of reading the words harder separates them.
+     * They get the chip, and nothing else happens — the page is not read, not
+     * sent anywhere, not classified. Yes runs the whole pass. No records the
+     * site as one not to offer on, which is the same switch the popup shows
+     * and the same one a later yes undoes. See `ask.js`.
+     */
+    const worthReading = () =>
+      showNow ||
+      ON_A_TRACKER.test(location.href) ||
+      ON_A_BOARD.test(location.href) ||
+      IN_A_JOBS_AREA.test(location.href) ||
+      looksLikeApplicationForm();
+    /*
+     * And never in the middle of something already begun.
+     *
+     * An application is several pages — the form, the questions, the
+     * voluntary disclosures, the review — and only the first of them is a
+     * decision. Asking "is this a job posting?" on each of the rest is asking
+     * somebody to re-answer, four times, a question they answered by starting
+     * to fill the thing in. Nearly all of those pages are caught by the
+     * signals above, because a form is a form and `/apply/eeo` is in the
+     * hiring part of the site; this is for the flows that are neither, and it
+     * asks the one source that actually knows — the trail, which is what
+     * decides that two pages belong to one application, and which answers
+     * with nothing when this page is not part of the one in hand.
+     *
+     * Only reached once the cheap answers have all come back no, so the
+     * ordinary path never pays for it.
+     */
+    if (!worthReading()) {
+      if (askedFor === location.href) return;
+      const held = await send('trailPages', { page: pageIdentity() }).catch(() => ({ pages: [] }));
+      if (!current()) return;
+      /*
+       * Recorded as settled, not merely skipped. The rescan tick runs every
+       * second for a minute and this branch is where it lands, so leaving the
+       * mark unset meant asking the worker the same question sixty times —
+       * and keeping it awake to answer. Nothing will change the answer: a
+       * page that grows a form or a posting stops reaching this branch at
+       * all, because `worthReading` answers yes before it.
+       */
+      if ((held.pages ?? []).length > 0) {
+        askedFor = location.href;
+        return;
+      }
+      askedFor = location.href;
+      createAsk({
+        site: location.hostname,
+        onYes: () => void show({ force: true }).catch(quietly),
+        onNo: () => void setMuted(true).catch(quietly),
+      });
+      return;
+    }
+
+    /*
      * And, failing that, once the wait becomes one you would notice.
      *
      * Holding the card back until the verdict is what stops it appearing on an
@@ -1049,6 +1229,10 @@
     // "does this need a cover letter?" is asking them to read the form on the
     // extension's behalf, when the form is right there to be read.
     const putUpCard = () => {
+      // The question has been answered by whatever put the card up, so the
+      // chip asking it is over — including the one this very call may have
+      // left behind on a page that has since declared itself.
+      removeAsk();
       if (cardHandle) return cardHandle;
       cardHandle = createCard({
         analysis: null,
@@ -1057,6 +1241,10 @@
         questions: [],
         needsCoverLetter: wantsCoverLetter(),
         onAction,
+        onClose: () => {
+          cardHandle = null;
+          dismissed = true;
+        },
       });
       return cardHandle;
     };
@@ -1083,7 +1271,7 @@
      * which is better than 700ms; a page that does neither is one we are only
      * guessing about, and the honest thing to do while guessing is nothing.
      */
-    if (showNow) putUpCard();
+    if (showNow && !dismissed) putUpCard();
 
     /*
      * The automatic pass is always the deterministic one. Tag matching takes
@@ -1149,6 +1337,9 @@
       ruledOut = { url: location.href, score: judgedScore };
       return;
     }
+    // And not back onto a page it was put away on, unless this pass is the
+    // button. `force` cleared `dismissed` on the way in.
+    if (dismissed) return;
     putUpCard();
     cardHandle?.update(analysis);
     // An AI pass that outlived the card it was started from. See `landLate`.
@@ -1633,7 +1824,7 @@
      * not, this is the only notice there will ever be.
      */
     if (message?.type === 'jh-application-frame') {
-      if (!cardHandle) show({ viaFrame: true }).catch(() => undefined);
+      if (!cardHandle && !dismissed) show({ viaFrame: true }).catch(() => undefined);
       sendResponse({ ok: true });
       return false;
     }
@@ -1814,9 +2005,13 @@
     // from this instant rather than from whenever the import resolves.
     supersede();
     return (async () => {
-      const { removeCard } = await imports.card();
+      const [{ removeCard }, { removeAsk }] = await Promise.all([imports.card(), imports.ask()]);
       removeCard();
+      // And the chip, which was asking about the page you have just left.
+      removeAsk();
       cardHandle = null;
+      // A new page is not the page anything was put away on.
+      dismissed = false;
       await show().catch(quietly);
     })();
   };
@@ -1831,9 +2026,17 @@
       watcher.disconnect();
       return;
     }
-    if (cardHandle || !pageChanged) return;
+    if (cardHandle || dismissed || !pageChanged) return;
     pageChanged = false;
     if (ruledOut?.url === location.href && localScore() <= ruledOut.score) return;
+    /*
+     * A page already asked about is not asked about again — but it is still
+     * watched, because a board that serves a shell and fetches the posting
+     * can settle the question a second after the chip went up, and when it
+     * does the card is owed. `decisiveSignal` is two selectors and the title,
+     * which is what makes it cheap enough to ask every tick.
+     */
+    if (askedFor === location.href && !decisiveSignal()) return;
 
     /*
      * One look at a time.
@@ -1865,6 +2068,8 @@
   // buttons all throw is worse than no card.
   teardown.push(() => {
     imports.card().then(({ removeCard }) => removeCard()).catch(() => undefined);
+    // Same reasoning: a chip whose Yes throws is worse than no chip.
+    imports.ask().then(({ removeAsk }) => removeAsk()).catch(() => undefined);
     cardHandle = null;
   });
 

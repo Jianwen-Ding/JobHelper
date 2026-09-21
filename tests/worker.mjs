@@ -228,6 +228,84 @@ async function main() {
     }
 
     /* ---------------------------------------------------------------- *
+     * Holding a space in the editor                                     *
+     * ---------------------------------------------------------------- */
+
+    /*
+     * The card's keeper saves every two seconds, and each save asks the store
+     * to open a Workspace row for the application. That push carries the
+     * card's whole spec and the endpoint merges, so it has to happen once:
+     * repeating it puts the card's older copy over whatever the person has
+     * since rearranged in the editor.
+     *
+     * "Once" was a Set on the worker, and the worker is stopped whenever the
+     * browser likes. So the guard held for as long as nothing interrupted it
+     * and was gone the moment something did — which is the one case it was
+     * written for, because being in the editor for half a minute is exactly
+     * what stops the worker and exactly when there are edits to lose.
+     *
+     * It also keyed on the company and the role alone, so the same role
+     * applied for out of a second save was taken for one already held and
+     * never got a row there at all.
+     */
+    group('Holding a space in the editor');
+    {
+      const helios = { spec: { id: 'job-7', generatedFor: { company: 'Helios', role: 'Platform Engineer' } } };
+      const spaces = () => store.sentTo('/api/workspace').length;
+      /** Wait for the push, which is sent alongside the reply rather than before it. */
+      const settle = async (want) => {
+        for (let i = 0; i < 60 && spaces() < want; i++) await new Promise((r) => setTimeout(r, 50));
+        // And a moment more, so a push that should not happen has time to.
+        await new Promise((r) => setTimeout(r, 400));
+        return spaces();
+      };
+
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      await ask(driver, 'analyze', { url: 'http://g.example/jobs/7', title: 'Helios', html: '<p>seven</p>', company: 'Helios' });
+      const before = spaces();
+      await ask(driver, 'saveWork', { work: helios });
+      await settle(before + 1);
+      await ask(driver, 'saveWork', { work: helios });
+      const twice = await settle(before + 1);
+      check('the keeper saving twice opens one space', twice === before + 1, `${twice - before} pushes`);
+      check('into the save the application was built in', lastSaveFor('/api/workspace') === 'work', lastSaveFor('/api/workspace'));
+
+      // The same role, out of a different save. A second application, and it
+      // wants its own row — this is the part the company-and-role key lost.
+      store.save = 'personal';
+      await ask(driver, 'clearTrail', {});
+      await ask(driver, 'analyze', { url: 'http://h.example/jobs/8', title: 'Helios', html: '<p>eight</p>', company: 'Helios' });
+      await ask(driver, 'saveWork', { work: helios });
+      const elsewhere = await settle(twice + 1);
+      check('the same role out of another save opens its own', elsewhere === twice + 1, `${elsewhere - twice} pushes`);
+      check('and that one goes to the other save', lastSaveFor('/api/workspace') === 'personal', lastSaveFor('/api/workspace'));
+
+      /*
+       * Now stop the worker the way Chrome's idle timer does, and let the
+       * keeper's next tick wake it. Nothing about the application has
+       * changed, so nothing should be pushed.
+       */
+      // A mark on the worker's own globals, so "restarted" is something this
+      // test observes rather than something it hopes the protocol did.
+      await (context.serviceWorkers()[0] ?? worker).evaluate(() => {
+        globalThis.__jhStillTheSameWorker = true;
+      });
+      const cdp = await context.newCDPSession(driver);
+      await cdp.send('ServiceWorker.enable').catch(() => undefined);
+      await cdp.send('ServiceWorker.stopAllWorkers').catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 500));
+
+      const woken = await ask(driver, 'saveWork', { work: helios });
+      const after = await settle(elsewhere + 1);
+      const fresh = await (context.serviceWorkers()[0] ?? worker)
+        .evaluate(() => globalThis.__jhStillTheSameWorker !== true)
+        .catch(() => false);
+      check('the worker really was restarted, and lost its memory with it', fresh && woken.reply?.ok === true, JSON.stringify(woken.reply ?? woken.lastError).slice(0, 120));
+      check('and a restarted worker does not push it again', after === elsewhere, `${after - elsewhere} pushes after the restart`);
+    }
+
+    /* ---------------------------------------------------------------- *
      * A reply that arrives and then stops                               *
      * ---------------------------------------------------------------- */
 

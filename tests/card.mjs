@@ -526,15 +526,43 @@ async function main() {
     spec: { id: 'job-acme', label: 'Acme', choices: { b1: 'v_b' } },
     rationale: [{ key: 'b1', from: 'v_a', to: 'v_b', toText: 'Built a Kafka pipeline', because: ['kafka'] }],
   });
+  /*
+   * Read off the provenance line, which is where this is stated now.
+   *
+   * The summary used to say it too — "…, with the changes the AI chose
+   * below" — alongside the base's name twice over. Both duplicates came out
+   * of it; `.from-what` is the line whose whole job is saying where the
+   * changes came from, and it is in the same capture.
+   */
   check(
     'and one the AI decided says the AI decided it',
-    /the AI chose/i.test(withOne),
+    /chosen by the AI/i.test(withOne),
     withOne.slice(0, 140),
   );
 
+  /*
+   * And it does not say the base's name at all, let alone twice.
+   *
+   * The name is the selected option of the "Start from" picker a few pixels
+   * above this line, and the old sentence printed it once at the front and
+   * once in the middle — "Software Engineer Intern — Summer 2027, with the
+   * changes the AI chose below. Your Software Engineer Intern — Summer 2027
+   * is untouched — …" — which is most of why it read as long as it did.
+   *
+   * Checked on both readings, because they were two different sentences and
+   * both of them opened with it.
+   */
+  for (const [what, text] of [['the AI decided', withOne], ['the match offered', arrived]]) {
+    check(
+      `the summary for one ${what} does not repeat the base's name back`,
+      !/New grad resume/.test(text),
+      text.slice(0, 140),
+    );
+  }
+
   const plainMatch = await summaryFor({ tailor: 'match', aiUsed: false });
   check(
-    'a posting with no suggestions at all still names the resume being sent',
+    'a posting with no suggestions at all says so, and reports no failure',
     /exactly as you keep it/i.test(plainMatch) && !/could not be started|nothing usable/i.test(plainMatch),
     plainMatch.slice(0, 140),
   );

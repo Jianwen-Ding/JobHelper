@@ -37,6 +37,8 @@
     {
       "resources": [
         "src/content/card.js",
+        "src/content/ask.js",
+        "src/shared/sites.js",
         "src/content/autofill.js",
         "src/shared/trail.js",
         "src/shared/sending.js",

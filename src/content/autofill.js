@@ -97,8 +97,14 @@ const NOT_ABOUT_YOU = [
    * A previous employer's address, which the employment-history sections of
    * Taleo and BrassRing ask for field by field. "Employer City" matched
    * `address_city` and was filled with the applicant's own town.
+   *
+   * `location` and `email` were missing from the list, and "Employer
+   * Location" is what Workday, Greenhouse and iCIMS all call that field —
+   * one line per past job, filled in with the applicant's own current city as
+   * a stated fact about where somebody else's office was. Exactly the case
+   * above, on the word those three happen to use.
    */
-  /\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+(name|address|city|town|state|province|country|phone|telephone|zip|postal)\b/i,
+  /\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+(name|address|location|city|town|state|province|country|phone|telephone|email|zip|postal)\b/i,
   // Where you heard about the job, which is not a profile of yours.
   /\b(did[\s_-]you[\s_-]hear|hear[\s_-]about[\s_-](us|this)|referral)\b/i,
   // Citizenship, birth and residence are different questions with the same
@@ -164,11 +170,31 @@ const NOT_ABOUT_YOU = [
  * went wrong.
  */
 const DIALLING_CODE = /\b(country|area|dial(?:l?ing)?)[\s_-]?code\b/i;
-const asksForADiallingCode = (description) =>
-  DIALLING_CODE.test(description.replace(/\([^)]*\)/g, ' '));
 
-const isNotAboutYou = (description) =>
-  asksForADiallingCode(description) || NOT_ABOUT_YOU.some((re) => re.test(description));
+/*
+ * A label that is only "Country", whatever the field is named underneath.
+ *
+ * The exclusion above reasons entirely about label wording — every line of
+ * its note is about what a label says — and it was being asked of the whole
+ * description, which is the label *plus* the name, the id and the
+ * placeholder. `[\s_-]?` allows no separator at all, so a `<select
+ * name="countryCode">` matched it, and naming a country select for the ISO
+ * code it submits is idiomatic. So a required dropdown labelled, plainly,
+ * "Country" was dropped as though it had asked for a dialling code — and
+ * exclusions report nothing, by design, so it was not in `skipped` either:
+ * an empty required field with the card saying nothing about it.
+ *
+ * The name is still read for every field whose label does not settle it,
+ * which is what keeps a `phone_country_code` box with no label out of the
+ * applicant's full telephone number.
+ */
+const PLAIN_COUNTRY = /^\s*country(\s+of\s+(residence|citizenship))?\s*[*:]*\s*$/i;
+
+const asksForADiallingCode = (description, label) =>
+  DIALLING_CODE.test(description.replace(/\([^)]*\)/g, ' ')) && !PLAIN_COUNTRY.test(label ?? '');
+
+const isNotAboutYou = (description, label) =>
+  asksForADiallingCode(description, label) || NOT_ABOUT_YOU.some((re) => re.test(description));
 
 /*
  * "Are you legally authorized to work in the United States without
@@ -718,8 +744,37 @@ const CONCEPT = {
 /** Words that are their own denial, with no separate negation to find. */
 const FUSED_NO = /^(unauthori[sz]ed|ineligible)$/;
 
-/** A denial close enough in front of a word to be about that word. */
-const NEAR_NO = /\b(no|not|never|non|cannot|can't|don'?t|doesn'?t|without|nor|neither)\b/i;
+/**
+ * A denial fixed to the front of the word it denies: "non-citizen".
+ *
+ * Its own case, because it is not a word in the sentence — it is part of the
+ * word that was matched, and it denies that word and nothing else. Read as a
+ * loose negation it poisoned everything after it; not read at all, it would
+ * make "non-citizen" an affirmation of citizenship.
+ */
+const FUSED_PREFIX = /(?:^|[^\w-])non-?$/i;
+
+/**
+ * A denial close enough in front of a word to be about that word.
+ *
+ * Bounded by `[^\w-]` rather than `\b`, because `\b` is a transition between
+ * a word character and anything else — and a hyphen is anything else. So
+ * `\bnon\b` matched the `non` inside `non-citizen`, and the window is four
+ * words wide, so one of those poisoned every concept word after it. Measured,
+ * running this function as written:
+ *
+ *   "I am a non-citizen, but authorized to work in the US without
+ *    restriction."                                            => no
+ *   "I am a non-immigrant and will require sponsorship."       => no
+ *
+ * The first says the applicant is not authorised to work, and the second says
+ * they do not need sponsorship. Both are the opposite of what was written,
+ * both are declarations made in somebody's name on a submitted form, and both
+ * are the exact failure the note above this function exists to prevent —
+ * arriving through the one spelling a visa holder is most likely to use about
+ * themselves. `non-citizen`, `non-immigrant`, `non-resident`.
+ */
+const NEAR_NO = /(?<![\w-])(no|not|never|non|cannot|can't|don'?t|doesn'?t|without|nor|neither)(?![\w-])/i;
 
 /** How much of what comes before a word can be said to be about it. */
 const LOOK_BACK_WORDS = 4;
@@ -750,11 +805,31 @@ function yesNoFrom(value, key) {
       verdicts.add('no');
       continue;
     }
-    // Only the few words in front of it: a denial further away than that is
-    // about some other clause. "…does not require sponsorship" denies the
-    // sponsorship; "I do not need it now but will require sponsorship in
-    // 2027" does not.
-    const before = said.slice(0, hit.index).split(/\s+/).slice(-LOOK_BACK_WORDS).join(' ');
+    /*
+     * Only the few words in front of it: a denial further away than that is
+     * about some other clause. "…does not require sponsorship" denies the
+     * sponsorship; "I do not need it now but will require sponsorship in
+     * 2027" does not.
+     *
+     * Trimmed first, and that is the whole of this line's history. What comes
+     * before a matched word always ends in the space that separates them, so
+     * `split(/\s+/)` produced a trailing empty token and the window spent one
+     * of its four slots on it — three real words, not four. "I do not at
+     * present require sponsorship" put `not` one word outside a window that
+     * should have held it and came back `yes`, so the form was filled in with
+     * "Yes, I require sponsorship" for somebody who had written the opposite,
+     * and counted as a field successfully answered. That is the false legal
+     * declaration the note above this function exists to prevent, made by the
+     * function written to prevent it.
+     */
+    const upTo = said.slice(0, hit.index);
+    // "non-citizen" is a denial of *this* word, wherever the rest of the
+    // sentence goes. See `FUSED_PREFIX`.
+    if (FUSED_PREFIX.test(upTo)) {
+      verdicts.add('no');
+      continue;
+    }
+    const before = upTo.trim().split(/\s+/).slice(-LOOK_BACK_WORDS).join(' ');
     verdicts.add(NEAR_NO.test(before) ? 'no' : 'yes');
   }
 
@@ -802,7 +877,7 @@ export function fillForm(fields, { overwrite = false } = {}) {
     // Before the exclusions, which say nothing, and before the match, which
     // this question does not need. See `handBack`.
     if (handBack(description, skipped)) continue;
-    if (isNotAboutYou(description)) continue;
+    if (isNotAboutYou(description, clean(labelFor(input)))) continue;
 
     let match = FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key]);
 
@@ -843,11 +918,25 @@ export function fillForm(fields, { overwrite = false } = {}) {
       const choosable = [...input.options].filter((o) => !isDisabled(o));
       const option =
         choosable.find((o) => sameOption(o.textContent, value) || sameOption(o.value, value)) ??
-        // And, failing that, a yes/no pair against a phrase. See `yesNoOption`.
+        /*
+         * And, failing that, a yes/no pair against a phrase. See
+         * `yesNoOption`, which wants a pair and nothing else — so the prompt
+         * has to come off first.
+         *
+         * `choosable` drops only the *disabled* options, and a dropdown's
+         * "Select…" is usually not disabled: every real yes/no `<select>`
+         * therefore arrived as three answers and was refused as a question
+         * with a third answer. So Greenhouse's work-authorisation dropdown
+         * was left blank against a profile saying "Authorized to work in the
+         * US", while the identical question asked as radio buttons on the
+         * same form was answered — the shape of the control decided whether
+         * the question got an answer. `looksLikePlaceholder` was already here
+         * and already knew what a prompt looks like.
+         */
         yesNoOption(
           key,
           value,
-          choosable.map((o) => ({ label: o.textContent, el: o })),
+          choosable.filter((o) => !looksLikePlaceholder(o, input)).map((o) => ({ label: o.textContent, el: o })),
         )?.el;
       if (option) {
         nativeSet(input, 'value', option.value);
@@ -1112,7 +1201,8 @@ function answerRadioGroups(fields, overwrite) {
     // are the commoner shape for this question: Workable and Teamtailor ask
     // "legally authorized to work without sponsorship" as a pair of buttons.
     if (handBack(description, skipped)) continue;
-    if (isNotAboutYou(description)) continue;
+    // The group's own words, on the same terms as `fillForm`.
+    if (isNotAboutYou(description, clean(groupLabelFor(radios)))) continue;
 
     /*
      * Only the keys that are a choice between options. A name, an email address
@@ -1206,7 +1296,7 @@ function unfillableChoices(fields, filled) {
 
     const description = describeField(widget);
     if (!description) continue;
-    if (isNotAboutYou(description)) continue;
+    if (isNotAboutYou(description, clean(labelFor(widget)))) continue;
 
     const match = FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key] && !already.has(key));
     if (!match) continue;
@@ -1422,6 +1512,20 @@ const YOURS_TO_ANSWER = [
   [/\b(disabilit|accommodat|impairment)\w*/i,
     'This one is yours to answer — nothing is written for you.'],
   [/\b(race|ethnicit|gender|veteran|disabled|sexual orientation|pronoun)\w*/i,
+    'This one is yours to answer — nothing is written for you.'],
+  /*
+   * And the two the rest of this file treats as the most damaging to get
+   * wrong, which were not on this list at all.
+   *
+   * `yesNoFrom` goes to great lengths so that a *tick box* about the right to
+   * work is never filled in against what the applicant wrote — the note above
+   * it calls a wrong answer there a false legal declaration made in their
+   * name. The same question asked as a paragraph ("Please describe your
+   * current work authorisation status", "If you will require sponsorship,
+   * please explain") is an ordinary custom question on Greenhouse and Lever,
+   * and it was offered to the model to invent an answer for.
+   */
+  [/\b(work[\s_-]authori[sz]ation|authori[sz]ed[\s_-]to[\s_-]work|right[\s_-]to[\s_-]work|sponsorship|sponsor|visa|h-?1b|opt|cpt|immigration|citizenship|work[\s_-]permit)\b/i,
     'This one is yours to answer — nothing is written for you.'],
   [/\b(criminal|conviction|felony|misdemeanou?r|background check)\b/i,
     'This one is yours to answer — nothing is written for you.'],

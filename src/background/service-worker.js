@@ -341,6 +341,20 @@ const trailKey = (tabId) => (tabId === undefined ? TRAIL_KEY : `${TRAIL_KEY}:${t
  */
 const orphanKey = (url) => `jh-orphan:${String(url).split('#')[0]}`;
 
+/**
+ * Which applications have already had a space opened for them, and in which
+ * save. See `holdASpace`, which is the only thing that reads or writes these.
+ *
+ * Percent-encoded rather than joined on a NUL, which is the obvious separator
+ * and does not survive the trip. `chrome.storage.session` takes a key with a
+ * NUL in it, stores it — `get(null)` lists it — and then answers `undefined`
+ * when asked for it by name, so every read missed and the guard below held
+ * nothing. Measured, not assumed: `set` ok, `get(null)` one key, `get(key)`
+ * null.
+ */
+const heldKey = (save, company, role) =>
+  `jh-held:${[save, company, role].map(encodeURIComponent).join('|')}`;
+
 /*
  * Whether a trail is still current is a question about when, not about how
  * many pages it holds. Keyed off `pages.length`, a record with work in it and
@@ -475,7 +489,17 @@ function whichTab(tabId, tab, sender) {
 async function inheritIfNew(tabId, openerTabId) {
   if (tabId === undefined || openerTabId === undefined) return;
   const mine = await readTrail(tabId);
-  if (mine.pages.length > 0) return;
+  /*
+   * And not into a tab that was told to start fresh.
+   *
+   * "Inherited once, on the new tab's first look" was written as "has no
+   * pages yet", and `openerTabId` stays on a tab for its whole life — so a
+   * tab emptied on purpose looked exactly like one that had never inherited,
+   * and the next page load copied the opener's whole application back over
+   * it: pages, work, save and expectation, as a blind write rather than a
+   * merge.
+   */
+  if (mine.pages.length > 0 || mine.cleared) return;
 
   const theirs = await readTrail(openerTabId);
   if (theirs.pages.length > 0) await writeTrail(tabId, { ...theirs, at: Date.now() });
@@ -616,7 +640,30 @@ async function askFrames(tabId, message) {
  * pushing the card's version over theirs every two seconds would be a way
  * of losing their sentence, not of holding their place.
  */
-const held = new Set();
+/*
+ * Once per application, and the worker must not be what remembers it.
+ *
+ * This was a module-level Set. A service worker is stopped whenever the
+ * browser feels like it — thirty seconds without a message is the documented
+ * case, and an extension reload or memory pressure will do it at any time —
+ * and module state goes with it. The card's keeper sends every two seconds,
+ * so the first tick after a restart found an empty set and pushed again: the
+ * whole spec the card is holding, merged over the version in the editor.
+ * Which is, word for word, the loss the comment above says this guard exists
+ * to prevent — you switch to the editor, rearrange the entries, and a card
+ * still open behind it puts its older copy back.
+ *
+ * Keyed by the save as well, because the same role applied for out of two
+ * saves is two applications and wants a row in each. Keyed off `company` and
+ * `role` alone, the second save silently never got one.
+ *
+ * `holding` is the narrower guard the Set was also doing by accident: a
+ * synchronous add before an await, so two keeper ticks overlapping across a
+ * slow POST cannot both send. Session storage cannot do that — the read and
+ * the write are two awaits — so it stays, in memory, for the in-flight case
+ * only.
+ */
+const holding = new Set();
 async function holdASpace(trail, tabId) {
   const work = trail?.work;
   if (!worthKeeping(work)) return;
@@ -658,29 +705,35 @@ async function holdASpace(trail, tabId) {
   const role = work.spec?.generatedFor?.role;
   if (!company || !role) return;
 
-  const key = `${company}\u0000${role}`;
-  if (held.has(key)) return;
-  held.add(key);
+  const key = heldKey(save, company, role);
+  if (holding.has(key)) return;
+  holding.add(key);
   try {
-    await serverFetch('/api/workspace', {
-      method: 'POST',
-      timeoutMs: SLOW_TIMEOUT_MS,
-      save,
-      body: JSON.stringify({
-        company,
-        role,
-        url: trail.pages?.[0]?.url,
-        source: trail.pages?.[0]?.url ? new URL(trail.pages[0].url).hostname : undefined,
-        resumeId: work.spec?.id,
-        spec: work.spec,
-        coverLetterRequired: Boolean(work.letter?.trim()) || undefined,
-      }),
-    });
-  } catch {
-    // The store may not be running, which is not this save's problem: the
-    // work is already held in the browser either way. Letting it go means
-    // the next application tries again rather than this one failing twice.
-    held.delete(key);
+    if ((await session().get(key).catch(() => ({})))[key]) return;
+    await session().set({ [key]: { at: Date.now() } }).catch(() => undefined);
+    try {
+      await serverFetch('/api/workspace', {
+        method: 'POST',
+        timeoutMs: SLOW_TIMEOUT_MS,
+        save,
+        body: JSON.stringify({
+          company,
+          role,
+          url: trail.pages?.[0]?.url,
+          source: trail.pages?.[0]?.url ? new URL(trail.pages[0].url).hostname : undefined,
+          resumeId: work.spec?.id,
+          spec: work.spec,
+          coverLetterRequired: Boolean(work.letter?.trim()) || undefined,
+        }),
+      });
+    } catch {
+      // The store may not be running, which is not this save's problem: the
+      // work is already held in the browser either way. Letting it go means
+      // the next application tries again rather than this one failing twice.
+      await session().remove(key).catch(() => undefined);
+    }
+  } finally {
+    holding.delete(key);
   }
 }
 
@@ -801,9 +854,23 @@ async function remember(tab, page) {
     pages: keepPages(pages, TRAIL_MAX),
     at: Date.now(),
   };
-  await writeTrail(tab?.id, next);
-  await markTab(tab?.id, next);
-return { ...summarise(next), startedFresh: !joins };
+  /*
+   * The badge says what was stored, not what this function built.
+   *
+   * `writeTrail` answers null when session storage will not take the trail
+   * even stripped of every page's text, and that is the case this file
+   * budgets for rather than an impossible one — its own note puts the fill
+   * point at five tabs of five pages. `saveWork` already reads the answer,
+   * and says in as many words why: the note on `markTab` is that this line
+   * has to be believed when it claims nothing was lost. This one drew the
+   * badge from `next` regardless, so the toolbar read "3 pages read, a
+   * tailored resume is ready" while the third page was in no storage
+   * anywhere and the card, which re-reads, listed two.
+   */
+  const written = await writeTrail(tab?.id, next);
+  const stored = written === null ? trail : next;
+  await markTab(tab?.id, stored);
+  return { ...summarise(stored), startedFresh: !joins };
 }
 
 const handlers = {
@@ -889,6 +956,10 @@ const handlers = {
     // Only the application this tab is actually on. Without this a card left
     // open on another posting would keep writing its work over this one's.
     if (page && trail.pages.length > 0 && !sameApplication(trail, page)) return { ok: false };
+    // And nothing at all into a tab that was told to start fresh, until it
+    // has read a page of its own. See `clearTrail`: the card's keeper is
+    // still running when that button is pressed.
+    if (trail.cleared && trail.pages.length === 0) return { ok: false };
     // And never nothing over something: a card that failed to analyse its page
     // has an empty state, and saving it threw away the resume built on the
     // page before.
@@ -1016,7 +1087,20 @@ const handlers = {
     const held = keep?.url ? trail.pages.filter((p) => p.url === keep.url) : [];
 
     if (held.length === 0) {
-      await session().remove(trailKey(id));
+      /*
+       * Marked as emptied, not simply removed.
+       *
+       * An absent trail and a forgotten one read the same to everything
+       * downstream — `pages: []` — and the card does not stop writing when
+       * this is pressed: its keeper re-sends the resume and the letter every
+       * two seconds. `saveWork`'s two guards are both gated on the trail
+       * having something in it, so within two seconds of "Start fresh" the
+       * trail was back, holding the old job's work under no pages, with no
+       * `save` and no badge. The next posting read in that tab was then
+       * handed it. The mark is what tells the two apart; it expires with the
+       * trail's own staleness window, so a tab left alone is a new tab again.
+       */
+      await writeTrail(id, { pages: [], cleared: Date.now(), at: Date.now() });
       /*
        * And the remembered binding with it, or the next application in this
        * tab inherits the last one's save.
@@ -1626,7 +1710,7 @@ const handlers = {
     const named =
       trail?.work?.spec?.generatedFor ?? (tab?.id === undefined ? null : await askThePage(tab.id));
     if (!named?.company || !named?.role) return { ok: false };
-    return handlers.applicationSent({ company: named.company, role: named.role, url, note });
+    return handlers.applicationSent({ company: named.company, role: named.role, url, note }, tab);
   },
 
   /**
@@ -1636,10 +1720,33 @@ const handlers = {
    * moves anything, and never backwards — is the store's decision, and it is
    * the only side that knows how an application is named.
    */
-  async applicationSent({ company, role, url, note }) {
+  async applicationSent({ company, role, url, note }, tab) {
     try {
       return await serverFetch('/api/extension/sent', {
         method: 'POST',
+        /*
+         * Which save this application belongs to, like every other write that
+         * touches the tracker.
+         *
+         * This was the one that did not say. The store refuses a header that
+         * names a different save and lets a request with *no* header through
+         * to whichever one happens to be open — which is the failure that
+         * check was built for, described in its own words where it is
+         * installed: "Filing it then wrote the application into whichever
+         * save happened to be open… a row in somebody else's tracker." So
+         * staging in "work" and then switching the editor to "personal"
+         * before pressing Submit left the Helios row in "work" reading
+         * `applying` for an application that had gone out, and put a stray
+         * one in "personal".
+         *
+         * `saveFor`, not `saveOrRefuse`: this handler must not throw. The
+         * form has already been submitted by the time it runs, and the note
+         * below is right that a store which cannot be reached is no reason to
+         * interrupt somebody who has just applied. Not knowing the save is
+         * rare — the trail carries it, and the per-tab map answers when the
+         * trail does not — and when it happens this is no worse than it was.
+         */
+        save: await saveFor(tab?.id),
         body: JSON.stringify({ company, role, url, note }),
       });
     } catch (err) {

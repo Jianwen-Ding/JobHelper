@@ -265,6 +265,24 @@ async function main() {
             `status="${(said ?? '').trim().slice(0, 120)}"; thrown=${thrown.join(' | ') || 'nothing'}; ` +
             `still in flight=${[...inFlight.values()].join(', ') || 'none'}`,
         );
+        /*
+         * And one more press, reported rather than believed.
+         *
+         * This has failed once in a parallel run and passed four times
+         * standalone, with the dropdown reading the job resume again and
+         * nothing in flight — which is the shape of a change event the editor
+         * dropped, not of a switch that hung. Those two want different fixes,
+         * and the note above cannot tell them apart. A second press that
+         * works says "dropped"; one that does not says "stuck". Either way
+         * this still fails: a switch that takes two presses is a bug, and
+         * retrying until green is how it would stop being reported.
+         */
+        await editor.selectOption('#resume-select', '__master__').catch(() => undefined);
+        const again = await editor
+          .waitForSelector('.master-source-variant', { timeout: 10_000 })
+          .then(() => true)
+          .catch(() => false);
+        console.log(`  note  pressing it a second time ${again ? 'worked — the first change was dropped' : 'did not work either'}`);
         throw err;
       }
 

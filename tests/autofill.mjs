@@ -105,6 +105,9 @@ const NOT_YOURS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply
   <!-- A previous employer's address, from the employment-history section. -->
   <h3>Employment history</h3>
   <label for="emp-city">Employer City</label><input id="emp-city" name="emp_city">
+  <!-- What Workday, Greenhouse and iCIMS all call the same field. -->
+  <label for="emp-loc">Employer Location</label><input id="emp-loc" name="emp_loc">
+  <label for="emp-mail">Company Email</label><input id="emp-mail" name="emp_mail" type="email">
 
   <label for="source">Where did you hear about this job? (LinkedIn, Indeed, referral)</label>
   <input id="source" name="source">
@@ -484,7 +487,43 @@ const STYLED_RADIOS = `<!doctype html><html><head><meta charset="utf-8"><title>A
 </form>
 </body></html>`;
 
-const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS };
+/*
+ * A phrase for an answer, against the two shapes the same question comes in.
+ *
+ * Both of these are legal declarations, and both were got wrong in a way that
+ * looked like nothing: the radio pair was answered with the opposite of what
+ * the profile said, and the dropdown was not answered at all.
+ */
+const PHRASE_ANSWERS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="f">
+  <fieldset>
+    <legend>Will you now or in the future require sponsorship?</legend>
+    <label><input type="radio" name="spon" value="y"> Yes</label>
+    <label><input type="radio" name="spon" value="n"> No</label>
+  </fieldset>
+
+  <!-- The same question Greenhouse asks as a dropdown, prompt and all. -->
+  <label for="auth">Are you legally authorized to work in the United States?</label>
+  <select id="auth" name="auth">
+    <option value="">Select...</option><option>Yes</option><option>No</option>
+  </select>
+
+  <!-- A country select named for the ISO code it submits, which is
+       idiomatic, beside a real dialling-code box that must stay excluded. -->
+  <label for="ctry">Country</label>
+  <select id="ctry" name="countryCode">
+    <option value=""></option><option>United Kingdom</option><option>United States</option>
+  </select>
+  <label for="dial">Phone Country Code</label><input id="dial" name="phoneCountryCode">
+
+  <!-- Three answers is still three answers, prompt or no prompt. -->
+  <label for="three">Will you now or in the future require sponsorship?</label>
+  <select id="three" name="three">
+    <option value="">Choose</option><option>Yes</option><option>No</option><option>Prefer not to say</option>
+  </select>
+</form></body></html>`;
+
+const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -593,7 +632,7 @@ async function main() {
         return {
           values: Object.fromEntries(
             ['own-email', 'own-phone', 'r-name', 'r-email', 'r-phone', 'mgr-email', 'ec-name', 'ec-phone',
-             'emp-city', 'source', 'citizenship', 'residence', 'b-country', 'b-city', 'cc', 'pref1',
+             'emp-city', 'emp-loc', 'emp-mail', 'source', 'citizenship', 'residence', 'b-country', 'b-city', 'cc', 'pref1',
              'pref2', 'reloc', 'st', 'sal', 'dis-sig', 'eeo-sig', 'auth-any', 'both']
               .map((id) => [id, document.getElementById(id).value]),
           ),
@@ -631,6 +670,14 @@ async function main() {
       `${mine.values['ec-name']} / ${mine.values['ec-phone']}`,
     );
     check("nor is the manager's email yours", mine.values['mgr-email'] === '', mine.values['mgr-email']);
+    /*
+     * The employment-history exclusion listed city, town, state and postal
+     * code but not `location` — which is the word Workday, Greenhouse and
+     * iCIMS use — so one line per past job was filled in with the applicant's
+     * own current city, as a stated fact about somebody else's office.
+     */
+    check("a past employer's location is not yours", mine.values['emp-loc'] === '', mine.values['emp-loc']);
+    check("nor is a past employer's email", mine.values['emp-mail'] === '', mine.values['emp-mail']);
     check(
       "nor is a previous employer's town your own",
       mine.values['emp-city'] === '',
@@ -922,6 +969,21 @@ async function main() {
       // is left for the person — which is the whole rule here: a blank costs
       // them a moment, a wrong declaration costs them the application.
       ['I am not a US citizen but am authorized to work', ''],
+      /*
+       * The way a visa holder actually describes themselves, and the one
+       * spelling that broke the reading of the whole sentence.
+       *
+       * `NEAR_NO` was bounded by `\b`, and a hyphen is a word boundary, so
+       * the `non` inside `non-citizen` counted as a negation four words
+       * deep — poisoning every concept word after it. Measured: this value
+       * ticked "No" on the right to work, for somebody who had written that
+       * they are authorised. `non-citizen` denies `citizen` and nothing
+       * else, so the sentence now says two things and nothing is ticked.
+       */
+      ['I am a non-citizen, but authorized to work in the US without restriction.', ''],
+      // And a sentence where both readings agree is still answered: the
+      // prefix denies `citizen`, `not` denies `authorized`, both say no.
+      ['Non-citizen. Not authorized to work in the US.', 'n'],
     ];
     for (const [value, want] of AUTH) {
       const got = await declared('work_authorization', value, 'auth');
@@ -937,6 +999,13 @@ async function main() {
       // to come out the other way: "without" denies the sponsorship, not the
       // authorisation.
       ['Authorized to work in the US without sponsorship', 'n'],
+      /*
+       * The mirror image, and the one that was outright wrong rather than
+       * merely unanswerable: `non-immigrant` made this read as a denial of
+       * the sponsorship, so the form was filled in with "No, I do not
+       * require sponsorship" for somebody who had written that they will.
+       */
+      ['I am a non-immigrant and will require sponsorship', 'y'],
     ];
     for (const [value, want] of SPON) {
       const got = await declared('requires_sponsorship', value, 'spon');
@@ -957,6 +1026,81 @@ async function main() {
           auth: document.querySelector('input[name="auth"]:checked')?.value ?? '',
         };
       }, { b: base, profile: { ...PROFILE, work_authorization: 'Authorized to work in the US' } }),
+    );
+
+    /* ------------------------------------------------------------------ */
+
+    const phrases = await page.goto(`${base}/phrases`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(profile);
+        return {
+          spon: document.querySelector('input[name="spon"]:checked')?.value ?? '',
+          auth: document.getElementById('auth').value,
+          three: document.getElementById('three').value,
+          ctry: document.getElementById('ctry').value,
+          dial: document.getElementById('dial').value,
+          filled: report.filled.map((f) => f.key),
+        };
+      }, {
+        b: base,
+        profile: {
+          ...PROFILE,
+          requires_sponsorship: 'I do not at present require sponsorship',
+          work_authorization: 'Authorized to work in the US',
+        },
+      }),
+    );
+
+    group('A phrase for an answer, on a question you sign your name under');
+    /*
+     * The negation and the word it denies are four words apart, and the
+     * window that looks for it was three: what comes before a matched word
+     * always ends in the space between them, so `split` produced a trailing
+     * empty token and one of the four slots was spent on nothing. The profile
+     * says the applicant does not need sponsorship; the form came out saying
+     * they do, and it was counted as a field successfully answered.
+     */
+    check(
+      'a denial with words in the middle is still a denial',
+      phrases.spon === 'n',
+      `"${phrases.spon}" (y is a false declaration)`,
+    );
+    /*
+     * And the same question as a dropdown. `yesNoOption` wants a yes/no pair
+     * and nothing else, and the list it was handed dropped only the
+     * *disabled* options — so "Select…", which is almost never disabled, made
+     * every real yes/no dropdown a three-answer question and it was refused.
+     * The shape of the control was deciding whether the question got answered
+     * at all.
+     */
+    check(
+      'a dropdown with a prompt is still a yes/no question',
+      phrases.auth === 'Yes',
+      `"${phrases.auth}"`,
+    );
+    check(
+      'and three answers are still three answers, so it declines to guess',
+      phrases.three === '',
+      `"${phrases.three}"`,
+    );
+    /*
+     * The dialling-code exclusion reasons entirely about label wording and
+     * was asked of the label *plus* the name and the id — so a country select
+     * named `countryCode`, which is how anyone names the field that submits
+     * an ISO code, was dropped as though it had asked for a dialling code.
+     * Exclusions report nothing by design, so it was not in `skipped`
+     * either: a required dropdown left empty with the card silent about it.
+     */
+    check(
+      'a country select named for its code is still the country',
+      phrases.ctry === 'United States',
+      `"${phrases.ctry}"`,
+    );
+    check(
+      'and a box that really does ask for a dialling code is still left alone',
+      phrases.dial === '',
+      `"${phrases.dial}"`,
     );
 
     group('Fields labelled the way the enterprise systems label them');
@@ -1323,6 +1467,17 @@ async function main() {
       ['Voluntary self-identification of disability', true],
       ['Please describe your veteran status', true],
       ['Have you ever been convicted of a felony?', true],
+      /*
+       * The same two questions `yesNoFrom` refuses to guess at when they are
+       * tick boxes, asked as a paragraph — which is how Greenhouse and Lever
+       * custom questions ask them. Neither was on this list, so the draft
+       * button was offered on the one answer this tool must never invent.
+       */
+      ['Please describe your current work authorization status.', true],
+      ['If you will require visa sponsorship now or in the future, please explain.', true],
+      ['Are you authorized to work in the United States? Please elaborate.', true],
+      // And not the ordinary essay questions that happen to sit near them.
+      ['Describe a project where you had to work around a legal constraint.', false],
       ['Why do you want to work here?', false],
       ['Tell us about a project you are proud of.', false],
       ['Describe a time you disagreed with a manager.', false],
@@ -1339,7 +1494,7 @@ async function main() {
     const wrong = yoursCases
       .map(([q, want], i) => (verdicts[i] === want ? null : `${verdicts[i] ? 'withheld' : 'offered'}: ${q}`))
       .filter(Boolean);
-    check('every question is judged the right way round', wrong.length === 0, wrong.join(' | ') || '13 phrasings');
+    check('every question is judged the right way round', wrong.length === 0, wrong.join(' | ') || `${yoursCases.length} phrasings`);
   } finally {
     await browser.close();
     server.close();
