@@ -193,8 +193,57 @@ const PLAIN_COUNTRY = /^\s*country(\s+of\s+(residence|citizenship))?\s*[*:]*\s*$
 const asksForADiallingCode = (description, label) =>
   DIALLING_CODE.test(description.replace(/\([^)]*\)/g, ' ')) && !PLAIN_COUNTRY.test(label ?? '');
 
-const isNotAboutYou = (description, label) =>
-  asksForADiallingCode(description, label) || NOT_ABOUT_YOU.some((re) => re.test(description));
+/**
+ * What the form says about a field somewhere other than on the field.
+ *
+ * Every exclusion above reads `describeField`, which is a field's own label
+ * plus its own `name`, `id` and `placeholder`. That is enough whenever the
+ * form repeats the disambiguating word onto each box — "Emergency contact
+ * number", "Reference 1 email" — and plenty of forms do not. They say it once:
+ *
+ *   <fieldset>
+ *     <legend>Emergency Contact</legend>
+ *     <label for="ec_phone">Phone</label><input id="ec_phone" name="q_88214">
+ *
+ * There the field describes itself as "Phone q 88214", matches the ordinary
+ * `phone` pattern, and was filled with the applicant's own number — reported
+ * as a field filled, in green, as a fact about the person they would call in
+ * an emergency. The same three boxes with the word on each of them were
+ * correctly left alone, so the rule held exactly where the markup was kind.
+ *
+ * The nearest fieldset only, and the nearest labelled group: a legend two
+ * levels up is about the section, and a form that wraps everything in one
+ * fieldset would otherwise have every field in it excluded by a single word.
+ *
+ * Used for the exclusions and nowhere else. It never reaches `describeField`,
+ * because a legend reading "Contact Information" over an ordinary email box
+ * is context for whether the box is yours and not evidence about which field
+ * it is — and anything that matched before has to go on matching.
+ */
+function surroundingWords(input) {
+  const said = [];
+  const legend = clean(input.closest('fieldset')?.querySelector('legend')?.textContent);
+  if (legend) said.push(legend);
+
+  const group = input.closest('[role="group"], [role="radiogroup"]');
+  if (group) {
+    const named = clean(group.getAttribute('aria-label')) || clean(fromLabelledBy(group));
+    if (named) said.push(named);
+  }
+  return clean(said.join(' ')).slice(0, 200);
+}
+
+/**
+ * `around` is joined to the description rather than tested beside it, because
+ * the two halves of a phrase can be on either side of the boundary: the
+ * employment-history rule wants "Employer" next to "Location", and a form
+ * that puts the first in the legend and the second on the label has written
+ * the same question as one that puts both on the label.
+ */
+const isNotAboutYou = (description, label, around = '') => {
+  const about = around ? `${around} ${description}` : description;
+  return asksForADiallingCode(description, label) || NOT_ABOUT_YOU.some((re) => re.test(about));
+};
 
 /*
  * "Are you legally authorized to work in the United States without
@@ -931,7 +980,7 @@ export function fillForm(fields, { overwrite = false } = {}) {
     // Before the exclusions, which say nothing, and before the match, which
     // this question does not need. See `handBack`.
     if (handBack(description, skipped)) continue;
-    if (isNotAboutYou(description, clean(labelFor(input)))) continue;
+    if (isNotAboutYou(description, clean(labelFor(input)), surroundingWords(input))) continue;
 
     /*
      * The first pattern that matches, and then whether the profile has it —
@@ -1285,7 +1334,7 @@ function answerRadioGroups(fields, overwrite) {
     // "legally authorized to work without sponsorship" as a pair of buttons.
     if (handBack(description, skipped)) continue;
     // The group's own words, on the same terms as `fillForm`.
-    if (isNotAboutYou(description, clean(groupLabelFor(radios)))) continue;
+    if (isNotAboutYou(description, clean(groupLabelFor(radios)), surroundingWords(radios[0]))) continue;
 
     /*
      * Only the keys that are a choice between options. A name, an email address
@@ -1380,7 +1429,7 @@ function unfillableChoices(fields, filled) {
 
     const description = describeField(widget);
     if (!description) continue;
-    if (isNotAboutYou(description, clean(labelFor(widget)))) continue;
+    if (isNotAboutYou(description, clean(labelFor(widget)), surroundingWords(widget))) continue;
 
     const match = FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key] && !already.has(key));
     if (!match) continue;

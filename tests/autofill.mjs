@@ -102,6 +102,28 @@ const NOT_YOURS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply
   <label for="ec-name">Emergency contact name</label><input id="ec-name" name="ec_name">
   <label for="ec-phone">Emergency contact number</label><input id="ec-phone" name="ec_phone" type="tel">
 
+  <!--
+    The same three questions again, with the context only in the legend.
+
+    Every other block here repeats the disambiguating word onto each field —
+    "Emergency contact number", "Reference 1 email" — which is what the
+    exclusions read. Plenty of forms do not: the fieldset says whose details
+    these are once, and each box under it is labelled "Name", "Phone",
+    "Email" like any other.
+  -->
+  <fieldset>
+    <legend>Emergency Contact</legend>
+    <label for="fs-name">Name</label><input id="fs-name" name="q_88213">
+    <label for="fs-phone">Phone</label><input id="fs-phone" name="q_88214" type="tel">
+    <label for="fs-email">Email</label><input id="fs-email" name="q_88215" type="email">
+  </fieldset>
+
+  <!-- And the shape without a fieldset: a heading, then a group. -->
+  <div role="group" aria-label="Reference 2">
+    <label for="g-name">Full name</label><input id="g-name" name="q_90001">
+    <label for="g-email">Email address</label><input id="g-email" name="q_90002" type="email">
+  </div>
+
   <!-- A previous employer's address, from the employment-history section. -->
   <h3>Employment history</h3>
   <label for="emp-city">Employer City</label><input id="emp-city" name="emp_city">
@@ -632,6 +654,7 @@ async function main() {
         return {
           values: Object.fromEntries(
             ['own-email', 'own-phone', 'r-name', 'r-email', 'r-phone', 'mgr-email', 'ec-name', 'ec-phone',
+             'fs-name', 'fs-phone', 'fs-email', 'g-name', 'g-email',
              'emp-city', 'emp-loc', 'emp-mail', 'source', 'citizenship', 'residence', 'b-country', 'b-city', 'cc', 'pref1',
              'pref2', 'reloc', 'st', 'sal', 'dis-sig', 'eeo-sig', 'auth-any', 'both']
               .map((id) => [id, document.getElementById(id).value]),
@@ -670,6 +693,25 @@ async function main() {
       `${mine.values['ec-name']} / ${mine.values['ec-phone']}`,
     );
     check("nor is the manager's email yours", mine.values['mgr-email'] === '', mine.values['mgr-email']);
+    /*
+     * And the same, said once above the boxes instead of on every one of
+     * them. The exclusions read a field's own label and its own name and id,
+     * and nothing else — so a fieldset whose legend is the only thing saying
+     * "Emergency Contact", over boxes labelled "Name", "Phone" and "Email",
+     * matched the ordinary patterns and was filled with the applicant's own
+     * details. Reported as three fields filled, in green, as facts about
+     * somebody they would call in an emergency.
+     */
+    check(
+      'a legend is enough to say whose details these are',
+      mine.values['fs-name'] === '' && mine.values['fs-phone'] === '' && mine.values['fs-email'] === '',
+      `${mine.values['fs-name']} / ${mine.values['fs-phone']} / ${mine.values['fs-email']}`,
+    );
+    check(
+      'and so is the label on a group that is not a fieldset',
+      mine.values['g-name'] === '' && mine.values['g-email'] === '',
+      `${mine.values['g-name']} / ${mine.values['g-email']}`,
+    );
     /*
      * The employment-history exclusion listed city, town, state and postal
      * code but not `location` — which is the word Workday, Greenhouse and
