@@ -279,6 +279,9 @@ async function serverFetch(path, options = {}) {
 
   if (!res.ok) {
     const failed = new Error(body.error ?? `${res.status} ${res.statusText}`);
+    // What the store called it, for the callers that treat one refusal
+    // differently from another. See `holdASpace` and `not-a-job`.
+    if (typeof body.kind === 'string') failed.kind = body.kind;
     // The server says which sort of refusal this is. "No save open" is the one
     // worth acting on: there is a button that fixes it, one tab away.
     if (body.kind === 'no-project') failed.jobhelper = { fix: 'open-save', serverUrl };
@@ -948,6 +951,16 @@ async function holdASpace(trail, tabId) {
         timeoutMs: SLOW_TIMEOUT_MS,
         save,
         body: JSON.stringify({
+          /*
+           * Nobody pressed anything to get here, so the store is allowed to
+           * disbelieve it. `openWorkspace` — the card's button — carries no
+           * such flag: somebody typing a company and a role means it, however
+           * odd it reads. This one is a guess made from a page's markup, and a
+           * guess is how "Indeed — Now Hiring: 300 Software Intern Jobs" and
+           * "Reddit — https://preview.redd.it/…jpeg?width=1280" became rows in
+           * somebody's tracker.
+           */
+          auto: true,
           company,
           role,
           url: trail.pages?.[0]?.url,
@@ -957,10 +970,19 @@ async function holdASpace(trail, tabId) {
           coverLetterRequired: Boolean(work.letter?.trim()) || undefined,
         }),
       });
-    } catch {
-      // The store may not be running, which is not this save's problem: the
-      // work is already held in the browser either way. Letting it go means
-      // the next application tries again rather than this one failing twice.
+    } catch (err) {
+      /*
+       * A refusal stands. The store has looked at this company and role and
+       * said it is not a job — "Indeed — Now Hiring: 300 Software Intern
+       * Jobs" — and the answer will be the same next time, so the key stays
+       * and this pair is not asked about again. Dropping it would put the
+       * write on every keeper tick for as long as the tab is open.
+       */
+      if (err?.kind === 'not-a-job') return;
+      // Anything else, and the store may simply not be running, which is not
+      // this save's problem: the work is already held in the browser either
+      // way. Letting the key go means the next application tries again
+      // rather than this one failing twice.
       await session().remove(key).catch(() => undefined);
     }
   } finally {

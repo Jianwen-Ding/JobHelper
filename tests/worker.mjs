@@ -59,11 +59,21 @@ function fakeStore() {
   const server = http.createServer(async (req, res) => {
     const url = req.url.split('?')[0];
     const raw = await readBody(req);
-    state.hits.push({ url, method: req.method, project: req.headers['x-rmm-project'] ?? null });
+    state.hits.push({ url, method: req.method, project: req.headers['x-rmm-project'] ?? null, body: raw });
 
     const mode = state.routes[url] ?? 'ok';
     if (mode === 'silent') {
       state.open.push(res);
+      return;
+    }
+    /*
+     * The store looking at a company and a role and saying that is not a job.
+     * Named, because the extension treats a refusal differently from a store
+     * that is not running: see `holdASpace`.
+     */
+    if (mode === 'not-a-job') {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ kind: 'not-a-job', error: 'does not read like a job, so no space was opened for it.' }));
       return;
     }
     if (mode === 'stall-body') {
@@ -381,6 +391,23 @@ async function main() {
       store.role = 'Platform Engineer';
     }
 
+    /*
+     * Claiming a park must not take another one with it.
+     *
+     * `parkWork` goes through the one-writer-at-a-time chain, and its own
+     * comment says exactly why: read, modify, write is three turns, two tabs
+     * closing on the same board address both read the same list, and the
+     * second write lands on top of the first. `dropPark` — the other half of
+     * the same read-modify-write, on the same key — did not. It was handed
+     * the list `takeWork` had read several turns earlier, across a real
+     * `await writeTrail`, and wrote it back minus the entry it claimed. A
+     * park that arrived in that window was written and then erased: somebody
+     * else's letter, gone, with no error anywhere and nothing to come back to.
+     *
+     * Driven as the race it is, at a spread of delays, because the window is
+     * a few milliseconds wide and one guess at it proves nothing. The other
+     * letter has to survive every one of them.
+     */
     /*
      * "Same job — put it back" has to put it back where it can be seen.
      *
@@ -706,6 +733,21 @@ async function main() {
       check('the keeper saving twice opens one space', twice === before + 1, `${twice - before} pushes`);
       check('into the save the application was built in', lastSaveFor('/api/workspace') === 'work', lastSaveFor('/api/workspace'));
 
+      /*
+       * And says that nobody asked for it.
+       *
+       * This row is opened off whatever the extractor made of the pages
+       * somebody walked through, with no button pressed, so the store is
+       * allowed to disbelieve the pair and refuse. It can only do that if it
+       * can tell this write from `openWorkspace`, which is the card's button
+       * and means whatever a person typed into it. The tracker had filled up
+       * with `Indeed — Now Hiring: 300 Software Intern Jobs` and a role that
+       * was two hundred characters of `preview.redd.it` image url; the guard
+       * that stops those lives in the store and is inert without this flag.
+       */
+      const held = JSON.parse(store.sentTo('/api/workspace').slice(-1)[0]?.body || '{}');
+      check('and says nobody asked for it, so the store may refuse it', held.auto === true, JSON.stringify(held).slice(0, 120));
+
       // The same role, out of a different save. A second application, and it
       // wants its own row — this is the part the company-and-role key lost.
       store.save = 'personal';
@@ -738,6 +780,65 @@ async function main() {
         .catch(() => false);
       check('the worker really was restarted, and lost its memory with it', fresh && woken.reply?.ok === true, JSON.stringify(woken.reply ?? woken.lastError).slice(0, 120));
       check('and a restarted worker does not push it again', after === elsewhere, `${after - elsewhere} pushes after the restart`);
+    }
+
+    /*
+     * A refusal is not a retry.
+     *
+     * The key that stops this write happening twice is dropped whenever it
+     * fails, because the usual failure is the store not running — and the
+     * next application should go. A refusal is the other thing: the store has
+     * read the company and the role and said it is not a job, and it will say
+     * so again. Dropped anyway, that is one rejected POST per keeper tick,
+     * every couple of seconds, for as long as the tab is open.
+     */
+    group('A pair the store says is not a job');
+    {
+      const pushes = () => store.sentTo('/api/workspace').length;
+      const junk = {
+        spec: { id: 'job-junk', generatedFor: { company: 'Indeed', role: 'Now Hiring: 300 Software Intern Jobs' } },
+        render: { pages: 1 },
+      };
+      store.save = 'work';
+      store.routes['/api/workspace'] = 'not-a-job';
+      await ask(driver, 'clearTrail', {});
+      await ask(driver, 'analyze', { url: 'http://i.example/jobs/junk', title: 'Indeed', html: '<p>junk</p>', company: 'Indeed' });
+
+      const before = pushes();
+      await ask(driver, 'saveWork', { work: junk });
+      for (let i = 0; i < 60 && pushes() === before; i++) await new Promise((r) => setTimeout(r, 50));
+      const tried = pushes();
+      check('it is asked about once', tried === before + 1, `${tried - before} pushes`);
+
+      // And then left alone, however many times the keeper saves.
+      await ask(driver, 'saveWork', { work: junk });
+      await ask(driver, 'saveWork', { work: junk });
+      await new Promise((r) => setTimeout(r, 800));
+      check('and not asked about again', pushes() === tried, `${pushes() - tried} more`);
+
+      /*
+       * Where an outage is not left alone, which is the behaviour this must
+       * not have broken: the store being down is nothing to do with this
+       * application, and the next save should try again.
+       */
+      store.routes['/api/workspace'] = 'ok';
+      const down = {
+        spec: { id: 'job-down', generatedFor: { company: 'Solace', role: 'Reliability Engineer' } },
+        render: { pages: 1 },
+      };
+      await ask(driver, 'clearTrail', {});
+      await ask(driver, 'analyze', { url: 'http://j.example/jobs/down', title: 'Solace', html: '<p>down</p>', company: 'Solace' });
+      store.strict = true;
+      store.save = 'personal';
+      // A write refused for a reason that is not about the pair at all: the
+      // editor has moved to another save. That one is retried.
+      await ask(driver, 'saveWork', { work: down });
+      await new Promise((r) => setTimeout(r, 600));
+      const refusedOnce = pushes();
+      store.save = 'work';
+      await ask(driver, 'saveWork', { work: down });
+      for (let i = 0; i < 60 && pushes() === refusedOnce; i++) await new Promise((r) => setTimeout(r, 50));
+      check('a refusal that is not about the pair is tried again', pushes() > refusedOnce, `${pushes() - refusedOnce} more`);
     }
 
     /* ---------------------------------------------------------------- *
