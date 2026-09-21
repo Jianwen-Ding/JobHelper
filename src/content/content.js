@@ -707,7 +707,7 @@
           return { placed: [], unplaced: [], nothing: true, dir: got?.dir ?? null };
         }
         const { attachFiles } = await imports.attach();
-        const here = attachFiles(files);
+        const here = await attachFiles(files);
         /*
          * And whatever is left, offered to the frames. A form split across
          * the page and an embed is ordinary, and a resume that went nowhere
@@ -1819,7 +1819,25 @@
          */
         case 'jh-frame-attach':
           answer(
-            imports.attach().then(({ attachFiles }) => attachFiles(message.payload?.files ?? [])),
+            Promise.all([imports.attach(), imports.autofill()]).then(
+              ([{ attachFiles }, { looksLikeApplicationForm }]) =>
+                /*
+                 * Behind the same guard as `jh-frame-fill`, and for a
+                 * stronger reason.
+                 *
+                 * Every frame on the page runs this script and every frame is
+                 * asked, so an advert, a chat widget or a survey embed with a
+                 * file input in it was a place the resume could land — and a
+                 * resume is a name, an address, a phone number and an
+                 * employment history in one file. `fillForm` has always
+                 * checked that the frame is actually an application before
+                 * giving it a single field; this gave a whole document to
+                 * anything with a box.
+                 */
+                looksLikeApplicationForm()
+                  ? attachFiles(message.payload?.files ?? [])
+                  : { placed: [], unplaced: [], boxes: 0 },
+            ),
           );
           return true;
 

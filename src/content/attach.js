@@ -226,8 +226,16 @@ function putIn(box, file) {
  * that only exists once a file has been chosen. Dispatching the three events
  * a real drag produces, with the same `DataTransfer`, is what the page is
  * listening for.
+ *
+ * Then it waits to see whether anything came of it, because unlike
+ * `input.files` there is nothing to read back: a drop is an event, and an
+ * event that nobody handled looks exactly like one that worked. A page that
+ * took the file ends up with an input holding it, which is something that can
+ * be checked. A page that uploaded it straight over the network does not, so
+ * the answer is "not sure" rather than "no" — and the caller says so rather
+ * than claiming it landed.
  */
-function dropOn(zone, file) {
+async function dropOn(zone, file) {
   const carrier = new DataTransfer();
   carrier.items.add(file);
   for (const type of ['dragenter', 'dragover', 'drop']) {
@@ -235,15 +243,59 @@ function dropOn(zone, file) {
       new DragEvent(type, { bubbles: true, cancelable: true, composed: true, dataTransfer: carrier }),
     );
   }
-  return true;
+  const landed = () => uploadBoxes().some((b) => [...(b.files ?? [])].some((f) => f.name === file.name));
+  for (let i = 0; i < 8; i++) {
+    if (landed()) return 'sure';
+    await new Promise((r) => setTimeout(r, 60));
+  }
+  return landed() ? 'sure' : 'unsure';
 }
+
+/**
+ * The words that mean a region takes files, on their own rather than inside
+ * another word.
+ *
+ * This was `/drag|drop|attach/` without boundaries, and `drop` is inside
+ * `dropdown` — which is on some element of nearly every page on the web. So
+ * an ordinary page with an account menu and no upload box anywhere reported
+ * the resume as attached, having dispatched a drop event at a menu.
+ * Measured: `{canAttach: true, placed: [{name: "…Resume.pdf", where: "the
+ * drop area"}], boxes: 0}`. Telling somebody their resume is in the form when
+ * it is nowhere is the worst thing this file can do — worse than refusing,
+ * because they submit on the strength of it.
+ */
+const DROP_WORDS = /\b(drag|drop|dropzone|attach|upload)\b/i;
 
 /** A region that behaves like a drop target, for a file with no box to go in. */
 function dropZones(root = document) {
-  const said = /drag|drop|attach/i;
-  return [...root.querySelectorAll('div,section,label,form')].filter(
-    (el) => el.isConnected && said.test(el.getAttribute('aria-label') ?? '') || said.test(el.className ?? ''),
-  );
+  const found = [...root.querySelectorAll('div,section,label,form')].filter((el) => {
+    if (!el.isConnected || el.closest('[hidden]')) return false;
+    /*
+     * `className` is not a string on an SVG element — it is an
+     * `SVGAnimatedString`, which stringifies to `[object SVGAnimatedString]`
+     * and matches nothing, quietly. `getAttribute` is the same answer for
+     * every kind of element.
+     */
+    const named = [el.getAttribute('aria-label'), el.getAttribute('data-automation-id'), el.getAttribute('class')]
+      .filter(Boolean)
+      .join(' ');
+    if (DROP_WORDS.test(named)) return true;
+    /*
+     * And its own words, for the zones that carry no class worth reading:
+     * "Drag and drop your resume here, or browse". Short, because a page that
+     * says "attach" somewhere in a paragraph of prose is not a drop target,
+     * and `drag` or `drop` specifically — an "Attach" button is a trigger for
+     * the file dialog, and dropping on it does nothing at all.
+     */
+    const text = (el.textContent ?? '').trim();
+    return text.length < 120 && /\b(drag|drop)\b/i.test(text);
+  });
+  /*
+   * Innermost first. A drop handler is usually on the zone itself and a drop
+   * bubbles upwards, so the deepest match reaches every handler above it as
+   * well; the outermost reaches only its own.
+   */
+  return found.filter((el) => !found.some((other) => other !== el && el.contains(other)));
 }
 
 /**
@@ -255,7 +307,7 @@ function dropZones(root = document) {
  *
  * @param {{name: string, base64: string, type?: string}[]} files
  */
-export function attachFiles(files) {
+export async function attachFiles(files) {
   const boxes = uploadBoxes();
   const taken = new Set();
   const placed = [];
@@ -295,8 +347,17 @@ export function attachFiles(files) {
     }
 
     const zone = dropZones()[0];
-    if (boxes.length === 0 && zone && dropOn(zone, file)) {
-      placed.push({ name: spec.name, where: 'the drop area' });
+    if (boxes.length === 0 && zone) {
+      /*
+       * Said as what it is. A drop cannot be read back the way `input.files`
+       * can, so "sure" means a box on the page is now holding this file and
+       * "unsure" means the event was delivered and nothing visible came of
+       * it — which is what a page that uploads over the network looks like,
+       * and also what a page that ignored it looks like. The card words the
+       * two differently; claiming both is how somebody submits a form with
+       * no resume in it.
+       */
+      placed.push({ name: spec.name, where: 'the drop area', sure: (await dropOn(zone, file)) === 'sure' });
       continue;
     }
 
@@ -309,7 +370,12 @@ export function attachFiles(files) {
   return { placed, unplaced, boxes: boxes.length };
 }
 
-/** Whether it is worth offering at all: is there anything to attach to? */
-export function canAttach() {
-  return uploadBoxes().length > 0 || dropZones().length > 0;
-}
+/*
+ * There was a `canAttach()` here, for hiding the button on a page with
+ * nothing to attach to. Nothing ever called it, and it could not be called:
+ * the answer it gives is about this document, and half the portals that
+ * matter put the upload control in an embedded frame — where the top
+ * document, correctly, sees no box and would have hidden the button that is
+ * the only way to reach the frame. A gate that has to be wrong on the case it
+ * exists for is not a gate.
+ */

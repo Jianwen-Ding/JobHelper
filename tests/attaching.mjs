@@ -83,7 +83,38 @@ const HEADINGS = page(`
   </div>
 `);
 
+/** An ordinary page with an account menu, and no upload box anywhere. */
+const MENU = `<!doctype html><html><head><meta charset="utf-8"><title>Careers</title></head>
+<body>
+  <div class="dropdown"><button type="button">Account</button><ul><li>Sign out</li></ul></div>
+  <h1>Platform Engineer</h1><p>Apply on our portal.</p>
+</body></html>`;
+
+/** Workday's shape: a region that listens for a drop, and no input at all. */
+const DROPZONE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head>
+<body><form>
+  <div class="upload-area" aria-label="Drop files to attach"><p>Drag and drop your resume here</p></div>
+</form></body></html>`;
+
+/** The same, on a page that does what Workday does with what it catches. */
+const DROPZONE_REAL = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head>
+<body><form>
+  <div id="zone" class="upload-area"><p>Drag and drop your resume here</p></div>
+  <script>
+    document.getElementById('zone').addEventListener('drop', (e) => {
+      e.preventDefault();
+      const made = document.createElement('input');
+      made.type = 'file'; made.id = 'made'; made.name = 'resume';
+      made.files = e.dataTransfer.files;
+      document.querySelector('form').append(made);
+    });
+  </script>
+</form></body></html>`;
+
 const PAGES = {
+  '/menu': MENU,
+  '/dropzone': DROPZONE,
+  '/dropzone-real': DROPZONE_REAL,
   '/headings': HEADINGS,
   '/labelled': LABELLED,
   '/bare': BARE,
@@ -131,7 +162,7 @@ async function main() {
           for (const input of document.querySelectorAll('input[type=file]')) {
             input.addEventListener('change', (e) => heard.push(e.target.id));
           }
-          const report = m.attachFiles(list);
+          const report = await m.attachFiles(list);
           const inBoxes = {};
           for (const input of document.querySelectorAll('input[type=file]')) {
             inBoxes[input.id] = [...(input.files ?? [])].map((f) => f.name);
@@ -214,6 +245,57 @@ async function main() {
       const { inBoxes } = await run('/headings', [filed('Jianwen-Ding-Resume.pdf'), filed('Transcript.pdf')]);
       check('the resume goes under the Resume heading', inBoxes.b?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
       check('and the transcript under the Transcript one', inBoxes.a?.[0] === 'Transcript.pdf', JSON.stringify(inBoxes));
+    }
+
+    /*
+     * The page with no upload box at all, which is most of the web.
+     *
+     * The drop-zone fallback matched `/drag|drop|attach/` with no word
+     * boundaries, and `drop` is inside `dropdown` — which is on some element
+     * of nearly every page there is. So an ordinary page with an account menu
+     * reported the resume as attached, having dispatched a drop event at a
+     * menu. Measured before the fix: `{placed: [{name: "…Resume.pdf", where:
+     * "the drop area"}], boxes: 0}`.
+     *
+     * Telling somebody their resume is in the form when it is nowhere is the
+     * worst thing this file can do. It is worse than refusing, because they
+     * press Submit on the strength of it.
+     */
+    group('A page with a menu on it and nowhere to put anything');
+    {
+      const { report } = await run('/menu', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('a dropdown is not a drop area', report.placed.length === 0, JSON.stringify(report.placed));
+      check('and the file is named as having nowhere to go', report.unplaced[0]?.name === 'Jianwen-Ding-Resume.pdf', JSON.stringify(report.unplaced));
+    }
+
+    /*
+     * And the real one, which must still work. Workday's is a region with a
+     * drop handler and no input until a file has been chosen — so there is
+     * nothing to read back afterwards, and a drop that was ignored looks
+     * exactly like one that was taken and uploaded over the network. The
+     * honest answer is "not sure", said as that.
+     */
+    group('A drop area with no input behind it');
+    {
+      const { report } = await run('/dropzone', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('the file is offered to it', report.placed[0]?.where === 'the drop area', JSON.stringify(report.placed));
+      check(
+        'and it is not claimed as attached, because nothing can say it was',
+        report.placed[0]?.sure === false,
+        JSON.stringify(report.placed[0]),
+      );
+    }
+
+    /*
+     * The same zone, on a page that does what Workday does: takes the drop
+     * and puts the file into an input. That *can* be read back, so it is not
+     * hedged.
+     */
+    group('A drop area that really takes the file');
+    {
+      const { report, inBoxes } = await run('/dropzone-real', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('the page ends up holding it', inBoxes.made?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
+      check('and it is reported as certain', report.placed[0]?.sure === true, JSON.stringify(report.placed[0]));
     }
 
     group('Reading a name for what kind of document it is');

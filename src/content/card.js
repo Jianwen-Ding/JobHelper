@@ -3912,8 +3912,26 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     if (placed.length === 0 && unplaced.length === 0) return 'Nothing to attach.';
 
     const parts = [];
-    if (placed.length > 0) parts.push(`Attached ${placed.map((p) => p.name).join(' and ')}`);
-    else parts.push('Nothing was attached');
+    /*
+     * A file put into a box is attached; a file dropped on a drop area may or
+     * may not be, and the two must not be said the same way.
+     *
+     * `input.files` can be read back, so "attached" there is a fact. A drop
+     * is an event: a page that took the file and uploaded it over the network
+     * looks exactly like a page that ignored it. Saying "attached" for both
+     * is how somebody submits a form with no resume in it, on the strength of
+     * a sentence from here.
+     */
+    const sure = placed.filter((p) => p.sure !== false);
+    const dropped = placed.filter((p) => p.sure === false);
+    if (sure.length > 0) parts.push(`Attached ${sure.map((p) => p.name).join(' and ')}`);
+    else if (dropped.length === 0) parts.push('Nothing was attached');
+    if (dropped.length > 0) {
+      parts.push(
+        `${dropped.map((p) => p.name).join(' and ')} went to this form’s drop area, which does not say ` +
+          'whether it took them — check the form before sending',
+      );
+    }
     if (unplaced.length > 0) {
       parts.push(
         `${unplaced.map((u) => u.name).join(' and ')} had nowhere to go — ${unplaced[0].why}. ` +
