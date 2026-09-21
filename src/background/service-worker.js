@@ -341,6 +341,20 @@ const trailKey = (tabId) => (tabId === undefined ? TRAIL_KEY : `${TRAIL_KEY}:${t
  */
 const orphanKey = (url) => `jh-orphan:${String(url).split('#')[0]}`;
 
+/**
+ * Which applications have already had a space opened for them, and in which
+ * save. See `holdASpace`, which is the only thing that reads or writes these.
+ *
+ * Percent-encoded rather than joined on a NUL, which is the obvious separator
+ * and does not survive the trip. `chrome.storage.session` takes a key with a
+ * NUL in it, stores it — `get(null)` lists it — and then answers `undefined`
+ * when asked for it by name, so every read missed and the guard below held
+ * nothing. Measured, not assumed: `set` ok, `get(null)` one key, `get(key)`
+ * null.
+ */
+const heldKey = (save, company, role) =>
+  `jh-held:${[save, company, role].map(encodeURIComponent).join('|')}`;
+
 /*
  * Whether a trail is still current is a question about when, not about how
  * many pages it holds. Keyed off `pages.length`, a record with work in it and
@@ -626,7 +640,30 @@ async function askFrames(tabId, message) {
  * pushing the card's version over theirs every two seconds would be a way
  * of losing their sentence, not of holding their place.
  */
-const held = new Set();
+/*
+ * Once per application, and the worker must not be what remembers it.
+ *
+ * This was a module-level Set. A service worker is stopped whenever the
+ * browser feels like it — thirty seconds without a message is the documented
+ * case, and an extension reload or memory pressure will do it at any time —
+ * and module state goes with it. The card's keeper sends every two seconds,
+ * so the first tick after a restart found an empty set and pushed again: the
+ * whole spec the card is holding, merged over the version in the editor.
+ * Which is, word for word, the loss the comment above says this guard exists
+ * to prevent — you switch to the editor, rearrange the entries, and a card
+ * still open behind it puts its older copy back.
+ *
+ * Keyed by the save as well, because the same role applied for out of two
+ * saves is two applications and wants a row in each. Keyed off `company` and
+ * `role` alone, the second save silently never got one.
+ *
+ * `holding` is the narrower guard the Set was also doing by accident: a
+ * synchronous add before an await, so two keeper ticks overlapping across a
+ * slow POST cannot both send. Session storage cannot do that — the read and
+ * the write are two awaits — so it stays, in memory, for the in-flight case
+ * only.
+ */
+const holding = new Set();
 async function holdASpace(trail, tabId) {
   const work = trail?.work;
   if (!worthKeeping(work)) return;
@@ -668,29 +705,35 @@ async function holdASpace(trail, tabId) {
   const role = work.spec?.generatedFor?.role;
   if (!company || !role) return;
 
-  const key = `${company}\u0000${role}`;
-  if (held.has(key)) return;
-  held.add(key);
+  const key = heldKey(save, company, role);
+  if (holding.has(key)) return;
+  holding.add(key);
   try {
-    await serverFetch('/api/workspace', {
-      method: 'POST',
-      timeoutMs: SLOW_TIMEOUT_MS,
-      save,
-      body: JSON.stringify({
-        company,
-        role,
-        url: trail.pages?.[0]?.url,
-        source: trail.pages?.[0]?.url ? new URL(trail.pages[0].url).hostname : undefined,
-        resumeId: work.spec?.id,
-        spec: work.spec,
-        coverLetterRequired: Boolean(work.letter?.trim()) || undefined,
-      }),
-    });
-  } catch {
-    // The store may not be running, which is not this save's problem: the
-    // work is already held in the browser either way. Letting it go means
-    // the next application tries again rather than this one failing twice.
-    held.delete(key);
+    if ((await session().get(key).catch(() => ({})))[key]) return;
+    await session().set({ [key]: { at: Date.now() } }).catch(() => undefined);
+    try {
+      await serverFetch('/api/workspace', {
+        method: 'POST',
+        timeoutMs: SLOW_TIMEOUT_MS,
+        save,
+        body: JSON.stringify({
+          company,
+          role,
+          url: trail.pages?.[0]?.url,
+          source: trail.pages?.[0]?.url ? new URL(trail.pages[0].url).hostname : undefined,
+          resumeId: work.spec?.id,
+          spec: work.spec,
+          coverLetterRequired: Boolean(work.letter?.trim()) || undefined,
+        }),
+      });
+    } catch {
+      // The store may not be running, which is not this save's problem: the
+      // work is already held in the browser either way. Letting it go means
+      // the next application tries again rather than this one failing twice.
+      await session().remove(key).catch(() => undefined);
+    }
+  } finally {
+    holding.delete(key);
   }
 }
 
