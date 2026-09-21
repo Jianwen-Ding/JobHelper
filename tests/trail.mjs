@@ -55,6 +55,21 @@ describe('two addresses on one site', () => {
     assert.equal(relatedPath('https://indeed.com/viewjob?jk=a', 'https://indeed.com/viewjob?jk=b'), false);
   });
 
+  /*
+   * And the view most people actually read Indeed in: a list on the left, the
+   * selected posting on the right, and the whole thing at `/jobs`. Which one
+   * is selected lives in `vjk`, which was on no list — so every job clicked
+   * in that pane was the same page as the last one, and the trail folded them
+   * all into one application. `/viewjob?jk=` branched correctly, which is why
+   * this only ever bit in the list.
+   */
+  it('does not join two jobs picked out of one search-results pane', () => {
+    const jobs = 'https://www.indeed.com/jobs?q=software+engineer&l=Boston';
+    assert.equal(relatedPath(`${jobs}&vjk=aaaa1111`, `${jobs}&vjk=bbbb2222`), false);
+    // The same posting reached with the search worded differently is still it.
+    assert.equal(relatedPath(`${jobs}&vjk=aaaa1111`, `https://www.indeed.com/jobs?q=golang&vjk=aaaa1111`), true);
+  });
+
   it('ignores the query when it says nothing about which job this is', () => {
     assert.equal(relatedPath('https://x.com/acme/8f21', 'https://x.com/acme/8f21?utm_source=board'), true);
     assert.equal(relatedPath('https://x.com/acme/8f21?gh_jid=9', 'https://x.com/acme/8f21?gh_jid=9&src=ad'), true);

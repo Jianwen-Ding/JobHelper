@@ -103,9 +103,17 @@ const bare = (seg) => String(seg ?? '').replace(/\.(ftl|html?|aspx?|jsp|php|do|c
  * `/careers`. Comparing paths alone made all of them one application — so
  * reading one Indeed posting and then another wrote the second up as the
  * first, which is the exact failure the host rules exist to prevent.
+ *
+ * `vjk` is the same story in the view most people actually read Indeed in.
+ * The search results are a list on the left and the selected posting on the
+ * right, all of it at `/jobs`, and which one is selected lives in `vjk` —
+ * clicking down the list changes only that. It was on no list, so every job
+ * in the pane was the same page as the last and the trail folded all of them
+ * into one application. `/viewjob?jk=` branched correctly, which is why this
+ * only ever bit in the list.
  */
 const JOB_PARAM =
-  /^(jk|jl|jid|job|jobid|job_id|jobreqid|career_job_req_id|opportunityid|token|gh_jid|jvi|requisitionid|reqid|req|postingid|posting_id|vacancyid|currentjobid|id|oid|pid)$/i;
+  /^(jk|vjk|jl|jid|job|jobid|job_id|jobreqid|career_job_req_id|opportunityid|token|gh_jid|jvi|requisitionid|reqid|req|postingid|posting_id|vacancyid|currentjobid|id|oid|pid)$/i;
 
 const jobIds = (u) => {
   const out = new Map();
