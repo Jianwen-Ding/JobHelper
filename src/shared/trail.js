@@ -379,7 +379,62 @@ export function wasLinkedFrom(trail, url) {
  * In order of how much the evidence is worth: the click that brought you here,
  * then the company named on the page, then where the page lives.
  */
-export function sameApplication(trail, page, now = Date.now()) {
+/**
+ * Words in a role title that say which job it is.
+ *
+ * Seniority and shape are not identity: "Senior Software Engineer" and
+ * "Software Engineer II" are the same job described twice, and a form page
+ * that titles itself "Software Engineer (Remote) - Apply" is the same job
+ * again. Stripping those leaves the words that actually name the work.
+ */
+const ROLE_NOISE = new Set([
+  'senior', 'junior', 'staff', 'lead', 'principal', 'associate', 'entry', 'level',
+  'the', 'and', 'for', 'with', 'job', 'jobs', 'role', 'position', 'opening', 'vacancy',
+  'apply', 'application', 'careers', 'career', 'hiring', 'remote', 'hybrid', 'onsite',
+  'full', 'part', 'time', 'contract', 'permanent', 'new', 'grad', 'graduate',
+]);
+
+const roleWords = (text) =>
+  new Set(
+    (String(text ?? '').toLowerCase().match(/[a-z][a-z+#.]{2,}/g) ?? []).filter((w) => !ROLE_NOISE.has(w)),
+  );
+
+/**
+ * Two role titles with nothing in common — a different job, said in words.
+ *
+ * Deliberately conservative, and the conservatism is the point: splitting one
+ * application in two halfway through its form is worse than missing a split,
+ * because the URL distinguishes the real cases anyway and this is the
+ * fallback for the ones where it does not. So "Platform Engineer" and "Data
+ * Scientist" are different; "Platform Engineer" and "Data Engineer" are not,
+ * because they still share the word that says what the work is.
+ *
+ * No opinion at all unless both sides name something. A page the classifier
+ * could not put a role to says nothing about whether this is a new job.
+ */
+export function plainlyAnotherRole(a, b) {
+  const mine = roleWords(a);
+  const theirs = roleWords(b);
+  if (mine.size === 0 || theirs.size === 0) return false;
+  for (const word of mine) if (theirs.has(word)) return false;
+  return true;
+}
+
+/**
+ * Same application, a different one, or not clear enough to say.
+ *
+ * The third answer is the one this grew for. A board that keeps every posting
+ * at one address — Indeed's results pane, any single-page board — leaves the
+ * url saying these are the same page when the pane has been changed to a
+ * different job entirely. Answering "same" there writes the second job up as
+ * the first; answering "different" on such thin evidence would split an
+ * ordinary application the first time a form page called itself something
+ * slightly different. So it says it is unsure, and the caller asks.
+ *
+ * `sameApplication` below is this, read as a yes or no, for the callers whose
+ * question really is binary.
+ */
+export function judgeApplication(trail, page, now = Date.now()) {
   /*
    * A tab told to start fresh belongs to nothing until it reads a page.
    *
@@ -393,13 +448,29 @@ export function sameApplication(trail, page, now = Date.now()) {
    * the resume, the letter". The user had pressed a button that said Forgotten
    * and been told it was.
    */
-  if (trail?.cleared && !trail?.pages?.length) return false;
-  if (!trail?.pages?.length) return true;
-  if (!page?.url) return false;
+  if (trail?.cleared && !trail?.pages?.length) return 'different';
+  if (!trail?.pages?.length) return 'same';
+  if (!page?.url) return 'different';
+
+  /*
+   * Before any of it: an address that names a different job is a different
+   * job, however it was arrived at.
+   *
+   * `relatedPath` says this already and said it too late to matter, because
+   * the click below is checked first — and on a board the click is exactly
+   * how you reach the next job. Open a posting from a list, go back, open
+   * another: the expectation set by the second click vouched for a page whose
+   * own url said, in the board's own parameter, that it was a different
+   * requisition. The click is strong evidence about *where you went*, and no
+   * evidence at all about whether it is the same job.
+   */
+  for (const p of trail.pages) {
+    if (p?.url && namesAnotherJob(page.url, p.url)) return 'different';
+  }
 
   // The click is the strongest evidence there is, and the only evidence left
   // when the referrer has been stripped — which plenty of sites do.
-  if (wasExpected(trail, page.url, now)) return true;
+  if (wasExpected(trail, page.url, now)) return 'same';
 
   const co = (c) => (c ?? '').trim().toLowerCase();
   const mine = co(page.company);
@@ -412,10 +483,24 @@ export function sameApplication(trail, page, now = Date.now()) {
   // name alone — no matter that they were plainly two different jobs at two
   // different addresses. The same name is a necessary condition for joining,
   // never a sufficient one; where the pages are still has to agree.
-  if (mine && known.length > 0 && !known.includes(mine)) return false;
+  if (mine && known.length > 0 && !known.includes(mine)) return 'different';
 
   const here = hostOf(page.url);
-  if (!here) return false;
+  if (!here) return 'different';
+
+  /*
+   * What the page says it is, against what the trail is already about.
+   *
+   * Only consulted where the address has already said "same page" — that is
+   * the case with no other evidence left, and the one a results pane
+   * produces. Unsure rather than different because a role title is the
+   * weakest identity there is: forms retitle themselves, boards append the
+   * company, and a wrong split costs somebody the letter they were halfway
+   * through.
+   */
+  const knownRoles = trail.pages.map((p) => p?.role).filter(Boolean);
+  const looksNew = () =>
+    knownRoles.length > 0 && knownRoles.every((role) => plainlyAnotherRole(page.role, role));
 
   for (const p of trail.pages) {
     const there = hostOf(p.url);
@@ -423,13 +508,13 @@ export function sameApplication(trail, page, now = Date.now()) {
 
     if (here === there || rootOf(here) === rootOf(there)) {
       // Same site: only the same posting, not merely the same board.
-      if (relatedPath(page.url, p.url)) return true;
+      if (relatedPath(page.url, p.url)) return looksNew() ? 'unsure' : 'same';
       continue;
     }
     // Different site: only by having been sent there from the trail.
     const cameFromHere =
       page.referrerHost && (page.referrerHost === there || rootOf(page.referrerHost) === rootOf(there));
-    if (cameFromHere) return true;
+    if (cameFromHere) return 'same';
   }
 
   /*
@@ -438,7 +523,18 @@ export function sameApplication(trail, page, now = Date.now()) {
    * is the most expensive and the least specific — and after the company veto
    * above, so a link cannot join two employers.
    */
-  return wasLinkedFrom(trail, page.url);
+  return wasLinkedFrom(trail, page.url) ? 'same' : 'different';
+}
+
+/**
+ * The same question as a yes or no, for the callers whose question is binary.
+ *
+ * Unsure counts as yes, which is what it meant before there was a third
+ * answer: `saveWork` asks "may this card write into this trail", and a card
+ * that is unsure about its own page is still the card on it.
+ */
+export function sameApplication(trail, page, now = Date.now()) {
+  return judgeApplication(trail, page, now) !== 'different';
 }
 
 /** The trail without the page text, or the work, which the card has no use for. */

@@ -17,6 +17,8 @@ import {
   keepPages,
   rootOf,
   lighten,
+  judgeApplication,
+  plainlyAnotherRole,
   relatedPath,
   sameApplication,
   summarise,
@@ -624,5 +626,113 @@ describe('a tab that was told to start fresh', () => {
     // it, and `remember` drops the mark because the fresh branch spreads
     // nothing.
     assert.equal(sameApplication(read, { url: 'https://acme.com/jobs/platform-engineer/apply', title: '' }), true);
+  });
+});
+
+/**
+ * Branching on a board that keeps every posting at one address.
+ *
+ * The address is the identity everywhere it can be, and on a results pane it
+ * cannot be: Indeed's list, a single-page board, anything that swaps the
+ * right-hand half and leaves the url alone. There the only thing that has
+ * changed is what the page says it is, and that is thin evidence — forms
+ * retitle themselves and boards append the company — so the answer is neither
+ * yes nor no. The caller branches and asks.
+ */
+describe('a board that shows several jobs at one address', () => {
+  const now = Date.now();
+  const board = 'https://jobs.example.test/search?q=engineer';
+  const page = (role, company) => ({ url: board, title: `${role} - ${company}`, role, company });
+  const held = (role, company) => ({
+    pages: [{ url: board, title: `${role} - ${company}`, role, company, at: now }],
+    at: now,
+  });
+
+  it('is unsure when the pane changes to a plainly different job', () => {
+    assert.equal(
+      judgeApplication(held('Platform Engineer', 'Helios'), page('Data Scientist', 'Helios'), now),
+      'unsure',
+    );
+  });
+
+  it('is sure it is the same job when the role has only been reworded', () => {
+    for (const [was, now_] of [
+      ['Software Engineer', 'Senior Software Engineer'],
+      ['Platform Engineer', 'Platform Engineer (Remote)'],
+      ['Data Engineer', 'Data Engineer II'],
+      // Related, and not the same job — but the wrong answer here splits an
+      // application in two, and the url distinguishes the real cases.
+      ['Platform Engineer', 'Data Engineer'],
+    ]) {
+      assert.equal(judgeApplication(held(was, 'Helios'), page(now_, 'Helios'), now), 'same', `${was} → ${now_}`);
+    }
+  });
+
+  it('says nothing about a page it could not put a role to', () => {
+    assert.equal(judgeApplication(held('Platform Engineer', 'Helios'), page(undefined, 'Helios'), now), 'same');
+    assert.equal(judgeApplication(held(undefined, 'Helios'), page('Data Scientist', 'Helios'), now), 'same');
+  });
+
+  /*
+   * And a different employer is still settled without asking: that veto is
+   * older and stronger than anything a role title can say.
+   */
+  it('does not ask about a different company, it answers', () => {
+    assert.equal(
+      judgeApplication(held('Platform Engineer', 'Helios'), page('Data Scientist', 'Altair'), now),
+      'different',
+    );
+  });
+
+  it('reads the boolean form as a join, so a card can still save its own page', () => {
+    assert.equal(sameApplication(held('Platform Engineer', 'Helios'), page('Data Scientist', 'Helios'), now), true);
+  });
+});
+
+/**
+ * An address that names a different job settles it, however it was reached.
+ *
+ * `relatedPath` says this and said it too late to matter: the click was
+ * checked first, and on a board the click is exactly how you reach the next
+ * job. Open a posting from a list, go back, open another — the expectation
+ * set by the second click vouched for a page whose own url said, in the
+ * board's own parameter, that it was a different requisition.
+ */
+describe('clicking through to another job on the same board', () => {
+  const now = Date.now();
+  const jobA = 'https://www.indeed.com/viewjob?jk=aaaa1111';
+  const jobB = 'https://www.indeed.com/viewjob?jk=bbbb2222';
+
+  it('does not let the click vouch for a different requisition', () => {
+    const trail = {
+      pages: [{ url: jobA, title: 'Platform Engineer - Helios', role: 'Platform Engineer', at: now }],
+      expecting: { to: jobB, at: now },
+      at: now,
+    };
+    assert.equal(judgeApplication(trail, { url: jobB, title: 'Data Scientist - Altair', role: 'Data Scientist' }, now), 'different');
+  });
+
+  it('still lets a click carry an application to its own form', () => {
+    const posting = 'https://boards.example.test/helios/platform-engineer';
+    const form = 'https://boards.example.test/helios/platform-engineer/apply';
+    const trail = {
+      pages: [{ url: posting, title: 'Platform Engineer', role: 'Platform Engineer', at: now }],
+      expecting: { to: form, at: now },
+      at: now,
+    };
+    assert.equal(judgeApplication(trail, { url: form, title: 'Apply' }, now), 'same');
+  });
+});
+
+describe('two role titles', () => {
+  it('are another job only when they share nothing that names the work', () => {
+    assert.equal(plainlyAnotherRole('Platform Engineer', 'Data Scientist'), true);
+    assert.equal(plainlyAnotherRole('Software Engineer', 'Senior Software Engineer'), false);
+    assert.equal(plainlyAnotherRole('Data Engineer', 'Platform Engineer'), false);
+    // Seniority and shape are not identity.
+    assert.equal(plainlyAnotherRole('Engineer II', 'Senior Engineer'), false);
+    // No opinion where there is nothing to compare.
+    assert.equal(plainlyAnotherRole('', 'Data Scientist'), false);
+    assert.equal(plainlyAnotherRole('Senior', 'Remote'), false);
   });
 });

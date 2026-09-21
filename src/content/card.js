@@ -683,6 +683,15 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       spec: state.spec,
       builtWith: state.builtWith,
       render: state.render,
+      /*
+       * And where the files went.
+       *
+       * The folder path is what you paste into an upload dialog, and it was
+       * shown on the page where the resume was built and nowhere else —
+       * because this list never carried it. So walking from the posting to
+       * its form, which is the only page the path is any use on, lost it.
+       */
+      staged: state.staged,
       letter: state.letter,
       letterSource: state.letterSource,
       letterStarted: state.letterStarted,
@@ -765,6 +774,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       };
     }
     if (work.render) state.render = work.render;
+    if (work.staged) state.staged = work.staged;
     if (work.letter != null) state.letter = work.letter;
     if (work.letterSource) state.letterSource = work.letterSource;
     state.letterStarted = state.letterStarted || Boolean(work.letterStarted);
@@ -2159,6 +2169,19 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       }
       state.render = r;
     });
+  }
+
+  /**
+   * The folder a file picker should be pointed at.
+   *
+   * Staging answers this once files have been written, and the analysis
+   * answers it from the first paint — the folder is a fixed place in the save
+   * and does not depend on anything having been built. Preferring the staged
+   * answer keeps this honest if the save is ever switched mid-application:
+   * that reply came from the save the files actually went to.
+   */
+  function uploadFolder() {
+    return state.staged?.currentDir ?? analysis?.currentDir ?? null;
   }
 
   function stageFiles() {
@@ -3575,16 +3598,20 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
          * location bar is the whole of what makes that reachable. An extension
          * cannot set where the dialog opens; this is what it can do instead.
          */
-        state.staged?.currentDir
+        uploadFolder()
           ? h('div', { className: 'staged' }, [
-              h('div', { textContent: 'Ready to attach, in one folder:' }),
-              h('div', { className: 'path', textContent: state.staged.currentDir }),
+              h('div', {
+                textContent: state.staged?.currentDir
+                  ? 'Ready to attach, in one folder:'
+                  : 'The folder to attach from:',
+              }),
+              h('div', { className: 'path', textContent: uploadFolder() }),
               h('div', { className: 'row gap' }, [
                 h('button', {
                   className: 'tiny',
                   textContent: 'Copy folder path',
                   title: 'Paste it into the upload dialog',
-                  onclick: () => navigator.clipboard?.writeText(state.staged.currentDir),
+                  onclick: () => navigator.clipboard?.writeText(uploadFolder()),
                 }),
                 h('button', {
                   className: 'tiny',

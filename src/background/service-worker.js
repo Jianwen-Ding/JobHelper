@@ -7,6 +7,7 @@
 
 import { getSettings } from '../shared/config.js';
 import {
+  judgeApplication,
   keepPages,
   lighten,
   sameApplication,
@@ -340,6 +341,12 @@ const trailKey = (tabId) => (tabId === undefined ? TRAIL_KEY : `${TRAIL_KEY}:${t
  * never find it otherwise.
  */
 const orphanKey = (url) => `jh-orphan:${String(url).split('#')[0]}`;
+
+/**
+ * Where the application a tab has just branched away from waits, in case it
+ * turns out to have been the same one. See `remember` and `keepTogether`.
+ */
+const branchKey = (tabId) => `jh-branched:${tabId}`;
 
 /**
  * Which applications have already had a space opened for them, and in which
@@ -753,11 +760,53 @@ async function holdASpace(trail, tabId) {
  * comment above this function described a second way in, and a second way in
  * is exactly what somebody reading this would have to reason about.
  */
+/** What an application is called, for a sentence a person reads. */
+function nameOfTrail(trail) {
+  const last = [...(trail?.pages ?? [])].reverse().find((p) => p?.role || p?.company);
+  if (!last) return null;
+  return { role: last.role ?? null, company: last.company ?? null };
+}
+
 async function remember(tab, page) {
   await inheritIfNew(tab?.id, tab?.openerTabId);
   const trail = await readTrail(tab?.id);
-  const joins = sameApplication(trail, page);
+  /*
+   * Three answers, not two.
+   *
+   * A board that keeps every posting at one address — Indeed's results pane,
+   * any single-page board — leaves the url saying "same page" when the pane
+   * has been changed to a different job entirely. `judgeApplication` says it
+   * is unsure there rather than guessing, and unsure branches: writing the
+   * second job up as the first is the failure this whole file exists to
+   * prevent, and a split is the one of the two that can be undone.
+   *
+   * So it is undoable. What the tab is leaving is stashed whole, and the card
+   * puts up a chip naming the job it has started — one press puts the old one
+   * back. See `keepTogether`.
+   */
+  const verdict = judgeApplication(trail, page);
+  const joins = verdict === 'same';
   const pages = joins ? trail.pages.filter((p) => p.url !== page.url) : [];
+
+  if (verdict === 'unsure' && tab?.id !== undefined) {
+    /*
+     * Without the markup of every page but the first.
+     *
+     * The stash holds the pages, the writing, the tailored resume and the
+     * save — everything a merge has to give back. Page text is the one part
+     * that is large and nearly recoverable: the first page is the posting,
+     * whose description is what a later form page reads back, and the rest is
+     * forms. Keeping all of it would put half a megabyte into a 10MB budget
+     * shared with every other tab.
+     */
+    const keeping = {
+      ...trail,
+      pages: (trail.pages ?? []).map((p, i) => (i === 0 ? p : { ...p, html: undefined })),
+    };
+    await session()
+      .set({ [branchKey(tab.id)]: { trail: keeping, left: nameOfTrail(trail), at: Date.now() } })
+      .catch(() => undefined);
+  }
 
   /*
    * A page that starts a fresh application in a tab that was holding written
@@ -852,6 +901,12 @@ async function remember(tab, page) {
      */
     save: joins ? (trail.save ?? page.save) : page.save,
     pages: keepPages(pages, TRAIL_MAX),
+    /*
+     * And, when this was a guess, what the guess was — so the card can say
+     * "started a new application for X, same one as before?" rather than
+     * silently reorganising the tab underneath somebody.
+     */
+    branchedFrom: verdict === 'unsure' ? nameOfTrail(trail) : undefined,
     at: Date.now(),
   };
   /*
