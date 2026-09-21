@@ -425,6 +425,7 @@ async function main() {
     await shot(page, 'ext-07-autofilled');
 
     await card.getByRole('button', { name: 'Mark as applied' }).click();
+    await card.getByRole('button', { name: 'Unfold JobHelper' }).click({ timeout: 120_000 });
     await card.locator('.done-box').waitFor({ timeout: 90_000 });
     await page.waitForTimeout(400);
     await shot(card, 'ext-08-done');

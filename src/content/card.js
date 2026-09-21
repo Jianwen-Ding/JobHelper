@@ -92,6 +92,16 @@ const STYLE = `
   font-size: 12px; color: var(--muted); padding: 0 12px 10px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.folded-title.applied { display: flex; align-items: center; gap: 7px; }
+.folded-title .applied-mark {
+  font-weight: 600;
+  color: var(--good, #188038);
+  background: var(--good-soft, #e6f4ea);
+  border-radius: 999px;
+  padding: 2px 8px;
+  flex: none;
+}
+.folded-title.applied > span:last-child { overflow: hidden; text-overflow: ellipsis; }
 
 /* Whether an AI is in play, stated in the header rather than left to be
    inferred from whether the wording came out any good. */
@@ -4559,6 +4569,18 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                   if (bundle) {
                     state.bundle = bundle;
                     state.view = 'done';
+                    /*
+                     * And out of the way, because the application is over.
+                     *
+                     * The panel underneath is still there and one press of
+                     * the chevron brings it back — a portal that rejects an
+                     * upload, or a question that comes back a week later,
+                     * both want the files rather than a memory of them. What
+                     * folding takes away is a card sitting over the
+                     * confirmation page of a form that has been sent, which
+                     * is the one moment it has nothing left to offer.
+                     */
+                    state.folded = true;
                   }
                 },
               ),
@@ -5221,12 +5243,20 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
        * behind the fold is still visible.
        */
       state.folded
-        ? h('div', {
-            className: 'folded-title',
-            textContent: analysis?.job
-              ? [analysis.job.title, analysis.job.company].filter(Boolean).join(' · ')
-              : 'Reading this page…',
-          })
+        ? h('div', { className: `folded-title${state.bundle ? ' applied' : ''}` }, [
+            /*
+             * Folded over a filed application, the line has to say so. The
+             * job's name on its own is what every other folded card says, and
+             * over a form that has been sent it reads as work still waiting
+             * — which is the opposite of what just happened.
+             */
+            state.bundle ? h('span', { className: 'applied-mark', textContent: '\u2713 Applied' }) : null,
+            h('span', {
+              textContent: analysis?.job
+                ? [analysis.job.title, analysis.job.company].filter(Boolean).join(' \u00b7 ')
+                : 'Reading this page…',
+            }),
+          ].filter(Boolean))
         : !analysis
           ? drawReadingView()
           : state.view === 'done'

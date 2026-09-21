@@ -931,6 +931,15 @@ async function main() {
 
     /* File it. */
     await card.getByRole('button', { name: 'Mark as applied' }).click();
+    /*
+     * Which folds the card away, because the application is over. The panel
+     * is still under it — a portal that rejects an upload wants the files
+     * rather than a memory of them — and the chevron brings it back.
+     */
+    const badge = card.locator('.folded-title.applied');
+    await badge.waitFor({ timeout: 90_000 });
+    check('filing folds the card down to a badge that says so', /Applied/.test(await badge.innerText()), await badge.innerText());
+    await card.getByRole('button', { name: 'Unfold JobHelper' }).click();
     await card.locator('.done-box').waitFor({ timeout: 90_000 });
     const done = await card.locator('.done-box').innerText();
     /*
