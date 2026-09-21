@@ -699,6 +699,34 @@
        * upload control on a good half of these portals is in one, exactly as
        * the text fields are.
        */
+      /*
+       * The same files, handed to the card rather than put in a box.
+       *
+       * For dragging. A drag has to have its files in hand the instant
+       * `dragstart` fires — `dataTransfer` cannot be filled in after an await
+       * — so the card fetches them when the pointer arrives over the chip and
+       * holds them until the drop. Nothing is placed and nothing is reported;
+       * this is the bytes and their names, and what happens next is the
+       * page's business.
+       */
+      /*
+       * What this form is asking for, so the card can point at the right
+       * document rather than listing three and leaving you to decide.
+       */
+      case 'wantedDocuments': {
+        const { documentsWanted } = await imports.attach();
+        return documentsWanted();
+      }
+
+      case 'attachmentFiles': {
+        const got = await send('attachments', { application: payload.application ?? null });
+        return {
+          files: got?.files ?? [],
+          missing: (got?.missing ?? []).map((m) => ({ name: m.name, why: m.why })),
+          dir: got?.dir ?? null,
+        };
+      }
+
       case 'attachFiles': {
         const got = await send('attachments', { application: payload.application ?? null });
         const files = got?.files ?? [];

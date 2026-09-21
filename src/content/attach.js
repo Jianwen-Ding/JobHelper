@@ -426,6 +426,42 @@ function dropZones(root = document) {
  *
  * @param {{name: string, base64: string, type?: string}[]} files
  */
+/**
+ * Which documents this form is asking for, from its own upload boxes.
+ *
+ * So the card can say "this one wants a transcript" beside the transcript,
+ * rather than leaving somebody to read the form twice. Read from the boxes
+ * and what is written around them — the same words `boxFor` places by, so
+ * what the card promises and what an attach actually does cannot disagree.
+ *
+ * This document only. A form split across an embed is ordinary and its boxes
+ * are not reachable from here, so the answer is "what I can see", never "what
+ * there is": a kind found here is a kind the form definitely wants, and a
+ * kind not found means nothing at all. The card treats it that way — it adds
+ * a mark, and never takes a file away.
+ */
+export function documentsWanted() {
+  const boxes = uploadBoxes();
+  const kinds = new Set();
+  let unnamed = 0;
+  for (const box of boxes) {
+    const said = saysWhat(box);
+    if (NOT_A_DOCUMENT.test(namedBy(box))) continue;
+    let named = false;
+    for (const [kind, pattern] of Object.entries(WANTS)) {
+      if (pattern.test(said)) {
+        kinds.add(kind);
+        named = true;
+      }
+    }
+    if (!named) unnamed += 1;
+  }
+  // A box that names nothing takes whatever it is given — see `saysNothing`
+  // — so it is not evidence about any one kind, and is counted rather than
+  // guessed at.
+  return { kinds: [...kinds], boxes: boxes.length, unnamed };
+}
+
 export async function attachFiles(files) {
   const boxes = uploadBoxes();
   const taken = new Set();

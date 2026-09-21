@@ -846,6 +846,65 @@ async function main() {
       done.split('\n').slice(1, 3).join(' '),
     );
 
+    /* ---- Dragging a built document into the form ---- */
+    /*
+     * "Attach files" puts them in the boxes and is still the quick way. It
+     * can only reach an `<input type=file>`, and a good half of these portals
+     * draw a drop zone that is not one — so the other way in is to pick the
+     * document up and drop it where the page wants it.
+     *
+     * What has to be true is that the chip is carrying the real file at the
+     * instant `dragstart` fires. `dataTransfer` is sealed once the handler
+     * returns, so there is no fetching it afterwards: the bytes are asked for
+     * when the pointer arrives and held. A chip that hands the page an empty
+     * transfer is worse than no chip, because the form then reports a file it
+     * could not read about a file that is perfectly good.
+     *
+     * Driven with a real `DataTransfer` rather than a stub, since being
+     * writable only during the event is the whole difficulty.
+     */
+    {
+      const chips = card.locator('.done-box .file.liftable');
+      await chips.first().waitFor({ timeout: 20_000 });
+      const names = await chips.locator('.what').allInnerTexts();
+      check('every built file is there to be picked up', names.some((n) => /-Resume/.test(n)), names.join(', '));
+
+      const resume = chips.filter({ hasText: /-Resume/ }).first();
+      // The pointer arriving is what fetches the bytes; the drag comes after.
+      await resume.hover();
+      await page.waitForTimeout(1200);
+
+      const carried = await resume.evaluate((chip) => {
+        const carrier = new DataTransfer();
+        const event = new DragEvent('dragstart', { dataTransfer: carrier, bubbles: true, cancelable: true });
+        chip.dispatchEvent(event);
+        return {
+          prevented: event.defaultPrevented,
+          files: [...carrier.files].map((f) => ({ name: f.name, size: f.size, type: f.type })),
+          text: carrier.getData('text/plain'),
+        };
+      });
+      check('the drag carries a file', carried.files.length === 1, JSON.stringify(carried.files));
+      /*
+       * And the chip says so. The folder's copy carries the employer in its
+       * name and the archive's does not, so a chip still showing the archive
+       * name would be promising a file it is not about to hand over.
+       */
+      const shown = (await resume.locator('.what').innerText()).trim();
+      check('and it is the one the chip names', carried.files[0]?.name === shown, `${carried.files[0]?.name} vs ${shown}`);
+      check('with the bytes in it, not an empty placeholder', (carried.files[0]?.size ?? 0) > 100, `${carried.files[0]?.size ?? 0} bytes`);
+      check('typed as a PDF, which is what a drop zone checks', carried.files[0]?.type === 'application/pdf', carried.files[0]?.type ?? '');
+      check('and the drag was not refused', carried.prevented === false);
+
+      /*
+       * One chip carries one document. A chip that handed over all three
+       * would put the transcript in the box marked Resume, which is the
+       * wrong-document failure `boxFor` exists to refuse — and refusing it
+       * there while a drag does it anyway would be no refusal at all.
+       */
+      check('and nothing else came with it', carried.text === carried.files[0]?.name, carried.text);
+    }
+
     const tracked = await (await fetch(`${SERVER}/api/applications`)).json();
     const entry = tracked.applications.find((a) => a.company === 'Streamly');
     check('application tracked', Boolean(entry), entry ? `${entry.status}` : 'not found');

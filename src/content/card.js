@@ -414,6 +414,33 @@ select {
 /* Selectable, because pasting it is the point. */
 .staged .path { user-select: all; border-color: var(--line); margin-bottom: 8px; }
 .done-box .file { font-size: 12px; color: var(--ink-soft); margin-top: 5px; }
+/*
+ * A file you can pick up. It has to look liftable before it is lifted —
+ * nobody tries dragging a line of grey text — so it gets a grip, a border and
+ * the grab cursor.
+ */
+.done-box .file.liftable {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: #fff; border: 1px solid var(--good-line); border-radius: 6px;
+  padding: 4px 8px; margin-right: 5px; cursor: grab; user-select: none;
+  color: var(--ink);
+}
+.done-box .file.liftable:active { cursor: grabbing; }
+.done-box .file.liftable .grip { color: var(--ink-soft); font-size: 11px; line-height: 1; }
+.done-box .file.liftable.warming { opacity: .6; cursor: progress; }
+.done-box .file.liftable.asked { border-color: var(--accent, #1a73e8); }
+.done-box .file.liftable .asked-mark {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--accent, #1a73e8); border: 1px solid currentColor; border-radius: 4px; padding: 1px 4px;
+}
+.done-box .file.liftable.all .what { font-style: italic; }
+.done-box .file.liftable .open-file {
+  font-size: 11px; padding: 1px 6px; border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--good-line); background: transparent; color: var(--ink-soft);
+}
+.done-box .file.liftable .open-file:hover { color: var(--ink); }
+.done-box .files { margin-top: 6px; }
+.done-box .drag-note { font-size: 11px; color: var(--ink-soft); margin-top: 7px; }
 
 /*
  * What the form asked for and the folder does not have. Above the green box
@@ -895,6 +922,302 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
   };
 
   const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+  /* ---------------------------------------------------------------- *
+   * Dragging a built file into the form                               *
+   * ---------------------------------------------------------------- */
+
+  /**
+   * The built files, in hand, because a drag cannot wait for them.
+   *
+   * `dataTransfer` is only writable during the `dragstart` event itself — an
+   * `await` inside the handler returns to a transfer object the browser has
+   * already sealed, and the drag carries nothing. So the bytes are fetched
+   * when the pointer arrives over a chip, which is hundreds of milliseconds
+   * before the press and the first few pixels of movement, and held until
+   * the card is redrawn with a different application.
+   *
+   * Keyed by application, because the card outlives the application it was
+   * first drawn for: follow Apply, build again, and the chips would hand the
+   * page the previous job's resume under the new job's name.
+   */
+  let carried = null;
+  /*
+   * The chips on screen right now, so arriving bytes can un-grey them where
+   * they stand.
+   *
+   * Deliberately not a `draw()`. Redrawing the card replaces the very node
+   * the pointer is resting on, and doing that between the press and the
+   * first few pixels of movement cancels the drag the person is in the
+   * middle of starting — the one thing this whole path exists to make work.
+   */
+  let chipsOnScreen = [];
+
+  function markChips() {
+    const held = carried?.files ?? [];
+    const ready = held.length > 0;
+    for (const chip of chipsOnScreen) {
+      if (!chip.isConnected) continue;
+      chip.classList.toggle('warming', !ready);
+      chip.title = ready
+        ? 'Drag this into the form\u2019s upload box'
+        : 'Drag this into the form\u2019s upload box \u2014 fetching it now';
+      /*
+       * And named for the copy that will actually be dropped.
+       *
+       * The two are not the same string. The archive keeps
+       * `Jianwen-Ding-Resume.pdf` and the upload folder keeps
+       * `Jianwen-Ding-Resume-Streamly.pdf` — the folder's names carry the
+       * employer, because that is the name a recruiter sees at the other
+       * end. The chip is built before the folder has been asked, so it
+       * starts with the name the bundle reported and corrects itself the
+       * moment the bytes arrive. A chip that says one name and hands over
+       * another is a chip nobody can check.
+       */
+      const kind = chip.dataset.kind;
+      const mine = kind && kind !== 'other' ? held.filter((f) => documentKind(f.name) === kind) : [];
+      const what = chip.querySelector('.what');
+      if (mine.length === 1 && what) what.textContent = mine[0].name;
+    }
+  }
+
+  function warmFiles(application) {
+    if (carried?.application === application && (carried.files || carried.waiting)) return carried.waiting;
+    carried = { application, files: null, waiting: null };
+    const mine = carried;
+    mine.waiting = onAction('attachmentFiles', { application })
+      .then((got) => {
+        if (carried !== mine) return;
+        mine.files = got?.files ?? [];
+        markChips();
+      })
+      .catch(() => {
+        if (carried === mine) mine.files = [];
+      })
+      .finally(() => {
+        if (carried === mine) mine.waiting = null;
+      });
+    return mine.waiting;
+  }
+
+  /**
+   * What this form asks for that was not built.
+   *
+   * The card already says which files exist; it said nothing about a form
+   * asking for a transcript when no transcript was made, and "Attach files"
+   * on such a form attaches two of three and reports two successes. Only
+   * kinds positively found on the page — see `documentsWanted`, which can
+   * only see this document — so a form whose boxes are in a frame says
+   * nothing here rather than something wrong.
+   */
+  function missingHere(b) {
+    const wanted = state.wanted?.kinds ?? [];
+    if (wanted.length === 0) return '';
+    const have = new Set((b.files ?? []).map(documentKind));
+    const short = wanted.filter((kind) => !have.has(kind) && DOCUMENT_KINDS[kind]);
+    if (short.length === 0) return '';
+    const said = short.map((kind) => DOCUMENT_KINDS[kind].says);
+    const list = said.length > 1 ? `${said.slice(0, -1).join(', ')} and ${said.at(-1)}` : said[0];
+    return `This form also asks for a ${list}, which is not in the folder.`;
+  }
+
+  /**
+   * Ask the page which documents it wants, once per card.
+   *
+   * Once, because the answer is about the form rather than about anything
+   * the card does, and because it is asked from inside `draw()` — a version
+   * that redrew on the answer would ask again on the redraw, for ever.
+   */
+  let askedWhatTheFormWants = false;
+  function askWhatTheFormWants() {
+    if (askedWhatTheFormWants) return;
+    askedWhatTheFormWants = true;
+    onAction('wantedDocuments', {})
+      .then((wanted) => {
+        if (!wanted?.kinds?.length) return;
+        state.wanted = wanted;
+        draw();
+      })
+      .catch(() => {
+        // A page that will not answer is a page we say nothing about.
+      });
+  }
+
+  /** Say something about a drag, without rebuilding the card underneath it. */
+  function sayAboutDragging(text) {
+    const note = root?.querySelector?.('.done-box .drag-note');
+    if (note) note.textContent = text;
+  }
+
+  /** What kind of document a built file is, from the name the store gave it. */
+  const DOCUMENT_KINDS = {
+    resume: { test: /\b(resume|resum[eé]|cv)\b/i, says: 'resume' },
+    letter: { test: /\bcover[\s_-]?letter\b/i, says: 'cover letter' },
+    transcript: { test: /\b(transcript|academic[\s_-]?record|grade[\s_-]?report|marksheet)\b/i, says: 'transcript' },
+    portfolio: { test: /\b(portfolio|work[\s_-]?sample|writing[\s_-]?sample)\b/i, says: 'portfolio' },
+  };
+
+  /*
+   * Mirrors `WANTS` in attach.js, which is the list the placing actually uses.
+   * A second copy rather than an import for the same reason `fileFromSpec` is
+   * one: the card is loaded on every page the extension offers on, and
+   * attach.js is loaded only when something is being placed.
+   */
+  function documentKind(name) {
+    const text = String(name ?? '').replace(/[._-]+/g, ' ');
+    for (const [kind, { test }] of Object.entries(DOCUMENT_KINDS)) if (test.test(text)) return kind;
+    return 'other';
+  }
+
+  /**
+   * One built document, liftable on its own.
+   *
+   * One file per chip, because "drag the cover letter into the cover letter
+   * box" is the thing somebody is actually doing, and a chip carrying all
+   * three would put the resume and the transcript in there with it. The
+   * "everything" chip below is the other case — one box marked "resume,
+   * cover letter and transcript" — and it is separate so that picking it is
+   * a decision rather than a surprise.
+   */
+  function liftable(name, application) {
+    const kind = documentKind(name);
+    const asked = state.wanted?.kinds?.includes(kind) ?? false;
+    const chip = h(
+      'div',
+      {
+        className: `file liftable${asked ? ' asked' : ''}`,
+        draggable: true,
+        dataset: { name, kind },
+      },
+      [
+        h('span', { className: 'grip', textContent: '\u283f' }),
+        h('span', { className: 'what', textContent: name }),
+        asked ? h('span', { className: 'asked-mark', textContent: 'this form asks for it' }) : null,
+        /*
+         * Look at it before you send it. `draggable: false` so that pressing
+         * the link is a press and not the start of a drag of the chip
+         * underneath it — without that, "open" on a touchpad is a three-pixel
+         * drag half the time and the file never opens.
+         */
+        h('button', {
+          className: 'open-file',
+          draggable: false,
+          type: 'button',
+          textContent: 'Open',
+          title: `Open ${name} in a tab`,
+          onclick: (event) => {
+            event.stopPropagation();
+            onAction('openTab', { url: `/current/${encodeURIComponent(name)}` });
+          },
+        }),
+      ].filter(Boolean),
+    );
+    /*
+     * By what the document is, not by what it is called.
+     *
+     * The bundle names the archive copy and the folder names the one that
+     * gets uploaded, and they differ: `Jianwen-Ding-Resume.pdf` against
+     * `Jianwen-Ding-Resume-Streamly.pdf`. Matching on the name carried
+     * nothing at all — measured, with the drag refusing itself because the
+     * filter came back empty over two perfectly good files.
+     *
+     * `other` has no kind to match on, so it falls back to the name; the
+     * answers file is the one that reaches that branch, and its two names
+     * are the same.
+     */
+    liftFrom(chip, application, (files) =>
+      kind === 'other'
+        ? files.filter((f) => f.name === name)
+        : files.filter((f) => documentKind(f.name) === kind),
+    );
+    return chip;
+  }
+
+  /** Everything at once, for the form with one box that takes the lot. */
+  function liftableAll(names, application) {
+    const chip = h(
+      'div',
+      { className: 'file liftable all', draggable: true },
+      [
+        h('span', { className: 'grip', textContent: '\u283f' }),
+        h('span', { className: 'what', textContent: `All ${plural(names.length, 'file')}` }),
+      ],
+    );
+    liftFrom(chip, application, (files) => files);
+    return chip;
+  }
+
+  /**
+   * Make one chip carry files.
+   *
+   * `pick` runs at `dragstart`, over whatever the store handed back, so a
+   * chip always carries the file it is named for rather than the file that
+   * was there when the card was drawn.
+   */
+  function liftFrom(chip, application, pick) {
+    chipsOnScreen.push(chip);
+    // Both, because a pointer can arrive and press in the same instant on a
+    // touchpad, and because the press is the last moment before the drag.
+    chip.onpointerenter = () => warmFiles(application);
+    chip.onpointerdown = () => warmFiles(application);
+
+    chip.ondragstart = (event) => {
+      const held = carried?.application === application ? (carried.files ?? []) : [];
+      const files = pick(held);
+      if (files.length === 0) {
+        /*
+         * Refused rather than sent empty. A drag carrying nothing looks to
+         * the page exactly like a drag of an unreadable file, and the form
+         * then says "that file could not be read" about a file that is
+         * perfectly good and had simply not arrived yet.
+         */
+        event.preventDefault();
+        warmFiles(application);
+        sayAboutDragging(
+          held.length === 0
+            ? 'Fetching the files \u2014 try that drag again in a moment.'
+            : 'The store no longer has that file. Build the application again.',
+        );
+        return;
+      }
+      const carrier = event.dataTransfer;
+      if (!carrier) return;
+      carrier.effectAllowed = 'copy';
+      let put = 0;
+      for (const spec of files) {
+        try {
+          carrier.items.add(fileFromSpec(spec));
+          put += 1;
+        } catch {
+          // One unreadable file must not stop the others going.
+        }
+      }
+      if (put === 0) {
+        event.preventDefault();
+        sayAboutDragging('Those files could not be read from the store.');
+        return;
+      }
+      // So a drop zone that reads the text flavour rather than the files —
+      // a few of them do — gets something it can show.
+      carrier.setData('text/plain', files.map((f) => f.name).join('\n'));
+    };
+  }
+
+  /**
+   * A file from what the store handed over.
+   *
+   * The same shape `attach.js` builds from, and deliberately a second small
+   * copy of it rather than an import: the card is loaded on every page the
+   * extension offers on, and `attach.js` is loaded only when something is
+   * actually being placed.
+   */
+  function fileFromSpec({ name, base64, type }) {
+    const binary = atob(base64);
+    if (binary.length === 0) throw new Error('empty');
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new File([bytes], name, { type: type || 'application/pdf' });
+  }
 
   /**
    * Mark a button as one that runs the AI.
@@ -4292,7 +4615,33 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         : null,
       h('div', { className: 'done-box' }, [
         h('div', { textContent: 'Saved. These files are named and ready to attach:' }),
-        ...b.files.map((f) => h('div', { className: 'file', textContent: f })),
+        ...(() => {
+          const application =
+            b.application?.id ?? state.staged?.application?.id ?? analysis?.application?.id ?? null;
+          // Rebuilt on every draw, so a chip from the last one is never left
+          // on the list to be un-greyed after it has gone. See `markChips`.
+          chipsOnScreen = [];
+          askWhatTheFormWants();
+          const chips = b.files.map((f) => liftable(f, application));
+          if (b.files.length > 1) chips.push(liftableAll(b.files, application));
+          return [
+            h('div', { className: 'files' }, chips),
+            /*
+             * Said once, under the files rather than over them. "Attach
+             * files" below does the same thing without a drag and is still
+             * the quick way; dragging is for the boxes it cannot reach — a
+             * drop zone that is not an `<input type=file>` at all, which is
+             * most of the pretty ones — and for the moment you would rather
+             * place each document yourself.
+             */
+            h('div', {
+              className: 'drag-note',
+              textContent: missingHere(b)
+                ? `${missingHere(b)} Drag any of these into the form, or press Attach files below.`
+                : 'Drag any of these into the form, or press Attach files below.',
+            }),
+          ];
+        })(),
 
         /*
          * The flat folder, not the archive. Both hold these files, but this is
