@@ -1615,6 +1615,87 @@ async function main() {
     }), 60));
   });
 
+  /*
+   * And a stage that was refused is tried again.
+   *
+   * `lastPrepared` is written before the call, so a second change arriving
+   * while one is in flight does not start a second compile of the same
+   * thing. It was not given back when the call failed — so a refusal counted
+   * as done, and nothing re-staged until something else about the
+   * application changed. The folder is what the upload dialog opens on; it is
+   * worth nothing if it is a build behind and believes it is not.
+   *
+   * Reachable now that a stage can be refused on purpose: a name typed into
+   * the rename menu that another document in this application already has.
+   */
+  const afterRefusal = await inPage((createCard) => {
+    const sent = [];
+    let refuse = true;
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        if (action === 'render') return { pages: 1, fits: true };
+        if (action === 'stage') {
+          // Refused only while there is a letter to refuse, the way a
+          // clashing name is refused — the build's own stage goes through.
+          if (refuse && payload?.coverLetter) {
+            refuse = false;
+            throw new Error('"Cover Letter" is already called Jianwen-Ding-Resume.pdf.');
+          }
+          return { currentDir: '/tmp/x', application: { id: 'app-1' } };
+        }
+        return {};
+      },
+    });
+
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
+
+    byText('Build resume').click();
+    const letter = 'Three paragraphs in and the tab goes.';
+    return new Promise((resolve) =>
+      setTimeout(() => {
+        // A letter arrives and its stage is refused.
+        handle.restoreWork({ letter }, false);
+        setTimeout(() => {
+          const afterRefused = sent.filter((c) => c.action === 'stage').length;
+          /*
+           * And the same letter again — the same application, the same files,
+           * nothing new to prepare. `prepareSoon` skips a state it has
+           * already prepared, so the only thing that can start another stage
+           * here is the refused one having been given back.
+           */
+          handle.restoreWork({ letter }, false);
+          setTimeout(
+            () =>
+              resolve({
+                stages: sent.filter((c) => c.action === 'stage').length,
+                afterRefused,
+              }),
+            2600,
+          );
+        }, 2600);
+      }, 2600),
+    );
+  });
+
+  check(
+    'a stage that was refused is tried again, not counted as done',
+    afterRefusal.stages > afterRefusal.afterRefused,
+    `${afterRefusal.afterRefused} by the refusal, ${afterRefusal.stages} in the end`,
+  );
+
   check('building still compiles the preview', staging.actions.includes('render'), JSON.stringify(staging.actions));
   check(
     'and puts the real files in the flat folder without being asked',

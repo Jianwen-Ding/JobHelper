@@ -919,6 +919,18 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     state.carriedOver = work.answersByQuestion ?? {};
     applyCarriedAnswers();
     maybeAutoDraft();
+    /*
+     * And what came back goes into the folder, not only onto the screen.
+     *
+     * Restoring is the one route to a letter that nothing else re-stages: a
+     * tab closed mid-letter comes back with the writing in the card and the
+     * folder holding whatever the last build put there. Somebody then drags
+     * the cover letter into the form and sends a copy that stops at the
+     * paragraph the tab was closed on. `prepareSoon` skips it when nothing
+     * that reaches a file has changed, so a rescue carrying nothing new costs
+     * nothing.
+     */
+    prepareSoon();
     draw();
   }
 
@@ -1136,6 +1148,20 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     });
   }
 
+  /**
+   * Shut any rename menu that is not the one being used.
+   *
+   * A menu stays open until something closes it, and an open one sits over
+   * the chips under it — which is how the first version of this swallowed
+   * their clicks. Closing on the way into any other press is the cheapest
+   * rule that cannot leave one stranded.
+   */
+  function closeRenameMenus(except) {
+    for (const menu of root?.querySelectorAll?.('.rename-menu') ?? []) {
+      if (menu !== except) menu.classList.add('hidden');
+    }
+  }
+
   /** Say something about a drag, without rebuilding the card underneath it. */
   function sayAboutDragging(text) {
     const note = root?.querySelector?.('.drag-note');
@@ -1335,6 +1361,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         onclick: (event) => {
           event.stopPropagation();
           const open = event.currentTarget.parentElement?.querySelector('.rename-menu');
+          closeRenameMenus(open);
           if (open) open.classList.toggle('hidden');
         },
       }),
@@ -2906,10 +2933,24 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     return state.staged?.currentDir ?? analysis?.currentDir ?? null;
   }
 
-  function stageFiles() {
+  async function stageFiles() {
     if (!state.spec) return;
+    /*
+     * Recorded before the call, so a second change landing while this one is
+     * in flight does not start a second compile of the same thing — and
+     * given back if it fails.
+     *
+     * Without that, a refused stage counted as done. The commonest refusal is
+     * the new one: a name typed into the rename menu that another document in
+     * this application already has. The card says so, you fix the name — and
+     * that is a change, so it re-stages. But anything that fails for a reason
+     * that passes on its own, a store that was restarting, stayed recorded as
+     * prepared, and nothing re-staged until something else about the
+     * application changed. The folder is what the upload dialog opens on; it
+     * is worth nothing if it is a build behind and believes it is not.
+     */
     lastPrepared = whatWouldBeStaged();
-    act(
+    const staged = await act(
       'stage',
       { spec: state.spec, coverLetter: state.letter, answers: collectedAnswers(), naming: state.naming },
       (staged) => {
@@ -2925,6 +2966,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       // saying. See `act`.
       { quiet: true },
     );
+    if (!staged) lastPrepared = null;
   }
 
   /**
