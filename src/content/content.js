@@ -1737,6 +1737,29 @@
     }
 
     // The rest arrives in its own time, each piece landing as it is ready.
+    /*
+     * And what gets chosen on this form, so the next one can offer it back.
+     *
+     * Started here rather than at document idle because this is the point the
+     * page has been read and found to be an application: watching every page
+     * somebody visits for what they select is not a thing this should do, and
+     * there is nothing to learn from a page that is not a form.
+     *
+     * Nothing personal leaves the page. `watchChoices` puts every answer
+     * through `worthRemembering` before telling anyone, so the refusal
+     * happens in the document rather than at the far end of a message.
+     */
+    imports
+      .autofill()
+      .then(({ watchChoices, looksLikeApplicationForm }) => {
+        if (!current() || !looksLikeApplicationForm()) return;
+        watchChoices((said) => {
+          if (!said.keep) return;
+          send('rememberChoice', { question: said.question, answer: said.answer }).catch(() => undefined);
+        });
+      })
+      .catch(() => undefined);
+
     send('listResumes')
       .then((resumes) => current() && cardHandle?.setResumes(resumes))
       .catch(() => undefined);

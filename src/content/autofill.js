@@ -6,6 +6,12 @@
  * form filled wrongly costs more than a form filled by hand.
  */
 
+/*
+ * The privacy rule lives on its own, away from everything that reads a form,
+ * because it is the part that has to be reviewable without reading this file.
+ */
+import { worthRemembering } from '../shared/remembering.js';
+
 /** Map a stored profile key to the label/name patterns that mean it. */
 const FIELD_PATTERNS = [
   ['first_name', /\b(first[\s_-]?name|given[\s_-]?name|fname)\b/i],
@@ -1646,6 +1652,91 @@ const TELLTALE = new Set([
   'linkedin', 'github', 'school', 'degree', 'major', 'gpa',
   'work_authorization', 'requires_sponsorship',
 ]);
+
+/**
+ * Watch what the person chooses, so the next form can offer it back.
+ *
+ * Applying is the same twenty questions over and over, and the answers to most
+ * of them do not change. What changes is the wording and the widget, which is
+ * why this records the *question* and the *answer as a human reads it* rather
+ * than a field name and a value: `q_88213 = 1` is worth nothing on the next
+ * site, and "Are you legally authorized to work in the United States? — Yes"
+ * is worth something on all of them.
+ *
+ * Chosen answers only, and that scope is most of the safety here rather than a
+ * limitation worked around: a chosen answer is one of a handful the form
+ * itself offered, and no form offers a social security number in a dropdown.
+ * See `worthRemembering`, which refuses the rest.
+ *
+ * Returns a function that stops watching, the way `watchForSending` does.
+ */
+export function watchChoices(tell) {
+  const seen = (control) => {
+    /*
+     * The question is the group's, never the button's own label — each button
+     * carries one of the answers. `groupLabelFor` already knows that and says
+     * why at length.
+     */
+    if (control instanceof HTMLSelectElement) {
+      const option = control.selectedOptions?.[0];
+      if (!option || looksLikePlaceholder(option, control)) return null;
+      return { question: describeField(control), answer: clean(option.textContent) };
+    }
+    if (control instanceof HTMLInputElement && control.type === 'radio') {
+      if (!control.checked) return null;
+      const group = [...deepQueryAll('input[type=radio]')].filter(
+        (r) => r.name === control.name && r.form === control.form,
+      );
+      return {
+        question: clean([groupLabelFor(group.length ? group : [control]), control.name].filter(Boolean).join(' ')),
+        answer: optionLabelFor(control),
+      };
+    }
+    const option = control?.closest?.('[role="radio"], [role="option"]');
+    if (option) {
+      const group = option.closest('[role="radiogroup"], [role="listbox"], [role="group"]');
+      if (!group) return null;
+      return {
+        question: choiceQuestionFor(group),
+        answer: clean(option.getAttribute('aria-label') || option.textContent),
+      };
+    }
+    return null;
+  };
+
+  const look = (event) => {
+    const target = event.composedPath?.()?.[0] ?? event.target;
+    if (!target || rootOf(target)?.host?.id === OURS) return;
+    let said;
+    try {
+      said = seen(target);
+    } catch {
+      // A page that throws from a getter is not a reason to break the form.
+      return;
+    }
+    if (!said?.question || !said?.answer) return;
+    /*
+     * The refusal is here rather than at the far end, so nothing personal
+     * leaves the page at all — not to the worker, not to the store, not into
+     * a log on the way. See `worthRemembering`.
+     */
+    const verdict = worthRemembering(said);
+    tell(verdict.keep ? { ...said, keep: true } : { ...said, keep: false, why: verdict.why });
+  };
+
+  /*
+   * `change` for the native controls, which is what a browser fires when a
+   * choice is made, and `click` for the ARIA ones, which fire nothing at all
+   * — the page's own handler is what marks them chosen, so this runs after it
+   * and reads what it decided.
+   */
+  document.addEventListener('change', look, true);
+  document.addEventListener('click', look, true);
+  return () => {
+    document.removeEventListener('change', look, true);
+    document.removeEventListener('click', look, true);
+  };
+}
 
 export function looksLikeApplicationForm() {
   const text = deepText();

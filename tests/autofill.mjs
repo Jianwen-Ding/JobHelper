@@ -563,7 +563,19 @@ const PROFILE = {
 
 async function main() {
   const source = fs.readFileSync(path.join(root, 'src/content/autofill.js'), 'utf8');
+  /*
+   * And what it imports, at the path it imports it from — the privacy rule,
+   * kept in its own file so it can be read without reading the rest. A server
+   * that answers only `/autofill.js` fails the whole import with "failed to
+   * fetch dynamically imported module", which names no module.
+   */
+  const shared = fs.readFileSync(path.join(root, 'src/shared/remembering.js'), 'utf8');
   const server = http.createServer((req, res) => {
+    if (req.url.startsWith('/shared/remembering.js')) {
+      res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
+      res.end(shared);
+      return;
+    }
     if (req.url.startsWith('/autofill.js')) {
       res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
       res.end(source);

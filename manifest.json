@@ -43,6 +43,7 @@
         "src/content/attach.js",
         "src/shared/trail.js",
         "src/shared/sending.js",
+        "src/shared/remembering.js",
         "src/content/pdfview.js",
         "vendor/pdf.min.mjs",
         "vendor/pdf.worker.min.mjs"

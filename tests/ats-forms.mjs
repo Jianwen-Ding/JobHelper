@@ -154,6 +154,11 @@ export const SYSTEMS = [
         <div role="option" aria-selected="false">California</div>
       </div>
 
+      <label for="dobq">Month of birth</label>
+      <select id="dobq" name="dob_month">
+        <option value="">--</option><option>April</option><option>May</option>
+      </select>
+
       <label for="q_why">Why do you want to work here?</label>
       <textarea id="q_why"></textarea>
       <script>
@@ -178,6 +183,9 @@ export const SYSTEMS = [
      */
     ariaUntouched: ['#statelist'],
     reportsUnfillable: ['address_state'],
+    // Worth keeping for the next application, and not.
+    remembers: [['[role=radio][data-v="Yes"]', 'legally authorized']],
+    refuses: [['#dobq', 'month of birth']],
     questions: [/why do you want to work here/i],
     wantsLetter: false,
   },
@@ -949,11 +957,19 @@ const CONSTRAINED = `
 
 async function main() {
   const source = fs.readFileSync(path.join(root, 'src/content/autofill.js'), 'utf8');
+  /*
+   * And what it imports, at the path it imports it from. `autofill.js` reaches
+   * for `../shared/remembering.js` — the privacy rule, kept apart so it can be
+   * read without reading the rest — and a server that answers only
+   * `/autofill.js` fails the whole import with "failed to fetch dynamically
+   * imported module", which says nothing about which module.
+   */
+  const shared = fs.readFileSync(path.join(root, 'src/shared/remembering.js'), 'utf8');
   const server = http.createServer((req, res) => {
     const url = req.url.split('?')[0];
-    if (url === '/autofill.js') {
+    if (url === '/autofill.js' || url === '/shared/remembering.js') {
       res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
-      res.end(source);
+      res.end(url === '/autofill.js' ? source : shared);
       return;
     }
     if (url === '/constrained') {
@@ -1048,6 +1064,65 @@ async function main() {
         },
         { b: base, profile: PROFILE, wants: system.want, host: system.shadowHost ?? null },
       );
+
+      /*
+       * And what a choice on this form would leave behind for the next one.
+       *
+       * Driven through the real controls rather than by calling the predicate
+       * with strings: the question a watcher records is whatever
+       * `groupLabelFor` and `choiceQuestionFor` make of this markup, and that
+       * is the half a table of strings cannot check. A refusal list is only
+       * as good as the question it is handed.
+       */
+      if (system.remembers || system.refuses) {
+        const kept = await where.evaluate(
+          async ({ b, hit }) => {
+            const m = await import(`${b}/autofill.js`);
+            const said = [];
+            const stop = m.watchChoices((x) => said.push(x));
+            for (const sel of hit) {
+              const el = document.querySelector(sel);
+              if (!el) continue;
+              if (el.tagName === 'SELECT') {
+                // A real option, not the placeholder. Leaving it on "--" means
+                // nothing is recorded and a refusal assertion below passes
+                // without anything having been refused.
+                const real = [...el.options].findIndex((o) => o.value && !/^-+$/.test(o.textContent.trim()));
+                el.selectedIndex = real >= 0 ? real : el.options.length - 1;
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+              } else {
+                el.click();
+              }
+            }
+            stop();
+            return said.map((x) => ({ question: x.question, answer: x.answer, keep: x.keep, why: x.why ?? '' }));
+          },
+          { b: base, hit: [...(system.remembers ?? []), ...(system.refuses ?? [])].map(([sel]) => sel) },
+        );
+
+        for (const [sel, wanted] of system.remembers ?? []) {
+          const got = kept.find((k) => new RegExp(wanted, 'i').test(k.question));
+          check(
+            `${system.name}: keeps the answer to "${wanted}" for next time`,
+            Boolean(got?.keep),
+            got ? `${got.question} -> ${got.answer} (keep ${got.keep}${got.why ? `, ${got.why}` : ''})` : `nothing recorded for ${sel}`,
+          );
+        }
+        for (const [sel, wanted] of system.refuses ?? []) {
+          const got = kept.find((k) => new RegExp(wanted, 'i').test(k.question));
+          /*
+           * The question has to have been *seen* and then refused. "Nothing
+           * was recorded" passes a refusal check without anything having been
+           * refused, which is the shape a privacy test fails in silently — it
+           * would go green over a watcher that had simply stopped working.
+           */
+          check(
+            `${system.name}: refuses to keep "${wanted}"`,
+            Boolean(got) && got.keep === false,
+            got ? `${got.question} -> ${got.answer} (keep ${got.keep}, ${got.why})` : `nothing was even recorded for ${sel}`,
+          );
+        }
+      }
 
       const wrong = Object.entries(system.want).filter(([sel, value]) => out.values[sel] !== value);
       check(

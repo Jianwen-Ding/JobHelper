@@ -2196,6 +2196,25 @@ const handlers = {
     );
   },
 
+  /**
+   * An answer somebody chose on a form, kept for the next one.
+   *
+   * Goes into the same answer bank a written answer goes into, because it is
+   * the same thing: a question this person has answered before. The label
+   * says where it came from, so a bank row can be told from one they wrote in
+   * the editor.
+   *
+   * The refusal happened on the page — see `worthRemembering` — so nothing
+   * personal reaches this function, let alone the store.
+   */
+  async rememberChoice({ question, answer }) {
+    if (!question?.trim() || !answer?.trim()) return { ok: false };
+    return serverFetch('/api/answers/save', {
+      method: 'POST',
+      body: JSON.stringify({ question, answer, label: 'Chosen on a form' }),
+    });
+  },
+
   async saveAnswer({ question, answer, itemId, label }) {
     return serverFetch('/api/answers/save', {
       method: 'POST',
