@@ -3293,7 +3293,11 @@ async function main() {
       // Every case below is on a page with a form on it; the page without
       // one is its own check further down.
       isForm: true,
-      onAction: async () => ({}),
+      // A folder with something in it, so the drag chips have files to be.
+      onAction: async (what) =>
+        what === 'attachmentFiles'
+          ? { files: [{ name: 'Jianwen-Ding-Resume.pdf' }, { name: 'Jianwen-Ding-Cover-Letter.pdf' }] }
+          : {},
     });
     const root = document.querySelector('#jobhelper-card-host').shadowRoot;
     const read = () => ({
@@ -3337,6 +3341,13 @@ async function main() {
     // And it stays back, however many more pages go by.
     handle.setTrail({ pages: [posting, form(1), form(2), form(3)] });
     seen.stillExpanded = read();
+
+    /*
+     * Back to reduced, and this time waiting for the folder to answer, so
+     * the chips have had their chance to appear.
+     */
+    root.querySelector('.body .link')?.remove();
+    seen.chips = null;
 
     /*
      * And across the navigation to the next page of the form, which is where
@@ -3503,6 +3514,90 @@ async function main() {
       hasEditor: [...root.querySelectorAll('.card button')].some((b) => /Edit in ResumeM-M/.test(b.textContent)),
     };
   });
+  /*
+   * And the files, which the reduced card has to keep.
+   *
+   * On plenty of systems the resume box is on page two — contact details
+   * first, files after — so the page that reduces is often the page with
+   * the upload on it. A reduced card without the chips takes the drag away
+   * on exactly the page it was for.
+   */
+  const reducedChips = await inPage((createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      isForm: true,
+      onAction: async (what) =>
+        what === 'attachmentFiles'
+          ? { files: [{ name: 'Jianwen-Ding-Resume.pdf' }, { name: 'Jianwen-Ding-Cover-Letter.pdf' }] }
+          : {},
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    /*
+     * A staged folder as well as a built resume: the whole card only draws
+     * the chips inside the block that shows the folder path, so without one
+     * the comparison below would be against a panel that has no chips for
+     * its own reasons.
+     */
+    handle.restoreWork({ render: { ok: true }, staged: { currentDir: '/tmp/current' } });
+    handle.setTrail({
+      pages: [
+        { url: 'https://acme.test/jobs/1', kind: 'posting', title: 'Platform Engineer' },
+        { url: 'https://acme.test/apply/1', kind: 'application', title: 'Step 1' },
+        { url: 'https://acme.test/apply/2', kind: 'application', title: 'Step 2' },
+      ],
+    });
+
+    // The folder is asked for asynchronously and the card redraws when it
+    // answers, so this waits for the chips rather than for a clock.
+    return new Promise((done) => {
+      const at = Date.now();
+      const look = () => {
+        const body = root.querySelector('.body.reduced');
+        const chips = [...(body?.querySelectorAll('.files > *') ?? [])].map((c) => c.textContent.trim());
+        if (chips.length > 0 || Date.now() - at > 3000) {
+          const note = body?.querySelector('.drag-note')?.textContent ?? '';
+          /*
+           * And then the whole card, because the same function draws both
+           * and a refactor that dropped them from the propose view would
+           * otherwise pass on the strength of the reduced one.
+           */
+          root.querySelector('.body.reduced .link')?.click();
+          const whole = root.querySelector('.body:not(.reduced)');
+          done({
+            small: Boolean(body),
+            chips,
+            note,
+            wholeChips: [...(whole?.querySelectorAll('.files > *') ?? [])].map((c) => c.textContent.trim()),
+          });
+          return;
+        }
+        setTimeout(look, 50);
+      };
+      look();
+    });
+  });
+  check('the reduced card is still the reduced card', reducedChips.small === true);
+  check(
+    'and it keeps the files to drag into this page',
+    reducedChips.chips.some((c) => /Jianwen-Ding-Resume\.pdf/.test(c)),
+    JSON.stringify(reducedChips.chips),
+  );
+  check('with the line saying what to do with them', /Drag any of these/.test(reducedChips.note), reducedChips.note);
+  check(
+    'and the whole card still has them too',
+    reducedChips.wholeChips.some((c) => /Jianwen-Ding-Resume\.pdf/.test(c)),
+    JSON.stringify(reducedChips.wholeChips),
+  );
+
   check(
     'a page with no form on it keeps the whole card, however far in',
     descriptionPage.small === false,

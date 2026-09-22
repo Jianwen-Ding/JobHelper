@@ -4086,6 +4086,45 @@ export function createCard({
    * exists for the pages somebody reaches at the end of an application,
    * which is precisely where nobody would notice one of them going stale.
    */
+  /**
+   * The files, as things to pick up and drop into the form.
+   *
+   * Its own function because the reduced card needs them too. On plenty of
+   * systems the resume box is on page *two* — contact details first, files
+   * after — which is exactly where the card reduces itself, and a reduced
+   * card without these takes the drag away on the one page it was for. See
+   * `drawReducedView`.
+   *
+   * Empty until something is staged, so on a page with nothing built it
+   * costs nothing.
+   */
+  function dragChips() {
+    const application = state.staged?.application?.id ?? analysis?.application?.id ?? null;
+    chipsOnScreen = [];
+    askWhatTheFormWants();
+    askWhatIsStaged(application);
+
+    const names = state.stagedFiles ?? [];
+    if (names.length === 0) return [];
+    const chips = names.map((f) => liftable(f, application));
+    if (names.length > 1) chips.push(liftableAll(names, application));
+    const short = missingHere({ files: names });
+    for (const kind of state.wanted?.kinds ?? []) {
+      if (!names.some((f) => documentKind(f) === kind) && DOCUMENT_KINDS[kind]) {
+        chips.push(missingChip(kind));
+      }
+    }
+    return [
+      h('div', { className: 'files' }, chips),
+      h('div', {
+        className: 'drag-note',
+        textContent: short
+          ? `${short} Drag any of these into the form, or press Attach files below.`
+          : 'Drag any of these into the form, or press Attach files below.',
+      }),
+    ];
+  }
+
   function formActions() {
     return [
       h('button', {
@@ -4848,32 +4887,7 @@ export function createCard({
                * which is where it used to be and which files the application
                * as sent.
                */
-              ...(() => {
-                const application = state.staged?.application?.id ?? analysis?.application?.id ?? null;
-                chipsOnScreen = [];
-                askWhatTheFormWants();
-                askWhatIsStaged(application);
-
-                const names = state.stagedFiles ?? [];
-                if (names.length === 0) return [];
-                const chips = names.map((f) => liftable(f, application));
-                if (names.length > 1) chips.push(liftableAll(names, application));
-                const short = missingHere({ files: names });
-                for (const kind of state.wanted?.kinds ?? []) {
-                  if (!names.some((f) => documentKind(f) === kind) && DOCUMENT_KINDS[kind]) {
-                    chips.push(missingChip(kind));
-                  }
-                }
-                return [
-                  h('div', { className: 'files' }, chips),
-                  h('div', {
-                    className: 'drag-note',
-                    textContent: short
-                      ? `${short} Drag any of these into the form, or press Attach files below.`
-                      : 'Drag any of these into the form, or press Attach files below.',
-                  }),
-                ];
-              })(),
+              ...dragChips(),
             ])
           : null,
         h('div', { className: 'row' }, [
@@ -5799,6 +5813,17 @@ export function createCard({
           ? 'Filed, and this is a later page of the form. Everything is still here.'
           : 'Your documents are built and this is a later page of the form. Everything is still here.',
       }),
+      /*
+       * The files, because this page may be where they go.
+       *
+       * Plenty of systems ask for contact details first and the resume
+       * after, so the page that gets reduced is often the page with the
+       * upload box on it. Leaving the chips out took the drag away on
+       * exactly the page it was for. They are here on the same terms as
+       * everything else in this panel: they act on the form in front of
+       * you, and there are none at all until something is staged.
+       */
+      ...dragChips(),
       h('div', { className: 'row' }, formActions()),
       state.autofillReport ? drawAutofillNote() : null,
       state.attachReport ? drawAttachNote() : null,
