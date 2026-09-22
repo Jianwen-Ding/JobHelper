@@ -68,9 +68,24 @@ const segments = (p) => p.split('/').filter(Boolean);
  * Segments that mean "this is a step of an application" rather than "this is
  * one of many jobs". Two sibling paths under `/apply/` are two steps of one
  * form; two siblings under `/jobs/` are two different jobs.
+ *
+ * The second line is the vocabulary a real ATS uses, which the first line —
+ * the words a developer reaches for — did not have. A Workday or Greenhouse
+ * application walks `/jobs/12345/apply` and then `/jobs/12345/eeo`,
+ * `/documents`, `/demographics`; the sibling rule needs *both* ends to look
+ * like steps, `apply` did and `eeo` did not, and a path-shaped job id is not
+ * something `namesTheSameJob` can agree about. So the equal-opportunity page
+ * came back `different` — the confident branch, with no chip — and the trail
+ * reset there. The letter is parked and comes back; page 0 is not, so
+ * everything written afterwards is written from the form rather than from the
+ * description, and nothing says so.
+ *
+ * Safe to add because they only ever join where the other end is a step too.
+ * Two jobs are never both named like form steps, which is the same rule that
+ * already keeps `/careers/apply` from swallowing `/careers/vega-engineer`.
  */
 const STEP_WORDS =
-  /^(apply|applynow|applymanually|application|applications|form|step|steps|questions|submit|details|profile|review)$/i;
+  /^(apply|applynow|applymanually|application|applications|form|step|steps|questions|submit|details|profile|review|eeo|demographics|disclosures|voluntary[-_]?disclosures|self[-_]?id(entification)?|documents|attachments|experience|education)$/i;
 
 /**
  * Segments that mean a step only at the end of a path that is already a

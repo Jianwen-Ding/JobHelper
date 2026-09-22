@@ -91,6 +91,44 @@ describe('two addresses on one site', () => {
    * "Senior Platform Engineer" share a word, so the addresses were the only
    * evidence left and they said "same page".
    */
+  /*
+   * The steps a real application form is actually made of.
+   *
+   * `STEP_WORDS` had the words a *developer* would pick — apply, form, step,
+   * submit, review — and none of the ones an ATS actually puts in the path.
+   * A Workday or Greenhouse application walks `/jobs/12345/apply` then
+   * `/jobs/12345/eeo`, `/documents`, `/demographics`, and the sibling rule
+   * needs both ends to look like steps: `apply` did, `eeo` did not, and the
+   * pair named no job in the query for `namesTheSameJob` to agree about.
+   *
+   * So the answer was `different` — the confident branch, not `unsure`. The
+   * trail resets at the equal-opportunity page, and while the letter is
+   * parked and comes back, page 0 does not: everything written from there on
+   * is written from the form rather than the description, and nothing says so
+   * because the chip only exists for `unsure`.
+   *
+   * These join only where the *other* end is a step too, which is the rule
+   * that already keeps `/careers/apply` from swallowing `/careers/vega-
+   * engineer`. Two jobs are never both named like form steps.
+   */
+  it('keeps the steps of one application form together', () => {
+    const job = 'https://careers.acme.example/jobs/12345';
+    assert.equal(relatedPath(`${job}/apply`, `${job}/eeo`), true);
+    assert.equal(relatedPath(`${job}/apply`, `${job}/documents`), true);
+    assert.equal(relatedPath(`${job}/review`, `${job}/demographics`), true);
+    assert.equal(relatedPath(`${job}/application`, `${job}/voluntary-disclosures`), true);
+  });
+
+  /*
+   * And the rule that protects them is still the one doing the work: a step
+   * beside something that is not a step is two different things.
+   */
+  it('still refuses a step beside a posting', () => {
+    assert.equal(relatedPath('https://acme.example/careers/apply', 'https://acme.example/careers/vega-engineer'), false);
+    assert.equal(relatedPath('https://acme.example/careers/documents', 'https://acme.example/careers/data-scientist'), false);
+    assert.equal(relatedPath('https://acme.example/jobs/1111', 'https://acme.example/jobs/2222'), false);
+  });
+
   it('does not join two postings an unlisted job parameter tells apart', () => {
     const adp = 'https://acme.example/ta/6100.jobs';
     assert.equal(relatedPath(`${adp}?ApplyToJob=482991`, `${adp}?ApplyToJob=482992`), false);
