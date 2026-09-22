@@ -43,6 +43,7 @@ import {
   OWN_SITE,
   SPA_BOARD,
   STEP_ONE,
+  STEP_TWO_FORM,
   WORKDAY,
   cleanStore,
   findChromium,
@@ -170,10 +171,33 @@ async function buildResume(page) {
  * `before` is what the description page said, so this can tell "carried" from
  * "worked it out again".
  */
-async function expectContinuity(page, label, { role, expectTrail = true } = {}) {
+async function expectContinuity(page, label, { role, expectTrail = true, reduced = false } = {}) {
   const card = cardOf(page);
 
   check(`${label}: the card came back`, (await card.count()) > 0);
+
+  /*
+   * And that it is the whole card, not the reduced one.
+   *
+   * On a later page of a form whose documents are already built the card
+   * shrinks to two buttons — see `reducedNow`. Not one of the journeys below
+   * is that: every one arrives at the *first* form page of its application,
+   * which is where the chips to drag and the picker live and is the page
+   * reducing must never touch. Checked rather than assumed, because the
+   * assertions underneath read the panel, and a reduced card would fail them
+   * with a timeout on a missing element rather than with a sentence about
+   * what went wrong. It did, when the rule was first written from the trail
+   * alone.
+   *
+   * `reduced: true` presses through instead of failing, for a caller that
+   * does mean to land on a later page.
+   */
+  const small = await card.locator('.body.reduced').count();
+  check(`${label}: the card is not reduced here`, Boolean(small) === reduced, `reduced: ${Boolean(small)}`);
+  if (small) {
+    await card.getByRole('button', { name: 'Show everything' }).click();
+    await card.locator('.fit').waitFor({ timeout: 30_000 });
+  }
 
   const shown = (await card.locator('.role').textContent())?.trim();
   check(`${label}: still knows the role`, shown === role, shown);
@@ -330,6 +354,57 @@ async function main() {
 
       const carried = await cardOf(page).locator('.q textarea').first().inputValue();
       check('the answer typed on step one is still there', carried === typed, carried);
+      await page.close();
+    }
+
+    /* ---- A later page of a form, with the documents already built ---- */
+    /*
+     * The card reducing itself, driven the whole way rather than by handing
+     * `createCard` a trail. `card.mjs` proves the rule; only this proves the
+     * content script tells the card there is a form here, and without that
+     * one argument the rule is never true on any real page — autofill works
+     * exactly as before and the feature is silently absent.
+     */
+    group('A later page of a form, once the documents are built');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(STEP_ONE), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      /*
+       * Built if it is not already. The group above walked this same
+       * application, so the card here may come back holding the resume it
+       * built then — in which case the button says "Recompile" and pressing
+       * "Build resume" waits thirty seconds for something that is finished.
+       */
+      if (await cardOf(page).getByRole('button', { name: 'Build resume' }).count()) {
+        await buildResume(page);
+      } else {
+        await cardOf(page).locator('.fit').waitFor({ timeout: 60_000 });
+      }
+      check('the first form page has the whole card', (await cardOf(page).locator('.body.reduced').count()) === 0);
+
+      await page.goto(fixtures.urlFor(STEP_TWO_FORM), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      const card = cardOf(page);
+      const small = await card.locator('.body.reduced').count();
+      check('and the page after it is reduced to what that page can use', small === 1, `${small} reduced bodies`);
+      const said = ((await card.locator('.reduced-why').textContent()) ?? '').trim();
+      check('which says why', /documents are built/.test(said), said || '(nothing)');
+      const buttons = (await card.locator('button').allTextContents()).map((b) => b.trim());
+      check(
+        'the two buttons for this page are there',
+        buttons.includes('Autofill this form') && buttons.includes('Attach files'),
+        JSON.stringify(buttons),
+      );
+      check('and the rest is one press away', buttons.includes('Show everything'), JSON.stringify(buttons));
+
+      await card.getByRole('button', { name: 'Show everything' }).click();
+      await card.locator('.fit').waitFor({ timeout: 30_000 });
+      check(
+        'pressing it brings back the resume that was built on the page before',
+        /page/i.test(((await card.locator('.fit').textContent()) ?? '').trim()),
+        ((await card.locator('.fit').textContent()) ?? '').trim(),
+      );
       await page.close();
     }
 

@@ -103,6 +103,24 @@ const STYLE = `
 }
 .folded-title.applied > span:last-child { overflow: hidden; text-overflow: ellipsis; }
 
+/*
+ * Reduced: the two things a later page of the form can still use.
+ *
+ * Between the full card and the fold. Folding takes the buttons away with the
+ * panel, and on page three of an application the buttons are the only part
+ * still worth having — so this keeps them and drops everything the first page
+ * already settled. The height is left to the content for the same reason the
+ * fold leaves it: the
+ * card is sized for the panel it no longer holds.
+ */
+.card.reduced-card { height: auto; }
+.body.reduced { display: flex; flex-direction: column; gap: 10px; }
+.body.reduced .job { margin: 0; }
+.reduced-why { color: var(--muted); font-size: 12px; line-height: 1.5; }
+/* Aligned left under the buttons rather than centred, so it reads as the way
+   back rather than as the main thing on offer. */
+.body.reduced > .link { align-self: flex-start; }
+
 /* Whether an AI is in play, stated in the header rather than left to be
    inferred from whether the wording came out any good. */
 .ai {
@@ -610,7 +628,16 @@ export function removeCard() {
  *   and checks it before building another, so a card that leaves without
  *   saying so is a card that can never be put back. See `putUpCard`.
  */
-export function createCard({ analysis, resumes = [], settings, questions = [], needsCoverLetter = false, onAction, onClose }) {
+export function createCard({
+  analysis,
+  resumes = [],
+  settings,
+  questions = [],
+  needsCoverLetter = false,
+  isForm = false,
+  onAction,
+  onClose,
+}) {
   removeCard();
 
   const host = document.createElement('div');
@@ -677,6 +704,13 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
      * the box you are typing in.
      */
     folded: false,
+    /**
+     * Set once somebody has asked for the whole card back on this page, which
+     * turns the reducing off for good here. See `reducedNow`: reducing is a
+     * guess about what is left to do, and a guess overruled once is not a
+     * guess to make again two repaints later.
+     */
+    showEverything: false,
     letter: null,
     /** True once the letter step is open, even if the draft came back empty. */
     letterStarted: false,
@@ -810,6 +844,14 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
        * its form, which is the only page the path is any use on, lost it.
        */
       staged: state.staged,
+      /*
+       * And that somebody asked for the whole card back.
+       *
+       * Per card would mean pressing "Show everything" on every page of the
+       * application, which is a preference asked for and then ignored four
+       * times in a row.
+       */
+      showEverything: state.showEverything,
       letter: state.letter,
       letterSource: state.letterSource,
       letterStarted: state.letterStarted,
@@ -908,6 +950,9 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     }
     if (work.render) state.render = work.render;
     if (work.staged) state.staged = work.staged;
+    // Set, never cleared: a page that carried nothing about this leaves the
+    // reducing exactly as this page works it out for itself.
+    if (work.showEverything) state.showEverything = true;
     if (work.letter != null) state.letter = work.letter;
     /*
      * And the step it lives in, because a letter the card is holding and not
@@ -4032,6 +4077,60 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       .catch(() => undefined);
   }
 
+  /**
+   * The two things the card can do to the form in front of it.
+   *
+   * Lifted out because the reduced card offers exactly these and nothing
+   * else. Two copies of a button that runs a job and stores its report would
+   * be two places to remember when either changes — and the reduced card
+   * exists for the pages somebody reaches at the end of an application,
+   * which is precisely where nobody would notice one of them going stale.
+   */
+  function formActions() {
+    return [
+      h('button', {
+        className: 'tiny',
+        textContent: busyLabel('autofill', 'Autofill this form', 'Filling…'),
+        disabled: busyIn('page'),
+        onclick: () => act('autofill', {}, (r) => (state.autofillReport = r)),
+      }),
+      /*
+       * The upload boxes, filled the same way the text boxes are.
+       *
+       * The flat folder and the path beside it were the answer to "how do
+       * I attach what this just built" — point the dialog at one place and
+       * pick the file out. That is two clicks and a paste, every time, and
+       * the same two clicks for the transcript that has not changed since
+       * September. A content script can put the file in the box directly;
+       * the page sees what it would have seen from the dialog, name and
+       * all. The path stays, for the boxes this cannot reach.
+       */
+      h('button', {
+        className: 'tiny',
+        textContent: busyLabel('attach', 'Attach files', 'Attaching…'),
+        title: 'Put the resume, letter and transcript into this form’s upload boxes',
+        disabled: busyIn('page'),
+        onclick: () =>
+          act(
+            'attachFiles',
+            /*
+             * The staged answer first, the analysis's second — the same
+             * fallback as `uploadFolder`, and for the same reason. The
+             * staged one came from the call that actually wrote the
+             * files; the analysis answers from the first paint, which is
+             * the only answer a card rebuilt by following Apply has. With
+             * neither, this asked the store for the files of no
+             * application in particular and was told, correctly, that
+             * there were none — so Attach on the form said "Nothing is
+             * built yet" over a resume built a minute earlier.
+             */
+            { application: state.staged?.application?.id ?? analysis?.application?.id ?? null },
+            (r) => (state.attachReport = r),
+          ),
+      }),
+    ];
+  }
+
   function drawProposeView() {
     const baseSelect = h('select', { title: 'Which resume to start from' });
 
@@ -4778,46 +4877,7 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             ])
           : null,
         h('div', { className: 'row' }, [
-          h('button', {
-            className: 'tiny',
-            textContent: busyLabel('autofill', 'Autofill this form', 'Filling…'),
-            disabled: busyIn('page'),
-            onclick: () => act('autofill', {}, (r) => (state.autofillReport = r)),
-          }),
-          /*
-           * The upload boxes, filled the same way the text boxes are.
-           *
-           * The flat folder and the path beside it were the answer to "how do
-           * I attach what this just built" — point the dialog at one place and
-           * pick the file out. That is two clicks and a paste, every time, and
-           * the same two clicks for the transcript that has not changed since
-           * September. A content script can put the file in the box directly;
-           * the page sees what it would have seen from the dialog, name and
-           * all. The path stays, for the boxes this cannot reach.
-           */
-          h('button', {
-            className: 'tiny',
-            textContent: busyLabel('attach', 'Attach files', 'Attaching…'),
-            title: 'Put the resume, letter and transcript into this form’s upload boxes',
-            disabled: busyIn('page'),
-            onclick: () =>
-              act(
-                'attachFiles',
-                /*
-                 * The staged answer first, the analysis's second — the same
-                 * fallback as `uploadFolder`, and for the same reason. The
-                 * staged one came from the call that actually wrote the
-                 * files; the analysis answers from the first paint, which is
-                 * the only answer a card rebuilt by following Apply has. With
-                 * neither, this asked the store for the files of no
-                 * application in particular and was told, correctly, that
-                 * there were none — so Attach on the form said "Nothing is
-                 * built yet" over a resume built a minute earlier.
-                 */
-                { application: state.staged?.application?.id ?? analysis?.application?.id ?? null },
-                (r) => (state.attachReport = r),
-              ),
-          }),
+          ...formActions(),
           /*
            * Named for what pressing it means, not for what it writes.
            *
@@ -4898,33 +4958,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
                   'keeps a copy of exactly what was sent.',
               })
             : null,
-        state.autofillReport
-          ? h('div', {
-              // Green only when nothing is left. See `.ok-note.warn`.
-              className: `ok-note${autofillLeftWork(state.autofillReport) ? ' warn' : ''}`,
-              textContent: describeAutofill(state.autofillReport),
-            })
-          : null,
-        state.attachReport
-          ? h('div', {
-              /*
-               * Green only when everything landed and can be shown to have
-               * landed. A report whose one entry is an unverifiable drop has
-               * an empty `unplaced` and was painted green under a sentence
-               * asking the person to go and check — which is the two halves
-               * of the card disagreeing, and the green is the one they will
-               * believe.
-               */
-              className: `ok-note${
-                (state.attachReport.unplaced?.length ?? 0) > 0 ||
-                state.attachReport.nothing ||
-                (state.attachReport.placed ?? []).some((p) => p.sure === false)
-                  ? ' warn'
-                  : ''
-              }`,
-              textContent: describeAttach(state.attachReport),
-            })
-          : null,
+        drawAutofillNote(),
+        drawAttachNote(),
       ]),
     );
 
@@ -5523,26 +5558,8 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
             textContent: 'Put back — it is being worked on again, and the files stay where they are.',
           })
         : null,
-      state.autofillReport
-        ? h('div', {
-            className: `ok-note${autofillLeftWork(state.autofillReport) ? ' warn' : ''}`,
-            textContent: describeAutofill(state.autofillReport),
-          })
-        : null,
-      // Same reading of the same report as the step before — see there for why
-      // an unverifiable drop is not green.
-      state.attachReport
-        ? h('div', {
-            className: `ok-note${
-              (state.attachReport.unplaced?.length ?? 0) > 0 ||
-              state.attachReport.nothing ||
-              (state.attachReport.placed ?? []).some((p) => p.sure === false)
-                ? ' warn'
-                : ''
-            }`,
-            textContent: describeAttach(state.attachReport),
-          })
-        : null,
+      drawAutofillNote(),
+      drawAttachNote(),
       h(
         'div',
         { className: 'hint', style: 'margin-top:8px' },
@@ -5595,6 +5612,11 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     // own title, not anything this has worked out yet.
     card.classList.toggle('loading', !analysis);
     card.classList.toggle('folded', Boolean(state.folded));
+    // Computed once: `reducedNow` is asked again below to pick the panel, and
+    // a class that disagreed with the panel would size the card for the one
+    // it is not drawing.
+    const small = reducedNow();
+    card.classList.toggle('reduced-card', small);
     card.replaceChildren(
       drawHead(),
       /*
@@ -5623,7 +5645,9 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           ? drawReadingView()
           : state.view === 'done'
             ? drawDoneView()
-            : drawProposeView(),
+            : small
+              ? drawReducedView()
+              : drawProposeView(),
     );
 
     if (wasScrolled) {
@@ -5644,6 +5668,147 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       // Not a text box any more, or the text is shorter than the old caret.
       // Focus is the part that matters; the position is a courtesy.
     }
+  }
+
+  /**
+   * What the last press of Autofill did, in a sentence.
+   *
+   * Its own function because three panels draw it — propose, done, and the
+   * reduced card — and what has to be right is the colour, which is a rule
+   * about the report rather than about where it is shown. It was written
+   * out twice already, and a third copy on a panel nobody looks at twice is
+   * how a green note comes to sit over an unfinished form.
+   */
+  function drawAutofillNote() {
+    return (
+      state.autofillReport
+        ? h('div', {
+            // Green only when nothing is left. See `.ok-note.warn`.
+            className: `ok-note${autofillLeftWork(state.autofillReport) ? ' warn' : ''}`,
+            textContent: describeAutofill(state.autofillReport),
+          })
+        : null
+    );
+  }
+
+  /** And the same for the last press of Attach. */
+  function drawAttachNote() {
+    return (
+      state.attachReport
+        ? h('div', {
+            /*
+             * Green only when everything landed and can be shown to have
+             * landed. A report whose one entry is an unverifiable drop has
+             * an empty `unplaced` and was painted green under a sentence
+             * asking the person to go and check — which is the two halves
+             * of the card disagreeing, and the green is the one they will
+             * believe.
+             */
+            className: `ok-note${
+              (state.attachReport.unplaced?.length ?? 0) > 0 ||
+              state.attachReport.nothing ||
+              (state.attachReport.placed ?? []).some((p) => p.sure === false)
+                ? ' warn'
+                : ''
+            }`,
+            textContent: describeAttach(state.attachReport),
+          })
+        : null
+    );
+  }
+
+  /**
+   * Whether this is a later page of an application whose documents are done.
+   *
+   * An application on any of the big systems is four or five pages, and the
+   * card proposes a resume on every one of them. By page three that whole
+   * panel — the picker, the change list, the preview, the letter step — is
+   * work that was finished on page one, sitting over the form you are trying
+   * to read. The two things still worth a button are filling this page and
+   * putting the files in it.
+   *
+   * Three conditions, and each is there to stop this firing when it would be
+   * wrong rather than merely unnecessary:
+   *
+   * - More than one *form* page in the trail. "Later parts" means later: the
+   *   first form is where the resume is normally attached, and reducing there
+   *   would hide the chips somebody is about to drag.
+   * - Something built. With no resume yet the propose panel is the whole
+   *   point of the card, however many pages have gone by.
+   * - Not the done view, which is the one screen somebody just asked for.
+   *
+   * A guess, so it is reversible and it stays reversed — see
+   * `state.showEverything`.
+   */
+  function reducedNow() {
+    if (state.showEverything || state.folded) return false;
+    if (!analysis || state.view === 'done') return false;
+    /*
+     * A form page somewhere behind this one — not two form pages counted up.
+     *
+     * Counting them looks equivalent and is not. A page only reaches the
+     * trail if the store judged it a posting, and `kind === 'application'`
+     * wants a form that is asking who you are (see `asksWhoYouAre` in
+     * ResumeM-M's extract.ts). Step four of a Workday application is a
+     * voluntary-disclosure page or a review screen: fields, no name box, and
+     * so not recorded at all. Counting form pages would have left the card
+     * full on exactly the pages it is worst on, and the test would still have
+     * passed, because a test builds the trail it wants.
+     *
+     * So: was there a form before this one. The current page need not be in
+     * the trail, and the question is the same either way.
+     */
+    /*
+     * And there has to be a form here to reduce *to*. Without this the card
+     * shrank on the description page as well — go back to the posting to
+     * re-read it, having already been through a form, and the picker, the
+     * change list and "Edit in ResumeM-M" were all gone behind a link. The
+     * two buttons the reduced card offers do nothing on a page with no form
+     * on it, so the whole of what it leaves would have been useless.
+     */
+    if (!isForm) return false;
+    const earlier = (state.trail?.pages ?? []).filter((p) => p.url !== location.href);
+    if (!earlier.some((p) => p.kind === 'application')) return false;
+    return Boolean(state.render || state.staged || state.bundle);
+  }
+
+  /**
+   * The card with everything already done taken out of it.
+   *
+   * What is left is what this page can still use: fill it, attach to it, and
+   * a way back to the rest. The job line stays, because a bar with two
+   * buttons and no name on it over somebody's application form is a thing to
+   * close rather than a thing to use.
+   */
+  function drawReducedView() {
+    const job = analysis.job ?? {};
+    return h('div', { className: 'body reduced' }, [
+      h('div', { className: 'job' }, [
+        h('div', { className: 'role', textContent: job.title ?? 'This posting' }),
+        h('div', { className: 'co', textContent: [job.company, job.location].filter(Boolean).join(' · ') }),
+      ]),
+      /*
+       * Why the card is small, in the words of what has happened rather than
+       * of what the card has done. "Reduced" is a fact about the interface;
+       * "your resume is built" is the fact somebody needs in order to agree
+       * with it — or to notice that it is wrong and press the link below.
+       */
+      h('div', {
+        className: 'reduced-why',
+        textContent: state.bundle
+          ? 'Filed, and this is a later page of the form. Everything is still here.'
+          : 'Your documents are built and this is a later page of the form. Everything is still here.',
+      }),
+      h('div', { className: 'row' }, formActions()),
+      state.autofillReport ? drawAutofillNote() : null,
+      state.attachReport ? drawAttachNote() : null,
+      h('button', {
+        className: 'link',
+        textContent: 'Show everything',
+        title: 'Bring back the resume, the letter and the rest',
+        onclick: () => { state.showEverything = true; draw(); },
+      }),
+    ].filter(Boolean));
   }
 
   /**

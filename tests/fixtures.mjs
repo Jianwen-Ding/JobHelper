@@ -485,6 +485,36 @@ export const STEP_ONE = {
     `${FORM_BODY}<p><a href="/rigel/apply/questions">Continue to apply</a></p>`,
   ),
 };
+/**
+ * And a second step that is itself a form.
+ *
+ * `STEP_TWO` is a thin page — one textarea and one box — and the extension
+ * does not read it as an application form at all: `looksLikeApplicationForm`
+ * wants two recognisable fields and finds one. That is the honest answer for
+ * that page, and it means it can say nothing about the card that reduces
+ * itself on later form pages, which is a thing only a real form page does.
+ *
+ * This is the other half of the same journey: page two of an application that
+ * asks for the ordinary things again, which is what Workday and iCIMS
+ * actually serve.
+ */
+export const STEP_TWO_FORM = {
+  name: 'step-two-form',
+  path: '/rigel/apply/more',
+  html: page(
+    'Apply — Rigel',
+    'Rigel',
+    `<form>
+       <label for="s2fn">First Name</label><input id="s2fn" name="first_name">
+       <label for="s2ln">Last Name</label><input id="s2ln" name="last_name">
+       <label for="s2em">Email</label><input id="s2em" name="email" type="email">
+       <label for="s2sp">Will you now or in the future require sponsorship?</label>
+       <select id="s2sp" name="sponsorship"><option value="">--</option><option>Yes</option><option>No</option></select>
+       <button type="button">Submit Application</button>
+     </form>`,
+  ),
+};
+
 export const STEP_TWO = {
   name: 'step-two',
   path: '/rigel/apply/questions',
@@ -1554,7 +1584,7 @@ export const NAVIGATION = [
   EMBEDDED_BOARD, EMBEDDED_BOARD_FRAME, BLOG_WITH_FORM, BLOG_ENQUIRY_FRAME, LATE_RENDER,
   CROWDED_PAGE, CROWDED_PAGE_FORM,
   LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY,
-  OWN_SITE, ATS_FORM, ATS_FORM_UNANSWERABLE, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, SPA_BOARD,
+  OWN_SITE, ATS_FORM, ATS_FORM_UNANSWERABLE, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, STEP_TWO_FORM, SPA_BOARD,
   ONE_ADDRESS_BOARD, SOLO_ROLE, SOLO_OTHER, SOLO_OTHER_FORM, NIMBUS_ROLE, NIMBUS_QUIET_FORM,
   LETTER_SPA, LETTER_SPA_FORM, LETTER_SPA_PLAIN,
 ];

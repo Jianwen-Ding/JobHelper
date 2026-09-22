@@ -1555,6 +1555,15 @@
         settings,
         questions: [],
         needsCoverLetter: wantsCoverLetter(),
+        /*
+         * Whether there is a form on this page at all, which the card cannot
+         * see for itself — it lives in a shadow root and reads none of the
+         * page. Used only to decide whether the card may reduce itself: see
+         * `reducedNow`. Read once, here, because it is read in the same
+         * breath as `wantsCoverLetter` and the two answer the same question
+         * about the same page.
+         */
+        isForm: looksLikeApplicationForm(),
         onAction,
         onClose: () => {
           cardHandle = null;
