@@ -66,12 +66,51 @@ const NEVER_REMEMBER = [
   // The stem, because a form asks "have you been convicted" and a list
   // written as "conviction" does not match it.
   /\bconvict/i,
-  /\bdisabilit(y|ies)\b/i,
+  /*
+   * The stem, like `convict` above: "Do you have a disability?" matched and
+   * "Are you disabled?" — the same question, asked the other common way — did
+   * not, so its answer was banked and offered to the next employer.
+   */
+  /\bdisab(led|ility|ilities)\b/i,
   /\bveteran\b/i,
   /\bethnicit(y|ies)\b/i,
   /\brace\b/i,
+  /*
+   * The equal-opportunity block asks about ethnicity without using the word.
+   *
+   * Greenhouse's own is "Are you Hispanic/Latino?", verbatim, as its own
+   * question beside "Race" — and it matched nothing here, so the answer went
+   * into the bank and was offered back on the next form. That is the exact
+   * thing this list exists to stop, on the commonest form there is. The rest
+   * are the same question as other systems and other countries put it: the
+   * Australian forms ask about Aboriginal and Torres Strait Islander identity,
+   * the Canadian ones about Indigenous identity and First Nations, and plenty
+   * ask whether you are a person of colour or about national origin.
+   */
+  /\bhispanic\b/i,
+  /\blatin[oaxe]s?\b/i,
+  /\bpe(rson|ople)\s*of\s*colou?r\b/i,
+  /\bindigenous\b/i,
+  /\baboriginal\b/i,
+  /\btorres\s*strait\b/i,
+  /\bfirst\s*nations?\b/i,
+  /\bnational\s*origin\b/i,
+  /\bcaste\b/i,
   /\bgender\b/i,
+  /*
+   * And the same for sex and identity. "Sex" was refused before only because
+   * it is shorter than the length check below — the wrong reason, and one
+   * that did not survive being asked as "What is your sex?".
+   *
+   * `trans` not followed by a hyphen, so "trans-Atlantic travel" is left
+   * alone. Word boundaries keep `sex` out of Essex and Middlesex.
+   */
+  /\bsex\b/i,
+  /\btrans(gender)?\b(?![-\u2010-\u2015])/i,
+  /\bnon-?binary\b/i,
+  /\blgbt/i,
   /\bsexual\s*orientation\b/i,
+  /\bneurodiver/i,
   /\breligion\b/i,
   /\bmarital\b/i,
   /\bpregnan/i,
