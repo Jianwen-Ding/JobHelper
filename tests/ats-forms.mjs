@@ -111,6 +111,15 @@ export const SYSTEMS = [
     },
     questions: [/why do you want to work at acme/i],
     wantsLetter: true,
+    /*
+     * A native `<select>`, which is the shape that was being written into the
+     * bank wrongly. Greenhouse names this field
+     * `job_application[answers_attributes][1][boolean_value]`, and a question
+     * recorded from the field's *description* carries that name in four
+     * spellings — so it is a row nothing can ever match again. Here rather
+     * than on a tidier fixture precisely because the name is ugly.
+     */
+    remembers: [['#job_application_answers_attributes_1_boolean_value', 'legally authorized']],
   },
 
   /*
@@ -540,6 +549,9 @@ export const SYSTEMS = [
       visa_status: '',
     },
     unchecked: ['consent'],
+    // The radio shape, whose recorded question used to carry the group's
+    // `name` attribute on the end of it — "…require sponsorship? sponsorship".
+    remembers: [['input[name="sponsorship"][value="0"]', 'require sponsorship']],
     neverGuesses: 'requires_sponsorship',
     questions: [],
     wantsLetter: false,
@@ -1020,6 +1032,13 @@ async function main() {
       const out = await where.evaluate(
         async ({ b, profile, wants, host }) => {
           const m = await import(`${b}/autofill.js`);
+          /*
+           * The questions this page would look up in the answer bank, read
+           * before anything is filled — `choiceQuestions` skips a control
+           * that already has an answer, and after `fillForm` several of
+           * these do.
+           */
+          const lookedUpBy = m.choiceQuestions();
           const report = m.fillForm(profile);
           // A form built from web components keeps its fields in a shadow
           // root, which is the whole point of that fixture.
@@ -1029,6 +1048,7 @@ async function main() {
             values: Object.fromEntries(
               Object.keys(wants).map((sel) => [sel, find(sel)?.value ?? '(no such field)']),
             ),
+            lookedUpBy,
             filled: report.filled.map((f) => f.key),
             skipped: report.skipped.map((s) => ({ key: s.key, reason: s.reason })),
             questions: m.findQuestions().map((q) => q.question),
@@ -1099,6 +1119,30 @@ async function main() {
           },
           { b: base, hit: [...(system.remembers ?? []), ...(system.refuses ?? [])].map(([sel]) => sel) },
         );
+
+        /*
+         * What is written down has to be what the next form looks it up by.
+         *
+         * The two halves derive a question separately — one from an event
+         * target, one from a walk over the page — and an agreement that holds
+         * only because both were written to look alike does not stay holding.
+         * It did not: the recording side stored `describeField`, which is the
+         * label plus `name`, `id` and `placeholder` each also split into
+         * words, so Greenhouse's work-authorisation dropdown went into the
+         * bank as the question plus four spellings of
+         * `job_application[answers_attributes][1][boolean_value]`. Every
+         * check above passed — they match the question with a regular
+         * expression, and the question is in there — while the row could
+         * never be found again by anything, because the matcher scores on
+         * shared words and those are shared with nothing.
+         */
+        for (const k of kept.filter((x) => x.keep)) {
+          check(
+            `${system.name}: what is written down is what the next form looks up`,
+            out.lookedUpBy.includes(k.question),
+            `stored "${k.question}"; looked up by ${out.lookedUpBy.map((q) => `"${q}"`).join(', ') || '(nothing)'}`,
+          );
+        }
 
         for (const [sel, wanted] of system.remembers ?? []) {
           const got = kept.find((k) => new RegExp(wanted, 'i').test(k.question));

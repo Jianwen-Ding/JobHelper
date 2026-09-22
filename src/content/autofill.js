@@ -10,7 +10,7 @@
  * The privacy rule lives on its own, away from everything that reads a form,
  * because it is the part that has to be reviewable without reading this file.
  */
-import { worthRemembering } from '../shared/remembering.js';
+import { neverRemember, worthRemembering } from '../shared/remembering.js';
 
 /** Map a stored profile key to the label/name patterns that mean it. */
 const FIELD_PATTERNS = [
@@ -970,7 +970,7 @@ function yesNoOption(key, value, options) {
  * Fill what we can. Returns a report of what was filled and what was skipped,
  * so the user can see the difference between "done" and "done silently wrong".
  */
-export function fillForm(fields, { overwrite = false } = {}) {
+export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
   const filled = [];
   const skipped = [];
 
@@ -1136,10 +1136,31 @@ export function fillForm(fields, { overwrite = false } = {}) {
 
   const radios = answerRadioGroups(fields, overwrite);
   const buttons = answerChoiceButtons(fields, overwrite, [...filled, ...radios.filled]);
-  const done = [...filled, ...radios.filled, ...buttons.filled];
+
+  /*
+   * Last, over what the profile could not answer. The profile has had every
+   * chance by here, so anything still unanswered is a question only the
+   * person applying knows — which is the only kind the bank holds.
+   */
+  const memory = answerFromMemory(remembered);
+  const done = [...filled, ...radios.filled, ...buttons.filled, ...memory.filled];
+
+  /*
+   * A control the memory pass answered is not still waiting, whatever an
+   * earlier pass said about it. `fillForm` reports a select it matched but
+   * could not find an option for as "no matching option", and the bank quite
+   * often *does* have an option for it — leaving both rows in said "filled 5
+   * fields, 1 still for you to answer" about a form with nothing left on it,
+   * which sends somebody back to hunt for a question that is answered.
+   */
+  const answered = new Set(memory.filled.map((f) => f.description));
+  const waiting = [...skipped, ...radios.skipped, ...buttons.skipped].filter(
+    (s) => !answered.has(s.description),
+  );
+
   return {
     filled: done,
-    skipped: [...skipped, ...radios.skipped, ...buttons.skipped, ...unfillableChoices(fields, done)],
+    skipped: [...waiting, ...memory.skipped, ...unfillableChoices(fields, done)],
   };
 }
 
@@ -1163,12 +1184,19 @@ export function fillForm(fields, { overwrite = false } = {}) {
  * ticked, and `unfillableChoices` already says those have to be picked by
  * hand. This does not widen that promise.
  */
-function answerChoiceButtons(fields, overwrite, already) {
-  const filled = [];
-  const skipped = [];
-  const taken = new Set(already.map((f) => f.key));
 
+/**
+ * Every ARIA group on the page that is a real, answerable choice.
+ *
+ * Pulled out of `answerChoiceButtons` because the remembered-answer pass has
+ * to walk exactly the same set. Two walks that agree by having been written
+ * to look alike do not stay agreeing: the popup exclusions below were added
+ * once, to one of them, and a second copy would have gone on opening
+ * comboboxes for ever. One function, two callers, no drift.
+ */
+function ariaChoiceGroups() {
   const visible = (el) => el.getClientRects().length > 0;
+  const found = [];
 
   for (const group of deepQueryAll('[role="radiogroup"], [role="listbox"], [role="group"]')) {
     if (isDisabled(group) || !visible(group)) continue;
@@ -1192,6 +1220,18 @@ function answerChoiceButtons(fields, overwrite, already) {
     const question = choiceQuestionFor(group);
     const description = clean([question, group.getAttribute('aria-label'), id].filter(Boolean).join(' '));
     if (!description) continue;
+
+    found.push({ group, options, question, description });
+  }
+  return found;
+}
+
+function answerChoiceButtons(fields, overwrite, already) {
+  const filled = [];
+  const skipped = [];
+  const taken = new Set(already.map((f) => f.key));
+
+  for (const { group, options, question, description } of ariaChoiceGroups()) {
     // The same three gates, in the same order, as `fillForm` and
     // `answerRadioGroups`. See `handBack`.
     if (handBack(description, skipped)) continue;
@@ -1439,10 +1479,14 @@ const CHOOSABLE = new Set([
   'location',
 ]);
 
-function answerRadioGroups(fields, overwrite) {
-  const filled = [];
-  const skipped = [];
-
+/**
+ * The radio groups on the page, scoped the way a browser scopes them.
+ *
+ * Pulled out for the same reason as `ariaChoiceGroups`: the remembered-answer
+ * pass has to see the same groups, and the form-scoping below is exactly the
+ * sort of hard-won detail a second copy would be written without.
+ */
+function radioGroups() {
   /*
    * A radio group is scoped to its form, and so is the grouping here.
    *
@@ -1473,8 +1517,14 @@ function answerRadioGroups(fields, overwrite) {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(radio);
   }
+  return [...groups.values()];
+}
 
-  for (const radios of groups.values()) {
+function answerRadioGroups(fields, overwrite) {
+  const filled = [];
+  const skipped = [];
+
+  for (const radios of radioGroups()) {
     const description = clean([groupLabelFor(radios), radios[0].name].filter(Boolean).join(' '));
     if (!description) continue;
     // Before the exclusions and before the match, as in `fillForm`. Radios
@@ -1548,6 +1598,183 @@ function answerRadioGroups(fields, overwrite) {
   }
 
   return { filled, skipped };
+}
+
+/* -------------------- Answers kept from the last form -------------------- */
+
+/**
+ * Every choice on this page that nothing in the profile answers.
+ *
+ * These are the questions the answer bank is for. The profile knows a name,
+ * an email address and a country; it does not know whether you have worked
+ * here before, how you heard about the job, or whether you are willing to
+ * relocate — and those are asked on every application, worded slightly
+ * differently each time, and answered by hand every time.
+ *
+ * The *question* is what travels, not the description. A description is a bag
+ * of words built for regular expressions — label plus `name` plus `id` — and
+ * matching "Have you previously been employed by Acme?" against
+ * "have you previously been employed by acme prev_emp_q3 q3" is matching
+ * against noise. The bank is keyed on what a person reads.
+ */
+function rememberableChoices() {
+  const found = [];
+  const add = (question, description, el, answered, choose) => {
+    const asked = clean(question);
+    // Too short to recognise on the next form. The same bar the bank itself
+    // applies on the way in — see `worthRemembering`.
+    if (asked.length < 8) return;
+    found.push({ question: asked, description, el, answered, choose });
+  };
+
+  for (const select of deepQueryAll('select')) {
+    if (!isFillable(select)) continue;
+    const description = describeField(select);
+    if (!description) continue;
+    add(
+      questionFor(select),
+      description,
+      select,
+      () => selectIsAnswered(select),
+      (answer) => chooseInSelect(select, answer),
+    );
+  }
+
+  for (const radios of radioGroups()) {
+    const description = clean([groupLabelFor(radios), radios[0].name].filter(Boolean).join(' '));
+    if (!description) continue;
+    add(
+      groupLabelFor(radios),
+      description,
+      radios[0],
+      () => radios.some((radio) => radio.checked),
+      (answer) => chooseInRadios(radios, answer),
+    );
+  }
+
+  for (const { group, options, question, description } of ariaChoiceGroups()) {
+    add(
+      question,
+      description,
+      group,
+      () => options.some(isMarkedChosen),
+      (answer) => chooseInAria(options, answer),
+    );
+  }
+
+  return found;
+}
+
+/** The questions on this page worth asking the bank about. */
+export function choiceQuestions() {
+  const out = new Set();
+  for (const choice of rememberableChoices()) {
+    if (choice.answered()) continue;
+    // Never ask the bank about these, so that nothing puts one in it and
+    // nothing takes one out. See `NEVER_REMEMBER`.
+    if (neverRemember(choice.question)) continue;
+    out.add(choice.question);
+  }
+  return [...out];
+}
+
+/**
+ * Put back the answers this person gave the last form that asked.
+ *
+ * `remembered` is `[{ question, answer }]` where each `question` is one of
+ * the strings `choiceQuestions` handed out — the matching was done by the
+ * store, which owns the only similarity function either product has, and the
+ * question comes back echoed so that the comparison here is string equality.
+ * A second fuzzy matcher living in the extension would drift away from the
+ * first one silently, and the drift would show up as an application answered
+ * wrongly rather than as a failing test.
+ *
+ * Three rules, and each is a refusal:
+ *
+ * - Nothing already answered is touched, `overwrite` or not. Overwrite is a
+ *   thing the person asked of their *profile*; the bank is a weaker claim
+ *   than the profile and a far weaker one than an answer already on screen.
+ * - Nothing personal, even if the bank holds it. `worthRemembering` keeps
+ *   these out on the way in, but the bank is older than that gate and the
+ *   Workspace lets answers be typed in by hand. A date of birth sitting in
+ *   the bank must not be typed into a form by a machine.
+ * - Only an option that plainly matches. No yes/no coercion, no nearest
+ *   option: the question match is already one inference, and stacking a
+ *   second one on it is how a form comes to say "No" where its owner meant
+ *   "Yes". Where nothing matches, the control is left for the person, which
+ *   is exactly where it was.
+ */
+function answerFromMemory(remembered) {
+  const filled = [];
+  const skipped = [];
+  if (!Array.isArray(remembered) || remembered.length === 0) return { filled, skipped };
+
+  const bank = new Map();
+  for (const { question, answer } of remembered) {
+    const asked = clean(question);
+    if (asked && String(answer ?? '').trim()) bank.set(asked, String(answer).trim());
+  }
+  if (bank.size === 0) return { filled, skipped };
+
+  for (const choice of rememberableChoices()) {
+    if (choice.answered()) continue;
+    if (neverRemember(choice.question)) continue;
+    const answer = bank.get(choice.question);
+    if (!answer) continue;
+
+    const took = choice.choose(answer);
+    const row = { key: 'remembered', value: answer, description: choice.description.slice(0, 60) };
+    if (took) filled.push({ ...row, question: choice.question, remembered: true });
+    else skipped.push({ ...row, reason: 'the answer you gave before is not one of the options here' });
+  }
+  return { filled, skipped };
+}
+
+/** Whether an ARIA option is the one marked as chosen. */
+const isMarkedChosen = (el) =>
+  el.getAttribute('aria-checked') === 'true' || el.getAttribute('aria-selected') === 'true';
+
+/** Pick an option in a native `<select>` by its text or its value. */
+function chooseInSelect(select, answer) {
+  const choosable = [...select.options].filter((o) => !isDisabled(o));
+  const option = choosable.find((o) => sameOption(o.textContent, answer) || sameOption(o.value, answer));
+  if (!option) return false;
+  nativeSet(select, 'value', option.value);
+  // Two options can share a value, so the write can land on the placeholder.
+  // The same read-back `fillForm` does, and for the same reason.
+  if (select.selectedOptions[0] !== option) return false;
+  select.dispatchEvent(new Event('input', { bubbles: true }));
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  return true;
+}
+
+/** Tick a radio in a group by its label or its value. */
+function chooseInRadios(radios, answer) {
+  const wanted = radios.find(
+    (radio) => sameOption(optionLabelFor(radio), answer) || sameOption(radio.value, answer),
+  );
+  if (!wanted) return false;
+  // Clicked, not set — React listens for click on radios. See
+  // `answerRadioGroups`, which explains what setting it instead cost.
+  wanted.click();
+  if (!wanted.checked) {
+    nativeSet(wanted, 'checked', true);
+    wanted.dispatchEvent(new Event('input', { bubbles: true }));
+    wanted.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  return wanted.checked;
+}
+
+/** Click an ARIA option by its label, and believe the page about the result. */
+function chooseInAria(options, answer) {
+  const labelOf = (el) => clean(el.getAttribute('aria-label') || el.textContent);
+  const wanted = options.find((el) => sameOption(labelOf(el), answer));
+  if (!wanted) return false;
+  wanted.click();
+  // Never written here: `aria-checked` belongs to the page's own component,
+  // and forging it puts a tick over a form that will submit blank. See
+  // `answerChoiceButtons`.
+  return isMarkedChosen(wanted);
 }
 
 /**
@@ -1676,11 +1903,29 @@ export function watchChoices(tell) {
      * The question is the group's, never the button's own label — each button
      * carries one of the answers. `groupLabelFor` already knows that and says
      * why at length.
+     *
+     * And it is the *question*, never the description. The first version of
+     * this stored `describeField(control)`, which is a bag of words built for
+     * regular expressions: the label, plus `name`, `id` and `placeholder`,
+     * each also split into words. Greenhouse's work-authorisation dropdown
+     * therefore went into the bank as
+     *
+     *   Are you legally authorized to work in the United States? *
+     *   job_application[answers_attributes][1][boolean_value]
+     *   job application[answers attributes][1][boolean value] …
+     *
+     * — which reads as nonsense in the Workspace, writes a form's internal
+     * field names into somebody's store, and above all can never be found
+     * again: the matcher scores on shared words, and those are shared with
+     * nothing. Every select somebody answered was recorded and none of it
+     * was ever offered back. The same three functions the reuse side uses
+     * (`rememberableChoices`), so that what is written down and what is
+     * looked up are the same string.
      */
     if (control instanceof HTMLSelectElement) {
       const option = control.selectedOptions?.[0];
       if (!option || looksLikePlaceholder(option, control)) return null;
-      return { question: describeField(control), answer: clean(option.textContent) };
+      return { question: clean(questionFor(control)), answer: clean(option.textContent) };
     }
     if (control instanceof HTMLInputElement && control.type === 'radio') {
       if (!control.checked) return null;
@@ -1688,7 +1933,7 @@ export function watchChoices(tell) {
         (r) => r.name === control.name && r.form === control.form,
       );
       return {
-        question: clean([groupLabelFor(group.length ? group : [control]), control.name].filter(Boolean).join(' ')),
+        question: clean(groupLabelFor(group.length ? group : [control])),
         answer: optionLabelFor(control),
       };
     }

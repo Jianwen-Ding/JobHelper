@@ -90,6 +90,7 @@ const SUITES = [
   { name: 'tabs', file: 'tabs.mjs', cost: 22 },
   { name: 'journey', file: 'journey.mjs', cost: 17 },
   { name: 'card', file: 'card.mjs', cost: 16 },
+  { name: 'reusing', file: 'reusing.mjs', cost: 25 },
   { name: 'roundtrip', file: 'roundtrip.mjs', cost: 13 },
   { name: 'joins', file: 'joins.mjs', cost: 8 },
   { name: 'ats-forms', file: 'ats-forms.mjs', cost: 7 },

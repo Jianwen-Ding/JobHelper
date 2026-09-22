@@ -2106,6 +2106,34 @@ const handlers = {
   },
 
   /**
+   * The answers this person has already given to questions like these.
+   *
+   * The matching lives in the store, not here. ResumeM-M's `matchAnswer` is
+   * the only question-similarity function either product has, it is what the
+   * Workspace already answers questions with, and a second one written in the
+   * extension would be a copy that drifts — silently, and into an application
+   * answered wrongly rather than into a failing test.
+   *
+   * Only the confident matches come back. `matchAnswer` grades every one, and
+   * a loose match is a starting point for somebody to read, not something to
+   * tick a radio button with; the Workspace shows those and this does not use
+   * them. The question is echoed back beside its answer so the caller can
+   * pair them up by string equality.
+   */
+  async rememberedAnswers({ questions }) {
+    if (!Array.isArray(questions) || questions.length === 0) return { answers: [] };
+    const reply = await serverFetch('/api/answers/match', {
+      method: 'POST',
+      body: JSON.stringify({ questions }),
+    }).catch(() => null);
+
+    const answers = (reply?.matches ?? [])
+      .filter((m) => m?.confident && m.answer)
+      .map((m) => ({ question: m.question, answer: m.answer }));
+    return { answers };
+  },
+
+  /**
    * What this application could attach, with the bytes of each.
    *
    * One round trip rather than a list and then a fetch per file, because the

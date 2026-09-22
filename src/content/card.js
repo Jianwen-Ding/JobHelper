@@ -5034,6 +5034,20 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     const parts = [`Filled ${plural(r.filled.length, 'field')}`];
 
     /*
+     * And where the unusual ones came from.
+     *
+     * A profile field being filled needs no explanation — the name and the
+     * email address are obviously the tool's to know. A question about
+     * sponsorship answered without being asked is different: it came out of
+     * what this person told the last form, and somebody who does not know
+     * that has no reason to trust it and no idea where to change it. Said
+     * once, as a count, because the point is to prompt a look rather than to
+     * list the questions back.
+     */
+    const remembered = r.filled.filter((f) => f.remembered).length;
+    if (remembered) parts.push(`${remembered} of them from answers you gave before`);
+
+    /*
      * Skipped is not one thing. A field left alone because it already had an
      * answer is finished; one skipped because nothing in its list matched, or
      * because it is a widget nothing can drive, is a required field still

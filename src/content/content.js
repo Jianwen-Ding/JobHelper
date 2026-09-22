@@ -518,15 +518,40 @@
    * the form and nothing in the form had changed.
    */
   async function runAutofill() {
-    const { fillForm } = await imports.autofill();
     const data = await send('autofillData');
-    const here = fillForm(data.fields);
+    const here = await fillThisDocument(data.fields);
 
     const { frames } = await send('fillFrames', { fields: data.fields }).catch(() => ({ frames: [] }));
     return {
       filled: [...here.filled, ...frames.flatMap((f) => f.filled ?? [])],
       skipped: [...here.skipped, ...frames.flatMap((f) => f.skipped ?? [])],
     };
+  }
+
+  /**
+   * Fill the form in *this* document, from the profile and from the answers
+   * this person has given before.
+   *
+   * The bank lookup happens per document rather than once at the top, because
+   * the questions are per document: an iCIMS application is in a frame and
+   * the page around it has none of it. Each frame asks about its own
+   * questions and gets back its own answers, which also keeps the round trip
+   * small — a page with six frames does not send six copies of one list.
+   *
+   * The matching is the store's. See `rememberedAnswers` in the worker: the
+   * question travels there and comes back echoed, so the only comparison here
+   * is string equality. Every failure path ends in an empty list, which is
+   * the behaviour this had before the bank existed.
+   */
+  async function fillThisDocument(fields) {
+    const { fillForm, choiceQuestions } = await imports.autofill();
+    const questions = choiceQuestions();
+    const remembered = questions.length
+      ? await send('rememberedAnswers', { questions })
+          .then((r) => r?.answers ?? [])
+          .catch(() => [])
+      : [];
+    return fillForm(fields, { remembered });
   }
 
   /**
@@ -2136,10 +2161,12 @@
 
         case 'jh-frame-fill':
           answer(
-            imports.autofill().then(({ fillForm, looksLikeApplicationForm }) =>
+            imports.autofill().then(({ looksLikeApplicationForm }) =>
               // The one that must not be got wrong. Anything else on the page
               // gets nothing about the person using it.
-              looksLikeApplicationForm() ? fillForm(message.payload?.fields ?? {}) : { filled: [], skipped: [] },
+              looksLikeApplicationForm()
+                ? fillThisDocument(message.payload?.fields ?? {})
+                : { filled: [], skipped: [] },
             ),
           );
           return true;

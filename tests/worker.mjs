@@ -115,6 +115,30 @@ function fakeStore() {
         spec: { id: 'job-fake', extends: 'newgrad' },
       });
     }
+    /*
+     * The answer bank's matcher, whose grading is the whole point of the
+     * route. `matchAnswer` scores every question in the bank and marks the
+     * near-identical ones `confident`; a loose match is something for
+     * somebody to read, not something to tick a radio button with. The fake
+     * returns one of each so the worker's filtering has something to do.
+     */
+    if (url === '/api/answers/match') {
+      let asked = [];
+      try {
+        asked = JSON.parse(raw).questions ?? [];
+      } catch {
+        /* the body is only read for the questions */
+      }
+      return send({
+        bankSize: 4,
+        matches: asked.map((question) => ({
+          question,
+          score: 0.9,
+          confident: !/loosely/i.test(question),
+          answer: /nothing in the bank/i.test(question) ? undefined : `answer to ${question}`,
+        })),
+      });
+    }
     if (url === '/api/applications/bundle') return send({ ok: true, id: 'app-1', folder: '/tmp/x' });
     if (url === '/api/workspace') return send({ ok: true, id: 'ws-1', url: '/workspace/ws-1' });
     if (url === '/api/resumes') return send({ resumes: [{ id: 'newgrad', label: 'New grad' }] });
@@ -896,6 +920,63 @@ async function main() {
       check('gives up rather than waiting for ever', got.ms < 40_000, `${got.ms}ms`);
       check('and says the store did not answer', /did not answer/i.test(got.reply?.error ?? ''), got.reply?.error ?? '(no error)');
       store.routes['/files/resume.pdf'] = 'ok';
+    }
+
+    /*
+     * The bank lookup, which is the only place a stored answer becomes
+     * something typed into somebody's application. What it lets through
+     * matters more than what it fetches: a loose match is a suggestion for a
+     * person to read, and putting one into a form is how an application comes
+     * to say something its author did not say.
+     */
+    group('Looking up the answers given before');
+    {
+      const asked = [
+        'Are you willing to relocate for this role?',
+        'Something the store matched only loosely',
+        'A question with nothing in the bank for it',
+      ];
+      const got = await ask(driver, 'rememberedAnswers', { questions: asked });
+      const answers = got.reply?.data?.answers ?? [];
+      check(
+        'a confident match comes back with its question beside it',
+        answers.length === 1 && answers[0].question === asked[0],
+        JSON.stringify(answers),
+      );
+      check(
+        'and its answer, which is what gets typed',
+        answers[0]?.answer === `answer to ${asked[0]}`,
+        answers[0]?.answer ?? '(none)',
+      );
+      check('a loose match is not offered', !answers.some((a) => /loosely/.test(a.question)), JSON.stringify(answers));
+      check(
+        'nor is a confident match with nothing to say',
+        !answers.some((a) => /nothing in the bank/.test(a.question)),
+        JSON.stringify(answers),
+      );
+
+      const before = store.sentTo('/api/answers/match').length;
+      const none = await ask(driver, 'rememberedAnswers', { questions: [] });
+      check(
+        'a page with no questions does not ask the store at all',
+        store.sentTo('/api/answers/match').length === before && none.reply?.data?.answers?.length === 0,
+        `${store.sentTo('/api/answers/match').length - before} extra requests`,
+      );
+
+      /*
+       * And a store that is not answering leaves the form exactly as it was.
+       * This runs behind the Autofill button somebody already pressed, so a
+       * throw here would take the whole fill down — every profile field
+       * unfilled because the optional half could not reach the bank.
+       */
+      store.routes['/api/answers/match'] = 'silent';
+      const wedged = await ask(driver, 'rememberedAnswers', { questions: ['Are you willing to relocate?'] });
+      check(
+        'a store that never answers gives back nothing rather than failing',
+        Array.isArray(wedged.reply?.data?.answers) && wedged.reply.data.answers.length === 0,
+        JSON.stringify(wedged.reply ?? null),
+      );
+      store.routes['/api/answers/match'] = 'ok';
     }
   } finally {
     await context.close();
