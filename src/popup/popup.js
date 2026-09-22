@@ -52,6 +52,36 @@ function setStatus(text, kind = '', fix) {
 /** Report a failure, carrying whatever it knows about how to get past it. */
 const failed = (err) => setStatus(err.message, 'err', err.jobhelper);
 
+/**
+ * A control that does something, and says so when it cannot.
+ *
+ * Every button and box in this window goes through `send`, and `send` rejects
+ * for two ordinary reasons: the reply says `ok: false`, or the messaging
+ * channel is gone because the extension was reloaded while this window was
+ * open — which is exactly what happens while the extension is being worked
+ * on, and how the popup gets looked at as a tab.
+ *
+ * An `async` handler assigned straight to `onclick` turns either of those into
+ * an unhandled rejection. The handler stops where it was, and because the
+ * status line is only written on the *last* line of most of these, nothing on
+ * screen changes at all. Press "Mute this site" and it is not muted, with no
+ * error and no mark on the button; tick "Let it use the AI" and the box stays
+ * ticked over a setting that was never saved — a window whose whole job is
+ * telling you the state of things, lying about it.
+ *
+ * Two of these were wrapped by hand and the rest were not, which is the usual
+ * end of "remember to catch it here": the ones somebody happened to be
+ * thinking about are covered and the other seven are not. So it is one
+ * wrapper, and a handler that does not use it is visible as one.
+ */
+const acts = (fn) => async (...args) => {
+  try {
+    await fn(...args);
+  } catch (err) {
+    failed(err);
+  }
+};
+
 async function activeTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   /*
@@ -211,17 +241,17 @@ async function showOpenApplication() {
   // Back to the last page of it, which is where you were when you wandered
   // off. Same tab, because the application is the tab.
   const last = pages[pages.length - 1];
-  $('backToApplication').onclick = async () => {
+  $('backToApplication').onclick = acts(async () => {
     if (!last?.url) return;
     await chrome.tabs.update(tab.id, { url: last.url });
     window.close();
-  };
+  });
 
-  $('dropApplication').onclick = async () => {
+  $('dropApplication').onclick = acts(async () => {
     await send('clearTrail', { tabId: tab.id });
     panel.hidden = true;
     setStatus('Forgotten. The next job page starts a new application.', 'ok');
-  };
+  });
 }
 
 /**
@@ -301,7 +331,7 @@ async function showAiState() {
   if (!shape.fix) return;
 
   fix.textContent = shape.fix;
-  fix.onclick = async () => {
+  fix.onclick = acts(async () => {
     if (status.state === 'unconfigured') {
       const { serverUrl } = await send('getSettings');
       chrome.tabs.create({ url: `${serverUrl.replace(/\/$/, '')}/#voice` });
@@ -322,7 +352,7 @@ async function showAiState() {
     } finally {
       fix.disabled = false;
     }
-  };
+  });
 }
 
 async function boot() {
@@ -335,7 +365,7 @@ async function boot() {
     await send('setSettings', { patch });
   };
 
-  $('serverUrl').onchange = async () => {
+  $('serverUrl').onchange = acts(async () => {
     /*
      * And put back what is actually in force, which is not always what was
      * typed: `localhost:4600` gains the scheme it needs, an emptied box goes
@@ -346,54 +376,46 @@ async function boot() {
     const after = await send('setSettings', { patch: { serverUrl: $('serverUrl').value.trim() } });
     $('serverUrl').value = after.serverUrl;
     check();
-  };
-  $('autoPrompt').onchange = () => save({ autoPrompt: $('autoPrompt').checked });
-  $('useAi').onchange = async () => {
+  });
+  $('autoPrompt').onchange = acts(() => save({ autoPrompt: $('autoPrompt').checked }));
+  $('useAi').onchange = acts(async () => {
     await save({ useAi: $('useAi').checked });
     showAiState();
-  };
+  });
   showAiState();
   showOpenApplication().catch(() => undefined);
 
-  $('baseResumeId').onchange = () => save({ baseResumeId: $('baseResumeId').value });
+  $('baseResumeId').onchange = acts(() => save({ baseResumeId: $('baseResumeId').value }));
 
-  $('show').onclick = async () => {
-    try {
-      await tellContentScript('show-card');
-      window.close();
-    } catch (err) {
-      failed(err);
+  $('show').onclick = acts(async () => {
+    await tellContentScript('show-card');
+    window.close();
+  });
+
+  $('autofill').onclick = acts(async () => {
+    const report = await tellContentScript('autofill');
+    const f = report.filled.length;
+    const parts = [`Filled ${f} ${f === 1 ? 'field' : 'fields'}`];
+
+    /*
+     * Skipped is not one thing. A field left alone because it already had an
+     * answer is finished; one skipped because nothing in the list matched, or
+     * because it is a widget nothing can drive, is a required field still
+     * empty. Reporting both as "already filled" told someone their country
+     * dropdown was done when it was blank — which is the difference between
+     * done and done wrong, and the reason the reasons are recorded at all.
+     */
+    const byReason = new Map();
+    for (const s of report.skipped) {
+      byReason.set(s.reason, (byReason.get(s.reason) ?? 0) + 1);
     }
-  };
+    const done = byReason.get('already filled') ?? 0;
+    const yours = report.skipped.length - done;
+    if (done) parts.push(`left ${done} already filled`);
+    if (yours) parts.push(`${yours} still need${yours === 1 ? 's' : ''} you`);
 
-  $('autofill').onclick = async () => {
-    try {
-      const report = await tellContentScript('autofill');
-      const f = report.filled.length;
-      const parts = [`Filled ${f} ${f === 1 ? 'field' : 'fields'}`];
-
-      /*
-       * Skipped is not one thing. A field left alone because it already had an
-       * answer is finished; one skipped because nothing in the list matched, or
-       * because it is a widget nothing can drive, is a required field still
-       * empty. Reporting both as "already filled" told someone their country
-       * dropdown was done when it was blank — which is the difference between
-       * done and done wrong, and the reason the reasons are recorded at all.
-       */
-      const byReason = new Map();
-      for (const s of report.skipped) {
-        byReason.set(s.reason, (byReason.get(s.reason) ?? 0) + 1);
-      }
-      const done = byReason.get('already filled') ?? 0;
-      const yours = report.skipped.length - done;
-      if (done) parts.push(`left ${done} already filled`);
-      if (yours) parts.push(`${yours} still need${yours === 1 ? 's' : ''} you`);
-
-      setStatus(`${parts.join(', ')}.`, yours ? 'warn' : 'ok');
-    } catch (err) {
-      failed(err);
-    }
-  };
+    setStatus(`${parts.join(', ')}.`, yours ? 'warn' : 'ok');
+  });
 
   /*
    * Muting, and unmuting, from the same button.
@@ -408,7 +430,7 @@ async function boot() {
    * So the button says which way it goes, and it is drawn from the settings
    * every time the popup opens rather than remembered here.
    */
-  $('mute').onclick = async () => {
+  $('mute').onclick = acts(async () => {
     const host = hostOf((await activeTab())?.url);
     if (!host) {
       setStatus('This page does not belong to a site that can be muted.', 'warn');
@@ -420,12 +442,12 @@ async function boot() {
     await send('muteHost', { host, muted: !wasMuted });
     await drawMute();
     setStatus(wasMuted ? `${host} is no longer muted — reload the page.` : `Muted ${host}.`, 'ok');
-  };
+  });
 
-  $('openApp').onclick = async () => {
+  $('openApp').onclick = acts(async () => {
     const current = await send('getSettings');
     chrome.tabs.create({ url: current.serverUrl });
-  };
+  });
 
   check();
   // The mute button's own state, which does not depend on the store being
