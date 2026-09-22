@@ -42,6 +42,8 @@ import {
   SOLO_OTHER,
   OWN_SITE,
   SPA_BOARD,
+  NEW_TAB_ASIDE,
+  NEW_TAB_BENEFITS,
   STEP_ONE,
   STEP_TWO_FORM,
   WORKDAY,
@@ -321,6 +323,119 @@ async function main() {
       await settled(tab);
       await expectContinuity(tab, 'new tab', { role: 'Platform Engineer' });
       await tab.close();
+      await page.close();
+    }
+
+    /* ---- A new tab that is not an application ---- */
+    /*
+     * The other half of the same mechanism, and the one that was wrong.
+     *
+     * Chrome sets `openerTabId` on *any* tab a page opens, and the trail
+     * inherited on that alone — so middle-clicking "Benefits" from a posting
+     * you had a resume built for handed the whole application to the new
+     * tab: its pages, its work, and its live "the next page belongs to this
+     * application", which is the one thing that overrides the host and path
+     * rules. Pressing Apply is what makes a new tab a continuation; opening
+     * a link is not.
+     */
+    group('A new tab opened from a posting by something that is not Apply');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(NEW_TAB_ASIDE), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      if (await cardOf(page).getByRole('button', { name: 'Build resume' }).count()) {
+        await buildResume(page);
+      }
+
+      const opened = context.waitForEvent('page');
+      await page.click('#aside');
+      const aside = await opened;
+      await aside.waitForLoadState('domcontentloaded');
+      // Long enough for the content script to have asked, which is the moment
+      // the inheriting used to happen.
+      await aside.waitForTimeout(2500);
+
+      const held = await worker.evaluate(async (url) => {
+        const [tab] = await chrome.tabs.query({ url });
+        const key = `trail:${tab.id}`;
+        const got = await chrome.storage.session.get(key);
+        return { pages: (got[key]?.pages ?? []).length, work: Boolean(got[key]?.work), expecting: Boolean(got[key]?.expecting) };
+      }, aside.url());
+
+      check('the benefits tab does not take the application over', held.pages === 0, JSON.stringify(held));
+      check('nor the resume that was built for it', held.work === false, JSON.stringify(held));
+      await aside.close();
+      await page.close();
+    }
+
+    /* ---- A new tab off a posting whose Apply was pressed long ago ---- */
+    /*
+     * The half above only proves the expectation has to be *there*. This one
+     * proves it has to be recent, which is the same five minutes `wasExpected`
+     * already holds every other continuation to.
+     *
+     * The shape is a posting left open in a background tab since this morning
+     * — Apply was pressed on it once, the form was abandoned, the expectation
+     * has long since gone stale. Middle-clicking "Benefits" out of it hours
+     * later is not a continuation of anything, and inheriting that dead
+     * expectation would hand the new tab the one flag that overrides the host
+     * and path rules for whatever it navigates to next.
+     */
+    group('A new tab opened from a posting whose Apply was pressed hours ago');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(NEW_TAB_ASIDE), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      if (await cardOf(page).getByRole('button', { name: 'Build resume' }).count()) {
+        await buildResume(page);
+      }
+
+      // Age it past EXPECTATION_MS, exactly as an abandoned form would.
+      const staled = await worker.evaluate(async ({ url, to }) => {
+        const [tab] = await chrome.tabs.query({ url });
+        const key = `trail:${tab.id}`;
+        const got = await chrome.storage.session.get(key);
+        const expecting = { to, at: Date.now() - 60 * 60 * 1000 };
+        await chrome.storage.session.set({ [key]: { ...got[key], expecting } });
+        return Boolean(got[key]?.pages?.length);
+      }, { url: page.url(), to: `${fixtures.urlFor(NEW_TAB_ASIDE)}/apply` });
+
+      // Without this the tab below would have nothing to inherit either way,
+      // and the three checks would pass on an empty trail.
+      check('the posting it is opened from is an application in the first place', staled === true);
+
+      const opened = context.waitForEvent('page');
+      await page.click('#aside');
+      const aside = await opened;
+      await aside.waitForLoadState('domcontentloaded');
+      await aside.waitForTimeout(2500);
+
+      const read = async (target) =>
+        worker.evaluate(async (url) => {
+          const [tab] = await chrome.tabs.query({ url });
+          const key = `trail:${tab.id}`;
+          const got = await chrome.storage.session.get(key);
+          return {
+            pages: (got[key]?.pages ?? []).length,
+            work: Boolean(got[key]?.work),
+            expecting: Boolean(got[key]?.expecting),
+          };
+        }, target);
+
+      const held = await read(aside.url());
+      const opener = await read(page.url());
+
+      // The same guard again: if the page had dropped its own stale
+      // expectation before the click, there would be nothing to inherit.
+      check('the stale expectation was still on the page when the link opened', opener.expecting === true, JSON.stringify(opener));
+      check('a stale expectation does not hand the application over', held.pages === 0, JSON.stringify(held));
+      check('nor the resume that was built for it', held.work === false, JSON.stringify(held));
+      check(
+        'nor the expectation itself, which would vouch for wherever the tab goes next',
+        held.expecting === false,
+        JSON.stringify(held),
+      );
+      await aside.close();
       await page.close();
     }
 

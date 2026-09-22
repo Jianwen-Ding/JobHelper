@@ -456,6 +456,35 @@ export const ATS_FORM_UNANSWERABLE = {
   html: page('Apply — Acme', 'Acme', FORM_WITH_UNANSWERABLE),
 };
 
+/**
+ * The same posting with an ordinary link beside the Apply one.
+ *
+ * "Benefits", "Life at Nova", "Follow us" — every careers page has several,
+ * and plenty open in a new tab. Chrome sets `openerTabId` on those exactly as
+ * it does for Apply, so they are the case that separates "this tab came from
+ * an application" from "this tab came from a page".
+ */
+export const NEW_TAB_ASIDE = {
+  name: 'new-tab-aside',
+  path: '/nova/roles/staff-engineer',
+  company: 'Nova',
+  title: 'Staff Engineer',
+  html: page(
+    'Staff Engineer at Nova',
+    'Nova',
+    `${ROLE_BODY}
+     <p><a id="aside" href="/nova/benefits" target="_blank" rel="noreferrer">Benefits and perks</a></p>
+     <p><a href="/nova/roles/staff-engineer/apply" target="_blank" rel="noreferrer">Apply now</a></p>`,
+  ),
+};
+
+/** The page that link goes to, which is nobody's application. */
+export const NEW_TAB_BENEFITS = {
+  name: 'new-tab-benefits',
+  path: '/nova/benefits',
+  html: page('Benefits — Nova', 'Nova', '<h2>Benefits and perks</h2><p>Health, dental, and a bicycle.</p>'),
+};
+
 /** An Apply button that opens the form in a new tab, as plenty do. */
 export const NEW_TAB_ROLE = {
   name: 'new-tab-role',
@@ -1584,7 +1613,7 @@ export const NAVIGATION = [
   EMBEDDED_BOARD, EMBEDDED_BOARD_FRAME, BLOG_WITH_FORM, BLOG_ENQUIRY_FRAME, LATE_RENDER,
   CROWDED_PAGE, CROWDED_PAGE_FORM,
   LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY,
-  OWN_SITE, ATS_FORM, ATS_FORM_UNANSWERABLE, NEW_TAB_ROLE, NEW_TAB_FORM, STEP_ONE, STEP_TWO, STEP_TWO_FORM, SPA_BOARD,
+  OWN_SITE, ATS_FORM, ATS_FORM_UNANSWERABLE, NEW_TAB_ROLE, NEW_TAB_FORM, NEW_TAB_ASIDE, NEW_TAB_BENEFITS, STEP_ONE, STEP_TWO, STEP_TWO_FORM, SPA_BOARD,
   ONE_ADDRESS_BOARD, SOLO_ROLE, SOLO_OTHER, SOLO_OTHER_FORM, NIMBUS_ROLE, NIMBUS_QUIET_FORM,
   LETTER_SPA, LETTER_SPA_FORM, LETTER_SPA_PLAIN,
 ];

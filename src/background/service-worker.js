@@ -7,6 +7,7 @@
 
 import { getSettings } from '../shared/config.js';
 import {
+  EXPECTATION_MS,
   judgeApplication,
   keepPages,
   plainlyAnotherRole,
@@ -619,7 +620,36 @@ async function inheritIfNew(tabId, openerTabId) {
   if (mine.pages.length > 0 || mine.cleared) return;
 
   const theirs = await readTrail(openerTabId);
-  if (theirs.pages.length > 0) await writeTrail(tabId, { ...theirs, at: Date.now() });
+  if (theirs.pages.length === 0) return;
+
+  /*
+   * And only when the tab it came from was in the middle of applying.
+   *
+   * `openerTabId` is set by Chrome for *any* tab a page opens — a middle
+   * click, a ctrl-click, a `target="_blank"` link, a `window.open` — and this
+   * runs on nearly every page, because `openHere` is what a low-scoring page
+   * asks before giving up and most pages are low-scoring. So middle-clicking
+   * "Benefits" from a posting you had half a letter written for handed that
+   * whole application to the new tab: its pages, its resume, its letter, and
+   * its live `expecting`, which is the one thing that overrides the host and
+   * path rules. One ordinary navigation from there to another company's
+   * posting could be taken as the same application.
+   *
+   * The expectation is the discriminator this always wanted, and
+   * `expectContinuation` says as much in its own comment — a new tab
+   * inherits "so an Apply button that opens one lands already knowing where
+   * it came from". Pressing Apply sets it; middle-clicking "Benefits" does
+   * not. Held to the same five minutes `wasExpected` allows, so a tab opened
+   * out of a posting left open since yesterday inherits nothing either.
+   *
+   * Where it is missing the new tab starts fresh, which is what every tab
+   * with no opener already does — and `wasLinkedFrom` still reads the link
+   * out of the page it came from, with no race in it at all.
+   */
+  const applying = theirs.expecting?.to && Date.now() - (theirs.expecting.at ?? 0) <= EXPECTATION_MS;
+  if (!applying) return;
+
+  await writeTrail(tabId, { ...theirs, at: Date.now() });
 }
 
 /* ------------------------------------------------------------------ *
