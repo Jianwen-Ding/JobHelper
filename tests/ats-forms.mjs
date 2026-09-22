@@ -48,6 +48,16 @@ const PROFILE = {
   github: 'github.com/jianwen',
   website: 'jianwen.dev',
   school: 'Northeastern University',
+  /*
+   * The education boxes, which the store answered with nothing until
+   * `derivedAutofill` learned to read them off the education entry. The
+   * patterns for all four have been in `FIELD_PATTERNS` from the start; what
+   * was missing was anything to put in them, so a Greenhouse Education section
+   * came out empty on a store holding a university, a degree and a grade.
+   */
+  degree: 'Bachelor of Science',
+  major: 'Computer Science',
+  gpa: '3.8',
   address_city: 'Boston',
   address_state: 'Massachusetts',
   address_country: 'United States',
@@ -99,7 +109,36 @@ export const SYSTEMS = [
       <label for="cover_letter_text">Cover Letter</label>
       <textarea id="cover_letter_text" name="job_application[cover_letter_text]"></textarea>
       <label for="q_why">Why do you want to work at Acme? <span class="asterisk">*</span></label>
-      <textarea id="q_why" name="job_application[answers_attributes][3][text_value]"></textarea>`,
+      <textarea id="q_why" name="job_application[answers_attributes][3][text_value]"></textarea>
+      <!--
+        The Education block, as Greenhouse builds it: three selects with the
+        options already on the page, named for the nested attributes rather
+        than for anything readable, plus a plain box for the grade. "Discipline"
+        is what it calls the subject — the word "major" appears nowhere.
+      -->
+      <label for="school--0">School</label>
+      <select id="school--0" name="job_application[educations_attributes][0][school_name_id]">
+        <option value="">--</option>
+        <option value="11">Boston University</option>
+        <option value="12">Northeastern University</option>
+        <option value="13">Northwestern University</option>
+      </select>
+      <label for="degree--0">Degree</label>
+      <select id="degree--0" name="job_application[educations_attributes][0][degree_id]">
+        <option value="">--</option>
+        <option value="21">Associate's Degree</option>
+        <option value="22">Bachelor of Science</option>
+        <option value="23">Master of Science</option>
+      </select>
+      <label for="discipline--0">Discipline</label>
+      <select id="discipline--0" name="job_application[educations_attributes][0][discipline_id]">
+        <option value="">--</option>
+        <option value="31">Computer Engineering</option>
+        <option value="32">Computer Science</option>
+        <option value="33">Information Systems</option>
+      </select>
+      <label for="gpa--0">GPA</label>
+      <input type="text" id="gpa--0" name="job_application[educations_attributes][0][gpa]">`,
     want: {
       '#first_name': 'Jianwen',
       '#last_name': 'Ding',
@@ -108,6 +147,11 @@ export const SYSTEMS = [
       '#job_application_answers_attributes_0_text_value': 'linkedin.com/in/jianwen',
       '#job_application_answers_attributes_1_boolean_value': '1',
       '#job_application_answers_attributes_2_boolean_value': '0',
+      // And the Education section, which used to come out empty.
+      '#school--0': '12',
+      '#degree--0': '22',
+      '#discipline--0': '32',
+      '#gpa--0': '3.8',
     },
     questions: [/why do you want to work at acme/i],
     wantsLetter: true,
