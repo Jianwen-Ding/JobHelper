@@ -2506,7 +2506,29 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     const copy = ` This is a copy, saved under this posting's name — the resume you keep is untouched.`;
 
     if (state.builtWith === 'ai' && analysis.aiUsed) {
-      return copy.trim();
+      /*
+       * And what the model asked for that is not in the save.
+       *
+       * The server checks every id a model names against the save and drops
+       * the ones that are not there — the rule that it chooses between
+       * wordings rather than writing them is enforced there, not trusted.
+       * What it dropped was computed and thrown away, so a run where the
+       * model invented most of its plan reached the card looking exactly like
+       * a run where it chose three things, and this said "chosen by the AI"
+       * over both.
+       *
+       * Worth saying because it changes what to do next: a run mostly
+       * refused is one worth asking again, or one where the model being used
+       * is not up to the job. The count, never the list — each entry names a
+       * bullet or a variant by its internal id, which is the one kind of
+       * string this card does not put on screen.
+       */
+      const thrown = analysis.rejected?.length ?? 0;
+      if (thrown === 0) return copy.trim();
+      return (
+        `${thrown === 1 ? 'One thing the AI asked for is' : `${thrown} things the AI asked for are`} not in ` +
+        `your save, so what is below is the rest of what it chose.${copy}`
+      );
     }
     /*
      * The AI was asked for and did not happen.
@@ -2696,6 +2718,16 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     'aiFailed',
     'aiFailedKind',
     'aiRaw',
+    /*
+     * What the sanitiser threw out of this run's plan.
+     *
+     * Here rather than in `aboutThePage` because that is what it describes: a
+     * keyword match has nothing to refuse. Nothing observable turns on it
+     * today — both halves reach `analysis` through an `Object.assign`, so
+     * either placement shows the same sentence — but a per-proposal count
+     * living on the page is one waiting to be shown over somebody else's run.
+     */
+    'rejected',
   ];
 
   const proposalOf = (a) => Object.fromEntries(PROPOSAL_KEYS.filter((k) => k in a).map((k) => [k, a[k]]));

@@ -428,6 +428,104 @@ async function main() {
     }).toString()})(createCard, ${JSON.stringify(extra)})`),
   );
 
+  /*
+   * A plan the server mostly refused, reported as a plan.
+   *
+   * Every id a model names is checked against the save and the ones that are
+   * not there are dropped — that is where "the AI chooses between wordings and
+   * never writes one" is actually enforced. What it dropped was computed and
+   * thrown away before it reached here, so a run where the model invented
+   * twelve of its fifteen choices arrived looking exactly like one where it
+   * chose three, and the card said "chosen by the AI" over both. Which is the
+   * one thing worth knowing about that run: it is the one worth asking again.
+   */
+  const mostlyRefused = await summaryFor({
+    tailor: 'ai',
+    aiUsed: true,
+    rejected: ['choice b_ghost: no such bullet', 'choice b_pipeline: not a variant id'],
+  });
+  check(
+    'a plan the save mostly refused says so',
+    /2 things the AI asked for are not in your save/.test(mostlyRefused),
+    mostlyRefused.slice(0, 160),
+  );
+  check(
+    'and never by the ids it named, which are not for reading',
+    !/b_ghost|b_pipeline|v_/.test(mostlyRefused),
+    mostlyRefused.slice(0, 160),
+  );
+
+  const refusedOne = await summaryFor({ tailor: 'ai', aiUsed: true, rejected: ['choice b_ghost: no such bullet'] });
+  check(
+    'one of them is one thing, not 1 things',
+    /One thing the AI asked for is not in your save/.test(refusedOne),
+    refusedOne.slice(0, 160),
+  );
+
+  const refusedNothing = await summaryFor({ tailor: 'ai', aiUsed: true, rejected: [] });
+  check(
+    'and a run the save took whole says nothing about refusals',
+    !/asked for/.test(refusedNothing),
+    refusedNothing.slice(0, 160),
+  );
+
+  /*
+   * And the same sentence on a run that landed in the background.
+   *
+   * An AI pass started on one page arrives minutes later, is filed rather
+   * than shown (see `fileOffer`), and is put on screen by pressing its
+   * button — a different path into `builtSummary` than the one above, which
+   * reads the analysis the card opened with.
+   *
+   * It does not pin which side of `PROPOSAL_KEYS` the field sits on: both
+   * halves reach `analysis` through an `Object.assign`, so moving it changes
+   * nothing observable. It is in the proposal half because that is what it
+   * describes — a keyword match has nothing to refuse — and because a
+   * per-proposal field sitting in `aboutThePage` is a stale count waiting to
+   * be shown over somebody else's run.
+   */
+  const refusedInTheBackground = await inPage(async (createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+        diff: [],
+        tailor: 'match',
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action) => (action === 'aiStatus' ? { active: true, state: 'on' } : {}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    await new Promise((r) => setTimeout(r, 120));
+
+    // Filed, not shown: nobody pressed for it on this page.
+    handle.update({
+      spec: { id: 'job-acme', label: 'Acme', tier: 'temporary', choices: { b_testing: 'v_base' } },
+      rationale: [],
+      diff: [],
+      tailor: 'ai',
+      aiUsed: true,
+      rejected: ['choice b_ghost: no such bullet', 'choice b_pipeline: not a variant id'],
+    });
+    await new Promise((r) => setTimeout(r, 120));
+
+    // Now open it, which is a switch between filed proposals and no server.
+    [...root.querySelectorAll('button.mode')].find((b) => /AI/.test(b.textContent))?.click();
+    await new Promise((r) => setTimeout(r, 200));
+    return [...root.querySelectorAll('.hint')].map((n) => n.textContent).join(' | ');
+  });
+
+  check(
+    'a refusal count survives being filed and opened later',
+    /2 things the AI asked for are not in your save/.test(refusedInTheBackground),
+    refusedInTheBackground.slice(0, 200),
+  );
+
   const failedToStart = await summaryFor({
     tailor: 'match',
     aiUsed: false,
