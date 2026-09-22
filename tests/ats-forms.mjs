@@ -129,9 +129,11 @@ export const SYSTEMS = [
       <label for="degree--0">Degree</label>
       <select id="degree--0" name="job_application[educations_attributes][0][degree_id]">
         <option value="">--</option>
+        <!-- Greenhouse's own list: levels, not the degree as the store words it. -->
         <option value="21">Associate's Degree</option>
-        <option value="22">Bachelor of Science</option>
-        <option value="23">Master of Science</option>
+        <option value="22">Bachelor's Degree</option>
+        <option value="23">Master's Degree</option>
+        <option value="24">Doctor of Philosophy (Ph.D.)</option>
       </select>
       <label for="discipline--0">Discipline</label>
       <select id="discipline--0" name="job_application[educations_attributes][0][discipline_id]">

@@ -739,7 +739,8 @@ const WIDGETS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply �
     input.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
   }
   reactSelect('country', ['United States Minor Outlying Islands', 'United States', 'United Kingdom']);
-  reactSelect('degree', ["Bachelor's Degree", "Master's Degree"]);
+  // A near miss: another bachelor's degree, not this one and not a level.
+  reactSelect('degree', ['Bachelor of Arts', 'Master of Science']);
   reactSelect('major', ['Computer Science', 'Computer Engineering'], { takes: false });
   reactSelect('city', ['Boston', 'Boston Heights'], { delay: 400 });
 
@@ -1817,6 +1818,40 @@ async function main() {
         return { ...Object.fromEntries(ids.map((id) => [id, document.getElementById(id).value])), limits };
       }, { b: base }),
     );
+    /*
+     * A degree dropdown lists levels — Greenhouse's reads "Associate's
+     * Degree", "Bachelor's Degree", "Master's Degree" — and the store words
+     * the degree as it is written on the diploma. Nothing matched, so the box
+     * was left empty on every Greenhouse form. A level option takes the degree
+     * of that level; a specific one still has to be the same degree.
+     */
+    const degrees = await page.evaluate(async ({ b }) => {
+      const m = await import(`${b}/autofill.js`);
+      const pick = (value, options) => {
+        document.body.innerHTML = `<form><label for="d">Degree</label><select id="d"><option value="">--</option>${options
+          .map((o) => `<option>${o}</option>`)
+          .join('')}</select></form>`;
+        m.fillForm({ degree: value });
+        return document.getElementById('d').value;
+      };
+      return {
+        bs: pick('Bachelor of Science', ["Associate's Degree", "Bachelor's Degree", "Master's Degree"]),
+        abbr: pick('B.S.', ["Associate's Degree", "Bachelor's Degree"]),
+        ms: pick('Master of Science', ["Bachelor's Degree", 'Masters']),
+        phd: pick('Doctor of Philosophy', ["Master's Degree", 'Doctorate']),
+        notArts: pick('Bachelor of Science', ['Bachelor of Arts', "Master's Degree"]),
+        notMba: pick('Master of Business Administration', ["Bachelor's Degree", "Master's Degree"]),
+      };
+    }, { b: base });
+    group('A degree against a list of levels');
+    check(
+      'a degree takes the option for its level, however it is spelled',
+      degrees.bs === "Bachelor's Degree" && degrees.abbr === "Bachelor's Degree" && degrees.ms === 'Masters' && degrees.phd === 'Doctorate',
+      JSON.stringify(degrees),
+    );
+    check('but never a different specific degree', degrees.notArts === '', `"${degrees.notArts}"`);
+    check('and an MBA is left for the person rather than guessed a master’s', degrees.notMba === '', `"${degrees.notMba}"`);
+
     group('Academic boxes that name the institution, and school the profile is not about');
     check('a University box still takes the school', academics['a-uni'] === 'Northeastern University', `"${academics['a-uni']}"`);
     check(

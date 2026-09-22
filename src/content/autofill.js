@@ -990,11 +990,48 @@ function placeKey(key, text) {
 }
 
 /**
+ * The level a degree is at, from however it is written — or nothing.
+ *
+ * An MBA is left out on purpose: it is a master's, and a list offering both
+ * "Master's Degree" and "MBA" means the person should say which.
+ */
+const DEGREE_LEVELS = [
+  ['associate', /\bassociate\b|\bassociate'?s\b/i],
+  ['bachelor', /\bbachelor|\bundergraduate\b|\bb\.?\s?(?:s|a|sc|eng|e)\.?(?=\s|,|$)/i],
+  ['master', /\bmaster|\bm\.?\s?(?:s|a|sc|eng)\.?(?=\s|,|$)/i],
+  ['doctorate', /\bph\.?\s?d\b|\bdoctor of philosophy\b|\bdoctora(?:te|l)\b/i],
+];
+function degreeLevel(text) {
+  const said = clean(text);
+  if (/business administration|\bm\.?\s?b\.?\s?a\b/i.test(said)) return null;
+  return DEGREE_LEVELS.find(([, re]) => re.test(said))?.[0] ?? null;
+}
+
+/**
+ * An option that names a level and nothing else: "Bachelor's Degree",
+ * "Masters", "Doctorate", "Undergraduate degree". Only these take a degree by
+ * its level — "Bachelor of Arts" is a degree of its own, and a Bachelor of
+ * Science is not it.
+ */
+const LEVEL_ONLY =
+  /^(?:associate|bachelor|master|doctorate|doctoral|ph\.?\s?d\.?|undergraduate)(?:'?s)?(?:\s+degree)?$/i;
+
+/**
  * Whether an option is this answer under a different spelling — for the
  * fields where a spelling table exists, and only those. Consulted after an
  * exact match has failed, never instead of one.
  */
 function sameAnswerSpelledOtherwise(key, option, value) {
+  /*
+   * A degree against a list of levels, which is what Greenhouse asks with:
+   * "Associate's Degree", "Bachelor's Degree", "Master's Degree". The store
+   * words the degree as the diploma does, so nothing matched and the box was
+   * left empty on every Greenhouse form.
+   */
+  if (key === 'degree') {
+    const level = degreeLevel(value);
+    return Boolean(level) && LEVEL_ONLY.test(clean(option).replace(/[’]/g, "'")) && degreeLevel(option) === level;
+  }
   if (key === 'graduation_month' || key === 'education_start_month') {
     const month = monthOf(value);
     return Boolean(month) && month === monthOf(option);
