@@ -59,7 +59,9 @@ function fakeStore() {
   const server = http.createServer(async (req, res) => {
     const url = req.url.split('?')[0];
     const raw = await readBody(req);
-    state.hits.push({ url, method: req.method, project: req.headers['x-rmm-project'] ?? null, body: raw });
+    // The query as well: `/api/autofill` carries the resume's choices in it.
+    const query = new URLSearchParams(req.url.split('?')[1] ?? '');
+    state.hits.push({ url, query, method: req.method, project: req.headers['x-rmm-project'] ?? null, body: raw });
 
     const mode = state.routes[url] ?? 'ok';
     if (mode === 'silent') {
@@ -746,6 +748,37 @@ async function main() {
       });
       await new Promise((r) => setTimeout(r, 600));
       check('and says it only the once', spaces() === before + 2, `${spaces() - before} opened`);
+    }
+
+    /*
+     * Which resume the form is being filled for.
+     *
+     * Somebody applying to internships and new-grad roles keeps two graduation
+     * dates and picks between them per posting. `autofillData` asked the store
+     * with no resume named, so the store answered from the default — May, on
+     * every internship form, under a resume that says December. The tailored
+     * resume's choices are on the trail; they go with the request.
+     */
+    group('Autofill is answered for the resume being sent');
+    {
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      await ask(driver, 'analyze', { url: 'http://g.example/jobs/intern', title: 'Helios', html: '<p>intern</p>', company: 'Helios' });
+
+      const asked = () => store.sentTo('/api/autofill').slice(-1)[0]?.query;
+
+      await ask(driver, 'autofillData', {});
+      check('with nothing built, it asks without naming a resume', asked()?.has('choices') === false, asked()?.toString());
+
+      await ask(driver, 'saveWork', {
+        work: {
+          spec: { id: 'job-intern', choices: { 'edu_neu.dates': 'v_dec2026' }, generatedFor: { company: 'Helios', role: 'Intern' } },
+          render: { pages: 1 },
+        },
+      });
+      await ask(driver, 'autofillData', {});
+      const sent = JSON.parse(asked()?.get('choices') ?? '{}');
+      check('once a resume is built, its choices go with the request', sent['edu_neu.dates'] === 'v_dec2026', JSON.stringify(sent));
     }
 
     group('Holding a space in the editor');

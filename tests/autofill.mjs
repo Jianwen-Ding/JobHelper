@@ -606,7 +606,41 @@ const REMEMBERED = `<!doctype html><html><head><meta charset="utf-8"><title>Appl
   document.getElementById('start').value = 'In two weeks';
 </script></body></html>`;
 
-const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED };
+/*
+ * When the degree ends, in every shape it is asked in.
+ *
+ * The store answers "December" and "2026" and "December 2026", and forms want
+ * "Dec" from a list, "12" from another list, "2026-12" in a month picker and
+ * "12/2026" in a box that says so. Each was a blank before. The last two
+ * fields are the ones that must *not* be answered: a yes/no about being a
+ * graduate is not a date question, and a label naming the university is still
+ * about the date.
+ */
+const GRADUATION = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Graduation</title></head><body>
+<form>
+  <label for="gm">Expected graduation month</label>
+  <select id="gm" name="grad_month"><option value="">Month</option>
+    <option value="1">Jan</option><option value="2">Feb</option><option value="3">Mar</option><option value="4">Apr</option>
+    <option value="5">May</option><option value="6">Jun</option><option value="7">Jul</option><option value="8">Aug</option>
+    <option value="9">Sep</option><option value="10">Oct</option><option value="11">Nov</option><option value="12">Dec</option>
+  </select>
+  <label for="gm2">Graduation Month</label>
+  <select id="gm2" name="grad_month_2"><option value="">--</option>
+    <option>01</option><option>02</option><option>03</option><option>04</option><option>05</option><option>06</option>
+    <option>07</option><option>08</option><option>09</option><option>10</option><option>11</option><option>12</option>
+  </select>
+  <label for="gy">Expected graduation year</label>
+  <select id="gy" name="grad_year"><option value="">Year</option><option>2025</option><option>2026</option><option>2027</option></select>
+  <label for="gmonth">Graduation date</label><input id="gmonth" type="month" name="grad_month_picker">
+  <label for="gslash">Anticipated graduation</label><input id="gslash" name="grad_slash" placeholder="MM/YYYY">
+  <label for="gwhen">When do you expect to graduate?</label><input id="gwhen" name="grad_when">
+  <label for="guni">Graduation date from your university</label><input id="guni" name="grad_uni">
+  <label for="gprog">Graduate program of interest</label><input id="gprog" name="grad_program">
+  <label for="recent">Are you a recent graduate?</label>
+  <select id="recent" name="recent"><option value="">--</option><option>Yes</option><option>No</option></select>
+</form></body></html>`;
+
+const PAGES = { '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -1279,6 +1313,66 @@ async function main() {
           };
         }, { b: base, profile: PROFILE, ids }),
       );
+    const graduation = await page.goto(`${base}/graduation`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm({
+          graduation_month: 'December',
+          graduation_year: '2026',
+          graduation_date: 'December 2026',
+          school: 'Northeastern University',
+        });
+        const ids = ['gm', 'gm2', 'gy', 'gmonth', 'gslash', 'gwhen', 'guni', 'gprog', 'recent'];
+        return {
+          values: Object.fromEntries(ids.map((id) => [id, document.getElementById(id).value])),
+          months: ['December', 'Dec', 'Dec.', 'Sept', '12', '01', '12 - December', 'Ma', 'Maybe', '13', ''].map((t) => [
+            t,
+            m.monthOf(t),
+          ]),
+          skipped: report.skipped.map((x) => `${x.key}:${x.reason}`),
+        };
+      }, { b: base }),
+    );
+
+    group('When the degree ends, however the form asks');
+    check('a month list that abbreviates', graduation.values.gm === '12', `value "${graduation.values.gm}"`);
+    check('a month list that numbers', graduation.values.gm2 === '12', `value "${graduation.values.gm2}"`);
+    check('a year list', graduation.values.gy === '2026', `value "${graduation.values.gy}"`);
+    check('a month picker, which takes nothing but 2026-12', graduation.values.gmonth === '2026-12', `"${graduation.values.gmonth}"`);
+    check('a box whose placeholder says MM/YYYY', graduation.values.gslash === '12/2026', `"${graduation.values.gslash}"`);
+    check('a plain box, the way a person would type it', graduation.values.gwhen === 'December 2026', `"${graduation.values.gwhen}"`);
+    /*
+     * The first pattern to match claims the field, and "university" is the
+     * school's. Above it on purpose, so a date question naming the school is
+     * still a date question.
+     */
+    check(
+      'a date question that names the university is still about the date',
+      graduation.values.guni === 'December 2026',
+      `"${graduation.values.guni}"`,
+    );
+    check('"are you a recent graduate?" is not a date question', graduation.values.recent === '', `"${graduation.values.recent}"`);
+    /*
+     * The one that proves it for a text box. A dropdown of Yes and No cannot
+     * take a date whatever claims it, so it stays blank either way; a box
+     * takes anything, which is where a pattern matching the bare word
+     * "graduate" would type December 2026 into a question about programmes.
+     */
+    check('nor is a box that merely says "graduate"', graduation.values.gprog === '', `"${graduation.values.gprog}"`);
+    const months = Object.fromEntries(graduation.months);
+    check(
+      'reads a month however it is spelled',
+      ['December', 'Dec', 'Dec.', '12', '12 - December'].every((t) => months[t] === 12) &&
+        months.Sept === 9 &&
+        months['01'] === 1,
+      JSON.stringify(graduation.months),
+    );
+    check(
+      'and refuses what is not one',
+      months.Ma === null && months.Maybe === null && months['13'] === null && months[''] === null,
+      JSON.stringify(graduation.months),
+    );
+
     const hidden = await read('/hidden', ['hfn', 'hem', 'hph']);
     const unhidden = await read('/unhidden', ['ufn', 'uem', 'uph']);
 

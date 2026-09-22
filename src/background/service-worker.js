@@ -2166,8 +2166,24 @@ const handlers = {
     return { base64: btoa(binary) };
   },
 
-  async autofillData() {
-    return serverFetch('/api/autofill');
+  /**
+   * What the form can be filled from — as the resume being sent says it.
+   *
+   * The resume's `choices` go along because some answers differ per resume,
+   * and the graduation date is the one that matters: somebody applying to
+   * internships and new-grad roles keeps two, and the form asked with no
+   * resume named was answered from the default — May, on every internship
+   * form, under a resume that says December. The store reads the choices and
+   * answers the way the attached document does.
+   */
+  async autofillData(_payload, tab) {
+    const trail = await readTrail(tab?.id);
+    const choices = trail?.work?.spec?.choices;
+    const query =
+      choices && typeof choices === 'object' && Object.keys(choices).length > 0
+        ? `?choices=${encodeURIComponent(JSON.stringify(choices))}`
+        : '';
+    return serverFetch(`/api/autofill${query}`);
   },
 
   /**

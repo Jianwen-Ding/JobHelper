@@ -29,6 +29,22 @@ const FIELD_PATTERNS = [
   ['linkedin', /\b(linked-?in)\b/i],
   ['github', /\b(git-?hub)\b/i],
   ['website', /\b(website|portfolio|personal[\s_-]?site|homepage)\b/i],
+  /*
+   * When the degree ends. Above school and degree on purpose: the first
+   * pattern to match claims the field, and "Graduation date from your
+   * university" or "Expected degree completion" would otherwise be taken as
+   * the school's name or the degree's.
+   *
+   * Month and year before the date, because "Expected graduation year" is
+   * asking for the year alone. Nothing here fires on a bare "graduate" — "Are
+   * you a recent graduate?" is a yes/no question, and a date is not its answer.
+   */
+  ['graduation_month', /(\bgrad\b|\bgraduat\w*|\bcompletion\b).{0,40}\bmonth\b|\bmonth\b.{0,40}\bgraduat/i],
+  ['graduation_year', /(\bgrad\b|\bgraduat\w*|\bcompletion\b).{0,40}\byear\b|\byear\b.{0,40}\bgraduat|\bclass\s*year\b/i],
+  [
+    'graduation_date',
+    /\bgrad(uation)?\s*date\b|\bdate\s*of\s*graduation\b|\b(expected|anticipated)\s*grad(uation)?\b|\bwhen\s+(do|will)\s+you\s+(expect\s+to\s+)?graduate\b/i,
+  ],
   ['school', /\b(school|university|college|institution)\b/i],
   ['degree', /\b(degree)\b/i],
   ['major', /\b(major|discipline|field[\s_-]?of[\s_-]?study)\b/i],
@@ -790,6 +806,57 @@ function otherWaysToWrite(key, value) {
 /** Two option labels are the same answer if they read the same. */
 const sameOption = (a, b) => clean(a).toLowerCase() === clean(b).toLowerCase();
 
+const MONTH_NAMES = [
+  'january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december',
+];
+
+/**
+ * Which month an option means, however it is spelled: "December", "Dec",
+ * "Dec.", "Sept", "12", "01", "12 - December". Null for anything else.
+ *
+ * A month dropdown is the one list where the same answer has four common
+ * spellings and every form picks a different one, so matching the store's
+ * "December" as text found nothing on a form listing "Dec" and the box was
+ * left empty. Three letters at least, so "Ma" is not taken for March or May.
+ */
+export function monthOf(text) {
+  const said = clean(text).toLowerCase();
+  if (!said) return null;
+  const number = /^0?(\d{1,2})(?!\d)/.exec(said);
+  if (number) {
+    const n = Number(number[1]);
+    return n >= 1 && n <= 12 ? n : null;
+  }
+  const word = /^[a-z]+/.exec(said)?.[0] ?? '';
+  if (word.length < 3) return null;
+  const at = MONTH_NAMES.findIndex((m) => m.startsWith(word));
+  return at === -1 ? null : at + 1;
+}
+
+/**
+ * "December 2026" written the way this particular box wants it.
+ *
+ * A `type=month` input takes "2026-12" and nothing else — assigning the
+ * readable form leaves it empty and raises nothing. A box whose placeholder
+ * says MM/YYYY will usually be checked against that shape when the form is
+ * sent. Anything else gets the readable form, which a person would type.
+ * Never a day: `type=date` wants one, and a guessed day is a guess.
+ */
+export function graduationFor(input, value) {
+  const hit = /^([a-z]+)\s+(\d{4})$/i.exec(String(value).trim());
+  const month = hit ? monthOf(hit[1]) : null;
+  if (!month) return value;
+  const year = hit[2];
+  const mm = String(month).padStart(2, '0');
+  if (input.type === 'month') return `${year}-${mm}`;
+  const hint = `${input.placeholder ?? ''} ${input.getAttribute?.('aria-label') ?? ''}`.toLowerCase();
+  if (/yyyy\s*-\s*mm/.test(hint)) return `${year}-${mm}`;
+  if (/mm\s*\/\s*yyyy/.test(hint)) return `${mm}/${year}`;
+  if (/mm\s*\/\s*yy\b/.test(hint)) return `${mm}/${year.slice(2)}`;
+  return value;
+}
+
 /**
  * Reading a yes/no answer out of a profile that holds a sentence.
  *
@@ -1014,7 +1081,7 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
     if (!match) continue;
 
     const [key] = match;
-    const value = fields[key];
+    let value = fields[key];
 
     const answered = input instanceof HTMLSelectElement ? selectIsAnswered(input) : Boolean(input.value);
     if (answered && !overwrite) {
@@ -1043,8 +1110,15 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
        * and the country submitted as nothing.
        */
       const choosable = [...input.options].filter((o) => !isDisabled(o));
+      const month = key === 'graduation_month' ? monthOf(value) : null;
       const option =
         choosable.find((o) => sameOption(o.textContent, value) || sameOption(o.value, value)) ??
+        /*
+         * A month however the list spells it. Only for a month: "12" is a
+         * perfectly good option in plenty of other lists, and nothing else
+         * should be matched on the number it happens to start with.
+         */
+        (month ? choosable.find((o) => monthOf(o.textContent) === month || monthOf(o.value) === month) : undefined) ??
         /*
          * And, failing that, a yes/no pair against a phrase. See
          * `yesNoOption`, which wants a pair and nothing else — so the prompt
@@ -1092,6 +1166,17 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
     }
 
     const before = input.value;
+    /*
+     * A month picker holds a month *and* a year, so whichever graduation key
+     * claimed it — a label saying "date", a name saying `graduation_month` —
+     * the only thing it can take is the whole date. Given the month alone it
+     * stays empty and says it would not take it.
+     */
+    if (key.startsWith('graduation_') && input.type === 'month' && fields.graduation_date) {
+      value = graduationFor(input, fields.graduation_date);
+    } else if (key === 'graduation_date') {
+      value = graduationFor(input, value);
+    }
     setValue(input, value);
     /*
      * Check it went in. Assigning a value a typed input will not accept — a
