@@ -171,19 +171,47 @@ async function main() {
       (await card.locator('.change').count()) > 0,
       `${await card.locator('.change').count()} suggestions on arrival`,
     );
+    /*
+     * Every guess off — and the one row that is not a guess on.
+     *
+     * This posting is titled "Software Engineer Intern", and the store's
+     * education entry carries two endings with the later one tagged `intern`.
+     * That tag is not the matcher inferring from the posting's vocabulary; it
+     * is an answer the applicant already wrote down for exactly this case, so
+     * the server marks it `instruction: true` and it arrives applied. Every
+     * other row here is the keyword match guessing, and those stay off until
+     * asked for.
+     *
+     * Both halves are asserted, because either one alone passes over the
+     * failure it is for: "all off" passed over an internship application
+     * going out with the new grad graduation date on it, and "one on" would
+     * pass over a card that had quietly ticked all six.
+     */
+    const onRows = await card.locator('.change:has(.pick):not(.off)').allInnerTexts();
     check(
-      'and nothing is changed until it is asked for',
-      arrivedOff.length > 0 && arrivedOff.every(Boolean),
+      'the guesses are all off until they are asked for',
+      arrivedOff.filter(Boolean).length === arrivedOff.length - 1,
       `${arrivedOff.filter(Boolean).length}/${arrivedOff.length} rows marked off`,
     );
     check(
-      'the count says how many of them are in, not just how many there are',
-      /^0 of \d+ changes$/.test((await countText()).trim()),
-      await countText(),
+      'and the one already applied is the graduation date',
+      onRows.length === 1 && /\b20\d\d\b/.test(onRows[0]) && /Dec/.test(onRows[0]),
+      onRows.join(' | ').replace(/\n/g, ' '),
     );
     check(
-      'and the bar says the resume is the original',
-      (await card.locator('button.mode.on').innerText()).includes('Use Original'),
+      'the count says how many of them are in, not just how many there are',
+      /^1 of \d+ changes$/.test((await countText()).trim()),
+      await countText(),
+    );
+    /*
+     * And the bar says so. It used to read "Use Original", which was true
+     * when nothing had been applied; with the date switched the resume is no
+     * longer the one kept, and saying otherwise would be the card's own
+     * account disagreeing with the document it is about to build.
+     */
+    check(
+      'and the bar no longer claims the resume is untouched',
+      (await card.locator('button.mode.on').innerText()).includes('Keyword match'),
       await card.locator('button.mode.on').innerText(),
     );
 
@@ -274,6 +302,10 @@ async function main() {
       for (const [i, row] of boxes.entries()) {
         const box = row.locator('.pick input');
         for (let w = 0; w < 600 && !(await box.isEnabled()); w++) await page.waitForTimeout(150);
+        // The level row arrived on — see above. Clicking it would switch the
+        // graduation date back off, and then wait ninety seconds for it to
+        // come on by itself.
+        if (!(await pickable.nth(i).getAttribute('class'))?.includes('off')) continue;
         await row.locator('.pick').click();
         for (let w = 0; w < 600 && (await pickable.nth(i).getAttribute('class'))?.includes('off'); w++) {
           await page.waitForTimeout(150);

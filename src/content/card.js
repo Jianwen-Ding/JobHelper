@@ -2705,10 +2705,39 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * everything needed: `from` on each change is what the base was using.
    * A second round trip to be told what we can work out is a second wait.
    */
-  function withAllOff(spec, rationale = [], skillChanges = []) {
+  /*
+   * `keepInstructions` is the difference between "nothing has been decided
+   * yet" and "put it back exactly as I keep it".
+   *
+   * Not every row in the list is the same kind of thing. Almost all of them
+   * are the keyword match reading the posting's vocabulary and inferring, and
+   * those are suggestions: they arrive off, and ticking one is how you agree.
+   * A level row is not an inference. It comes from a tag the applicant wrote
+   * on their own variant — "this ending is the one for internships" — which
+   * is an answer they already gave to this exact question, and the only
+   * question it answers is the graduation date.
+   *
+   * Both came through here and both were switched off, so an internship
+   * posting produced a resume carrying the new-grad date unless you noticed a
+   * row in the list and ticked it. Measured against the store's own education
+   * entry, with a posting titled "Software Engineering Intern, Summer 2026":
+   * the match returns `{edu_neu.dates: v_dec2026}` and this handed back
+   * `v_may2026`. That is the failure the whole level module exists to stop —
+   * "nobody remembers to switch the ending before hitting submit" — and it
+   * was being undone one line after it was worked out.
+   *
+   * "Use Original" still turns everything off, instructions included: that
+   * button means the resume as it is kept, and saying otherwise would leave
+   * the one control that promises nothing changed changing something.
+   */
+  function withAllOff(spec, rationale = [], skillChanges = [], { keepInstructions = true } = {}) {
     if (!spec) return spec;
     const choices = { ...(spec.choices ?? {}) };
-    for (const r of rationale ?? []) if (r.key && r.from) choices[r.key] = r.from;
+    for (const r of rationale ?? []) {
+      if (!r.key || !r.from) continue;
+      if (keepInstructions && r.instruction) continue;
+      choices[r.key] = r.from;
+    }
     const sections = (spec.sections ?? []).map((section) => {
       if (section.kind !== 'skills') return section;
       const items = { ...(section.items ?? {}) };
@@ -2825,7 +2854,9 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     // "As you keep it" is the match's list with nothing ticked, so it is that
     // proposal you are on — not a third state of its own.
     if (state.offers.match && state.showing !== 'match') showOffer('match');
-    state.spec = withAllOff(state.spec, analysis.rationale, analysis.skillChanges);
+    // Everything, the level instruction included — see `withAllOff`. This
+    // button is the one that means the resume exactly as it is kept.
+    state.spec = withAllOff(state.spec, analysis.rationale, analysis.skillChanges, { keepInstructions: false });
     state.builtWith = 'none';
     if (state.offers.match) state.offers.match.spec = state.spec;
     state.render = null;
