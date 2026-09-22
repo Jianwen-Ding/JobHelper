@@ -812,6 +812,54 @@ function otherWaysToWrite(key, value) {
   return out;
 }
 
+/**
+ * Which section of the form a field sits in, as its heading says.
+ *
+ * The fieldset's legend where there is one, since that is the section saying
+ * so outright. Otherwise the last heading before the field — and only
+ * headings inside the same form, because the page's own title is not a
+ * section: a posting for "Software Engineer, Education Technology" would
+ * otherwise make every date on its job-history step an education date.
+ */
+const HEADING = 'h1, h2, h3, h4, h5, h6, legend, [role="heading"]';
+function sectionOf(input) {
+  const legend = input.closest?.('fieldset')?.querySelector(':scope > legend');
+  if (legend) return clean(legend.textContent);
+  const scope = input.closest?.('form') ?? null;
+  if (!scope) return '';
+  let found = '';
+  for (const heading of scope.querySelectorAll(HEADING)) {
+    if (!(heading.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING)) break;
+    found = heading.textContent;
+  }
+  return clean(found);
+}
+
+const EDUCATION_SECTION = /\b(education|academic\w*|schools?|degrees?)\b/i;
+
+/**
+ * "Start date" and "End date", when they are the degree's.
+ *
+ * The Education block of a Greenhouse form asks for both ends of the degree in
+ * words that say nothing about education — "Start date month", "End date year"
+ * — and a job-history block asks the same words about every job. Read on their
+ * own they are unanswerable; read with the section's heading they are the
+ * start of the degree and its graduation. Anywhere that is not plainly an
+ * education section they are left alone, exactly as before.
+ */
+function educationDateKey(input, description) {
+  if (!/\b(date|month|year)\b/i.test(description)) return null;
+  const which = /\b(start\w*|from|began|begin\w*)\b/i.test(description)
+    ? 'start'
+    : /\b(end\w*|to|until|finish\w*|complet\w*)\b/i.test(description)
+      ? 'end'
+      : null;
+  if (!which) return null;
+  if (!EDUCATION_SECTION.test(sectionOf(input))) return null;
+  const part = /\bmonth\b/i.test(description) ? 'month' : /\byear\b/i.test(description) ? 'year' : 'date';
+  return which === 'start' ? `education_start_${part}` : `graduation_${part}`;
+}
+
 /** Two option labels are the same answer if they read the same. */
 const sameOption = (a, b) => clean(a).toLowerCase() === clean(b).toLowerCase();
 
@@ -899,7 +947,7 @@ function placeKey(key, text) {
  * exact match has failed, never instead of one.
  */
 function sameAnswerSpelledOtherwise(key, option, value) {
-  if (key === 'graduation_month') {
+  if (key === 'graduation_month' || key === 'education_start_month') {
     const month = monthOf(value);
     return Boolean(month) && month === monthOf(option);
   }
@@ -1145,7 +1193,10 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
      * happens to hold. Nothing here fills a field it has no value for; it
      * simply no longer goes looking for a different question to answer.
      */
-    const named = FIELD_PATTERNS.find(([, re]) => re.test(description));
+    // The degree's dates first: see `educationDateKey`. They read as nothing
+    // at all to the patterns, so this can only claim what was going unclaimed.
+    const dated = educationDateKey(input, description);
+    const named = dated ? [dated] : FIELD_PATTERNS.find(([, re]) => re.test(description));
     let match = named && fields[named[0]] ? named : undefined;
 
     if (!match && fields.full_name && BARE_NAME.test(withoutMarkers(labelFor(input)))) {
@@ -1249,7 +1300,9 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
      */
     if (key.startsWith('graduation_') && input.type === 'month' && fields.graduation_date) {
       value = graduationFor(input, fields.graduation_date);
-    } else if (key === 'graduation_date') {
+    } else if (key.startsWith('education_start_') && input.type === 'month' && fields.education_start_date) {
+      value = graduationFor(input, fields.education_start_date);
+    } else if (key === 'graduation_date' || key === 'education_start_date') {
       value = graduationFor(input, value);
     }
     setValue(input, value);
@@ -1973,7 +2026,11 @@ function widgetChoices(fields, filled) {
     if (!description) continue;
     if (isNotAboutYou(description, clean(labelFor(widget)), surroundingWords(widget))) continue;
 
-    const match = FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key] && !already.has(key));
+    const dated = educationDateKey(widget, description);
+    const match =
+      dated && fields[dated] && !already.has(dated)
+        ? [dated]
+        : FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key] && !already.has(key));
     if (!match) continue;
     found.push({ key: match[0], description: description.slice(0, 60), el: widget });
     already.add(match[0]);

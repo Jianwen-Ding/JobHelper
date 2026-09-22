@@ -829,7 +829,47 @@ const PLACES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply â€
   });
 </script></body></html>`;
 
-const PAGES = { '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED };
+/*
+ * The same four labels in two sections. Only the Education block's belong to
+ * the degree; the Work Experience block asks them about a job, and a page
+ * title that happens to say "Education" is not a section heading.
+ */
+const MONTH_OPTIONS = '<option value="">Month</option>' +
+  ['January','February','March','April','May','June','July','August','September','October','November','December']
+    .map((m) => `<option>${m}</option>`).join('');
+// Abbreviated, as plenty of lists are, so the start month has to be matched
+// across spellings the way the graduation month is.
+const SHORT_MONTHS = '<option value="">Month</option>' +
+  ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((m) => `<option>${m}</option>`).join('');
+const SECTIONS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply â€” Sections</title></head><body>
+<h1>Software Engineer, Education Technology</h1>
+<form id="main">
+  <h3>Education</h3>
+  <label for="e-sm">Start date month</label><select id="e-sm">${SHORT_MONTHS}</select>
+  <label for="e-sy">Start date year</label><input id="e-sy">
+  <label for="e-em">End date month</label><select id="e-em">${MONTH_OPTIONS}</select>
+  <label for="e-ey">End date year</label><input id="e-ey">
+  <h3>Work Experience</h3>
+  <label for="w-sm">Start date month</label><select id="w-sm">${MONTH_OPTIONS}</select>
+  <label for="w-sy">Start date year</label><input id="w-sy">
+  <label for="w-em">End date month</label><select id="w-em">${MONTH_OPTIONS}</select>
+  <label for="w-ey">End date year</label><input id="w-ey">
+</form>
+<form id="legend">
+  <!-- A sub-heading inside the section: the legend is still what it is. -->
+  <fieldset><legend>Academic history</legend>
+    <h4>Dates attended</h4>
+    <label for="f-from">From (year)</label><input id="f-from">
+    <label for="f-to">To (year)</label><input id="f-to">
+  </fieldset>
+</form>
+<form id="jobsonly">
+  <label for="j-sy">Start date year</label><input id="j-sy">
+  <label for="j-ey">End date year</label><input id="j-ey">
+</form>
+</body></html>`;
+
+const PAGES = { '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -1585,6 +1625,36 @@ async function main() {
         };
       }, { b: base }),
     );
+    const sections = await page.goto(`${base}/sections`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = {
+          education_start_month: 'September', education_start_year: '2022', education_start_date: 'September 2022',
+          graduation_month: 'May', graduation_year: '2026', graduation_date: 'May 2026',
+        };
+        m.fillForm(fields);
+        const ids = ['e-sm', 'e-sy', 'e-em', 'e-ey', 'w-sm', 'w-sy', 'w-em', 'w-ey', 'f-from', 'f-to', 'j-sy', 'j-ey'];
+        return Object.fromEntries(ids.map((id) => [id, document.getElementById(id).value]));
+      }, { b: base }),
+    );
+    group("The degree's own dates, and only the degree's");
+    check(
+      'an Education block answers its start and end',
+      sections['e-sm'] === 'Sep' && sections['e-sy'] === '2022' && sections['e-em'] === 'May' && sections['e-ey'] === '2026',
+      JSON.stringify([sections['e-sm'], sections['e-sy'], sections['e-em'], sections['e-ey']]),
+    );
+    check(
+      'the same labels under Work Experience are left alone',
+      ['w-sm', 'w-sy', 'w-em', 'w-ey'].every((id) => sections[id] === ''),
+      JSON.stringify(['w-sm', 'w-sy', 'w-em', 'w-ey'].map((id) => sections[id])),
+    );
+    check('a fieldset whose legend says so, asked From and To', sections['f-from'] === '2022' && sections['f-to'] === '2026', JSON.stringify([sections['f-from'], sections['f-to']]));
+    check(
+      'a page title that mentions education is not a section',
+      sections['j-sy'] === '' && sections['j-ey'] === '',
+      JSON.stringify([sections['j-sy'], sections['j-ey']]),
+    );
+
     group('The same place, spelled the way the list spells it');
     check('"MA" into a State list of names', places.stName === 'Massachusetts', `"${places.stName}"`);
     check('"MA" into a State list whose values are numbers', places.stNum === '21', `"${places.stNum}"`);
