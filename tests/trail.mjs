@@ -416,6 +416,63 @@ describe('an apply link on the page you came from', () => {
     assert.equal(sameApplication({ pages: [board] }, { url: 'https://boards.other.example/gh/acme/jobs/9911' }), false);
   });
 
+  /*
+   * An apply link says where you went, not which job you went to.
+   *
+   * The other three routes into a join were each taught this, and each says
+   * so: the click "is evidence about *where you went*, though, and none at
+   * all about whether you went to the same job", and the referrer branch
+   * concludes "the role is consulted here as it is there, on the same terms".
+   * The link route was left returning a flat `same`.
+   *
+   * It is the route that runs when the referrer has been stripped — which
+   * boards do routinely with `rel="noreferrer"` — so it is not a rare corner.
+   * A careers listing whose rows each carry an Apply button: read Platform
+   * Engineer, apply, come back, press Data Scientist's Apply, and its form
+   * opens inside the first job's application with "Carried over: the resume,
+   * the letter" and no chip.
+   *
+   * Measured against the module before the fix: this returned `same`, while
+   * the identical situation arriving with a referrer returned `unsure`.
+   */
+  it('leaves an apply link unsure when the page plainly names another job', () => {
+    const board = {
+      url: 'https://careers.acme.example/openings',
+      at: Date.now() - 60_000,
+      html:
+        '<a href="/jobs/1111">Platform Engineer</a><a href="/jobs/1111">Apply</a>' +
+        '<a href="/jobs/2222">Data Scientist</a><a href="/jobs/2222">Apply</a>',
+    };
+    const first = {
+      url: 'https://careers.acme.example/jobs/1111',
+      at: Date.now() - 30_000,
+      company: 'Acme',
+      role: 'Platform Engineer',
+    };
+    const trail = { pages: [board, first], at: Date.now() };
+
+    assert.equal(
+      judgeApplication(trail, {
+        url: 'https://careers.acme.example/jobs/2222',
+        company: 'Acme',
+        role: 'Data Scientist',
+      }),
+      'unsure',
+    );
+
+    // And the hand-off the route exists for is untouched: a form that names
+    // no role of its own is the ordinary next page, not a new job.
+    assert.equal(judgeApplication(trail, { url: 'https://careers.acme.example/jobs/2222' }), 'same');
+    assert.equal(
+      judgeApplication(trail, {
+        url: 'https://careers.acme.example/jobs/2222',
+        company: 'Acme',
+        role: 'Platform Engineer',
+      }),
+      'same',
+    );
+  });
+
   it('does not join a link to somewhere else entirely', () => {
     const trail = { pages: [careers('<a href="https://acme.example/apply/1">Apply now</a>')] };
     assert.equal(sameApplication(trail, { url: 'https://elsewhere.example/jobs/7' }), false);

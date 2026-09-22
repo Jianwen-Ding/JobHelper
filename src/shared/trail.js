@@ -565,8 +565,25 @@ export function judgeApplication(trail, page, now = Date.now()) {
    * page already held, pointing here. Checked after everything else because it
    * is the most expensive and the least specific — and after the company veto
    * above, so a link cannot join two employers.
+   *
+   * On the same terms as the other three, which is what this was missing. A
+   * link is evidence about *where you went* and none at all about which job
+   * you went to — the same sentence the click branch above is written around
+   * — and this returned a flat `same`. It is also the route that runs when
+   * the referrer has been stripped, which boards do routinely with
+   * `rel="noreferrer"`, so it is the least supervised rather than the rarest.
+   *
+   * Measured against this module: trail [careers.acme.example/openings whose
+   * rows each carry an Apply link, careers.acme.example/jobs/1111 "Platform
+   * Engineer"], page /jobs/2222 as "Data Scientist" -> "same", where the
+   * identical situation arriving with a referrer -> "unsure". Job 2222's form
+   * inside job 1111's application, "Carried over: the resume, the letter",
+   * and no chip.
+   *
+   * The hand-off it exists for is untouched: a form that names no role of its
+   * own leaves `looksNew()` false and still joins.
    */
-  return wasLinkedFrom(trail, page.url) ? 'same' : 'different';
+  return wasLinkedFrom(trail, page.url) ? (looksNew() ? 'unsure' : 'same') : 'different';
 }
 
 /**
