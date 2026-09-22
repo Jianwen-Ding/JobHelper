@@ -4374,10 +4374,29 @@ export function createCard({
      */
     baseSelect.onchange = () => switchBaseTo(baseSelect.value);
 
+    /*
+     * The button below has to hear about every keystroke here, without a
+     * `draw()`: a redraw destroys this box and takes the caret with it — see
+     * `syncLetterControls` below, which exists for the same reason on the
+     * letter box.
+     */
+    let applyFeedback = null;
     const feedback = h('textarea', {
       value: state.feedback,
       placeholder: 'Anything to change? e.g. “lead with the distributed systems work”.',
-      oninput: (e) => (state.feedback = e.target.value),
+      /*
+       * Named, like the letter and the answer boxes, so a repaint mid-sentence
+       * can find this box again. Without it this was the one text box `draw`
+       * could not restore focus to — the AI status arriving, the resume list
+       * answering, all rebuilt the box out from under whatever was being
+       * typed, and the next keystroke went nowhere until it was noticed and
+       * clicked back into.
+       */
+      dataset: { field: 'feedback' },
+      oninput: (e) => {
+        state.feedback = e.target.value;
+        if (applyFeedback) applyFeedback.disabled = busyIn('resume') || !state.feedback.trim();
+      },
     });
 
     const body = h('div', { className: 'body' }, [drawJob()]);
@@ -4597,10 +4616,18 @@ export function createCard({
         ]),
         h('div', { className: 'row gap' }, [feedback]),
         h('div', { className: 'row' }, [
-          h('button', {
+          (applyFeedback = h('button', {
             className: 'tiny',
             textContent: busyLabel('refine', 'Apply feedback', 'Thinking…'),
-            disabled: busyIn('resume'),
+            /*
+             * Empty was live. Every other box on the card that only does
+             * something with text in it — Save to store, Copy, See it typeset
+             * — disables on `!text.trim()` as well as while busy; this one
+             * disabled on busy alone; and clicking it empty ran the "there is
+             * nothing here" branch below silently, which read as a button
+             * that does nothing at all.
+             */
+            disabled: busyIn('resume') || !state.feedback.trim(),
             onclick: async () => {
               if (!state.feedback.trim()) return;
               /*
@@ -4640,7 +4667,7 @@ export function createCard({
                 draw();
               }
             },
-          }),
+          })),
         ]),
       ]),
     );

@@ -1781,6 +1781,117 @@ async function main() {
     JSON.stringify(lateFeedback),
   );
 
+  console.log('\nApply feedback with nothing written in the box');
+
+  /*
+   * Every other box that only does something with text in it — Save to
+   * store, Copy, See it typeset — disables while it is empty as well as
+   * while busy. This one used to disable on busy alone, so an empty box left
+   * the button live: pressing it ran the early-return branch and nothing on
+   * screen said why nothing had happened.
+   */
+  const emptyFeedback = await inPage((createCard) => {
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
+    // Falls back to the first textarea so a version without the field name
+    // still reports a clean failure below rather than throwing here.
+    const box = root.querySelector('textarea[data-field="feedback"]') ?? root.querySelector('textarea');
+    const button = byText('Apply feedback');
+    const empty = button?.disabled;
+
+    box.value = '  ';
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    const whitespaceOnly = button?.disabled;
+
+    box.value = 'lead with the distributed systems work';
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    const withText = button?.disabled;
+
+    return {
+      found: root.querySelector('textarea[data-field="feedback"]') != null && Boolean(button),
+      empty,
+      whitespaceOnly,
+      withText,
+    };
+  });
+
+  check('the feedback box and its button are both there', emptyFeedback.found === true, JSON.stringify(emptyFeedback));
+  check('empty, the button cannot be pressed', emptyFeedback.empty === true, JSON.stringify(emptyFeedback));
+  check(
+    'nor can it with only whitespace typed in',
+    emptyFeedback.whitespaceOnly === true,
+    JSON.stringify(emptyFeedback),
+  );
+  check('with real text, it is live again', emptyFeedback.withText === false, JSON.stringify(emptyFeedback));
+
+  console.log('\nWriting feedback while the card repaints');
+
+  /*
+   * The letter box and the answer boxes are named so `draw` can find them
+   * again after rebuilding the subtree — this is the one text box on the
+   * card that was not, so an AI status arriving mid-sentence here threw
+   * focus away for good instead of putting it back.
+   */
+  const feedbackTyping = await inPage((createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+
+    // Falls back to the first textarea so a version without the field name
+    // still reports a clean failure below rather than throwing here.
+    const box = root.querySelector('textarea[data-field="feedback"]') ?? root.querySelector('textarea');
+    box.focus();
+    box.value = 'lead with the platform work';
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    box.setSelectionRange(4, 4);
+
+    // A real repaint, touching nothing about the feedback box itself.
+    handle.setResumes([{ id: 'base', label: 'New grad', base: true }]);
+
+    const active = root.activeElement;
+    return {
+      replaced: !box.isConnected,
+      tag: active?.tagName ?? null,
+      field: active?.dataset?.field ?? null,
+      value: active?.value ?? null,
+      caret: active?.selectionStart ?? null,
+    };
+  });
+
+  check('the box really is rebuilt, so this is the case that mattered', feedbackTyping.replaced === true);
+  check('the caret is still in a text box', feedbackTyping.tag === 'TEXTAREA', JSON.stringify(feedbackTyping));
+  check('and in the feedback box specifically', feedbackTyping.field === 'feedback', String(feedbackTyping.field));
+  check(
+    'with what was typed still in it',
+    feedbackTyping.value === 'lead with the platform work',
+    String(feedbackTyping.value),
+  );
+  check('and the caret where it was, not at the end', feedbackTyping.caret === 4, String(feedbackTyping.caret));
+
   /*
    * Coming back from the builder having written something new.
    *
