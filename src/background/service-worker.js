@@ -470,8 +470,21 @@ const branchKey = (tabId) => `jh-branched:${tabId}`;
  * nothing. Measured, not assumed: `set` ok, `get(null)` one key, `get(key)`
  * null.
  */
-const heldKey = (save, company, role) =>
-  `jh-held:${[save, company, role].map(encodeURIComponent).join('|')}`;
+const heldKey = (save, company, role, applied) =>
+  /*
+   * And whether the form had been acted on when it was held.
+   *
+   * Without that last part this key is what stops the second push. The first
+   * one opens the row while the resume is being built, which is before
+   * anything has been put in the employer's boxes — so the row is `interested`
+   * and the key is set, and the push that would carry `actedOnForm: true` and
+   * move it to `applying` never goes. The row stays "Not applied" through an
+   * application that was filled in and sent.
+   *
+   * Two keys, so each of the two states is pushed once. It cannot oscillate:
+   * `actedOnForm` is only ever set on the card, never cleared.
+   */
+  `jh-held:${[save, company, role, applied ? 'applied' : 'held'].map(encodeURIComponent).join('|')}`;
 
 /*
  * Whether a trail is still current is a question about when, not about how
@@ -969,7 +982,7 @@ async function holdASpace(trail, tabId) {
   const role = work.spec?.generatedFor?.role;
   if (!company || !role) return;
 
-  const key = heldKey(save, company, role);
+  const key = heldKey(save, company, role, work.actedOnForm);
   if (holding.has(key)) return;
   holding.add(key);
   try {
@@ -991,6 +1004,28 @@ async function holdASpace(trail, tabId) {
            * somebody's tracker.
            */
           auto: true,
+          /*
+           * And whether it has been applied to yet, which is a different
+           * question from whether there is anything to hold.
+           *
+           * A place to write is wanted as soon as there is a resume: the
+           * letter is drafted before the form is opened, and gating the
+           * workspace on the form having been filled puts the writing surface
+           * behind the thing it is for. But a row that says `applying` is a
+           * claim about what somebody is doing, and a built resume is not that
+           * claim — a resume is built on anything job-shaped you open, and
+           * `prepareSoon` stages the folder off a timer with nobody pressing
+           * anything. So the tracker filled up with "Indeed — Now Hiring: 300
+           * Software Intern Jobs", a `preview.redd.it` image url, and one row
+           * each for "NVIDIA Corporation" and "2100 NVIDIA USA", every one of
+           * them sitting at `applying` for ever.
+           *
+           * Putting text in the employer's boxes or a file in its upload
+           * control is the thing no amount of browsing does by accident. The
+           * store opens the row at `interested` until it hears this, and
+           * advances it when it does.
+           */
+          actedOnForm: Boolean(work.actedOnForm),
           company,
           role,
           url: trail.pages?.[0]?.url,

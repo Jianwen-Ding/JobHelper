@@ -691,45 +691,67 @@ async function main() {
      *
      * `worthKeeping` is true of a spec alone, and the opening read of every
      * posting produces one — so the keeper, saving every couple of seconds,
-     * filed a tracker row for every job anybody looked at. Click down a board
-     * and a dozen drafts are waiting for jobs you read one line of. A row
-     * says an application is under way, so it takes something somebody did:
-     * a resume compiled, files staged, a letter started, an answer written.
+     * filed a tracker row for every job anybody looked at. A space says work
+     * has been done, so it takes something somebody did: a resume compiled,
+     * files staged, a letter started, an answer written.
+     *
+     * What it does *not* take is the form having been filled in. A place to
+     * write is wanted before the form is ever opened, so the space opens
+     * early and carries `actedOnForm` to say which of the two it is — see
+     * `holdASpace`, and the status the store gives it.
      */
     group('A posting that was only read opens nothing');
     {
       const spaces = () => store.sentTo('/api/workspace').length;
+      const lastBody = () => JSON.parse(store.sentTo('/api/workspace').slice(-1)[0]?.body || '{}');
+      // Its own company and role: `heldKey` is per save, company and role, so
+      // borrowing another group's would reserve the key it is about to test.
+      const solace = { id: 'job-read', generatedFor: { company: 'Solace', role: 'Reader' } };
       store.save = 'work';
       await ask(driver, 'clearTrail', {});
       await ask(driver, 'analyze', { url: 'http://g.example/jobs/read-only', title: 'Helios', html: '<p>read</p>', company: 'Helios' });
 
       const before = spaces();
-      // What the card holds after an opening read and nothing else: the
-      // proposal it worked out, and no letter, no answers, nothing compiled.
-      await ask(driver, 'saveWork', {
-        // Its own company and role: `heldKey` is per save, company and role,
-        // so borrowing another group's would reserve the key it is about to
-        // test and suppress its push.
-        work: { spec: { id: 'job-read', generatedFor: { company: 'Solace', role: 'Reader' } } },
-      });
+      await ask(driver, 'saveWork', { work: { spec: solace } });
       await new Promise((r) => setTimeout(r, 600));
       check('reading a posting files no draft', spaces() === before, `${spaces() - before} opened`);
 
       // And the moment something is built, it does.
-      await ask(driver, 'saveWork', {
-        work: {
-          spec: { id: 'job-read', generatedFor: { company: 'Solace', role: 'Reader' } },
-          render: { pages: 1 },
-        },
-      });
+      await ask(driver, 'saveWork', { work: { spec: solace, render: { pages: 1 } } });
       for (let i = 0; i < 60 && spaces() === before; i++) await new Promise((r) => setTimeout(r, 50));
       check('and building one does', spaces() === before + 1, `${spaces() - before} opened`);
+
+      /*
+       * Carrying the fact that nothing has been put in the form yet. Without
+       * this the store has only "a workspace was opened" to go on, which it
+       * read as `applying` — and a built resume is not an application.
+       */
+      check('and says the form has not been touched', lastBody().actedOnForm === false, JSON.stringify(lastBody().actedOnForm));
+
+      /*
+       * And a second push once it has, which `heldKey` used to swallow: the
+       * first hold was keyed on the pair alone, so the row stayed "Not
+       * applied" through an application that was filled in and sent.
+       */
+      await ask(driver, 'saveWork', {
+        work: { spec: solace, render: { pages: 1 }, actedOnForm: true },
+      });
+      for (let i = 0; i < 60 && spaces() === before + 1; i++) await new Promise((r) => setTimeout(r, 50));
+      check('filling the form says so, once', spaces() === before + 2, `${spaces() - before} opened`);
+      check('and that push carries it', lastBody().actedOnForm === true, JSON.stringify(lastBody().actedOnForm));
+
+      // And not again on every keeper tick after that.
+      await ask(driver, 'saveWork', {
+        work: { spec: solace, render: { pages: 1 }, actedOnForm: true },
+      });
+      await new Promise((r) => setTimeout(r, 600));
+      check('and says it only the once', spaces() === before + 2, `${spaces() - before} opened`);
     }
 
     group('Holding a space in the editor');
     {
       /*
-       * With a compiled resume on it, because that is what opens a row at
+       * With a compiled resume on it, because that is what opens a space at
        * all: a spec alone is the card's opening read of a posting, and
        * reading a posting no longer files anything. See `madeSomething`.
        */

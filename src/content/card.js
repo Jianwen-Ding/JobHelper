@@ -733,6 +733,15 @@ export function createCard({
     autofillReport: null,
     /** What the last press of Attach put into the form, and what it could not. */
     attachReport: null,
+    /**
+     * Whether anything has actually been done to the employer's form.
+     *
+     * Carried between pages, because the autofill on step one and the attach
+     * on step three are the same application, and the report itself is not
+     * carried — see `takeWork`. Only ever set, never cleared: an application
+     * you have begun does not stop having been begun.
+     */
+    actedOnForm: false,
     workspaceOpened: false,
     /** Whether an AI is in play at all. Filled in below; never assumed. */
     ai: null,
@@ -830,11 +839,35 @@ export function createCard({
    * landing on an application form already showing the "saved" panel would
    * hide the form it is standing in front of.
    */
+  /**
+   * Whether this application has been acted on, as against merely prepared.
+   *
+   * Reading a posting and building a resume for it is something you do to a
+   * dozen jobs in an evening, most of which you never apply to. Putting text
+   * into the employer's boxes or a file into its upload control is not: it is
+   * done on one form, deliberately, and there is no version of it that happens
+   * by browsing. That is the line the tracker needs — see `startedApplying` in
+   * the service worker, and the row-per-page-you-glanced-at it replaces.
+   *
+   * Derived rather than set at the four buttons, so a path that grows a fifth
+   * way to fill or attach is covered by having a report at all. A press that
+   * filled nothing or placed nothing does not count: pressing Autofill on a
+   * page with no fields is finding out there are none.
+   */
+  function actedOnForm() {
+    return Boolean(
+      state.actedOnForm ||
+        (state.autofillReport?.filled ?? []).length > 0 ||
+        (state.attachReport?.placed ?? []).length > 0,
+    );
+  }
+
   function takeWork() {
     return {
       spec: state.spec,
       builtWith: state.builtWith,
       render: state.render,
+      actedOnForm: actedOnForm(),
       /*
        * And where the files went.
        *
@@ -950,6 +983,10 @@ export function createCard({
     }
     if (work.render) state.render = work.render;
     if (work.staged) state.staged = work.staged;
+    // One way only: the reports do not survive the page, so if this were
+    // assigned rather than or-ed, walking from the form you filled to the next
+    // step would say the application had never been touched.
+    state.actedOnForm = state.actedOnForm || Boolean(work.actedOnForm);
     // Set, never cleared: a page that carried nothing about this leaves the
     // reducing exactly as this page works it out for itself.
     if (work.showEverything) state.showEverything = true;
