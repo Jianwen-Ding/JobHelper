@@ -101,14 +101,31 @@ export function looksLikeTheApplication(form) {
  * and the application went out unrecorded. The one case the attribute exists
  * for was the one case it was never read in.
  *
- * Then `value`, which is how `input[type=submit]` carries its label, then the
- * text, then `title` as the last resort — the same precedence the accessible
- * name computation uses, for the same reason.
+ * Then `value` — but only on an `input`, which is the element whose label
+ * *is* its value. This said it followed "the same precedence the accessible
+ * name computation uses", and for `input[type=submit]` it does. For a
+ * `<button>` it is the opposite: the name is the contents and `value` is the
+ * key/value pair posted with the form, which nobody ever meant as a label.
+ *
+ * `<button type="submit" name="commit" value="1">Submit Application</button>`
+ * is the Rails idiom and common well beyond it. The name came back "1", no
+ * rule matched it, and — because a name *was* found — the
+ * `looksLikeTheApplication` fallback that would have caught it on the file
+ * input alone never ran. The application went out and the tracker still said
+ * it was being worked on.
+ *
+ * It cuts the other way too, and that half is worse: a step in a multi-page
+ * form written `<button name="step" value="submit">Continue to review</button>`
+ * read as the word "submit", which matches the send rule exactly. Recorded as
+ * sent on step two of five — and `once()` latches, so the real send later did
+ * nothing at all.
+ *
+ * Then the text, then `title` as the last resort.
  */
 export function nameOf(control) {
   const said =
     control?.getAttribute?.('aria-label') ||
-    control?.value ||
+    (control?.tagName === 'INPUT' ? control.value : '') ||
     control?.textContent ||
     control?.getAttribute?.('title') ||
     '';
