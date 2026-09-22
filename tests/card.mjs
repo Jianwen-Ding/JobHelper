@@ -3610,6 +3610,73 @@ async function main() {
     String(carriedOff.told),
   );
 
+  console.log('\nAn answer box with a limit');
+
+  /*
+   * A script assigning a value is not held to `maxlength`, so an answer longer
+   * than the box went into the form whole and was refused on submit. The
+   * card counts against the box's limit while it can still be cut, and tells
+   * every drafting run what the limit is.
+   */
+  const limits = await inPage(async (createCard) => {
+    const sent = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme', description: 'Kafka and Go.' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [
+        { question: 'Why us?', answer: 'Short one.', confident: true, fieldId: 'jh-1', limit: 40 },
+        { question: 'Tell us about a project.', answer: '', confident: false, fieldId: 'jh-2' },
+      ],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    await new Promise((r) => setTimeout(r, 120));
+    const counters = () => [...root.querySelectorAll('.q .count')];
+    const before = counters().map((c) => ({ text: c.textContent, over: c.classList.contains('over') }));
+
+    const box = root.querySelector('textarea[data-field="answer:Why us?"]');
+    box.value = 'x'.repeat(52);
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    const after = counters().map((c) => ({ text: c.textContent, over: c.classList.contains('over') }));
+
+    const draft = [...root.querySelectorAll('.q')][0].querySelector('button.ai, button[class*="ai"]') ??
+      [...[...root.querySelectorAll('.q')][0].querySelectorAll('button')].find((b) => /Draft|Rewrite/.test(b.textContent));
+    draft?.click();
+    await new Promise((r) => setTimeout(r, 150));
+    const both = [...root.querySelectorAll('button')].find((b) => /Write .*2 answers/.test(b.textContent));
+    both?.click();
+    await new Promise((r) => setTimeout(r, 150));
+    return {
+      before,
+      after,
+      one: sent.find((c) => c.action === 'answer:Why us?')?.payload ?? null,
+      all: sent.find((c) => c.action === 'writeApplication')?.payload?.questions ?? null,
+    };
+  });
+  check('a box with a limit is counted against it', limits.before.length === 1 && limits.before[0].text === '10 / 40' && !limits.before[0].over, JSON.stringify(limits.before));
+  check(
+    'and says so, in red, once an answer runs past it',
+    limits.after.length === 1 && limits.after[0].over && /12 over/.test(limits.after[0].text),
+    JSON.stringify(limits.after),
+  );
+  check('drafting one answer tells the run the limit', limits.one?.limit === 40, JSON.stringify(limits.one));
+  check(
+    'and so does writing them all at once, only for the box that has one',
+    limits.all?.[0]?.limit === 40 && limits.all?.[1]?.limit === undefined,
+    JSON.stringify(limits.all),
+  );
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);

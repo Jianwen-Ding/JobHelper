@@ -2576,6 +2576,12 @@ export function findQuestions() {
       fieldId: id,
       question,
       currentValue: field.value ?? field.textContent ?? '',
+      /*
+       * The box's own limit. A script assigning a value is not held to
+       * `maxlength`, so an answer over it went in whole and the form refused
+       * it on submit. -1 is what a box without one reports.
+       */
+      ...(field.maxLength > 0 ? { limit: field.maxLength } : {}),
       ...(yoursToAnswer(question) ? { yours: yoursToAnswer(question) } : {}),
     });
   }

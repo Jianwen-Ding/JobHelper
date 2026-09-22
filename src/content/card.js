@@ -220,6 +220,8 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 }
 .hint.warn button.link:hover { background: transparent; text-decoration-thickness: 2px; }
 .faint { color: var(--faint); font-size: 11px; }
+.count { text-align: right; margin-top: 2px; }
+.count.over { color: var(--bad); }
 
 .job { margin-bottom: 12px; }
 .job .role { font-weight: 500; font-size: 16px; line-height: 1.3; }
@@ -628,6 +630,18 @@ export function removeCard() {
  *   and checks it before building another, so a card that leaves without
  *   saying so is a card that can never be put back. See `putUpCard`.
  */
+
+/** "412 / 500", and a warning once past it. Nothing where the box has no limit. */
+function countAgainst(counter, text, limit) {
+  if (!counter || !limit) return;
+  const length = String(text ?? '').length;
+  const over = length > limit;
+  counter.textContent = over
+    ? `${length} / ${limit} — ${length - limit} over the box's limit; the form will refuse it`
+    : `${length} / ${limit}`;
+  counter.classList.toggle('over', over);
+}
+
 export function createCard({
   analysis,
   resumes = [],
@@ -4025,7 +4039,7 @@ export function createCard({
       if (q.yours) continue;
       const borrowed = Boolean(q.namesAnother) && !state.answers[q.question];
       const before = state.answers[q.question] ?? (borrowed ? '' : q.answer ?? '');
-      slots.push({ id: `q${slots.length + 1}`, question: q.question, answer: before, before });
+      slots.push({ id: `q${slots.length + 1}`, question: q.question, answer: before, before, limit: q.limit });
     }
 
     const mine = state.letter ?? '';
@@ -4037,7 +4051,7 @@ export function createCard({
       {
         spec: state.spec,
         letter: { required: wantsLetter, body: mine },
-        questions: slots.map(({ id, question, answer }) => ({ id, question, answer })),
+        questions: slots.map(({ id, question, answer, limit }) => ({ id, question, answer, limit })),
       },
       async (r) => {
         if (!r) return;
@@ -4053,7 +4067,7 @@ export function createCard({
           if (wantsLetter) await draftLetter();
           for (const slot of slots) {
             const before = state.answers[slot.question] ?? slot.before;
-            await act(`answer:${slot.question}`, { question: slot.question, force: true }, (one) => {
+            await act(`answer:${slot.question}`, { question: slot.question, force: true, limit: slot.limit }, (one) => {
               if (one?.executed && one.output) applyAnswer(slot.question, before, one.output);
             });
           }
@@ -5253,6 +5267,14 @@ export function createCard({
             ? h('span', { className: 'badge weak', textContent: 'close match' })
             : h('span', { className: 'badge none', textContent: 'new question' });
 
+      /*
+       * The box's own limit, where the form states one. An answer over it is
+       * put in whole — a script is not held to `maxlength` — and refused when
+       * the form is sent, so it is counted here while it can still be cut.
+       */
+      const counter = q.limit ? h('div', { className: 'count faint' }) : null;
+      countAgainst(counter, value, q.limit);
+
       const box = h('div', { className: 'q' }, [
         h('div', { className: 'qt' }, [document.createTextNode(q.question), badge]),
         borrowed
@@ -5277,8 +5299,12 @@ export function createCard({
           // back in the same box even if another question arrived above it.
           dataset: { field: `answer:${q.question}` },
           placeholder: q.answer ? '' : 'No stored answer yet — write one and it is saved for next time.',
-          oninput: (e) => (state.answers[q.question] = e.target.value),
+          oninput: (e) => {
+            state.answers[q.question] = e.target.value;
+            countAgainst(counter, e.target.value, q.limit);
+          },
         }),
+        counter,
         h('div', { className: 'row gap' }, [
           h('button', {
             className: 'tiny',
@@ -5310,7 +5336,7 @@ export function createCard({
                 // What is in the box now, so the reply can tell its own work
                 // from anything written during the minutes it takes.
                 const typedBefore = state.answers[q.question] ?? value;
-                return act(`answer:${q.question}`, { question: q.question, force: true }, (r) => {
+                return act(`answer:${q.question}`, { question: q.question, force: true, limit: q.limit }, (r) => {
                   /*
                    * `executed` first, not `output` first.
                    *

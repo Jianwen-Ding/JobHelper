@@ -260,6 +260,9 @@ async function main() {
       check('a workspace draft exists for it', Boolean(fresh), fresh?.company ?? 'none');
       if (fresh) {
         check('with the role it was read from', /platform engineer/i.test(fresh.role ?? ''), fresh.role);
+        // And each box's own limit, which the store writes the answers to.
+        const why = (fresh.questions ?? []).find((q) => /why do you want to work here/i.test(q.question));
+        check('and the question box’s limit with its question', why?.limit === 1500, JSON.stringify(why ?? fresh.questions));
       }
     } else {
       check('the hand-off to the editor is offered', false, openWorkspace);

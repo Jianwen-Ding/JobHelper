@@ -2319,7 +2319,7 @@ const handlers = {
   },
 
   /** Answer one question, reusing a stored answer unless asked to redraft. */
-  async answerQuestion({ question, force, job }, tab) {
+  async answerQuestion({ question, force, job, limit }, tab) {
     return stoppably(tab, 'answerQuestion', (signal) =>
       serverFetch('/api/ai/answer', {
         method: 'POST',
@@ -2328,6 +2328,8 @@ const handlers = {
         body: JSON.stringify({
           question,
           force,
+          // The box's own `maxlength`, so the draft is written to fit it.
+          limit,
           // Mapped into the server's shape, as `coverLetter` does below.
           job: job
             ? {

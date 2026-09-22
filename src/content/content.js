@@ -986,6 +986,7 @@
             question: q.question,
             required: q.required,
             answer: q.answer || undefined,
+            limit: q.limit || undefined,
           })),
         });
         await send('openTab', { url: result.absoluteUrl });

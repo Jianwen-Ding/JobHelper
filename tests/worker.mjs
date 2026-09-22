@@ -387,6 +387,15 @@ async function main() {
      * The park is written as a closed tab leaves one: named, from a tab that
      * no longer exists.
      */
+    group('Drafting one answer tells the store the box’s limit');
+    {
+      store.save = 'work';
+      await ask(driver, 'answerQuestion', { question: 'Why us?', force: true, limit: 280 });
+      const hit = store.sentTo('/api/ai/answer').slice(-1)[0];
+      const body = JSON.parse(hit?.body || '{}');
+      check('the limit goes with the question', body.limit === 280 && body.question === 'Why us?', hit?.body ?? '(not sent)');
+    }
+
     group('A rescue onto a page nobody could name says which job it was for');
     {
       const BOARD = 'http://board.example/unnamed';

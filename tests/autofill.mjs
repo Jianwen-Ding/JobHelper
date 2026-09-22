@@ -906,6 +906,8 @@ const ACADEMICS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply
   <fieldset><legend>Interview availability</legend>
     <label for="a-f2">First</label><input id="a-f2">
   </fieldset>
+  <label for="a-why">Why do you want to work here?</label><textarea id="a-why" maxlength="500"></textarea>
+  <label for="a-proj">Tell us about a project you are proud of</label><textarea id="a-proj"></textarea>
 </form>
 </body></html>`;
 
@@ -1797,8 +1799,9 @@ async function main() {
           education_start_month: 'September', education_start_year: '2023', education_start_date: 'September 2023',
           graduation_month: 'May', graduation_year: '2027', graduation_date: 'May 2027',
         });
+        const limits = Object.fromEntries(m.findQuestions().map((q) => [q.question, q.limit ?? null]));
         const ids = ['a-uni', 'a-cgpa', 'a-maj', 'a-hs', 'a-hsgpa', 'a-ss', 'a-fore', 'a-sur', 'a-first', 'a-last', 'a-f2', 'a-from', 'a-to', 'a-grad', 'a-gm', 'a-inst', 'a-aos'];
-        return Object.fromEntries(ids.map((id) => [id, document.getElementById(id).value]));
+        return { ...Object.fromEntries(ids.map((id) => [id, document.getElementById(id).value])), limits };
       }, { b: base }),
     );
     group('Academic boxes that name the institution, and school the profile is not about');
@@ -1832,6 +1835,17 @@ async function main() {
       JSON.stringify([academics['a-from'], academics['a-to'], academics['a-grad']]),
     );
     check('and one asking for the month still gets the month', academics['a-gm'] === 'May', `"${academics['a-gm']}"`);
+    /*
+     * A question box's own limit comes with the question, so the answer can
+     * be written to fit: a script is not held to `maxlength`, and the form
+     * refuses an over-long answer only when it is sent.
+     */
+    check(
+      'a question carries its box’s limit, and one without a limit carries none',
+      academics.limits['Why do you want to work here?'] === 500 &&
+        academics.limits['Tell us about a project you are proud of'] === null,
+      JSON.stringify(academics.limits),
+    );
     check('but not a "First" under any other legend', academics['a-f2'] === '', `"${academics['a-f2']}"`);
 
     const loose = await page.goto(`${base}/loose-widgets`, { waitUntil: 'domcontentloaded' }).then(() =>
