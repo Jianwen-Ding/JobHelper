@@ -316,13 +316,35 @@ function fileFrom({ name, base64, type }) {
  * listens for one and a plain one for the other, and a form that never hears
  * either shows the box still empty however correct `files` is.
  */
-function putIn(box, file, { alongside = false } = {}) {
+function putIn(box, file, { alongside = false, ours } = {}) {
   const carrier = new DataTransfer();
-  // What it is already holding, when the box takes several and this is the
-  // second or third. Replacing them is what a one-item `DataTransfer` does,
-  // and on a box labelled "resume, cover letter and transcript" that would
-  // leave only whichever file happened to be last.
-  const had = alongside ? [...(box.files ?? [])] : [];
+  /*
+   * What it is already holding, and whose it is.
+   *
+   * Replacing is what a one-item `DataTransfer` does, and on a box labelled
+   * "resume, cover letter and transcript" that would leave only whichever
+   * file happened to be last — so the second and third placements into one
+   * box come through `alongside`.
+   *
+   * The first one still replaces, and that is deliberate: it is what keeps
+   * pressing Attach files twice from stacking up two of everything. But it
+   * replaced *everything*, including a file the person had attached
+   * themselves through the portal's own dialog — which the card all but
+   * invites, since it says "No transcript in the folder" and offers to add
+   * one. Their transcript went, silently: nothing in `unplaced`, and a green
+   * "Attached …-Resume.pdf and …-Cover-Letter.pdf" over a box that had held
+   * three documents and now held two.
+   *
+   * So the first placement clears *our* files and keeps theirs. `ours` is
+   * every name this run is placing, which is exactly the set a re-press needs
+   * to clean up after itself.
+   *
+   * Only where the box takes several. A single-file input holding one of
+   * theirs has no room to keep it, and handing two files to a non-`multiple`
+   * input is not a thing a page would accept anyway.
+   */
+  const held = [...(box.files ?? [])];
+  const had = alongside ? held : box.multiple ? held.filter((f) => !ours?.has(f.name)) : [];
   for (const already of had) carrier.items.add(already);
   carrier.items.add(file);
   try {
@@ -467,6 +489,18 @@ export async function attachFiles(files) {
   const taken = new Set();
   const placed = [];
   const unplaced = [];
+  /*
+   * Every name this run is placing, and which boxes it has already written
+   * to. Together they tell a file of ours from a file of theirs, and a first
+   * placement into a box from a second. See `putIn`.
+   */
+  const ours = new Set((files ?? []).map((f) => f?.name).filter(Boolean));
+  const written = new Set();
+  const placeIn = (box, file) => {
+    const ok = putIn(box, file, { alongside: written.has(box), ours });
+    if (ok) written.add(box);
+    return ok;
+  };
 
   for (const spec of files ?? []) {
     let file;
@@ -482,7 +516,7 @@ export async function attachFiles(files) {
 
     const kind = kindOf(spec.name);
     const box = boxFor(kind, boxes, taken, file);
-    if (box && putIn(box, file)) {
+    if (box && placeIn(box, file)) {
       taken.add(box);
       placed.push({ name: spec.name, where: saysWhat(box).slice(0, 60) });
       continue;
@@ -508,7 +542,7 @@ export async function attachFiles(files) {
      */
     const free = boxes.filter((b) => !taken.has(b));
     const saysNothing = free.length === 1 && kindOf(saysWhat(free[0])) === 'other' && !NOT_A_DOCUMENT.test(namedBy(free[0]));
-    if (saysNothing && (files.length === 1 || boxes.length === 1) && willTake(free[0], file) && putIn(free[0], file)) {
+    if (saysNothing && (files.length === 1 || boxes.length === 1) && willTake(free[0], file) && placeIn(free[0], file)) {
       taken.add(free[0]);
       placed.push({ name: spec.name, where: 'the only upload box on the page' });
       continue;
@@ -530,7 +564,7 @@ export async function attachFiles(files) {
         willTake(b, file) &&
         !NOT_A_DOCUMENT.test(namedBy(b)),
     );
-    if (several && putIn(several, file, { alongside: true })) {
+    if (several && placeIn(several, file)) {
       placed.push({ name: spec.name, where: saysWhat(several).slice(0, 60) });
       continue;
     }

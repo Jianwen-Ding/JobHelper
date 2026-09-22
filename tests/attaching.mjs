@@ -228,6 +228,29 @@ async function main() {
       );
     };
 
+    /**
+     * The same, with a file the person put in the box themselves first.
+     *
+     * A `multiple` box is the one place their own attachment and ours share a
+     * control, so it is the only place ours can delete theirs.
+     */
+    const runOver = async (where, files, mine) => {
+      await p.goto(`${base}${where}`, { waitUntil: 'domcontentloaded' });
+      return p.evaluate(
+        async ({ b, list, seed }) => {
+          const box = document.querySelector('input[type=file][multiple]');
+          const carrier = new DataTransfer();
+          carrier.items.add(new File([new Uint8Array([1, 2, 3])], seed, { type: 'application/pdf' }));
+          box.files = carrier.files;
+
+          const m = await import(`${b}/attach.js`);
+          const report = await m.attachFiles(list);
+          return { report, inBox: [...(box.files ?? [])].map((f) => f.name) };
+        },
+        { b: base, list: files, seed: mine },
+      );
+    };
+
     /* ---------------------------------------------------------------- */
 
     /* ---------------------------------------------------------------- *
@@ -480,6 +503,62 @@ async function main() {
       check('all three go in', (inBoxes.all ?? []).length === 3, JSON.stringify(inBoxes));
       check('in the order they were given', inBoxes.all?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
       check('and none is reported as homeless', report.unplaced.length === 0, JSON.stringify(report.unplaced));
+    }
+
+    /*
+     * A transcript the person attached by hand, on the box we are about to use.
+     *
+     * The card says so itself when the folder has no transcript — "No
+     * transcript in the folder", and an "Add one" button — so doing it through
+     * the portal's own dialog is the obvious move. Then pressing Attach files
+     * put the resume in through `boxFor`, which replaces rather than adds,
+     * and the transcript was gone. Silently: the card printed a green
+     * "Attached …-Resume.pdf and …-Cover-Letter.pdf", nothing was in
+     * `unplaced`, and the box that had held three documents held two.
+     *
+     * `putIn`'s own comment already knew replacing was wrong on a box like
+     * this — "on a box labelled 'resume, cover letter and transcript' that
+     * would leave only whichever file happened to be last" — and the first
+     * call site passed no `alongside` at all.
+     */
+    group('A file the person attached themselves, in the box we are filling');
+    {
+      const { report, inBox } = await runOver(
+        '/all-in-one',
+        [filed('Jianwen-Ding-Resume.pdf'), filed('Jianwen-Ding-Cover-Letter.pdf')],
+        'My-Transcript.pdf',
+      );
+      check('what they attached is still there', inBox.includes('My-Transcript.pdf'), JSON.stringify(inBox));
+      check('and ours went in beside it', inBox.length === 3, JSON.stringify(inBox));
+      check('with nothing reported as homeless', report.unplaced.length === 0, JSON.stringify(report.unplaced));
+    }
+
+    /*
+     * And pressing it twice does not stack up two of everything. The replace
+     * on the first file is what keeps a re-press clean, so sparing their file
+     * must not spare ours.
+     */
+    group('Attach files pressed twice over their own file');
+    {
+      const twice = await p.evaluate(
+        async ({ b, list, seed }) => {
+          const box = document.querySelector('input[type=file][multiple]');
+          const carrier = new DataTransfer();
+          carrier.items.add(new File([new Uint8Array([1])], seed, { type: 'application/pdf' }));
+          box.files = carrier.files;
+          const m = await import(`${b}/attach.js`);
+          await m.attachFiles(list);
+          await m.attachFiles(list);
+          return [...(box.files ?? [])].map((f) => f.name);
+        },
+        {
+          b: base,
+          list: [filed('Jianwen-Ding-Resume.pdf'), filed('Jianwen-Ding-Cover-Letter.pdf')],
+          seed: 'My-Transcript.pdf',
+        },
+      );
+      check('still three files, not five', twice.length === 3, JSON.stringify(twice));
+      check('and theirs is one of them', twice.includes('My-Transcript.pdf'), JSON.stringify(twice));
     }
 
     /*
