@@ -891,9 +891,15 @@ const EDUCATION_SECTION = /\b(education|academic\w*|schools?|degrees?)\b/i;
  */
 function educationDateKey(input, description) {
   if (!/\b(date|month|year)\b/i.test(description)) return null;
-  const which = /\b(start\w*|from|began|begin\w*)\b/i.test(description)
+  /*
+   * Workday says neither: its education block asks for the "First Year
+   * Attended" and the "Last Year Attended (Actual or Expected)", and both were
+   * left empty. First and last only beside "attended", so "First name" and a
+   * "Last updated" note are not dates of a degree.
+   */
+  const which = /\b(start\w*|from|began|begin\w*)\b|\bfirst\b.{0,20}\battend/i.test(description)
     ? 'start'
-    : /\b(end\w*|to|until|finish\w*|complet\w*)\b/i.test(description)
+    : /\b(end\w*|to|until|finish\w*|complet\w*)\b|\blast\b.{0,20}\battend/i.test(description)
       ? 'end'
       : null;
   if (!which) return null;
