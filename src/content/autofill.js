@@ -14,7 +14,7 @@ import { neverRemember, worthRemembering } from '../shared/remembering.js';
 
 /** Map a stored profile key to the label/name patterns that mean it. */
 const FIELD_PATTERNS = [
-  ['first_name', /\b(first[\s_-]?name|given[\s_-]?name|fname)\b/i],
+  ['first_name', /\b(first[\s_-]?name|given[\s_-]?name|forename|fname)\b/i],
   ['last_name', /\b(last[\s_-]?name|family[\s_-]?name|surname|lname)\b/i],
   ['full_name', /\b(full[\s_-]?name|your[\s_-]?name|candidate[\s_-]?name|legal[\s_-]?name)\b/i],
   ['email', /\b(e-?mail)\b/i],
@@ -54,10 +54,15 @@ const FIELD_PATTERNS = [
     'graduation_date',
     /\bgrad(uation)?\s*date\b|\bdate\s*of\s*graduation\b|\b(expected|anticipated)\s*grad(uation)?\b|\bwhen\s+(do|will)\s+you\s+(expect\s+to\s+)?graduate\b/i,
   ],
-  ['school', /\b(school|university|college|institution)\b/i],
-  ['degree', /\b(degree)\b/i],
-  ['major', /\b(major|discipline|field[\s_-]?of[\s_-]?study)\b/i],
+  /*
+   * The grade and the subject above the school, for the reason graduation is:
+   * "College GPA" and "University major" name the institution, and with
+   * `school` first they were filled with its name.
+   */
   ['gpa', /\bgpa\b/i],
+  ['major', /\b(major|discipline|field[\s_-]?of[\s_-]?study|(course|area)[\s_-]?of[\s_-]?study)\b/i],
+  ['school', /\b(school|university|college|institution|institute)\b/i],
+  ['degree', /\b(degree)\b/i],
   ['address_city', /\b(city|town)\b/i],
   /*
    * Country before state, because the first pattern to match wins and
@@ -157,6 +162,12 @@ const NOT_ABOUT_YOU = [
   /\b(salary|compensation|wage|pay[\s_-]?rate|hourly[\s_-]?rate|bonus)\b/i,
   /\b(gender|race|ethnicit\w*|hispanic|latin[ox]|veteran|disabilit\w*|sexual[\s_-]orientation|pronouns)\b/i,
   /\b(eeoc?|self[\s_-]?identification|equal[\s_-]employment)\b/i,
+  /*
+   * School before the degree. The profile's education is the newest one, and
+   * a "High School" box was being told the applicant went to high school at
+   * their university — with "High school GPA" given the university's grade.
+   */
+  /\b(high|secondary)[\s_-]?school\b/i,
   /*
    * A consent question, which is not a fact about the applicant at all — it
    * is a decision about what the employer may send them.
@@ -343,6 +354,37 @@ const BARE_NAME = /^(full\s+)?name$/i;
  * text all along; the label handed to `BARE_NAME` never went through it.
  */
 const withoutMarkers = (label) => clean(label).replace(/^[*:\s]+/, '').replace(/[*:\s]+$/, '');
+
+/**
+ * "First" and "Last" under a legend that says "Name".
+ *
+ * A form that groups the name in a fieldset labels its halves with one word
+ * each, and neither the patterns above nor `BARE_NAME` reads "First" as a
+ * name: both boxes were left empty, and unreported. Only under a legend that
+ * is the name and nothing else — "First" under "Interview availability" is
+ * some other question.
+ */
+function nameHalf(input) {
+  if (!/^(?:(?:your|full|legal)\s+)?name$/i.test(withoutMarkers(surroundingWords(input)))) return null;
+  const label = withoutMarkers(labelFor(input));
+  if (/^(first|given)$/i.test(label)) return 'first_name';
+  if (/^(last|family)$/i.test(label)) return 'last_name';
+  return null;
+}
+
+/**
+ * The whole date, where a box asks for the month and the year at once.
+ *
+ * "From (Month/Year)" matched `month` first and was given "September" — into
+ * a box whose placeholder said MM/YYYY — and reported as filled. A dropdown
+ * keeps the key it matched: its options are one or the other.
+ */
+function wholeDateKey(input, key, description) {
+  if (input instanceof HTMLSelectElement) return key;
+  if (!/^(graduation|education_start)_(month|year)$/.test(key)) return key;
+  if (!(/\bmonth\b/i.test(description) && /\byear\b/i.test(description))) return key;
+  return key.replace(/_(month|year)$/, '_date');
+}
 
 /**
  * Every document this page is really made of.
@@ -1202,9 +1244,14 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
     if (!match && fields.full_name && BARE_NAME.test(withoutMarkers(labelFor(input)))) {
       match = ['full_name'];
     }
+    if (!match) {
+      const half = nameHalf(input);
+      if (half && fields[half]) match = [half];
+    }
     if (!match) continue;
 
-    const [key] = match;
+    const key = wholeDateKey(input, match[0], description);
+    if (!fields[key]) continue;
     let value = fields[key];
 
     const answered = input instanceof HTMLSelectElement ? selectIsAnswered(input) : Boolean(input.value);

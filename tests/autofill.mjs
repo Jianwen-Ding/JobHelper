@@ -869,7 +869,47 @@ const SECTIONS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply 
 </form>
 </body></html>`;
 
-const PAGES = { '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED };
+/*
+ * Academic boxes whose labels name the institution, and school the profile
+ * does not describe.
+ *
+ * `school` sat above `gpa` and `major`, and the first pattern to match claims
+ * the field — so "College GPA" and "College major" were filled with
+ * "Northeastern University". And the profile's education is the newest one,
+ * a degree: a "High School" box was told the applicant went to high school
+ * at a university, and "High school GPA" is the university's grade under any
+ * order of the patterns.
+ */
+const ACADEMICS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Academics</title></head><body>
+<form>
+  <label for="a-uni">University</label><input id="a-uni">
+  <label for="a-inst">Institute</label><input id="a-inst">
+  <label for="a-aos">Area of study</label><input id="a-aos">
+  <label for="a-cgpa">College GPA</label><input id="a-cgpa">
+  <label for="a-maj">College major</label><input id="a-maj">
+  <label for="a-hs">High School</label><input id="a-hs">
+  <label for="a-hsgpa">High school GPA</label><input id="a-hsgpa">
+  <fieldset><legend>Secondary school</legend>
+    <label for="a-ss">Name of institution</label><input id="a-ss">
+  </fieldset>
+  <input id="a-fore" placeholder="Forename"><input id="a-sur" placeholder="Surname">
+  <fieldset><legend>Name *</legend>
+    <label for="a-first">First</label><input id="a-first">
+    <label for="a-last">Last</label><input id="a-last">
+  </fieldset>
+  <fieldset><legend>Education</legend>
+    <label for="a-from">From (Month/Year)</label><input id="a-from" placeholder="MM/YYYY">
+    <label for="a-to">To (Month/Year)</label><input id="a-to" placeholder="MM/YYYY">
+  </fieldset>
+  <label for="a-grad">Graduation (month and year)</label><input id="a-grad">
+  <label for="a-gm">Graduation month</label><input id="a-gm">
+  <fieldset><legend>Interview availability</legend>
+    <label for="a-f2">First</label><input id="a-f2">
+  </fieldset>
+</form>
+</body></html>`;
+
+const PAGES = { '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -1654,6 +1694,51 @@ async function main() {
       sections['j-sy'] === '' && sections['j-ey'] === '',
       JSON.stringify([sections['j-sy'], sections['j-ey']]),
     );
+
+    const academics = await page.goto(`${base}/academics`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm({
+          first_name: 'Jianwen', last_name: 'Ding', school: 'Northeastern University', major: 'Computer Science', gpa: '3.8',
+          education_start_month: 'September', education_start_year: '2023', education_start_date: 'September 2023',
+          graduation_month: 'May', graduation_year: '2027', graduation_date: 'May 2027',
+        });
+        const ids = ['a-uni', 'a-cgpa', 'a-maj', 'a-hs', 'a-hsgpa', 'a-ss', 'a-fore', 'a-sur', 'a-first', 'a-last', 'a-f2', 'a-from', 'a-to', 'a-grad', 'a-gm', 'a-inst', 'a-aos'];
+        return Object.fromEntries(ids.map((id) => [id, document.getElementById(id).value]));
+      }, { b: base }),
+    );
+    group('Academic boxes that name the institution, and school the profile is not about');
+    check('a University box still takes the school', academics['a-uni'] === 'Northeastern University', `"${academics['a-uni']}"`);
+    check(
+      '"Institute" and "Area of study", as Freshteam and Avature say them',
+      academics['a-inst'] === 'Northeastern University' && academics['a-aos'] === 'Computer Science',
+      JSON.stringify([academics['a-inst'], academics['a-aos']]),
+    );
+    check('"College GPA" takes the grade, not the school', academics['a-cgpa'] === '3.8', `"${academics['a-cgpa']}"`);
+    check('"College major" takes the major, not the school', academics['a-maj'] === 'Computer Science', `"${academics['a-maj']}"`);
+    check(
+      'a high school is not the university',
+      academics['a-hs'] === '' && academics['a-hsgpa'] === '' && academics['a-ss'] === '',
+      JSON.stringify([academics['a-hs'], academics['a-hsgpa'], academics['a-ss']]),
+    );
+    check('"Forename" is the first name', academics['a-fore'] === 'Jianwen' && academics['a-sur'] === 'Ding', JSON.stringify([academics['a-fore'], academics['a-sur']]));
+    check(
+      '"First" and "Last" under a legend reading Name',
+      academics['a-first'] === 'Jianwen' && academics['a-last'] === 'Ding',
+      JSON.stringify([academics['a-first'], academics['a-last']]),
+    );
+    /*
+     * A box asking for the month and the year together wants the date. It was
+     * given the month alone, "September", into a box whose placeholder says
+     * MM/YYYY, and reported as filled.
+     */
+    check(
+      'a box asking for month and year at once gets the date',
+      academics['a-from'] === '09/2023' && academics['a-to'] === '05/2027' && academics['a-grad'] === 'May 2027',
+      JSON.stringify([academics['a-from'], academics['a-to'], academics['a-grad']]),
+    );
+    check('and one asking for the month still gets the month', academics['a-gm'] === 'May', `"${academics['a-gm']}"`);
+    check('but not a "First" under any other legend', academics['a-f2'] === '', `"${academics['a-f2']}"`);
 
     group('The same place, spelled the way the list spells it');
     check('"MA" into a State list of names', places.stName === 'Massachusetts', `"${places.stName}"`);
