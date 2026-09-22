@@ -1178,12 +1178,22 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     if (note) note.textContent = text;
   }
 
-  /** What kind of document a built file is, from the name the store gave it. */
+  /**
+   * What kind of document a built file is, from the name the store gave it.
+   *
+   * Word for word the same vocabulary as `WANTS` in attach.js — see the note
+   * below on why it is a copy — and read through the same normalisation, which
+   * is the part that had drifted. The card stripped `_` and `-` to spaces
+   * before matching and attach.js did not, so `\bresume\b` could not see
+   * `Resume_Streamly.pdf`: the card called it a resume and drew it a resume
+   * chip, and the placing called it `other` and reported it homeless. Neither
+   * folded accents, so `résumé.pdf` was `other` to both.
+   */
   const DOCUMENT_KINDS = {
-    resume: { test: /\b(resume|resum[eé]|cv)\b/i, says: 'resume' },
-    letter: { test: /\bcover[\s_-]?letter\b/i, says: 'cover letter' },
-    transcript: { test: /\b(transcript|academic[\s_-]?record|grade[\s_-]?report|marksheet)\b/i, says: 'transcript' },
-    portfolio: { test: /\b(portfolio|work[\s_-]?sample|writing[\s_-]?sample)\b/i, says: 'portfolio' },
+    resume: { test: /\b(resume|cv|curriculum vitae)\b/, says: 'resume' },
+    letter: { test: /\b(cover letter|covering letter|motivation letter)\b/, says: 'cover letter' },
+    transcript: { test: /\b(transcript|academic record|grade report|marksheet)\b/, says: 'transcript' },
+    portfolio: { test: /\b(portfolio|work sample|writing sample|publication)\b/, says: 'portfolio' },
   };
 
   /*
@@ -1205,8 +1215,13 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     other: 'Answers',
   };
 
+  /** The same normalisation `wordsOf` does in attach.js, for the same reason. */
   function documentKind(name) {
-    const text = String(name ?? '').replace(/[._-]+/g, ' ');
+    const text = String(name ?? '')
+      .normalize('NFD')
+      .replace(/\p{Diacritic}/gu, '')
+      .replace(/[._-]+/g, ' ')
+      .toLowerCase();
     for (const [kind, { test }] of Object.entries(DOCUMENT_KINDS)) if (test.test(text)) return kind;
     return 'other';
   }

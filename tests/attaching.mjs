@@ -601,9 +601,29 @@ async function main() {
           'UVA Academic Record.pdf',
           'Portfolio.pdf',
           'something-else.pdf',
+          /*
+           * Underscores, which are the shape a person's own file arrives in.
+           * `bundleFileName` writes hyphens, so everything the store made read
+           * correctly — and `_` is a word character, so `\bresume\b` could
+           * not see `resume_streamly` at all. The card strips `._-` to spaces
+           * before matching and this did not, so the chip said "resume" and
+           * pressing Attach files said "no box here asks for it" about the
+           * same file. That is drag and Attach placing different things.
+           */
+          'Resume_Streamly.pdf',
+          'Academic_Transcript.pdf',
+          'Jianwen_Ding_Cover_Letter.pdf',
+          // And the accented spellings, which were in the list and could never
+          // match: the closing `\b` after `é` needs a word character, and a
+          // full stop is not one.
+          'résumé.pdf',
+          'resumé.pdf',
         ].map((n) => [n, m.kindOf(n)]);
       }, { b: base });
-      const want = ['resume', 'resume', 'letter', 'transcript', 'transcript', 'portfolio', 'other'];
+      const want = [
+        'resume', 'resume', 'letter', 'transcript', 'transcript', 'portfolio', 'other',
+        'resume', 'transcript', 'letter', 'resume', 'resume',
+      ];
       const got = kinds.map(([, k]) => k);
       check('each name reads as what it is', JSON.stringify(got) === JSON.stringify(want), JSON.stringify(kinds));
     }

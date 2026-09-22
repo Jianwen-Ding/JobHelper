@@ -84,6 +84,34 @@ function uploadBoxes(root = document) {
 }
 
 /**
+ * A name or a label, flattened to the words in it.
+ *
+ * Two things were being matched raw that cannot be. Separators: `_` is a word
+ * character, so `\bresume\b` cannot see `resume_streamly` — and a person's
+ * own file is exactly where underscores come from, because `bundleFileName`
+ * writes hyphens and everything the store made therefore read correctly. The
+ * card has stripped `._-` to spaces since it was written, so the chip said
+ * "resume" and Attach files said "no box here asks for it" about the same
+ * file.
+ *
+ * And accents: `résumé` was in the list from the start and could never match,
+ * because the closing `\b` after `é` wants a word character and `é` is not
+ * one to an ASCII `\b`. A box labelled "Résumé" read as no kind at all.
+ * Folding the diacritics away is simpler than teaching every pattern about
+ * them, and it is what a reader does anyway.
+ *
+ * Exported because the card has to read a name the same way this does, or the
+ * chip promises one thing and the placing does another.
+ */
+export function wordsOf(text) {
+  return String(text ?? '')
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[._-]+/g, ' ')
+    .toLowerCase();
+}
+
+/**
  * What a box says about itself, without borrowing from its neighbours.
  *
  * Its own label, its name and id, whatever accessibility text it carries.
@@ -98,7 +126,7 @@ function namedBy(input) {
    */
   const where = input.getRootNode?.() ?? document;
   const byFor = input.id ? where.querySelector?.(`label[for="${CSS.escape(input.id)}"]`) : null;
-  return [
+  const said = [
     input.name,
     input.id,
     input.getAttribute('aria-label'),
@@ -108,9 +136,8 @@ function namedBy(input) {
     input.closest('label')?.textContent,
   ]
     .filter(Boolean)
-    .join(' ')
-    .toLowerCase()
-    .replace(/\s+/g, ' ');
+    .join(' ');
+  return wordsOf(said).replace(/\s+/g, ' ').trim();
 }
 
 /**
@@ -129,7 +156,7 @@ function namedBy(input) {
  * describing more than this one and is not this one's text.
  */
 function aroundIt(input) {
-  const clean = (text) => String(text ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const clean = (text) => wordsOf(text).replace(/\s+/g, ' ').trim();
 
   let node = input;
   let holder = input.parentElement;
@@ -192,8 +219,8 @@ function saysWhat(input) {
  * the resume, because that is what somebody uploading one file to it means.
  */
 const WANTS = {
-  resume: /\b(resume|resumé|résumé|cv|curriculum vitae)\b/,
-  letter: /\b(cover[\s_-]?letter|covering[\s_-]?letter|motivation[\s_-]?letter)\b/,
+  resume: /\b(resume|cv|curriculum vitae)\b/,
+  letter: /\b(cover letter|covering letter|motivation letter)\b/,
   transcript: /\b(transcript|academic record|grade report|marksheet)\b/,
   portfolio: /\b(portfolio|work sample|writing sample|publication)\b/,
 };
@@ -243,7 +270,7 @@ function willTake(input, file) {
 
 /** Which of the kinds above a file is, from the name it will be uploaded as. */
 export function kindOf(name) {
-  const text = String(name ?? '').toLowerCase();
+  const text = wordsOf(name);
   for (const [kind, pattern] of Object.entries(WANTS)) {
     if (pattern.test(text)) return kind;
   }
@@ -580,7 +607,7 @@ export async function attachFiles(files) {
      * all: a zone beside a resume box is the resume's, and dropping a
      * transcript on it is the same wrong-document failure by another route.
      */
-    const zone = dropZones().find((z) => boxes.length === 0 || WANTS[kind]?.test((z.textContent ?? '').toLowerCase()));
+    const zone = dropZones().find((z) => boxes.length === 0 || WANTS[kind]?.test(wordsOf(z.textContent)));
     if (zone) {
       /*
        * Said as what it is. A drop cannot be read back the way `input.files`
