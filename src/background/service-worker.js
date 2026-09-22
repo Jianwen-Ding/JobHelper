@@ -1572,6 +1572,34 @@ const handlers = {
     const trail = await readTrail(id);
     const held = keep?.url ? trail.pages.filter((p) => p.url === keep.url) : [];
 
+    /*
+     * What is being forgotten is parked first, exactly as `remember` parks it.
+     *
+     * Forgetting an application and destroying what was written for it are two
+     * different things, and every other path already knows it: closing the tab
+     * parks, and `remember`'s own fresh start parks with the reason written
+     * out — "nothing is destroyed either, which is the failure it was
+     * causing". This one dropped `trail.work` on the floor, and it is reached
+     * from the popup, whose panel says "your writing is being held, and comes
+     * back when you return" two lines above the button. So the same intent had
+     * two outcomes, and the destructive one was the one that had just promised
+     * otherwise.
+     *
+     * Under the pages being forgotten, never the one kept. The card's "start a
+     * new application here" keeps the page you are on, and parking under that
+     * url would have the new application rescue the old one's letter on its
+     * first read — the failure `pickParked` exists to prevent, arranged by
+     * hand. The pages that go are the pages the writing goes with.
+     */
+    if (trail.work) {
+      const gone = [...new Set(trail.pages.filter((p) => !held.includes(p)).map((p) => p?.url).filter(Boolean))];
+      if (gone.length > 0) {
+        await sweepOrphans();
+        const entry = { work: trail.work, save: trail.save, job: nameOfTrail(trail), tab: id, at: Date.now() };
+        for (const url of gone) await parkWork(url, entry);
+      }
+    }
+
     if (held.length === 0) {
       /*
        * Marked as emptied, not simply removed.

@@ -421,6 +421,64 @@ async function main() {
      * The one place the extension writes into the store                  *
      * ---------------------------------------------------------------- */
 
+    /*
+     * "Start fresh" is pressed in the middle of a letter.
+     *
+     * Forgetting an application and destroying what was written for it are two
+     * different things, and every other path already knew it: closing the tab
+     * parks the writing, and `remember`'s own fresh start parks it with the
+     * reason written out — "nothing is destroyed either, which is the failure
+     * it was causing". `clearTrail`, which is what this button sends, dropped
+     * `trail.work` on the floor.
+     *
+     * The popup is the worst place for that to happen. Two lines above the
+     * button its own panel says "your writing is being held, and comes back
+     * when you return", and the status afterwards reads "Forgotten." So the
+     * same intent had two outcomes, and the destructive one was the one that
+     * had just promised otherwise.
+     *
+     * The trail still empties — that is what the button is for, and the check
+     * above it stays. What changes is that the letter is parked under the
+     * pages being let go, so coming back to the posting finds it.
+     */
+    group('Forgetting an application written into');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(HELIOS_FORM), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+
+      const letter = cardOf(page).locator('textarea.tall').first();
+      await letter.waitFor({ timeout: 20_000 });
+      await letter.click();
+      await letter.pressSequentially('Written before I pressed Start fresh.', { delay: 8 });
+      // The keeper writes on an interval; give it one.
+      await page.waitForTimeout(2600);
+
+      await page.bringToFront();
+      const popup = await openPopup();
+      await popup.locator('#dropApplication').click();
+      await popup.waitForTimeout(1200);
+      await popup.close();
+
+      const emptied = await heldPages(worker, page);
+      check('the application is forgotten, as the button says', emptied.length === 0, emptied.join(' | ') || '(none)');
+
+      await page.close();
+      await new Promise((go) => setTimeout(go, 1200));
+
+      const back = await context.newPage();
+      await back.goto(fixtures.urlFor(HELIOS_FORM), { waitUntil: 'domcontentloaded' });
+      await settled(back);
+      await back.waitForTimeout(1500);
+      const written = await cardOf(back).locator('textarea.tall').first().inputValue();
+      check(
+        'and the letter written for it is still reachable',
+        /before i pressed start fresh/i.test(written),
+        written.slice(0, 60) || '(empty)',
+      );
+      await back.close();
+    }
+
     group('Saving an answer for next time');
     {
       /*
