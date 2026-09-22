@@ -1077,6 +1077,147 @@ async function main() {
   );
 
   /*
+   * The graduation date, which is not a suggestion and must not arrive as one.
+   *
+   * Everything above is the keyword match: it read the posting's vocabulary
+   * and inferred, and agreeing with a guess should be a decision, so those
+   * rows arrive off. A level row is a different thing. It comes from a tag
+   * the applicant wrote on their own variant — "this ending is the one for
+   * internships" — which is an answer they already gave to this exact
+   * question, and the server marks it `instruction: true` to say so.
+   *
+   * Reported: an internship posting produced a resume still carrying the new
+   * grad date, with the intern-tagged alternate sitting right there in the
+   * store. The matcher had it right — measured against the store's own
+   * education entry with the title "Software Engineering Intern, Summer
+   * 2026", it returns `{edu_neu.dates: v_dec2026}` — and `withAllOff` wrote
+   * `v_may2026` straight back over it one line later, because it could not
+   * tell the two kinds of row apart. The whole point of reading the level is
+   * that nobody remembers to switch the ending before hitting submit; a row
+   * you have to notice and tick is the same thing as not remembering.
+   */
+  console.log('\nThe graduation date on an internship posting');
+
+  const grad = await inPage(async (createCard) => {
+    const sent = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Software Engineering Intern, Summer 2026', company: 'Acme' },
+        spec: {
+          id: 'job-acme',
+          label: 'Acme',
+          choices: { b_pipeline: 'v_kafka', 'edu_neu.dates': 'v_dec2026' },
+        },
+        baseLabel: 'New grad resume',
+        tailor: 'match',
+        diff: [],
+        rationale: [
+          // A guess about words. Arrives off, as every one of them does.
+          { key: 'b_pipeline', from: 'v_base', to: 'v_kafka', toText: 'Built a Kafka pipeline', because: ['kafka'] },
+          // An instruction the applicant left. Arrives on.
+          {
+            key: 'edu_neu.dates',
+            from: 'v_may2026',
+            to: 'v_dec2026',
+            toText: 'Sep. 2022 -- Dec. 2026',
+            because: ['intern'],
+            instruction: true,
+          },
+        ],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        return action === 'render' ? { pages: 1, fits: true } : {};
+      },
+    });
+    void handle;
+
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const settle = () => new Promise((r) => setTimeout(r, 60));
+    root.querySelector('.fold-changes')?.click();
+    const boxes = () => [...root.querySelectorAll('.pick input')];
+    const lastSpec = () => sent.filter((c) => c.action === 'render').at(-1)?.payload?.spec?.choices ?? null;
+
+    /*
+     * Nothing has been compiled yet on arrival, so the spec has to be read
+     * through a recompile — and the one that provokes it is the *other* row,
+     * the keyword guess. Turning that on and off again leaves it exactly as
+     * it arrived, and every spec sent along the way has to still carry the
+     * date.
+     */
+    const arrivedTicks = boxes().map((b) => b.checked);
+    boxes()[0].click();
+    await settle();
+    const withKeywordOn = lastSpec();
+    boxes()[0].click();
+    await settle();
+    const arrived = { ticks: arrivedTicks, choices: lastSpec(), withKeywordOn };
+
+    // Off by hand, because it still has to be refusable.
+    boxes()[1].click();
+    await settle();
+    const untickedByHand = { ticks: boxes().map((b) => b.checked), choices: lastSpec() };
+
+    // And "Use Original" means the resume exactly as it is kept, this
+    // included — the one control that promises nothing changed.
+    boxes()[1].click();
+    await settle();
+    [...root.querySelectorAll('button')].find((b) => /Use Original/.test(b.textContent))?.click();
+    await settle();
+    await settle();
+    return { arrived, untickedByHand, original: { choices: lastSpec() } };
+  });
+
+  check(
+    'the date arrives already switched on',
+    JSON.stringify(grad.arrived.ticks) === '[false,true]',
+    JSON.stringify(grad.arrived.ticks),
+  );
+  /*
+   * And in the resume that compiles, which is the half the person actually
+   * sends. A ticked box over a spec still naming the old date would be worse
+   * than no box at all.
+   */
+  check(
+    'and is in the resume that is built, not only on the screen',
+    grad.arrived.choices?.['edu_neu.dates'] === 'v_dec2026',
+    JSON.stringify(grad.arrived.choices),
+  );
+  // The keyword row beside it is untouched: this is not "apply everything".
+  // The keyword row beside it is untouched: this is not "apply everything".
+  check(
+    'while the keyword guess beside it is still off',
+    grad.arrived.choices?.b_pipeline === 'v_base',
+    JSON.stringify(grad.arrived.choices),
+  );
+  /*
+   * And the date survives the keyword row being ticked. The two live in one
+   * `choices` map, so a rebuild for one that dropped the other is the way
+   * this comes back without anybody touching the date at all.
+   */
+  check(
+    'and it survives the other row being ticked',
+    grad.arrived.withKeywordOn?.['edu_neu.dates'] === 'v_dec2026'
+      && grad.arrived.withKeywordOn?.b_pipeline === 'v_kafka',
+    JSON.stringify(grad.arrived.withKeywordOn),
+  );
+  check(
+    'it can still be refused',
+    grad.untickedByHand.choices?.['edu_neu.dates'] === 'v_may2026',
+    JSON.stringify(grad.untickedByHand.choices),
+  );
+  check(
+    'and "Use Original" really does mean the resume as you keep it',
+    grad.original.choices?.['edu_neu.dates'] === 'v_may2026',
+    JSON.stringify(grad.original.choices),
+  );
+
+  /*
    * And the skills rows, which had no way back at all.
    *
    * The button above tests for a `key` and a `from`, which is the shape of a

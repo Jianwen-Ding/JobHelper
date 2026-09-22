@@ -647,6 +647,105 @@ export async function attachFiles(files) {
   return { placed, unplaced, boxes: boxes.length };
 }
 
+/**
+ * Put files where the pointer let go of them.
+ *
+ * The chips on the card are draggable and the drag never carried anything.
+ * Measured on a bare page with no extension involved — a `<div>` whose
+ * `dragstart` adds a real `File` to `event.dataTransfer`, dropped on a zone
+ * that reads it back:
+ *
+ *   types:  ["text/plain"]      <- no "Files"
+ *   files:  []
+ *   items:  [{kind: "string", type: "text/plain"}]
+ *
+ * Chromium will not carry a script-made `File` in a drag a page starts, and
+ * it is right not to: a drag can leave the browser, and a page that could put
+ * files in one could write to the desktop. Dragging the same document out of
+ * a file manager works because that drag is native and this one never can be.
+ * So the bytes went into the carrier, the browser threw them away, and the
+ * form saw a plain-text drag it ignored. The card said "Drag any of these
+ * into the form" about something that has never once worked.
+ *
+ * What does work is for the extension to take the drop itself: the content
+ * script cancels it, reads where the pointer was, and places the file the way
+ * `attachFiles` places one. Nothing here is a trick the page can tell from a
+ * dialog — the same `input.files` write and the same events.
+ *
+ * `target` is whatever was under the pointer, which is almost never the box:
+ * it is the styled button in front of a hidden input, a label, the text
+ * inside a drop zone. So it is walked outwards to the nearest thing that
+ * takes files, and only then outwards to the page as a whole.
+ */
+export async function dropOnto(target, files) {
+  const placed = [];
+  const unplaced = [];
+  const boxes = uploadBoxes();
+
+  /*
+   * What the pointer was over, in the order a person would mean it.
+   *
+   * The box under the pointer first, then a box inside what is under the
+   * pointer — a drop on the panel around a single input means that input.
+   * Only when neither is there is the drop read as a drop on a zone.
+   */
+  const near = (el) => {
+    for (let at = el; at; at = at.parentElement ?? at.getRootNode?.()?.host) {
+      if (at instanceof HTMLInputElement && at.type === 'file' && boxes.includes(at)) return at;
+      const inside = [...(at.querySelectorAll?.('input[type="file"]') ?? [])].filter((b) => boxes.includes(b));
+      if (inside.length === 1) return inside[0];
+      if (inside.length > 1) return null;
+    }
+    return null;
+  };
+
+  const box = target ? near(target) : null;
+  const zone = box ? null : target?.closest?.('div,section,label,form') ?? null;
+  const written = new Set();
+  const ours = new Set((files ?? []).map((f) => f?.name).filter(Boolean));
+
+  for (const spec of files ?? []) {
+    let file;
+    try {
+      file = fileFrom(spec);
+    } catch (err) {
+      unplaced.push({
+        name: spec?.name ?? 'a file',
+        why: String(err?.message) === 'empty' ? 'it came back empty from the store' : 'it could not be read',
+      });
+      continue;
+    }
+
+    if (box) {
+      // Named at its word, exactly as `boxFor` does: a box that says it takes
+      // `.doc` is not a box a PDF goes in, however deliberately it was aimed at.
+      if (!willTake(box, file)) {
+        unplaced.push({ name: spec.name, why: `this form only takes ${box.getAttribute('accept')} there` });
+        continue;
+      }
+      if (putIn(box, file, { alongside: written.has(box), ours })) {
+        written.add(box);
+        placed.push({ name: spec.name, where: saysWhat(box).slice(0, 60) || 'the box you dropped it on' });
+        continue;
+      }
+      unplaced.push({ name: spec.name, why: 'the page would not let that box take a file' });
+      continue;
+    }
+
+    if (zone) {
+      // A zone gives nothing back to read, so the answer is "not sure" and is
+      // reported as such rather than claimed. See `dropOn`.
+      const how = await dropOn(zone, file);
+      placed.push({ name: spec.name, where: 'where you dropped it', sure: how === 'sure' });
+      continue;
+    }
+
+    unplaced.push({ name: spec.name, why: 'there is no upload box where you dropped it' });
+  }
+
+  return { placed, unplaced, boxes: boxes.length };
+}
+
 /*
  * There was a `canAttach()` here, for hiding the button on a page with
  * nothing to attach to. Nothing ever called it, and it could not be called:

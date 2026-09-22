@@ -1506,6 +1506,25 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       // So a drop zone that reads the text flavour rather than the files —
       // a few of them do — gets something it can show.
       carrier.setData('text/plain', files.map((f) => f.name).join('\n'));
+
+      /*
+       * And the files themselves go the only way they can: not in the drag.
+       *
+       * Chromium will not carry a script-made `File` in a drag a page starts,
+       * so everything put in `carrier.items` above is thrown away before the
+       * drop — measured on a bare page, `files: []` and no file item at the
+       * other end. The carrier is still filled because a page that reads it
+       * during `dragover` uses it to decide whether to light up a drop zone,
+       * and because the day Chromium allows this the drag will simply work.
+       *
+       * What actually places the file is the drop listener in content.js,
+       * which needs to know what is in the air. See `inTheAir` there.
+       */
+      onAction('dragging', { files }).catch(() => undefined);
+    };
+
+    chip.ondragend = () => {
+      onAction('dragging', { files: [] }).catch(() => undefined);
     };
   }
 
@@ -2686,10 +2705,39 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * everything needed: `from` on each change is what the base was using.
    * A second round trip to be told what we can work out is a second wait.
    */
-  function withAllOff(spec, rationale = [], skillChanges = []) {
+  /*
+   * `keepInstructions` is the difference between "nothing has been decided
+   * yet" and "put it back exactly as I keep it".
+   *
+   * Not every row in the list is the same kind of thing. Almost all of them
+   * are the keyword match reading the posting's vocabulary and inferring, and
+   * those are suggestions: they arrive off, and ticking one is how you agree.
+   * A level row is not an inference. It comes from a tag the applicant wrote
+   * on their own variant — "this ending is the one for internships" — which
+   * is an answer they already gave to this exact question, and the only
+   * question it answers is the graduation date.
+   *
+   * Both came through here and both were switched off, so an internship
+   * posting produced a resume carrying the new-grad date unless you noticed a
+   * row in the list and ticked it. Measured against the store's own education
+   * entry, with a posting titled "Software Engineering Intern, Summer 2026":
+   * the match returns `{edu_neu.dates: v_dec2026}` and this handed back
+   * `v_may2026`. That is the failure the whole level module exists to stop —
+   * "nobody remembers to switch the ending before hitting submit" — and it
+   * was being undone one line after it was worked out.
+   *
+   * "Use Original" still turns everything off, instructions included: that
+   * button means the resume as it is kept, and saying otherwise would leave
+   * the one control that promises nothing changed changing something.
+   */
+  function withAllOff(spec, rationale = [], skillChanges = [], { keepInstructions = true } = {}) {
     if (!spec) return spec;
     const choices = { ...(spec.choices ?? {}) };
-    for (const r of rationale ?? []) if (r.key && r.from) choices[r.key] = r.from;
+    for (const r of rationale ?? []) {
+      if (!r.key || !r.from) continue;
+      if (keepInstructions && r.instruction) continue;
+      choices[r.key] = r.from;
+    }
     const sections = (spec.sections ?? []).map((section) => {
       if (section.kind !== 'skills') return section;
       const items = { ...(section.items ?? {}) };
@@ -2806,7 +2854,9 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     // "As you keep it" is the match's list with nothing ticked, so it is that
     // proposal you are on — not a third state of its own.
     if (state.offers.match && state.showing !== 'match') showOffer('match');
-    state.spec = withAllOff(state.spec, analysis.rationale, analysis.skillChanges);
+    // Everything, the level instruction included — see `withAllOff`. This
+    // button is the one that means the resume exactly as it is kept.
+    state.spec = withAllOff(state.spec, analysis.rationale, analysis.skillChanges, { keepInstructions: false });
     state.builtWith = 'none';
     if (state.offers.match) state.offers.match.spec = state.spec;
     state.render = null;
@@ -4807,11 +4857,24 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           'whether it took them — check the form before sending',
       );
     }
+    /*
+     * Grouped by the reason, because the reasons differ and each one is a
+     * different thing to do about it.
+     *
+     * `attachFiles` gives every unplaced file its own `why`, and one run
+     * routinely produces two: a resume refused by a box that takes `.doc`
+     * only, and a transcript on a form with no transcript box at all. This
+     * named both files and then printed `unplaced[0].why` — so the sentence
+     * read "Resume.pdf and Transcript.pdf had nowhere to go — this form only
+     * takes .doc,.docx there", which is a lie about the transcript and sends
+     * the person off to export a Word copy of a document the form never
+     * wanted.
+     */
+    const byReason = new Map();
+    for (const u of unplaced) byReason.set(u.why, [...(byReason.get(u.why) ?? []), u.name]);
+    for (const [why, names] of byReason) parts.push(`${names.join(' and ')} had nowhere to go — ${why}`);
     if (unplaced.length > 0) {
-      parts.push(
-        `${unplaced.map((u) => u.name).join(' and ')} had nowhere to go — ${unplaced[0].why}. ` +
-          'The folder above has everything, for the boxes this cannot reach',
-      );
+      parts.push('The folder above has everything, for the boxes this cannot reach');
     }
     return `${parts.join('. ')}.`;
   }
@@ -5220,6 +5283,37 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         ]),
       ]),
       h('div', { className: 'row gap' }, [
+        /*
+         * The button the note above has always named.
+         *
+         * "Drag any of these into the form, or press Attach files below" was
+         * written for the step before this one and copied here, where there
+         * was no such button: Autofill, "Not sent after all" and Done. So the
+         * panel headed "Saved. These files are named and ready to attach"
+         * pointed at a control that does not exist, and the quick way to
+         * attach was one step back through a card that had moved on.
+         *
+         * This is the moment it belongs to. Nothing about the step is over —
+         * the files have just been written, the form is still on screen with
+         * its upload boxes empty, and dragging three chips is what the person
+         * would otherwise be doing by hand.
+         */
+        h('button', {
+          className: 'tiny',
+          textContent: busyLabel('attach', 'Attach files', 'Attaching…'),
+          title: 'Put the resume, letter and transcript into this form’s upload boxes',
+          disabled: busyIn('page'),
+          onclick: () =>
+            act(
+              'attachFiles',
+              // The same fallback as the step before — see there.
+              {
+                application:
+                  b.application?.id ?? state.staged?.application?.id ?? analysis?.application?.id ?? null,
+              },
+              (r) => (state.attachReport = r),
+            ),
+        }),
         h('button', {
           className: 'tiny',
           textContent: busyLabel('autofill', 'Autofill this form', 'Filling…'),
@@ -5268,6 +5362,20 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         ? h('div', {
             className: `ok-note${autofillLeftWork(state.autofillReport) ? ' warn' : ''}`,
             textContent: describeAutofill(state.autofillReport),
+          })
+        : null,
+      // Same reading of the same report as the step before — see there for why
+      // an unverifiable drop is not green.
+      state.attachReport
+        ? h('div', {
+            className: `ok-note${
+              (state.attachReport.unplaced?.length ?? 0) > 0 ||
+              state.attachReport.nothing ||
+              (state.attachReport.placed ?? []).some((p) => p.sure === false)
+                ? ' warn'
+                : ''
+            }`,
+            textContent: describeAttach(state.attachReport),
           })
         : null,
       h(
@@ -5535,6 +5643,19 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     /** Something that happened and went well. See `state.note`. */
     say(text) {
       state.note = text;
+      draw();
+    },
+
+    /*
+     * Where a dragged chip landed.
+     *
+     * Said in the same words and with the same green-or-amber reading as a
+     * press of Attach files, because it is the same act: the drag cannot
+     * carry the file, so the extension takes the drop and places it. See
+     * `inTheAir` in content.js.
+     */
+    dropped(report) {
+      state.attachReport = report;
       draw();
     },
 

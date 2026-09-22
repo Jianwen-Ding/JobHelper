@@ -171,19 +171,47 @@ async function main() {
       (await card.locator('.change').count()) > 0,
       `${await card.locator('.change').count()} suggestions on arrival`,
     );
+    /*
+     * Every guess off — and the one row that is not a guess on.
+     *
+     * This posting is titled "Software Engineer Intern", and the store's
+     * education entry carries two endings with the later one tagged `intern`.
+     * That tag is not the matcher inferring from the posting's vocabulary; it
+     * is an answer the applicant already wrote down for exactly this case, so
+     * the server marks it `instruction: true` and it arrives applied. Every
+     * other row here is the keyword match guessing, and those stay off until
+     * asked for.
+     *
+     * Both halves are asserted, because either one alone passes over the
+     * failure it is for: "all off" passed over an internship application
+     * going out with the new grad graduation date on it, and "one on" would
+     * pass over a card that had quietly ticked all six.
+     */
+    const onRows = await card.locator('.change:has(.pick):not(.off)').allInnerTexts();
     check(
-      'and nothing is changed until it is asked for',
-      arrivedOff.length > 0 && arrivedOff.every(Boolean),
+      'the guesses are all off until they are asked for',
+      arrivedOff.filter(Boolean).length === arrivedOff.length - 1,
       `${arrivedOff.filter(Boolean).length}/${arrivedOff.length} rows marked off`,
     );
     check(
-      'the count says how many of them are in, not just how many there are',
-      /^0 of \d+ changes$/.test((await countText()).trim()),
-      await countText(),
+      'and the one already applied is the graduation date',
+      onRows.length === 1 && /\b20\d\d\b/.test(onRows[0]) && /Dec/.test(onRows[0]),
+      onRows.join(' | ').replace(/\n/g, ' '),
     );
     check(
-      'and the bar says the resume is the original',
-      (await card.locator('button.mode.on').innerText()).includes('Use Original'),
+      'the count says how many of them are in, not just how many there are',
+      /^1 of \d+ changes$/.test((await countText()).trim()),
+      await countText(),
+    );
+    /*
+     * And the bar says so. It used to read "Use Original", which was true
+     * when nothing had been applied; with the date switched the resume is no
+     * longer the one kept, and saying otherwise would be the card's own
+     * account disagreeing with the document it is about to build.
+     */
+    check(
+      'and the bar no longer claims the resume is untouched',
+      (await card.locator('button.mode.on').innerText()).includes('Keyword match'),
       await card.locator('button.mode.on').innerText(),
     );
 
@@ -274,6 +302,10 @@ async function main() {
       for (const [i, row] of boxes.entries()) {
         const box = row.locator('.pick input');
         for (let w = 0; w < 600 && !(await box.isEnabled()); w++) await page.waitForTimeout(150);
+        // The level row arrived on — see above. Clicking it would switch the
+        // graduation date back off, and then wait ninety seconds for it to
+        // come on by itself.
+        if (!(await pickable.nth(i).getAttribute('class'))?.includes('off')) continue;
         await row.locator('.pick').click();
         for (let w = 0; w < 600 && (await pickable.nth(i).getAttribute('class'))?.includes('off'); w++) {
           await page.waitForTimeout(150);
@@ -955,6 +987,28 @@ async function main() {
       done.split('\n').slice(1, 3).join(' '),
     );
 
+    /*
+     * And every control this panel names is on this panel.
+     *
+     * The note under the chips reads "Drag any of these into the form, or
+     * press Attach files below." It was written for the step before this one
+     * and copied here, where the buttons were Autofill, "Not sent after all"
+     * and Done — so a screen headed "named and ready to attach" pointed at a
+     * button that was one step back, through a card that had moved on.
+     *
+     * Read out of the note rather than hard-coded, so that rewording the
+     * sentence cannot quietly move the promise somewhere nothing keeps it.
+     */
+    {
+      const note = (await card.locator('.done-box .drag-note').innerText()).trim();
+      const named = note.match(/press ([A-Z][^.]*?) below/)?.[1];
+      check('the note under the files names a button', Boolean(named), note);
+      if (named) {
+        const button = card.getByRole('button', { name: named, exact: true });
+        check(`and "${named}" is on this panel`, (await button.count()) > 0, note);
+      }
+    }
+
     /* ---- Dragging a built document into the form ---- */
     /*
      * "Attach files" puts them in the boxes and is still the quick way. It
@@ -1012,6 +1066,64 @@ async function main() {
        * there while a drag does it anyway would be no refusal at all.
        */
       check('and nothing else came with it', carried.text === carried.files[0]?.name, carried.text);
+    }
+
+    /*
+     * And now the part none of the above was ever evidence for: letting go.
+     *
+     * Everything up to here reads the carrier *inside* `dragstart`, where the
+     * file is genuinely present — and the browser then throws it away.
+     * Chromium will not carry a script-made `File` in a drag a page starts,
+     * because a drag can leave the browser and a page that could put files in
+     * one could write to the desktop. Measured on a bare page with no
+     * extension involved (tests/probe-drag-drop.mjs): at the drop, `types` is
+     * `["text/plain"]`, `files` is empty and there is no file item at all.
+     *
+     * So the chips looked right from every angle this suite had and had never
+     * once put a document into a form. What places it is the extension taking
+     * the drop itself — see `inTheAir` in content.js — and the only test that
+     * can tell the difference is one that drags with a real pointer and then
+     * asks the *form* what it is holding.
+     */
+    {
+      const box = page.locator('#cl');
+      await box.waitFor({ timeout: 20_000 });
+      const chip = card.locator('.done-box .file.liftable').first();
+      const name = (await chip.locator('.what').innerText()).trim();
+
+      const from = await chip.boundingBox();
+      const to = await box.boundingBox();
+      // The pointer arriving is what fetches the bytes, and a drag started
+      // before they land is refused on purpose. See `warmFiles`.
+      await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+      await page.waitForTimeout(1200);
+      await page.mouse.down();
+      await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 14 });
+      await page.mouse.up();
+
+      let held = [];
+      for (let i = 0; i < 25 && held.length === 0; i++) {
+        held = await box.evaluate((el) => [...(el.files ?? [])].map((f) => f.name));
+        if (held.length === 0) await page.waitForTimeout(120);
+      }
+      check('dropping a chip on a box puts the file in it', held[0] === name, `${JSON.stringify(held)} vs ${name}`);
+      check('with the bytes, not an empty placeholder',
+        (await box.evaluate((el) => el.files?.[0]?.size ?? 0)) > 100,
+        String(await box.evaluate((el) => el.files?.[0]?.size ?? 0)));
+      /*
+       * And the card says where it went, in the same words a press of Attach
+       * files uses — it is the same act. Found by the filename rather than by
+       * position: the autofill note from earlier in this run is also an
+       * `.ok-note` on this panel, and matching the first one would have
+       * passed on "Filled 6 fields".
+       */
+      const note = card.locator('.ok-note').filter({ hasText: name });
+      let says = 0;
+      for (let i = 0; i < 25 && says === 0; i++) {
+        says = await note.count();
+        if (says === 0) await page.waitForTimeout(120);
+      }
+      check('and the card says so', says > 0, (await card.locator('.ok-note').allInnerTexts()).join(' | '));
     }
 
     const tracked = await (await fetch(`${SERVER}/api/applications`)).json();

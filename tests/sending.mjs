@@ -478,6 +478,14 @@ async function main() {
     group('A press the browser refuses');
     {
       const src = fs.readFileSync(path.join(extensionRoot, 'src/shared/sending.js'), 'utf8');
+      /** The same markup, behind an open shadow boundary. */
+      const inShadow = (html) =>
+        `<div id="host"></div><script>
+          document.getElementById('host').attachShadow({ mode: 'open' }).innerHTML =
+            ${JSON.stringify(html)};
+          document.getElementById('host').shadowRoot
+            .querySelector('form').addEventListener('submit', (e) => e.preventDefault());
+        </script>`;
       const cases = [
         ['a valid form, submitted natively', true,
           '<form onsubmit="event.preventDefault()"><input name="n" required value="Jane">' +
@@ -494,6 +502,27 @@ async function main() {
           '<button type="submit" formnovalidate>Submit Application</button></form>'],
         ['an empty required field, which the browser blocks', false,
           '<form><input name="n" required><button type="submit">Submit Application</button></form>'],
+        /*
+         * And the same three from inside an open shadow root.
+         *
+         * A click is retargeted on its way out of one: at a document listener
+         * `event.target` is the host, which is a `<div>`, so `closest('button,
+         * …')` found nothing and a real send went unrecorded. Not a curiosity —
+         * `looksLikeApplicationForm` and `attachFiles` both walk shadow roots
+         * on purpose, because several of these portals are web components, so
+         * the card would fill such a form and attach to it and then miss it
+         * going out.
+         *
+         * The third is the control: the boundary must not turn off the reasons
+         * a press is *not* a send, or this would be a fix that records
+         * everything.
+         */
+        ['a press inside an open shadow root', true, inShadow(
+          '<form><input name="n" required><button type="button">Submit Application</button></form>')],
+        ['a native submit inside an open shadow root', true, inShadow(
+          '<form novalidate><input name="n" value="Jane"><button type="submit">Submit Application</button></form>')],
+        ['an empty required field inside an open shadow root', false, inShadow(
+          '<form><input name="n" required><button type="submit">Submit Application</button></form>')],
       ];
 
       for (const [what, shouldRecord, html] of cases) {

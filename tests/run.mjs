@@ -100,6 +100,7 @@ const SUITES = [
   { name: 'trail', file: 'trail.mjs', cost: 1, nodeTest: true },
   { name: 'sites', file: 'sites.mjs', cost: 1, nodeTest: true },
   { name: 'documents', file: 'documents.mjs', cost: 1, nodeTest: true },
+  { name: 'reporting', file: 'reporting.mjs', cost: 1, nodeTest: true },
   { name: 'config', file: 'config.mjs', cost: 1, nodeTest: true },
 ];
 
