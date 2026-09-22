@@ -257,7 +257,33 @@ export function watchForSending(doc, tell) {
   };
 
   const onClick = (event) => {
-    const target = event.target;
+    /*
+     * The thing actually pressed, not the element the browser retargeted to.
+     *
+     * A click that starts inside an open shadow root is rewritten on its way
+     * out: by the time it reaches a document listener, `event.target` is the
+     * *host*, and the host is a `<div>` with nothing button-shaped about it.
+     * So `closest('button, …')` came back null and the press was not a send.
+     * Measured, on a host whose shadow root holds
+     * `<button type=button>Submit Application</button>`: nothing recorded, and
+     * at the document `{target: "DIV", path0: "BUTTON"}`.
+     *
+     * Web-component forms are not a curiosity here — `looksLikeApplicationForm`
+     * and `attachFiles` both walk shadow roots deliberately, because several of
+     * these portals are built that way. The card would fill such a form, attach
+     * to it, and then never notice it being sent.
+     *
+     * `composedPath()[0]` is the un-retargeted target. Outside a shadow root it
+     * is `event.target` and nothing changes.
+     *
+     * This covers the presses, which is every send that goes through a button —
+     * including Enter in a text field, which fires a click on the default
+     * button. A `submit` event raised inside a shadow root is still invisible
+     * here and cannot be made visible from the document: `submit` is
+     * `composed: false`, so it does not cross the boundary at all. Measured:
+     * `submit reached the document: false`.
+     */
+    const target = event.composedPath?.()?.[0] ?? event.target;
     if (!target || typeof target.closest !== 'function') return;
     const button = target.closest('button, input[type=submit], [role=button]');
     if (!button) return;

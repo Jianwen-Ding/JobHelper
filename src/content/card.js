@@ -4807,11 +4807,24 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
           'whether it took them — check the form before sending',
       );
     }
+    /*
+     * Grouped by the reason, because the reasons differ and each one is a
+     * different thing to do about it.
+     *
+     * `attachFiles` gives every unplaced file its own `why`, and one run
+     * routinely produces two: a resume refused by a box that takes `.doc`
+     * only, and a transcript on a form with no transcript box at all. This
+     * named both files and then printed `unplaced[0].why` — so the sentence
+     * read "Resume.pdf and Transcript.pdf had nowhere to go — this form only
+     * takes .doc,.docx there", which is a lie about the transcript and sends
+     * the person off to export a Word copy of a document the form never
+     * wanted.
+     */
+    const byReason = new Map();
+    for (const u of unplaced) byReason.set(u.why, [...(byReason.get(u.why) ?? []), u.name]);
+    for (const [why, names] of byReason) parts.push(`${names.join(' and ')} had nowhere to go — ${why}`);
     if (unplaced.length > 0) {
-      parts.push(
-        `${unplaced.map((u) => u.name).join(' and ')} had nowhere to go — ${unplaced[0].why}. ` +
-          'The folder above has everything, for the boxes this cannot reach',
-      );
+      parts.push('The folder above has everything, for the boxes this cannot reach');
     }
     return `${parts.join('. ')}.`;
   }
@@ -5220,6 +5233,37 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         ]),
       ]),
       h('div', { className: 'row gap' }, [
+        /*
+         * The button the note above has always named.
+         *
+         * "Drag any of these into the form, or press Attach files below" was
+         * written for the step before this one and copied here, where there
+         * was no such button: Autofill, "Not sent after all" and Done. So the
+         * panel headed "Saved. These files are named and ready to attach"
+         * pointed at a control that does not exist, and the quick way to
+         * attach was one step back through a card that had moved on.
+         *
+         * This is the moment it belongs to. Nothing about the step is over —
+         * the files have just been written, the form is still on screen with
+         * its upload boxes empty, and dragging three chips is what the person
+         * would otherwise be doing by hand.
+         */
+        h('button', {
+          className: 'tiny',
+          textContent: busyLabel('attach', 'Attach files', 'Attaching…'),
+          title: 'Put the resume, letter and transcript into this form’s upload boxes',
+          disabled: busyIn('page'),
+          onclick: () =>
+            act(
+              'attachFiles',
+              // The same fallback as the step before — see there.
+              {
+                application:
+                  b.application?.id ?? state.staged?.application?.id ?? analysis?.application?.id ?? null,
+              },
+              (r) => (state.attachReport = r),
+            ),
+        }),
         h('button', {
           className: 'tiny',
           textContent: busyLabel('autofill', 'Autofill this form', 'Filling…'),
@@ -5268,6 +5312,20 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
         ? h('div', {
             className: `ok-note${autofillLeftWork(state.autofillReport) ? ' warn' : ''}`,
             textContent: describeAutofill(state.autofillReport),
+          })
+        : null,
+      // Same reading of the same report as the step before — see there for why
+      // an unverifiable drop is not green.
+      state.attachReport
+        ? h('div', {
+            className: `ok-note${
+              (state.attachReport.unplaced?.length ?? 0) > 0 ||
+              state.attachReport.nothing ||
+              (state.attachReport.placed ?? []).some((p) => p.sure === false)
+                ? ' warn'
+                : ''
+            }`,
+            textContent: describeAttach(state.attachReport),
           })
         : null,
       h(

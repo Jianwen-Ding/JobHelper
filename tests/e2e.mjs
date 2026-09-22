@@ -955,6 +955,28 @@ async function main() {
       done.split('\n').slice(1, 3).join(' '),
     );
 
+    /*
+     * And every control this panel names is on this panel.
+     *
+     * The note under the chips reads "Drag any of these into the form, or
+     * press Attach files below." It was written for the step before this one
+     * and copied here, where the buttons were Autofill, "Not sent after all"
+     * and Done — so a screen headed "named and ready to attach" pointed at a
+     * button that was one step back, through a card that had moved on.
+     *
+     * Read out of the note rather than hard-coded, so that rewording the
+     * sentence cannot quietly move the promise somewhere nothing keeps it.
+     */
+    {
+      const note = (await card.locator('.done-box .drag-note').innerText()).trim();
+      const named = note.match(/press ([A-Z][^.]*?) below/)?.[1];
+      check('the note under the files names a button', Boolean(named), note);
+      if (named) {
+        const button = card.getByRole('button', { name: named, exact: true });
+        check(`and "${named}" is on this panel`, (await button.count()) > 0, note);
+      }
+    }
+
     /* ---- Dragging a built document into the form ---- */
     /*
      * "Attach files" puts them in the boxes and is still the quick way. It
