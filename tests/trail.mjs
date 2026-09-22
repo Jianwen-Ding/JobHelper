@@ -72,6 +72,73 @@ describe('two addresses on one site', () => {
     assert.equal(relatedPath(`${jobs}&vjk=aaaa1111`, `https://www.indeed.com/jobs?q=golang&vjk=aaaa1111`), true);
   });
 
+  /*
+   * And the two systems this repo already ships fixtures for.
+   *
+   * `JOB_PARAM` is the whole defence for an ATS that keeps every posting at
+   * one path: `relatedPath` returns true the moment the paths match, so a job
+   * id the list does not know is a job id that does not exist. `tests/ats-web`
+   * models ADP WorkForce Now at `/ta/6100.jobs?ApplyToJob=` with three
+   * different postings, so the product claims to handle a system whose jobs
+   * it could not tell apart.
+   *
+   * `jobpostingid` is the same omission one word longer: `postingid` is on the
+   * list and the regex is anchored, so the longer spelling matched nothing.
+   *
+   * Two roles whose titles are plainly different are caught anyway, by the
+   * role gate, and come back `unsure` — a chip rather than a merge. What this
+   * fixes is the pair the gate cannot separate: "Platform Engineer" and
+   * "Senior Platform Engineer" share a word, so the addresses were the only
+   * evidence left and they said "same page".
+   */
+  /*
+   * The steps a real application form is actually made of.
+   *
+   * `STEP_WORDS` had the words a *developer* would pick — apply, form, step,
+   * submit, review — and none of the ones an ATS actually puts in the path.
+   * A Workday or Greenhouse application walks `/jobs/12345/apply` then
+   * `/jobs/12345/eeo`, `/documents`, `/demographics`, and the sibling rule
+   * needs both ends to look like steps: `apply` did, `eeo` did not, and the
+   * pair named no job in the query for `namesTheSameJob` to agree about.
+   *
+   * So the answer was `different` — the confident branch, not `unsure`. The
+   * trail resets at the equal-opportunity page, and while the letter is
+   * parked and comes back, page 0 does not: everything written from there on
+   * is written from the form rather than the description, and nothing says so
+   * because the chip only exists for `unsure`.
+   *
+   * These join only where the *other* end is a step too, which is the rule
+   * that already keeps `/careers/apply` from swallowing `/careers/vega-
+   * engineer`. Two jobs are never both named like form steps.
+   */
+  it('keeps the steps of one application form together', () => {
+    const job = 'https://careers.acme.example/jobs/12345';
+    assert.equal(relatedPath(`${job}/apply`, `${job}/eeo`), true);
+    assert.equal(relatedPath(`${job}/apply`, `${job}/documents`), true);
+    assert.equal(relatedPath(`${job}/review`, `${job}/demographics`), true);
+    assert.equal(relatedPath(`${job}/application`, `${job}/voluntary-disclosures`), true);
+  });
+
+  /*
+   * And the rule that protects them is still the one doing the work: a step
+   * beside something that is not a step is two different things.
+   */
+  it('still refuses a step beside a posting', () => {
+    assert.equal(relatedPath('https://acme.example/careers/apply', 'https://acme.example/careers/vega-engineer'), false);
+    assert.equal(relatedPath('https://acme.example/careers/documents', 'https://acme.example/careers/data-scientist'), false);
+    assert.equal(relatedPath('https://acme.example/jobs/1111', 'https://acme.example/jobs/2222'), false);
+  });
+
+  it('does not join two postings an unlisted job parameter tells apart', () => {
+    const adp = 'https://acme.example/ta/6100.jobs';
+    assert.equal(relatedPath(`${adp}?ApplyToJob=482991`, `${adp}?ApplyToJob=482992`), false);
+    // The same posting reached twice is still the same posting.
+    assert.equal(relatedPath(`${adp}?ApplyToJob=482991`, `${adp}?ApplyToJob=482991&src=email`), true);
+
+    const ukg = 'https://acme.example/careers';
+    assert.equal(relatedPath(`${ukg}?jobPostingId=111`, `${ukg}?jobPostingId=222`), false);
+  });
+
   it('ignores the query when it says nothing about which job this is', () => {
     assert.equal(relatedPath('https://x.com/acme/8f21', 'https://x.com/acme/8f21?utm_source=board'), true);
     assert.equal(relatedPath('https://x.com/acme/8f21?gh_jid=9', 'https://x.com/acme/8f21?gh_jid=9&src=ad'), true);
@@ -414,6 +481,63 @@ describe('an apply link on the page you came from', () => {
         '<a href="https://boards.other.example/gh/acme/jobs/9911">Data Scientist</a>',
     };
     assert.equal(sameApplication({ pages: [board] }, { url: 'https://boards.other.example/gh/acme/jobs/9911' }), false);
+  });
+
+  /*
+   * An apply link says where you went, not which job you went to.
+   *
+   * The other three routes into a join were each taught this, and each says
+   * so: the click "is evidence about *where you went*, though, and none at
+   * all about whether you went to the same job", and the referrer branch
+   * concludes "the role is consulted here as it is there, on the same terms".
+   * The link route was left returning a flat `same`.
+   *
+   * It is the route that runs when the referrer has been stripped — which
+   * boards do routinely with `rel="noreferrer"` — so it is not a rare corner.
+   * A careers listing whose rows each carry an Apply button: read Platform
+   * Engineer, apply, come back, press Data Scientist's Apply, and its form
+   * opens inside the first job's application with "Carried over: the resume,
+   * the letter" and no chip.
+   *
+   * Measured against the module before the fix: this returned `same`, while
+   * the identical situation arriving with a referrer returned `unsure`.
+   */
+  it('leaves an apply link unsure when the page plainly names another job', () => {
+    const board = {
+      url: 'https://careers.acme.example/openings',
+      at: Date.now() - 60_000,
+      html:
+        '<a href="/jobs/1111">Platform Engineer</a><a href="/jobs/1111">Apply</a>' +
+        '<a href="/jobs/2222">Data Scientist</a><a href="/jobs/2222">Apply</a>',
+    };
+    const first = {
+      url: 'https://careers.acme.example/jobs/1111',
+      at: Date.now() - 30_000,
+      company: 'Acme',
+      role: 'Platform Engineer',
+    };
+    const trail = { pages: [board, first], at: Date.now() };
+
+    assert.equal(
+      judgeApplication(trail, {
+        url: 'https://careers.acme.example/jobs/2222',
+        company: 'Acme',
+        role: 'Data Scientist',
+      }),
+      'unsure',
+    );
+
+    // And the hand-off the route exists for is untouched: a form that names
+    // no role of its own is the ordinary next page, not a new job.
+    assert.equal(judgeApplication(trail, { url: 'https://careers.acme.example/jobs/2222' }), 'same');
+    assert.equal(
+      judgeApplication(trail, {
+        url: 'https://careers.acme.example/jobs/2222',
+        company: 'Acme',
+        role: 'Platform Engineer',
+      }),
+      'same',
+    );
   });
 
   it('does not join a link to somewhere else entirely', () => {

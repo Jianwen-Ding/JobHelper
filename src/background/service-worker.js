@@ -1572,6 +1572,34 @@ const handlers = {
     const trail = await readTrail(id);
     const held = keep?.url ? trail.pages.filter((p) => p.url === keep.url) : [];
 
+    /*
+     * What is being forgotten is parked first, exactly as `remember` parks it.
+     *
+     * Forgetting an application and destroying what was written for it are two
+     * different things, and every other path already knows it: closing the tab
+     * parks, and `remember`'s own fresh start parks with the reason written
+     * out — "nothing is destroyed either, which is the failure it was
+     * causing". This one dropped `trail.work` on the floor, and it is reached
+     * from the popup, whose panel says "your writing is being held, and comes
+     * back when you return" two lines above the button. So the same intent had
+     * two outcomes, and the destructive one was the one that had just promised
+     * otherwise.
+     *
+     * Under the pages being forgotten, never the one kept. The card's "start a
+     * new application here" keeps the page you are on, and parking under that
+     * url would have the new application rescue the old one's letter on its
+     * first read — the failure `pickParked` exists to prevent, arranged by
+     * hand. The pages that go are the pages the writing goes with.
+     */
+    if (trail.work) {
+      const gone = [...new Set(trail.pages.filter((p) => !held.includes(p)).map((p) => p?.url).filter(Boolean))];
+      if (gone.length > 0) {
+        await sweepOrphans();
+        const entry = { work: trail.work, save: trail.save, job: nameOfTrail(trail), tab: id, at: Date.now() };
+        for (const url of gone) await parkWork(url, entry);
+      }
+    }
+
     if (held.length === 0) {
       /*
        * Marked as emptied, not simply removed.
@@ -2457,13 +2485,40 @@ async function sweepOrphans() {
     .map(([key, value]) => ({ key, at: value?.at ?? 0 }));
 
   const now = Date.now();
-  const expired = mine.filter((o) => now - o.at > TRAIL_STALE_MS).map((o) => o.key);
-  // Newest first, and anything past the limit goes with the expired ones.
-  const surplus = mine
-    .filter((o) => !expired.includes(o.key))
-    .sort((a, b) => b.at - a.at)
-    .slice(ORPHAN_LIMIT)
-    .map((o) => o.key);
+  const expired = new Set(mine.filter((o) => now - o.at > TRAIL_STALE_MS).map((o) => o.key));
+
+  /*
+   * By the moment each was written, because that is what an application is
+   * here.
+   *
+   * A closed tab parks its writing under *every* page of the trail it was on
+   * — the posting, the form, whatever came between — so that coming back to
+   * whichever of them you were last looking at finds it. One application is
+   * therefore several keys, written in one go and all carrying the same `at`.
+   *
+   * The count used to be of keys, newest first, cut wherever the number ran
+   * out. That cut falls inside an application as easily as between two: four
+   * of five pages kept and the fifth let go, so the letter is still there and
+   * which page you come back through decides whether you find it. Nothing
+   * says so either way, and the one page people actually return to — the
+   * posting they searched for again — is as likely to be the dropped one as
+   * not.
+   */
+  const groups = new Map();
+  for (const o of mine) {
+    if (expired.has(o.key)) continue;
+    groups.set(o.at, [...(groups.get(o.at) ?? []), o.key]);
+  }
+
+  const surplus = [];
+  let kept = 0;
+  for (const [, keys] of [...groups.entries()].sort((a, b) => b[0] - a[0])) {
+    // Whole or not at all — except that the newest is always kept, so a trail
+    // longer than the whole budget cannot throw away the thing that has just
+    // been rescued.
+    if (kept === 0 || kept + keys.length <= ORPHAN_LIMIT) kept += keys.length;
+    else surplus.push(...keys);
+  }
 
   const doomed = [...expired, ...surplus];
   if (doomed.length > 0) await session().remove(doomed).catch(() => undefined);

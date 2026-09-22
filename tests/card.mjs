@@ -428,6 +428,104 @@ async function main() {
     }).toString()})(createCard, ${JSON.stringify(extra)})`),
   );
 
+  /*
+   * A plan the server mostly refused, reported as a plan.
+   *
+   * Every id a model names is checked against the save and the ones that are
+   * not there are dropped — that is where "the AI chooses between wordings and
+   * never writes one" is actually enforced. What it dropped was computed and
+   * thrown away before it reached here, so a run where the model invented
+   * twelve of its fifteen choices arrived looking exactly like one where it
+   * chose three, and the card said "chosen by the AI" over both. Which is the
+   * one thing worth knowing about that run: it is the one worth asking again.
+   */
+  const mostlyRefused = await summaryFor({
+    tailor: 'ai',
+    aiUsed: true,
+    rejected: ['choice b_ghost: no such bullet', 'choice b_pipeline: not a variant id'],
+  });
+  check(
+    'a plan the save mostly refused says so',
+    /2 things the AI asked for are not in your save/.test(mostlyRefused),
+    mostlyRefused.slice(0, 160),
+  );
+  check(
+    'and never by the ids it named, which are not for reading',
+    !/b_ghost|b_pipeline|v_/.test(mostlyRefused),
+    mostlyRefused.slice(0, 160),
+  );
+
+  const refusedOne = await summaryFor({ tailor: 'ai', aiUsed: true, rejected: ['choice b_ghost: no such bullet'] });
+  check(
+    'one of them is one thing, not 1 things',
+    /One thing the AI asked for is not in your save/.test(refusedOne),
+    refusedOne.slice(0, 160),
+  );
+
+  const refusedNothing = await summaryFor({ tailor: 'ai', aiUsed: true, rejected: [] });
+  check(
+    'and a run the save took whole says nothing about refusals',
+    !/asked for/.test(refusedNothing),
+    refusedNothing.slice(0, 160),
+  );
+
+  /*
+   * And the same sentence on a run that landed in the background.
+   *
+   * An AI pass started on one page arrives minutes later, is filed rather
+   * than shown (see `fileOffer`), and is put on screen by pressing its
+   * button — a different path into `builtSummary` than the one above, which
+   * reads the analysis the card opened with.
+   *
+   * It does not pin which side of `PROPOSAL_KEYS` the field sits on: both
+   * halves reach `analysis` through an `Object.assign`, so moving it changes
+   * nothing observable. It is in the proposal half because that is what it
+   * describes — a keyword match has nothing to refuse — and because a
+   * per-proposal field sitting in `aboutThePage` is a stale count waiting to
+   * be shown over somebody else's run.
+   */
+  const refusedInTheBackground = await inPage(async (createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+        diff: [],
+        tailor: 'match',
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action) => (action === 'aiStatus' ? { active: true, state: 'on' } : {}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    await new Promise((r) => setTimeout(r, 120));
+
+    // Filed, not shown: nobody pressed for it on this page.
+    handle.update({
+      spec: { id: 'job-acme', label: 'Acme', tier: 'temporary', choices: { b_testing: 'v_base' } },
+      rationale: [],
+      diff: [],
+      tailor: 'ai',
+      aiUsed: true,
+      rejected: ['choice b_ghost: no such bullet', 'choice b_pipeline: not a variant id'],
+    });
+    await new Promise((r) => setTimeout(r, 120));
+
+    // Now open it, which is a switch between filed proposals and no server.
+    [...root.querySelectorAll('button.mode')].find((b) => /AI/.test(b.textContent))?.click();
+    await new Promise((r) => setTimeout(r, 200));
+    return [...root.querySelectorAll('.hint')].map((n) => n.textContent).join(' | ');
+  });
+
+  check(
+    'a refusal count survives being filed and opened later',
+    /2 things the AI asked for are not in your save/.test(refusedInTheBackground),
+    refusedInTheBackground.slice(0, 200),
+  );
+
   const failedToStart = await summaryFor({
     tailor: 'match',
     aiUsed: false,
@@ -644,7 +742,7 @@ async function main() {
         return b ? b.disabled : null;
       })(),
       // Filing waits for the two things it files.
-      filing: named('Submit'),
+      filing: named('Mark as applied'),
       // Different lanes entirely: none of these touch the resume.
       draftLetter: named('✦Draft a letter'),
       draftAnswer: named('✦Draft an answer'),
@@ -1379,6 +1477,108 @@ async function main() {
   check('and comes down when it finishes', overlap.barAfter === false, JSON.stringify(overlap));
 
   /*
+   * Feedback answered about a resume that is no longer the one on screen.
+   *
+   * "Apply feedback" sends the spec that is up when it is pressed, and a model
+   * reading it takes a while. "Use Original" is live for the whole of that —
+   * it is a local revert in a different lane, deliberately — so the two
+   * overlap, and what came back was merged into whatever `state.spec` had
+   * become by then. Press both and the boxes just taken off come back on,
+   * ticked by a model that was looking at the other document.
+   */
+  console.log('\nFeedback landing on a resume it was not about');
+
+  const lateFeedback = await inPage(async (createCard) => {
+    let release;
+    const renders = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: {
+          id: 'job-acme',
+          label: 'Acme',
+          tier: 'temporary',
+          choices: { b_pipeline: 'v_kafka' },
+        },
+        // One taken suggestion, so "Use Original" has something to put back.
+        rationale: [
+          { key: 'b_pipeline', from: 'v_base', to: 'v_kafka', toText: 'Built a Kafka pipeline', because: ['kafka'] },
+        ],
+        diff: [{ kind: 'changed', where: 'Acme Co.', from: 'Built a pipeline', to: 'Built a Kafka pipeline' }],
+        /*
+         * A decision, not a list of offers — a model read the posting and
+         * chose. That is the only arrival whose spec comes up with anything
+         * taken (see `isDecision`), so it is the only one where "Use Original"
+         * has work to do and the race is reachable at all.
+         */
+        tailor: 'ai',
+        aiUsed: true,
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'render') {
+          renders.push(payload?.spec?.choices?.b_pipeline ?? null);
+          return { pages: 1, fits: true };
+        }
+        // Held open, so the revert lands while the model is still reading.
+        if (action === 'refine') {
+          return new Promise((r) => {
+            release = () => r({ parsed: { choices: { b_pipeline: 'v_model' } } });
+          });
+        }
+        return {};
+      },
+    });
+    await new Promise((r) => setTimeout(r, 150));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
+    const mode = (re) => [...root.querySelectorAll('button.mode')].find((b) => re.test(b.textContent));
+
+    const box = root.querySelector('textarea');
+    box.value = 'lead with the distributed systems work';
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+
+    byText('Apply feedback').click();
+    await new Promise((r) => setTimeout(r, 100));
+    const started = Boolean(release);
+    mode(/Use Original/).click();
+    await new Promise((r) => setTimeout(r, 250));
+
+    // What the revert compiled, and everything the late reply compiles after it.
+    const reverted = renders.slice();
+    release();
+    await new Promise((r) => setTimeout(r, 300));
+    return {
+      started,
+      reverted,
+      after: renders.slice(reverted.length),
+      said: root.querySelector('.err')?.textContent ?? '',
+    };
+  });
+
+  check('the feedback really was in flight', lateFeedback.started === true, JSON.stringify(lateFeedback));
+  check(
+    'the revert put the original wording back',
+    lateFeedback.reverted.at(-1) === 'v_base',
+    JSON.stringify(lateFeedback),
+  );
+  check(
+    'and the late reply does not tick its choice onto the resume that replaced it',
+    !lateFeedback.after.includes('v_model'),
+    JSON.stringify(lateFeedback),
+  );
+  check(
+    'it says so, rather than dropping the feedback silently',
+    /different one now/.test(lateFeedback.said),
+    JSON.stringify(lateFeedback),
+  );
+
+  /*
    * Coming back from the builder having written something new.
    *
    * A wording added there is an *alternate*, and an alternate is only reached
@@ -1610,10 +1810,163 @@ async function main() {
     return new Promise((resolve) => setTimeout(() => resolve({
       actions: sent.map((c) => c.action),
       staged: sent.find((c) => c.action === 'stage')?.payload ?? null,
-      submitLabel: Boolean(byText('Submit')),
+      submitLabel: Boolean(byText('Mark as applied')),
       oldLabel: Boolean(byText('Prepare to submit')),
     }), 60));
   });
+
+  /*
+   * And a stage that was refused is tried again.
+   *
+   * `lastPrepared` is written before the call, so a second change arriving
+   * while one is in flight does not start a second compile of the same
+   * thing. It was not given back when the call failed — so a refusal counted
+   * as done, and nothing re-staged until something else about the
+   * application changed. The folder is what the upload dialog opens on; it is
+   * worth nothing if it is a build behind and believes it is not.
+   *
+   * Reachable now that a stage can be refused on purpose: a name typed into
+   * the rename menu that another document in this application already has.
+   */
+  const afterRefusal = await inPage((createCard) => {
+    const sent = [];
+    let refuse = true;
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        if (action === 'render') return { pages: 1, fits: true };
+        if (action === 'stage') {
+          // Refused only while there is a letter to refuse, the way a
+          // clashing name is refused — the build's own stage goes through.
+          if (refuse && payload?.coverLetter) {
+            refuse = false;
+            throw new Error('"Cover Letter" is already called Jianwen-Ding-Resume.pdf.');
+          }
+          return { currentDir: '/tmp/x', application: { id: 'app-1' } };
+        }
+        return {};
+      },
+    });
+
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
+
+    byText('Build resume').click();
+    const letter = 'Three paragraphs in and the tab goes.';
+    return new Promise((resolve) =>
+      setTimeout(() => {
+        // A letter arrives and its stage is refused.
+        handle.restoreWork({ letter }, false);
+        setTimeout(() => {
+          const afterRefused = sent.filter((c) => c.action === 'stage').length;
+          /*
+           * And the same letter again — the same application, the same files,
+           * nothing new to prepare. `prepareSoon` skips a state it has
+           * already prepared, so the only thing that can start another stage
+           * here is the refused one having been given back.
+           */
+          handle.restoreWork({ letter }, false);
+          setTimeout(
+            () =>
+              resolve({
+                stages: sent.filter((c) => c.action === 'stage').length,
+                afterRefused,
+              }),
+            2600,
+          );
+        }, 2600);
+      }, 2600),
+    );
+  });
+
+  check(
+    'a stage that was refused is tried again, not counted as done',
+    afterRefusal.stages > afterRefusal.afterRefused,
+    `${afterRefusal.afterRefused} by the refusal, ${afterRefusal.stages} in the end`,
+  );
+
+  /*
+   * "Saved" has to be about the text that was saved.
+   *
+   * The request carries a snapshot of the box, which is right. The callback
+   * that runs when it comes back read `state.letter` *again* — so a letter
+   * typed on while the save was in flight was recorded as the saved one.
+   * The button then says "Saved", disabled, under "Future drafts will start
+   * from this one", about a paragraph the store has never seen; and the
+   * mismatch check that would normally catch it compares against the wrong
+   * baseline, so it never fires.
+   */
+  const savedLie = await inPage((createCard) => {
+    let release;
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: true,
+      onAction: async (action, payload) =>
+        action === 'saveLetter'
+          ? new Promise((r) => { release = () => r({ ok: true, sent: payload.body }); })
+          : action === 'aiStatus'
+            ? { active: true, state: 'on' }
+            : {},
+    });
+    void handle;
+    return (async () => {
+      await new Promise((r) => setTimeout(r, 100));
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      const byText = (t) => [...root.querySelectorAll('button')].find((b) => new RegExp(t).test(b.textContent));
+      const box = root.querySelector('textarea[data-field="letter"]');
+      if (!box) return { error: 'no letter box' };
+
+      box.value = 'A';
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 40));
+
+      const save = byText('Save to store');
+      if (!save) return { error: 'no save button' };
+      save.click();
+      await new Promise((r) => setTimeout(r, 40));
+
+      // Still typing while the save is out.
+      box.value = 'A and then some more.';
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 40));
+
+      release?.();
+      await new Promise((r) => setTimeout(r, 120));
+
+      const now = byText('Save to store') ?? byText('Saved');
+      return {
+        inTheBox: root.querySelector('textarea[data-field="letter"]')?.value ?? '',
+        label: now?.textContent?.trim() ?? '(gone)',
+        disabled: now?.disabled ?? null,
+      };
+    })();
+  });
+
+  check(
+    'a letter typed on while the save was out is not called saved',
+    savedLie.label === 'Save to store' && savedLie.disabled === false,
+    `${savedLie.error ?? ''} button says "${savedLie.label}", disabled ${savedLie.disabled}, box holds "${savedLie.inTheBox}"`,
+  );
 
   check('building still compiles the preview', staging.actions.includes('render'), JSON.stringify(staging.actions));
   check(

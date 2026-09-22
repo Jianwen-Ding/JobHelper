@@ -65,3 +65,34 @@ test('every entry is a bare host, so `under` can do the matching', () => {
   // And no duplicates, which would be a list nobody had read.
   assert.equal(new Set(NEVER_OFFER).size, NEVER_OFFER.length);
 });
+
+/*
+ * An employer's own hiring site is not the thing this list is about.
+ *
+ * The list's reason for each entry is that postings there are "incidental and
+ * the false positives are constant" — true of amazon.com, which is a shop,
+ * and false of hiring.amazon.com, which is nothing but job applications. But
+ * `under()` matches every subdomain, so the bare name silenced both, and
+ * `neverOffer` is checked before the chip and before anything else: total
+ * silence, with no explanation on screen and no way back except knowing the
+ * toolbar button is there.
+ *
+ * A subdomain is a different site rather than a page of the feed, which is
+ * what makes this safe to carve out where a path would not be.
+ */
+test('an employer’s own hiring subdomain is still offered on', () => {
+  assert.equal(neverOffer('https://hiring.amazon.com/app#/jobSearch'), false);
+  assert.equal(neverOffer('https://careers.slack.com/openings/1234'), false);
+  assert.equal(neverOffer('https://jobs.discord.com/1234/engineer'), false);
+  assert.equal(neverOffer('https://careers.x.com/roles/1234'), false);
+});
+
+test('and the feed itself is as silent as it ever was', () => {
+  assert.equal(neverOffer('https://amazon.com/dp/B000'), true);
+  assert.equal(neverOffer('https://www.reddit.com/r/jobs'), true);
+  assert.equal(neverOffer('https://old.reddit.com/r/csMajors'), true);
+  assert.equal(neverOffer('https://x.com/someone/status/1'), true);
+  assert.equal(neverOffer('https://slack.com/intl/en-gb/'), true);
+  // Not a hiring host — just a name that starts the same way.
+  assert.equal(neverOffer('https://hiringmanager.reddit.com/x'), true);
+});

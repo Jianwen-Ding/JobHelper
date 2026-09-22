@@ -228,6 +228,29 @@ async function main() {
       );
     };
 
+    /**
+     * The same, with a file the person put in the box themselves first.
+     *
+     * A `multiple` box is the one place their own attachment and ours share a
+     * control, so it is the only place ours can delete theirs.
+     */
+    const runOver = async (where, files, mine) => {
+      await p.goto(`${base}${where}`, { waitUntil: 'domcontentloaded' });
+      return p.evaluate(
+        async ({ b, list, seed }) => {
+          const box = document.querySelector('input[type=file][multiple]');
+          const carrier = new DataTransfer();
+          carrier.items.add(new File([new Uint8Array([1, 2, 3])], seed, { type: 'application/pdf' }));
+          box.files = carrier.files;
+
+          const m = await import(`${b}/attach.js`);
+          const report = await m.attachFiles(list);
+          return { report, inBox: [...(box.files ?? [])].map((f) => f.name) };
+        },
+        { b: base, list: files, seed: mine },
+      );
+    };
+
     /* ---------------------------------------------------------------- */
 
     /* ---------------------------------------------------------------- *
@@ -483,6 +506,62 @@ async function main() {
     }
 
     /*
+     * A transcript the person attached by hand, on the box we are about to use.
+     *
+     * The card says so itself when the folder has no transcript — "No
+     * transcript in the folder", and an "Add one" button — so doing it through
+     * the portal's own dialog is the obvious move. Then pressing Attach files
+     * put the resume in through `boxFor`, which replaces rather than adds,
+     * and the transcript was gone. Silently: the card printed a green
+     * "Attached …-Resume.pdf and …-Cover-Letter.pdf", nothing was in
+     * `unplaced`, and the box that had held three documents held two.
+     *
+     * `putIn`'s own comment already knew replacing was wrong on a box like
+     * this — "on a box labelled 'resume, cover letter and transcript' that
+     * would leave only whichever file happened to be last" — and the first
+     * call site passed no `alongside` at all.
+     */
+    group('A file the person attached themselves, in the box we are filling');
+    {
+      const { report, inBox } = await runOver(
+        '/all-in-one',
+        [filed('Jianwen-Ding-Resume.pdf'), filed('Jianwen-Ding-Cover-Letter.pdf')],
+        'My-Transcript.pdf',
+      );
+      check('what they attached is still there', inBox.includes('My-Transcript.pdf'), JSON.stringify(inBox));
+      check('and ours went in beside it', inBox.length === 3, JSON.stringify(inBox));
+      check('with nothing reported as homeless', report.unplaced.length === 0, JSON.stringify(report.unplaced));
+    }
+
+    /*
+     * And pressing it twice does not stack up two of everything. The replace
+     * on the first file is what keeps a re-press clean, so sparing their file
+     * must not spare ours.
+     */
+    group('Attach files pressed twice over their own file');
+    {
+      const twice = await p.evaluate(
+        async ({ b, list, seed }) => {
+          const box = document.querySelector('input[type=file][multiple]');
+          const carrier = new DataTransfer();
+          carrier.items.add(new File([new Uint8Array([1])], seed, { type: 'application/pdf' }));
+          box.files = carrier.files;
+          const m = await import(`${b}/attach.js`);
+          await m.attachFiles(list);
+          await m.attachFiles(list);
+          return [...(box.files ?? [])].map((f) => f.name);
+        },
+        {
+          b: base,
+          list: [filed('Jianwen-Ding-Resume.pdf'), filed('Jianwen-Ding-Cover-Letter.pdf')],
+          seed: 'My-Transcript.pdf',
+        },
+      );
+      check('still three files, not five', twice.length === 3, JSON.stringify(twice));
+      check('and theirs is one of them', twice.includes('My-Transcript.pdf'), JSON.stringify(twice));
+    }
+
+    /*
      * A form built as a web component. `looksLikeApplicationForm` — the gate
      * on this whole path — walks into shadow roots, so the frame passes the
      * gate and then every file was refused for having no upload box, on the
@@ -522,9 +601,29 @@ async function main() {
           'UVA Academic Record.pdf',
           'Portfolio.pdf',
           'something-else.pdf',
+          /*
+           * Underscores, which are the shape a person's own file arrives in.
+           * `bundleFileName` writes hyphens, so everything the store made read
+           * correctly — and `_` is a word character, so `\bresume\b` could
+           * not see `resume_streamly` at all. The card strips `._-` to spaces
+           * before matching and this did not, so the chip said "resume" and
+           * pressing Attach files said "no box here asks for it" about the
+           * same file. That is drag and Attach placing different things.
+           */
+          'Resume_Streamly.pdf',
+          'Academic_Transcript.pdf',
+          'Jianwen_Ding_Cover_Letter.pdf',
+          // And the accented spellings, which were in the list and could never
+          // match: the closing `\b` after `é` needs a word character, and a
+          // full stop is not one.
+          'résumé.pdf',
+          'resumé.pdf',
         ].map((n) => [n, m.kindOf(n)]);
       }, { b: base });
-      const want = ['resume', 'resume', 'letter', 'transcript', 'transcript', 'portfolio', 'other'];
+      const want = [
+        'resume', 'resume', 'letter', 'transcript', 'transcript', 'portfolio', 'other',
+        'resume', 'transcript', 'letter', 'resume', 'resume',
+      ];
       const got = kinds.map(([, k]) => k);
       check('each name reads as what it is', JSON.stringify(got) === JSON.stringify(want), JSON.stringify(kinds));
     }

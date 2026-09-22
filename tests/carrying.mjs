@@ -577,7 +577,7 @@ async function main() {
       const card = cardOf(cold);
       await card.getByRole('button', { name: 'Build resume' }).click();
       await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
-      await card.getByRole('button', { name: 'Submit' }).click();
+      await card.getByRole('button', { name: 'Mark as applied' }).click();
       await cold.waitForTimeout(5000);
 
       const after = await heliosRows();

@@ -105,9 +105,32 @@ export function under(host, name) {
   return host === name || host.endsWith(`.${name}`);
 }
 
+/**
+ * Subdomains that are an employer's own hiring site.
+ *
+ * The reason each name is on the list above is that postings there are
+ * incidental and the false positives are constant — which is true of
+ * `amazon.com`, a shop, and false of `hiring.amazon.com`, which is nothing
+ * but job applications. `under()` matches every subdomain, so the bare name
+ * silenced both, and the same went for `careers.slack.com`, `jobs.discord.com`
+ * and every other employer on the list who put their hiring on a host of its
+ * own.
+ *
+ * Silence is the expensive way to be wrong here: `neverOffer` is checked
+ * before the chip and before anything else, so there is no explanation on
+ * screen and no way back except already knowing the toolbar button exists.
+ *
+ * A subdomain and not a path, deliberately. `hiring.amazon.com` is a
+ * different site; `facebook.com/careers` is a page on the one the list is
+ * about, and matching paths there would start guessing at what a feed is
+ * showing.
+ */
+const HIRING_HOST = /^(hiring|careers|jobs|recruiting|talent)\./;
+
 /** Whether nothing should be offered on this address unless asked. */
 export function neverOffer(url) {
   const host = hostOf(url);
   if (!host) return false;
+  if (HIRING_HOST.test(host)) return false;
   return NEVER_OFFER.some((name) => under(host, name));
 }

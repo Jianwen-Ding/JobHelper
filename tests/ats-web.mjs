@@ -859,6 +859,51 @@ export const ANOTHER_ONE = form({
     <button type="button" class="quiet">Submit another application</button>`,
 });
 
+/*
+ * A `<button>` whose `value` is form payload rather than its label.
+ *
+ * `<button type="submit" name="commit" value="1">` is the Rails idiom and
+ * common well beyond it: the value is what the server reads to know which
+ * button was pressed, and the label is the contents. `nameOf` tried `value`
+ * before `textContent` for every element, on the stated grounds that this is
+ * "the same precedence the accessible name computation uses" — which is true
+ * of `input[type=submit]`, whose label *is* its value, and false of `button`.
+ *
+ * So the name came back "1", no rule matched it, and because a name was found
+ * the `looksLikeTheApplication` fallback never ran. The application went out
+ * and the tracker still said it was being worked on.
+ */
+export const COMMIT_VALUE = form({
+  name: 'commit-value',
+  path: '/jobs/4821/apply',
+  company: 'Ashgrove Labs',
+  title: 'Platform Engineer',
+  sends: 'Submit Application',
+  inner: `<form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="submit" name="commit" value="1">Submit Application</button>
+    </form>`,
+});
+
+/*
+ * And the other way round, which is the worse half.
+ *
+ * A step in a multi-page form, whose `value` happens to be the word "submit"
+ * because that is what the server calls this step. Read as a label it matches
+ * the send rule exactly, so the tracker recorded the application as sent on
+ * step two of five — and `once()` latches, so the real send later did nothing.
+ */
+export const STEP_VALUE = form({
+  name: 'step-value',
+  path: '/jobs/9120/apply',
+  company: 'Brentmoor Systems',
+  title: 'Data Scientist',
+  inner: `<form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="submit" name="step" value="submit">Continue to review</button>
+    </form>`,
+});
+
 /** Every form above, in the order the suite walks them. */
 export const SENDS = [
   ORACLE,
@@ -886,6 +931,7 @@ export const SENDS = [
   STAFFING,
   GOVERNMENT,
   EMBEDDED_APPLY,
+  COMMIT_VALUE,
 ];
 
 /** And the ones that must leave the tracker alone. */
@@ -906,4 +952,5 @@ export const DOES_NOT_SEND = [
   EMBEDDED_SUBSCRIBE,
   ACCORDION,
   ANOTHER_ONE,
+  STEP_VALUE,
 ];

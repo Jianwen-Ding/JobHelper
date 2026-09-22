@@ -90,7 +90,8 @@ async function main() {
     const before = await (await fetch(`${SERVER}/api/applications`)).json();
     log('tracker rows before bundle:', before.applications.filter((a) => a.company === 'Helios').length);
 
-    await card.getByRole('button', { name: 'Submit' }).click();
+    await card.getByRole('button', { name: 'Mark as applied' }).click();
+    await card.getByRole('button', { name: 'Unfold JobHelper' }).click({ timeout: 120_000 });
     await card.locator('.done-box').waitFor({ timeout: 120_000 });
     log('done box:\n' + (await card.locator('.done-box').innerText()));
 

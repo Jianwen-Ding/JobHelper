@@ -290,7 +290,9 @@ async function main() {
     check('and says whether it fits the page', /page/i.test(fit), fit);
     check('with the working indicator gone', (await formCard.locator('.progress').count()) === 0);
 
-    await formCard.getByRole('button', { name: 'Submit' }).click();
+    await formCard.getByRole('button', { name: 'Mark as applied' }).click();
+    // Filing folds the card away; the panel is underneath. See `state.folded`.
+    await formCard.getByRole('button', { name: 'Unfold JobHelper' }).click({ timeout: 120_000 });
     await timed('write the application folder', 90_000, () =>
       formCard.locator('.done-box').waitFor({ timeout: 90_000 }),
     );

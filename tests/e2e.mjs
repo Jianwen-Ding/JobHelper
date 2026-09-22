@@ -454,10 +454,19 @@ async function main() {
        * row says `applying` rather than `applied` is forced in one line in the
        * service worker and read there.
        */
+      /*
+       * What is in the folder, rather than how much more of it there is than
+       * before. Preparing is not one press any more — a letter drafting
+       * itself, or the form saying it wants a transcript, re-stages too — so
+       * the folder can already hold this posting's files by the time the
+       * count above is taken, and a growth check then reads a working build
+       * as a broken one.
+       */
+      const holds = await (await fetch(`${SERVER}/current`)).text();
       check(
         'building puts its files in the upload folder, before anything is submitted',
-        listed > before.files,
-        `${before.files} files before, ${listed} after — newest row ${made?.company ?? 'none'} ${made?.status ?? ''}`,
+        /-Resume[^"]*\.pdf/.test(holds),
+        `${listed} files, newest row ${made?.company ?? 'none'} ${made?.status ?? ''}`,
       );
     })();
 
@@ -779,7 +788,7 @@ async function main() {
        * for a letter, and you would have attached the two files it named and
        * sent it without one.
        */
-      await card.getByRole('button', { name: 'Submit' }).click();
+      await card.getByRole('button', { name: 'Mark as applied' }).click();
       await card.locator('.done-box').waitFor({ timeout: 90_000 });
       const body = await card.innerText();
       check('a folder missing the letter the form wants says so', /Not in this folder: a cover letter/.test(body));
@@ -829,8 +838,108 @@ async function main() {
       );
     }
 
+    /* ---- The same documents, pickable before anything is filed ---- */
+    /*
+     * The chips used to live only in the panel after Submit, and Submit is
+     * the step that files the application as sent — so dragging, which is
+     * what you reach for to get a document *into* a form, was offered only
+     * once you had said you had already sent it. The files were there the
+     * whole time: building stages them, which is why the folder path and
+     * "Attach files" are both live on this screen.
+     *
+     * Asserted with the form still unfilled and Submit unpressed, because
+     * that is the whole of the complaint.
+     */
+    {
+      const before = card.locator('.staged .file.liftable');
+      await before.first().waitFor({ timeout: 30_000 });
+      const names = await before.locator('.what').allInnerTexts();
+      check(
+        'the built files can be picked up before anything is filed',
+        names.some((n) => /-Resume/.test(n)),
+        names.join(', '),
+      );
+      check('and the panel that files the application has not been reached', (await card.locator('.done-box').count()) === 0);
+
+      // And they carry the real bytes here too, which is the only thing that
+      // makes a chip worth having. See the done panel's case below.
+      const resume = before.filter({ hasText: /-Resume/ }).first();
+      await resume.hover();
+      await page.waitForTimeout(1200);
+      const carried = await resume.evaluate((chip) => {
+        const carrier = new DataTransfer();
+        chip.dispatchEvent(new DragEvent('dragstart', { dataTransfer: carrier, bubbles: true, cancelable: true }));
+        return [...carrier.files].map((f) => ({ name: f.name, size: f.size }));
+      });
+      check('with the bytes in them', (carried[0]?.size ?? 0) > 100, JSON.stringify(carried));
+    }
+
+    /* ---- Naming one document, for this application only ---- */
+    /*
+     * The store's shape setting is about every application there will ever
+     * be. This is the other need — this portal will only take `resume.pdf`,
+     * or this posting wants the title in the name — and neither is a reason
+     * to rename the next fifty.
+     */
+    {
+      const chip = card.locator('.staged .file.liftable').filter({ hasText: /-Resume/ }).first();
+      const was = (await chip.locator('.what').innerText()).trim();
+
+      await chip.locator('.rename button.open-file').last().click();
+      await chip.locator('.rename-menu button', { hasText: 'Rename' }).click();
+      const box = chip.locator('.rename-box');
+      await box.fill('resume');
+      await box.press('Enter');
+
+      /*
+       * The folder is the assertion, not the label: the chip hands over
+       * whatever the folder holds, and a chip that renamed itself over a file
+       * that did not is the one failure worth catching here.
+       */
+      let listing = '';
+      for (let i = 0; i < 60; i++) {
+        listing = await (await fetch(`${SERVER}/current`)).text();
+        if (/href="\/current\/resume\.pdf"/.test(listing)) break;
+        await page.waitForTimeout(1000);
+      }
+      check(
+        'a renamed document is renamed in the folder too',
+        /href="\/current\/resume\.pdf"/.test(listing),
+        `was ${was}; folder holds ${(listing.match(/\/current\/[^"]+/g) ?? []).join(', ')}`,
+      );
+      // And the chip catches up with it, or it promises a name it will not hand over.
+      await card
+        .locator('.staged .file.liftable .what', { hasText: /^resume\.pdf$/ })
+        .first()
+        .waitFor({ timeout: 30_000 });
+
+      /*
+       * And back again, which is the third thing the menu offers. By the
+       * chip's own name rather than by its text, because a chip's text is the
+       * filename plus "Open" plus the menu's caret — `hasText: /^resume/`
+       * matches none of that.
+       */
+      const renamed = card.locator('.staged .file.liftable[data-name="resume.pdf"]').first();
+      await renamed.locator('.rename button.open-file').last().click();
+      await renamed.locator('.rename-menu button', { hasText: 'Back to the default' }).click();
+      await card
+        .locator('.staged .file.liftable .what', { hasText: /-Resume/ })
+        .first()
+        .waitFor({ timeout: 60_000 });
+      check('and goes back to the default when asked', true);
+    }
+
     /* File it. */
-    await card.getByRole('button', { name: 'Submit' }).click();
+    await card.getByRole('button', { name: 'Mark as applied' }).click();
+    /*
+     * Which folds the card away, because the application is over. The panel
+     * is still under it — a portal that rejects an upload wants the files
+     * rather than a memory of them — and the chevron brings it back.
+     */
+    const badge = card.locator('.folded-title.applied');
+    await badge.waitFor({ timeout: 90_000 });
+    check('filing folds the card down to a badge that says so', /Applied/.test(await badge.innerText()), await badge.innerText());
+    await card.getByRole('button', { name: 'Unfold JobHelper' }).click();
     await card.locator('.done-box').waitFor({ timeout: 90_000 });
     const done = await card.locator('.done-box').innerText();
     /*

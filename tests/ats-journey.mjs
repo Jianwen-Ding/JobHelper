@@ -182,7 +182,9 @@ async function main() {
         await page.waitForTimeout(2600);
 
         /* 5. Filed, with the files a portal would ask for. */
-        await card.getByRole('button', { name: 'Submit' }).click();
+        await card.getByRole('button', { name: 'Mark as applied' }).click();
+        // Filing folds the card away; the panel is underneath. See `state.folded`.
+        await card.getByRole('button', { name: 'Unfold JobHelper' }).click({ timeout: 120_000 });
         await card.locator('.done-box').waitFor({ timeout: 120_000 });
         const done = await card.locator('.done-box').innerText();
         check('an application folder is written', /-Resume\.pdf/.test(done), done.split('\n')[1] ?? '');
