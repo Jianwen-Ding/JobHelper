@@ -113,7 +113,8 @@ function fakeStore() {
         isJobPosting: true,
         kind: 'posting',
         save: state.save,
-        job: { company: page.company ?? 'Helios', title: state.role, description: 'A job.', keywords: [] },
+        // `company` set on the state is a page the analysis could not name.
+        job: { company: state.company ?? page.company ?? 'Helios', title: state.role, description: 'A job.', keywords: [] },
         spec: { id: 'job-fake', extends: 'newgrad' },
       });
     }
@@ -371,6 +372,68 @@ async function main() {
       const back = await ask(driver, 'takeWork', { page: { url: BOARD, title: 'Board' } });
       check('and the other job’s letter is still waiting for it', letterOn(back.reply) === 'FOR-THE-DATA-SCIENTIST', JSON.stringify(back.reply?.data?.work));
       store.role = 'Platform Engineer';
+    }
+
+    /*
+     * A rescue nothing could check against the page says whose it was.
+     *
+     * `pickParked` refuses a park naming a plainly different job, but only
+     * when the page gives it a job to compare with. On a page the analysis
+     * cannot name it hands back the newest park at the address, which on a
+     * board keeping every posting at one url may be another job's letter —
+     * and the card said only "Recovered what you had written before this tab
+     * closed", with nothing to notice a wrong hand-off by.
+     *
+     * The park is written as a closed tab leaves one: named, from a tab that
+     * no longer exists.
+     */
+    group('A rescue onto a page nobody could name says which job it was for');
+    {
+      const BOARD = 'http://board.example/unnamed';
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      await driver.evaluate(
+        ([key]) =>
+          chrome.storage.session.set({
+            [key]: {
+              parked: [{ work: { letter: 'FOR-SOMEONE' }, save: 'work', job: { role: 'Platform Engineer', company: 'Helios' }, tab: 987654, at: Date.now() }],
+              at: Date.now(),
+            },
+          }),
+        [`jh-orphan:${BOARD}`],
+      );
+      store.role = '';
+      store.company = '';
+      await ask(driver, 'analyze', { url: BOARD, title: 'Board', html: '<p>unnamed</p>' });
+      const got = await ask(driver, 'takeWork', { page: { url: BOARD, title: 'Board' } });
+      store.company = undefined;
+      check('the letter is still rescued', got.reply?.data?.work?.letter === 'FOR-SOMEONE', JSON.stringify(got.reply?.data?.work));
+      check(
+        'and named as the job it was written for',
+        got.reply?.data?.recoveredFor === 'Platform Engineer at Helios',
+        JSON.stringify(got.reply?.data?.recoveredFor),
+      );
+
+      // Where the page is named and matched, its heading already says it.
+      await ask(driver, 'clearTrail', {});
+      await driver.evaluate(
+        ([key]) =>
+          chrome.storage.session.set({
+            [key]: {
+              parked: [{ work: { letter: 'FOR-HELIOS' }, save: 'work', job: { role: 'Platform Engineer', company: 'Helios' }, tab: 987654, at: Date.now() }],
+              at: Date.now(),
+            },
+          }),
+        [`jh-orphan:${BOARD}`],
+      );
+      store.role = 'Platform Engineer';
+      await ask(driver, 'analyze', { url: BOARD, title: 'Board', html: '<p>named</p>' });
+      const matched = await ask(driver, 'takeWork', { page: { url: BOARD, title: 'Board' } });
+      check(
+        'not where the page itself was matched to it',
+        matched.reply?.data?.work?.letter === 'FOR-HELIOS' && matched.reply?.data?.recoveredFor === undefined,
+        JSON.stringify(matched.reply?.data),
+      );
     }
 
     /*

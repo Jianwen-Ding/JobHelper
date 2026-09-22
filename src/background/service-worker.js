@@ -1078,6 +1078,17 @@ function nameOfTrail(trail) {
   return { role: last.role ?? null, company: last.company ?? null };
 }
 
+/**
+ * The same name in a sentence, the way the card's heading and the toolbar
+ * already say it: "Platform Engineer at Helios".
+ */
+function sayJob(job) {
+  const role = job?.role?.trim();
+  const company = job?.company?.trim();
+  if (role && company) return `${role} at ${company}`;
+  return role || company || null;
+}
+
 async function remember(tab, page) {
   await inheritIfNew(tab?.id, tab?.openerTabId);
   const trail = await readTrail(tab?.id);
@@ -1424,7 +1435,8 @@ const handlers = {
      * Nothing else here knows: what the content script sends is an address
      * and a title.
      */
-    const rescued = pickParked(held, nameOfTrail(trail), tab?.id);
+    const looking = nameOfTrail(trail);
+    const rescued = pickParked(held, looking, tab?.id);
     if (rescued) {
       const fresh = Date.now() - (rescued.at ?? 0) < TRAIL_STALE_MS;
       // Claimed or expired, this one goes either way. Leaving the stale ones
@@ -1468,7 +1480,32 @@ const handlers = {
          * in the tab you never left, is not a closed tab and saying so reads
          * as the extension having lost track.
          */
-        return { work: rescued.work, recovered: rescued.tab !== undefined && rescued.tab === tab?.id ? 'job' : true };
+        const mine = rescued.tab !== undefined && rescued.tab === tab?.id;
+        /*
+         * And, where nothing checked it against this page, which job it was.
+         *
+         * `pickParked` refuses a park that names a plainly different job —
+         * but only when it has a job to compare it to. A page the analysis
+         * could not name gives it none, and rather than refuse every rescue
+         * there it hands back the newest thing parked at the address, which
+         * is the branch the whole Ctrl+Shift+T case runs down: a reopened tab
+         * has a new id, so its own park is not recognisable as its own.
+         *
+         * That is the right call — the alternative loses the letter the
+         * rescue exists for — but on a board that keeps every posting at one
+         * address the newest park may be another job's, and "Recovered what
+         * you had written before this tab closed" gave nothing to notice it
+         * by. Saying whose it was costs a clause and turns a silent wrong
+         * hand-off into one the reader can see.
+         *
+         * Only in that branch. Everywhere else the park was matched against
+         * the job on screen, and the card's own heading already names it.
+         */
+        return {
+          work: rescued.work,
+          recovered: mine ? 'job' : true,
+          recoveredFor: mine || looking ? undefined : sayJob(rescued.job) ?? undefined,
+        };
       }
       // Claimed or expired, this one goes either way. Leaving the stale ones
       // behind is how the space fills up; see `sweepOrphans`. The others stay
