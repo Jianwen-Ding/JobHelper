@@ -50,11 +50,34 @@ const BARE = page(`<p>Application</p><input id="only" name="file" type="file">`)
  * The shape every real portal uses: a styled button, and the input behind it
  * with `display:none`. A visibility test throws all of these away.
  */
+/*
+ * The two ways a page puts a file input behind something, and the one way it
+ * puts one out of reach.
+ *
+ * `display:none` with a button in front is the familiar one. The `hidden`
+ * attribute with a `<label for>` styled as the button is the same idea said
+ * in HTML rather than CSS, and it is the accessible way to build it — the
+ * label's click opens the native dialog. Both are ordinary; neither is a
+ * reason to refuse the box.
+ *
+ * The third is not: a complete, correctly labelled upload control inside a
+ * container the page has hidden — a closed modal, an "add another" prototype
+ * row. Nobody can see it, and taking it is how a file lands somewhere the
+ * form will never submit.
+ */
 const HIDDEN = page(`
+  <div hidden>
+    <label for="tpl">Resume</label>
+    <input id="tpl" name="resume_template" type="file">
+  </div>
   <div>
     <h3>Resume</h3>
     <button type="button">Attach or drop files here</button>
     <input id="rs" name="resume" type="file" style="display:none">
+  </div>
+  <div>
+    <label for="cl" class="button">Upload cover letter</label>
+    <input id="cl" name="cover_letter" type="file" hidden>
   </div>
 `);
 
@@ -362,8 +385,42 @@ async function main() {
 
     group('A box behind a styled button, which is how they are all built');
     {
-      const { inBoxes } = await run('/hidden', [filed('Jianwen-Ding-Resume.pdf')]);
+      const { inBoxes, report } = await run('/hidden', [
+        filed('Jianwen-Ding-Resume.pdf'),
+        filed('Jianwen-Ding-Cover-Letter.pdf'),
+      ]);
       check('display:none is not a reason to skip it', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes.rs));
+      /*
+       * Nor the attribute that means the same thing. This was refused, and
+       * the refusal was invisible: `closest('[hidden]')` starts at the
+       * element itself, so the check written for a hidden *template* threw
+       * away every box built the accessible way. On a form with one of each,
+       * the letter matched nothing, went to whatever container looked like a
+       * drop area, and came back reported as placed with the box still empty.
+       */
+      check(
+        'and nor is the attribute that means the same thing',
+        inBoxes.cl?.[0] === 'Jianwen-Ding-Cover-Letter.pdf',
+        JSON.stringify(inBoxes.cl),
+      );
+      /*
+       * And the container case still refused — from *in front of* the real
+       * box, which is the only arrangement where the refusal does any work.
+       * Behind it the visible box wins on document order anyway, and a check
+       * written that way goes green over a refusal that has been deleted.
+       */
+      check(
+        'while a control inside a hidden container is still left alone',
+        (inBoxes.tpl ?? []).length === 0,
+        JSON.stringify(inBoxes.tpl),
+      );
+      // And both are reported as having gone into a box, rather than as
+      // having been handed to something that might not have taken them.
+      check(
+        'both are reported as landing somewhere definite',
+        report.placed.length === 2 && report.placed.every((pl) => pl.sure !== false),
+        JSON.stringify(report.placed),
+      );
     }
 
     /*

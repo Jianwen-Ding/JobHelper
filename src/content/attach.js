@@ -75,11 +75,28 @@ function uploadBoxes(root = document) {
   return deepAll('input[type="file"]', root).filter((input) => {
     if (input.disabled) return false;
     /*
-     * `isConnected` covers an input the page has detached, `[hidden]` one
-     * inside a hidden template, and `putAwayByThePage` the container the page
-     * has hidden with CSS — see there.
+     * `isConnected` covers an input the page has detached, and
+     * `putAwayByThePage` a container the page has hidden — see there.
+     *
+     * There used to be a third: `!input.closest('[hidden]')`, written for "an
+     * input inside a hidden template". `closest` starts at the element
+     * itself, so what it actually refused was every input carrying `hidden`
+     * — and `<input type="file" hidden id="cv">` beside `<label for="cv">`
+     * styled as the button is the *accessible* way to build an upload. It is
+     * the same thing as the `display:none` the paragraph above exists to
+     * allow, said in HTML instead of CSS. Measured on a form with one box of
+     * each kind: one box found instead of two, the second file matched
+     * nothing, went to whatever container looked like a drop area, and came
+     * back reported as placed with the box still empty.
+     *
+     * Not replaced with an ancestors-only version, because there is nothing
+     * left for it to do: `hidden` computes to `display: none`, so a container
+     * carrying it is already refused by `putAwayByThePage` — and refused on
+     * what the page actually renders, which is the better question. A page
+     * that writes `[hidden] { display: block }` has un-hidden it, and the
+     * attribute check would have gone on refusing a box somebody can see.
      */
-    return input.isConnected && !input.closest('[hidden]') && !putAwayByThePage(input);
+    return input.isConnected && !putAwayByThePage(input);
   });
 }
 
