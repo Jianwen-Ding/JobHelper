@@ -909,7 +909,101 @@ const ACADEMICS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply
 </form>
 </body></html>`;
 
-const PAGES = { '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED };
+/*
+ * Widgets built the ways the libraries beyond react-select and Workday build
+ * them, each proving one reading of whether the choice took.
+ *
+ *   - An MUI-style autocomplete: no hidden input, the clicked option gone
+ *     once the menu closes, and the choice written into the text box itself.
+ *     It was undone every time, because a box holding text read as typing.
+ *     The same box ignoring the click, menu left open, is the refusal.
+ *   - A bare button sitting straight in the form, beside a paragraph that
+ *     happens to name the answer. Its click does nothing; the answer was
+ *     "seen" in the paragraph, and reported as filled.
+ *   - A closed menu kept mounted with `visibility: hidden`, as exit
+ *     transitions leave them, beside a widget that names no listbox of its
+ *     own. Two "visible" listboxes meant choosing was refused.
+ */
+const LOOSE_WIDGETS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Loose widgets</title></head><body>
+<form>
+  <p>Our downtown Boston office is next to the park.</p>
+  <!-- Stamped on the first click, as analytics fields are: not the city's. -->
+  <div class="tracking"><input type="hidden" name="started" id="started"></div>
+  <label id="l-city">City</label>
+  <button type="button" id="b-city" role="combobox" aria-haspopup="listbox" aria-labelledby="l-city">Choose a city</button>
+
+  <div class="MuiAutocomplete-root"><div class="MuiFormControl-root"><label id="l-co">Country</label>
+    <div class="MuiInputBase-root"><input id="m-country" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="m-lb-country" aria-labelledby="l-co"></div>
+  </div></div>
+
+  <div class="MuiAutocomplete-root"><div class="MuiFormControl-root"><label id="l-sc">School</label>
+    <div class="MuiInputBase-root"><input id="m-school" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="m-lb-school" aria-labelledby="l-sc"></div>
+  </div></div>
+
+</form>
+<!-- Its own form: the hidden menu would otherwise refuse the city's popup too, and hide whether the paragraph is read. -->
+<form>
+  <ul role="listbox" id="stale" style="visibility:hidden;position:absolute"><li role="option">Red</li></ul>
+  <label id="l-st">State</label>
+  <div><button type="button" id="b-state" aria-haspopup="listbox" aria-labelledby="l-st">Select</button><input type="hidden" name="state" id="h-state"></div>
+</form>
+<script>
+  window.submits = 0;
+  for (const f of document.querySelectorAll('form')) f.addEventListener('submit', (e) => { e.preventDefault(); window.submits += 1; });
+
+  function popup(options, onPick) {
+    const list = document.createElement('ul');
+    list.setAttribute('role', 'listbox');
+    for (const text of options) {
+      const o = document.createElement('li');
+      o.setAttribute('role', 'option'); o.textContent = text;
+      o.addEventListener('click', () => onPick(text, list));
+      list.append(o);
+    }
+    document.body.append(list);
+    return list;
+  }
+
+  document.addEventListener('click', () => { document.getElementById('started').value ||= String(Date.now()); });
+
+  // The click does nothing, and Escape closes it.
+  const city = document.getElementById('b-city');
+  let cityList = null;
+  city.addEventListener('click', () => { cityList ??= popup(['Boston', 'Cambridge'], () => {}); });
+  city.addEventListener('keydown', (e) => { if (e.key === 'Escape') { cityList?.remove(); cityList = null; } });
+
+  function mui(id, options, takes) {
+    const input = document.getElementById(id);
+    let list = null;
+    input.addEventListener('input', () => {
+      list?.remove();
+      list = popup(options, (text, l) => {
+        if (!takes) return;
+        input.value = text;
+        l.remove(); list = null;
+        input.setAttribute('aria-expanded', 'false');
+      });
+      list.id = input.getAttribute('aria-controls');
+      input.setAttribute('aria-expanded', 'true');
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { list?.remove(); list = null; input.setAttribute('aria-expanded', 'false'); }
+    });
+  }
+  mui('m-country', ['United States Minor Outlying Islands', 'United States'], true);
+  mui('m-school', ['Northeastern University'], false);
+
+  const state = document.getElementById('b-state');
+  state.addEventListener('click', () => {
+    popup(['MA', 'NY'], (text, l) => {
+      state.textContent = text;
+      document.getElementById('h-state').value = text;
+      l.remove();
+    });
+  });
+</script></body></html>`;
+
+const PAGES = { '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -1739,6 +1833,56 @@ async function main() {
     );
     check('and one asking for the month still gets the month', academics['a-gm'] === 'May', `"${academics['a-gm']}"`);
     check('but not a "First" under any other legend', academics['a-f2'] === '', `"${academics['a-f2']}"`);
+
+    const loose = await page.goto(`${base}/loose-widgets`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { address_city: 'Boston', address_country: 'United States', school: 'Northeastern University', address_state: 'MA' };
+        // One pass per form, the other hidden: see the page.
+        const forms = [...document.querySelectorAll('form')];
+        const filled = [];
+        const byHand = [];
+        for (const shown of forms) {
+          for (const f of forms) f.hidden = f !== shown;
+          const report = await m.fillComboboxes(fields, m.fillForm(fields));
+          filled.push(...report.filled.map((f) => f.key));
+          byHand.push(...report.skipped.filter((s) => /by hand/i.test(s.reason)).map((s) => s.key));
+        }
+        const read = (id) => document.getElementById(id);
+        return {
+          filled: filled.sort(),
+          byHand: byHand.sort(),
+          city: read('b-city').textContent,
+          country: read('m-country').value,
+          school: read('m-school').value,
+          state: read('h-state').value,
+          submits: window.submits,
+        };
+      }, { b: base }),
+    );
+    group('Widgets from the other libraries, read the way each one shows a choice');
+    check(
+      'an autocomplete that writes the choice into its own box keeps it',
+      loose.country === 'United States' && loose.filled.includes('address_country'),
+      JSON.stringify([loose.country, loose.filled]),
+    );
+    check(
+      'and one that ignores the click, menu still open, is emptied and handed back',
+      loose.school === '' && !loose.filled.includes('school') && loose.byHand.includes('school'),
+      JSON.stringify([loose.school, loose.byHand]),
+    );
+    // And not in some other field's hidden input changing under it.
+    check(
+      'an ignored click is not "seen" in a paragraph beside the widget',
+      loose.city === 'Choose a city' && !loose.filled.includes('address_city') && loose.byHand.includes('address_city'),
+      JSON.stringify([loose.city, loose.filled]),
+    );
+    check(
+      'a closed menu kept mounted but hidden is not a second listbox',
+      loose.state === 'MA' && loose.filled.includes('address_state'),
+      JSON.stringify([loose.state, loose.byHand]),
+    );
+    check('and nothing was submitted', loose.submits === 0, String(loose.submits));
 
     group('The same place, spelled the way the list spells it');
     check('"MA" into a State list of names', places.stName === 'Massachusetts', `"${places.stName}"`);

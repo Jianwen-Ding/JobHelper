@@ -2130,7 +2130,14 @@ function optionsOf(widget) {
   const named = ids.map((id) => widget.getRootNode().getElementById?.(id) ?? document.getElementById(id)).filter(Boolean);
   const lists = named.length
     ? named
-    : deepQueryAll('[role="listbox"]').filter((l) => l !== widget && l.getClientRects().length > 0);
+    : deepQueryAll('[role="listbox"]').filter(
+        /*
+         * `visibility: hidden` keeps a box, so a closed menu that an exit
+         * transition leaves mounted counted as open — and as a second listbox
+         * it refused every unlinked widget on the page.
+         */
+        (l) => l !== widget && l.getClientRects().length > 0 && getComputedStyle(l).visibility !== 'hidden',
+      );
   if (!named.length && lists.length !== 1) return [];
   return lists.flatMap((l) => [...l.querySelectorAll('[role="option"]')]).filter((o) => !isDisabled(o) && o.getAttribute('aria-disabled') !== 'true');
 }
@@ -2167,6 +2174,16 @@ function tookIt(widget, box, option, value, hiddenBefore) {
   if (hidden && hidden.value && hidden.value !== hiddenBefore) return true;
   if (option.isConnected && option.getAttribute('aria-selected') === 'true') return true;
   /*
+   * An autocomplete that writes the choice into its own box — MUI, Downshift,
+   * Ant Design — with no hidden input and the option gone once the menu
+   * closes. The box holding the option's text is not evidence on its own,
+   * because it was typed there; the widget saying its menu is now closed, with
+   * exactly that text left in the box, is. An ignored click leaves the menu
+   * open, and a widget that drops the choice clears the box as it closes.
+   */
+  const expanded = box?.getAttribute('aria-expanded') ?? widget.getAttribute('aria-expanded');
+  if (box && expanded === 'false' && sameOption(box.value, option.textContent)) return true;
+  /*
    * Not "the box holds the option's text": the box holds it because it was
    * typed there, whether or not the click did anything. And the control's text
    * is read with any open listbox cut out of it, or an ignored click would
@@ -2180,15 +2197,26 @@ function tookIt(widget, box, option, value, hiddenBefore) {
   return shows && (!box || !box.value);
 }
 
-/** The element a widget draws its current answer in. */
+/**
+ * The element a widget draws its current answer in.
+ *
+ * The widget itself where no wrapper says it is the control — not its parent.
+ * A button sitting straight in a form has the form as its parent, and the
+ * answer "shown" anywhere in the form's text passed for a choice that took:
+ * an ignored click beside a paragraph naming the city was reported as filled.
+ */
 function controlOf(widget) {
-  return widget.closest?.('[class*="control"], [class*="select"], [class*="combobox"]') ?? widget.parentElement ?? widget;
+  return widget.closest?.('[class*="control"], [class*="select"], [class*="combobox"]') ?? widget;
 }
 
-/** The hidden input carrying what the widget submits, where it sits beside it. */
+/**
+ * The hidden input carrying what the widget submits, where it sits beside it
+ * — beside it, not anywhere below the parent, which for a widget straight in a
+ * form was the first hidden input of some other field.
+ */
 function hiddenPartner(widget) {
   const around = controlOf(widget).parentElement ?? controlOf(widget);
-  return around.querySelector?.('input[type="hidden"]') ?? null;
+  return around.querySelector?.(':scope > input[type="hidden"]') ?? null;
 }
 
 /** Whether pressing this would send its form. */
