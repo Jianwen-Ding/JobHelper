@@ -1077,6 +1077,68 @@ async function main() {
   );
 
   /*
+   * The picker that names which resume this starts from, with no list yet.
+   *
+   * The list arrives on its own, after the card is up: `listResumes` in
+   * content.js, fired and forgotten with a `.catch(() => undefined)` and a
+   * guard that drops the reply if the page has moved on while it was in
+   * flight. Either of those leaves it empty for good, and an empty `<select>`
+   * renders as a chevron with nothing beside it — reported from a real card
+   * that had already compiled a resume and knew perfectly well which one it
+   * had started from.
+   */
+  console.log('\nThe picker before the resume list has arrived');
+
+  const basePicker = await inPage(async (createCard) => {
+    const asked = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        baseResumeId: 'new-grad',
+        baseLabel: 'New grad resume',
+        rationale: [],
+        diff: [],
+      },
+      // The case itself: nothing has arrived.
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action) => {
+        asked.push(action);
+        if (action === 'render') return { pages: 1, fits: true };
+        // And still nothing when asked again, so the fallback has to hold.
+        if (action === 'listResumes') return [];
+        return {};
+      },
+    });
+    void handle;
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    await new Promise((r) => setTimeout(r, 80));
+    const select = root.querySelector('select');
+    return {
+      options: [...(select?.options ?? [])].map((o) => o.textContent),
+      value: select?.value ?? null,
+      askedAgain: asked.filter((a) => a === 'listResumes').length,
+    };
+  });
+
+  check(
+    'it names the resume this starts from rather than nothing',
+    basePicker.options.length === 1 && basePicker.options[0] === 'New grad resume',
+    JSON.stringify(basePicker.options),
+  );
+  // And carries its id, so the control is not only legible but answerable.
+  check('and carries that resume’s id', basePicker.value === 'new-grad', String(basePicker.value));
+  /*
+   * Asked again, once. The fetch is cheap and this is the one moment its
+   * absence is visible; asking on every draw would ask for ever.
+   */
+  check('and the list is asked for again', basePicker.askedAgain === 1, `asked ${basePicker.askedAgain} times`);
+
+  /*
    * The graduation date, which is not a suggestion and must not arrive as one.
    *
    * Everything above is the keyword match: it read the posting's vocabulary
