@@ -72,6 +72,35 @@ describe('two addresses on one site', () => {
     assert.equal(relatedPath(`${jobs}&vjk=aaaa1111`, `https://www.indeed.com/jobs?q=golang&vjk=aaaa1111`), true);
   });
 
+  /*
+   * And the two systems this repo already ships fixtures for.
+   *
+   * `JOB_PARAM` is the whole defence for an ATS that keeps every posting at
+   * one path: `relatedPath` returns true the moment the paths match, so a job
+   * id the list does not know is a job id that does not exist. `tests/ats-web`
+   * models ADP WorkForce Now at `/ta/6100.jobs?ApplyToJob=` with three
+   * different postings, so the product claims to handle a system whose jobs
+   * it could not tell apart.
+   *
+   * `jobpostingid` is the same omission one word longer: `postingid` is on the
+   * list and the regex is anchored, so the longer spelling matched nothing.
+   *
+   * Two roles whose titles are plainly different are caught anyway, by the
+   * role gate, and come back `unsure` — a chip rather than a merge. What this
+   * fixes is the pair the gate cannot separate: "Platform Engineer" and
+   * "Senior Platform Engineer" share a word, so the addresses were the only
+   * evidence left and they said "same page".
+   */
+  it('does not join two postings an unlisted job parameter tells apart', () => {
+    const adp = 'https://acme.example/ta/6100.jobs';
+    assert.equal(relatedPath(`${adp}?ApplyToJob=482991`, `${adp}?ApplyToJob=482992`), false);
+    // The same posting reached twice is still the same posting.
+    assert.equal(relatedPath(`${adp}?ApplyToJob=482991`, `${adp}?ApplyToJob=482991&src=email`), true);
+
+    const ukg = 'https://acme.example/careers';
+    assert.equal(relatedPath(`${ukg}?jobPostingId=111`, `${ukg}?jobPostingId=222`), false);
+  });
+
   it('ignores the query when it says nothing about which job this is', () => {
     assert.equal(relatedPath('https://x.com/acme/8f21', 'https://x.com/acme/8f21?utm_source=board'), true);
     assert.equal(relatedPath('https://x.com/acme/8f21?gh_jid=9', 'https://x.com/acme/8f21?gh_jid=9&src=ad'), true);

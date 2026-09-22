@@ -113,7 +113,7 @@ const bare = (seg) => String(seg ?? '').replace(/\.(ftl|html?|aspx?|jsp|php|do|c
  * only ever bit in the list.
  */
 const JOB_PARAM =
-  /^(jk|vjk|jl|jid|job|jobid|job_id|jobreqid|career_job_req_id|opportunityid|token|gh_jid|jvi|requisitionid|reqid|req|postingid|posting_id|vacancyid|currentjobid|id|oid|pid)$/i;
+  /^(jk|vjk|jl|jid|job|jobid|job_id|jobreqid|career_job_req_id|opportunityid|token|gh_jid|jvi|requisitionid|reqid|req|postingid|posting_id|jobpostingid|applytojob|vacancyid|currentjobid|id|oid|pid)$/i;
 
 const jobIds = (u) => {
   const out = new Map();
