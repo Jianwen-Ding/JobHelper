@@ -783,7 +783,53 @@ const WIDGETS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply â
   });
 </script></body></html>`;
 
-const PAGES = { '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED };
+/*
+ * The same place, spelled the list's way. The store says "MA" and "United
+ * States", which is what the live payload sends; a State list says
+ * "Massachusetts" with values that are names or numbers, and a Country list
+ * says "United States of America". The last two lists are the refusals: a
+ * State list with Maine and Maryland but no Massachusetts, and a Country list
+ * with American territories but not the country.
+ */
+const PLACES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply â€” Places</title></head><body>
+<form>
+  <label for="st-name">State</label>
+  <select id="st-name"><option value="">Select</option><option value="Maine">Maine</option><option value="Massachusetts">Massachusetts</option></select>
+  <label for="st-num">State/Province</label>
+  <select id="st-num"><option value="0">--</option><option value="21">Massachusetts</option><option value="33">New York</option><option value="52">Ontario</option></select>
+  <label for="co-long">Country</label>
+  <select id="co-long"><option value="">Select</option><option value="CA">Canada</option><option value="US">United States of America</option></select>
+  <label for="co-abbr">Country of residence</label>
+  <select id="co-abbr"><option value="">Select</option><option>UK</option><option>USA</option></select>
+</form>
+<form id="widget">
+  <label id="l-wdco">Country</label>
+  <div class="wd"><button type="button" id="wd-co" aria-haspopup="listbox" aria-controls="lb-wdco" aria-labelledby="l-wdco">Select One</button>
+    <input type="hidden" id="h-wdco"></div>
+</form>
+<form id="refusals">
+  <label for="st-near">State</label>
+  <select id="st-near"><option value="">Select</option><option>Maine</option><option>Maryland</option></select>
+  <label for="co-near">Country</label>
+  <select id="co-near"><option value="">Select</option><option>American Samoa</option><option>United States Minor Outlying Islands</option></select>
+</form>
+<script>
+  const button = document.getElementById('wd-co');
+  button.addEventListener('click', () => {
+    if (document.getElementById('lb-wdco')) return;
+    const list = document.createElement('ul');
+    list.id = 'lb-wdco'; list.setAttribute('role', 'listbox');
+    for (const text of ['Canada', 'United States of America']) {
+      const o = document.createElement('li');
+      o.setAttribute('role', 'option'); o.textContent = text;
+      o.addEventListener('click', () => { button.textContent = text; document.getElementById('h-wdco').value = text; list.remove(); });
+      list.append(o);
+    }
+    button.after(list);
+  });
+</script></body></html>`;
+
+const PAGES = { '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -1514,6 +1560,40 @@ async function main() {
         };
       }, { b: base }),
     );
+    const places = await page.goto(`${base}/places`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        // Exactly what the live payload sends.
+        const fields = { address_state: 'MA', address_country: 'United States' };
+        const read = (id) => document.getElementById(id);
+        const forms = [...document.querySelectorAll('form')];
+        // One pass per form, the others hidden, because each asks the same
+        // questions and a key filled in one form is not driven in a widget.
+        for (const shown of forms) {
+          for (const f of forms) f.hidden = f !== shown;
+          await m.fillComboboxes(fields, m.fillForm(fields));
+        }
+        for (const f of forms) f.hidden = false;
+        return {
+          stName: read('st-name').value,
+          stNum: read('st-num').value,
+          coLong: read('co-long').value,
+          coAbbr: read('co-abbr').value,
+          wd: read('h-wdco').value,
+          stNear: read('st-near').value,
+          coNear: read('co-near').value,
+        };
+      }, { b: base }),
+    );
+    group('The same place, spelled the way the list spells it');
+    check('"MA" into a State list of names', places.stName === 'Massachusetts', `"${places.stName}"`);
+    check('"MA" into a State list whose values are numbers', places.stNum === '21', `"${places.stNum}"`);
+    check('"United States" into a list that says United States of America', places.coLong === 'US', `"${places.coLong}"`);
+    check('and into one that says USA', places.coAbbr === 'USA', `"${places.coAbbr}"`);
+    check('and into a Workday-style country widget', places.wd === 'United States of America', `"${places.wd}"`);
+    check('never the nearest state: Maine and Maryland are not MA', places.stNear === '', `"${places.stNear}"`);
+    check('nor a territory for the country', places.coNear === '', `"${places.coNear}"`);
+
     group('Widgets that open a list, chosen the way a person chooses');
     check(
       'fillForm alone can only name them',

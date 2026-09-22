@@ -843,6 +843,70 @@ export function monthOf(text) {
   return at === -1 ? null : at + 1;
 }
 
+/*
+ * The same place, spelled the ways lists spell it.
+ *
+ * A store holds "MA" and "United States"; a State list says "Massachusetts" and
+ * a Country list says "United States of America", which is Workday's spelling
+ * and plenty of others'. Exact matching found neither, so the two most-asked
+ * dropdowns on a US application were left for the person on most forms.
+ *
+ * A table rather than anything fuzzier, because these are facts with a closed
+ * list of answers: the fifty states, DC and Puerto Rico, Canada's provinces and
+ * territories, and the handful of countries whose long official names are what
+ * the lists use. Nothing outside the table is treated as the same.
+ */
+const REGIONS = {
+  AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado',
+  CT: 'Connecticut', DE: 'Delaware', DC: 'District of Columbia', FL: 'Florida', GA: 'Georgia',
+  HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky',
+  LA: 'Louisiana', ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota',
+  MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire',
+  NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota',
+  OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', PR: 'Puerto Rico', RI: 'Rhode Island',
+  SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont',
+  VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming',
+  AB: 'Alberta', BC: 'British Columbia', MB: 'Manitoba', NB: 'New Brunswick', NL: 'Newfoundland and Labrador',
+  NS: 'Nova Scotia', NT: 'Northwest Territories', NU: 'Nunavut', ON: 'Ontario', PE: 'Prince Edward Island',
+  QC: 'Quebec', SK: 'Saskatchewan', YT: 'Yukon',
+};
+const REGION_BY_NAME = Object.fromEntries(Object.entries(REGIONS).map(([code, name]) => [name.toLowerCase(), code]));
+
+const COUNTRY_SPELLINGS = [
+  ['united states', 'united states of america', 'usa', 'u.s.a.', 'us', 'u.s.'],
+  ['united kingdom', 'united kingdom of great britain and northern ireland', 'uk', 'u.k.', 'great britain'],
+  ['south korea', 'korea, republic of', 'republic of korea'],
+];
+
+/** One spelling for everything the table says is the same place. */
+function placeKey(key, text) {
+  const said = clean(text).toLowerCase().replace(/\s*\([^)]*\)\s*$/, '');
+  if (key === 'address_state') {
+    const code = said.toUpperCase();
+    if (REGIONS[code]) return code;
+    return REGION_BY_NAME[said] ?? null;
+  }
+  if (key === 'address_country') {
+    const group = COUNTRY_SPELLINGS.findIndex((names) => names.includes(said));
+    return group === -1 ? null : `country:${group}`;
+  }
+  return null;
+}
+
+/**
+ * Whether an option is this answer under a different spelling — for the
+ * fields where a spelling table exists, and only those. Consulted after an
+ * exact match has failed, never instead of one.
+ */
+function sameAnswerSpelledOtherwise(key, option, value) {
+  if (key === 'graduation_month') {
+    const month = monthOf(value);
+    return Boolean(month) && month === monthOf(option);
+  }
+  const wanted = placeKey(key, value);
+  return Boolean(wanted) && wanted === placeKey(key, option);
+}
+
 /**
  * "December 2026" written the way this particular box wants it.
  *
@@ -1119,15 +1183,17 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
        * and the country submitted as nothing.
        */
       const choosable = [...input.options].filter((o) => !isDisabled(o));
-      const month = key === 'graduation_month' ? monthOf(value) : null;
       const option =
         choosable.find((o) => sameOption(o.textContent, value) || sameOption(o.value, value)) ??
         /*
-         * A month however the list spells it. Only for a month: "12" is a
-         * perfectly good option in plenty of other lists, and nothing else
-         * should be matched on the number it happens to start with.
+         * The same answer spelled the list's way: a month as "Dec" or "12", a
+         * state as its name or its code, a country by its long name. Only for
+         * those fields — "12" is a perfectly good option in plenty of other
+         * lists — and only after the exact match has failed.
          */
-        (month ? choosable.find((o) => monthOf(o.textContent) === month || monthOf(o.value) === month) : undefined) ??
+        choosable.find(
+          (o) => sameAnswerSpelledOtherwise(key, o.textContent, value) || sameAnswerSpelledOtherwise(key, o.value, value),
+        ) ??
         /*
          * And, failing that, a yes/no pair against a phrase. See
          * `yesNoOption`, which wants a pair and nothing else — so the prompt
@@ -1967,10 +2033,9 @@ function optionsOf(widget) {
 
 /** The option that is plainly this answer, or nothing. Never the nearest. */
 function exactOption(options, key, value) {
-  const month = key === 'graduation_month' ? monthOf(value) : null;
   return (
     options.find((o) => sameOption(o.textContent, value)) ??
-    (month ? options.find((o) => monthOf(o.textContent) === month) : undefined) ??
+    options.find((o) => sameAnswerSpelledOtherwise(key, o.textContent, value)) ??
     null
   );
 }
