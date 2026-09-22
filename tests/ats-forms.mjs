@@ -111,6 +111,92 @@ export const SYSTEMS = [
     },
     questions: [/why do you want to work at acme/i],
     wantsLetter: true,
+    /*
+     * A native `<select>`, which is the shape that was being written into the
+     * bank wrongly. Greenhouse names this field
+     * `job_application[answers_attributes][1][boolean_value]`, and a question
+     * recorded from the field's *description* carries that name in four
+     * spellings — so it is a row nothing can ever match again. Here rather
+     * than on a tidier fixture precisely because the name is ugly.
+     */
+    remembers: [['#job_application_answers_attributes_1_boolean_value', 'legally authorized']],
+  },
+
+  /*
+   * The accessible custom control, which is what a modern component library
+   * builds and what nothing here could see.
+   *
+   * `answerRadioGroups` finds `<input type=radio>` and `unfillableChoices`
+   * reports a popup as one to pick by hand. Between them is this: options
+   * already on the page, wearing `role="radio"` or `role="option"` on divs
+   * and buttons. It is what an accessible custom control is *supposed* to
+   * look like, so it is the shape a form built this decade uses — and a
+   * required work-authorisation question went out blank under a card saying
+   * the form was done.
+   *
+   * The popup listbox at the bottom is the control: it must be left alone and
+   * still reported as one to pick by hand, because opening a popup and
+   * choosing inside it is a different and much more fragile thing.
+   */
+  {
+    name: 'ARIA choice groups',
+    html: `
+      <label for="fn">First name</label><input id="fn" name="fn">
+      <label for="em">Email</label><input id="em" name="em" type="email">
+
+      <div id="authq">Are you legally authorized to work in the United States?</div>
+      <div role="radiogroup" aria-labelledby="authq" id="auth">
+        <div role="radio" tabindex="0" aria-checked="false" data-v="Yes">Yes</div>
+        <div role="radio" tabindex="0" aria-checked="false" data-v="No">No</div>
+      </div>
+
+      <div id="sponq">Will you now or in the future require sponsorship?</div>
+      <div role="listbox" aria-labelledby="sponq" id="spon">
+        <button type="button" role="option" aria-selected="false" data-v="Yes">Yes</button>
+        <button type="button" role="option" aria-selected="false" data-v="No">No</button>
+      </div>
+
+      <label id="stl">State</label>
+      <button type="button" aria-haspopup="listbox" aria-controls="statelist" aria-labelledby="stl">Select…</button>
+      <div role="listbox" id="statelist" aria-labelledby="stl">
+        <div role="option" aria-selected="false">Massachusetts</div>
+        <div role="option" aria-selected="false">California</div>
+      </div>
+
+      <label for="dobq">Month of birth</label>
+      <select id="dobq" name="dob_month">
+        <option value="">--</option><option>April</option><option>May</option>
+      </select>
+
+      <label for="q_why">Why do you want to work here?</label>
+      <textarea id="q_why"></textarea>
+      <script>
+        for (const group of document.querySelectorAll('#auth, #spon, #statelist')) {
+          group.addEventListener('click', (e) => {
+            const hit = e.target.closest('[role=radio], [role=option]');
+            if (!hit) return;
+            const attr = hit.getAttribute('role') === 'radio' ? 'aria-checked' : 'aria-selected';
+            for (const el of group.children) el.setAttribute(attr, 'false');
+            hit.setAttribute(attr, 'true');
+          });
+        }
+      </script>`,
+    want: { '#fn': 'Jianwen', '#em': 'ding.jianw@northeastern.edu' },
+    aria: { '#auth': 'Yes', '#spon': 'No' },
+    /*
+     * The popup's options must be untouched, and said so about — and this
+     * one answers a click, so leaving it alone is a decision rather than an
+     * accident of the fixture not working. Without the guard, autofill
+     * reaches into a list the combobox above owns and leaves it half-chosen:
+     * an option marked selected under a button still reading "Select…".
+     */
+    ariaUntouched: ['#statelist'],
+    reportsUnfillable: ['address_state'],
+    // Worth keeping for the next application, and not.
+    remembers: [['[role=radio][data-v="Yes"]', 'legally authorized']],
+    refuses: [['#dobq', 'month of birth']],
+    questions: [/why do you want to work here/i],
+    wantsLetter: false,
   },
 
   {
@@ -463,6 +549,9 @@ export const SYSTEMS = [
       visa_status: '',
     },
     unchecked: ['consent'],
+    // The radio shape, whose recorded question used to carry the group's
+    // `name` attribute on the end of it — "…require sponsorship? sponsorship".
+    remembers: [['input[name="sponsorship"][value="0"]', 'require sponsorship']],
     neverGuesses: 'requires_sponsorship',
     questions: [],
     wantsLetter: false,
@@ -880,11 +969,19 @@ const CONSTRAINED = `
 
 async function main() {
   const source = fs.readFileSync(path.join(root, 'src/content/autofill.js'), 'utf8');
+  /*
+   * And what it imports, at the path it imports it from. `autofill.js` reaches
+   * for `../shared/remembering.js` — the privacy rule, kept apart so it can be
+   * read without reading the rest — and a server that answers only
+   * `/autofill.js` fails the whole import with "failed to fetch dynamically
+   * imported module", which says nothing about which module.
+   */
+  const shared = fs.readFileSync(path.join(root, 'src/shared/remembering.js'), 'utf8');
   const server = http.createServer((req, res) => {
     const url = req.url.split('?')[0];
-    if (url === '/autofill.js') {
+    if (url === '/autofill.js' || url === '/shared/remembering.js') {
       res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
-      res.end(source);
+      res.end(url === '/autofill.js' ? source : shared);
       return;
     }
     if (url === '/constrained') {
@@ -935,6 +1032,13 @@ async function main() {
       const out = await where.evaluate(
         async ({ b, profile, wants, host }) => {
           const m = await import(`${b}/autofill.js`);
+          /*
+           * The questions this page would look up in the answer bank, read
+           * before anything is filled — `choiceQuestions` skips a control
+           * that already has an answer, and after `fillForm` several of
+           * these do.
+           */
+          const lookedUpBy = m.choiceQuestions();
           const report = m.fillForm(profile);
           // A form built from web components keeps its fields in a shadow
           // root, which is the whole point of that fixture.
@@ -944,6 +1048,7 @@ async function main() {
             values: Object.fromEntries(
               Object.keys(wants).map((sel) => [sel, find(sel)?.value ?? '(no such field)']),
             ),
+            lookedUpBy,
             filled: report.filled.map((f) => f.key),
             skipped: report.skipped.map((s) => ({ key: s.key, reason: s.reason })),
             questions: m.findQuestions().map((q) => q.question),
@@ -958,10 +1063,110 @@ async function main() {
               ]),
             ),
             ticked: [...document.querySelectorAll('input[type=checkbox]:checked')].map((c) => c.name),
+            /*
+             * And which option of an ARIA group ended up chosen. A native
+             * radio answers this itself through `checked`; these have only
+             * the attribute the page writes, which is exactly why the filling
+             * side reads it back rather than writing it.
+             */
+            aria: Object.fromEntries(
+              [...document.querySelectorAll('[role=radiogroup], [role=listbox]')]
+                .filter((g) => g.id)
+                .map((g) => [
+                  `#${g.id}`,
+                  [...g.querySelectorAll('[role=radio], [role=option]')]
+                    .filter((o) => o.getAttribute('aria-checked') === 'true' || o.getAttribute('aria-selected') === 'true')
+                    .map((o) => o.textContent.trim())
+                    .join(','),
+                ]),
+            ),
           };
         },
         { b: base, profile: PROFILE, wants: system.want, host: system.shadowHost ?? null },
       );
+
+      /*
+       * And what a choice on this form would leave behind for the next one.
+       *
+       * Driven through the real controls rather than by calling the predicate
+       * with strings: the question a watcher records is whatever
+       * `groupLabelFor` and `choiceQuestionFor` make of this markup, and that
+       * is the half a table of strings cannot check. A refusal list is only
+       * as good as the question it is handed.
+       */
+      if (system.remembers || system.refuses) {
+        const kept = await where.evaluate(
+          async ({ b, hit }) => {
+            const m = await import(`${b}/autofill.js`);
+            const said = [];
+            const stop = m.watchChoices((x) => said.push(x));
+            for (const sel of hit) {
+              const el = document.querySelector(sel);
+              if (!el) continue;
+              if (el.tagName === 'SELECT') {
+                // A real option, not the placeholder. Leaving it on "--" means
+                // nothing is recorded and a refusal assertion below passes
+                // without anything having been refused.
+                const real = [...el.options].findIndex((o) => o.value && !/^-+$/.test(o.textContent.trim()));
+                el.selectedIndex = real >= 0 ? real : el.options.length - 1;
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+              } else {
+                el.click();
+              }
+            }
+            stop();
+            return said.map((x) => ({ question: x.question, answer: x.answer, keep: x.keep, why: x.why ?? '' }));
+          },
+          { b: base, hit: [...(system.remembers ?? []), ...(system.refuses ?? [])].map(([sel]) => sel) },
+        );
+
+        /*
+         * What is written down has to be what the next form looks it up by.
+         *
+         * The two halves derive a question separately — one from an event
+         * target, one from a walk over the page — and an agreement that holds
+         * only because both were written to look alike does not stay holding.
+         * It did not: the recording side stored `describeField`, which is the
+         * label plus `name`, `id` and `placeholder` each also split into
+         * words, so Greenhouse's work-authorisation dropdown went into the
+         * bank as the question plus four spellings of
+         * `job_application[answers_attributes][1][boolean_value]`. Every
+         * check above passed — they match the question with a regular
+         * expression, and the question is in there — while the row could
+         * never be found again by anything, because the matcher scores on
+         * shared words and those are shared with nothing.
+         */
+        for (const k of kept.filter((x) => x.keep)) {
+          check(
+            `${system.name}: what is written down is what the next form looks up`,
+            out.lookedUpBy.includes(k.question),
+            `stored "${k.question}"; looked up by ${out.lookedUpBy.map((q) => `"${q}"`).join(', ') || '(nothing)'}`,
+          );
+        }
+
+        for (const [sel, wanted] of system.remembers ?? []) {
+          const got = kept.find((k) => new RegExp(wanted, 'i').test(k.question));
+          check(
+            `${system.name}: keeps the answer to "${wanted}" for next time`,
+            Boolean(got?.keep),
+            got ? `${got.question} -> ${got.answer} (keep ${got.keep}${got.why ? `, ${got.why}` : ''})` : `nothing recorded for ${sel}`,
+          );
+        }
+        for (const [sel, wanted] of system.refuses ?? []) {
+          const got = kept.find((k) => new RegExp(wanted, 'i').test(k.question));
+          /*
+           * The question has to have been *seen* and then refused. "Nothing
+           * was recorded" passes a refusal check without anything having been
+           * refused, which is the shape a privacy test fails in silently — it
+           * would go green over a watcher that had simply stopped working.
+           */
+          check(
+            `${system.name}: refuses to keep "${wanted}"`,
+            Boolean(got) && got.keep === false,
+            got ? `${got.question} -> ${got.answer} (keep ${got.keep}, ${got.why})` : `nothing was even recorded for ${sel}`,
+          );
+        }
+      }
 
       const wrong = Object.entries(system.want).filter(([sel, value]) => out.values[sel] !== value);
       check(
@@ -976,6 +1181,21 @@ async function main() {
           `${system.name}: answers the yes/no questions`,
           wrongRadio.length === 0,
           wrongRadio.map(([n, want]) => `${n} wanted "${want}", got "${out.chosen[n]}"`).join('; '),
+        );
+      }
+      if (system.aria) {
+        const wrongAria = Object.entries(system.aria).filter(([sel, v]) => out.aria[sel] !== v);
+        check(
+          `${system.name}: answers the questions built out of buttons`,
+          wrongAria.length === 0,
+          wrongAria.map(([sel, want]) => `${sel} wanted "${want}", got "${out.aria[sel]}"`).join('; '),
+        );
+      }
+      for (const sel of system.ariaUntouched ?? []) {
+        check(
+          `${system.name}: leaves the popup's options alone`,
+          out.aria[sel] === '',
+          `${sel} chose "${out.aria[sel]}"`,
         );
       }
       if (system.neverGuesses) {

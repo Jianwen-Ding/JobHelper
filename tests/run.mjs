@@ -94,6 +94,7 @@ const SUITES = [
   { name: 'joins', file: 'joins.mjs', cost: 8 },
   { name: 'ats-forms', file: 'ats-forms.mjs', cost: 7 },
   { name: 'autofill', file: 'autofill.mjs', cost: 2 },
+  { name: 'reusing', file: 'reusing.mjs', cost: 3 },
   { name: 'csp', file: 'csp.mjs', cost: 2 },
   { name: 'harness', file: 'harness.mjs', cost: 1, nodeTest: true },
   { name: 'ats', file: 'ats.mjs', cost: 1, nodeTest: true },
@@ -101,6 +102,7 @@ const SUITES = [
   { name: 'sites', file: 'sites.mjs', cost: 1, nodeTest: true },
   { name: 'documents', file: 'documents.mjs', cost: 1, nodeTest: true },
   { name: 'reporting', file: 'reporting.mjs', cost: 1, nodeTest: true },
+  { name: 'remembering', file: 'remembering.mjs', cost: 1, nodeTest: true },
   { name: 'config', file: 'config.mjs', cost: 1, nodeTest: true },
 ];
 

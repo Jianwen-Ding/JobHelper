@@ -1328,6 +1328,72 @@ async function main() {
       await popup.close();
       await pointExtensionAt(context, context.serviceWorkers()[0], SERVER);
     }
+
+    /* ---------------------------------------------------------------- *
+     * A control whose message does not get through                       *
+     * ---------------------------------------------------------------- */
+
+    /*
+     * The popup talks to the worker for everything, and that conversation
+     * fails in two ordinary ways: the worker answers `ok: false`, or the
+     * channel is gone because the extension was reloaded while this window
+     * was open — which is what happens all day while it is being worked on.
+     *
+     * Either way, a control that does not catch it stops silently. The
+     * setting is not saved and the box stays ticked; the site is not muted and
+     * the button does not change; nothing is written to the status line,
+     * because on most of these the status line is the *last* thing the handler
+     * does. A window whose one job is telling you the state of things, wrong
+     * about it and quiet.
+     *
+     * Driven by making the channel itself fail, rather than by finding a real
+     * failure for each control: the point is not any one of these messages, it
+     * is that no control in here may swallow a refusal.
+     */
+    group('A control whose message to the worker fails');
+    {
+      /*
+       * A real page behind the popup, because Mute has a guard of its own:
+       * with nothing but the popup open there is no host to mute and it says
+       * so and stops, which is the guard working and not the thing under test
+       * here.
+       */
+      const behind = await context.newPage();
+      await behind.goto(fixtures.urlFor(HELIOS_ROLE), { waitUntil: 'domcontentloaded' });
+      const popup = await openPopup();
+      try {
+        const press = async (what, act) => {
+          // A sentinel, so "the status line was rewritten" cannot be confused
+          // with "the status line already said something".
+          await popup.evaluate(() => {
+            document.getElementById('status').textContent = 'nothing has been said yet';
+          });
+          // Every message refused, from this point on.
+          await popup.evaluate(() => {
+            chrome.runtime.sendMessage = (_message, reply) => reply({ ok: false, error: 'the worker said no' });
+          });
+          await act();
+          await popup.waitForTimeout(400);
+          const said = (await popup.locator('#status').textContent())?.trim() ?? '';
+          check(`${what} says so when the message does not get through`, /the worker said no/.test(said), said);
+          await popup.reload();
+          await popup.locator('#mute').waitFor({ timeout: 20_000 });
+          await popup.waitForTimeout(800);
+        };
+
+        await press('muting a site', () => popup.locator('#mute').click());
+        await press('opening the editor', () => popup.locator('#openApp').click());
+        await press('the offer-automatically box', () => popup.locator('#autoPrompt').click());
+        await press('the AI switch', () => popup.locator('#useAi').click());
+        await press('the address box', async () => {
+          await popup.fill('#serverUrl', 'http://127.0.0.1:4600');
+          await popup.locator('#serverUrl').dispatchEvent('change');
+        });
+      } finally {
+        await popup.close().catch(() => undefined);
+        await behind.close().catch(() => undefined);
+      }
+    }
   } finally {
     await context.close();
     fixtures.close();

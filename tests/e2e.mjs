@@ -428,12 +428,42 @@ async function main() {
      * screen would be showing a resume nobody has. Same button, same lane,
      * and this is the press that stages.
      */
+    /*
+     * Watched from before the press, rather than read after it.
+     *
+     * This read `.progress-label` in a second round trip once the bar had
+     * been found, which only works while a compile is slow enough to still be
+     * running by then. A document this server has already compiled comes back
+     * in about ten milliseconds: the bar appears and is gone before the
+     * question arrives, `innerText` times out, and — because it was not a
+     * `check` but a throw — the whole suite went down over a card that had
+     * done exactly what it promises.
+     *
+     * An observer inside the page records the first thing the label ever
+     * said. That is the claim, and it is true at any speed.
+     */
+    await card.evaluate((el) => {
+      window.__built = '';
+      window.__builtBar = false;
+      const read = () => {
+        if (el.querySelector('.step .progress')) window.__builtBar = true;
+        const text = el.querySelector('.progress-label')?.textContent?.trim() ?? '';
+        if (text && !window.__built) window.__built = text;
+      };
+      read();
+      window.__buildWatch = new MutationObserver(read);
+      window.__buildWatch.observe(el, { childList: true, subtree: true, characterData: true });
+    });
     await card.getByRole('button', { name: /^(Build resume|Recompile)$/ }).click();
 
-    // Compiling takes seconds; the card has to show it is working.
+    /*
+     * Watched rather than waited for. Compiling takes seconds the first time
+     * and about ten milliseconds once this server has seen the document, and
+     * `waitFor` on the bar is a bet that the first case is the only one — it
+     * is up and gone inside a frame otherwise, and this was not a `check` but
+     * a throw, so the whole suite went down over a card doing its job.
+     */
     const bar = card.locator('.step').first().locator('.progress');
-    await bar.waitFor({ timeout: 15_000 });
-    check('progress is shown while the resume compiles', true, await card.locator('.progress-label').first().innerText());
 
     /*
      * Waited for the bar to go, rather than for a fit badge to exist.
@@ -449,6 +479,12 @@ async function main() {
      * card says nothing about whether the compile finished.
      */
     await bar.waitFor({ state: 'detached', timeout: 120_000 }).catch(() => undefined);
+    const built = await card.evaluate(() => {
+      window.__buildWatch?.disconnect();
+      return { bar: window.__builtBar === true, said: window.__built ?? '' };
+    });
+    check('progress is shown while the resume compiles', built.bar, built.bar ? 'shown' : 'never shown');
+    check('and it says what it is doing', built.said.trim().length > 0, built.said);
     check(
       'progress clears when the work finishes',
       (await bar.count()) === 0,

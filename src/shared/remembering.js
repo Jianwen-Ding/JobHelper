@@ -1,0 +1,159 @@
+/**
+ * What may be remembered from one application and offered on the next.
+ *
+ * Applying is the same twenty questions over and over — work authorisation,
+ * sponsorship, how you heard about us, whether you have worked here before,
+ * which state you live in — and answering them again every time is most of
+ * what makes a form tedious. So the answers are kept.
+ *
+ * Only the ones that were *chosen*, never the ones that were typed. That is a
+ * scope decision and it does most of the safety work on its own: a chosen
+ * answer is by construction one of a handful the form itself offered, and no
+ * form offers your social security number in a dropdown. Free text is where
+ * the dangerous things live — an SSN typed into a box, a date of birth, an
+ * account number — and none of it comes through here.
+ *
+ * The two checks below are belt and braces over that. The first reads the
+ * question, which catches the ordinary case of a sensitive field that happens
+ * to be a choice ("Date of birth" as three dropdowns). The second reads the
+ * answer, which catches the same field when nobody labelled it — a box named
+ * `q_88213` holding nine digits is not something to keep, whatever it is
+ * called.
+ *
+ * Both are deliberately one-way: anything that looks like it might be
+ * sensitive is refused, and the cost of refusing wrongly is that one question
+ * gets answered by hand again.
+ */
+
+/**
+ * Questions whose answer is never kept, however it was given.
+ *
+ * Written as whole words with boundaries, because the substring versions are
+ * worse than useless here: `ssn` is inside "lessons", `dob` inside "doberman",
+ * and a check that fires on those teaches nobody anything while quietly
+ * refusing ordinary questions.
+ *
+ * "Salary" and "notice period" are deliberately *not* on this list. They are
+ * personal, and they are also different for every application — remembering
+ * them would be wrong for the ordinary reason that the answer changes, not
+ * because keeping them is dangerous. They simply do not match anything in
+ * `CHOOSABLE`, so nothing here reaches them.
+ */
+const NEVER_REMEMBER = [
+  /\bssn\b/i,
+  /\bsocial\s*security\b/i,
+  /\bnational\s*insurance\b/i,
+  /\bni\s*number\b/i,
+  /\bsin\b/i,
+  /\btax\s*(id|identification|payer)\b/i,
+  /\btin\b/i,
+  /\b(date|day|month|year)\s*of\s*birth\b/i,
+  /\bbirth\s*(date|day)\b/i,
+  /\bdob\b/i,
+  /\bage\b/i,
+  /\bdriver'?s?\s*licen[cs]e\b/i,
+  /\bpassport\b/i,
+  /\bvisa\s*number\b/i,
+  /\bbank\b/i,
+  /\brouting\b/i,
+  /\b(account|card)\s*number\b/i,
+  /\biban\b/i,
+  /\bsort\s*code\b/i,
+  /\bpassword\b/i,
+  /\bsecurity\s*question\b/i,
+  /\bmother'?s\s*maiden\b/i,
+  /\bcriminal\b/i,
+  // The stem, because a form asks "have you been convicted" and a list
+  // written as "conviction" does not match it.
+  /\bconvict/i,
+  /\bdisabilit(y|ies)\b/i,
+  /\bveteran\b/i,
+  /\bethnicit(y|ies)\b/i,
+  /\brace\b/i,
+  /\bgender\b/i,
+  /\bsexual\s*orientation\b/i,
+  /\breligion\b/i,
+  /\bmarital\b/i,
+  /\bpregnan/i,
+  /\bmedical\b/i,
+  /\bhealth\b/i,
+];
+
+/**
+ * And answers that look like something private whatever they were asked by.
+ *
+ * The label check cannot see a field nobody labelled, and those exist: an
+ * enterprise questionnaire whose every control is `q_88213`. So the value is
+ * looked at too — not to understand it, only to notice that its shape is one
+ * secrets come in.
+ *
+ * Long digit runs, an SSN with or without its dashes, and anything that reads
+ * as a date. A date is refused rather than parsed: a birthday and a graduation
+ * date are the same nine characters, and the one that must not be kept is the
+ * one worth being wrong about.
+ */
+const SENSITIVE_SHAPE = [
+  // Nine digits, dashed or not: an SSN either way.
+  /^\d{3}-?\d{2}-?\d{4}$/,
+  // A card or account number, and any other long run of digits.
+  /^[\d\s-]{11,}$/,
+  // A date in any of the ways people write one.
+  /^\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}$/,
+  /^\d{1,2}\s+\w{3,9}\s+\d{4}$/,
+  /^\w{3,9}\s+\d{1,2},?\s+\d{4}$/,
+];
+
+/** Whether this question is one whose answer is never kept. */
+export function neverRemember(question) {
+  const text = String(question ?? '');
+  return NEVER_REMEMBER.some((re) => re.test(text));
+}
+
+/** Whether this answer looks like something private, whatever it was asked by. */
+export function looksPrivate(answer) {
+  const text = String(answer ?? '').trim();
+  return SENSITIVE_SHAPE.some((re) => re.test(text));
+}
+
+/**
+ * Whether a chosen answer is worth keeping for next time — and if not, why.
+ *
+ * The reason is returned rather than swallowed because the card says it. A
+ * tool that quietly declines to remember things looks broken; one that says
+ * "not keeping the date-of-birth answer" is doing something the person can
+ * agree with.
+ */
+export function worthRemembering({ question, answer } = {}) {
+  const asked = String(question ?? '').trim();
+  const said = String(answer ?? '').trim();
+
+  if (!asked || !said) return { keep: false, why: 'there is no question and answer here' };
+
+  /*
+   * The two refusals first, before anything about shape or length.
+   *
+   * Order is not cosmetic here: it decides what the card says. "DOB" is three
+   * characters, so a length check in front would refuse it for being short —
+   * true, and the wrong reason to give somebody about their date of birth.
+   * The sentence a person reads has to name the actual objection, or the next
+   * person to read this code will relax the length rule and quietly turn the
+   * other one off.
+   */
+  if (neverRemember(asked)) return { keep: false, why: 'this one is personal, so it is not kept' };
+  if (looksPrivate(said)) return { keep: false, why: 'the answer looks personal, so it is not kept' };
+
+  /*
+   * A question nobody could match again is not worth a row in the bank. The
+   * point of keeping it is that the next form asks something recognisably the
+   * same, and two words cannot be recognised.
+   */
+  if (asked.length < 8) return { keep: false, why: 'the question is too short to recognise again' };
+  /*
+   * And an answer long enough to be prose is not a chosen option — it is
+   * something typed, which this does not keep. Belt and braces: the caller
+   * only ever offers chosen options.
+   */
+  if (said.length > 120) return { keep: false, why: 'this is written rather than chosen' };
+
+  return { keep: true };
+}

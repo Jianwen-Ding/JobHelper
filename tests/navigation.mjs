@@ -42,7 +42,10 @@ import {
   SOLO_OTHER,
   OWN_SITE,
   SPA_BOARD,
+  NEW_TAB_ASIDE,
+  NEW_TAB_BENEFITS,
   STEP_ONE,
+  STEP_TWO_FORM,
   WORKDAY,
   cleanStore,
   findChromium,
@@ -170,10 +173,33 @@ async function buildResume(page) {
  * `before` is what the description page said, so this can tell "carried" from
  * "worked it out again".
  */
-async function expectContinuity(page, label, { role, expectTrail = true } = {}) {
+async function expectContinuity(page, label, { role, expectTrail = true, reduced = false } = {}) {
   const card = cardOf(page);
 
   check(`${label}: the card came back`, (await card.count()) > 0);
+
+  /*
+   * And that it is the whole card, not the reduced one.
+   *
+   * On a later page of a form whose documents are already built the card
+   * shrinks to two buttons — see `reducedNow`. Not one of the journeys below
+   * is that: every one arrives at the *first* form page of its application,
+   * which is where the chips to drag and the picker live and is the page
+   * reducing must never touch. Checked rather than assumed, because the
+   * assertions underneath read the panel, and a reduced card would fail them
+   * with a timeout on a missing element rather than with a sentence about
+   * what went wrong. It did, when the rule was first written from the trail
+   * alone.
+   *
+   * `reduced: true` presses through instead of failing, for a caller that
+   * does mean to land on a later page.
+   */
+  const small = await card.locator('.body.reduced').count();
+  check(`${label}: the card is not reduced here`, Boolean(small) === reduced, `reduced: ${Boolean(small)}`);
+  if (small) {
+    await card.getByRole('button', { name: 'Show everything' }).click();
+    await card.locator('.fit').waitFor({ timeout: 30_000 });
+  }
 
   const shown = (await card.locator('.role').textContent())?.trim();
   check(`${label}: still knows the role`, shown === role, shown);
@@ -300,6 +326,119 @@ async function main() {
       await page.close();
     }
 
+    /* ---- A new tab that is not an application ---- */
+    /*
+     * The other half of the same mechanism, and the one that was wrong.
+     *
+     * Chrome sets `openerTabId` on *any* tab a page opens, and the trail
+     * inherited on that alone — so middle-clicking "Benefits" from a posting
+     * you had a resume built for handed the whole application to the new
+     * tab: its pages, its work, and its live "the next page belongs to this
+     * application", which is the one thing that overrides the host and path
+     * rules. Pressing Apply is what makes a new tab a continuation; opening
+     * a link is not.
+     */
+    group('A new tab opened from a posting by something that is not Apply');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(NEW_TAB_ASIDE), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      if (await cardOf(page).getByRole('button', { name: 'Build resume' }).count()) {
+        await buildResume(page);
+      }
+
+      const opened = context.waitForEvent('page');
+      await page.click('#aside');
+      const aside = await opened;
+      await aside.waitForLoadState('domcontentloaded');
+      // Long enough for the content script to have asked, which is the moment
+      // the inheriting used to happen.
+      await aside.waitForTimeout(2500);
+
+      const held = await worker.evaluate(async (url) => {
+        const [tab] = await chrome.tabs.query({ url });
+        const key = `trail:${tab.id}`;
+        const got = await chrome.storage.session.get(key);
+        return { pages: (got[key]?.pages ?? []).length, work: Boolean(got[key]?.work), expecting: Boolean(got[key]?.expecting) };
+      }, aside.url());
+
+      check('the benefits tab does not take the application over', held.pages === 0, JSON.stringify(held));
+      check('nor the resume that was built for it', held.work === false, JSON.stringify(held));
+      await aside.close();
+      await page.close();
+    }
+
+    /* ---- A new tab off a posting whose Apply was pressed long ago ---- */
+    /*
+     * The half above only proves the expectation has to be *there*. This one
+     * proves it has to be recent, which is the same five minutes `wasExpected`
+     * already holds every other continuation to.
+     *
+     * The shape is a posting left open in a background tab since this morning
+     * — Apply was pressed on it once, the form was abandoned, the expectation
+     * has long since gone stale. Middle-clicking "Benefits" out of it hours
+     * later is not a continuation of anything, and inheriting that dead
+     * expectation would hand the new tab the one flag that overrides the host
+     * and path rules for whatever it navigates to next.
+     */
+    group('A new tab opened from a posting whose Apply was pressed hours ago');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(NEW_TAB_ASIDE), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      if (await cardOf(page).getByRole('button', { name: 'Build resume' }).count()) {
+        await buildResume(page);
+      }
+
+      // Age it past EXPECTATION_MS, exactly as an abandoned form would.
+      const staled = await worker.evaluate(async ({ url, to }) => {
+        const [tab] = await chrome.tabs.query({ url });
+        const key = `trail:${tab.id}`;
+        const got = await chrome.storage.session.get(key);
+        const expecting = { to, at: Date.now() - 60 * 60 * 1000 };
+        await chrome.storage.session.set({ [key]: { ...got[key], expecting } });
+        return Boolean(got[key]?.pages?.length);
+      }, { url: page.url(), to: `${fixtures.urlFor(NEW_TAB_ASIDE)}/apply` });
+
+      // Without this the tab below would have nothing to inherit either way,
+      // and the three checks would pass on an empty trail.
+      check('the posting it is opened from is an application in the first place', staled === true);
+
+      const opened = context.waitForEvent('page');
+      await page.click('#aside');
+      const aside = await opened;
+      await aside.waitForLoadState('domcontentloaded');
+      await aside.waitForTimeout(2500);
+
+      const read = async (target) =>
+        worker.evaluate(async (url) => {
+          const [tab] = await chrome.tabs.query({ url });
+          const key = `trail:${tab.id}`;
+          const got = await chrome.storage.session.get(key);
+          return {
+            pages: (got[key]?.pages ?? []).length,
+            work: Boolean(got[key]?.work),
+            expecting: Boolean(got[key]?.expecting),
+          };
+        }, target);
+
+      const held = await read(aside.url());
+      const opener = await read(page.url());
+
+      // The same guard again: if the page had dropped its own stale
+      // expectation before the click, there would be nothing to inherit.
+      check('the stale expectation was still on the page when the link opened', opener.expecting === true, JSON.stringify(opener));
+      check('a stale expectation does not hand the application over', held.pages === 0, JSON.stringify(held));
+      check('nor the resume that was built for it', held.work === false, JSON.stringify(held));
+      check(
+        'nor the expectation itself, which would vouch for wherever the tab goes next',
+        held.expecting === false,
+        JSON.stringify(held),
+      );
+      await aside.close();
+      await page.close();
+    }
+
     /* ---- A form in two steps ---- */
     group('A form split over two pages');
     {
@@ -330,6 +469,57 @@ async function main() {
 
       const carried = await cardOf(page).locator('.q textarea').first().inputValue();
       check('the answer typed on step one is still there', carried === typed, carried);
+      await page.close();
+    }
+
+    /* ---- A later page of a form, with the documents already built ---- */
+    /*
+     * The card reducing itself, driven the whole way rather than by handing
+     * `createCard` a trail. `card.mjs` proves the rule; only this proves the
+     * content script tells the card there is a form here, and without that
+     * one argument the rule is never true on any real page — autofill works
+     * exactly as before and the feature is silently absent.
+     */
+    group('A later page of a form, once the documents are built');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(STEP_ONE), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      /*
+       * Built if it is not already. The group above walked this same
+       * application, so the card here may come back holding the resume it
+       * built then — in which case the button says "Recompile" and pressing
+       * "Build resume" waits thirty seconds for something that is finished.
+       */
+      if (await cardOf(page).getByRole('button', { name: 'Build resume' }).count()) {
+        await buildResume(page);
+      } else {
+        await cardOf(page).locator('.fit').waitFor({ timeout: 60_000 });
+      }
+      check('the first form page has the whole card', (await cardOf(page).locator('.body.reduced').count()) === 0);
+
+      await page.goto(fixtures.urlFor(STEP_TWO_FORM), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      const card = cardOf(page);
+      const small = await card.locator('.body.reduced').count();
+      check('and the page after it is reduced to what that page can use', small === 1, `${small} reduced bodies`);
+      const said = ((await card.locator('.reduced-why').textContent()) ?? '').trim();
+      check('which says why', /documents are built/.test(said), said || '(nothing)');
+      const buttons = (await card.locator('button').allTextContents()).map((b) => b.trim());
+      check(
+        'the two buttons for this page are there',
+        buttons.includes('Autofill this form') && buttons.includes('Attach files'),
+        JSON.stringify(buttons),
+      );
+      check('and the rest is one press away', buttons.includes('Show everything'), JSON.stringify(buttons));
+
+      await card.getByRole('button', { name: 'Show everything' }).click();
+      await card.locator('.fit').waitFor({ timeout: 30_000 });
+      check(
+        'pressing it brings back the resume that was built on the page before',
+        /page/i.test(((await card.locator('.fit').textContent()) ?? '').trim()),
+        ((await card.locator('.fit').textContent()) ?? '').trim(),
+      );
       await page.close();
     }
 
@@ -749,6 +939,87 @@ async function main() {
           asked.some((q) => /why do you want to work here/i.test(q)),
           asked.join(' | ') || '(none)',
         );
+      }
+
+      /*
+       * And a chip dragged into the frame lands in the frame's own box.
+       *
+       * This is the case a drop cannot reach on its own. The card lives in the
+       * top frame; the pointer lets go over an embed; the `drop` event fires
+       * in the embed's document, which has its own copy of this content script
+       * and knew nothing about the drag. So the file went nowhere and nothing
+       * said so — on Greenhouse and Lever, which is most of the boards that
+       * embed rather than redirect.
+       *
+       * Every frame is told a chip is in the air, behind the same
+       * `looksLikeApplicationForm` guard that stops an advert's frame being
+       * handed a resume, and whichever one takes the drop reports back through
+       * the worker because the card is not in it.
+       */
+      if (there) {
+        const card = cardOf(page);
+        await card.getByRole('button', { name: 'Build resume' }).click().catch(() => undefined);
+        const chip = card.locator('.file.liftable').first();
+        const got = await chip.waitFor({ timeout: 120_000 }).then(() => true).catch(() => false);
+        check('the card stages a file to drag', got);
+        if (got) {
+          const name = (await chip.locator('.what').innerText()).trim();
+          /*
+           * The pointer arriving on the chip is what tells every frame a drag
+           * may be coming — see `liftFrom`. `dragstart` is far too late for a
+           * round trip out to the worker and back into each frame, and a
+           * press held still long enough to buy that time stops Chromium
+           * treating the gesture as a drag at all.
+           */
+          await chip.hover();
+          await page.waitForTimeout(900);
+
+          /*
+           * And the drop, dispatched in the frame at its own box.
+           *
+           * The arming above is the real thing, over the real worker, into
+           * the real frame. The event is dispatched because Chromium's drag
+           * controller cannot be driven across an iframe boundary from a
+           * test — which is a limitation of the harness and not of the drag:
+           * everything this exercises after the pointer is the same code a
+           * hand reaches.
+           */
+          const frame = page.frames().find((f) => /embed/.test(f.url()));
+          await frame.evaluate(() => {
+            const el = document.getElementById('rs');
+            for (const type of ['dragenter', 'dragover', 'drop']) {
+              el.dispatchEvent(
+                new DragEvent(type, {
+                  bubbles: true,
+                  cancelable: true,
+                  composed: true,
+                  dataTransfer: new DataTransfer(),
+                }),
+              );
+            }
+          });
+
+          const box = page.frameLocator('#grnhse_iframe').locator('#rs');
+          let held = [];
+          for (let i = 0; i < 40 && held.length === 0; i++) {
+            held = await box.evaluate((el) => [...(el.files ?? [])].map((f) => f.name)).catch(() => []);
+            if (held.length === 0) await page.waitForTimeout(150);
+          }
+          check('a chip dropped into the embed lands in the embed’s box', held[0] === name, `${JSON.stringify(held)} vs ${name}`);
+
+          /*
+           * And the card says so, which is a second hop: the frame that took
+           * the drop has no card, so the report goes back out through the
+           * worker to the top frame. Without it the file lands and the only
+           * account of it is silence.
+           */
+          let says = 0;
+          for (let i = 0; i < 30 && says === 0; i++) {
+            says = await card.locator('.ok-note').filter({ hasText: name }).count().catch(() => 0);
+            if (says === 0) await page.waitForTimeout(150);
+          }
+          check('and the card in the top frame says so', says > 0, (await card.locator('.ok-note').allInnerTexts()).join(' | '));
+        }
       }
       await page.close();
     }

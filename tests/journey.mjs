@@ -276,16 +276,53 @@ async function main() {
      * end to end, and checked for saying it is working while it does.
      */
     console.log('\nMaking the files');
+    /*
+     * Watched from before the press, rather than read after it.
+     *
+     * This asked for `.progress-label`'s text in a second round trip once the
+     * bar had been found, which only works while a compile is slow enough to
+     * still be running by then. A document this server has already compiled
+     * comes back in about ten milliseconds — the bar appears and is gone
+     * before the question arrives, and the test fails over a card that did
+     * exactly what it promises.
+     *
+     * An observer inside the page records the first thing the label ever
+     * said. That is the claim being made — it says what it is doing while it
+     * works — and it is true at any speed.
+     */
+    await formCard.evaluate((card) => {
+      window.__said = '';
+      const read = () => {
+        if (card.querySelector('.progress')) window.__sawBar = true;
+        const text = card.querySelector('.progress-label')?.textContent?.trim() ?? '';
+        if (text && !window.__said) window.__said = text;
+      };
+      window.__sawBar = false;
+      read();
+      window.__watch = new MutationObserver(read);
+      window.__watch.observe(card, { childList: true, subtree: true, characterData: true });
+    });
     await formCard.getByRole('button', { name: 'Build resume' }).click();
-    await timed('the card says it is compiling', 15_000, () =>
-      formCard.locator('.progress').first().waitFor({ timeout: 15_000 }),
-    );
-    const compiling = await formCard.locator('.progress-label').innerText().catch(() => '');
-    check('and says what it is doing', compiling.trim().length > 0, compiling);
 
+    /*
+     * The outcome is what is waited for; the bar is what is watched for.
+     *
+     * Waiting on `.progress` to become visible is a bet that the compile
+     * outlasts the poll, and a document this server has already compiled
+     * comes back in about ten milliseconds — the bar is up and gone inside
+     * one frame, and a suite that waits fifteen seconds for it then dies over
+     * a card that did exactly what it promises. The observer above sees it
+     * whether it lasted a second or a millisecond.
+     */
     await timed('compile the resume', 90_000, () =>
       formCard.locator('.fit.ok, .fit.bad').waitFor({ timeout: 90_000 }),
     );
+    const working = await formCard.evaluate(() => {
+      window.__watch?.disconnect();
+      return { bar: window.__sawBar === true, said: window.__said ?? '' };
+    });
+    check('the card says it is compiling', working.bar, working.bar ? 'shown' : 'never shown');
+    check('and says what it is doing', working.said.trim().length > 0, working.said);
     const fit = await formCard.locator('.fit.ok, .fit.bad').innerText();
     check('and says whether it fits the page', /page/i.test(fit), fit);
     check('with the working indicator gone', (await formCard.locator('.progress').count()) === 0);

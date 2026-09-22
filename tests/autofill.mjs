@@ -545,7 +545,68 @@ const PHRASE_ANSWERS = `<!doctype html><html><head><meta charset="utf-8"><title>
   </select>
 </form></body></html>`;
 
-const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS };
+/**
+ * The questions the profile cannot answer, which are the ones applying
+ * actually repeats.
+ *
+ * Nothing in a ResumeM-M profile says whether somebody has worked here
+ * before, how they heard about the job, or whether they will relocate. They
+ * are asked on every application, in all three control shapes, and they are
+ * what the answer bank exists to stop being typed twice.
+ *
+ * Two of these must stay untouched however the rest goes. `dob-month` is
+ * personal and is refused even with a matching row in the bank; `team` is
+ * ordinary and simply has no row, and a tool that guessed at it would be
+ * putting somebody on a team they did not pick.
+ */
+const REMEMBERED = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="f">
+  <label for="prev">Have you previously been employed by this company?</label>
+  <select id="prev" name="prev_emp_q3">
+    <option value="">Select...</option><option>Yes</option><option>No</option>
+  </select>
+
+  <fieldset>
+    <legend>Are you willing to relocate for this role?</legend>
+    <label><input type="radio" name="reloc" value="y"> Yes</label>
+    <label><input type="radio" name="reloc" value="n"> No</label>
+  </fieldset>
+
+  <div role="radiogroup" aria-label="How did you hear about this position?">
+    <div role="radio" id="h-li" aria-checked="false" tabindex="0">LinkedIn</div>
+    <div role="radio" id="h-ref" aria-checked="false" tabindex="0">Employee referral</div>
+  </div>
+
+  <!-- Personal, and in the bank, and still not to be answered. -->
+  <label for="dob-month">Month of birth</label>
+  <select id="dob-month" name="dobm">
+    <option value="">Select...</option><option>April</option><option>May</option>
+  </select>
+
+  <!-- Nothing in the bank looks like this, so it is left alone. -->
+  <label for="team">Which team would you like to join?</label>
+  <select id="team" name="team">
+    <option value="">Select...</option><option>Platform</option><option>Growth</option>
+  </select>
+
+  <!-- Already answered by hand. The bank is a weaker claim than this. -->
+  <label for="start">When could you start?</label>
+  <select id="start" name="start">
+    <option>Immediately</option><option>In two weeks</option>
+  </select>
+</form>
+<script>
+  // What a real component does, so the ARIA read-back has something to read.
+  for (const el of document.querySelectorAll('[role="radio"]')) {
+    el.addEventListener('click', () => {
+      for (const sib of document.querySelectorAll('[role="radio"]')) sib.setAttribute('aria-checked', 'false');
+      el.setAttribute('aria-checked', 'true');
+    });
+  }
+  document.getElementById('start').value = 'In two weeks';
+</script></body></html>`;
+
+const PAGES = { '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -563,7 +624,19 @@ const PROFILE = {
 
 async function main() {
   const source = fs.readFileSync(path.join(root, 'src/content/autofill.js'), 'utf8');
+  /*
+   * And what it imports, at the path it imports it from — the privacy rule,
+   * kept in its own file so it can be read without reading the rest. A server
+   * that answers only `/autofill.js` fails the whole import with "failed to
+   * fetch dynamically imported module", which names no module.
+   */
+  const shared = fs.readFileSync(path.join(root, 'src/shared/remembering.js'), 'utf8');
   const server = http.createServer((req, res) => {
+    if (req.url.startsWith('/shared/remembering.js')) {
+      res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
+      res.end(shared);
+      return;
+    }
     if (req.url.startsWith('/autofill.js')) {
       res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
       res.end(source);
@@ -1537,6 +1610,128 @@ async function main() {
       .map(([q, want], i) => (verdicts[i] === want ? null : `${verdicts[i] ? 'withheld' : 'offered'}: ${q}`))
       .filter(Boolean);
     check('every question is judged the right way round', wrong.length === 0, wrong.join(' | ') || `${yoursCases.length} phrasings`);
+
+    /* ---------------- Answers kept from the last form ---------------- */
+
+    /*
+     * The bank as the worker hands it over: the store matched these questions
+     * and echoed each one back beside its answer, so the pairing here is
+     * string equality. `Month of birth` is in it deliberately — a bank is
+     * older than the gate that now keeps such things out, and answers can be
+     * typed into the Workspace by hand, so the reuse side has to refuse it
+     * too rather than trust what it was given.
+     */
+    const BANK = [
+      { question: 'Have you previously been employed by this company?', answer: 'No' },
+      { question: 'Are you willing to relocate for this role?', answer: 'Yes' },
+      { question: 'How did you hear about this position?', answer: 'LinkedIn' },
+      { question: 'Month of birth', answer: 'April' },
+      { question: 'When could you start?', answer: 'Immediately' },
+    ];
+
+    const memory = await page.goto(`${base}/remembered`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(
+        async ({ b, profile, bank }) => {
+          const m = await import(`${b}/autofill.js`);
+          const asked = m.choiceQuestions();
+          const report = m.fillForm(profile, { remembered: bank });
+          const val = (id) => document.getElementById(id).value;
+          return {
+            asked,
+            prev: val('prev'),
+            dobMonth: val('dob-month'),
+            team: val('team'),
+            start: val('start'),
+            reloc: document.querySelector('input[name="reloc"]:checked')?.value ?? '',
+            heard: [...document.querySelectorAll('[role="radio"]')]
+              .filter((el) => el.getAttribute('aria-checked') === 'true')
+              .map((el) => el.id),
+            fromMemory: report.filled.filter((f) => f.remembered).map((f) => `${f.question} = ${f.value}`),
+            keys: report.filled.map((f) => f.key),
+          };
+        },
+        { b: base, profile: PROFILE, bank: BANK },
+      ),
+    );
+
+    group('Answers kept from the last form');
+    /*
+     * All three shapes, because the three fill paths are three different
+     * pieces of code and a feature that works on dropdowns and silently not
+     * on radio buttons is the kind of half-working nobody notices: the form
+     * just comes out less filled than it should, which looks the same as a
+     * tool that was never confident.
+     */
+    check('a dropdown is answered from what was said last time', memory.prev === 'No', `"${memory.prev}"`);
+    check('so is a radio group', memory.reloc === 'y', `"${memory.reloc}"`);
+    check(
+      'and a group built out of buttons',
+      memory.heard.join(',') === 'h-li',
+      memory.heard.join(',') || 'nothing ticked',
+    );
+    /*
+     * The two refusals, which are the half worth being sure about. A wrong
+     * answer here is not a blank box somebody notices — it is a form that
+     * looks finished and says something they did not say.
+     */
+    check(
+      'a personal question is left alone even with a matching row in the bank',
+      memory.dobMonth === '',
+      `"${memory.dobMonth}"`,
+    );
+    check(
+      'and it is never even asked about',
+      !memory.asked.some((q) => /birth/i.test(q)),
+      memory.asked.filter((q) => /birth/i.test(q)).join(' | ') || `asked about ${memory.asked.length}`,
+    );
+    check(
+      'a question the bank has nothing for is left for the person',
+      memory.team === '',
+      `"${memory.team}"`,
+    );
+    check(
+      'and an answer already on screen outranks the bank',
+      memory.start === 'In two weeks',
+      `"${memory.start}"`,
+    );
+    /*
+     * And the questions it asks the bank about are the ones the profile
+     * cannot answer. Asking about a name or an email address would be asking
+     * the store to fuzzy-match something it already knows exactly.
+     */
+    check(
+      'only the questions worth asking the bank are sent',
+      memory.asked.length === 4 && memory.asked.every((q) => !/birth/i.test(q)),
+      memory.asked.join(' | '),
+    );
+    check(
+      'the report says which answers came from memory',
+      memory.fromMemory.length === 3,
+      memory.fromMemory.join(' | ') || 'none',
+    );
+    /*
+     * And nothing changes when there is no bank, which is every first
+     * application and every session with the store switched off.
+     */
+    const noBank = await page.goto(`${base}/remembered`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(
+        async ({ b, profile }) => {
+          const m = await import(`${b}/autofill.js`);
+          const report = m.fillForm(profile);
+          return {
+            prev: document.getElementById('prev').value,
+            reloc: document.querySelector('input[name="reloc"]:checked')?.value ?? '',
+            filled: report.filled.length,
+          };
+        },
+        { b: base, profile: PROFILE },
+      ),
+    );
+    check(
+      'with no bank the form is exactly as it was',
+      noBank.prev === '' && noBank.reloc === '' && noBank.filled === 0,
+      `prev "${noBank.prev}", reloc "${noBank.reloc}", ${noBank.filled} filled`,
+    );
   } finally {
     await browser.close();
     server.close();

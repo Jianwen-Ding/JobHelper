@@ -7,6 +7,7 @@
 
 import { getSettings } from '../shared/config.js';
 import {
+  EXPECTATION_MS,
   judgeApplication,
   keepPages,
   plainlyAnotherRole,
@@ -619,7 +620,36 @@ async function inheritIfNew(tabId, openerTabId) {
   if (mine.pages.length > 0 || mine.cleared) return;
 
   const theirs = await readTrail(openerTabId);
-  if (theirs.pages.length > 0) await writeTrail(tabId, { ...theirs, at: Date.now() });
+  if (theirs.pages.length === 0) return;
+
+  /*
+   * And only when the tab it came from was in the middle of applying.
+   *
+   * `openerTabId` is set by Chrome for *any* tab a page opens — a middle
+   * click, a ctrl-click, a `target="_blank"` link, a `window.open` — and this
+   * runs on nearly every page, because `openHere` is what a low-scoring page
+   * asks before giving up and most pages are low-scoring. So middle-clicking
+   * "Benefits" from a posting you had half a letter written for handed that
+   * whole application to the new tab: its pages, its resume, its letter, and
+   * its live `expecting`, which is the one thing that overrides the host and
+   * path rules. One ordinary navigation from there to another company's
+   * posting could be taken as the same application.
+   *
+   * The expectation is the discriminator this always wanted, and
+   * `expectContinuation` says as much in its own comment — a new tab
+   * inherits "so an Apply button that opens one lands already knowing where
+   * it came from". Pressing Apply sets it; middle-clicking "Benefits" does
+   * not. Held to the same five minutes `wasExpected` allows, so a tab opened
+   * out of a posting left open since yesterday inherits nothing either.
+   *
+   * Where it is missing the new tab starts fresh, which is what every tab
+   * with no opener already does — and `wasLinkedFrom` still reads the link
+   * out of the page it came from, with no race in it at all.
+   */
+  const applying = theirs.expecting?.to && Date.now() - (theirs.expecting.at ?? 0) <= EXPECTATION_MS;
+  if (!applying) return;
+
+  await writeTrail(tabId, { ...theirs, at: Date.now() });
 }
 
 /* ------------------------------------------------------------------ *
@@ -1224,6 +1254,43 @@ const handlers = {
     if (tab?.id === undefined) return { frames: [] };
     const replies = await askFrames(tab.id, { type: 'jh-frame-attach', payload: { files } });
     return { frames: replies.map(({ frameId, data }) => ({ frameId, ...data })) };
+  },
+
+  /**
+   * Tell every sub-frame that a chip is in the air, or that it has landed.
+   *
+   * The drop has to be taken by whichever document the pointer is over, and
+   * on half the portals that matter that document is an embed — a Greenhouse
+   * or Lever form in an iframe, with the top frame holding nothing but the
+   * job advert. The card lives in the top frame, so without this the frame
+   * under the pointer never knew a drag was happening and the drop did
+   * nothing at all.
+   *
+   * Every frame is told, and each one decides: the same
+   * `looksLikeApplicationForm` guard `jh-frame-attach` uses, for the same
+   * reason — every advert and chat widget on the page runs this script too,
+   * and a resume is a name, an address and an employment history in one file.
+   */
+  async draggingInFrames({ files }, tab) {
+    if (tab?.id === undefined) return { frames: 0 };
+    const replies = await askFrames(tab.id, { type: 'jh-frame-dragging', payload: { files } });
+    return { frames: replies.length };
+  },
+
+  /**
+   * A frame took a drop. Hand the report to the top frame, where the card is.
+   *
+   * `sender` names the frame that is telling us, which is not the one that
+   * needs to hear: the card is in the top frame and this is the only account
+   * anybody gets of where the file went.
+   */
+  async droppedInFrame({ report }, tab, sender) {
+    const tabId = tab?.id ?? sender?.tab?.id;
+    if (tabId === undefined) return false;
+    await chrome.tabs
+      .sendMessage(tabId, { type: 'jh-frame-dropped', payload: { report } }, { frameId: 0 })
+      .catch(() => undefined);
+    return true;
   },
 
   /** Fill the form in every sub-frame from the same profile. */
@@ -2069,6 +2136,34 @@ const handlers = {
   },
 
   /**
+   * The answers this person has already given to questions like these.
+   *
+   * The matching lives in the store, not here. ResumeM-M's `matchAnswer` is
+   * the only question-similarity function either product has, it is what the
+   * Workspace already answers questions with, and a second one written in the
+   * extension would be a copy that drifts — silently, and into an application
+   * answered wrongly rather than into a failing test.
+   *
+   * Only the confident matches come back. `matchAnswer` grades every one, and
+   * a loose match is a starting point for somebody to read, not something to
+   * tick a radio button with; the Workspace shows those and this does not use
+   * them. The question is echoed back beside its answer so the caller can
+   * pair them up by string equality.
+   */
+  async rememberedAnswers({ questions }) {
+    if (!Array.isArray(questions) || questions.length === 0) return { answers: [] };
+    const reply = await serverFetch('/api/answers/match', {
+      method: 'POST',
+      body: JSON.stringify({ questions }),
+    }).catch(() => null);
+
+    const answers = (reply?.matches ?? [])
+      .filter((m) => m?.confident && m.answer)
+      .map((m) => ({ question: m.question, answer: m.answer }));
+    return { answers };
+  },
+
+  /**
    * What this application could attach, with the bytes of each.
    *
    * One round trip rather than a list and then a fetch per file, because the
@@ -2157,6 +2252,25 @@ const handlers = {
         }),
       }),
     );
+  },
+
+  /**
+   * An answer somebody chose on a form, kept for the next one.
+   *
+   * Goes into the same answer bank a written answer goes into, because it is
+   * the same thing: a question this person has answered before. The label
+   * says where it came from, so a bank row can be told from one they wrote in
+   * the editor.
+   *
+   * The refusal happened on the page — see `worthRemembering` — so nothing
+   * personal reaches this function, let alone the store.
+   */
+  async rememberChoice({ question, answer }) {
+    if (!question?.trim() || !answer?.trim()) return { ok: false };
+    return serverFetch('/api/answers/save', {
+      method: 'POST',
+      body: JSON.stringify({ question, answer, label: 'Chosen on a form' }),
+    });
   },
 
   async saveAnswer({ question, answer, itemId, label }) {

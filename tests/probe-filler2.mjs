@@ -81,8 +81,15 @@ const PAGES = {
 
 async function main() {
   const source = fs.readFileSync(path.join(root, 'src/content/autofill.js'), 'utf8');
+  // And what it imports; see the same line in tests/autofill.mjs.
+  const shared = fs.readFileSync(path.join(root, 'src/shared/remembering.js'), 'utf8');
   const server = http.createServer((req, res) => {
     const url = req.url.split('?')[0];
+    if (url.startsWith('/shared/remembering.js')) {
+      res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
+      res.end(shared);
+      return;
+    }
     if (url.startsWith('/autofill.js')) {
       res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
       res.end(source);

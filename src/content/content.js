@@ -518,15 +518,40 @@
    * the form and nothing in the form had changed.
    */
   async function runAutofill() {
-    const { fillForm } = await imports.autofill();
     const data = await send('autofillData');
-    const here = fillForm(data.fields);
+    const here = await fillThisDocument(data.fields);
 
     const { frames } = await send('fillFrames', { fields: data.fields }).catch(() => ({ frames: [] }));
     return {
       filled: [...here.filled, ...frames.flatMap((f) => f.filled ?? [])],
       skipped: [...here.skipped, ...frames.flatMap((f) => f.skipped ?? [])],
     };
+  }
+
+  /**
+   * Fill the form in *this* document, from the profile and from the answers
+   * this person has given before.
+   *
+   * The bank lookup happens per document rather than once at the top, because
+   * the questions are per document: an iCIMS application is in a frame and
+   * the page around it has none of it. Each frame asks about its own
+   * questions and gets back its own answers, which also keeps the round trip
+   * small — a page with six frames does not send six copies of one list.
+   *
+   * The matching is the store's. See `rememberedAnswers` in the worker: the
+   * question travels there and comes back echoed, so the only comparison here
+   * is string equality. Every failure path ends in an empty list, which is
+   * the behaviour this had before the bank existed.
+   */
+  async function fillThisDocument(fields) {
+    const { fillForm, choiceQuestions } = await imports.autofill();
+    const questions = choiceQuestions();
+    const remembered = questions.length
+      ? await send('rememberedAnswers', { questions })
+          .then((r) => r?.answers ?? [])
+          .catch(() => [])
+      : [];
+    return fillForm(fields, { remembered });
   }
 
   /**
@@ -720,11 +745,27 @@
         event.preventDefault();
         event.stopPropagation();
         inTheAir = null;
+        /*
+         * Said wherever the card is, which is not always here.
+         *
+         * A frame that took the drop has no card to tell — the card is in the
+         * top frame — so the report goes back through the worker. In the top
+         * frame there is no worker round trip to make.
+         */
+        const said = (report) => {
+          if (cardHandle) cardHandle.dropped(report);
+          else send('droppedInFrame', { report }).catch(() => undefined);
+        };
         imports
           .attach()
           .then(({ dropOnto }) => dropOnto(target, files))
-          .then((report) => cardHandle?.dropped(report))
-          .catch(() => cardHandle?.dropped({ placed: [], unplaced: files.map((f) => ({ name: f.name, why: 'the drop could not be completed' })) }));
+          .then(said)
+          .catch(() =>
+            said({
+              placed: [],
+              unplaced: files.map((f) => ({ name: f.name, why: 'the drop could not be completed' })),
+            }),
+          );
       },
       true,
     );
@@ -805,8 +846,25 @@
       case 'dragging': {
         inTheAir = payload.files?.length ? payload.files : null;
         if (inTheAir) watchForDrops();
+        /*
+         * And every frame on the page, because the drop lands in whichever
+         * document the pointer is over. On a board that embeds its form —
+         * Greenhouse and Lever both do — that is never this one. Not awaited:
+         * the drag is already in flight and the pointer is not going to wait
+         * for a round trip through the worker.
+         */
+        send('draggingInFrames', { files: inTheAir ?? [] }).catch(() => undefined);
         return { watching: Boolean(inTheAir) };
       }
+
+      /*
+       * The resume list, asked for again. See `askForResumesAgain` in the
+       * card: the list is normally pushed in by `setResumes` once it lands,
+       * and that push is dropped if the page moved on while it was in flight
+       * — which leaves the picker empty with nothing to retry it.
+       */
+      case 'listResumes':
+        return send('listResumes');
 
       case 'attachFiles': {
         const got = await send('attachments', { application: payload.application ?? null });
@@ -1497,6 +1555,15 @@
         settings,
         questions: [],
         needsCoverLetter: wantsCoverLetter(),
+        /*
+         * Whether there is a form on this page at all, which the card cannot
+         * see for itself — it lives in a shadow root and reads none of the
+         * page. Used only to decide whether the card may reduce itself: see
+         * `reducedNow`. Read once, here, because it is read in the same
+         * breath as `wantsCoverLetter` and the two answer the same question
+         * about the same page.
+         */
+        isForm: looksLikeApplicationForm(),
         onAction,
         onClose: () => {
           cardHandle = null;
@@ -1704,6 +1771,29 @@
     }
 
     // The rest arrives in its own time, each piece landing as it is ready.
+    /*
+     * And what gets chosen on this form, so the next one can offer it back.
+     *
+     * Started here rather than at document idle because this is the point the
+     * page has been read and found to be an application: watching every page
+     * somebody visits for what they select is not a thing this should do, and
+     * there is nothing to learn from a page that is not a form.
+     *
+     * Nothing personal leaves the page. `watchChoices` puts every answer
+     * through `worthRemembering` before telling anyone, so the refusal
+     * happens in the document rather than at the far end of a message.
+     */
+    imports
+      .autofill()
+      .then(({ watchChoices, looksLikeApplicationForm }) => {
+        if (!current() || !looksLikeApplicationForm()) return;
+        watchChoices((said) => {
+          if (!said.keep) return;
+          send('rememberChoice', { question: said.question, answer: said.answer }).catch(() => undefined);
+        });
+      })
+      .catch(() => undefined);
+
     send('listResumes')
       .then((resumes) => current() && cardHandle?.setResumes(resumes))
       .catch(() => undefined);
@@ -2048,12 +2138,44 @@
           );
           return true;
 
+        /*
+         * A chip is in the air over the page this frame is part of.
+         *
+         * The card lives in the top frame and the drop lands in whichever
+         * document the pointer is over — which, on half the portals that
+         * matter, is an embed. Without this the frame under the pointer never
+         * knew a drag was happening and let go of the file into nothing.
+         *
+         * Behind the same guard as `jh-frame-attach`, and for the same
+         * reason: every advert and chat widget on the page runs this script,
+         * and a resume is a name, an address and an employment history in one
+         * file. A frame that is not an application form is told nothing and
+         * installs nothing.
+         */
+        case 'jh-frame-dragging':
+          answer(
+            imports.autofill().then(({ looksLikeApplicationForm }) => {
+              const files = message.payload?.files ?? [];
+              if (files.length === 0) {
+                inTheAir = null;
+                return { watching: false };
+              }
+              if (!looksLikeApplicationForm()) return { watching: false };
+              inTheAir = files;
+              watchForDrops();
+              return { watching: true };
+            }),
+          );
+          return true;
+
         case 'jh-frame-fill':
           answer(
-            imports.autofill().then(({ fillForm, looksLikeApplicationForm }) =>
+            imports.autofill().then(({ looksLikeApplicationForm }) =>
               // The one that must not be got wrong. Anything else on the page
               // gets nothing about the person using it.
-              looksLikeApplicationForm() ? fillForm(message.payload?.fields ?? {}) : { filled: [], skipped: [] },
+              looksLikeApplicationForm()
+                ? fillThisDocument(message.payload?.fields ?? {})
+                : { filled: [], skipped: [] },
             ),
           );
           return true;
@@ -2129,6 +2251,20 @@
      */
     if (message?.type === 'jh-application-frame') {
       if (!cardHandle && !dismissed) show({ viaFrame: true }).catch(() => undefined);
+      sendResponse({ ok: true });
+      return false;
+    }
+    /*
+     * A frame took a drop, and the card is here rather than there.
+     *
+     * The drop lands in whichever document the pointer is over, which on a
+     * board that embeds its form is never this one — but the account of where
+     * the file went belongs on the card, and the card is in the top frame.
+     * It comes back through the worker, which is the only thing that can
+     * address this frame from that one.
+     */
+    if (message?.type === 'jh-frame-dropped') {
+      cardHandle?.dropped(message.payload?.report);
       sendResponse({ ok: true });
       return false;
     }

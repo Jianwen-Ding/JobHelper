@@ -1077,6 +1077,68 @@ async function main() {
   );
 
   /*
+   * The picker that names which resume this starts from, with no list yet.
+   *
+   * The list arrives on its own, after the card is up: `listResumes` in
+   * content.js, fired and forgotten with a `.catch(() => undefined)` and a
+   * guard that drops the reply if the page has moved on while it was in
+   * flight. Either of those leaves it empty for good, and an empty `<select>`
+   * renders as a chevron with nothing beside it — reported from a real card
+   * that had already compiled a resume and knew perfectly well which one it
+   * had started from.
+   */
+  console.log('\nThe picker before the resume list has arrived');
+
+  const basePicker = await inPage(async (createCard) => {
+    const asked = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        baseResumeId: 'new-grad',
+        baseLabel: 'New grad resume',
+        rationale: [],
+        diff: [],
+      },
+      // The case itself: nothing has arrived.
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action) => {
+        asked.push(action);
+        if (action === 'render') return { pages: 1, fits: true };
+        // And still nothing when asked again, so the fallback has to hold.
+        if (action === 'listResumes') return [];
+        return {};
+      },
+    });
+    void handle;
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    await new Promise((r) => setTimeout(r, 80));
+    const select = root.querySelector('select');
+    return {
+      options: [...(select?.options ?? [])].map((o) => o.textContent),
+      value: select?.value ?? null,
+      askedAgain: asked.filter((a) => a === 'listResumes').length,
+    };
+  });
+
+  check(
+    'it names the resume this starts from rather than nothing',
+    basePicker.options.length === 1 && basePicker.options[0] === 'New grad resume',
+    JSON.stringify(basePicker.options),
+  );
+  // And carries its id, so the control is not only legible but answerable.
+  check('and carries that resume’s id', basePicker.value === 'new-grad', String(basePicker.value));
+  /*
+   * Asked again, once. The fetch is cheap and this is the one moment its
+   * absence is visible; asking on every draw would ask for ever.
+   */
+  check('and the list is asked for again', basePicker.askedAgain === 1, `asked ${basePicker.askedAgain} times`);
+
+  /*
    * The graduation date, which is not a suggestion and must not arrive as one.
    *
    * Everything above is the keyword match: it read the posting's vocabulary
@@ -3198,6 +3260,355 @@ async function main() {
   check('it says the writing for this job is here', /what you had written for it is here/.test(returned.said), returned.said);
   check('and offers nothing to press', returned.buttons.length === 0, JSON.stringify(returned.buttons));
   check('and drops the warning colour', returned.back === true, String(returned.back));
+
+  console.log('\nThe card on a later page of an application');
+
+  /*
+   * An application on any of the big systems runs to four or five pages, and
+   * the card proposed a resume on every one of them — a panel of work
+   * finished on page one, sitting over the form. So it reduces: the job line,
+   * the two buttons this page can still use, and a way back.
+   *
+   * Every condition is driven separately below, because each of them is the
+   * difference between a useful card and a card that has hidden the thing
+   * somebody was about to press. Reducing too eagerly is the worse failure:
+   * on the first form page the chips to drag are in the panel this takes
+   * away.
+   */
+  const reducing = await inPage((createCard) => {
+    const posting = { url: 'https://acme.test/jobs/1', kind: 'posting', title: 'Platform Engineer' };
+    const form = (n) => ({ url: `https://acme.test/apply/${n}`, kind: 'application', title: `Step ${n}` });
+
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      // Every case below is on a page with a form on it; the page without
+      // one is its own check further down.
+      isForm: true,
+      // A folder with something in it, so the drag chips have files to be.
+      onAction: async (what) =>
+        what === 'attachmentFiles'
+          ? { files: [{ name: 'Jianwen-Ding-Resume.pdf' }, { name: 'Jianwen-Ding-Cover-Letter.pdf' }] }
+          : {},
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const read = () => ({
+      small: Boolean(root.querySelector('.body.reduced')),
+      why: root.querySelector('.reduced-why')?.textContent ?? '',
+      buttons: [...root.querySelectorAll('.card button')].map((b) => b.textContent.trim()),
+    });
+
+    const seen = {};
+    seen.firstPage = read();
+
+    // Three pages, two of them forms — but nothing built yet, so the panel
+    // proposing a resume is still the whole point of the card.
+    handle.setTrail({ pages: [posting, form(1), form(2)] });
+    seen.nothingBuilt = read();
+
+    // And now with a resume built on the page before.
+    handle.restoreWork({ render: { ok: true } });
+    handle.setTrail({ pages: [posting, form(1), form(2)] });
+    seen.built = read();
+
+    // The same, with this page missing from the trail entirely.
+    handle.setTrail({ pages: [posting, form(1)] });
+    seen.unrecorded = read();
+
+    /*
+     * Back to the first form page, which is where the chips get dragged and
+     * the one page reducing must never touch. "This page" is that form page,
+     * so it is excluded from the walk and nothing earlier is a form.
+     */
+    handle.setTrail({ pages: [posting, { ...form(1), url: location.href }] });
+    seen.firstForm = read();
+
+    handle.setTrail({ pages: [posting, form(1), form(2)] });
+    seen.againLater = read();
+
+    // Somebody asks for the whole card back.
+    root.querySelector('.body.reduced .link')?.click();
+    seen.expanded = read();
+
+    // And it stays back, however many more pages go by.
+    handle.setTrail({ pages: [posting, form(1), form(2), form(3)] });
+    seen.stillExpanded = read();
+
+    /*
+     * Back to reduced, and this time waiting for the folder to answer, so
+     * the chips have had their chance to appear.
+     */
+    root.querySelector('.body .link')?.remove();
+    seen.chips = null;
+
+    /*
+     * And across the navigation to the next page of the form, which is where
+     * a preference like this is actually lost: the card is destroyed and
+     * rebuilt, and only what `takeWork` hands over survives.
+     */
+    seen.carried = Boolean(handle.takeWork().showEverything);
+    return seen;
+  });
+
+  check('the first page of an application gets the whole card', reducing.firstPage.small === false, JSON.stringify(reducing.firstPage.buttons));
+  check(
+    'and so does a later page with nothing built yet',
+    reducing.nothingBuilt.small === false,
+    JSON.stringify(reducing.nothingBuilt.buttons),
+  );
+  check('a later page with the documents built is reduced', reducing.built.small === true, reducing.built.why);
+  check('and says why, in what has happened rather than what it did', /documents are built/.test(reducing.built.why), reducing.built.why);
+  /*
+   * The page the store never recorded, which is most of the later ones.
+   *
+   * A page reaches the trail only if it was judged a posting, and
+   * `kind: 'application'` wants a form asking who you are — step four of a
+   * Workday application is a voluntary-disclosure page with no name box on
+   * it, so it is in no trail. The trail here holds the pages *behind* this
+   * one and not this one, which is the ordinary case rather than an edge.
+   */
+  check(
+    'a page the trail never recorded is still a later page',
+    reducing.unrecorded.small === true,
+    reducing.unrecorded.why,
+  );
+  /*
+   * The two it keeps are the two that act on the form in front of it. The
+   * ones it drops are the ones about a resume that is already built — and
+   * dropping Mark as applied is the point being checked, because that is the
+   * button whose absence would be a bug if the application were not finished.
+   */
+  check(
+    'it keeps the two buttons this page can use',
+    reducing.built.buttons.includes('Autofill this form') && reducing.built.buttons.includes('Attach files'),
+    JSON.stringify(reducing.built.buttons),
+  );
+  check(
+    'and drops the panel about a resume that is already built',
+    !reducing.built.buttons.includes('Mark as applied') && !reducing.built.buttons.some((b) => /^Build/.test(b)),
+    JSON.stringify(reducing.built.buttons),
+  );
+  check(
+    'the first form page is never reduced, whatever is built',
+    reducing.firstForm.small === false,
+    JSON.stringify(reducing.firstForm.buttons),
+  );
+  check('and the page after it is again', reducing.againLater.small === true, reducing.againLater.why);
+  check('asking for everything brings it back', reducing.expanded.small === false, JSON.stringify(reducing.expanded.buttons));
+  check(
+    'and it stays back — a guess overruled once is not made again',
+    reducing.stillExpanded.small === false,
+    JSON.stringify(reducing.stillExpanded.buttons),
+  );
+  check('and travels to the next page of the form', reducing.carried === true, String(reducing.carried));
+
+  /*
+   * The other direction, which is the one that would be wrong: a page that
+   * was never told anything must not switch the reducing off for the page
+   * after it. Driven through `restoreWork`, because that is the half of the
+   * pair a change to the carrying would touch.
+   */
+  const carriedOff = await inPage((createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      isForm: true,
+      onAction: async () => ({}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    // Everything the page before had, except an opinion about the card's size.
+    handle.restoreWork({ render: { ok: true } });
+    handle.setTrail({
+      pages: [
+        { url: 'https://acme.test/jobs/1', kind: 'posting', title: 'Platform Engineer' },
+        { url: 'https://acme.test/apply/1', kind: 'application', title: 'Step 1' },
+        { url: 'https://acme.test/apply/2', kind: 'application', title: 'Step 2' },
+      ],
+    });
+    const quiet = Boolean(root.querySelector('.body.reduced'));
+
+    /*
+     * And the same page told what the one before it decided. This is the
+     * half `takeWork` exists for: the card is destroyed on every navigation,
+     * so a preference that is not picked up here was never kept at all.
+     */
+    const told = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      isForm: true,
+      onAction: async () => ({}),
+    });
+    const after = document.querySelector('#jobhelper-card-host').shadowRoot;
+    told.restoreWork({ render: { ok: true }, showEverything: true });
+    told.setTrail({
+      pages: [
+        { url: 'https://acme.test/jobs/1', kind: 'posting', title: 'Platform Engineer' },
+        { url: 'https://acme.test/apply/1', kind: 'application', title: 'Step 1' },
+        { url: 'https://acme.test/apply/2', kind: 'application', title: 'Step 2' },
+      ],
+    });
+    return { quiet, told: Boolean(after.querySelector('.body.reduced')) };
+  });
+  check('a page that carried no opinion still reduces', carriedOff.quiet === true, String(carriedOff.quiet));
+
+  /*
+   * And back on the description page, which is the case that caught this.
+   *
+   * Going back to re-read the posting mid-application is ordinary — it is
+   * where "Edit in ResumeM-M" and the change list are — and the trail by then
+   * has form pages in it. Judged on the trail alone the card shrank there
+   * too, and the two buttons it leaves do nothing on a page with no form on
+   * it, so everything it kept was useless and everything it hid was the
+   * point.
+   */
+  const descriptionPage = await inPage((createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      isForm: false,
+      onAction: async () => ({}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    handle.restoreWork({ render: { ok: true } });
+    handle.setTrail({
+      pages: [
+        { url: 'https://acme.test/jobs/1', kind: 'posting', title: 'Platform Engineer' },
+        { url: 'https://acme.test/apply/1', kind: 'application', title: 'Step 1' },
+        { url: 'https://acme.test/apply/2', kind: 'application', title: 'Step 2' },
+      ],
+    });
+    return {
+      small: Boolean(root.querySelector('.body.reduced')),
+      hasEditor: [...root.querySelectorAll('.card button')].some((b) => /Edit in ResumeM-M/.test(b.textContent)),
+    };
+  });
+  /*
+   * And the files, which the reduced card has to keep.
+   *
+   * On plenty of systems the resume box is on page two — contact details
+   * first, files after — so the page that reduces is often the page with
+   * the upload on it. A reduced card without the chips takes the drag away
+   * on exactly the page it was for.
+   */
+  const reducedChips = await inPage((createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      isForm: true,
+      onAction: async (what) =>
+        what === 'attachmentFiles'
+          ? { files: [{ name: 'Jianwen-Ding-Resume.pdf' }, { name: 'Jianwen-Ding-Cover-Letter.pdf' }] }
+          : {},
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    /*
+     * A staged folder as well as a built resume: the whole card only draws
+     * the chips inside the block that shows the folder path, so without one
+     * the comparison below would be against a panel that has no chips for
+     * its own reasons.
+     */
+    handle.restoreWork({ render: { ok: true }, staged: { currentDir: '/tmp/current' } });
+    handle.setTrail({
+      pages: [
+        { url: 'https://acme.test/jobs/1', kind: 'posting', title: 'Platform Engineer' },
+        { url: 'https://acme.test/apply/1', kind: 'application', title: 'Step 1' },
+        { url: 'https://acme.test/apply/2', kind: 'application', title: 'Step 2' },
+      ],
+    });
+
+    // The folder is asked for asynchronously and the card redraws when it
+    // answers, so this waits for the chips rather than for a clock.
+    return new Promise((done) => {
+      const at = Date.now();
+      const look = () => {
+        const body = root.querySelector('.body.reduced');
+        const chips = [...(body?.querySelectorAll('.files > *') ?? [])].map((c) => c.textContent.trim());
+        if (chips.length > 0 || Date.now() - at > 3000) {
+          const note = body?.querySelector('.drag-note')?.textContent ?? '';
+          /*
+           * And then the whole card, because the same function draws both
+           * and a refactor that dropped them from the propose view would
+           * otherwise pass on the strength of the reduced one.
+           */
+          root.querySelector('.body.reduced .link')?.click();
+          const whole = root.querySelector('.body:not(.reduced)');
+          done({
+            small: Boolean(body),
+            chips,
+            note,
+            wholeChips: [...(whole?.querySelectorAll('.files > *') ?? [])].map((c) => c.textContent.trim()),
+          });
+          return;
+        }
+        setTimeout(look, 50);
+      };
+      look();
+    });
+  });
+  check('the reduced card is still the reduced card', reducedChips.small === true);
+  check(
+    'and it keeps the files to drag into this page',
+    reducedChips.chips.some((c) => /Jianwen-Ding-Resume\.pdf/.test(c)),
+    JSON.stringify(reducedChips.chips),
+  );
+  check('with the line saying what to do with them', /Drag any of these/.test(reducedChips.note), reducedChips.note);
+  check(
+    'and the whole card still has them too',
+    reducedChips.wholeChips.some((c) => /Jianwen-Ding-Resume\.pdf/.test(c)),
+    JSON.stringify(reducedChips.wholeChips),
+  );
+
+  check(
+    'a page with no form on it keeps the whole card, however far in',
+    descriptionPage.small === false,
+    String(descriptionPage.small),
+  );
+  check('so going back to re-read the posting still offers the builder', descriptionPage.hasEditor === true);
+  check(
+    'and one told the page before wanted everything comes up whole',
+    carriedOff.told === false,
+    String(carriedOff.told),
+  );
 
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);

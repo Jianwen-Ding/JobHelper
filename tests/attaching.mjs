@@ -50,11 +50,34 @@ const BARE = page(`<p>Application</p><input id="only" name="file" type="file">`)
  * The shape every real portal uses: a styled button, and the input behind it
  * with `display:none`. A visibility test throws all of these away.
  */
+/*
+ * The two ways a page puts a file input behind something, and the one way it
+ * puts one out of reach.
+ *
+ * `display:none` with a button in front is the familiar one. The `hidden`
+ * attribute with a `<label for>` styled as the button is the same idea said
+ * in HTML rather than CSS, and it is the accessible way to build it — the
+ * label's click opens the native dialog. Both are ordinary; neither is a
+ * reason to refuse the box.
+ *
+ * The third is not: a complete, correctly labelled upload control inside a
+ * container the page has hidden — a closed modal, an "add another" prototype
+ * row. Nobody can see it, and taking it is how a file lands somewhere the
+ * form will never submit.
+ */
 const HIDDEN = page(`
+  <div hidden>
+    <label for="tpl">Resume</label>
+    <input id="tpl" name="resume_template" type="file">
+  </div>
   <div>
     <h3>Resume</h3>
     <button type="button">Attach or drop files here</button>
     <input id="rs" name="resume" type="file" style="display:none">
+  </div>
+  <div>
+    <label for="cl" class="button">Upload cover letter</label>
+    <input id="cl" name="cover_letter" type="file" hidden>
   </div>
 `);
 
@@ -95,6 +118,39 @@ const DROPZONE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply<
 <body><form>
   <div class="upload-area" aria-label="Drop files to attach"><p>Drag and drop your resume here</p></div>
 </form></body></html>`;
+
+/**
+ * Workday as it is actually built, which is the one somebody hit.
+ *
+ * Reported against an Adobe application, which is Workday. Its upload is not
+ * a labelled input and not a bare region either: a `data-automation-id` drop
+ * zone several divs deep, a "Select files" button inside it that is what the
+ * pointer is actually over, and a file input that does not exist until a file
+ * has been chosen — created by the drop handler, exactly as below. Nothing in
+ * this file had that shape: `/dropzone-real` has the handler but the pointer
+ * lands straight on the zone.
+ */
+const WORKDAY = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head>
+<body><div data-automation-id="applicationPage">
+  <div data-automation-id="quickApplyResume">
+    <h4>Resume/CV</h4>
+    <div id="zone" data-automation-id="file-upload-drop-zone">
+      <div class="inner">
+        <p>Drag and drop files here</p>
+        <button id="pick" type="button" data-automation-id="select-files">Select files</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    document.getElementById('zone').addEventListener('drop', (e) => {
+      e.preventDefault();
+      const made = document.createElement('input');
+      made.type = 'file'; made.id = 'made'; made.name = 'resume';
+      made.files = e.dataTransfer.files;
+      document.body.append(made);
+    });
+  </script>
+</div></body></html>`;
 
 /** The same, on a page that does what Workday does with what it catches. */
 const DROPZONE_REAL = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head>
@@ -160,6 +216,7 @@ const PAGES = {
   '/menu': MENU,
   '/dropzone': DROPZONE,
   '/dropzone-real': DROPZONE_REAL,
+  '/workday': WORKDAY,
   '/headings': HEADINGS,
   '/labelled': LABELLED,
   '/bare': BARE,
@@ -328,8 +385,42 @@ async function main() {
 
     group('A box behind a styled button, which is how they are all built');
     {
-      const { inBoxes } = await run('/hidden', [filed('Jianwen-Ding-Resume.pdf')]);
+      const { inBoxes, report } = await run('/hidden', [
+        filed('Jianwen-Ding-Resume.pdf'),
+        filed('Jianwen-Ding-Cover-Letter.pdf'),
+      ]);
       check('display:none is not a reason to skip it', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes.rs));
+      /*
+       * Nor the attribute that means the same thing. This was refused, and
+       * the refusal was invisible: `closest('[hidden]')` starts at the
+       * element itself, so the check written for a hidden *template* threw
+       * away every box built the accessible way. On a form with one of each,
+       * the letter matched nothing, went to whatever container looked like a
+       * drop area, and came back reported as placed with the box still empty.
+       */
+      check(
+        'and nor is the attribute that means the same thing',
+        inBoxes.cl?.[0] === 'Jianwen-Ding-Cover-Letter.pdf',
+        JSON.stringify(inBoxes.cl),
+      );
+      /*
+       * And the container case still refused — from *in front of* the real
+       * box, which is the only arrangement where the refusal does any work.
+       * Behind it the visible box wins on document order anyway, and a check
+       * written that way goes green over a refusal that has been deleted.
+       */
+      check(
+        'while a control inside a hidden container is still left alone',
+        (inBoxes.tpl ?? []).length === 0,
+        JSON.stringify(inBoxes.tpl),
+      );
+      // And both are reported as having gone into a box, rather than as
+      // having been handed to something that might not have taken them.
+      check(
+        'both are reported as landing somewhere definite',
+        report.placed.length === 2 && report.placed.every((pl) => pl.sure !== false),
+        JSON.stringify(report.placed),
+      );
     }
 
     /*
@@ -673,6 +764,34 @@ async function main() {
      * will take — a `.doc`-only box given a PDF rejects it on submit, and the
      * card would have said it went in.
      */
+    /*
+     * Workday, aimed at the button inside the zone — which is what a pointer
+     * lands on, because the button is the only thing in there worth aiming
+     * at. Reported against an Adobe application, which is Workday.
+     *
+     * Everything the drop has to get right is different here from
+     * `/dropzone-real`: the pointer is on a `<button>`, the zone is two
+     * ancestors up and is not a `<form>`, and there is no upload box anywhere
+     * on the page until the drop creates one.
+     */
+    group('Workday: a chip let go of on the button inside the drop zone');
+    {
+      const { report } = await dropAt('/workday', '#pick', [filed('Jianwen-Ding-Resume.pdf')]);
+      const landed = await p.evaluate(() => [...(document.getElementById('made')?.files ?? [])].map((f) => f.name));
+      check('the zone gets the drop, from a press on the button inside it', landed[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(landed));
+      check('and it is reported as placed', report.placed.length === 1, JSON.stringify(report));
+      check('with nothing left homeless', report.unplaced.length === 0, JSON.stringify(report.unplaced));
+    }
+
+    /* And on the words inside it, which is the other half of that target. */
+    group('Workday: let go of on the words rather than the button');
+    {
+      const { report } = await dropAt('/workday', '#zone p', [filed('Jianwen-Ding-Resume.pdf')]);
+      const landed = await p.evaluate(() => [...(document.getElementById('made')?.files ?? [])].map((f) => f.name));
+      check('the zone still gets it', landed[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(landed));
+      check('and it is reported as placed', report.placed.length === 1, JSON.stringify(report.placed));
+    }
+
     group('A chip let go of on a box that will not take it');
     {
       const { report, inBoxes } = await dropAt('/doc-only', '#rs', [filed('Jianwen-Ding-Resume.pdf')]);
