@@ -544,14 +544,16 @@
    * the behaviour this had before the bank existed.
    */
   async function fillThisDocument(fields) {
-    const { fillForm, choiceQuestions } = await imports.autofill();
+    const { fillForm, fillComboboxes, choiceQuestions } = await imports.autofill();
     const questions = choiceQuestions();
     const remembered = questions.length
       ? await send('rememberedAnswers', { questions })
           .then((r) => r?.answers ?? [])
           .catch(() => [])
       : [];
-    return fillForm(fields, { remembered });
+    // And then the widgets `fillForm` could only name. See `fillComboboxes`:
+    // exact options only, and seen to have taken, or put back as they were.
+    return fillComboboxes(fields, fillForm(fields, { remembered }));
   }
 
   /**

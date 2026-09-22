@@ -1886,7 +1886,14 @@ function chooseInAria(options, answer) {
  * three. Naming them costs nothing and is the difference between "done" and
  * "done silently wrong".
  */
-function unfillableChoices(fields, filled) {
+const PICK_BY_HAND = 'this one has to be picked by hand';
+
+/**
+ * The widgets on the page that ask something the profile answers, with the
+ * element — shared by the report below and by `fillComboboxes`, so the two
+ * cannot disagree about which widget is which question.
+ */
+function widgetChoices(fields, filled) {
   const already = new Set(filled.map((f) => f.key));
   const found = [];
 
@@ -1902,14 +1909,203 @@ function unfillableChoices(fields, filled) {
 
     const match = FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key] && !already.has(key));
     if (!match) continue;
-    found.push({
-      key: match[0],
-      reason: 'this one has to be picked by hand',
-      description: description.slice(0, 60),
-    });
+    found.push({ key: match[0], description: description.slice(0, 60), el: widget });
     already.add(match[0]);
   }
   return found;
+}
+
+function unfillableChoices(fields, filled) {
+  return widgetChoices(fields, filled).map(({ key, description }) => ({ key, reason: PICK_BY_HAND, description }));
+}
+
+/* ---------------------------------------------------------------------- *
+ * Driving the widgets, where that can be done without guessing             *
+ * ---------------------------------------------------------------------- */
+
+const pause = (ms) => new Promise((done) => setTimeout(done, ms));
+
+/** Poll until `find` answers something, or give up. */
+async function waitFor(find, patience) {
+  const until = Date.now() + patience;
+  for (;;) {
+    const got = find();
+    if (got) return got;
+    if (Date.now() >= until) return null;
+    await pause(50);
+  }
+}
+
+/** The text box a widget types into, if it has one. */
+function typingBoxOf(widget) {
+  if (widget instanceof HTMLInputElement) return widget;
+  return widget.querySelector?.('input:not([type=hidden])') ?? null;
+}
+
+/**
+ * The options this widget opened — and only this widget's.
+ *
+ * The listbox it names through `aria-controls` or `aria-owns`, which is how an
+ * accessible widget says which popup is its own. Failing that, the listbox
+ * that is visible, but only if exactly one is: two open listboxes and no
+ * pointer to either is a page where choosing is a guess about which one
+ * answers this question, and guessing is what this does not do.
+ */
+function optionsOf(widget) {
+  const box = typingBoxOf(widget);
+  const ids = [widget, box]
+    .filter(Boolean)
+    .flatMap((el) => `${el.getAttribute('aria-controls') ?? ''} ${el.getAttribute('aria-owns') ?? ''}`.split(/\s+/))
+    .filter(Boolean);
+  const named = ids.map((id) => widget.getRootNode().getElementById?.(id) ?? document.getElementById(id)).filter(Boolean);
+  const lists = named.length
+    ? named
+    : deepQueryAll('[role="listbox"]').filter((l) => l !== widget && l.getClientRects().length > 0);
+  if (!named.length && lists.length !== 1) return [];
+  return lists.flatMap((l) => [...l.querySelectorAll('[role="option"]')]).filter((o) => !isDisabled(o) && o.getAttribute('aria-disabled') !== 'true');
+}
+
+/** The option that is plainly this answer, or nothing. Never the nearest. */
+function exactOption(options, key, value) {
+  const month = key === 'graduation_month' ? monthOf(value) : null;
+  return (
+    options.find((o) => sameOption(o.textContent, value)) ??
+    (month ? options.find((o) => monthOf(o.textContent) === month) : undefined) ??
+    null
+  );
+}
+
+/** A click as a person makes one — some widgets choose on mousedown, some on click. */
+function press(el) {
+  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+    const Ctor = type.startsWith('pointer') && typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+    el.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, view: window }));
+  }
+}
+
+/**
+ * Whether the widget really took the answer, read back the way a person would.
+ *
+ * A widget can render options and then ignore the click — a newer release
+ * that chooses on a keypress, a listener the synthetic event did not reach —
+ * and a form that looks answered and submits nothing is the failure this
+ * whole file is written against. So it has to be seen: the option marked
+ * chosen, or the control now showing it with the typing gone, or the value it
+ * submits carrying something where it carried nothing.
+ */
+function tookIt(widget, box, option, value, hiddenBefore) {
+  const hidden = hiddenPartner(widget);
+  if (hidden && hidden.value && hidden.value !== hiddenBefore) return true;
+  if (option.isConnected && option.getAttribute('aria-selected') === 'true') return true;
+  /*
+   * Not "the box holds the option's text": the box holds it because it was
+   * typed there, whether or not the click did anything. And the control's text
+   * is read with any open listbox cut out of it, or an ignored click would
+   * pass because the option is still showing in the menu underneath — which
+   * is what a React widget that re-renders its options on click, choosing
+   * nothing, looks like: the clicked node is gone and the menu is still open.
+   */
+  const control = controlOf(widget).cloneNode(true);
+  for (const list of control.querySelectorAll('[role="listbox"]')) list.remove();
+  const shows = clean(control.textContent).toLowerCase().includes(clean(value).toLowerCase());
+  return shows && (!box || !box.value);
+}
+
+/** The element a widget draws its current answer in. */
+function controlOf(widget) {
+  return widget.closest?.('[class*="control"], [class*="select"], [class*="combobox"]') ?? widget.parentElement ?? widget;
+}
+
+/** The hidden input carrying what the widget submits, where it sits beside it. */
+function hiddenPartner(widget) {
+  const around = controlOf(widget).parentElement ?? controlOf(widget);
+  return around.querySelector?.('input[type="hidden"]') ?? null;
+}
+
+/** Whether pressing this would send its form. */
+function wouldSubmit(el) {
+  if (el instanceof HTMLButtonElement) return el.type === 'submit' && Boolean(el.form);
+  if (el instanceof HTMLInputElement) return ['submit', 'image'].includes(el.type) && Boolean(el.form);
+  return false;
+}
+
+/** Put the widget back as it was: nothing typed, nothing open. */
+function undoWidget(widget, box) {
+  if (box) setValue(box, '');
+  (box ?? widget).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  (box ?? widget).blur?.();
+}
+
+/**
+ * Choose in the widgets `fillForm` could only report.
+ *
+ * Workday's dropdowns and the react-select boxes half the other systems use
+ * are a control that opens a listbox, with nothing to assign a value to — so
+ * the country, the state and the school on those forms were all left for the
+ * person to pick, every time. They can be driven, the way a person drives
+ * them: type or click to open, choose the option, see that it took.
+ *
+ * Only on these terms, because a form that looks answered and is not is worse
+ * than one that says it is not:
+ *
+ *   - Exactly the answer, never the nearest. "United States" does not choose
+ *     "United States Minor Outlying Islands", and no option means no choice.
+ *   - Only this widget's own options. See `optionsOf`.
+ *   - Seen to have taken. See `tookIt`. Otherwise everything typed is taken
+ *     back out and the widget is reported exactly as it was before.
+ *
+ * Async, and after `fillForm`, because a widget opens and fills in on its own
+ * time — a school list fetched as you type can take a second to arrive.
+ */
+export async function fillComboboxes(fields, report, { patience = 1500 } = {}) {
+  const pending = new Set(report.skipped.filter((s) => s.reason === PICK_BY_HAND).map((s) => s.key));
+  if (pending.size === 0) return report;
+
+  const done = [];
+  for (const { key, el: widget } of widgetChoices(fields, report.filled)) {
+    if (!pending.has(key)) continue;
+    const value = String(fields[key]);
+    const box = typingBoxOf(widget);
+    const hiddenBefore = hiddenPartner(widget)?.value ?? '';
+
+    /*
+     * Never a control that would send the form.
+     *
+     * A `<button>` with no `type` inside a form *is* a submit button — that is
+     * the default, and a Workday-style dropdown written without `type="button"`
+     * is one. Pressing it to open its list submitted the application instead:
+     * the page navigated away mid-fill, half the form empty, and nothing came
+     * back to say so. A widget that has to be pressed to open, and would send
+     * the form if pressed, is left for the person, exactly as before.
+     */
+    if (!box && wouldSubmit(widget)) continue;
+
+    widget.focus?.();
+    if (box) {
+      setValue(box, value);
+    } else {
+      press(widget);
+    }
+    const option = await waitFor(() => exactOption(optionsOf(widget), key, value), patience);
+    if (!option) {
+      undoWidget(widget, box);
+      continue;
+    }
+    press(option);
+    await pause(60);
+    if (!tookIt(widget, box, option, value, hiddenBefore)) {
+      undoWidget(widget, box);
+      continue;
+    }
+    done.push({ key, value, widget: true });
+  }
+
+  const chose = new Set(done.map((d) => d.key));
+  return {
+    ...report,
+    filled: [...report.filled, ...done],
+    skipped: report.skipped.filter((s) => !(s.reason === PICK_BY_HAND && chose.has(s.key))),
+  };
 }
 
 /**

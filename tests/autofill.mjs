@@ -657,7 +657,133 @@ const CURRENT = `<!doctype html><html><head><meta charset="utf-8"><title>Apply �
   <label for="cl">Current location</label><input id="cl" name="current_location">
 </form></body></html>`;
 
-const PAGES = { '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED };
+/*
+ * Widgets that open a listbox, built to behave the way the real ones do.
+ *
+ * The react-select shape: a text box inside a control, a listbox rendered as
+ * you type, an option chosen on mousedown, the choice written into a hidden
+ * input and drawn in the control while the text box empties. The Workday
+ * shape: a button that opens a listbox on click and draws its choice on
+ * itself. Each one below proves one rule of `fillComboboxes`.
+ */
+const WIDGETS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Widgets</title></head><body>
+<form>
+  <label id="l-country">Country</label>
+  <div class="select"><div class="select__control"><span class="single"></span>
+    <input id="w-country" role="combobox" aria-autocomplete="list" aria-controls="lb-country" aria-labelledby="l-country" autocomplete="off">
+  </div><input type="hidden" name="country" id="h-country"></div>
+
+  <label id="l-school">School</label>
+  <div class="wd"><button type="button" id="w-school" aria-haspopup="listbox" aria-controls="lb-school" aria-labelledby="l-school">Select One</button>
+    <input type="hidden" name="school" id="h-school"></div>
+
+  <label id="l-state">State</label>
+  <div class="wd"><button type="button" id="w-state" aria-haspopup="listbox" aria-controls="lb-state" aria-labelledby="l-state">Select One</button>
+    <input type="hidden" name="state" id="h-state"></div>
+
+  <!-- No type: inside a form that makes it a submit button. -->
+  <label id="l-auth">Work authorization</label>
+  <div class="wd"><button id="w-auth" aria-haspopup="listbox" aria-labelledby="l-auth">Select One</button></div>
+
+  <label id="l-degree">Degree</label>
+  <div class="select"><div class="select__control"><span class="single"></span>
+    <input id="w-degree" role="combobox" aria-autocomplete="list" aria-controls="lb-degree" aria-labelledby="l-degree" autocomplete="off">
+  </div><input type="hidden" name="degree" id="h-degree"></div>
+
+  <label id="l-major">Discipline</label>
+  <div class="select"><div class="select__control"><span class="single"></span>
+    <input id="w-major" role="combobox" aria-autocomplete="list" aria-controls="lb-major" aria-labelledby="l-major" autocomplete="off">
+  </div><input type="hidden" name="major" id="h-major"></div>
+
+  <label id="l-city">City</label>
+  <div class="select"><div class="select__control"><span class="single"></span>
+    <input id="w-city" role="combobox" aria-autocomplete="list" aria-controls="lb-city" aria-labelledby="l-city" autocomplete="off">
+  </div><input type="hidden" name="city" id="h-city"></div>
+</form>
+<script>
+  // Counted and stopped, so a press that would have submitted shows up here
+  // instead of navigating the test away.
+  window.submits = 0;
+  document.querySelector('form').addEventListener('submit', (e) => { e.preventDefault(); window.submits += 1; });
+
+  function reactSelect(name, options, { delay = 0, takes = true } = {}) {
+    const input = document.getElementById('w-' + name);
+    const hidden = document.getElementById('h-' + name);
+    const holder = input.closest('.select');
+    let list = null;
+    const close = () => { list?.remove(); list = null; };
+    input.addEventListener('input', () => {
+      close();
+      const typed = input.value.toLowerCase();
+      if (!typed) return;
+      setTimeout(() => {
+        close();
+        list = document.createElement('div');
+        list.id = 'lb-' + name; list.setAttribute('role', 'listbox');
+        for (const text of options.filter((o) => o.toLowerCase().includes(typed.slice(0, 4)))) {
+          const o = document.createElement('div');
+          o.setAttribute('role', 'option'); o.textContent = text;
+          o.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            if (!takes) return;
+            hidden.value = text;
+            holder.querySelector('.single').textContent = text;
+            input.value = '';
+            close();
+          });
+          list.append(o);
+        }
+        holder.append(list);
+      }, delay);
+    });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+  }
+  reactSelect('country', ['United States Minor Outlying Islands', 'United States', 'United Kingdom']);
+  reactSelect('degree', ["Bachelor's Degree", "Master's Degree"]);
+  reactSelect('major', ['Computer Science', 'Computer Engineering'], { takes: false });
+  reactSelect('city', ['Boston', 'Boston Heights'], { delay: 400 });
+
+  // The Workday shape.
+  const button = document.getElementById('w-school');
+  button.addEventListener('click', () => {
+    if (document.getElementById('lb-school')) return;
+    const list = document.createElement('ul');
+    list.id = 'lb-school'; list.setAttribute('role', 'listbox');
+    for (const text of ['Northeastern Illinois University', 'Northeastern University', 'Northwestern University']) {
+      const o = document.createElement('li');
+      o.setAttribute('role', 'option'); o.textContent = text;
+      o.addEventListener('click', () => {
+        button.textContent = text;
+        document.getElementById('h-school').value = text;
+        list.remove();
+      });
+      list.append(o);
+    }
+    button.after(list);
+  });
+
+  // The same shape, but a release that chooses on a keypress: the click
+  // lands, the list re-renders its options — the clicked node replaced, as
+  // React does — the menu stays open showing the option, and nothing is set.
+  const stubborn = document.getElementById('w-state');
+  stubborn.addEventListener('click', () => {
+    if (document.getElementById('lb-state')) return;
+    const list = document.createElement('ul');
+    list.id = 'lb-state'; list.setAttribute('role', 'listbox');
+    const render = () => {
+      list.replaceChildren(...['MA', 'NY'].map((text) => {
+        const o = document.createElement('li');
+        o.setAttribute('role', 'option'); o.textContent = text;
+        o.addEventListener('click', render);
+        return o;
+      }));
+    };
+    render();
+    stubborn.after(list);
+  });
+</script></body></html>`;
+
+const PAGES = { '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -1358,6 +1484,90 @@ async function main() {
         return Object.fromEntries(['cc', 'ct', 'mre', 'hco', 'hti', 'cl'].map((id) => [id, document.getElementById(id).value]));
       }, { b: base }),
     );
+    const widgets = await page.goto(`${base}/widgets`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = {
+          address_country: 'United States',
+          school: 'Northeastern University',
+          degree: 'Bachelor of Science',
+          major: 'Computer Science',
+          address_city: 'Boston',
+          address_state: 'MA',
+          work_authorization: 'Yes',
+        };
+        const first = m.fillForm(fields);
+        const report = await m.fillComboboxes(fields, first);
+        const read = (id) => document.getElementById(id);
+        return {
+          before: first.skipped.filter((x) => /by hand/.test(x.reason)).map((x) => x.key).sort(),
+          country: [read('h-country').value, read('w-country').value],
+          school: [read('h-school').value, read('w-school').textContent],
+          degree: [read('h-degree').value, read('w-degree').value],
+          major: [read('h-major').value, read('w-major').value],
+          city: read('h-city').value,
+          state: [read('h-state').value, read('w-state').textContent],
+          filled: report.filled.filter((f) => f.widget).map((f) => f.key).sort(),
+          stillByHand: report.skipped.filter((x) => /by hand/.test(x.reason)).map((x) => x.key).sort(),
+          openLists: [...document.querySelectorAll('[role="listbox"]')].map((l) => l.id),
+          submits: window.submits,
+        };
+      }, { b: base }),
+    );
+    group('Widgets that open a list, chosen the way a person chooses');
+    check(
+      'fillForm alone can only name them',
+      JSON.stringify(widgets.before) === JSON.stringify(['address_city', 'address_country', 'address_state', 'degree', 'major', 'school', 'work_authorization']),
+      JSON.stringify(widgets.before),
+    );
+    check('a react-select country, typed and chosen', widgets.country[0] === 'United States' && widgets.country[1] === '', JSON.stringify(widgets.country));
+    check(
+      'the exact option, not the first that starts the same',
+      widgets.country[0] !== 'United States Minor Outlying Islands',
+      widgets.country[0],
+    );
+    check('a Workday-style button, clicked and chosen', widgets.school[0] === 'Northeastern University' && widgets.school[1] === 'Northeastern University', JSON.stringify(widgets.school));
+    check('options that arrive late, as a fetched list does', widgets.city === 'Boston', `"${widgets.city}"`);
+    /*
+     * The refusals are the reason this is allowed to exist. No exact option
+     * means no choice; a widget that shows options and ignores the click is
+     * not answered — and in both cases what was typed is taken back out, so
+     * the box is exactly as the person would have found it.
+     */
+    check('no exact option: nothing chosen, and the typing taken back out', widgets.degree[0] === '' && widgets.degree[1] === '', JSON.stringify(widgets.degree));
+    check('a widget that ignores the click is not claimed as answered', widgets.major[0] === '' && widgets.major[1] === '', JSON.stringify(widgets.major));
+    check(
+      'nor a button whose menu stays open showing the option it ignored',
+      widgets.state[0] === '' && widgets.state[1] === 'Select One',
+      JSON.stringify(widgets.state),
+    );
+    /*
+     * The one that matters most. A `<button>` with no type in a form submits
+     * it, and a dropdown written that way is ordinary — pressing it to open
+     * the list sent the application half-filled.
+     */
+    check('a dropdown that is really a submit button is never pressed', widgets.submits === 0, `${widgets.submits} submits`);
+    check(
+      'and all of these are still named for the person to pick',
+      JSON.stringify(widgets.stillByHand) === JSON.stringify(['address_state', 'degree', 'major', 'work_authorization']),
+      JSON.stringify(widgets.stillByHand),
+    );
+    check(
+      'the ones chosen are reported as filled',
+      JSON.stringify(widgets.filled) === JSON.stringify(['address_city', 'address_country', 'school']),
+      JSON.stringify(widgets.filled),
+    );
+    /*
+     * Escape is how every one of these closes, and the stubborn button does
+     * not listen for it either — so its menu may stay. Nothing this chose is
+     * left open, which is the part that is this code's to answer for.
+     */
+    check(
+      'no list it chose from is left open',
+      widgets.openLists.every((id) => id === 'lb-state'),
+      JSON.stringify(widgets.openLists),
+    );
+
     group('The job somebody holds now');
     check('"Current company"', current.cc === 'Helios', `"${current.cc}"`);
     check('"Current job title"', current.ct === 'Software Engineer Intern', `"${current.ct}"`);
