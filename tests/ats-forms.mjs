@@ -58,6 +58,9 @@ const PROFILE = {
   degree: 'Bachelor of Science',
   major: 'Computer Science',
   gpa: '3.8',
+  // From an experience entry that runs to the present. See `currentJob`.
+  current_company: 'Helios',
+  current_title: 'Software Engineer Intern',
   address_city: 'Boston',
   address_state: 'Massachusetts',
   address_country: 'United States',
@@ -273,6 +276,8 @@ export const SYSTEMS = [
       'input[name="phone"]': '555-0100',
       'input[name="urls[LinkedIn]"]': 'linkedin.com/in/jianwen',
       'input[name="urls[GitHub]"]': 'github.com/jianwen',
+      // "Current company", Lever's own field, which read as nothing at all.
+      'input[name="org"]': 'Helios',
       'input[name="urls[Portfolio]"]': 'jianwen.dev',
     },
     questions: [/what interests you about this role/i],

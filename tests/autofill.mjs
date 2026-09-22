@@ -640,7 +640,24 @@ const GRADUATION = `<!doctype html><html><head><meta charset="utf-8"><title>Appl
   <select id="recent" name="recent"><option value="">--</option><option>Yes</option><option>No</option></select>
 </form></body></html>`;
 
-const PAGES = { '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED };
+/*
+ * The job somebody holds now, and the two questions that look like it. A
+ * job-history section asks "Company" for every job in turn, and "Current
+ * location" is an address — neither is this.
+ */
+const CURRENT = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Current</title></head><body>
+<form>
+  <label for="cc">Current company</label><input id="cc" name="current_company">
+  <label for="ct">Current job title</label><input id="ct" name="current_title">
+  <label for="mre">Most recent employer</label><input id="mre" name="most_recent_employer">
+  <fieldset><legend>Work experience</legend>
+    <label for="hco">Company</label><input id="hco" name="experience[0][company]">
+    <label for="hti">Title</label><input id="hti" name="experience[0][title]">
+  </fieldset>
+  <label for="cl">Current location</label><input id="cl" name="current_location">
+</form></body></html>`;
+
+const PAGES = { '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -1333,6 +1350,24 @@ async function main() {
         };
       }, { b: base }),
     );
+
+    const current = await page.goto(`${base}/current`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm({ current_company: 'Helios', current_title: 'Software Engineer Intern', location: 'Boston, MA' });
+        return Object.fromEntries(['cc', 'ct', 'mre', 'hco', 'hti', 'cl'].map((id) => [id, document.getElementById(id).value]));
+      }, { b: base }),
+    );
+    group('The job somebody holds now');
+    check('"Current company"', current.cc === 'Helios', `"${current.cc}"`);
+    check('"Current job title"', current.ct === 'Software Engineer Intern', `"${current.ct}"`);
+    check('"Most recent employer"', current.mre === 'Helios', `"${current.mre}"`);
+    check(
+      'a job-history row is not asked about the current job',
+      current.hco === '' && current.hti === '',
+      `company "${current.hco}", title "${current.hti}"`,
+    );
+    check('"Current location" is still an address', current.cl === 'Boston, MA', `"${current.cl}"`);
 
     group('When the degree ends, however the form asks');
     check('a month list that abbreviates', graduation.values.gm === '12', `value "${graduation.values.gm}"`);

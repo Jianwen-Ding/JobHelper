@@ -30,6 +30,15 @@ const FIELD_PATTERNS = [
   ['github', /\b(git-?hub)\b/i],
   ['website', /\b(website|portfolio|personal[\s_-]?site|homepage)\b/i],
   /*
+   * The job somebody holds now. Only with "current", "present" or "most
+   * recent" in front: a bare "Company" is a row of a job-history section,
+   * which asks about every job in turn and is not this question. Lever's is
+   * `name="org"` with "Current company" as its only label, and it read as
+   * nothing at all.
+   */
+  ['current_company', /\b(current|present|most[\s_-]*recent)[\s_-]*(company|employer|organi[sz]ation|org)\b/i],
+  ['current_title', /\b(current|present|most[\s_-]*recent)[\s_-]*(job[\s_-]*)?(title|role|position)\b/i],
+  /*
    * When the degree ends. Above school and degree on purpose: the first
    * pattern to match claims the field, and "Graduation date from your
    * university" or "Expected degree completion" would otherwise be taken as
