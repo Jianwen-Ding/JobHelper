@@ -1226,6 +1226,43 @@ const handlers = {
     return { frames: replies.map(({ frameId, data }) => ({ frameId, ...data })) };
   },
 
+  /**
+   * Tell every sub-frame that a chip is in the air, or that it has landed.
+   *
+   * The drop has to be taken by whichever document the pointer is over, and
+   * on half the portals that matter that document is an embed — a Greenhouse
+   * or Lever form in an iframe, with the top frame holding nothing but the
+   * job advert. The card lives in the top frame, so without this the frame
+   * under the pointer never knew a drag was happening and the drop did
+   * nothing at all.
+   *
+   * Every frame is told, and each one decides: the same
+   * `looksLikeApplicationForm` guard `jh-frame-attach` uses, for the same
+   * reason — every advert and chat widget on the page runs this script too,
+   * and a resume is a name, an address and an employment history in one file.
+   */
+  async draggingInFrames({ files }, tab) {
+    if (tab?.id === undefined) return { frames: 0 };
+    const replies = await askFrames(tab.id, { type: 'jh-frame-dragging', payload: { files } });
+    return { frames: replies.length };
+  },
+
+  /**
+   * A frame took a drop. Hand the report to the top frame, where the card is.
+   *
+   * `sender` names the frame that is telling us, which is not the one that
+   * needs to hear: the card is in the top frame and this is the only account
+   * anybody gets of where the file went.
+   */
+  async droppedInFrame({ report }, tab, sender) {
+    const tabId = tab?.id ?? sender?.tab?.id;
+    if (tabId === undefined) return false;
+    await chrome.tabs
+      .sendMessage(tabId, { type: 'jh-frame-dropped', payload: { report } }, { frameId: 0 })
+      .catch(() => undefined);
+    return true;
+  },
+
   /** Fill the form in every sub-frame from the same profile. */
   async fillFrames({ fields }, tab) {
     if (tab?.id === undefined) return { frames: [] };

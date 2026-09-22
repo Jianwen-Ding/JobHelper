@@ -96,6 +96,39 @@ const DROPZONE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply<
   <div class="upload-area" aria-label="Drop files to attach"><p>Drag and drop your resume here</p></div>
 </form></body></html>`;
 
+/**
+ * Workday as it is actually built, which is the one somebody hit.
+ *
+ * Reported against an Adobe application, which is Workday. Its upload is not
+ * a labelled input and not a bare region either: a `data-automation-id` drop
+ * zone several divs deep, a "Select files" button inside it that is what the
+ * pointer is actually over, and a file input that does not exist until a file
+ * has been chosen — created by the drop handler, exactly as below. Nothing in
+ * this file had that shape: `/dropzone-real` has the handler but the pointer
+ * lands straight on the zone.
+ */
+const WORKDAY = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head>
+<body><div data-automation-id="applicationPage">
+  <div data-automation-id="quickApplyResume">
+    <h4>Resume/CV</h4>
+    <div id="zone" data-automation-id="file-upload-drop-zone">
+      <div class="inner">
+        <p>Drag and drop files here</p>
+        <button id="pick" type="button" data-automation-id="select-files">Select files</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    document.getElementById('zone').addEventListener('drop', (e) => {
+      e.preventDefault();
+      const made = document.createElement('input');
+      made.type = 'file'; made.id = 'made'; made.name = 'resume';
+      made.files = e.dataTransfer.files;
+      document.body.append(made);
+    });
+  </script>
+</div></body></html>`;
+
 /** The same, on a page that does what Workday does with what it catches. */
 const DROPZONE_REAL = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head>
 <body><form>
@@ -160,6 +193,7 @@ const PAGES = {
   '/menu': MENU,
   '/dropzone': DROPZONE,
   '/dropzone-real': DROPZONE_REAL,
+  '/workday': WORKDAY,
   '/headings': HEADINGS,
   '/labelled': LABELLED,
   '/bare': BARE,
@@ -673,6 +707,34 @@ async function main() {
      * will take — a `.doc`-only box given a PDF rejects it on submit, and the
      * card would have said it went in.
      */
+    /*
+     * Workday, aimed at the button inside the zone — which is what a pointer
+     * lands on, because the button is the only thing in there worth aiming
+     * at. Reported against an Adobe application, which is Workday.
+     *
+     * Everything the drop has to get right is different here from
+     * `/dropzone-real`: the pointer is on a `<button>`, the zone is two
+     * ancestors up and is not a `<form>`, and there is no upload box anywhere
+     * on the page until the drop creates one.
+     */
+    group('Workday: a chip let go of on the button inside the drop zone');
+    {
+      const { report } = await dropAt('/workday', '#pick', [filed('Jianwen-Ding-Resume.pdf')]);
+      const landed = await p.evaluate(() => [...(document.getElementById('made')?.files ?? [])].map((f) => f.name));
+      check('the zone gets the drop, from a press on the button inside it', landed[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(landed));
+      check('and it is reported as placed', report.placed.length === 1, JSON.stringify(report));
+      check('with nothing left homeless', report.unplaced.length === 0, JSON.stringify(report.unplaced));
+    }
+
+    /* And on the words inside it, which is the other half of that target. */
+    group('Workday: let go of on the words rather than the button');
+    {
+      const { report } = await dropAt('/workday', '#zone p', [filed('Jianwen-Ding-Resume.pdf')]);
+      const landed = await p.evaluate(() => [...(document.getElementById('made')?.files ?? [])].map((f) => f.name));
+      check('the zone still gets it', landed[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(landed));
+      check('and it is reported as placed', report.placed.length === 1, JSON.stringify(report.placed));
+    }
+
     group('A chip let go of on a box that will not take it');
     {
       const { report, inBoxes } = await dropAt('/doc-only', '#rs', [filed('Jianwen-Ding-Resume.pdf')]);

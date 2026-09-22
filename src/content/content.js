@@ -720,11 +720,27 @@
         event.preventDefault();
         event.stopPropagation();
         inTheAir = null;
+        /*
+         * Said wherever the card is, which is not always here.
+         *
+         * A frame that took the drop has no card to tell — the card is in the
+         * top frame — so the report goes back through the worker. In the top
+         * frame there is no worker round trip to make.
+         */
+        const said = (report) => {
+          if (cardHandle) cardHandle.dropped(report);
+          else send('droppedInFrame', { report }).catch(() => undefined);
+        };
         imports
           .attach()
           .then(({ dropOnto }) => dropOnto(target, files))
-          .then((report) => cardHandle?.dropped(report))
-          .catch(() => cardHandle?.dropped({ placed: [], unplaced: files.map((f) => ({ name: f.name, why: 'the drop could not be completed' })) }));
+          .then(said)
+          .catch(() =>
+            said({
+              placed: [],
+              unplaced: files.map((f) => ({ name: f.name, why: 'the drop could not be completed' })),
+            }),
+          );
       },
       true,
     );
@@ -805,8 +821,25 @@
       case 'dragging': {
         inTheAir = payload.files?.length ? payload.files : null;
         if (inTheAir) watchForDrops();
+        /*
+         * And every frame on the page, because the drop lands in whichever
+         * document the pointer is over. On a board that embeds its form —
+         * Greenhouse and Lever both do — that is never this one. Not awaited:
+         * the drag is already in flight and the pointer is not going to wait
+         * for a round trip through the worker.
+         */
+        send('draggingInFrames', { files: inTheAir ?? [] }).catch(() => undefined);
         return { watching: Boolean(inTheAir) };
       }
+
+      /*
+       * The resume list, asked for again. See `askForResumesAgain` in the
+       * card: the list is normally pushed in by `setResumes` once it lands,
+       * and that push is dropped if the page moved on while it was in flight
+       * — which leaves the picker empty with nothing to retry it.
+       */
+      case 'listResumes':
+        return send('listResumes');
 
       case 'attachFiles': {
         const got = await send('attachments', { application: payload.application ?? null });
@@ -2048,6 +2081,36 @@
           );
           return true;
 
+        /*
+         * A chip is in the air over the page this frame is part of.
+         *
+         * The card lives in the top frame and the drop lands in whichever
+         * document the pointer is over — which, on half the portals that
+         * matter, is an embed. Without this the frame under the pointer never
+         * knew a drag was happening and let go of the file into nothing.
+         *
+         * Behind the same guard as `jh-frame-attach`, and for the same
+         * reason: every advert and chat widget on the page runs this script,
+         * and a resume is a name, an address and an employment history in one
+         * file. A frame that is not an application form is told nothing and
+         * installs nothing.
+         */
+        case 'jh-frame-dragging':
+          answer(
+            imports.autofill().then(({ looksLikeApplicationForm }) => {
+              const files = message.payload?.files ?? [];
+              if (files.length === 0) {
+                inTheAir = null;
+                return { watching: false };
+              }
+              if (!looksLikeApplicationForm()) return { watching: false };
+              inTheAir = files;
+              watchForDrops();
+              return { watching: true };
+            }),
+          );
+          return true;
+
         case 'jh-frame-fill':
           answer(
             imports.autofill().then(({ fillForm, looksLikeApplicationForm }) =>
@@ -2129,6 +2192,20 @@
      */
     if (message?.type === 'jh-application-frame') {
       if (!cardHandle && !dismissed) show({ viaFrame: true }).catch(() => undefined);
+      sendResponse({ ok: true });
+      return false;
+    }
+    /*
+     * A frame took a drop, and the card is here rather than there.
+     *
+     * The drop lands in whichever document the pointer is over, which on a
+     * board that embeds its form is never this one — but the account of where
+     * the file went belongs on the card, and the card is in the top frame.
+     * It comes back through the worker, which is the only thing that can
+     * address this frame from that one.
+     */
+    if (message?.type === 'jh-frame-dropped') {
+      cardHandle?.dropped(message.payload?.report);
       sendResponse({ ok: true });
       return false;
     }

@@ -1143,12 +1143,25 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    * costs one fetch per application and leaves the first drag instant rather
    * than fetching under somebody's cursor.
    */
-  let askedWhatIsStaged = null;
+  /*
+   * `undefined` is "never asked"; `null` is a real answer.
+   *
+   * The folder is asked for by application id, and `null` is what every
+   * caller falls back to when the card has not been told one — a card rebuilt
+   * by following Apply, before the analysis lands. `attachmentFiles` answers
+   * that with the current folder, which is exactly the case this exists for,
+   * and the sentinel and the value were the same thing: the first call with
+   * `null` matched the "never asked" state and returned without asking.
+   */
+  let askedWhatIsStaged;
   function askWhatIsStaged(application) {
-    if (askedWhatIsStaged === application) return;
-    askedWhatIsStaged = application;
+    // Normalised, so a caller that passes nothing and one that passes `null`
+    // are one application and not two — and neither is the sentinel.
+    const id = application ?? null;
+    if (askedWhatIsStaged !== undefined && askedWhatIsStaged === id) return;
+    askedWhatIsStaged = id;
     state.stagedFiles = state.stagedFiles ?? null;
-    warmFiles(application)?.then(() => {
+    warmFiles(id)?.then(() => {
       const names = (carried?.files ?? []).map((f) => f.name).filter(Boolean);
       const same =
         state.stagedFiles?.length === names.length && (state.stagedFiles ?? []).every((n, i) => n === names[i]);
@@ -1462,10 +1475,98 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
    */
   function liftFrom(chip, application, pick) {
     chipsOnScreen.push(chip);
-    // Both, because a pointer can arrive and press in the same instant on a
-    // touchpad, and because the press is the last moment before the drag.
-    chip.onpointerenter = () => warmFiles(application);
-    chip.onpointerdown = () => warmFiles(application);
+    /*
+     * Fetched when the chip is drawn, not when a pointer reaches it.
+     *
+     * `dragstart` is not a moment anything can be waited for: the drag either
+     * carries the file or it does not, and a chip with nothing in hand has to
+     * refuse rather than send an empty one. So the fetch has to have finished
+     * before the pointer gets there, and hanging it off `pointerenter` does
+     * not give it time — a press follows the pointer by tens of milliseconds
+     * and the round trip is a few hundred. Off a cold chip the first drag was
+     * always refused, and "try that drag again in a moment" is a strange
+     * thing for a panel to say about files it has already listed by name.
+     *
+     * The staged step had this right and said so — "leaves the first drag
+     * instant rather than fetching under somebody's cursor" — but it warmed
+     * through `askWhatIsStaged`, which the done panel does not call. So the
+     * one screen built around dragging was the one that never pre-fetched.
+     * Here it covers every panel that draws a chip, because it is the drawing
+     * of the chip that says a drag is possible.
+     *
+     * `warmFiles` is a cache: repeated draws of the same application cost
+     * nothing after the first.
+     */
+    warmFiles(application);
+
+    /** What this chip would hand over, if the store has answered yet. */
+    const carrying = () => pick(carried?.application === application ? (carried.files ?? []) : []);
+
+    /*
+     * Tell the page a drag is coming, at the press rather than at the drag.
+     *
+     * The drop is taken by whichever document the pointer is over, and on the
+     * boards that embed rather than redirect that document is an iframe with
+     * its own copy of the content script. Telling it goes through the worker,
+     * and `dragstart` is far too late for a round trip: measured, the frame
+     * was still unarmed when the pointer let go, and the file went nowhere.
+     *
+     * A press is the one moment that is reliably before the drag and after
+     * the intent — nobody drags a chip without first pressing it, and the
+     * gesture between the two is tens of milliseconds at the very least.
+     */
+    let dragging = false;
+    let pressed = false;
+    const tell = (files) => onAction('dragging', { files }).catch(() => undefined);
+    const arm = () => {
+      const files = carrying();
+      if (files.length > 0) tell(files);
+    };
+    const ready = () => {
+      const waiting = warmFiles(application);
+      if (waiting) waiting.then(arm);
+      else arm();
+    };
+
+    /*
+     * Armed when the pointer arrives, not when the drag starts.
+     *
+     * `dragstart` is far too late: the message has to reach the worker and
+     * come back out to every frame, and by then the pointer has let go.
+     * Measured on a board whose form is in an embed — the frame reported
+     * itself armed after the drop had already happened, and the file went
+     * nowhere.
+     *
+     * A press is not early enough either, and not for the reason it looks
+     * like: holding the button still for a few hundred milliseconds before
+     * moving stops Chromium treating the gesture as a drag at all, so buying
+     * the round trip that way costs the drag. Measured: no `dragstart`.
+     *
+     * The pointer arriving is both early and free. Nothing is armed until
+     * somebody reaches for a chip, and reaching for one and changing your
+     * mind disarms again.
+     */
+    chip.onpointerenter = () => ready();
+    chip.onpointerdown = () => {
+      pressed = true;
+      dragging = false;
+      ready();
+    };
+    /*
+     * And a reach that came to nothing disarms. An armed page takes the next
+     * drop anywhere on it, so leaving one armed after the pointer has wandered
+     * off would place a file nobody was dragging.
+     *
+     * Only while nothing is in flight: a drag beginning moves the pointer off
+     * the chip, and `pressed` is what tells that from a hover that ended.
+     */
+    chip.onpointerleave = () => {
+      if (!pressed && !dragging) tell([]);
+    };
+    chip.onpointerup = () => {
+      pressed = false;
+      if (!dragging) tell([]);
+    };
 
     chip.ondragstart = (event) => {
       const held = carried?.application === application ? (carried.files ?? []) : [];
@@ -1520,11 +1621,14 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
        * What actually places the file is the drop listener in content.js,
        * which needs to know what is in the air. See `inTheAir` there.
        */
-      onAction('dragging', { files }).catch(() => undefined);
+      dragging = true;
+      tell(files);
     };
 
     chip.ondragend = () => {
-      onAction('dragging', { files: [] }).catch(() => undefined);
+      dragging = false;
+      pressed = false;
+      tell([]);
     };
   }
 
@@ -3908,6 +4012,26 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     return true;
   }
 
+  /*
+   * Ask for the resume list again, once, when a draw finds it missing.
+   *
+   * Once, because it is called from inside `draw()` and a version that asked
+   * on every draw would ask for ever. `setResumes` redraws, so a list that
+   * arrives replaces the single fallback option below with the real picker.
+   */
+  let askedForResumes = false;
+  function askForResumesAgain() {
+    if (askedForResumes) return;
+    askedForResumes = true;
+    onAction('listResumes', {})
+      .then((list) => {
+        if (!list?.length) return;
+        resumes = list;
+        draw();
+      })
+      .catch(() => undefined);
+  }
+
   function drawProposeView() {
     const baseSelect = h('select', { title: 'Which resume to start from' });
 
@@ -4019,6 +4143,33 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       }
     } else {
       for (const r of byFit(resumes, sameEmployer)) baseSelect.append(option(r));
+    }
+
+    /*
+     * Never an empty picker.
+     *
+     * The list arrives on its own, after the card is up — `listResumes` in
+     * content.js, fired and forgotten with a `.catch(() => undefined)` and a
+     * guard that drops the reply if the page has moved on since. Either of
+     * those leaves `resumes` empty for good, and an empty `<select>` renders
+     * as a chevron with nothing beside it: a control that looks broken, over
+     * a card that has already compiled a resume and knows perfectly well
+     * which one it started from.
+     *
+     * The analysis names the base, and that name is already on screen a few
+     * pixels away in the diff head. So the picker says it too rather than
+     * saying nothing, and asks for the list again — the fetch is cheap and
+     * this is the one moment its absence is visible.
+     */
+    if (baseSelect.options.length === 0) {
+      baseSelect.append(
+        h('option', {
+          value: analysis?.baseResumeId ?? '',
+          textContent: analysis?.baseLabel ?? 'Your resume',
+          selected: true,
+        }),
+      );
+      askForResumesAgain();
     }
 
     /*

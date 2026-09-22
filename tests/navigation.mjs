@@ -750,6 +750,87 @@ async function main() {
           asked.join(' | ') || '(none)',
         );
       }
+
+      /*
+       * And a chip dragged into the frame lands in the frame's own box.
+       *
+       * This is the case a drop cannot reach on its own. The card lives in the
+       * top frame; the pointer lets go over an embed; the `drop` event fires
+       * in the embed's document, which has its own copy of this content script
+       * and knew nothing about the drag. So the file went nowhere and nothing
+       * said so — on Greenhouse and Lever, which is most of the boards that
+       * embed rather than redirect.
+       *
+       * Every frame is told a chip is in the air, behind the same
+       * `looksLikeApplicationForm` guard that stops an advert's frame being
+       * handed a resume, and whichever one takes the drop reports back through
+       * the worker because the card is not in it.
+       */
+      if (there) {
+        const card = cardOf(page);
+        await card.getByRole('button', { name: 'Build resume' }).click().catch(() => undefined);
+        const chip = card.locator('.file.liftable').first();
+        const got = await chip.waitFor({ timeout: 120_000 }).then(() => true).catch(() => false);
+        check('the card stages a file to drag', got);
+        if (got) {
+          const name = (await chip.locator('.what').innerText()).trim();
+          /*
+           * The pointer arriving on the chip is what tells every frame a drag
+           * may be coming — see `liftFrom`. `dragstart` is far too late for a
+           * round trip out to the worker and back into each frame, and a
+           * press held still long enough to buy that time stops Chromium
+           * treating the gesture as a drag at all.
+           */
+          await chip.hover();
+          await page.waitForTimeout(900);
+
+          /*
+           * And the drop, dispatched in the frame at its own box.
+           *
+           * The arming above is the real thing, over the real worker, into
+           * the real frame. The event is dispatched because Chromium's drag
+           * controller cannot be driven across an iframe boundary from a
+           * test — which is a limitation of the harness and not of the drag:
+           * everything this exercises after the pointer is the same code a
+           * hand reaches.
+           */
+          const frame = page.frames().find((f) => /embed/.test(f.url()));
+          await frame.evaluate(() => {
+            const el = document.getElementById('rs');
+            for (const type of ['dragenter', 'dragover', 'drop']) {
+              el.dispatchEvent(
+                new DragEvent(type, {
+                  bubbles: true,
+                  cancelable: true,
+                  composed: true,
+                  dataTransfer: new DataTransfer(),
+                }),
+              );
+            }
+          });
+
+          const box = page.frameLocator('#grnhse_iframe').locator('#rs');
+          let held = [];
+          for (let i = 0; i < 40 && held.length === 0; i++) {
+            held = await box.evaluate((el) => [...(el.files ?? [])].map((f) => f.name)).catch(() => []);
+            if (held.length === 0) await page.waitForTimeout(150);
+          }
+          check('a chip dropped into the embed lands in the embed’s box', held[0] === name, `${JSON.stringify(held)} vs ${name}`);
+
+          /*
+           * And the card says so, which is a second hop: the frame that took
+           * the drop has no card, so the report goes back out through the
+           * worker to the top frame. Without it the file lands and the only
+           * account of it is silence.
+           */
+          let says = 0;
+          for (let i = 0; i < 30 && says === 0; i++) {
+            says = await card.locator('.ok-note').filter({ hasText: name }).count().catch(() => 0);
+            if (says === 0) await page.waitForTimeout(150);
+          }
+          check('and the card in the top frame says so', says > 0, (await card.locator('.ok-note').allInnerTexts()).join(' | '));
+        }
+      }
       await page.close();
     }
 
