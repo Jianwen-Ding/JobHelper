@@ -1129,10 +1129,152 @@ export function fillForm(fields, { overwrite = false } = {}) {
   }
 
   const radios = answerRadioGroups(fields, overwrite);
+  const buttons = answerChoiceButtons(fields, overwrite, [...filled, ...radios.filled]);
+  const done = [...filled, ...radios.filled, ...buttons.filled];
   return {
-    filled: [...filled, ...radios.filled],
-    skipped: [...skipped, ...radios.skipped, ...unfillableChoices(fields, [...filled, ...radios.filled])],
+    filled: done,
+    skipped: [...skipped, ...radios.skipped, ...buttons.skipped, ...unfillableChoices(fields, done)],
   };
+}
+
+/* ------------------- Choices that are buttons, not inputs ------------------- */
+
+/**
+ * The same questions, asked with ARIA instead of with `<input type=radio>`.
+ *
+ * `answerRadioGroups` finds the native shape and `unfillableChoices` reports
+ * the popup shape as one to pick by hand. Between them is a third that is
+ * neither: a group whose options are already on the page and are `<div>`s or
+ * `<button>`s wearing `role="radio"` or `role="option"`. Every modern
+ * component library builds a segmented yes/no that way — it is what an
+ * accessible custom control is *supposed* to look like — and nothing here
+ * could see one, so a required work-authorisation question went out blank
+ * under a card reporting the form done.
+ *
+ * Only groups whose options are on screen. A `role="listbox"` that is the
+ * popup half of a combobox is a different thing: opening it, waiting for it
+ * and choosing inside it is fragile in a way that ends with the wrong answer
+ * ticked, and `unfillableChoices` already says those have to be picked by
+ * hand. This does not widen that promise.
+ */
+function answerChoiceButtons(fields, overwrite, already) {
+  const filled = [];
+  const skipped = [];
+  const taken = new Set(already.map((f) => f.key));
+
+  const visible = (el) => el.getClientRects().length > 0;
+
+  for (const group of deepQueryAll('[role="radiogroup"], [role="listbox"], [role="group"]')) {
+    if (isDisabled(group) || !visible(group)) continue;
+    /*
+     * The popup half of a combobox, which is somebody else's to open. A
+     * listbox a combobox owns says so — through `aria-controls`,
+     * `aria-owns`, or by sitting under a control that has
+     * `aria-haspopup="listbox"` — and those go to `unfillableChoices`.
+     */
+    if (group.closest('[aria-haspopup="listbox"]')) continue;
+    const id = group.getAttribute('id');
+    if (id && deepQueryAll(`[aria-controls="${CSS.escape(id)}"], [aria-owns="${CSS.escape(id)}"]`).length > 0) continue;
+
+    const options = [...group.querySelectorAll('[role="radio"], [role="option"]')].filter(
+      (el) => visible(el) && !isDisabled(el),
+    );
+    // One option is not a choice, and nothing on this page asked a question
+    // with it. Two is the yes/no pair this exists for.
+    if (options.length < 2) continue;
+
+    const question = choiceQuestionFor(group);
+    const description = clean([question, group.getAttribute('aria-label'), id].filter(Boolean).join(' '));
+    if (!description) continue;
+    // The same three gates, in the same order, as `fillForm` and
+    // `answerRadioGroups`. See `handBack`.
+    if (handBack(description, skipped)) continue;
+    if (isNotAboutYou(description, clean(question), surroundingWords(group))) continue;
+
+    // Only the keys that are a choice between options, as in
+    // `answerRadioGroups` — see `CHOOSABLE` there.
+    const named = FIELD_PATTERNS.find(([key, re]) => CHOOSABLE.has(key) && re.test(description));
+    const match = named && fields[named[0]] && !taken.has(named[0]) ? named : undefined;
+    if (!match) continue;
+
+    const [key] = match;
+    const value = fields[key];
+    const chosen = (el) => el.getAttribute('aria-checked') === 'true' || el.getAttribute('aria-selected') === 'true';
+
+    if (options.some(chosen) && !overwrite) {
+      skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
+      continue;
+    }
+
+    const labelOf = (el) => clean(el.getAttribute('aria-label') || el.textContent);
+    const wanted =
+      options.find((el) => sameOption(labelOf(el), value)) ??
+      // And a yes/no pair against a phrase, on the same terms as a radio's.
+      yesNoOption(key, value, options.map((el) => ({ label: labelOf(el), el })))?.el;
+    if (!wanted) {
+      skipped.push({ key, reason: 'no matching option', description: description.slice(0, 60) });
+      continue;
+    }
+
+    /*
+     * Clicked, and then read back — which for these is the whole difficulty.
+     *
+     * A native radio answers "did that take" itself: `checked` is the
+     * browser's, and setting it is the last resort when a click is cancelled.
+     * These have no such thing. `aria-checked` is an attribute the page
+     * writes, and writing it here would be writing the appearance of an
+     * answer onto a control whose own state is a variable in somebody's
+     * component — the form would submit blank under a green tick, which is
+     * the worst outcome this file has.
+     *
+     * So: click, which is what a person does and what every framework is
+     * listening for, and then believe the page. If it did not mark the option
+     * chosen, it is reported as needing a hand rather than claimed.
+     */
+    wanted.click();
+    if (chosen(wanted)) {
+      filled.push({ key, value });
+      taken.add(key);
+    } else {
+      skipped.push({
+        key,
+        reason: 'the page did not take it — pick this one by hand',
+        description: description.slice(0, 60),
+      });
+      taken.add(key);
+    }
+  }
+  return { filled, skipped };
+}
+
+/**
+ * What an ARIA group is asking.
+ *
+ * Its own label first, because a group that wears `role="radiogroup"` is
+ * built by somebody who knows to name it — that is most of the reason the
+ * role is there. Then the same fallbacks a native group gets: the row header
+ * on a questionnaire laid out as a table, and the nearest heading above.
+ */
+function choiceQuestionFor(group) {
+  const said = fromLabelledBy(group) || clean(group.getAttribute('aria-label'));
+  if (said) return said;
+
+  const legend = clean(group.closest('fieldset')?.querySelector('legend')?.textContent);
+  if (legend) return legend;
+
+  const header = clean(group.closest('tr')?.querySelector('th')?.textContent);
+  if (header) return header;
+
+  /*
+   * And failing all of that, the text immediately above it — bounded, because
+   * an unbounded climb reaches the whole form and reads every other question
+   * as part of this one.
+   */
+  for (let at = group.parentElement, up = 0; at && up < 3; at = at.parentElement, up++) {
+    const heading = clean(at.querySelector('label, legend, h1, h2, h3, h4, h5, h6, .label')?.textContent);
+    if (heading) return heading;
+  }
+  return '';
 }
 
 /* ---------------------------- Radio groups ---------------------------- */

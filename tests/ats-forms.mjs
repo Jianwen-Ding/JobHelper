@@ -113,6 +113,75 @@ export const SYSTEMS = [
     wantsLetter: true,
   },
 
+  /*
+   * The accessible custom control, which is what a modern component library
+   * builds and what nothing here could see.
+   *
+   * `answerRadioGroups` finds `<input type=radio>` and `unfillableChoices`
+   * reports a popup as one to pick by hand. Between them is this: options
+   * already on the page, wearing `role="radio"` or `role="option"` on divs
+   * and buttons. It is what an accessible custom control is *supposed* to
+   * look like, so it is the shape a form built this decade uses — and a
+   * required work-authorisation question went out blank under a card saying
+   * the form was done.
+   *
+   * The popup listbox at the bottom is the control: it must be left alone and
+   * still reported as one to pick by hand, because opening a popup and
+   * choosing inside it is a different and much more fragile thing.
+   */
+  {
+    name: 'ARIA choice groups',
+    html: `
+      <label for="fn">First name</label><input id="fn" name="fn">
+      <label for="em">Email</label><input id="em" name="em" type="email">
+
+      <div id="authq">Are you legally authorized to work in the United States?</div>
+      <div role="radiogroup" aria-labelledby="authq" id="auth">
+        <div role="radio" tabindex="0" aria-checked="false" data-v="Yes">Yes</div>
+        <div role="radio" tabindex="0" aria-checked="false" data-v="No">No</div>
+      </div>
+
+      <div id="sponq">Will you now or in the future require sponsorship?</div>
+      <div role="listbox" aria-labelledby="sponq" id="spon">
+        <button type="button" role="option" aria-selected="false" data-v="Yes">Yes</button>
+        <button type="button" role="option" aria-selected="false" data-v="No">No</button>
+      </div>
+
+      <label id="stl">State</label>
+      <button type="button" aria-haspopup="listbox" aria-controls="statelist" aria-labelledby="stl">Select…</button>
+      <div role="listbox" id="statelist" aria-labelledby="stl">
+        <div role="option" aria-selected="false">Massachusetts</div>
+        <div role="option" aria-selected="false">California</div>
+      </div>
+
+      <label for="q_why">Why do you want to work here?</label>
+      <textarea id="q_why"></textarea>
+      <script>
+        for (const group of document.querySelectorAll('#auth, #spon, #statelist')) {
+          group.addEventListener('click', (e) => {
+            const hit = e.target.closest('[role=radio], [role=option]');
+            if (!hit) return;
+            const attr = hit.getAttribute('role') === 'radio' ? 'aria-checked' : 'aria-selected';
+            for (const el of group.children) el.setAttribute(attr, 'false');
+            hit.setAttribute(attr, 'true');
+          });
+        }
+      </script>`,
+    want: { '#fn': 'Jianwen', '#em': 'ding.jianw@northeastern.edu' },
+    aria: { '#auth': 'Yes', '#spon': 'No' },
+    /*
+     * The popup's options must be untouched, and said so about — and this
+     * one answers a click, so leaving it alone is a decision rather than an
+     * accident of the fixture not working. Without the guard, autofill
+     * reaches into a list the combobox above owns and leaves it half-chosen:
+     * an option marked selected under a button still reading "Select…".
+     */
+    ariaUntouched: ['#statelist'],
+    reportsUnfillable: ['address_state'],
+    questions: [/why do you want to work here/i],
+    wantsLetter: false,
+  },
+
   {
     name: 'Lever',
     // Lever labels nothing. Every word a human reads is a placeholder, and the
@@ -958,6 +1027,23 @@ async function main() {
               ]),
             ),
             ticked: [...document.querySelectorAll('input[type=checkbox]:checked')].map((c) => c.name),
+            /*
+             * And which option of an ARIA group ended up chosen. A native
+             * radio answers this itself through `checked`; these have only
+             * the attribute the page writes, which is exactly why the filling
+             * side reads it back rather than writing it.
+             */
+            aria: Object.fromEntries(
+              [...document.querySelectorAll('[role=radiogroup], [role=listbox]')]
+                .filter((g) => g.id)
+                .map((g) => [
+                  `#${g.id}`,
+                  [...g.querySelectorAll('[role=radio], [role=option]')]
+                    .filter((o) => o.getAttribute('aria-checked') === 'true' || o.getAttribute('aria-selected') === 'true')
+                    .map((o) => o.textContent.trim())
+                    .join(','),
+                ]),
+            ),
           };
         },
         { b: base, profile: PROFILE, wants: system.want, host: system.shadowHost ?? null },
@@ -976,6 +1062,21 @@ async function main() {
           `${system.name}: answers the yes/no questions`,
           wrongRadio.length === 0,
           wrongRadio.map(([n, want]) => `${n} wanted "${want}", got "${out.chosen[n]}"`).join('; '),
+        );
+      }
+      if (system.aria) {
+        const wrongAria = Object.entries(system.aria).filter(([sel, v]) => out.aria[sel] !== v);
+        check(
+          `${system.name}: answers the questions built out of buttons`,
+          wrongAria.length === 0,
+          wrongAria.map(([sel, want]) => `${sel} wanted "${want}", got "${out.aria[sel]}"`).join('; '),
+        );
+      }
+      for (const sel of system.ariaUntouched ?? []) {
+        check(
+          `${system.name}: leaves the popup's options alone`,
+          out.aria[sel] === '',
+          `${sel} chose "${out.aria[sel]}"`,
         );
       }
       if (system.neverGuesses) {
