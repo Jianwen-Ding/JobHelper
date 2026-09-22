@@ -589,6 +589,108 @@ async function main() {
       check('and it is reported as empty, not as attached', /empty/.test(report.unplaced[0]?.why ?? ''), report.unplaced[0]?.why ?? '');
     }
 
+    /* ---------------------------------------------------------------- *
+     * Letting go of a chip over the form                                 *
+     * ---------------------------------------------------------------- */
+    /*
+     * The drag never carried anything, and nothing here could have known.
+     *
+     * The chips on the card are draggable; their `dragstart` puts a real
+     * `File` into `event.dataTransfer`; and Chromium throws it away before
+     * the drop, because a drag can leave the browser and a page that could
+     * put files into one could write to the desktop. Measured on a bare page
+     * with no extension involved — drop side: `types: ["text/plain"]`,
+     * `files: []`, no file item at all. See tests/probe-drag-drop.mjs.
+     *
+     * The test that was here asked what the chip *hands over*, inside
+     * `dragstart`, where the file is genuinely present. It passed for months
+     * over a feature that has never once put a file in a form.
+     *
+     * So the extension takes the drop itself, and `dropOnto` is what places
+     * the file. What it has to get right is the aim: what is under the
+     * pointer is almost never the box — it is the styled button in front of a
+     * hidden input, a label, the words inside a drop zone.
+     */
+    const dropAt = async (where, selector, files) => {
+      await p.goto(`${base}${where}`, { waitUntil: 'domcontentloaded' });
+      return p.evaluate(
+        async ({ b, sel, list }) => {
+          const m = await import(`${b}/attach.js`);
+          const heard = [];
+          for (const input of document.querySelectorAll('input[type=file]')) {
+            input.addEventListener('change', (e) => heard.push(e.target.id));
+          }
+          const report = await m.dropOnto(document.querySelector(sel), list);
+          const inBoxes = {};
+          for (const input of document.querySelectorAll('input[type=file]')) {
+            inBoxes[input.id] = [...(input.files ?? [])].map((f) => f.name);
+          }
+          return { report, inBoxes, heard };
+        },
+        { b: base, sel: selector, list: files },
+      );
+    };
+
+    group('A chip let go of straight onto an upload box');
+    {
+      const { report, inBoxes, heard } = await dropAt('/labelled', '#tr', [filed('Transcript.pdf')]);
+      check('it goes in the box it was dropped on', inBoxes.tr?.[0] === 'Transcript.pdf', JSON.stringify(inBoxes.tr));
+      check('and nowhere else', (inBoxes.rs?.length ?? 0) === 0 && (inBoxes.cl?.length ?? 0) === 0, JSON.stringify(inBoxes));
+      check('reported as placed', report.placed.length === 1, JSON.stringify(report));
+      // The half that is easy to leave out: a form listens for `change`.
+      check('and the form heard about it', heard.join() === 'tr', heard.join(', '));
+    }
+
+    /*
+     * Aimed at the button, which is what there is to aim at. Every real
+     * portal hides the input behind one, so a drop that only accepts a direct
+     * hit on an `<input type=file>` would never once land.
+     */
+    group('A chip let go of over the button in front of a hidden box');
+    {
+      const { inBoxes, report } = await dropAt('/hidden', 'button', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('the hidden input behind it takes the file', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes.rs));
+      check('and it is reported as placed', report.placed.length === 1, JSON.stringify(report.placed));
+    }
+
+    group('A chip let go of on a drop zone that has no input at all');
+    {
+      const { report } = await dropAt('/dropzone-real', '#zone p', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('the zone is given the drop', report.placed.length === 1, JSON.stringify(report));
+      /*
+       * A zone gives nothing back to read, so what it did cannot be claimed.
+       * This one does what Workday does — makes an input and keeps the file —
+       * so it can be, and the report has to be able to tell the two apart.
+       */
+      const landed = await p.evaluate(() => [...(document.getElementById('made')?.files ?? [])].map((f) => f.name));
+      check('and the page kept the file', landed[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(landed));
+      check('so it is not hedged', report.placed[0]?.sure !== false, JSON.stringify(report.placed));
+    }
+
+    /*
+     * And a box is taken at its word even when it was aimed at deliberately.
+     * "I dropped it there" is not more reliable than the form saying what it
+     * will take — a `.doc`-only box given a PDF rejects it on submit, and the
+     * card would have said it went in.
+     */
+    group('A chip let go of on a box that will not take it');
+    {
+      const { report, inBoxes } = await dropAt('/doc-only', '#rs', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('nothing goes in', (inBoxes.rs?.length ?? 0) === 0, JSON.stringify(inBoxes.rs));
+      check('and it says what the form will take', /\.doc/.test(report.unplaced[0]?.why ?? ''), report.unplaced[0]?.why ?? '');
+    }
+
+    group('A chip let go of somewhere that takes nothing');
+    {
+      const { report } = await dropAt('/menu', 'body', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('nothing is claimed', report.placed.length === 0, JSON.stringify(report.placed));
+      check(
+        'and it says so rather than going quiet',
+        /no upload box where you dropped it/.test(report.unplaced[0]?.why ?? ''),
+        report.unplaced[0]?.why ?? '',
+      );
+    }
+
     group('Reading a name for what kind of document it is');
     {
       const kinds = await p.evaluate(async ({ b }) => {

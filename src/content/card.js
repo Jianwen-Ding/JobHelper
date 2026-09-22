@@ -1506,6 +1506,25 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
       // So a drop zone that reads the text flavour rather than the files —
       // a few of them do — gets something it can show.
       carrier.setData('text/plain', files.map((f) => f.name).join('\n'));
+
+      /*
+       * And the files themselves go the only way they can: not in the drag.
+       *
+       * Chromium will not carry a script-made `File` in a drag a page starts,
+       * so everything put in `carrier.items` above is thrown away before the
+       * drop — measured on a bare page, `files: []` and no file item at the
+       * other end. The carrier is still filled because a page that reads it
+       * during `dragover` uses it to decide whether to light up a drop zone,
+       * and because the day Chromium allows this the drag will simply work.
+       *
+       * What actually places the file is the drop listener in content.js,
+       * which needs to know what is in the air. See `inTheAir` there.
+       */
+      onAction('dragging', { files }).catch(() => undefined);
+    };
+
+    chip.ondragend = () => {
+      onAction('dragging', { files: [] }).catch(() => undefined);
     };
   }
 
@@ -5593,6 +5612,19 @@ export function createCard({ analysis, resumes = [], settings, questions = [], n
     /** Something that happened and went well. See `state.note`. */
     say(text) {
       state.note = text;
+      draw();
+    },
+
+    /*
+     * Where a dragged chip landed.
+     *
+     * Said in the same words and with the same green-or-amber reading as a
+     * press of Attach files, because it is the same act: the drag cannot
+     * carry the file, so the extension takes the drop and places it. See
+     * `inTheAir` in content.js.
+     */
+    dropped(report) {
+      state.attachReport = report;
       draw();
     },
 

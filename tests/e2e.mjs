@@ -1036,6 +1036,64 @@ async function main() {
       check('and nothing else came with it', carried.text === carried.files[0]?.name, carried.text);
     }
 
+    /*
+     * And now the part none of the above was ever evidence for: letting go.
+     *
+     * Everything up to here reads the carrier *inside* `dragstart`, where the
+     * file is genuinely present — and the browser then throws it away.
+     * Chromium will not carry a script-made `File` in a drag a page starts,
+     * because a drag can leave the browser and a page that could put files in
+     * one could write to the desktop. Measured on a bare page with no
+     * extension involved (tests/probe-drag-drop.mjs): at the drop, `types` is
+     * `["text/plain"]`, `files` is empty and there is no file item at all.
+     *
+     * So the chips looked right from every angle this suite had and had never
+     * once put a document into a form. What places it is the extension taking
+     * the drop itself — see `inTheAir` in content.js — and the only test that
+     * can tell the difference is one that drags with a real pointer and then
+     * asks the *form* what it is holding.
+     */
+    {
+      const box = page.locator('#cl');
+      await box.waitFor({ timeout: 20_000 });
+      const chip = card.locator('.done-box .file.liftable').first();
+      const name = (await chip.locator('.what').innerText()).trim();
+
+      const from = await chip.boundingBox();
+      const to = await box.boundingBox();
+      // The pointer arriving is what fetches the bytes, and a drag started
+      // before they land is refused on purpose. See `warmFiles`.
+      await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+      await page.waitForTimeout(1200);
+      await page.mouse.down();
+      await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 14 });
+      await page.mouse.up();
+
+      let held = [];
+      for (let i = 0; i < 25 && held.length === 0; i++) {
+        held = await box.evaluate((el) => [...(el.files ?? [])].map((f) => f.name));
+        if (held.length === 0) await page.waitForTimeout(120);
+      }
+      check('dropping a chip on a box puts the file in it', held[0] === name, `${JSON.stringify(held)} vs ${name}`);
+      check('with the bytes, not an empty placeholder',
+        (await box.evaluate((el) => el.files?.[0]?.size ?? 0)) > 100,
+        String(await box.evaluate((el) => el.files?.[0]?.size ?? 0)));
+      /*
+       * And the card says where it went, in the same words a press of Attach
+       * files uses — it is the same act. Found by the filename rather than by
+       * position: the autofill note from earlier in this run is also an
+       * `.ok-note` on this panel, and matching the first one would have
+       * passed on "Filled 6 fields".
+       */
+      const note = card.locator('.ok-note').filter({ hasText: name });
+      let says = 0;
+      for (let i = 0; i < 25 && says === 0; i++) {
+        says = await note.count();
+        if (says === 0) await page.waitForTimeout(120);
+      }
+      check('and the card says so', says > 0, (await card.locator('.ok-note').allInnerTexts()).join(' | '));
+    }
+
     const tracked = await (await fetch(`${SERVER}/api/applications`)).json();
     const entry = tracked.applications.find((a) => a.company === 'Streamly');
     check('application tracked', Boolean(entry), entry ? `${entry.status}` : 'not found');

@@ -659,6 +659,77 @@
     if (wasDecided(late.result)) cardHandle?.say('The AI finished tailoring this posting. Its changes are below.');
   }
 
+  /*
+   * The files a chip on the card is being dragged with, while it is in the air.
+   *
+   * The drag itself cannot carry them. Chromium will not put a script-made
+   * `File` into a drag a page starts — measured on a bare page with no
+   * extension involved: at the drop, `types` is `["text/plain"]`, `files` is
+   * empty and there is no file item at all. It is right not to; a drag can
+   * leave the browser, and a page that could put files in one could write to
+   * the desktop. So the card's chips have never actually dropped anything into
+   * a form, while saying "Drag any of these into the form" the whole time.
+   *
+   * The extension can do what the drag cannot. The card says what is in the
+   * air, the listeners below allow the drop and then cancel it, and the file
+   * goes into the box under the pointer through the same `input.files` write
+   * that Attach files uses. Nothing here is a trick the page can tell from its
+   * own file dialog.
+   */
+  let inTheAir = null;
+  let watchingDrops = false;
+
+  function watchForDrops() {
+    if (watchingDrops) return;
+    watchingDrops = true;
+    /*
+     * Capture, and `preventDefault` on `dragover` — without it the browser
+     * refuses the drop and there is no `drop` event to take. Capture so a page
+     * that cancels the drag on its own handlers cannot get there first.
+     */
+    document.addEventListener(
+      'dragover',
+      (event) => {
+        if (!inTheAir) return;
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+      },
+      true,
+    );
+    document.addEventListener(
+      'drop',
+      (event) => {
+        const files = inTheAir;
+        if (!files) return;
+        /*
+         * Stopped as well as cancelled: the page's own drop handler would
+         * otherwise run on a drag carrying nothing and report "that file could
+         * not be read" about a file that is about to go in correctly.
+         */
+        const target = event.composedPath?.()?.[0] ?? event.target;
+        /*
+         * A chip let go of over the card itself is a drag abandoned, not a
+         * drop on a form. Without this the card is the nearest thing that
+         * looks like a drop zone and the file would be dispatched at our own
+         * panel.
+         */
+        if (target?.getRootNode?.()?.host?.id === 'jobhelper-card-host') {
+          inTheAir = null;
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        inTheAir = null;
+        imports
+          .attach()
+          .then(({ dropOnto }) => dropOnto(target, files))
+          .then((report) => cardHandle?.dropped(report))
+          .catch(() => cardHandle?.dropped({ placed: [], unplaced: files.map((f) => ({ name: f.name, why: 'the drop could not be completed' })) }));
+      },
+      true,
+    );
+  }
+
   async function onAction(action, payload = {}) {
     if (action.startsWith('answer:')) {
       // With the job, like every other drafting call. Without it the prompt
@@ -725,6 +796,16 @@
           missing: (got?.missing ?? []).map((m) => ({ name: m.name, why: m.why })),
           dir: got?.dir ?? null,
         };
+      }
+
+      /*
+       * A chip has been picked up, or put down. See `inTheAir`: the drag
+       * itself carries nothing, so this is how the drop knows what to place.
+       */
+      case 'dragging': {
+        inTheAir = payload.files?.length ? payload.files : null;
+        if (inTheAir) watchForDrops();
+        return { watching: Boolean(inTheAir) };
       }
 
       case 'attachFiles': {
