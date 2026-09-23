@@ -164,8 +164,15 @@ const NOT_ABOUT_YOU = [
    * contact email" gave the applicant's address.
    */
   /\bcontact\b[\s\S]{0,30}\bemployers?\b|\bemployers?\b[\s\S]{0,20}\bcontact\b/i,
+  /*
+   * How long, not who. "Years at current company" matched `current_company`
+   * and was given the employer's name in a box asking for a number.
+   */
+  /\b(years?|months?|how[\s_-]long|tenure|duration)\b[\s\S]{0,24}\b(current|present|most[\s_-]recent)\b/i,
+  // How to say a name, which is not the name: "Pronunciation of your name".
+  /\b(pronunc\w*|phonetic\w*)\b/i,
   // Where you heard about the job, which is not a profile of yours.
-  /\b(did[\s_-]you[\s_-]hear|hear[\s_-]about[\s_-](us|this)|referral)\b/i,
+  /\b(did[\s_-]you[\s_-](?:first[\s_-])?hear|hear[\s_-](?:about|of)[\s_-](us|this)|referral)\b/i,
   // Citizenship, birth and residence are different questions with the same
   // answers.
   /\b(citizen\w*|nationality|passport)\b/i,
@@ -178,7 +185,8 @@ const NOT_ABOUT_YOU = [
    * "where I am" into "where I want to be" without being asked.
    */
   /\b(prefer\w*|desired|requested)\b[\s\S]{0,24}\b(location|city|town|country|office|site)\b/i,
-  /\b(location|city|town|country|office|site)\b[\s\S]{0,24}\b(prefer\w*|desired|requested)\b/i,
+  // "Which location are you applying for?" is the same question again.
+  /\b(location|city|town|country|office|site)\b[\s\S]{0,24}\b(prefer\w*|desired|requested|applying)\b/i,
   // Relocation is about somewhere you are not. "Which city would you relocate
   // to?" was answered with the city the applicant already lives in.
   /\brelocat\w*/i,
@@ -239,7 +247,7 @@ const NOT_ABOUT_YOU = [
  * same way. Read with the parentheses out for the same reason: "Phone (ext.
  * optional)" is the telephone box.
  */
-const DIALLING_CODE = /\b(country|area|dial(?:l?ing)?)[\s_-]?code\b|\bext(?:ension)?\b/i;
+const DIALLING_CODE = /\b(country|area|dial(?:l?ing)?)[\s_-]?(?:phone[\s_-]?)?code\b|\bext(?:ension)?\b/i;
 
 /*
  * A label that is only "Country", whatever the field is named underneath.
@@ -382,6 +390,32 @@ const BARE_NAME = /^(full\s+)?name$/i;
  * text all along; the label handed to `BARE_NAME` never went through it.
  */
 const withoutMarkers = (label) => clean(label).replace(/^[*:\s]+/, '').replace(/[*:\s]+$/, '');
+
+/**
+ * A box that asks for writing, not for a fact from the profile.
+ *
+ * The patterns read single words, and an essay prompt is free to use any of
+ * them: "Tell us about a project you shipped at your current company" matched
+ * `current_company`, "What did you study in school and why?" matched `school`,
+ * and "Do you have experience with state management libraries?" matched
+ * `address_state` — each box was typed over with a profile value, as though
+ * the employer's name were an answer to the question. These are the card's
+ * questions, not autofill's.
+ *
+ * Read off the field's own label, never the name or id. A multi-line box is
+ * writing unless its label is a short noun phrase ("LinkedIn profile"); a
+ * single-line one only when the label opens the way a prompt does, so "Which
+ * university did you graduate from?" is still the school.
+ */
+const ESSAY_PROMPT =
+  /^(?:please\s+)?(?:describe|tell\s+us|explain|elaborate|why\b|walk\s+us\s+through|give\s+(?:us\s+)?an?\s+example|share\s+(?:a\s+time|an?\s+example|your\s+(?:experience|thoughts))|what\s+(?:excites|interests|motivates|makes|would\s+you|did\s+you)|how\s+(?:does|do|would|did|will)\s+your?\b)|\bexperience\s+(?:with|using|in)\b/i;
+
+function asksForWriting(input) {
+  const label = withoutMarkers(labelFor(input));
+  if (!label) return false;
+  if (input instanceof HTMLTextAreaElement) return /\?$/.test(label) || label.split(/\s+/).length > 5;
+  return ESSAY_PROMPT.test(label);
+}
 
 /**
  * "First" and "Last" under a legend that says "Name".
@@ -1288,6 +1322,7 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
     // this question does not need. See `handBack`.
     if (handBack(description, skipped)) continue;
     if (isNotAboutYou(description, clean(labelFor(input)), surroundingWords(input))) continue;
+    if (asksForWriting(input)) continue;
 
     /*
      * The first pattern that matches, and then whether the profile has it —

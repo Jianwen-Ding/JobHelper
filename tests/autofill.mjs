@@ -1044,6 +1044,20 @@ const MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</
   <label for="ext">Phone extension</label><input id="ext" name="phone_ext">
   <label for="contact">Can we contact your current employer?</label><input id="contact" name="q_contact">
   <label for="empmail">Employer contact email</label><input id="empmail" name="emp_contact" type="email">
+  <label for="tenure">Years at current company</label><input id="tenure" name="tenure">
+  <label for="cpc">Country phone code</label><input id="cpc" name="cpc">
+  <label for="say">Pronunciation of your name</label><input id="say" name="say">
+  <label for="fulln">Full name</label><input id="fulln" name="fulln">
+
+  <!-- Essay prompts that happen to say a profile word. -->
+  <label for="e1">Tell us about a project you shipped at your current company</label><textarea id="e1" name="q_e1"></textarea>
+  <label for="e2">What did you study in school and why?</label><textarea id="e2" name="q_e2"></textarea>
+  <label for="e3">Do you have experience with state management libraries?</label><input id="e3" name="q_e3">
+  <label for="e4">How did you first hear of us? (LinkedIn, etc.)</label><input id="e4" name="q_e4">
+  <label for="e5">Which location are you applying for?</label><input id="e5" name="q_e5">
+  <!-- And the facts, asked as short labels or plain questions, still filled. -->
+  <label for="f1">LinkedIn profile</label><textarea id="f1" name="f1"></textarea>
+  <label for="f2">Which university did you graduate from?</label><input id="f2" name="f2">
 
   <!-- The fields these words were mistaken for, still filled. -->
   <label for="st">State</label><input id="st" name="state">
@@ -1465,11 +1479,11 @@ async function main() {
         const v = (id) => document.getElementById(id).value;
         const ticked = (n) => document.querySelector(`input[name="${n}"]:checked`)?.value ?? '';
         return {
-          why: v('why'), why2: v('why2'), ext: v('ext'), contact: v('contact'), empmail: v('empmail'),
+          why: v('why'), why2: v('why2'), ext: v('ext'), contact: v('contact'), empmail: v('empmail'), tenure: v('tenure'), cpc: v('cpc'), say: v('say'), fulln: v('fulln'), e1: v('e1'), e2: v('e2'), e3: v('e3'), e4: v('e4'), e5: v('e5'), f1: v('f1'), f2: v('f2'),
           st: v('st'), ctry: v('ctry'), ph: v('ph'), co: v('co'),
           auth: ticked('auth'), elig: ticked('elig'),
         };
-      }, { b: base, profile: { ...PROFILE, address_state: 'MA', current_company: 'Acme' } }),
+      }, { b: base, profile: { ...PROFILE, address_state: 'MA', current_company: 'Acme', school: 'Northeastern University', location: 'Boston, MA' } }),
     );
 
     group('Words a pattern matches that are not asking for that field');
@@ -1488,6 +1502,17 @@ async function main() {
     check('"Can we contact your current employer?" is not given the employer', misread.contact === '', misread.contact);
     check('while "Current employer" still is', misread.co === 'Acme', misread.co);
     check('"Employer contact email" is not given the applicant\'s email', misread.empmail === '', misread.empmail);
+    check('"Years at current company" is not given the employer', misread.tenure === '', misread.tenure);
+    check('"Country phone code" is not given the whole number', misread.cpc === '', misread.cpc);
+    check('"Pronunciation of your name" is not given the name', misread.say === '', misread.say);
+    check('while "Full name" still is', misread.fulln === 'Jianwen Ding', misread.fulln);
+    check('an essay about "your current company" is not given the employer', misread.e1 === '', misread.e1);
+    check('"What did you study in school and why?" is not given the school', misread.e2 === '', misread.e2);
+    check('"experience with state management" is not given the state', misread.e3 === '', misread.e3);
+    check('"How did you first hear of us? (LinkedIn…)" is not given the profile URL', misread.e4 === '', misread.e4);
+    check('"Which location are you applying for?" is not given where the applicant lives', misread.e5 === '', misread.e5);
+    check('while a box labelled "LinkedIn profile" still gets it, multi-line or not', misread.f1 === 'linkedin.com/in/x', misread.f1);
+    check('and "Which university did you graduate from?" still gets the school', misread.f2 === 'Northeastern University', misread.f2);
 
     group('A declaration answered from a sentence');
     check(
