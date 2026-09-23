@@ -8,6 +8,7 @@
 import { getSettings } from '../shared/config.js';
 import {
   EXPECTATION_MS,
+  employerKey,
   judgeApplication,
   keepPages,
   plainlyAnotherRole,
@@ -368,7 +369,14 @@ const parkedAt = (record) => {
   return record?.work ? [{ work: record.work, save: record.save, at: record.at }] : [];
 };
 
-const companyOf = (job) => (job?.company ?? '').trim().toLowerCase();
+/*
+ * By the same key the trail joins pages on — see `employerKey`. Compared
+ * exactly, a park named after the form's "Helios" was another employer's to
+ * the posting's "Helios, Inc.", and coming back to the job refused its own
+ * letter: measured, `takeWork` answered `{work: null}` with the park still
+ * sitting at the address.
+ */
+const companyOf = (job) => employerKey(job?.company);
 
 /**
  * Two applications that are plainly not each other.

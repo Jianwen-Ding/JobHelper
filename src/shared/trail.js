@@ -454,7 +454,7 @@ export function plainlyAnotherRole(a, b) {
 const LEGAL_FORM =
   /[\s,]+(inc|incorporated|llc|l\.l\.c|ltd|limited|corp|corporation|co|plc|gmbh|ag|sa|nv|bv|pty|oy|ab|lp|llp)\.?$/;
 
-function employerKey(name) {
+export function employerKey(name) {
   let n = String(name ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
   for (;;) {
     const next = n.replace(LEGAL_FORM, '').trim();

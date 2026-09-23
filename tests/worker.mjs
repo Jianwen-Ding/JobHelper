@@ -446,6 +446,56 @@ async function main() {
     }
 
     /*
+     * One employer written two ways is still one job to put writing back into.
+     *
+     * A park is named after the application's last page, and a posting's
+     * JSON-LD carries the legal name where the form says the short one. The
+     * names were compared exactly, so coming back to the posting as "Helios,
+     * Inc." read the park named "Helios" as another employer's and refused
+     * it: the letter stayed parked and the card came up empty on the job it
+     * was written for.
+     */
+    group('Coming back to a job whose employer is written another way');
+    {
+      const WHERE = 'http://careers.helios.example/jobs/platform-engineer';
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      await driver.evaluate(
+        ([key]) =>
+          chrome.storage.session.set({
+            [key]: {
+              parked: [{ work: { letter: 'FOR-HELIOS-AGAIN' }, save: 'work', job: { role: 'Platform Engineer', company: 'Helios' }, tab: 987654, at: Date.now() }],
+              at: Date.now(),
+            },
+          }),
+        [`jh-orphan:${WHERE}`],
+      );
+      store.role = 'Platform Engineer';
+      // What the analysis reads off the posting, whatever the page sent.
+      store.company = 'Helios, Inc.';
+      await ask(driver, 'analyze', { url: WHERE, title: 'Platform Engineer', html: '<p>posting</p>', company: 'Helios, Inc.' });
+      const got = await ask(driver, 'takeWork', { page: { url: WHERE, title: 'Platform Engineer' } });
+      check('its letter comes back', got.reply?.data?.work?.letter === 'FOR-HELIOS-AGAIN', JSON.stringify(got.reply?.data));
+
+      // And another employer's is still refused, however it is written.
+      await ask(driver, 'clearTrail', {});
+      await driver.evaluate(
+        ([key]) =>
+          chrome.storage.session.set({
+            [key]: {
+              parked: [{ work: { letter: 'FOR-ALTAIR' }, save: 'work', job: { role: 'Platform Engineer', company: 'Altair' }, tab: 987654, at: Date.now() }],
+              at: Date.now(),
+            },
+          }),
+        [`jh-orphan:${WHERE}`],
+      );
+      await ask(driver, 'analyze', { url: WHERE, title: 'Platform Engineer', html: '<p>posting</p>', company: 'Helios, Inc.' });
+      const other = await ask(driver, 'takeWork', { page: { url: WHERE, title: 'Platform Engineer' } });
+      store.company = undefined;
+      check('while another employer’s is not', other.reply?.data?.work?.letter !== 'FOR-ALTAIR', JSON.stringify(other.reply?.data));
+    }
+
+    /*
      * A rescue is not a rescue until the writing is somewhere other than a
      * message.
      *
