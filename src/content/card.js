@@ -6218,5 +6218,28 @@ export function createCard({
       state.errorFix = fix;
       draw();
     },
+
+    /*
+     * Put the card back if the page took it off.
+     *
+     * The host is a child of `<html>`, and a page that re-renders its whole
+     * root — a framework whose hydration gives up and client-renders the
+     * document, anything calling `replaceChildren` on it — takes the host
+     * with it. Everything the card holds is still here, in this closure; it
+     * is only the element that has gone. So it is the same element that goes
+     * back, letter and answers and all, rather than a fresh card built from
+     * nothing. Leaving it off was measured in tests/worker.mjs: the content
+     * script still held this handle, so nothing ever built another, and the
+     * toolbar button returned the detached card and showed nothing.
+     *
+     * Only for a card the page removed. The × and Done go through
+     * `closeCard`, whose `onClose` drops the handle, so nothing calls this on
+     * a card somebody put away.
+     */
+    putBack() {
+      if (host.isConnected || document.getElementById(HOST_ID) || !document.documentElement) return false;
+      document.documentElement.append(host);
+      return true;
+    },
   };
 }

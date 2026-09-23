@@ -1514,6 +1514,61 @@ async function main() {
       check('the page did replace its root', seen.title === 'Platform Engineer at Helios', JSON.stringify(seen));
       check('and the posting it became gets its card', seen.card === true, JSON.stringify(seen));
     }
+
+    /*
+     * A page that throws the card out, and the card that should come back.
+     *
+     * The card's host is a child of `<html>`, and a page that re-renders its
+     * whole root — a framework whose hydration gives up and client-renders
+     * the document, anything calling `replaceChildren` on it — takes the host
+     * with it. The content script still held the handle, so every route back
+     * short-circuited on a card that was no longer in the document: the tick
+     * saw a card and stayed quiet, and the toolbar button's `putUpCard`
+     * returned the detached handle and put up nothing. The letter and the
+     * answers were still in it, on no screen at all.
+     */
+    group('A card the page throws out comes back, as it was');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1><p>Helios is hiring a Platform Engineer. Responsibilities: build the
+          platform. Requirements: Kubernetes, Go. Apply now to join our team.</p>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/jobs/platform-engineer`;
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+
+      const page = await context.newPage();
+      let seen = {};
+      try {
+        await page.goto(where);
+        await page.locator('#jobhelper-card-host .card').waitFor({ timeout: 15_000 });
+        // Marked in the page's world, so the one that comes back can be told
+        // from a fresh card built to replace it.
+        seen.thrownOut = await page.evaluate(() => {
+          const host = document.querySelector('#jobhelper-card-host');
+          host.__before = true;
+          document.documentElement.replaceChildren(document.head, document.body);
+          return !host.isConnected;
+        });
+        await page.waitForTimeout(2500);
+        seen.after = await page.evaluate(() => {
+          const host = document.querySelector('#jobhelper-card-host');
+          return { back: Boolean(host), same: host?.__before === true };
+        });
+      } finally {
+        await page.close();
+        site.close();
+        await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: false }));
+      }
+
+      check('the page really did throw the card out', seen.thrownOut === true, JSON.stringify(seen));
+      check('and it is back on the page', seen.after?.back === true, JSON.stringify(seen));
+      check('the same card, with whatever was in it', seen.after?.same === true, JSON.stringify(seen));
+    }
   } finally {
     await context.close();
     store.close();

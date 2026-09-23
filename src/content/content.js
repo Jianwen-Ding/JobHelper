@@ -1594,7 +1594,11 @@
       // chip asking it is over — including the one this very call may have
       // left behind on a page that has since declared itself.
       removeAsk();
-      if (cardHandle) return cardHandle;
+      if (cardHandle) {
+        // The page may have thrown it out; see `putBack` in card.js.
+        cardHandle.putBack?.();
+        return cardHandle;
+      }
       cardHandle = createCard({
         analysis: null,
         resumes: [],
@@ -2632,6 +2636,14 @@
       readAs = null;
       return startOver();
     }
+
+    /*
+     * A card the page took off, put back — before anything below reads
+     * `cardHandle` as "the card is up". See `putBack` in card.js: a page that
+     * re-renders its root throws the host out with it, and the handle kept
+     * every route back closed for the life of the page.
+     */
+    if (cardHandle && !dismissed) cardHandle.putBack?.();
 
     // The board that swaps the job and changes nothing else. See `readAs`.
     if (
