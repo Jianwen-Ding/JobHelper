@@ -657,6 +657,26 @@ const CURRENT = `<!doctype html><html><head><meta charset="utf-8"><title>Apply �
     <label for="hti">Title</label><input id="hti" name="experience[0][title]">
   </fieldset>
   <label for="cl">Current location</label><input id="cl" name="current_location">
+  <!--
+    "Name" after the company, which is how Greenhouse's custom questions and
+    plenty of hand-built forms put it — and which the employment-history
+    exclusion read as a past employer's name. The history rows below it must
+    still read that way.
+  -->
+  <label for="ccn">Current Company Name</label><input id="ccn" name="q_1001">
+  <label for="cen">Current employer's name</label><input id="cen" name="q_1002">
+  <label for="mren">Most recent employer name</label><input id="mren" name="q_1003">
+  <label for="pcn">Present company name</label><input id="pcn" name="q_1004">
+  <fieldset><legend>Employment history</legend>
+    <label for="hcn">Company Name</label><input id="hcn" name="q_2001">
+    <label for="hen">Employer name</label><input id="hen" name="q_2002">
+    <label for="hcc">Current company name</label><input id="hcc" name="q_2008">
+  </fieldset>
+  <label for="bcn">Company name</label><input id="bcn" name="q_2003">
+  <label for="prn">Previous company name</label><input id="prn" name="q_2004">
+  <label for="ncn">Not your current company name, the one before it</label><input id="ncn" name="q_2005">
+  <label for="cca">Current company address</label><input id="cca" name="q_2006">
+  <label for="ccl">Current employer location</label><input id="ccl" name="q_2007">
 </form></body></html>`;
 
 /*
@@ -1923,7 +1943,11 @@ async function main() {
       page.evaluate(async ({ b }) => {
         const m = await import(`${b}/autofill.js`);
         m.fillForm({ current_company: 'Helios', current_title: 'Software Engineer Intern', location: 'Boston, MA' });
-        return Object.fromEntries(['cc', 'ct', 'mre', 'hco', 'hti', 'cl'].map((id) => [id, document.getElementById(id).value]));
+        return Object.fromEntries(
+          ['cc', 'ct', 'mre', 'hco', 'hti', 'cl', 'ccn', 'cen', 'mren', 'pcn', 'hcn', 'hen', 'hcc', 'bcn', 'prn', 'ncn', 'cca', 'ccl'].map(
+            (id) => [id, document.getElementById(id).value],
+          ),
+        );
       }, { b: base }),
     );
     const widgetKeys = await page.goto(`${base}/widget-keys`, { waitUntil: 'domcontentloaded' }).then(() =>
@@ -2253,6 +2277,31 @@ async function main() {
       `company "${current.hco}", title "${current.hti}"`,
     );
     check('"Current location" is still an address', current.cl === 'Boston, MA', `"${current.cl}"`);
+    /*
+     * "Company name" is the employment-history exclusion's to keep — a past
+     * employer's, one row per job — unless "current", "present" or "most
+     * recent" sits directly in front of it, in which case it is this question
+     * with "name" on the end.
+     */
+    check('"Current Company Name"', current.ccn === 'Helios', `"${current.ccn}"`);
+    check('"Current employer\'s name"', current.cen === 'Helios', `"${current.cen}"`);
+    check('"Most recent employer name"', current.mren === 'Helios', `"${current.mren}"`);
+    check('"Present company name"', current.pcn === 'Helios', `"${current.pcn}"`);
+    check(
+      'a "Company Name" row under Employment history is still a past employer\'s',
+      current.hcn === '' && current.hen === '' && current.hcc === '',
+      `company "${current.hcn}", employer "${current.hen}", "current" "${current.hcc}"`,
+    );
+    check(
+      'and so is a bare, previous or "not current" one',
+      current.bcn === '' && current.prn === '' && current.ncn === '',
+      JSON.stringify([current.bcn, current.prn, current.ncn]),
+    );
+    check(
+      'the current employer\'s address and location are still not the applicant\'s',
+      current.cca === '' && current.ccl === '',
+      JSON.stringify([current.cca, current.ccl]),
+    );
 
     group('When the degree ends, however the form asks');
     check('a month list that abbreviates', graduation.values.gm === '12', `value "${graduation.values.gm}"`);

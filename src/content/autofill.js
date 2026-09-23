@@ -170,7 +170,25 @@ const NOT_ABOUT_YOU = [
    * Its website too: "Company website" is on the same line of the same
    * section, and `website` gave it the applicant's own site.
    */
-  /\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+(name|address|location|city|town|state|province|country|phone|telephone|email|zip|postal|web[\s_-]?site|url)\b/i,
+  /*
+   * Its name as well, except where the question opens by saying it is the
+   * current one. "Current Company Name" is how Greenhouse's custom questions
+   * and plenty of hand-built forms ask `current_company`, and "company name"
+   * inside it made it a past employer's: left blank, where "Current company"
+   * two lines up on another form was filled. Measured: "Current Company
+   * Name", "Current employer's name", "Most recent employer name" and
+   * "Present company name" all came out empty.
+   *
+   * Only at the very start, not merely with "current" in front. "Not your
+   * current company name, the one before it" has "current" directly in front
+   * too, and asks for somebody else's; a legend such as "Employment history"
+   * comes first in what this is tested against, so a row under one stays a
+   * past job's; and a name attribute like `companyName` is another "company
+   * name" further on, which still excludes. Every doubt leaves it blank. The
+   * rest of the list — the employer's address, location, phone — is
+   * somebody else's however current they are.
+   */
+  /\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+(address|location|city|town|state|province|country|phone|telephone|email|zip|postal|web[\s_-]?site|url)\b|(?<!^[\W_]*(?:current|present|most[\s_-]*recent)[\s_-]+)\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+name\b/i,
   /*
    * And the school's, which the education sections of the older systems ask
    * for the same way. `school` sits above every address pattern, so "School
