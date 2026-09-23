@@ -574,6 +574,14 @@ async function writeTrail(tabId, trail) {
  * Saying, anywhere you go, that an application is open                 *
  * ------------------------------------------------------------------ */
 
+/** Named for the tab, so a later write moves it rather than adding another. See `markTab`. */
+const expiryAlarm = (tabId) => `jh-trail-expires:${tabId}`;
+
+chrome.alarms?.onAlarm?.addListener(({ name }) => {
+  const tabId = /^jh-trail-expires:(\d+)$/.exec(name)?.[1];
+  if (tabId !== undefined) markTab(Number(tabId)).catch(() => undefined);
+});
+
 /**
  * Mark the tab that is holding an application.
  *
@@ -597,10 +605,25 @@ async function markTab(tabId, trail) {
     const held = trail ?? (await readTrail(tabId));
     const pages = held.pages ?? [];
     if (pages.length === 0) {
+      chrome.alarms?.clear(expiryAlarm(tabId)).catch(() => undefined);
       await chrome.action.setBadgeText({ tabId, text: '' });
       await chrome.action.setTitle({ tabId, title: 'JobHelper' });
       return;
     }
+    /*
+     * And drawn again the moment it stops being true.
+     *
+     * The trail is current for `TRAIL_STALE_MS` from its last write, and this
+     * was only ever redrawn by a write or a navigation. A tab left on the
+     * company's About page for an afternoon went on saying "your writing is
+     * being held" hours after `readTrail` had started answering with nothing
+     * — the letter out of reach of every page and every button, and the
+     * tooltip promising the opposite. An alarm, because the worker is not
+     * awake two hours later to notice and a timer would die with it.
+     */
+    chrome.alarms
+      ?.create(expiryAlarm(tabId), { when: (held.at ?? Date.now()) + TRAIL_STALE_MS + 1 })
+      .catch(() => undefined);
 
     // The company if it is known, and the last page's title if it is not: on a
     // form that never names the employer, "the application you are on" is

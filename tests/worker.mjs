@@ -2072,6 +2072,47 @@ async function main() {
       check('the tooltip says the application is held', /1 page read/.test(title), title);
       check('without claiming the resume was tailored', !/tailored/i.test(title), title);
     }
+
+    /*
+     * And what it says once the trail has gone stale with nothing happening.
+     *
+     * A trail is current for two hours from its last write, and after that
+     * `readTrail` answers with nothing: the letter cannot be carried to
+     * another page or put back. The badge was only ever redrawn by a write or
+     * a navigation, so a tab left on the company's About page over lunch went
+     * on saying "your writing is being held" about writing nothing could
+     * reach. The two hours are made to have passed by writing the letter with
+     * the worker's clock set back to three seconds short of them.
+     */
+    group('The toolbar stops saying the writing is held when it is not');
+    {
+      await ask(driver, 'clearTrail', {});
+      await ask(driver, 'analyze', { url: 'http://expiry.example/jobs/1', title: 'Helios', html: '<p>one</p>', company: 'Helios' });
+      const sw = context.serviceWorkers()[0] ?? worker;
+      await sw.evaluate(() => {
+        globalThis.__jhRealNow = Date.now;
+        Date.now = () => globalThis.__jhRealNow() - (2 * 60 * 60 * 1000 - 3000);
+      });
+      try {
+        await ask(driver, 'saveWork', { work: { letter: 'Dear Helios, I would like to build your platform.' } });
+      } finally {
+        await sw.evaluate(() => {
+          if (globalThis.__jhRealNow) Date.now = globalThis.__jhRealNow;
+        }).catch(() => undefined);
+      }
+      const titleNow = () =>
+        driver.evaluate(async () => chrome.action.getTitle({ tabId: (await chrome.tabs.getCurrent()).id }));
+      const before = await titleNow();
+      check('while the trail is current it says the writing is held', /writing is being held/.test(before), before);
+      let after = before;
+      for (let i = 0; i < 40 && /writing is being held/.test(after); i++) {
+        await driver.waitForTimeout(250);
+        after = await titleNow();
+      }
+      const held = await ask(driver, 'getTrail', {});
+      check('the trail really is out of reach by now', (held.reply?.data?.pages ?? []).length === 0, JSON.stringify(held.reply?.data));
+      check('and the tooltip no longer says the writing is held', !/writing is being held/.test(after), after);
+    }
   } finally {
     await context.close();
     store.close();
