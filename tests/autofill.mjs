@@ -1162,6 +1162,9 @@ const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Ap
   <!-- "Degree" the measure. -->
   <label for="degprof">Degree of proficiency in Spanish</label><input id="degprof" name="q_d1">
   <label for="degfam">To what degree are you familiar with SQL?</label><input id="degfam" name="q_d2">
+  <label for="degfield">Field of degree</label><input id="degfield" name="q_d5">
+  <label for="degfield2">Degree field</label><input id="degfield2" name="q_d6">
+  <label for="degsubj">Subject of degree</label><input id="degsubj" name="q_d7">
   <label for="own-degree">Degree</label><input id="own-degree" name="q_d3">
   <label for="deg-pursue">What degree are you pursuing?</label><input id="deg-pursue" name="q_d4">
 
@@ -1822,6 +1825,16 @@ async function main() {
     group('"Degree" the measure, which is not the qualification');
     check('"Degree of proficiency in Spanish" is not given the degree', more.degprof === '', more.degprof);
     check('nor "To what degree are you familiar with SQL?"', more.degfam === '', more.degfam);
+    /*
+     * And the subject of the degree is the major. "Field of degree", "Degree
+     * field" and "Subject of degree" were given "Bachelor of Science" in a
+     * box asking what it was in.
+     */
+    check(
+      '"Field of degree", "Degree field" and "Subject of degree" get the major, not the degree',
+      more.degfield === 'Computer Science' && more.degfield2 === 'Computer Science' && more.degsubj === 'Computer Science',
+      `${more.degfield} / ${more.degfield2} / ${more.degsubj}`,
+    );
     check(
       'while "Degree" and "What degree are you pursuing?" still get it',
       more['own-degree'] === 'Bachelor of Science' && more['deg-pursue'] === 'Bachelor of Science',

@@ -60,7 +60,15 @@ const FIELD_PATTERNS = [
    * `school` first they were filled with its name.
    */
   ['gpa', /\bgpa\b/i],
-  ['major', /\b(major|discipline|field[\s_-]?of[\s_-]?study|(course|area)[\s_-]?of[\s_-]?study)\b/i],
+  /*
+   * What the degree is in, however it is put: "Field of degree", "Degree
+   * field" and "Subject of degree" fell through to `degree` and were given
+   * "Bachelor of Science" in a box asking for the subject.
+   */
+  [
+    'major',
+    /\b(major|discipline|field[\s_-]?of[\s_-]?study|(course|area)[\s_-]?of[\s_-]?study|(field|subject)[\s_-]+of[\s_-]+(your[\s_-]+)?degree|degree[\s_-]+(field|subject))\b/i,
+  ],
   ['school', /\b(school|university|college|institution|institute)\b/i],
   ['degree', /\b(degree)\b/i],
   /*
