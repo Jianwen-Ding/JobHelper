@@ -302,7 +302,39 @@ const TWO_ZONES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply
 const ACCEPT_UNDOTTED = page(`<label for="rs">Resume</label><input id="rs" type="file" accept="pdf,doc,docx">`);
 const ACCEPT_UNDOTTED_DOC = page(`<label for="rs">Resume</label><input id="rs" type="file" accept="doc,docx">`);
 
+/**
+ * Two widgets that clear the box and name the file in doing so — to refuse
+ * it. The first says why in an alert beside the box; the second is Dropzone's
+ * own preview, drawn with the name and marked `dz-error`. The name appearing
+ * near the box is what `KEEPS_AS_CHIP` is read by, and here it means no.
+ */
+const REFUSES_BY_NAME = page(`
+  <div class="file-upload"><label for="rs">Resume</label><input id="rs" type="file"><div class="messages"></div></div>
+  <script>
+    document.getElementById('rs').addEventListener('change', (e) => {
+      const f = e.target.files[0];
+      e.target.value = '';
+      if (f) document.querySelector('.messages').innerHTML =
+        '<p class="error" role="alert">' + f.name + ' is larger than the 1 MB limit.</p>';
+    });
+  </script>
+`);
+const REFUSES_IN_PREVIEW = page(`
+  <div class="dropzone"><label for="rs">Resume</label><input id="rs" type="file"><div class="previews"></div></div>
+  <script>
+    document.getElementById('rs').addEventListener('change', (e) => {
+      const f = e.target.files[0];
+      e.target.value = '';
+      if (f) document.querySelector('.previews').innerHTML =
+        '<div class="dz-preview dz-file-preview dz-error"><div class="dz-filename"><span data-dz-name>' + f.name +
+        '</span></div><div class="dz-error-message"><span data-dz-errormessage>You can not upload files of this type.</span></div></div>';
+    });
+  </script>
+`);
+
 const PAGES = {
+  '/refuses-by-name': REFUSES_BY_NAME,
+  '/refuses-in-preview': REFUSES_IN_PREVIEW,
   '/two-zones': TWO_ZONES,
   '/accept-undotted': ACCEPT_UNDOTTED,
   '/accept-undotted-doc': ACCEPT_UNDOTTED_DOC,
@@ -855,6 +887,28 @@ async function main() {
         'is reported as attached, through the box, because it was',
         report.placed.length === 1 && report.placed[0].sure !== false,
         JSON.stringify(report.placed),
+      );
+    }
+
+    /*
+     * A widget that takes the file back and says so with its name in the
+     * sentence: "Jianwen-Ding-Resume.pdf is larger than the 1 MB limit", or
+     * Dropzone's preview drawn in its error state. The name near the box was
+     * read as the chip `KEEPS_AS_CHIP` shows, and the card said "Attached"
+     * over an empty box and a red message.
+     */
+    group('A widget that names the file it is refusing');
+    for (const where of ['/refuses-by-name', '/refuses-in-preview']) {
+      const { report, inBoxes } = await run(where, [filed('Jianwen-Ding-Resume.pdf')]);
+      check(
+        `${where}: not reported as attached`,
+        report.placed.length === 0 && (inBoxes.rs ?? []).length === 0,
+        JSON.stringify(report),
+      );
+      check(
+        `${where}: and said to have been taken back`,
+        report.unplaced[0]?.why === 'this form took it and then would not keep it',
+        JSON.stringify(report.unplaced),
       );
     }
 

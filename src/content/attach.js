@@ -434,8 +434,18 @@ function putIn(box, file, { alongside = false, ours } = {}) {
    * straight after so the same file can be chosen again — and then show it
    * as a chip with its name. An empty input there means kept, not refused;
    * the name appearing where the box was is the widget saying so.
+   *
+   * Unless it is saying no. A widget that refuses a file clears the box too,
+   * and names the file while it explains: "Jianwen-Ding-Resume.pdf is larger
+   * than the 1 MB limit", or Dropzone's preview drawn with the name and
+   * marked `dz-error`. Read as a chip, that was "Attached" over an empty box
+   * and a red message. A name inside something marked as an error or an
+   * alert is a refusal.
    */
-  return Boolean(home?.isConnected && (home.textContent ?? '').includes(file.name));
+  if (!home?.isConnected) return false;
+  const refusing = home.querySelectorAll('[role="alert"], [class*="error" i], [class*="invalid" i]');
+  if ([...refusing].some((el) => (el.textContent ?? '').includes(file.name))) return false;
+  return (home.textContent ?? '').includes(file.name);
 }
 
 /**
@@ -693,7 +703,9 @@ export async function attachFiles(files) {
      * With no box, still only a zone that names no other kind — see
      * `zoneSays`.
      */
-    const zones = dropZones();
+    // Not the one around a box that has just refused this file: it has had
+    // its say, and a drop there came back as "not sure" about a known no.
+    const zones = dropZones().filter((z) => !(rejectedBy && z.contains(rejectedBy)));
     const zone =
       zones.find((z) => WANTS[kind]?.test(zoneSays(z, zones))) ??
       (boxes.length === 0 ? zones.find((z) => kindOf(zoneSays(z, zones)) === 'other') : undefined);
