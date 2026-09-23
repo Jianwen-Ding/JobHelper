@@ -294,8 +294,18 @@ const TWO_ZONES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply
   </script>
 </div></body></html>`;
 
+/**
+ * `accept` written without the dots, which the specification does not allow
+ * and plenty of forms do: the browser ignores a token it cannot read, and the
+ * person who wrote "pdf,doc,docx" plainly meant a PDF was fine.
+ */
+const ACCEPT_UNDOTTED = page(`<label for="rs">Resume</label><input id="rs" type="file" accept="pdf,doc,docx">`);
+const ACCEPT_UNDOTTED_DOC = page(`<label for="rs">Resume</label><input id="rs" type="file" accept="doc,docx">`);
+
 const PAGES = {
   '/two-zones': TWO_ZONES,
+  '/accept-undotted': ACCEPT_UNDOTTED,
+  '/accept-undotted-doc': ACCEPT_UNDOTTED_DOC,
   '/resume-only-labelled': RESUME_ONLY_LABELLED,
   '/photo-and-zone': PHOTO_AND_ZONE,
   '/decoy': DECOY,
@@ -707,6 +717,20 @@ async function main() {
         /\.doc/.test(report.unplaced[0]?.why ?? ''),
         report.unplaced[0]?.why ?? '',
       );
+    }
+
+    /*
+     * `accept="pdf,doc,docx"`. Each token was read as a MIME type, none is
+     * one, and the PDF was refused with "this form only takes pdf,doc,docx
+     * there" — a sentence that contradicts itself, over a box that would
+     * have taken the file from the dialog.
+     */
+    group('A box that says what it takes without the dots');
+    {
+      const { report, inBoxes } = await run('/accept-undotted', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('a PDF goes into a box that says "pdf"', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(report));
+      const doc = await run('/accept-undotted-doc', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('and still not into one that says only "doc,docx"', (doc.inBoxes.rs ?? []).length === 0, JSON.stringify(doc.report));
     }
 
     /*

@@ -281,6 +281,14 @@ function willTake(input, file) {
       if (want === '*/*') return true;
       if (want.startsWith('.')) return name.endsWith(want);
       if (want.endsWith('/*')) return type.startsWith(want.slice(0, -1));
+      /*
+       * "pdf,doc,docx": an extension without its dot. Not what the
+       * specification allows, and the browser's own dialog ignores such a
+       * token — so read as a MIME type it refused a PDF from a box that
+       * would have taken one, with "this form only takes pdf,doc,docx
+       * there". Read as what it plainly means instead.
+       */
+      if (!want.includes('/')) return name.endsWith(`.${want}`);
       return type === want;
     });
 }
