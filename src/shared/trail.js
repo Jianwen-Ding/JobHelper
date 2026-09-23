@@ -744,10 +744,38 @@ const SHOWN_CHOICE = [
 ].join(', ');
 const REPEATS_CHOICE = ['title', 'aria-label', 'data-value', 'value'];
 
+/*
+ * And which option in a list is the pick.
+ *
+ * `aria-selected` was never the only mark. Each library puts state of its own
+ * on the chosen option, and in the list the options are the question, so the
+ * pick is plain to anyone comparing one option with the next. Choices.js keeps
+ * its dropdown in the page whether it is open or not, with `is-selected` and
+ * `is-highlighted` on the answer and the search box's `aria-activedescendant`
+ * naming it by id; react-select (`__option--is-selected`), MUI
+ * (`Mui-selected`), Headless UI (`data-headlessui-state="… selected"`,
+ * `data-selected`), Radix (`data-state="checked"`) and select2
+ * (`select2-results__option--selected`) mark it while the menu is open, which
+ * is when the page is read if the applicant is in the middle of choosing.
+ * Measured in Chromium by reopening each menu after a pick. The focus and
+ * highlight marks go too, because a menu reopens with them on the pick, and
+ * so does an emotion `css-…` class: react-select styles the pick differently,
+ * so its generated class name is a different hash from its neighbours'. Only
+ * on `role="option"`, so nothing but a list's options is touched.
+ */
+const OPTION_STATE_ATTRS = ['data-state', 'data-selected', 'data-headlessui-state', 'data-active', 'data-focus', 'data-highlighted'];
+const OPTION_STATE_CLASS = /selected|highlighted|focused|focusvisible|^css-/i;
+
 function scrubCopy(root) {
   for (const el of root.querySelectorAll(SHOWN_CHOICE)) {
     el.textContent = '';
     for (const name of REPEATS_CHOICE) el.removeAttribute(name);
+  }
+  for (const el of root.querySelectorAll('[role="option"], [aria-activedescendant]')) {
+    el.removeAttribute('aria-activedescendant');
+    if (el.getAttribute('role') !== 'option') continue;
+    for (const name of OPTION_STATE_ATTRS) el.removeAttribute(name);
+    for (const token of [...el.classList]) if (OPTION_STATE_CLASS.test(token)) el.classList.remove(token);
   }
   for (const el of root.querySelectorAll(ANSWERS)) {
     if (el.localName === 'input') {

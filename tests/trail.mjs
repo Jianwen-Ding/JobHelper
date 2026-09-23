@@ -1325,4 +1325,81 @@ describe('the page as sent does not say which option a widget shows as chosen', 
       await browser.close();
     }
   });
+
+  /*
+   * Nor which option in a list is the chosen one. The options are the
+   * question and stay; what goes is the state each library puts on the pick.
+   * Choices.js keeps its dropdown in the page closed or open, with
+   * `is-selected` on the answer and the search box's `aria-activedescendant`
+   * naming it; the others mark it while the menu is open, which is when the
+   * page is read if the applicant is mid-choice. Each list below is what the
+   * library rendered in Chromium on reopening a menu after a pick.
+   */
+  it('drops the marks each library puts on the chosen option in a list', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><title>Apply</title></head><body>
+        <label for="ch">Gender</label>
+        <div class="choices" data-type="select-one" tabindex="0" role="combobox" aria-haspopup="true" aria-expanded="false">
+          <div class="choices__list choices__list--dropdown" aria-expanded="false">
+            <input type="search" class="choices__input choices__input--cloned" aria-label="Select" aria-activedescendant="choices--ch-item-choice-2">
+            <div class="choices__list" role="listbox">
+              <div id="choices--ch-item-choice-2" class="choices__item choices__item--choice is-selected choices__item--selectable is-highlighted" role="option" data-choice="" data-id="2" data-value="Female" data-select-text="Press to select" data-choice-selectable="" aria-selected="true">Female</div>
+              <div id="choices--ch-item-choice-3" class="choices__item choices__item--choice choices__item--selectable" role="option" data-choice="" data-id="3" data-value="Male" data-select-text="Press to select" data-choice-selectable="" aria-selected="false">Male</div>
+            </div>
+          </div>
+        </div>
+        <div role="listbox">
+          <div class="select__option select__option--is-focused select__option--is-selected css-tr4s17-option" aria-disabled="false" id="react-select-2-option-0" tabindex="-1" role="option" aria-selected="true">Asian</div>
+          <div class="select__option css-10wo9uf-option" aria-disabled="false" id="react-select-2-option-1" tabindex="-1" role="option" aria-selected="false">White</div>
+        </div>
+        <ul role="listbox">
+          <li class="MuiButtonBase-root MuiMenuItem-root MuiMenuItem-gutters Mui-selected Mui-focusVisible MuiMenuItem-root MuiMenuItem-gutters Mui-selected css-1km1ehz" tabindex="0" role="option" aria-selected="true" data-value="pv">I am a protected veteran</li>
+          <li class="MuiButtonBase-root MuiMenuItem-root MuiMenuItem-gutters MuiMenuItem-root MuiMenuItem-gutters css-1km1ehz" tabindex="-1" role="option" aria-selected="false" data-value="nv">I am not a protected veteran</li>
+        </ul>
+        <div role="listbox">
+          <div id="headlessui-listbox-option-:rh:" role="option" tabindex="-1" aria-selected="true" data-headlessui-state="active focus selected" data-selected="" data-active="" data-focus="">Yes, I have a disability</div>
+          <div id="headlessui-listbox-option-:ri:" role="option" tabindex="-1" aria-selected="false" data-headlessui-state="">No, I do not</div>
+        </div>
+        <div role="listbox">
+          <div role="option" aria-labelledby="radix-:rn:" aria-selected="false" data-state="unchecked" tabindex="-1" data-radix-collection-item=""><span id="radix-:rn:">Yes, Hispanic or Latino</span></div>
+          <div role="option" aria-labelledby="radix-:ro:" aria-selected="true" data-state="checked" tabindex="-1" data-radix-collection-item="" data-highlighted=""><span id="radix-:ro:">No, not Hispanic or Latino</span></div>
+        </div>
+        <ul role="listbox">
+          <li class="select2-results__option select2-results__option--selectable select2-results__option--selected select2-results__option--highlighted" id="select2-s2-result-jni4-pv" role="option" aria-selected="true">Male</li>
+          <li class="select2-results__option select2-results__option--selectable" id="select2-s2-result-8wyp-nv" role="option" aria-selected="false">Female</li>
+        </ul></body></html>`);
+      const out = await page.evaluate(async (js) => {
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        const html = mod.trimForStorage(mod.pageHtml(document));
+        const sent = new DOMParser().parseFromString(html, 'text/html');
+        // Everything an option says about itself except which one it is.
+        const shape = (o) =>
+          [...o.attributes]
+            .filter((a) => !['id', 'data-id', 'data-value', 'aria-labelledby', 'tabindex'].includes(a.name))
+            .map((a) => `${a.name}=${a.value}`)
+            .sort()
+            .join(' ');
+        return {
+          html,
+          lists: [...sent.querySelectorAll('[role="listbox"]')].map((list) =>
+            [...list.querySelectorAll('[role="option"]')].map((o) => ({ text: o.textContent.trim(), shape: shape(o) })),
+          ),
+        };
+      }, source);
+      assert.ok(!/aria-activedescendant/.test(out.html), 'the search box still names the chosen option');
+      assert.equal(out.lists.length, 6);
+      for (const [first, second] of out.lists) {
+        assert.ok(first.text && second.text, 'the options themselves are kept');
+        assert.equal(first.shape, second.shape, `"${first.text}" is still marked apart from "${second.text}"`);
+      }
+    } finally {
+      await browser.close();
+    }
+  });
 });
