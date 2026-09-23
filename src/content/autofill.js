@@ -3217,6 +3217,23 @@ export function findQuestions() {
     if (field.getClientRects().length === 0) continue;
 
     /*
+     * Nor an editor's own workings, put where nobody can reach them.
+     *
+     * Quill 1 keeps a second contenteditable beside every editor, 100000px
+     * off the left of the page, to catch pastes in. It has no label, so the
+     * positional fallback read the editor beside it as its question — which
+     * is whatever the person has typed so far. Measured against the real
+     * Quill 1.3.7 with the extension loaded: type "I like the team here."
+     * into the page's editor and the card listed "I like the team here." as
+     * a question of its own, redrawn as the question watcher saw the page
+     * change. A box entirely left of or above the page cannot be typed in.
+     */
+    if (!(field instanceof HTMLTextAreaElement)) {
+      const at = field.getBoundingClientRect();
+      if (at.right + window.scrollX <= 0 || at.bottom + window.scrollY <= 0) continue;
+    }
+
+    /*
      * The cover letter box is not an essay question. It is long-form, it is
      * labelled, and it passes every test below — so it was being offered as a
      * question to draft an answer to, on the same card that already has a

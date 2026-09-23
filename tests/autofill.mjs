@@ -1550,7 +1550,26 @@ const EDITORS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</
 </script>
 </body></html>`;
 
-const PAGES = { '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
+/*
+ * Quill 1 as it draws itself, with its own stylesheet's rules for the two
+ * parts: the editor, and beside it the contenteditable it catches pastes in,
+ * put 100000px off the left of the page. Something already typed into the
+ * editor, which is the moment the question watcher reads the page again.
+ */
+const QUILL_ONE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title>
+<style>
+  .ql-container { position: relative; height: 100%; }
+  .ql-clipboard { left: -100000px; height: 1px; overflow-y: hidden; position: absolute; top: 50%; }
+</style></head><body>
+<form>
+  <label id="l-why">Why do you want to work at Acme?</label>
+  <div id="editor" class="ql-container ql-snow">
+    <div class="ql-editor" contenteditable="true" aria-labelledby="l-why"><p>I like the team and the mission.</p></div>
+    <div class="ql-clipboard" contenteditable="true" tabindex="-1"></div>
+  </div>
+</form></body></html>`;
+
+const PAGES = { '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -3726,6 +3745,24 @@ async function main() {
       'while a box whose label only counts characters still takes its answer',
       stepped.same === 'I led the migration.' && stepped.intoSame === true,
       JSON.stringify(stepped),
+    );
+
+    /*
+     * Quill 1's paste catcher is a second contenteditable with no label, so
+     * the positional fallback took the editor beside it — whatever the person
+     * had typed so far — as its question. Against the real Quill 1.3.7 with
+     * the extension loaded: type "I like the team here." into the page's
+     * editor and the card listed "I like the team here." as a new question,
+     * redrawn as the typing went on.
+     */
+    const quill = await page.goto(`${base}/quill-one`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => (await import(`${b}/autofill.js`)).findQuestions().map((q) => q.question), { b: base }),
+    );
+    group('A Quill 1 editor with something typed in it');
+    check(
+      'is one question, not that and what was typed',
+      JSON.stringify(quill) === JSON.stringify(['Why do you want to work at Acme?']),
+      JSON.stringify(quill),
     );
 
     /*
