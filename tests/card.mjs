@@ -3961,6 +3961,92 @@ async function main() {
     JSON.stringify(limits.all),
   );
 
+  console.log('\nAn AI-tailored resume carried to the next page');
+
+  /*
+   * The next page reads the posting again, but only by keyword, so the AI's
+   * resume arrived there with the match's rows and the match's verdict filed
+   * under the AI's button. Measured: the AI button lit and the AI's resume on
+   * screen, under "The AI returned nothing usable, so nothing was tailored"
+   * and a keyword row headed "Chosen by the AI", counted "0 of 1 change".
+   *
+   * Driven as the content script drives it: one card's `takeWork`, handed to
+   * the next card's `restoreWork` after that page's own reading has landed.
+   */
+  const carriedAi = await inPage(async (createCard) => {
+    const job = { title: 'Platform Engineer', company: 'Acme' };
+    const onAction = async (action) =>
+      action === 'aiStatus' ? { active: true, state: 'on' } : action === 'render' ? { pages: 1, fits: true } : {};
+    const first = createCard({
+      analysis: {
+        isJobPosting: true,
+        job,
+        spec: { id: 'job-acme', label: 'Acme', choices: { b_pipeline: 'v_streams' } },
+        baseLabel: 'New grad resume',
+        tailor: 'ai',
+        aiUsed: true,
+        rejected: [],
+        diff: [{ kind: 'changed', where: 'Acme Co.', from: 'Built a pipeline', to: 'Built a streaming pipeline' }],
+        rationale: [
+          { key: 'b_pipeline', from: 'v_base', to: 'v_streams', toText: 'Built a streaming pipeline', because: ['streaming'] },
+        ],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction,
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const work = JSON.parse(JSON.stringify(first.takeWork()));
+
+    // The form: its own opening read is the keyword match, over the same base.
+    const next = createCard({
+      analysis: null,
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction,
+    });
+    next.update({
+      isJobPosting: true,
+      job,
+      spec: { id: 'job-acme', label: 'Acme', choices: { b_pipeline: 'v_kafka' } },
+      baseLabel: 'New grad resume',
+      tailor: 'match',
+      aiUsed: false,
+      rejected: [],
+      diff: [{ kind: 'changed', where: 'Acme Co.', from: 'Built a pipeline', to: 'Built a Kafka pipeline' }],
+      rationale: [{ key: 'b_pipeline', from: 'v_base', to: 'v_kafka', toText: 'Built a Kafka pipeline', because: ['kafka'] }],
+    });
+    next.restoreWork(work);
+    await new Promise((r) => setTimeout(r, 50));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    root.querySelector('.fold-changes')?.click();
+    return {
+      hints: [...root.querySelectorAll('.hint')].map((n) => n.textContent).join(' | '),
+      rows: root.querySelector('.changes')?.textContent ?? '',
+      ticks: [...root.querySelectorAll('.pick input')].map((b) => b.checked),
+      count: root.querySelector('.diff-head .count')?.textContent ?? null,
+    };
+  });
+  check(
+    'the AI resume carried to the next page is not called untailored',
+    !/nothing usable|nothing was tailored/.test(carriedAi.hints),
+    carriedAi.hints.slice(0, 200),
+  );
+  check(
+    'and its rows are the AI’s, not the keyword match’s',
+    /streaming pipeline/.test(carriedAi.rows) && !/Kafka/.test(carriedAi.rows),
+    carriedAi.rows.slice(0, 200),
+  );
+  check(
+    'ticked, because they are what is in it',
+    JSON.stringify(carriedAi.ticks) === '[true]' && carriedAi.count === '1 change',
+    `${JSON.stringify(carriedAi.ticks)} ${carriedAi.count}`,
+  );
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);

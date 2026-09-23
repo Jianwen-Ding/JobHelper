@@ -880,6 +880,15 @@ export function createCard({
     return {
       spec: state.spec,
       builtWith: state.builtWith,
+      /*
+       * What the AI chose and why, for the page that cannot work it out.
+       *
+       * The next page reads the posting again, but only by keyword — it has
+       * no AI proposal of its own to draw the rows and the summary from. The
+       * match needs nothing carried; its own reading on that page is newer.
+       * See `restoreWork`.
+       */
+      proposal: state.builtWith === 'ai' ? proposalOf(analysis ?? {}) : null,
       render: state.render,
       actedOnForm: actedOnForm(),
       /*
@@ -986,14 +995,32 @@ export function createCard({
       state.spec = work.spec;
       if (work.builtWith) state.builtWith = work.builtWith;
       state.showing = slot;
+      /*
+       * And the AI's rows with the AI's resume.
+       *
+       * This page's own reading is the keyword match, so an AI decision
+       * carried here was filed under the match's proposal — its rows, its
+       * `tailor: 'match'`, its `aiUsed: false` — and `analysis` was never
+       * given even that. Measured, walking on from a page the AI had
+       * tailored: the AI's button lit and the AI's resume compiled, under
+       * "The AI returned nothing usable, so nothing was tailored" and a
+       * keyword row headed "Chosen by the AI", counted "0 of 1 change". The
+       * proposal now travels with the work — see `takeWork` — and is what
+       * the card reads from, exactly as it would have after `showOffer`.
+       */
+      const carriedProposal = slot === 'ai' ? (work.proposal ?? null) : null;
       state.offers[slot] = {
         // This page's own reading of the posting where there is one: it is
         // the newer answer about the same job, and the rows come from it.
-        analysis: filed?.analysis ?? proposalOf(analysis ?? {}),
+        analysis: filed?.analysis ?? carriedProposal ?? proposalOf(analysis ?? {}),
         spec: work.spec,
         full: filed?.full ?? work.spec,
         none: filed?.none ?? withAllOff(work.spec, analysis?.rationale, analysis?.skillChanges),
       };
+      if (analysis) {
+        for (const k of PROPOSAL_KEYS) delete analysis[k];
+        Object.assign(analysis, state.offers[slot].analysis);
+      }
     }
     if (work.render) state.render = work.render;
     if (work.staged) state.staged = work.staged;
