@@ -190,6 +190,13 @@ const NOT_ABOUT_YOU = [
   /\bhow[\s_-]+many\b|\byears[\s_-]+of\b/i,
   // How to say a name, which is not the name: "Pronunciation of your name".
   /\b(pronunc\w*|phonetic\w*)\b/i,
+  /*
+   * The password to a link, which is not the link. Design roles ask for a
+   * "Portfolio password" beside the portfolio URL, and as a plain text box —
+   * `isFillable` only refuses `type=password` — so `website` matched it and
+   * the URL was typed in as the password, where the reviewer would try it.
+   */
+  /\b(password|passcode|pass[\s_-]?phrase)\b/i,
   // Where you heard about the job, which is not a profile of yours.
   /\b(did[\s_-]you[\s_-](?:first[\s_-])?hear|hear[\s_-](?:about|of)[\s_-](us|this)|referral)\b/i,
   // Citizenship, birth and residence are different questions with the same

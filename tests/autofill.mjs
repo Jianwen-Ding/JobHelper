@@ -1086,7 +1086,12 @@ const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Ap
   <label for="count2">How many years of college have you completed?</label><input id="count2" name="q_c2">
   <label for="count3">Years of GitHub Actions experience</label><input id="count3" name="q_c3">
 
+  <!-- The password to a link, as the plain text box design roles ask for. -->
+  <label for="pfpw">Portfolio password</label><input id="pfpw" name="q_pw1">
+  <label for="webpw">Website password (if any)</label><input id="webpw" name="q_pw2">
+
   <!-- The applicant's own, still filled. -->
+  <label for="pf">Portfolio</label><input id="pf" name="q_pf">
   <label for="gradyear">Year of graduation</label><input id="gradyear" name="q_gy">
   <label for="own-email">Email</label><input id="own-email" name="email" type="email">
   <label for="own-phone">Phone</label><input id="own-phone" name="phone">
@@ -1566,6 +1571,11 @@ async function main() {
     check('"How many years of college have you completed?" is not given the school', more.count2 === '', more.count2);
     check('"Years of GitHub Actions experience" is not given the GitHub URL', more.count3 === '', more.count3);
     check('while "Year of graduation" still gets the year', more.gradyear === '2027', more.gradyear);
+
+    group('The password to a link, which is not the link');
+    check('"Portfolio password" is not given the portfolio URL', more.pfpw === '', more.pfpw);
+    check('nor is "Website password (if any)"', more.webpw === '', more.webpw);
+    check('while "Portfolio" still gets it', more.pf === 'jianwen.dev', more.pf);
 
     group('A declaration answered from a sentence');
     check(
