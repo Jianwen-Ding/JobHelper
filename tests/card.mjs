@@ -1362,6 +1362,12 @@ async function main() {
     const specAt = (n) => sent.filter((c) => c.action === 'render').at(n)?.payload?.spec;
     const itemsOf = (spec) => (spec?.sections ?? []).find((x) => x.kind === 'skills')?.items;
 
+    // The opening state, before any skills box is touched: the wording box
+    // on and off again, so there is a compiled spec to read.
+    await flip(0);
+    const opening = itemsOf(specAt(-1)) ?? null;
+    await flip(0);
+
     // On: the group whose base list was explicit.
     const clicked = await flip(1);
     const afterFirst = { rows: rows(), stillNames: /dropped Ruby/.test(text()), ticks: ticks(), clicked };
@@ -1378,6 +1384,7 @@ async function main() {
       offered,
       before,
       startTicks,
+      opening,
       afterFirst,
       after: rows(),
       // Narrowed, with both suggestions switched on.
@@ -1386,7 +1393,6 @@ async function main() {
       // And back to what the base asked for, with both switched off.
       items: itemsOf(off) ?? null,
       hasTools: itemsOf(off) ? Object.prototype.hasOwnProperty.call(itemsOf(off), 'sk_tools') : null,
-      hasLang: itemsOf(off) ? Object.prototype.hasOwnProperty.call(itemsOf(off), 'sk_lang') : null,
       choices: off?.choices ?? null,
       backTicks: ticks(),
     };
@@ -1423,22 +1429,28 @@ async function main() {
    * and compiling the narrowed group anyway would be worse than no button.
    */
   /*
-   * Off, both groups go back to having no entry at all.
+   * Off, each group goes back to exactly what the base holds.
    *
-   * Absent means inherited, and what is inherited is the base's own list —
-   * so the printed document is the base's, which is what "off" means. The
-   * card used to write the base's list back explicitly for a group the base
-   * had named, which prints the same today and pins it: a skill added to the
-   * base next month would never reach this resume. Writing an empty list
-   * would be different again, and wrong — that prints nothing.
+   * Resumes no longer inherit: a group with no list prints every skill in it.
+   * The card used to take the key out for a group the base had trimmed, on
+   * the reading that "absent means inherited" — which put every skill the
+   * base had turned off back on the page, starting with the opening state
+   * where every suggestion is off. Only a group the base named nothing for
+   * goes back to having no entry, because that is what the base holds.
    */
   check(
-    'the group the base named goes back to having no entry of its own',
-    skillUndo.hasLang === false,
+    'with nothing ticked, a trimmed group prints the base\'s list, not the whole group',
+    JSON.stringify(skillUndo.opening?.sk_lang) === JSON.stringify(['s_py', 's_go', 's_rb', 's_php'])
+      && !Object.prototype.hasOwnProperty.call(skillUndo.opening ?? {}, 'sk_tools'),
+    JSON.stringify(skillUndo.opening),
+  );
+  check(
+    'unticked again, the group the base named gets that list back',
+    JSON.stringify(skillUndo.items?.sk_lang) === JSON.stringify(['s_py', 's_go', 's_rb', 's_php']),
     JSON.stringify(skillUndo.items),
   );
   check(
-    'and so does the group it named nothing for',
+    'and the group it named nothing for has no entry of its own',
     skillUndo.hasTools === false,
     JSON.stringify(skillUndo.items),
   );
@@ -3088,7 +3100,12 @@ async function main() {
     await settle();
     const cutOnly = { ticks: ticks(), items: itemsNow() };
 
-    return { boxes, start, added, both, cutOnly };
+    // And the cut off too: nothing ticked, which has to be the base's group.
+    picks()[1].click();
+    await settle();
+    const neither = { ticks: ticks(), items: itemsNow() };
+
+    return { boxes, start, added, both, cutOnly, neither };
   });
 
   check('each row gets its own box', halves.boxes === 2, String(halves.boxes));
@@ -3125,6 +3142,18 @@ async function main() {
     JSON.stringify(halves.cutOnly.ticks) === JSON.stringify([false, true])
       && JSON.stringify(halves.cutOnly.items) === JSON.stringify([]),
     JSON.stringify(halves.cutOnly),
+  );
+  /*
+   * Both off is the base's own list, written back. Taking the key out instead
+   * — "absent means inherited" — prints every skill in the group now that
+   * nothing inherits, so unticking a suggestion added skills the base had
+   * turned off.
+   */
+  check(
+    'and with both off again the group is exactly the base\'s, not the whole group',
+    JSON.stringify(halves.neither.ticks) === JSON.stringify([false, false])
+      && JSON.stringify(halves.neither.items) === JSON.stringify(['f_unity', 'f_sdl']),
+    JSON.stringify(halves.neither),
   );
 
   console.log('\nA proposal whose diff came back empty');

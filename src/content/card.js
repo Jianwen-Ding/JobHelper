@@ -2942,13 +2942,16 @@ export function createCard({
       if (section.kind !== 'skills') return section;
       const items = { ...(section.items ?? {}) };
       /*
-       * The key comes out rather than being written back as the base's own
-       * list. Absent means inherited, and what is inherited here *is* the
-       * base's list — `from` is read off the flattened base — so the printed
-       * document is the same either way. Pinning it is how a resume stops
-       * seeing a skill added to its base next month.
+       * Back to the base's own list. Resumes no longer inherit, so a group
+       * with no list prints every skill it holds — taking the key out of a
+       * group the base had trimmed put back every skill the base had turned
+       * off. Only a group the base named nothing for (`from` null) goes back
+       * to having no entry, because that is what the base holds.
        */
-      for (const sc of skillChanges ?? []) delete items[sc.groupId];
+      for (const sc of skillChanges ?? []) {
+        if (sc.from) items[sc.groupId] = [...sc.from];
+        else delete items[sc.groupId];
+      }
       return { ...section, items };
     });
     return { ...spec, choices, ...(spec.sections ? { sections } : {}) };
@@ -3124,7 +3127,8 @@ export function createCard({
    * set of items, recorded under `sections[skills].items`. Putting one back
    * means putting that list back, and `null` means the base asked for nothing
    * — which is not "no answer" but a real one, the group printing all of its
-   * items, and the way to say it is to leave the key out.
+   * items, and the way to say it is to leave the key out. A base that named
+   * a list gets that list written back, never the key removed.
    */
   async function setSkills(change, on, part) {
     /*
@@ -3134,18 +3138,17 @@ export function createCard({
      * Where both halves end up on, the answer is `change.to` verbatim rather
      * than the same set rebuilt — the match chose an order as well as a set,
      * and a rebuilt list is a permutation of it. Where both end up off, the
-     * key is left out rather than written back as the base's own list:
-     * absent means inherited, and pinning what was inherited is how a resume
-     * stops seeing things added to its base later.
+     * answer is the base's own list — see `withAllOff`: no list prints the
+     * whole group, which is only what the base holds when `from` is null.
      */
     const wanted = () => {
-      if (!change.from || !part) return on ? change.to : null;
+      if (!change.from || !part) return on ? change.to : change.from;
       const added = addedBy(change);
       const dropped = droppedBy(change) ?? [];
       const addOn = part === 'added' ? on : skillsOn(change, 'added');
       const dropOn = part === 'dropped' ? on : skillsOn(change, 'dropped');
       if (addOn && dropOn) return change.to;
-      if (!addOn && !dropOn) return null;
+      if (!addOn && !dropOn) return change.from;
       const kept = change.from.filter((id) => !(dropOn && dropped.includes(id)));
       return addOn ? [...kept, ...added] : kept;
     };
