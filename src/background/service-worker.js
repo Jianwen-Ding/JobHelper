@@ -2698,7 +2698,21 @@ const handlers = {
      * the order the one it was always meant to be. Bounded, because a store
      * slow to open a draft is still no reason to hold up recording the send.
      */
-    const saving = savesInFlight.get(tab?.id);
+    /*
+     * And where no save came with it, the top frame is asked for one. A form
+     * inside an iframe reports its send from that frame's script, which runs
+     * no keeper and so flushes nothing — the card and its keeper are in the
+     * top frame — and a send that beat the keeper's next tick was filed with
+     * no draft yet, the draft following it by up to a tick (measured in
+     * tests/sending.mjs: "embedded-apply", 348ms after).
+     */
+    let saving = savesInFlight.get(tab?.id);
+    if (!saving && tab?.id !== undefined) {
+      // Its `saveWork` is sent before this answer, so by the time the answer
+      // is back the save is registered and can be waited on like any other.
+      await chrome.tabs.sendMessage(tab.id, { type: 'jh-flush-work' }, { frameId: 0 }).catch(() => undefined);
+      saving = savesInFlight.get(tab.id);
+    }
     if (saving) await Promise.race([saving, new Promise((r) => setTimeout(r, SEND_WAITS_FOR_SAVE_MS))]);
     try {
       return await serverFetch('/api/extension/sent', {

@@ -2402,6 +2402,18 @@
           );
           return true;
 
+        /*
+         * The worker asking for this page's work now, because a send has just
+         * been reported and nothing was flushed with it — the form was in an
+         * iframe, whose script runs no keeper. Only the top frame answers:
+         * it is where the card and the keeper are.
+         */
+        case 'jh-flush-work':
+          if (window !== window.top) return false;
+          saveWorkNow?.();
+          answer(Promise.resolve(true));
+          return true;
+
         default:
           return false;
       }
