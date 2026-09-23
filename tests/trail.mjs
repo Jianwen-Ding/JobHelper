@@ -333,6 +333,44 @@ describe('the same employer with and without its legal form', () => {
   });
 });
 
+/**
+ * And the same employer again, when an AI pass finishes late.
+ *
+ * `landLate` in content.js keeps a proposal that outlived the pass that asked
+ * for it, and lands it only if the card is showing the same posting — which
+ * `sameJob` decided by comparing the company exactly. So a three-minute AI
+ * run for "Acme, Inc." finishing on a card that reads the same posting as
+ * "Acme" was said to be for another posting and thrown away. It is compared
+ * by the trail's `employerKey` now, the same key the trail joins pages on.
+ *
+ * `sameJob` lives inside the content script's closure, so it is lifted out of
+ * the source the way tests/reporting.mjs lifts `describeAttach`.
+ */
+describe('a late AI result, against the posting on screen', async () => {
+  const fsMod = await import('node:fs');
+  const { employerKey } = await import('../src/shared/trail.js');
+  const source = fsMod.readFileSync(new URL('../src/content/content.js', import.meta.url), 'utf8');
+  const from = source.indexOf('  const sameJob =');
+  const to = source.indexOf(';\n', from);
+  const sameJob = new Function('employerKey', `${source.slice(from, to + 1)}\nreturn sameJob;`)(employerKey);
+  const job = (company, title = 'Platform Engineer') => ({ job: { company, title } });
+
+  it('is lifted from the content script', () => {
+    assert.notEqual(from, -1, 'content.js no longer has a sameJob');
+  });
+
+  it('lands on the same employer written with its legal form', () => {
+    assert.equal(sameJob(job('Acme, Inc.'), job('Acme')), true);
+    assert.equal(sameJob(job('ACME Corp'), job('Acme')), true);
+  });
+
+  it('but not on another employer, nor another role', () => {
+    assert.equal(sameJob(job('Acme Labs'), job('Acme')), false);
+    assert.equal(sameJob(job('Northwind, Inc.'), job('Acme, Inc.')), false);
+    assert.equal(sameJob(job('Acme, Inc.', 'Data Scientist'), job('Acme')), false);
+  });
+});
+
 describe('what the card is told', () => {
   it('keeps the page text and the work to itself', () => {
     const trail = {

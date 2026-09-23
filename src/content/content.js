@@ -636,10 +636,28 @@
   /** Older than this and nobody is still waiting for it. */
   const LATE_PROPOSAL_MS = 10 * 60 * 1000;
 
+  /*
+   * The trail's employer key, held once the trail module has loaded — see
+   * `plainlyAnotherRole` below, which is loaded the same way for the same
+   * reason: `sameJob` is asked synchronously.
+   *
+   * The company used to be compared exactly, and one posting writes its
+   * employer two ways: the JSON-LD carries "Acme, Inc.", the title says
+   * "Acme". Measured by lifting `sameJob` out of this file: an AI result for
+   * "Acme, Inc." against a card reading "Acme" came back false, so three
+   * minutes of a model's work on this very posting was announced as "not
+   * this posting, so it was not used" and dropped. The key is `employerKey`,
+   * which leaves a trailing legal form out and nothing else; until the module
+   * has loaded the comparison is the exact one it always was.
+   */
+  let employerKey = null;
+
   /** Two analyses about the same opening, by what they say it is. */
   const sameJob = (a, b) =>
     Boolean(a?.job && b?.job) &&
-    (a.job.company ?? '') === (b.job.company ?? '') &&
+    (employerKey
+      ? employerKey(a.job.company) === employerKey(b.job.company)
+      : (a.job.company ?? '') === (b.job.company ?? '')) &&
     (a.job.title ?? '') === (b.job.title ?? '');
 
   /** Whether a model actually chose something, as the card reads it. */
@@ -2442,6 +2460,7 @@
     .trail()
     .then((m) => {
       plainlyAnotherRole = m.plainlyAnotherRole;
+      employerKey = m.employerKey;
     })
     .catch(quietly);
 
