@@ -2621,6 +2621,59 @@ async function main() {
       elsewhere.us === 'Yes' && elsewhere.sp === 'No',
       JSON.stringify(elsewhere),
     );
+    /*
+     * And a declaration that names no country at all, which is what somebody
+     * types into a box labelled "Work authorization": "Yes". It matched the
+     * Yes option by its text before any country was looked at, so a profile
+     * living in the United States ticked "Yes" to the UK and to Canada and
+     * "No" to needing UK sponsorship. A bare answer is about where the
+     * profile lives.
+     */
+    const bare = await page.goto(`${base}/elsewhere`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { work_authorization: 'Yes', requires_sponsorship: 'No', address_country: 'United States' };
+        const report = m.fillForm(fields);
+        const ticked = (n) => document.querySelector(`input[name="${n}"]:checked`)?.value ?? '';
+        const out = {
+          uk: document.getElementById('uk').value,
+          ca: ticked('ca'),
+          us: document.getElementById('us').value,
+          sp: ticked('sp'),
+          skipped: report.skipped.map((x) => `${x.key}:${x.reason}:${x.description}`),
+        };
+        for (const el of document.querySelectorAll('form > :not([role="radiogroup"])')) el.remove();
+        m.fillForm(fields);
+        out.uks = [...document.querySelectorAll('[role="radio"]')].filter((el) => el.getAttribute('aria-checked') === 'true').map((el) => el.id).join(',');
+        return out;
+      }, { b: base }),
+    );
+    check(
+      'a bare "Yes" from a US profile does not answer the UK question',
+      bare.uk === '' && bare.skipped.some((x) => /^work_authorization:.*another country.*UK/.test(x)),
+      JSON.stringify(bare),
+    );
+    check('nor the Canadian one, nor UK sponsorship', bare.ca === '' && bare.uks === '', JSON.stringify(bare));
+    check('while it still answers the US question and one naming none', bare.us === 'Yes' && bare.sp === 'No', JSON.stringify(bare));
+    // And Workday's dropdown, which picks an option by its text the same way.
+    const bareWidget = await page.goto(`${base}/paired-widgets`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        for (const id of ['l-both', 'w-both', 'l-able', 'w-able']) document.getElementById(id).remove();
+        document.getElementById('l-auth').textContent = 'Are you legally authorized to work in the United Kingdom?';
+        const fields = { work_authorization: 'Yes', address_country: 'United States' };
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        return {
+          auth: document.getElementById('h-auth').value,
+          skipped: report.skipped.map((x) => `${x.key}:${x.reason}:${x.description}`),
+        };
+      }, { b: base }),
+    );
+    check(
+      'nor, on a Workday dropdown, the UK question',
+      bareWidget.auth === '' && bareWidget.skipped.some((x) => /^work_authorization:.*another country/.test(x)),
+      JSON.stringify(bareWidget),
+    );
     const paired = await page.goto(`${base}/paired-widgets`, { waitUntil: 'domcontentloaded' }).then(() =>
       page.evaluate(async ({ b }) => {
         const m = await import(`${b}/autofill.js`);

@@ -1715,10 +1715,21 @@ function countriesIn(text) {
   return out;
 }
 
-/** Whether a yes/no declaration names one country and the question another. */
-function aboutAnotherCountry(key, value, asked) {
+/**
+ * Whether a yes/no declaration names one country and the question another.
+ *
+ * `home` is the profile's own country, and it speaks for a declaration that
+ * names none. "Yes" is what people type into a box labelled "Work
+ * authorization", and it matched the Yes option by its text before any
+ * country was looked at: a profile living in the United States ticked "Yes"
+ * to "Are you authorized to work in the UK?" and "…in Canada?", and "No" to
+ * needing UK sponsorship. With no country anywhere in the profile there is
+ * nothing to compare, and the answer stands as it always did.
+ */
+function aboutAnotherCountry(key, value, asked, home) {
   if (!YES_NO_KEYS.has(key)) return false;
-  const declared = countriesIn(value);
+  let declared = countriesIn(value);
+  if (declared.size === 0) declared = countriesIn(home);
   const wanted = countriesIn(asked);
   if (declared.size === 0 || wanted.size === 0) return false;
   for (const code of wanted) if (declared.has(code)) return false;
@@ -1832,6 +1843,12 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
     }
 
     if (input instanceof HTMLSelectElement) {
+      // Before any option is matched, because "Yes" matches "Yes" by its
+      // text whichever country is asked about. See `aboutAnotherCountry`.
+      if (aboutAnotherCountry(key, value, description, fields.address_country)) {
+        skipped.push({ key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) });
+        continue;
+      }
       /*
        * Only pick an option that plainly matches; never guess on a dropdown.
        * Compared through `clean` because the enterprise systems pad their
@@ -2085,6 +2102,11 @@ function answerChoiceButtons(fields, overwrite, already) {
       continue;
     }
 
+    // Before any option is matched, as in `fillForm`.
+    if (aboutAnotherCountry(key, value, description, fields.address_country)) {
+      skipped.push({ key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) });
+      continue;
+    }
     const labelOf = (el) => clean(el.getAttribute('aria-label') || el.textContent);
     const wanted =
       options.find((el) => sameOption(labelOf(el), value)) ??
@@ -2390,6 +2412,11 @@ function answerRadioGroups(fields, overwrite) {
       continue;
     }
 
+    // Before any option is matched, as in `fillForm`.
+    if (aboutAnotherCountry(key, value, description, fields.address_country)) {
+      skipped.push({ key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) });
+      continue;
+    }
     const wanted =
       radios.find(
         (radio) => sameOption(optionLabelFor(radio), value) || sameOption(radio.value, value),
@@ -2693,16 +2720,19 @@ function widgetChoices(fields, filled) {
     const key = dated || FIELD_PATTERNS.find(([, re]) => re.test(description))?.[0];
     if (!key || !fields[key] || already.has(key)) continue;
     if (anotherLevelOfStudy(widget, key, fields)) continue;
-    found.push({ key, description: description.slice(0, 60), el: widget });
+    // Named, so it is reported for what it is and never driven: Workday's
+    // list picks "Yes" by its text too. See `aboutAnotherCountry`.
+    const elsewhere = aboutAnotherCountry(key, fields[key], description, fields.address_country);
+    found.push({ key, description: description.slice(0, 60), el: widget, elsewhere });
     already.add(key);
   }
   return found;
 }
 
 function unfillableChoices(fields, filled) {
-  return widgetChoices(fields, filled).map(({ key, description, both }) => ({
+  return widgetChoices(fields, filled).map(({ key, description, both, elsewhere }) => ({
     key,
-    reason: both ? TWO_AT_ONCE : PICK_BY_HAND,
+    reason: both ? TWO_AT_ONCE : elsewhere ? ANOTHER_COUNTRY : PICK_BY_HAND,
     description,
   }));
 }
@@ -2880,8 +2910,8 @@ export async function fillComboboxes(fields, report, { patience = 1500 } = {}) {
   if (pending.size === 0) return report;
 
   const done = [];
-  for (const { key, el: widget, both } of widgetChoices(fields, report.filled)) {
-    if (both || !pending.has(key)) continue;
+  for (const { key, el: widget, both, elsewhere } of widgetChoices(fields, report.filled)) {
+    if (both || elsewhere || !pending.has(key)) continue;
     const value = String(fields[key]);
     const box = typingBoxOf(widget);
     const hiddenBefore = hiddenPartner(widget)?.value ?? '';
