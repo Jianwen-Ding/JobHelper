@@ -1395,10 +1395,10 @@ const handlers = {
   },
 
   /** Put an answer into a field that lives in one particular frame. */
-  async insertInFrame({ frameId, fieldId, text }, tab) {
+  async insertInFrame({ frameId, fieldId, text, question }, tab) {
     if (tab?.id === undefined) return false;
     const reply = await chrome.tabs
-      .sendMessage(tab.id, { type: 'jh-frame-insert', payload: { fieldId, text } }, { frameId })
+      .sendMessage(tab.id, { type: 'jh-frame-insert', payload: { fieldId, text, question } }, { frameId })
       .catch(() => null);
     return Boolean(reply?.ok && reply.data);
   },

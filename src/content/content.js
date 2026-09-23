@@ -968,10 +968,11 @@
             frameId: Number(inFrame[1]),
             fieldId: inFrame[2],
             text: payload.text,
+            question: payload.question,
           });
         }
         const { insertAnswer } = await imports.autofill();
-        return insertAnswer(payload.fieldId, payload.text);
+        return insertAnswer(payload.fieldId, payload.text, payload.question);
       }
 
       /*
@@ -2305,7 +2306,9 @@
           answer(
             imports
               .autofill()
-              .then(({ insertAnswer }) => insertAnswer(message.payload?.fieldId, message.payload?.text)),
+              .then(({ insertAnswer }) =>
+                insertAnswer(message.payload?.fieldId, message.payload?.text, message.payload?.question),
+              ),
           );
           return true;
 

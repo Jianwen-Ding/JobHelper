@@ -3023,7 +3023,7 @@ export function findQuestions() {
      * placeholder rather than `describeField`, because a field's name and id
      * are not a question anyone wrote.
      */
-    const question = cleanQuestion(questionFor(field) || field.getAttribute?.('placeholder') || '');
+    const question = questionOf(field);
     // Anything this short is a label like "Notes" rather than a question worth
     // drafting an answer to — unless it ends in a question mark, which settles
     // it. "Why us?" is seven characters and is exactly the sort of thing this
@@ -3152,10 +3152,34 @@ export function isRequired(fieldId) {
   return false;
 }
 
-/** Put text into a field the card previously identified. */
-export function insertAnswer(fieldId, text) {
+/** What a question box asks, as `findQuestions` reads it. */
+function questionOf(field) {
+  return cleanQuestion(questionFor(field) || field.getAttribute?.('placeholder') || '');
+}
+
+/*
+ * The same question, however its counter reads. A label that says "(500
+ * characters remaining)" says 473 once something is typed into the box, and
+ * that is not a different question; a different sentence is.
+ */
+const askedAs = (question) => cleanQuestion(question).replace(/\d+/g, '#').toLowerCase();
+
+/**
+ * Put text into a field the card previously identified.
+ *
+ * `question` is what the card showed above the answer, and the field has to
+ * still be asking it. Questions are found once, when the card goes up, and
+ * the box is marked with an id; a form that moves to its next step by
+ * re-rendering in place keeps the same element for step two's box, our mark
+ * still on it, with the url unchanged and so nothing reading the questions
+ * again. Measured in tests/autofill.mjs: Insert under "Why do you want to
+ * work at Acme?" wrote that answer into step two's "Describe a time you
+ * failed." and returned true. Where it no longer matches, nothing is written.
+ */
+export function insertAnswer(fieldId, text, question) {
   const field = deepQueryAll(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`)[0];
   if (!field) return false;
+  if (question != null && askedAs(questionOf(field)) !== askedAs(question)) return false;
   if (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) {
     setValue(field, text);
   } else {

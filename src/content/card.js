@@ -5449,7 +5449,10 @@ export function createCard({
             className: 'tiny',
             textContent: 'Insert into form',
             disabled: !q.fieldId,
-            onclick: () => onAction('insertAnswer', { fieldId: q.fieldId, text: state.answers[q.question] ?? value }),
+            // With the question it answers: the box must still be asking it. See
+            // `insertAnswer` in autofill.js.
+            onclick: () =>
+              onAction('insertAnswer', { fieldId: q.fieldId, question: q.question, text: state.answers[q.question] ?? value }),
           }),
           /*
            * Some questions are not the model's to answer.

@@ -1320,7 +1320,20 @@ const WIDGET_KEYS = `<!doctype html><html><head><meta charset="utf-8"><title>App
   <button type="button" id="k-us" aria-haspopup="listbox" aria-labelledby="l-us">Select One</button>
 </form></body></html>`;
 
-const PAGES = { '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
+/*
+ * A form that moves to its next step by re-rendering in place, as a React
+ * form does when step two's component sits where step one's did: the same
+ * `<textarea>` element, a new label beside it, the url unchanged.
+ */
+const STEPPED = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="f">
+  <div class="q"><label id="q-label" for="q-box">Why do you want to work at Acme?</label>
+    <textarea id="q-box" name="step1_why"></textarea></div>
+  <div class="q"><label id="c-label" for="c-box">Tell us about a project you led. (500 characters remaining)</label>
+    <textarea id="c-box" name="project"></textarea></div>
+</form></body></html>`;
+
+const PAGES = { '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -3220,6 +3233,53 @@ async function main() {
       'with no bank the form is exactly as it was',
       noBank.prev === '' && noBank.reloc === '' && noBank.filled === 0,
       `prev "${noBank.prev}", reloc "${noBank.reloc}", ${noBank.filled} filled`,
+    );
+
+    /*
+     * "Insert into form" into a box that has since become another question.
+     *
+     * A question is found once, when the card goes up, and the box is marked
+     * with an id the card keeps. A form that moves to its next step by
+     * re-rendering in place keeps the same element for step two's box — the
+     * mark is ours, so nothing takes it off — and the url does not change,
+     * so nothing reads the questions again. Pressing Insert under "Why do you
+     * want to work at Acme?" then wrote that answer into step two's "Describe
+     * a time you failed", and said it had.
+     */
+    const stepped = await page.goto(`${base}/stepped`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const found = m.findQuestions();
+        const why = found.find((q) => /Acme/.test(q.question));
+        const project = found.find((q) => /project/.test(q.question));
+
+        // Step two, drawn into step one's elements.
+        document.getElementById('q-label').textContent = 'Describe a time you failed.';
+        document.getElementById('q-box').name = 'step2_failure';
+        // And the other box's counter ticking, which is not a new question.
+        document.getElementById('c-label').textContent = 'Tell us about a project you led. (473 characters remaining)';
+
+        const intoOther = m.insertAnswer(why.fieldId, 'Because Acme builds rockets.', why.question);
+        const intoSame = m.insertAnswer(project.fieldId, 'I led the migration.', project.question);
+        return {
+          intoOther,
+          other: document.getElementById('q-box').value,
+          intoSame,
+          same: document.getElementById('c-box').value,
+        };
+      }, { b: base }),
+    );
+
+    group('Inserting an answer into a box that has become another question');
+    check(
+      'the answer to one question is not written into the next step’s box',
+      stepped.other === '' && stepped.intoOther === false,
+      JSON.stringify(stepped),
+    );
+    check(
+      'while a box whose label only counts characters still takes its answer',
+      stepped.same === 'I led the migration.' && stepped.intoSame === true,
+      JSON.stringify(stepped),
     );
   } finally {
     await browser.close();
