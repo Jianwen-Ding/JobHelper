@@ -5832,6 +5832,14 @@ export function createCard({
     const active = root.activeElement;
     const focused = active && active !== card ? active.dataset?.field : null;
     const caret = focused ? { start: active.selectionStart, end: active.selectionEnd } : null;
+    /*
+     * And how far the box itself is scrolled. The letter box is a fixed height
+     * and a letter is longer than it, so the paragraph being written is at the
+     * bottom of a scrolled box — and the box a repaint builds starts at the
+     * top. Measured: caret put back at the end, `scrollTop` 462 before and 0
+     * after, the line being written out of sight until the next keystroke.
+     */
+    const boxScrolled = focused ? active.scrollTop : 0;
 
     /*
      * Where you were reading.
@@ -5909,6 +5917,7 @@ export function createCard({
       // Not a text box any more, or the text is shorter than the old caret.
       // Focus is the part that matters; the position is a courtesy.
     }
+    again.scrollTop = boxScrolled;
   }
 
   /**

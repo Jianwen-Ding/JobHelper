@@ -98,6 +98,48 @@ async function main() {
   check('with what was typed still in it', typing.value === 'Half a sent', String(typing.value));
   check('and the caret where it was, not at the end', typing.caret === 4, String(typing.caret));
 
+  /*
+   * And the box scrolled where it was. The letter box is a fixed height and
+   * a letter is longer than it, so writing the last paragraph means the box
+   * is scrolled to its end. The caret came back after a repaint and the
+   * scroll did not: the box showed the letter's first lines, and the line
+   * being written was out of sight until the next keystroke dragged it back.
+   */
+  const letterScroll = await inPage((createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: true,
+      onAction: async () => ({}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const box = root.querySelector('textarea[data-field="letter"]');
+    if (!box) return { error: 'no letter box' };
+    box.focus();
+    box.value = Array.from({ length: 30 }, (_, i) => `Paragraph ${i} of a letter long enough to scroll its box.`).join('\n');
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    box.setSelectionRange(box.value.length, box.value.length);
+    box.scrollTop = box.scrollHeight;
+    const was = box.scrollTop;
+
+    handle.setQuestions([{ question: 'Tell us about a project you led.', answer: '', confident: false }]);
+
+    const now = root.querySelector('textarea[data-field="letter"]');
+    return { was, now: now.scrollTop, replaced: now !== box };
+  });
+  check(
+    'a long letter stays scrolled to where it is being written',
+    letterScroll.replaced === true && letterScroll.was > 0 && letterScroll.now === letterScroll.was,
+    JSON.stringify(letterScroll),
+  );
+
   console.log('\nSaying how long the AI has been thinking');
 
   /*
