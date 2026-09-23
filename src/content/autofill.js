@@ -1095,6 +1095,12 @@ function otherWaysToWrite(key, value) {
  * headings inside the same form, because the page's own title is not a
  * section: a posting for "Software Engineer, Education Technology" would
  * otherwise make every date on its job-history step an education date.
+ *
+ * A legend only for the fieldset it heads. The walk below took the legend of
+ * any fieldset that came earlier as the heading of everything after it, so
+ * once an "Education" fieldset had closed, "Available start date" beneath it
+ * was given the degree's start and "Notice period end date" its graduation —
+ * an availability the applicant never stated, and one already past.
  */
 const HEADING = 'h1, h2, h3, h4, h5, h6, legend, [role="heading"]';
 function sectionOf(input) {
@@ -1105,6 +1111,7 @@ function sectionOf(input) {
   let found = '';
   for (const heading of scope.querySelectorAll(HEADING)) {
     if (!(heading.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING)) break;
+    if (heading.localName === 'legend' && !heading.parentElement?.contains(input)) continue;
     found = heading.textContent;
   }
   return clean(found);

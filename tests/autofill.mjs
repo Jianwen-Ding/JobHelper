@@ -890,6 +890,14 @@ const SECTIONS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply 
   <label for="j-sy">Start date year</label><input id="j-sy">
   <label for="j-ey">End date year</label><input id="j-ey">
 </form>
+<form id="after">
+  <!-- The Education fieldset has ended; the questions below it are not the degree's. -->
+  <fieldset><legend>Education</legend>
+    <label for="x-from">Start date</label><input id="x-from">
+  </fieldset>
+  <label for="x-avail">Available start date</label><input id="x-avail">
+  <label for="x-notice">Notice period end date</label><input id="x-notice">
+</form>
 <form id="workday">
   <!-- Workday's education block asks for the years attended, in words none of the others use. -->
   <h3>Education</h3>
@@ -2256,7 +2264,7 @@ async function main() {
           graduation_month: 'May', graduation_year: '2026', graduation_date: 'May 2026',
         };
         m.fillForm(fields);
-        const ids = ['e-sm', 'e-sy', 'e-em', 'e-ey', 'w-sm', 'w-sy', 'w-em', 'w-ey', 'f-from', 'f-to', 'j-sy', 'j-ey', 'wd-first', 'wd-last', 'wd-jfirst'];
+        const ids = ['e-sm', 'e-sy', 'e-em', 'e-ey', 'w-sm', 'w-sy', 'w-em', 'w-ey', 'f-from', 'f-to', 'j-sy', 'j-ey', 'wd-first', 'wd-last', 'wd-jfirst', 'x-from', 'x-avail', 'x-notice'];
         return Object.fromEntries(ids.map((id) => [id, document.getElementById(id).value]));
       }, { b: base }),
     );
@@ -2272,6 +2280,17 @@ async function main() {
       JSON.stringify(['w-sm', 'w-sy', 'w-em', 'w-ey'].map((id) => sections[id])),
     );
     check('a fieldset whose legend says so, asked From and To', sections['f-from'] === '2022' && sections['f-to'] === '2026', JSON.stringify([sections['f-from'], sections['f-to']]));
+    /*
+     * A legend names its own fieldset and nothing after it. Read as the
+     * heading of everything below, it made "Available start date" the
+     * degree's start and "Notice period end date" its graduation.
+     */
+    check(
+      'below an Education fieldset, "Available start date" and "Notice period end date" are not the degree\'s',
+      sections['x-avail'] === '' && sections['x-notice'] === '',
+      JSON.stringify([sections['x-avail'], sections['x-notice']]),
+    );
+    check('while "Start date" inside it still is', sections['x-from'] === 'September 2022', sections['x-from']);
     check(
       'Workday’s first and last year attended, under Education only',
       sections['wd-first'] === '2022' && sections['wd-last'] === '2026' && sections['wd-jfirst'] === '',
