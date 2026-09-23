@@ -236,6 +236,15 @@ const NOT_ABOUT_YOU = [
    * the URL was typed in as the password, where the reviewer would try it.
    */
   /\b(password|passcode|pass[\s_-]?phrase)\b/i,
+  /*
+   * A username, which is a part of the link and not the link. "GitHub
+   * username", "GitHub handle" and "Username on LinkedIn" matched `github`
+   * and `linkedin` and were given the whole profile URL, in a box that will
+   * be read as a handle — `https://github.com/...` as somebody's username.
+   * Left blank rather than cut out of the URL: a stored link is not always
+   * just the profile.
+   */
+  /\b(git-?hub|git-?lab|linked-?in)\b[\s\S]{0,20}\b(user[\s_-]?names?|handles?|user[\s_-]?ids?)\b|\b(user[\s_-]?names?|handles?)\b[\s\S]{0,20}\b(git-?hub|git-?lab|linked-?in)\b/i,
   // Where you heard about the job, which is not a profile of yours.
   /\b(did[\s_-]you[\s_-](?:first[\s_-])?hear|hear[\s_-](?:about|of)[\s_-](us|this)|referral)\b/i,
   // Citizenship, birth and residence are different questions with the same

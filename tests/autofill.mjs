@@ -1125,6 +1125,12 @@ const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Ap
   <label for="formern">Former legal name</label><input id="formern" name="q_n3">
   <label for="prevused">Last name (previously used, if any)</label><input id="prevused" name="q_n4">
 
+  <!-- A username, which is part of the URL the profile holds and not the URL. -->
+  <label for="ghuser">GitHub username</label><input id="ghuser" name="q_u1">
+  <label for="ghhandle">GitHub handle</label><input id="ghhandle" name="q_u2">
+  <label for="liuser">Username on LinkedIn</label><input id="liuser" name="q_u3">
+  <label for="gh-url">GitHub profile URL</label><input id="gh-url" name="q_u4">
+
   <!-- The applicant's own, still filled. -->
   <label for="own-ln">Last name</label><input id="own-ln" name="q_ln">
   <label for="own-legal">Legal name</label><input id="own-legal" name="q_legal">
@@ -1649,6 +1655,16 @@ async function main() {
       'while "Last name" and "Legal name" still are',
       more['own-ln'] === 'Ding' && more['own-legal'] === 'Jianwen Ding',
       `${more['own-ln']} / ${more['own-legal']}`,
+    );
+
+    group('A username, which is not the profile URL');
+    check('"GitHub username" is not given the whole URL', more.ghuser === '', more.ghuser);
+    check('nor "GitHub handle"', more.ghhandle === '', more.ghhandle);
+    check('nor "Username on LinkedIn"', more.liuser === '', more.liuser);
+    check(
+      'while "GitHub profile URL" and "LinkedIn" still get theirs',
+      more['gh-url'] === PROFILE.github && more['own-li'] === PROFILE.linkedin,
+      `${more['gh-url']} / ${more['own-li']}`,
     );
 
     group('A declaration answered from a sentence');
