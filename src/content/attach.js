@@ -399,9 +399,35 @@ function putIn(box, file, { alongside = false, ours } = {}) {
     return false;
   }
   if (box.files?.length !== had.length + 1) return false;
+  // Where the widget would say it has the file, noted before it gets a vote.
+  const home =
+    box.closest?.('label, [class*="upload" i], [class*="drop" i], [class*="file" i], [class*="attach" i]') ??
+    box.parentElement;
   box.dispatchEvent(new Event('input', { bubbles: true }));
   box.dispatchEvent(new Event('change', { bubbles: true }));
-  return true;
+  /*
+   * And what is still true once the page has had its say.
+   *
+   * A `change` handler runs synchronously inside that dispatch, and two
+   * ordinary things it does both undo what was just checked above: reject
+   * the file by clearing the box — the client-side "too large" or
+   * "wrong kind" check every upload widget has — or replace the input
+   * outright to reset itself, which is how a form built to show a removable
+   * chip instead of the native control works. Either way `box` is left
+   * looking exactly as it did the instant before `dispatchEvent`, and
+   * without this the caller had already decided "placed" on evidence from
+   * before the page got a vote. Measured on a page that clears the input on
+   * `change`: reported as attached, the box empty.
+   */
+  if (box.isConnected && [...(box.files ?? [])].some((f) => f.name === file.name)) return true;
+  /*
+   * Unless the widget took it for itself. Plenty of upload components read
+   * the file on `change`, keep it in their own state, and clear the input
+   * straight after so the same file can be chosen again — and then show it
+   * as a chip with its name. An empty input there means kept, not refused;
+   * the name appearing where the box was is the widget saying so.
+   */
+  return Boolean(home?.isConnected && (home.textContent ?? '').includes(file.name));
 }
 
 /**
@@ -560,10 +586,21 @@ export async function attachFiles(files) {
 
     const kind = kindOf(spec.name);
     const box = boxFor(kind, boxes, taken, file);
-    if (box && placeIn(box, file)) {
-      taken.add(box);
-      placed.push({ name: spec.name, where: saysWhat(box).slice(0, 60) });
-      continue;
+    /*
+     * A box was found for this file, which the reason at the bottom of this
+     * loop needs to know even when `placeIn` fails: without it, a box that
+     * took the file and then rejected it — see `putIn` — read no differently
+     * from a form with no such box at all, and said so: "no box here asks
+     * for it", about a box sitting right there under a label that named it.
+     */
+    let rejectedBy = null;
+    if (box) {
+      if (placeIn(box, file)) {
+        taken.add(box);
+        placed.push({ name: spec.name, where: saysWhat(box).slice(0, 60) });
+        continue;
+      }
+      rejectedBy = box;
     }
 
     /*
@@ -653,11 +690,13 @@ export async function attachFiles(files) {
     );
     unplaced.push({
       name: spec.name,
-      why: refusedType
-        ? `this form only takes ${refusedType.getAttribute('accept')} there`
-        : boxes.length === 0
-          ? 'this page has no upload box the extension can reach'
-          : 'no box here asks for it',
+      why: rejectedBy
+        ? 'this form took it and then would not keep it'
+        : refusedType
+          ? `this form only takes ${refusedType.getAttribute('accept')} there`
+          : boxes.length === 0
+            ? 'this page has no upload box the extension can reach'
+            : 'no box here asks for it',
     });
   }
 

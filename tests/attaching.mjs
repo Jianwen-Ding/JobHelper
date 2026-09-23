@@ -199,6 +199,59 @@ const ALL_IN_ONE = page(
   `<label for="all">Attach your resume, cover letter and transcript</label><input id="all" type="file" multiple>`,
 );
 
+/**
+ * A box whose own `change` handler takes the file straight back.
+ *
+ * The ordinary shape of client-side validation: too large, wrong kind, and
+ * the widget clears the input in the same handler that read it. `putIn`
+ * checked `box.files` once, before dispatching the event that runs this
+ * handler, and reported the file placed on the strength of a fact that was
+ * about to stop being true.
+ */
+const RECLAIMS = page(`
+  <label for="rs">Resume</label><input id="rs" type="file">
+  <script>document.getElementById('rs').addEventListener('change', (e) => { e.target.value = ''; });</script>
+`);
+
+/**
+ * A widget that keeps the file for itself: reads it on `change`, clears the
+ * input so the same file can be chosen again, and shows it as a chip. The
+ * input ends up empty exactly as it does in `RECLAIMS`, and the file was
+ * accepted — so an empty input alone cannot be the test.
+ */
+const KEEPS_AS_CHIP = page(`
+  <div class="dropzone"><label for="rs">Resume</label><input id="rs" type="file"><div class="chips"></div></div>
+  <script>
+    document.getElementById('rs').addEventListener('change', (e) => {
+      const name = e.target.files[0]?.name;
+      e.target.value = '';
+      if (name) {
+        const chip = document.createElement('span');
+        chip.className = 'chip'; chip.textContent = name;
+        document.querySelector('.chips').append(chip);
+      }
+    });
+  </script>
+`);
+
+/**
+ * A box that resets itself by becoming a different element, which is how a
+ * widget built to show a removable chip instead of the native control
+ * usually works. The old node — the one `putIn` is still holding — keeps
+ * `.files` set even once it is out of the document, so the same check that
+ * catches `RECLAIMS` needs `isConnected` as well, not `files` alone.
+ */
+const REMOUNTS = page(`
+  <label for="rs">Resume</label><input id="rs" type="file">
+  <script>
+    document.getElementById('rs').addEventListener('change', (e) => {
+      const fresh = document.createElement('input');
+      fresh.type = 'file'; fresh.id = 'rs';
+      e.target.replaceWith(fresh);
+    });
+  </script>
+`);
+
 /** A form built as a web component, which is how a modern one is built. */
 const SHADOW = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head>
 <body><div id="host"></div><script>
@@ -212,6 +265,9 @@ const PAGES = {
   '/decoy': DECOY,
   '/doc-only': DOC_ONLY,
   '/all-in-one': ALL_IN_ONE,
+  '/reclaims': RECLAIMS,
+  '/keeps-as-chip': KEEPS_AS_CHIP,
+  '/remounts': REMOUNTS,
   '/shadow': SHADOW,
   '/menu': MENU,
   '/dropzone': DROPZONE,
@@ -663,6 +719,52 @@ async function main() {
       const { report, inBoxes } = await run('/shadow', [filed('Jianwen-Ding-Resume.pdf')]);
       check('a box inside a shadow root is still a box', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
       check('and it is reported as placed', report.placed.length === 1, JSON.stringify(report));
+    }
+
+    /*
+     * A box that takes the file back the instant it is given one — a
+     * `change` handler that clears it, the ordinary shape of client-side
+     * validation. `putIn` read `box.files` once, before dispatching the very
+     * event that runs this handler, so the file was reported placed on
+     * evidence about to stop being true. Measured before the fix: `placed:
+     * [{name: "Jianwen-Ding-Resume.pdf", ...}]`, `#rs` empty.
+     */
+    group('A box that clears itself the moment it hears about the file');
+    {
+      const { report, inBoxes } = await run('/reclaims', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('nothing is left in the box', (inBoxes.rs ?? []).length === 0, JSON.stringify(inBoxes));
+      check('and it is not claimed as attached', report.placed.length === 0, JSON.stringify(report.placed));
+      check(
+        'and named for what happened, not as though no box exists',
+        report.unplaced[0]?.why === 'this form took it and then would not keep it',
+        report.unplaced[0]?.why ?? '',
+      );
+    }
+
+    /*
+     * The same failure by the other route: the box resets itself by becoming
+     * a different element, which is how a widget that shows a removable
+     * chip instead of the native control is usually built. The detached old
+     * node keeps `.files` set, so the fix needs `isConnected` as well as a
+     * re-read of `files` — either alone misses this one.
+     */
+    group('A widget that clears the input and keeps the file as a chip');
+    {
+      const { report } = await run('/keeps-as-chip', [filed('Jianwen-Ding-Resume.pdf')]);
+      // Through the box, and sure of it — not rescued by the drop-area
+      // fallback, which can only guess (`sure: false`).
+      check(
+        'is reported as attached, through the box, because it was',
+        report.placed.length === 1 && report.placed[0].sure !== false,
+        JSON.stringify(report.placed),
+      );
+    }
+
+    group('A box that replaces itself the moment it hears about the file');
+    {
+      const { report, inBoxes } = await run('/remounts', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('the fresh box is empty', (inBoxes.rs ?? []).length === 0, JSON.stringify(inBoxes));
+      check('and it is not claimed as attached', report.placed.length === 0, JSON.stringify(report.placed));
     }
 
     /*
