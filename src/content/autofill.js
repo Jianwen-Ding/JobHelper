@@ -270,6 +270,14 @@ const NOT_ABOUT_YOU = [
    * credential the applicant may hold somewhere else, or not at all.
    */
   /\blicen[cs]\w*\b[\s\S]{0,24}\b(state|province|country|jurisdiction)\b|\b(state|province|country|jurisdiction)\b[\s\S]{0,12}\blicen[cs]\w*|\bissu(ing|ed)\b[\s\S]{0,12}\b(state|province|country)\b|\b(state|province|country)\b[\s\S]{0,12}\bof[\s_-]+issu\w*/i,
+  /*
+   * When to ring, which is not the number to ring. "Best phone interview
+   * time", "Best time to reach you by phone" and "Phone screen availability"
+   * matched `phone` and were given the telephone number as a time. The
+   * interview itself is excluded only where no "number" is asked for, because
+   * "Phone number for the phone interview" is the telephone box.
+   */
+  /\b(best|convenient|preferred|ideal)[\s_-]+times?\b|^(?![\s\S]*\bnumber\b)[\s\S]*\bphone[\s_-]+(interview|screen\w*)\b/i,
   // Where you heard about the job, which is not a profile of yours.
   /\b(did[\s_-]you[\s_-](?:first[\s_-])?hear|hear[\s_-](?:about|of)[\s_-](us|this)|referral)\b/i,
   // Citizenship, birth and residence are different questions with the same

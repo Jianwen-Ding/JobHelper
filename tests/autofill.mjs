@@ -1151,6 +1151,13 @@ const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Ap
   <label for="licst4">Issuing state</label><input id="licst4" name="q_l4">
   <label for="own-state">State/Province</label><input id="own-state" name="q_l5">
 
+  <!-- When to ring, which is not the number to ring. -->
+  <label for="phtime1">Best phone interview time</label><input id="phtime1" name="q_p1">
+  <label for="phtime2">Best time to reach you by phone</label><input id="phtime2" name="q_p2">
+  <label for="phtime3">Phone screen availability</label><input id="phtime3" name="q_p3">
+  <label for="phbest">Best phone number to reach you</label><input id="phbest" name="q_p4">
+  <label for="phint">Phone number for the phone interview</label><input id="phint" name="q_p5">
+
   <!-- The applicant's own, still filled. -->
   <label for="own-ln">Last name</label><input id="own-ln" name="q_ln">
   <label for="own-legal">Legal name</label><input id="own-legal" name="q_legal">
@@ -1712,6 +1719,16 @@ async function main() {
     check('nor "Driver\'s license issuing state"', more.licst3 === '', more.licst3);
     check('nor "Issuing state"', more.licst4 === '', more.licst4);
     check('while "State/Province" still gets it', more['own-state'] === 'MA', more['own-state']);
+
+    group('When to ring, which is not the number');
+    check('"Best phone interview time" is not given the phone number', more.phtime1 === '', more.phtime1);
+    check('nor "Best time to reach you by phone"', more.phtime2 === '', more.phtime2);
+    check('nor "Phone screen availability"', more.phtime3 === '', more.phtime3);
+    check(
+      'while "Best phone number to reach you" and "Phone number for the phone interview" still get it',
+      more.phbest === PROFILE.phone && more.phint === PROFILE.phone,
+      `${more.phbest} / ${more.phint}`,
+    );
 
     group('A declaration answered from a sentence');
     check(
