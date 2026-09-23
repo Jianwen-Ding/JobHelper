@@ -402,6 +402,9 @@
   /** Stops the one watcher of choices made on this page's form; see `show`. */
   let stopChoices = null;
 
+  /** Stops the watcher that re-reads the form's questions; see `watchQuestions`. */
+  let stopQuestions = null;
+
   /**
    * Which pass owns the card.
    *
@@ -510,6 +513,57 @@
       // A server that is down must not cost us the questions themselves.
       return { wantsLetter, questions: found.map((q) => ({ ...q, answer: '', confident: false, score: 0 })) };
     }
+  }
+
+  /**
+   * Read the questions again when the form moves on without the url moving.
+   *
+   * They were read once, when the card went up, and again only on a url
+   * change. A form that draws its next step where the last one was — a React
+   * step component, the url untouched — left the card listing step one's
+   * question, its answer box and its Insert button, while the page asked
+   * something else; and step two's own questions were never offered at all.
+   * Measured in tests/worker.mjs: after Next, the card still listed "Why do
+   * you want to work at Helios?" over a page asking "Describe a time you
+   * failed." and a second question step one did not have.
+   *
+   * The observer only sets a flag, as the rescore watcher's does, and the
+   * reading happens on a slow tick — and only for a form, only while its card
+   * is up. What is compared is the questions as the page asks them, counters
+   * folded out the way `insertAnswer` folds them, so a "(473 characters
+   * remaining)" ticking as somebody types is not a new step. Only this
+   * document is looked at on the tick; when it has moved on, the whole
+   * reading runs again, frames included, with the bank matched afresh.
+   */
+  function watchQuestions(findQuestions, current) {
+    const asked = () =>
+      findQuestions()
+        .map((q) => q.question.replace(/\d+/g, '#').toLowerCase())
+        .join('\n');
+    let readAs = asked();
+    let changed = false;
+    const observer = new MutationObserver(() => {
+      changed = true;
+    });
+    observer.observe(document, { childList: true, subtree: true, characterData: true });
+    const tick = setInterval(() => {
+      if (!changed || !cardHandle || dismissed || !current()) return;
+      changed = false;
+      const now = asked();
+      if (now === readAs) return;
+      readAs = now;
+      gatherQuestions()
+        .then(({ questions, wantsLetter }) => {
+          if (!current()) return;
+          cardHandle?.setQuestions(questions);
+          cardHandle?.setNeedsCoverLetter(wantsLetter);
+        })
+        .catch(() => undefined);
+    }, 1500);
+    return () => {
+      observer.disconnect();
+      clearInterval(tick);
+    };
   }
 
   /**
@@ -1863,8 +1917,12 @@
      */
     imports
       .autofill()
-      .then(({ watchChoices, looksLikeApplicationForm }) => {
+      .then(({ watchChoices, looksLikeApplicationForm, findQuestions }) => {
         if (!current() || !looksLikeApplicationForm()) return;
+        // And its questions, for a form that moves on in place. One watcher,
+        // for the reason given below for the choices.
+        stopQuestions?.();
+        stopQuestions = watchQuestions(findQuestions, current);
         /*
          * One watcher, whatever number of passes found the form.
          *
@@ -2636,6 +2694,8 @@
     // next page is watched only if its own pass finds a form on it.
     stopChoices?.();
     stopChoices = null;
+    stopQuestions?.();
+    stopQuestions = null;
 
     // Before the await, not after: the pass still running belongs to the url
     // that just went away, and it must stop being able to write to the card
@@ -2729,6 +2789,7 @@
     imports.ask().then(({ removeAsk }) => removeAsk()).catch(() => undefined);
     cardHandle = null;
     stopChoices?.();
+    stopQuestions?.();
   });
 
   // A missing server must not spam every page the user opens.

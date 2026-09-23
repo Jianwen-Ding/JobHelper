@@ -1630,6 +1630,89 @@ async function main() {
       check('the choice is remembered', (sent ?? []).includes('LinkedIn'), JSON.stringify(sent));
       check('once, however many times the page was looked at', sent?.length === 1, JSON.stringify(sent));
     }
+
+    /*
+     * A form that moves to its next step in place, and the card's list of
+     * its questions.
+     *
+     * Questions were read once, when the card went up, and again only on a
+     * url change. A form that draws step two where step one was — a React
+     * step component, the url untouched — left the card listing step one's
+     * question under "Application questions", with its answer box and its
+     * Insert button, while the page asked something else. Insert has since
+     * refused a box that asks another question, and says so; the list itself
+     * went on naming the question that was gone, and step two's new one was
+     * never offered at all.
+     */
+    group('A form that moves to its next step in place');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Apply for Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1>
+          <form id="f">
+            <label for="fn">First name</label><input id="fn" name="first_name">
+            <label for="ln">Last name</label><input id="ln" name="last_name">
+            <label for="em">Email</label><input id="em" type="email" name="email">
+            <label for="cv">Resume</label><input id="cv" type="file">
+            <label id="q-label" for="q-box">Why do you want to work at Helios?</label>
+            <textarea id="q-box" name="step1_why"></textarea>
+            <button type="button" id="next">Next</button>
+          </form>
+          <script>
+            // Step two, drawn into step one's place: the same box under a new
+            // label, and a second box that step one did not have.
+            document.getElementById('next').addEventListener('click', () => {
+              document.getElementById('q-label').textContent = 'Describe a time you failed.';
+              document.getElementById('q-box').name = 'step2_failure';
+              document.getElementById('next').insertAdjacentHTML('beforebegin',
+                '<label for="q-two">What would you build first on our platform?</label>' +
+                '<textarea id="q-two" name="step2_build"></textarea>');
+            });
+          </script>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/jobs/platform-engineer/apply`;
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+
+      const page = await context.newPage();
+      const listed = () =>
+        page
+          .locator('#jobhelper-card-host .card .q .qt')
+          .evaluateAll((els) => els.map((el) => el.firstChild?.textContent ?? ''))
+          .catch(() => []);
+      let before = [];
+      let after = [];
+      try {
+        await page.goto(where);
+        await page.locator('#jobhelper-card-host .card').waitFor({ timeout: 15_000 });
+        await page.locator('#jobhelper-card-host .card .q').first().waitFor({ timeout: 15_000 });
+        // A question the page never showed, typed in by hand. It is on no
+        // step, so no step's reading may take it off the list.
+        page.once('dialog', (d) => d.accept('What is your notice period?'));
+        await page.locator('#jobhelper-card-host .card').getByRole('button', { name: '+ Question' }).click();
+        await page.waitForTimeout(500);
+        before = await listed();
+        await page.click('#next');
+        await page.waitForTimeout(4000);
+        after = await listed();
+      } finally {
+        await page.close();
+        site.close();
+        await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: false }));
+      }
+
+      check('step one’s question is listed first', before.includes('Why do you want to work at Helios?'), JSON.stringify(before));
+      check(
+        'after the step changes in place, the card lists step two’s questions',
+        after.includes('Describe a time you failed.') && after.includes('What would you build first on our platform?'),
+        JSON.stringify(after),
+      );
+      check('and not the question that has gone', !after.includes('Why do you want to work at Helios?'), JSON.stringify(after));
+      check('while a question typed in by hand stays', after.includes('What is your notice period?'), JSON.stringify(after));
+    }
   } finally {
     await context.close();
     store.close();

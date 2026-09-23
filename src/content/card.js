@@ -6205,7 +6205,18 @@ export function createCard({
       draw();
     },
     setQuestions(qs) {
-      state.questions = qs;
+      /*
+       * Every question the page shows, and the ones typed in by hand, which
+       * the page does not. This is called again when a form moves to its next
+       * step in place — see `watchQuestions` in content.js — and replacing the
+       * list outright there took a hand-typed question off it with the step
+       * it was typed on. Their answers were never at risk: `state.answers` is
+       * keyed by the question and is not touched here.
+       */
+      const byHand = (state.questions ?? []).filter(
+        (q) => !q.fieldId && !(qs ?? []).some((n) => n.question === q.question),
+      );
+      state.questions = [...(qs ?? []), ...byHand];
       // Questions arrive after the card is built, so anything carried over
       // from the last page can only be matched to them now.
       applyCarriedAnswers();
