@@ -194,6 +194,17 @@ const NOT_YOURS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply
     <label><input type="radio" name="auth2" value="Yes"> Yes</label>
     <label><input type="radio" name="auth2" value="No"> No</label>
   </fieldset>
+
+  <!-- The same two declarations with the first put another way. "Able to
+       work" is no wording the authorization pattern knows, so only the
+       sponsorship half was seen, and answered the wrong way up. -->
+  <label for="able">Are you able to work in the U.S. without sponsorship?</label>
+  <select id="able" name="able_nosponsor"><option value="">--</option><option>Yes</option><option>No</option></select>
+  <fieldset>
+    <legend>Can you work in the United States without visa sponsorship?</legend>
+    <label><input type="radio" name="able2" value="Yes"> Yes</label>
+    <label><input type="radio" name="able2" value="No"> No</label>
+  </fieldset>
 </form></body></html>`;
 
 /*
@@ -1463,10 +1474,11 @@ async function main() {
             ['own-email', 'own-phone', 'r-name', 'r-email', 'r-phone', 'mgr-email', 'ec-name', 'ec-phone',
              'fs-name', 'fs-phone', 'fs-email', 'g-name', 'g-email',
              'emp-city', 'emp-loc', 'emp-mail', 'source', 'citizenship', 'residence', 'b-country', 'b-city', 'cc', 'pref1',
-             'pref2', 'reloc', 'st', 'sal', 'dis-sig', 'eeo-sig', 'auth-any', 'both']
+             'pref2', 'reloc', 'st', 'sal', 'dis-sig', 'eeo-sig', 'auth-any', 'both', 'able']
               .map((id) => [id, document.getElementById(id).value]),
           ),
           checked: document.querySelector('input[name="auth2"]:checked')?.value ?? '',
+          able2: document.querySelector('input[name="able2"]:checked')?.value ?? '',
           office: document.querySelector('input[name="office"]:checked')?.value ?? '',
           filled: report.filled.map((f) => f.key),
           // With the description, because two fields can be skipped for the
@@ -1628,6 +1640,28 @@ async function main() {
           /^work_authorization:this one asks two things at once:.*US without requiri/.test(s),
         ),
       `checked "${mine.checked}"; ${mine.skipped.join(', ')}`,
+    );
+    /*
+     * The same question with its first half in other words. Only the
+     * sponsorship half matched, so it was answered as "do you need
+     * sponsorship?" — and it asks the opposite. Measured against a profile
+     * needing none: "Are you able to work in the U.S. without sponsorship?"
+     * was answered "No", on the dropdown and on the radio buttons, telling
+     * the employer the applicant cannot work there unsponsored. A profile
+     * that does need sponsorship got "Yes", which is a false declaration of
+     * the right to work.
+     */
+    check(
+      'able to work without sponsorship is not answered from the sponsorship alone',
+      mine.values.able === '' &&
+        mine.skipped.some((s) => /^work_authorization:this one asks two things at once:.*able to work in the U\.S/.test(s)),
+      `"${mine.values.able}"; ${mine.skipped.join(', ')}`,
+    );
+    check(
+      'nor as radio buttons',
+      mine.able2 === '' &&
+        mine.skipped.some((s) => /^work_authorization:this one asks two things at once:.*Can you work/.test(s)),
+      `checked "${mine.able2}"; ${mine.skipped.join(', ')}`,
     );
     /*
      * And the half-question that is answerable is still answered. Without this

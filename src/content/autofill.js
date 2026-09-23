@@ -533,8 +533,20 @@ const isNotAboutYou = (description, label, around = '', section = '') => {
  */
 const AUTHORIZATION = FIELD_PATTERNS.find(([key]) => key === 'work_authorization')[1];
 const SPONSORSHIP = FIELD_PATTERNS.find(([key]) => key === 'requires_sponsorship')[1];
+/*
+ * And the same pair with its first half in words `AUTHORIZATION` does not
+ * know. "Are you able to work in the U.S. without sponsorship?" and "Can you
+ * work in the United States without visa sponsorship?" matched only the
+ * sponsorship pattern, so they were answered as "do you need sponsorship?" —
+ * which is the opposite question. Measured: a profile needing none had "No"
+ * written into both, telling the employer the applicant cannot work there
+ * unsponsored; a profile needing it would have had "Yes", a false declaration
+ * of the right to work. "Without" in front of the sponsorship is what makes it
+ * the question about working, however the working is put.
+ */
+const WITHOUT_SPONSORSHIP = /\bwithout\b[\s\S]{0,30}\bsponsor\w*/i;
 const asksBothAtOnce = (description) =>
-  AUTHORIZATION.test(description) && SPONSORSHIP.test(description);
+  (AUTHORIZATION.test(description) || WITHOUT_SPONSORSHIP.test(description)) && SPONSORSHIP.test(description);
 
 /**
  * Handing it back, wherever it turns up.
