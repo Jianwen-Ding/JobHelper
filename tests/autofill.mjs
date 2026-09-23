@@ -1090,7 +1090,15 @@ const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Ap
   <label for="pfpw">Portfolio password</label><input id="pfpw" name="q_pw1">
   <label for="webpw">Website password (if any)</label><input id="webpw" name="q_pw2">
 
+  <!-- Where the school is, and the employer's website. -->
+  <label for="schcity">School city</label><input id="schcity" name="q_s1">
+  <label for="schstate">School state</label><input id="schstate" name="q_s2">
+  <label for="unictry">University country</label><input id="unictry" name="q_s3">
+  <label for="unicity">What city is your university located in?</label><input id="unicity" name="q_s4">
+  <label for="coweb">Company website</label><input id="coweb" name="q_s5">
+
   <!-- The applicant's own, still filled. -->
+  <label for="sch">School</label><input id="sch" name="q_sch">
   <label for="pf">Portfolio</label><input id="pf" name="q_pf">
   <label for="gradyear">Year of graduation</label><input id="gradyear" name="q_gy">
   <label for="own-email">Email</label><input id="own-email" name="email" type="email">
@@ -1576,6 +1584,14 @@ async function main() {
     check('"Portfolio password" is not given the portfolio URL', more.pfpw === '', more.pfpw);
     check('nor is "Website password (if any)"', more.webpw === '', more.webpw);
     check('while "Portfolio" still gets it', more.pf === 'jianwen.dev', more.pf);
+
+    group('Where the school is, and whose website');
+    check('"School city" is not given the school\'s name', more.schcity === '', more.schcity);
+    check('"School state" is not given it either', more.schstate === '', more.schstate);
+    check('nor "University country"', more.unictry === '', more.unictry);
+    check('nor "What city is your university located in?"', more.unicity === '', more.unicity);
+    check('"Company website" is not given the applicant\'s own site', more.coweb === '', more.coweb);
+    check('while "School" still gets the school', more.sch === 'Northeastern University', more.sch);
 
     group('A declaration answered from a sentence');
     check(

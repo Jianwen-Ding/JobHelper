@@ -166,7 +166,19 @@ const NOT_ABOUT_YOU = [
    * a stated fact about where somebody else's office was. Exactly the case
    * above, on the word those three happen to use.
    */
-  /\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+(name|address|location|city|town|state|province|country|phone|telephone|email|zip|postal)\b/i,
+  /*
+   * Its website too: "Company website" is on the same line of the same
+   * section, and `website` gave it the applicant's own site.
+   */
+  /\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+(name|address|location|city|town|state|province|country|phone|telephone|email|zip|postal|web[\s_-]?site|url)\b/i,
+  /*
+   * And the school's, which the education sections of the older systems ask
+   * for the same way. `school` sits above every address pattern, so "School
+   * city", "School state", "University country" and "What city is your
+   * university located in?" were each given the university's *name* — in a
+   * box asking where it is.
+   */
+  /\b(school|university|college|institution)['’]?s?[\s_-]+(address|location|city|town|state|province|country|zip|postal)\b|\b(school|university|college|institution)\b[\s\S]{0,24}\blocated\b/i,
   /*
    * Permission to contact an employer, which is a yes or a no and not the
    * employer's name — "Can we contact your current employer?" took
