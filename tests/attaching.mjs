@@ -259,7 +259,43 @@ const SHADOW = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</t
   root.innerHTML = '<label for="rs">Resume</label><input id="rs" type="file">';
 </script></body></html>`;
 
+/**
+ * Workday's drop area twice over: a Cover Letter section above a Resume/CV
+ * one, each a heading and a zone with no input until something is dropped,
+ * and the heading outside the zone, as `WORKDAY` has it. Each input the page
+ * makes is named for the zone that made it, so the readback says which one
+ * took what.
+ */
+const TWO_ZONES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head>
+<body><div data-automation-id="applicationPage">
+  <div data-automation-id="coverLetterSection">
+    <h4>Cover Letter</h4>
+    <div id="cl" data-automation-id="file-upload-drop-zone">
+      <div class="inner"><p>Drag and drop files here</p><button type="button">Select files</button></div>
+    </div>
+  </div>
+  <div data-automation-id="resumeSection">
+    <h4>Resume/CV</h4>
+    <div id="cv" data-automation-id="file-upload-drop-zone">
+      <div class="inner"><p>Drag and drop files here</p><button type="button">Select files</button></div>
+    </div>
+  </div>
+  <script>
+    let n = 0;
+    for (const zone of document.querySelectorAll('[data-automation-id="file-upload-drop-zone"]')) {
+      zone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const made = document.createElement('input');
+        made.type = 'file'; made.id = zone.id + '-' + ++n; made.style.display = 'none';
+        made.files = e.dataTransfer.files;
+        zone.append(made);
+      });
+    }
+  </script>
+</div></body></html>`;
+
 const PAGES = {
+  '/two-zones': TWO_ZONES,
   '/resume-only-labelled': RESUME_ONLY_LABELLED,
   '/photo-and-zone': PHOTO_AND_ZONE,
   '/decoy': DECOY,
@@ -569,6 +605,44 @@ async function main() {
       const { report, inBoxes } = await run('/dropzone-real', [filed('Jianwen-Ding-Resume.pdf')]);
       check('the page ends up holding it', inBoxes.made?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
       check('and it is reported as certain', report.placed[0]?.sure === true, JSON.stringify(report.placed[0]));
+    }
+
+    /*
+     * Two drop areas and no input anywhere, which is Workday with a cover
+     * letter section as well as a resume one. With no box on the page every
+     * file went to the first area in the document, whatever was written over
+     * it — measured: the resume and the letter both dropped on Cover Letter,
+     * the page holding both there, and "Attached …-Resume.pdf and
+     * …-Cover-Letter.pdf" in green.
+     */
+    group('Two drop areas, each under its own heading');
+    {
+      const { report, inBoxes } = await run('/two-zones', [
+        filed('Jianwen-Ding-Resume.pdf'),
+        filed('Jianwen-Ding-Cover-Letter.pdf'),
+      ]);
+      const into = (zone) =>
+        Object.entries(inBoxes).filter(([id]) => id.startsWith(`${zone}-`)).flatMap(([, names]) => names);
+      check('the resume goes to the area under Resume/CV', JSON.stringify(into('cv')) === '["Jianwen-Ding-Resume.pdf"]', JSON.stringify(inBoxes));
+      check('and the letter to the one under Cover Letter', JSON.stringify(into('cl')) === '["Jianwen-Ding-Cover-Letter.pdf"]', JSON.stringify(inBoxes));
+      check('both said as attached, because both can be read back', report.placed.every((p) => p.sure === true), JSON.stringify(report.placed));
+    }
+
+    /*
+     * And one area, under Resume/CV, with a transcript to place as well. The
+     * area has said whose it is; dropping the transcript on it is the
+     * wrong-document failure `boxFor` refuses, arriving through the drop.
+     */
+    group('One drop area, and it says Resume/CV');
+    {
+      const { report } = await run('/workday', [filed('Jianwen-Ding-Resume.pdf'), filed('Transcript.pdf')]);
+      check('the resume is dropped on it', report.placed.some((p) => p.name === 'Jianwen-Ding-Resume.pdf'), JSON.stringify(report.placed));
+      check(
+        'and the transcript is not, and is said to have nowhere to go',
+        !report.placed.some((p) => p.name === 'Transcript.pdf') &&
+          report.unplaced.some((u) => u.name === 'Transcript.pdf' && u.why === 'no box here asks for it'),
+        JSON.stringify(report),
+      );
     }
 
     /* ---------------------------------------------------------------- *

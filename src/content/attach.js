@@ -510,6 +510,28 @@ function dropZones(root = document) {
 }
 
 /**
+ * What a drop area is for: its own words, and the heading over it.
+ *
+ * Read off the zone's text alone, which on Workday is "Drag and drop files
+ * here, Select files" — the "Resume/CV" is a heading outside it. So no zone
+ * ever named a kind, and on a page with no input yet every file went to the
+ * first zone in the document. Measured with a Cover Letter section above a
+ * Resume/CV one: the resume and the letter both dropped on Cover Letter, and
+ * both reported attached. The walk up stops where it would reach another
+ * zone, as `aroundIt` stops at another box.
+ */
+function zoneSays(zone, zones) {
+  const clean = (text) => wordsOf(text).replace(/\s+/g, ' ').trim();
+  let said = clean(`${zone.getAttribute('aria-label') ?? ''} ${zone.textContent ?? ''}`);
+  for (let holder = zone.parentElement, up = 0; holder && up < 4; holder = holder.parentElement, up++) {
+    if (zones.some((z) => z !== zone && holder.contains(z))) break;
+    const text = clean(holder.textContent);
+    if (text && text.length < 400) said = text;
+  }
+  return said;
+}
+
+/**
  * Attach what the card has to whatever this page asks for.
  *
  * Reports rather than throws, and reports per file: a form with a resume box
@@ -660,8 +682,13 @@ export async function attachFiles(files) {
      * the zone says it wants this kind, or there is no box on the page at
      * all: a zone beside a resume box is the resume's, and dropping a
      * transcript on it is the same wrong-document failure by another route.
+     * With no box, still only a zone that names no other kind — see
+     * `zoneSays`.
      */
-    const zone = dropZones().find((z) => boxes.length === 0 || WANTS[kind]?.test(wordsOf(z.textContent)));
+    const zones = dropZones();
+    const zone =
+      zones.find((z) => WANTS[kind]?.test(zoneSays(z, zones))) ??
+      (boxes.length === 0 ? zones.find((z) => kindOf(zoneSays(z, zones)) === 'other') : undefined);
     if (zone) {
       /*
        * Said as what it is. A drop cannot be read back the way `input.files`
@@ -694,7 +721,7 @@ export async function attachFiles(files) {
         ? 'this form took it and then would not keep it'
         : refusedType
           ? `this form only takes ${refusedType.getAttribute('accept')} there`
-          : boxes.length === 0
+          : boxes.length === 0 && zones.length === 0
             ? 'this page has no upload box the extension can reach'
             : 'no box here asks for it',
     });
