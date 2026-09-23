@@ -633,6 +633,8 @@ const GRADUATION = `<!doctype html><html><head><meta charset="utf-8"><title>Appl
   <select id="gy" name="grad_year"><option value="">Year</option><option>2025</option><option>2026</option><option>2027</option></select>
   <label for="gmonth">Graduation date</label><input id="gmonth" type="month" name="grad_month_picker">
   <label for="gslash">Anticipated graduation</label><input id="gslash" name="grad_slash" placeholder="MM/YYYY">
+  <!-- The same shape said in the label, which is where most forms say it. -->
+  <label for="glabel">Graduation date (MM/YYYY)</label><input id="glabel" name="grad_label">
   <label for="gwhen">When do you expect to graduate?</label><input id="gwhen" name="grad_when">
   <label for="guni">Graduation date from your university</label><input id="guni" name="grad_uni">
   <label for="gprog">Graduate program of interest</label><input id="gprog" name="grad_program">
@@ -1888,7 +1890,7 @@ async function main() {
           graduation_date: 'December 2026',
           school: 'Northeastern University',
         });
-        const ids = ['gm', 'gm2', 'gy', 'gmonth', 'gslash', 'gwhen', 'guni', 'gprog', 'recent'];
+        const ids = ['gm', 'gm2', 'gy', 'gmonth', 'gslash', 'glabel', 'gwhen', 'guni', 'gprog', 'recent'];
         return {
           values: Object.fromEntries(ids.map((id) => [id, document.getElementById(id).value])),
           months: ['December', 'Dec', 'Dec.', 'Sept', '12', '01', '12 - December', 'Ma', 'Maybe', '13', ''].map((t) => [
@@ -2218,6 +2220,7 @@ async function main() {
     check('a year list', graduation.values.gy === '2026', `value "${graduation.values.gy}"`);
     check('a month picker, which takes nothing but 2026-12', graduation.values.gmonth === '2026-12', `"${graduation.values.gmonth}"`);
     check('a box whose placeholder says MM/YYYY', graduation.values.gslash === '12/2026', `"${graduation.values.gslash}"`);
+    check('and one whose label says it', graduation.values.glabel === '12/2026', `"${graduation.values.glabel}"`);
     check('a plain box, the way a person would type it', graduation.values.gwhen === 'December 2026', `"${graduation.values.gwhen}"`);
     /*
      * The first pattern to match claims the field, and "university" is the

@@ -1165,7 +1165,12 @@ export function graduationFor(input, value) {
   const year = hit[2];
   const mm = String(month).padStart(2, '0');
   if (input.type === 'month') return `${year}-${mm}`;
-  const hint = `${input.placeholder ?? ''} ${input.getAttribute?.('aria-label') ?? ''}`.toLowerCase();
+  /*
+   * The label too, which is where most forms that want a shape say so:
+   * "Graduation date (MM/YYYY)" over a bare box was given "December 2026" and
+   * reported as filled — the one shape its own label said it would not take.
+   */
+  const hint = `${input.placeholder ?? ''} ${input.getAttribute?.('aria-label') ?? ''} ${labelFor(input)}`.toLowerCase();
   if (/yyyy\s*-\s*mm/.test(hint)) return `${year}-${mm}`;
   if (/mm\s*\/\s*yyyy/.test(hint)) return `${mm}/${year}`;
   if (/mm\s*\/\s*yy\b/.test(hint)) return `${mm}/${year.slice(2)}`;
