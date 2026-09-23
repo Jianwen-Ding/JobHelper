@@ -1941,6 +1941,35 @@ async function main() {
       check('the space is asked for again once the worker is back', afterRetry === before + 2, `${afterRetry - before - 1} pushes after the restart`);
       check('and once only', spaces() === before + 2, `${spaces() - before} pushes in all`);
     }
+
+    /*
+     * The popup on a page no extension can run on.
+     *
+     * A new tab, chrome://anything, the extensions page: content scripts are
+     * never allowed there, and Autofill and "Open on this page" both said
+     * "JobHelper is not running on this page. Reload the tab and try again."
+     * — advice that cannot work, however many times it is followed. No web
+     * page is open here, so the popup falls back to its own tab, which is
+     * exactly such a page.
+     */
+    group('The popup on a page no extension can run on');
+    {
+      const popup = await context.newPage();
+      const said = {};
+      try {
+        await popup.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+        await popup.waitForTimeout(1500);
+        for (const [name, button] of [['autofill', '#autofill'], ['show', '#show']]) {
+          await popup.locator(button).click();
+          await popup.waitForTimeout(800);
+          said[name] = (await popup.locator('#status').textContent().catch(() => '')) ?? '';
+        }
+      } finally {
+        await popup.close().catch(() => undefined);
+      }
+      check('Autofill does not tell you to reload the tab', !/reload/i.test(said.autofill) && /does not run/i.test(said.autofill), said.autofill);
+      check('nor does "Open on this page"', !/reload/i.test(said.show) && /does not run/i.test(said.show), said.show);
+    }
   } finally {
     await context.close();
     store.close();

@@ -159,6 +159,19 @@ async function tellContentScript(type) {
   if (!tab?.id) return;
 
   /*
+   * A page no extension may run on, before either of the two below.
+   *
+   * A new tab, a chrome:// page, the extensions page: the message has
+   * nowhere to go, and the catch below said "Reload the tab and try again"
+   * — which cannot work there, however many times it is followed. Only
+   * where there is an address to read, so a tab this cannot see still gets
+   * the old answer.
+   */
+  if (tab.url && !/^(https?|file):/i.test(tab.url)) {
+    throw new Error('JobHelper does not run on browser pages like this one. Open the job posting or the application form, then try again.');
+  }
+
+  /*
    * Two different failures, and only one of them is "not running here".
    *
    * `sendMessage` rejects when there is no content script to receive it — a
