@@ -743,6 +743,8 @@ export function createCard({
     priorLetters: [],
     questions,
     answers: {},
+    /** Questions whose last "Insert into form" put nothing in, by question. */
+    insertMissed: {},
     feedback: '',
     autofillReport: null,
     /** What the last press of Attach put into the form, and what it could not. */
@@ -5451,9 +5453,29 @@ export function createCard({
             disabled: !q.fieldId,
             // With the question it answers: the box must still be asking it. See
             // `insertAnswer` in autofill.js.
-            onclick: () =>
-              onAction('insertAnswer', { fieldId: q.fieldId, question: q.question, text: state.answers[q.question] ?? value }),
+            onclick: async () => {
+              const put = await Promise.resolve(
+                onAction('insertAnswer', { fieldId: q.fieldId, question: q.question, text: state.answers[q.question] ?? value }),
+              ).catch(() => false);
+              /*
+               * Said, not swallowed. A box that has gone, or now asks step
+               * two's question, is refused — and a button that does nothing
+               * when pressed reads as a button that is broken.
+               */
+              const missed = !put;
+              if (Boolean(state.insertMissed[q.question]) !== missed) {
+                if (missed) state.insertMissed[q.question] = true;
+                else delete state.insertMissed[q.question];
+                draw();
+              }
+            },
           }),
+          state.insertMissed[q.question]
+            ? h('span', {
+                className: 'faint',
+                textContent: 'Nothing was put in: that box on the page is gone or asks something else now.',
+              })
+            : null,
           /*
            * Some questions are not the model's to answer.
            *

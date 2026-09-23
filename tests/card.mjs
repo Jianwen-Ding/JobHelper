@@ -4360,6 +4360,45 @@ async function main() {
     JSON.stringify(previewOfAnother),
   );
 
+  console.log('\nAn Insert that puts nothing in says so');
+
+  /*
+   * The form refuses a box that has gone, or that now asks step two's
+   * question (`insertAnswer` in autofill.js). A button that then does nothing
+   * reads as broken; the card says what happened, and stops saying it once an
+   * Insert lands.
+   */
+  const refused = await inPage(async (createCard) => {
+    let lands = false;
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [{ question: 'Why us?', answer: 'Rockets.', confident: true, fieldId: 'jh-7' }],
+      needsCoverLetter: false,
+      onAction: async (action) => (action === 'insertAnswer' ? lands : {}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const press = async () => {
+      [...root.querySelectorAll('button')].find((b) => b.textContent === 'Insert into form').click();
+      await new Promise((r) => setTimeout(r, 50));
+      return /Nothing was put in/.test(root.textContent);
+    };
+    const before = /Nothing was put in/.test(root.textContent);
+    const afterMiss = await press();
+    lands = true;
+    const afterHit = await press();
+    return { before, afterMiss, afterHit };
+  });
+  check('nothing is said before Insert is pressed', refused.before === false, JSON.stringify(refused));
+  check('a refused Insert says nothing was put in', refused.afterMiss === true, JSON.stringify(refused));
+  check('and one that lands clears it', refused.afterHit === false, JSON.stringify(refused));
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);

@@ -468,11 +468,12 @@ export function employerKey(name) {
  *
  * The late-result check compared titles exactly, and one posting writes its
  * title several ways — the JSON-LD's "Platform Engineer", the heading's
- * "Platform engineer", a page title's "Platform Engineer – Remote" with
- * whatever dash its author typed. Measured by lifting `sameJob` out of
- * content.js: each of those against the card's "Platform Engineer" came back
- * false, and a finished AI run on this very posting was announced as "not
- * this posting" and dropped.
+ * "Platform engineer", "Sr. Engineer" beside "Sr Engineer", a non-breaking
+ * space or whatever dash its author typed. Measured by lifting `sameJob` out
+ * of content.js: each of those against the card's reading came back false,
+ * and a finished AI run on this very posting was announced as "not this
+ * posting" and dropped. A title with a word added — "Platform Engineer –
+ * Remote" — is still a different string here, and stays one.
  *
  * Case, spacing and punctuation come off; words do not. Every letter and
  * digit is kept in order, so "Senior Platform Engineer", "Platform Engineer
