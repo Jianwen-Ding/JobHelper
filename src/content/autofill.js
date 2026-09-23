@@ -501,12 +501,19 @@ function surroundingWords(input) {
 const HISTORY_GROUP = /\b(work|employment|professional|job|career)[\s_-]+(experience|history)\b|\beducation\w*\b/i;
 const A_PLACE_OR_LINE = /\b(location|city|town|state|province|region|country|address|zip|postal|phone|telephone|mobile|e-?mail)\b/i;
 
-const isNotAboutYou = (description, label, around = '') => {
+/*
+ * `section` is a heading the markup bounds — see `boundedSection` — and it is
+ * read by the history rule alone. A heading is weaker evidence than a legend
+ * or a labelled group, so it is not joined to `around` for the rest of the
+ * list; and the history rule leaves a box blank, which is the safe way for a
+ * guess about sections to be wrong.
+ */
+const isNotAboutYou = (description, label, around = '', section = '') => {
   const about = around ? `${around} ${description}` : description;
   return (
     asksForADiallingCode(description, label) ||
     NOT_ABOUT_YOU.some((re) => re.test(about)) ||
-    (HISTORY_GROUP.test(around) && A_PLACE_OR_LINE.test(description))
+    ((HISTORY_GROUP.test(around) || HISTORY_GROUP.test(section)) && A_PLACE_OR_LINE.test(description))
   );
 };
 
@@ -1148,18 +1155,82 @@ function otherWaysToWrite(key, value) {
  * an availability the applicant never stated, and one already past.
  */
 const HEADING = 'h1, h2, h3, h4, h5, h6, legend, [role="heading"]';
+
+/*
+ * Where a heading's section ends, when the markup says.
+ *
+ * A heading with no fieldset has no edge of its own, and "the last heading
+ * before the field" held it open to the end of the form. Measured, on a form
+ * built as one wrapper per section: an `<h3>Education</h3>` block, then a
+ * block holding only "Available start date" — which was given the degree's
+ * start, "September 2022" — and a Work Experience block whose plain
+ * "Location" and "City" were given the applicant's own home.
+ *
+ * The edge is the heading's wrapper: its parent, or the nearest ancestor that
+ * holds a control, so a heading wrapped on its own in a header `div` is
+ * measured by the section around it. Only a wrapper smaller than the form,
+ * and not one holding another heading of the same rank or higher — that is a
+ * page, not a section. A flat form, where every heading is a sibling of every
+ * field, has no edge to read, and there nothing changes: the last heading
+ * before the field is still the answer, because the form's own `Employment
+ * history` heading is followed by unrelated questions on the same level and
+ * there is no telling where it stopped.
+ */
+const A_CONTROL =
+  'input:not([type=hidden]):not([type=button]):not([type=submit]):not([type=reset]):not([type=image]), select, textarea';
+const rankOf = (heading) =>
+  /^h[1-6]$/.test(heading.localName) ? Number(heading.localName[1]) : Number(heading.getAttribute('aria-level')) || 2;
+
+function sectionBoxOf(heading) {
+  let box = heading.parentElement;
+  while (box && !box.querySelector(A_CONTROL)) box = box.parentElement;
+  if (!box || box.localName === 'form' || box.localName === 'body' || box.localName === 'html') return null;
+  const rank = rankOf(heading);
+  for (const other of box.querySelectorAll(HEADING)) {
+    if (other === heading || other.localName === 'legend') continue;
+    if (rankOf(other) <= rank) return null;
+  }
+  return box;
+}
+
+/**
+ * The heading a field sits under, and whether the markup bounds it.
+ *
+ * Headings whose wrapper has already closed are passed over; see
+ * `sectionBoxOf`. `bounded` is whether the one found has a wrapper holding the
+ * field, which is the only case where it is evidence about the field rather
+ * than about the form.
+ */
+function headingOver(input) {
+  const scope = input.closest?.('form') ?? null;
+  if (!scope) return null;
+  let found = null;
+  for (const heading of scope.querySelectorAll(HEADING)) {
+    if (!(heading.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING)) break;
+    if (heading.localName === 'legend') {
+      if (heading.parentElement?.contains(input)) found = { heading, bounded: false };
+      continue;
+    }
+    const box = sectionBoxOf(heading);
+    if (box && !box.contains(input)) continue;
+    found = { heading, bounded: Boolean(box) };
+  }
+  return found;
+}
+
 function sectionOf(input) {
   const legend = input.closest?.('fieldset')?.querySelector(':scope > legend');
   if (legend) return clean(legend.textContent);
-  const scope = input.closest?.('form') ?? null;
-  if (!scope) return '';
-  let found = '';
-  for (const heading of scope.querySelectorAll(HEADING)) {
-    if (!(heading.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING)) break;
-    if (heading.localName === 'legend' && !heading.parentElement?.contains(input)) continue;
-    found = heading.textContent;
-  }
-  return clean(found);
+  return clean(headingOver(input)?.heading.textContent ?? '');
+}
+
+/**
+ * The section heading over a field, only where its wrapper says the field is
+ * in it. See `sectionBoxOf`, and `isNotAboutYou`, which is what reads it.
+ */
+function boundedSection(input) {
+  const over = headingOver(input);
+  return over?.bounded ? clean(over.heading.textContent).slice(0, 200) : '';
 }
 
 const EDUCATION_SECTION = /\b(education|academic\w*|schools?|degrees?)\b/i;
@@ -1590,7 +1661,7 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
     // Before the exclusions, which say nothing, and before the match, which
     // this question does not need. See `handBack`.
     if (handBack(description, skipped)) continue;
-    if (isNotAboutYou(description, clean(labelFor(input)), surroundingWords(input))) continue;
+    if (isNotAboutYou(description, clean(labelFor(input)), surroundingWords(input), boundedSection(input))) continue;
     if (asksForWriting(input)) continue;
 
     /*
@@ -1872,7 +1943,7 @@ function answerChoiceButtons(fields, overwrite, already) {
     // The same three gates, in the same order, as `fillForm` and
     // `answerRadioGroups`. See `handBack`.
     if (handBack(description, skipped)) continue;
-    if (isNotAboutYou(description, clean(question), surroundingWords(group))) continue;
+    if (isNotAboutYou(description, clean(question), surroundingWords(group), boundedSection(group))) continue;
 
     // Only the keys that are a choice between options, as in
     // `answerRadioGroups` — see `CHOOSABLE` there.
@@ -2169,7 +2240,7 @@ function answerRadioGroups(fields, overwrite) {
     // "legally authorized to work without sponsorship" as a pair of buttons.
     if (handBack(description, skipped)) continue;
     // The group's own words, on the same terms as `fillForm`.
-    if (isNotAboutYou(description, clean(groupLabelFor(radios)), surroundingWords(radios[0]))) continue;
+    if (isNotAboutYou(description, clean(groupLabelFor(radios)), surroundingWords(radios[0]), boundedSection(radios[0]))) continue;
 
     /*
      * Only the keys that are a choice between options. A name, an email address
@@ -2448,7 +2519,7 @@ function widgetChoices(fields, filled) {
 
     const description = describeField(widget);
     if (!description) continue;
-    if (isNotAboutYou(description, clean(labelFor(widget)), surroundingWords(widget))) continue;
+    if (isNotAboutYou(description, clean(labelFor(widget)), surroundingWords(widget), boundedSection(widget))) continue;
 
     /*
      * The first pattern that matches, and only then whether the profile has

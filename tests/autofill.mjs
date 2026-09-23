@@ -906,6 +906,32 @@ const SECTIONS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply 
   <h3>Work Experience</h3>
   <label for="wd-jfirst">First Year Attended</label><input id="wd-jfirst">
 </form>
+<form id="wrapped">
+  <!--
+    One wrapper per section, headed by an h3 and no fieldset. The wrapper is
+    where each heading's section ends: the Education block's heading is not
+    the heading of the block after it, and the Work Experience heading —
+    wrapped on its own in a header div — is.
+  -->
+  <div class="section"><h3>Personal information</h3>
+    <label for="s-city">City</label><input id="s-city">
+  </div>
+  <div class="section"><h3>Education</h3>
+    <label for="s-esy">Start date year</label><input id="s-esy">
+  </div>
+  <div class="section">
+    <label for="s-avail">Available start date</label><input id="s-avail">
+  </div>
+  <div class="section"><div class="head"><h3>Work Experience</h3></div>
+    <div class="body">
+      <label for="s-wloc">Location</label><input id="s-wloc">
+      <label for="s-wcity">City</label><input id="s-wcity">
+    </div>
+  </div>
+  <div class="section">
+    <label for="s-after">City</label><input id="s-after">
+  </div>
+</form>
 </body></html>`;
 
 /*
@@ -2371,9 +2397,11 @@ async function main() {
         const fields = {
           education_start_month: 'September', education_start_year: '2022', education_start_date: 'September 2022',
           graduation_month: 'May', graduation_year: '2026', graduation_date: 'May 2026',
+          address_city: 'Boston', location: 'Boston, MA',
         };
         m.fillForm(fields);
-        const ids = ['e-sm', 'e-sy', 'e-em', 'e-ey', 'w-sm', 'w-sy', 'w-em', 'w-ey', 'f-from', 'f-to', 'j-sy', 'j-ey', 'wd-first', 'wd-last', 'wd-jfirst', 'x-from', 'x-avail', 'x-notice'];
+        const ids = ['e-sm', 'e-sy', 'e-em', 'e-ey', 'w-sm', 'w-sy', 'w-em', 'w-ey', 'f-from', 'f-to', 'j-sy', 'j-ey', 'wd-first', 'wd-last', 'wd-jfirst', 'x-from', 'x-avail', 'x-notice',
+          's-city', 's-esy', 's-avail', 's-wloc', 's-wcity', 's-after'];
         return Object.fromEntries(ids.map((id) => [id, document.getElementById(id).value]));
       }, { b: base }),
     );
@@ -2409,6 +2437,38 @@ async function main() {
       'a page title that mentions education is not a section',
       sections['j-sy'] === '' && sections['j-ey'] === '',
       JSON.stringify([sections['j-sy'], sections['j-ey']]),
+    );
+    /*
+     * A heading with no fieldset, whose section is a wrapper of its own.
+     *
+     * The last heading before a field was its section to the end of the form,
+     * so once an Education block had closed, "Available start date" in the
+     * next block was given the degree's start; and a Work Experience block's
+     * plain "Location" and "City" were given the applicant's own home, which
+     * only a legend or a labelled group could prevent. The wrapper is the
+     * edge now — and the flat `Employment history` heading in the not-yours
+     * fixture, followed by the applicant's own country questions, is the
+     * control for a form with no edge to read.
+     */
+    check(
+      'a wrapped Education block still answers its start date',
+      sections['s-esy'] === '2022',
+      sections['s-esy'],
+    );
+    check(
+      'but not "Available start date" in the block after it',
+      sections['s-avail'] === '',
+      sections['s-avail'],
+    );
+    check(
+      'a wrapped Work Experience block\'s "Location" and "City" are not where the applicant lives',
+      sections['s-wloc'] === '' && sections['s-wcity'] === '',
+      JSON.stringify([sections['s-wloc'], sections['s-wcity']]),
+    );
+    check(
+      'while "City" under Personal information, and in the block after, still is',
+      sections['s-city'] === 'Boston' && sections['s-after'] === 'Boston',
+      JSON.stringify([sections['s-city'], sections['s-after']]),
     );
 
     const academics = await page.goto(`${base}/academics`, { waitUntil: 'domcontentloaded' }).then(() =>
