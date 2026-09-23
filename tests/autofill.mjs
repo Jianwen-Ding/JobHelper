@@ -1204,6 +1204,13 @@ const MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</
     <label><input type="radio" name="applyin" value="n"> No</label>
   </fieldset>
 
+  <!-- The same question put as employment rather than work. -->
+  <fieldset>
+    <legend>Are you currently eligible for employment in the US?</legend>
+    <label><input type="radio" name="employ" value="y"> Yes</label>
+    <label><input type="radio" name="employ" value="n"> No</label>
+  </fieldset>
+
   <label for="ext">Phone extension</label><input id="ext" name="phone_ext">
   <label for="contact">Can we contact your current employer?</label><input id="contact" name="q_contact">
   <label for="empmail">Employer contact email</label><input id="empmail" name="emp_contact" type="email">
@@ -1890,7 +1897,7 @@ async function main() {
         return {
           why: v('why'), why2: v('why2'), ext: v('ext'), contact: v('contact'), empmail: v('empmail'), tenure: v('tenure'), cpc: v('cpc'), say: v('say'), fulln: v('fulln'), fl1: v('fl1'), fl2: v('fl2'), fl3: v('fl3'), ln1: v('ln1'), ln2: v('ln2'), ln3: v('ln3'), ln4: v('ln4'), e1: v('e1'), e2: v('e2'), e3: v('e3'), e4: v('e4'), e5: v('e5'), f1: v('f1'), f2: v('f2'),
           st: v('st'), cs1: v('cs1'), cs2: v('cs2'), ctry: v('ctry'), ph: v('ph'), co: v('co'),
-          auth: ticked('auth'), elig: ticked('elig'), applyin: ticked('applyin'),
+          auth: ticked('auth'), elig: ticked('elig'), applyin: ticked('applyin'), employ: ticked('employ'),
         };
       }, { b: base, profile: { ...PROFILE, address_state: 'MA', current_company: 'Acme', school: 'Northeastern University', location: 'Boston, MA' } }),
     );
@@ -1915,6 +1922,8 @@ async function main() {
       `ticked "${misread.auth}"`,
     );
     check('and so is "legally eligible to work"', misread.elig === 'y', `ticked "${misread.elig}"`);
+    // Matched no key at all, so it was neither answered nor reported.
+    check('and "eligible for employment in the US"', misread.employ === 'y', `ticked "${misread.employ}"`);
     /*
      * Read as "Which location are you applying for?", whose rule wants a place
      * and then "applying" a few words on, so the right-to-work question was

@@ -112,10 +112,14 @@ const FIELD_PATTERNS = [
    * none of the three above — the required question came out blank and, having
    * matched no key at all, was not reported either. The conjunction with
    * sponsorship is still refused; see `asksBothAtOnce`.
+   *
+   * And "for employment" where the same question says "to work": "Are you
+   * currently eligible for employment in the US?" matched nothing, so the
+   * required question was neither answered nor reported.
    */
   [
     'work_authorization',
-    /\b(work[\s_-]?authoriz\w*|legally[\s_-]?authorized|authoriz\w+[\s_-]+to[\s_-]+work|eligib\w*[\s_-]+to[\s_-]+work|right[\s_-]?to[\s_-]?work)\b/i,
+    /\b(work[\s_-]?authoriz\w*|legally[\s_-]?authorized|(authoriz|eligib)\w*[\s_-]+(to[\s_-]+work|for[\s_-]+employment)|right[\s_-]?to[\s_-]?work)\b/i,
   ],
   ['requires_sponsorship', /\b(sponsor\w*|visa[\s_-]?status)\b/i],
   /*
