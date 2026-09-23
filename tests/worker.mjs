@@ -78,6 +78,12 @@ function fakeStore() {
       res.end(JSON.stringify({ kind: 'not-a-job', error: 'does not read like a job, so no space was opened for it.' }));
       return;
     }
+    // A store that is up and failing, which reads to the card as one that is down.
+    if (mode === 'broken') {
+      res.writeHead(500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'broken on purpose' }));
+      return;
+    }
     if (mode === 'stall-body') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.write('{"isJobPosting":true,');
@@ -1408,6 +1414,51 @@ async function main() {
         JSON.stringify(seen),
       );
       check('nor announced as this posting’s', !/AI finished tailoring this posting/.test(seen.said ?? ''), JSON.stringify(seen));
+    }
+
+    /*
+     * A page that failed to be read is not read again every second.
+     *
+     * The rescore tick in content.js runs on any DOM change for the first
+     * minute, and only a verdict used to settle a page — so a read that
+     * failed was retried on the next tick, and the next. On a results page
+     * whose timestamps tick, with the store failing, the whole page was
+     * copied and posted once a second: measured at twelve posts in twelve
+     * seconds, 1.9 seconds of main thread, on a page of 22,500 elements.
+     *
+     * The page is one the card does not put itself up on early — a results
+     * list names no role — so nothing on screen says anything is happening.
+     */
+    group('A page whose read failed is not re-read on every change');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Engineering jobs in Boston | Board</title>
+          <h1>Search results</h1><div class="count">24 jobs found</div>
+          <ul>${'<li>Engineer, full-time. Responsibilities and requirements inside. <time>1 day ago</time></li>'.repeat(24)}</ul>
+          <script>let n = 0; setInterval(() => { document.querySelector('time').textContent = (++n) + ' seconds ago'; }, 100);</script>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/jobs/search?q=engineer`;
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      store.routes['/api/extension/analyze'] = 'broken';
+
+      const page = await context.newPage();
+      let reads = 0;
+      try {
+        const before = store.sentTo('/api/extension/analyze').length;
+        await page.goto(where);
+        await page.waitForTimeout(5000);
+        reads = store.sentTo('/api/extension/analyze').length - before;
+      } finally {
+        delete store.routes['/api/extension/analyze'];
+        await page.close();
+        site.close();
+        await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: false }));
+      }
+
+      check('the page was read', reads >= 1, `${reads} reads`);
+      check('once, rather than on every tick of the page', reads === 1, `${reads} reads in five seconds`);
     }
   } finally {
     await context.close();

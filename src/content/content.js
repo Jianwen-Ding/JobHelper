@@ -1689,6 +1689,25 @@
        */
       if (current() && cardHandle) cardHandle.setStatus(err.message, err.jobhelper ?? null);
       else quietly(err);
+      /*
+       * And not asked again on the next tick, unless the page has gained.
+       *
+       * Only a verdict used to settle the page, so a read that failed left it
+       * open — and the rescore tick below fires on any DOM change, which a
+       * busy page makes constantly. Measured on a board's results page of
+       * 22,500 elements whose timestamps and adverts tick, with the store
+       * answering 500: the whole page was copied, scrubbed, serialised and
+       * posted twelve times in twelve seconds — 1.9 seconds of the page's main
+       * thread spent re-reading what had not changed, heading for sixty
+       * multi-megabyte posts over the minute the tick runs. With ResumeM-M
+       * simply not open, which is the ordinary state of most browsing, every
+       * page above the threshold did the same.
+       *
+       * Held the way a "not a posting" verdict is held: a page that has grown
+       * something since is still worth a second look, and the toolbar button
+       * still asks at once.
+       */
+      if (current()) ruledOut = { url: location.href, score: judgedScore };
       return;
     }
     if (!current()) return;
