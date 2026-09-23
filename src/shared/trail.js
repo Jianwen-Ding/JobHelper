@@ -706,6 +706,20 @@ export function trimForStorage(html, limit = 400_000) {
         : tag.replace(/\svalue\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, ''),
     )
     .replace(/(<textarea\b[^>]*>)[\s\S]*?(<\/textarea>)/gi, '$1$2')
+    /*
+     * And which of the options the applicant chose, which is their answer as
+     * surely as a typed one. The options stay — they are the question — but
+     * the mark on the chosen one went too: a server-rendered step carries
+     * `checked` and `selected` on what was answered, and every ARIA group
+     * carries `aria-checked="true"` on its pick. On the voluntary
+     * self-identification step that is the applicant's gender, race,
+     * disability and veteran status, sent to the server and on to the AI
+     * beside a question they were entitled to decline.
+     */
+    .replace(/<(?:input|option)\b[^>]*>/gi, (tag) =>
+      tag.replace(/\s(?:checked|selected)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?(?=[\s/>])/gi, ''),
+    )
+    .replace(/\saria-(?:checked|selected|pressed)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/\n{3,}/g, '\n\n');
 

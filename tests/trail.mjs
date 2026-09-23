@@ -371,6 +371,33 @@ describe('what is worth keeping of a page', () => {
       assert.ok(kept.includes(question), `"${question}" was lost`);
     }
   });
+
+  /*
+   * Nor which option they chose. A server-rendered step marks the answer with
+   * `checked` or `selected`, and an ARIA group with `aria-checked`; on the
+   * self-identification step those are the applicant's gender, disability
+   * and veteran status. Every option is still there, so the question is.
+   */
+  it('drops the mark on a chosen option, keeping every option', () => {
+    const page =
+      '<fieldset><legend>Gender</legend>' +
+      '<label><input type="radio" name="g" value="Female" checked> Female</label>' +
+      '<label><input type=radio name=g value=Male> Male</label></fieldset>' +
+      '<label>Disability</label><select name="d"><option value="">Select</option>' +
+      '<option value="1" selected="selected">Yes, I have a disability</option><option value="0">No</option></select>' +
+      '<label><input type="checkbox" name="remote" checked="" value="Open to remote"> Open to remote</label>' +
+      '<div role="radiogroup" aria-label="Veteran status">' +
+      '<div role="radio" aria-checked="true">I am a protected veteran</div>' +
+      '<div role="radio" aria-checked="false">I am not a protected veteran</div></div>' +
+      '<button aria-pressed="true">Hispanic or Latino</button>';
+    const kept = trimForStorage(page);
+    for (const mark of [/\schecked\b/, /\sselected\b/, /aria-checked/, /aria-pressed/]) {
+      assert.ok(!mark.test(kept), `${mark} survived: ${kept}`);
+    }
+    for (const option of ['value="Female"', 'value=Male', 'Yes, I have a disability', 'value="Open to remote"', 'I am a protected veteran', 'I am not a protected veteran', 'Hispanic or Latino', 'Veteran status']) {
+      assert.ok(kept.includes(option), `"${option}" was lost`);
+    }
+  });
 });
 
 describe('carrying less when there is no room', () => {
