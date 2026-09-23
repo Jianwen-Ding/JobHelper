@@ -1970,6 +1970,82 @@ async function main() {
       check('Autofill does not tell you to reload the tab', !/reload/i.test(said.autofill) && /does not run/i.test(said.autofill), said.autofill);
       check('nor does "Open on this page"', !/reload/i.test(said.show) && /does not run/i.test(said.show), said.show);
     }
+
+    /*
+     * Out to the editor for longer than the worker stays awake.
+     *
+     * "Edit in ResumeM-M" notes the tab, and coming back to it tells the card
+     * the store may have changed under its proposal. The note was a Set in
+     * the worker's memory, on the reasoning that a worker asleep long enough
+     * to forget it means a trip too old to mention — but Chrome stops the
+     * worker after half a minute without an event, and a tab left behind has
+     * its timers throttled to about one a minute after five, so the card's
+     * keeper stops keeping it awake. Adding a phrasing takes longer than
+     * that. Measured with the worker stopped while the editor was open: back
+     * on the posting, nothing said the match was out of date.
+     */
+    group('Back from the editor after the worker has been stopped');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1><p>Helios is hiring a Platform Engineer. Responsibilities: build the
+          platform. Requirements: Kubernetes, Go. Apply now to join our team.</p>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/jobs/platform-engineer`;
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+
+      const job = await context.newPage();
+      let editor = null;
+      let said = '';
+      let stopped = false;
+      try {
+        await job.goto(where);
+        await job.waitForTimeout(500);
+        await driver.evaluate(async (url) => {
+          const [tab] = await chrome.tabs.query({ url });
+          await chrome.tabs.sendMessage(tab.id, { type: 'show-card' });
+        }, where);
+        const card = job.locator('#jobhelper-card-host');
+        const edit = card.getByRole('button', { name: 'Edit in ResumeM-M' });
+        await edit.waitFor({ timeout: 15_000 });
+        await job.waitForTimeout(1000);
+
+        const opened = context.waitForEvent('page');
+        await edit.click();
+        editor = await opened;
+        await editor.waitForLoadState('domcontentloaded').catch(() => undefined);
+
+        await (context.serviceWorkers()[0] ?? worker).evaluate(() => {
+          globalThis.__jhStillTheSameWorker = true;
+        });
+        const cdp = await context.newCDPSession(editor);
+        await cdp.send('ServiceWorker.enable').catch(() => undefined);
+        await cdp.send('ServiceWorker.stopAllWorkers').catch(() => undefined);
+        await editor.waitForTimeout(1000);
+
+        await job.bringToFront();
+        await job
+          .waitForFunction(
+            () => /been editing the store/i.test(document.querySelector('#jobhelper-card-host')?.shadowRoot?.textContent ?? ''),
+            undefined,
+            { timeout: 5_000, polling: 100 },
+          )
+          .catch(() => undefined);
+        said = await job.evaluate(() => document.querySelector('#jobhelper-card-host')?.shadowRoot?.textContent ?? '');
+        stopped = await (context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker')))
+          .evaluate(() => globalThis.__jhStillTheSameWorker !== true)
+          .catch(() => false);
+      } finally {
+        await editor?.close().catch(() => undefined);
+        await job.close();
+        site.close();
+      }
+      check('the worker really was stopped while the editor was open', stopped);
+      check('and on coming back the card still says the match may be out of date', /been editing the store/i.test(said), said.slice(-160));
+    }
   } finally {
     await context.close();
     store.close();

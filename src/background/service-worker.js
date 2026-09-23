@@ -2610,8 +2610,8 @@ const handlers = {
     const absolute = /^[a-z]+:/i.test(url) ? url : `${(await getSettings()).serverUrl.replace(/\/$/, '')}${url}`;
     const opened = await chrome.tabs.create({ url: absolute });
     // Noted, so that coming back to the tab that sent you here means
-    // something. See `awaitingReturn`.
-    if (typeof tab?.id === 'number') awaitingReturn.add(tab.id);
+    // something. See `awayKey`.
+    if (typeof tab?.id === 'number') await session().set({ [awayKey(tab.id)]: { at: Date.now() } }).catch(() => undefined);
     return { id: opened.id };
   },
 
@@ -2776,14 +2776,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
  *
  * Held here rather than worked out in the page from `visibilitychange`: this
  * side knows the trip was made, and it catches the return made by closing the
- * builder tab, which is how people actually come back. Plain memory is right
- * for it — if the worker has been asleep long enough to forget, the trip is
- * old enough not to be worth mentioning.
+ * builder tab, which is how people actually come back.
+ *
+ * In session storage, not in a Set. The Set was kept on the reasoning that a
+ * worker asleep long enough to forget it means a trip too old to mention —
+ * but Chrome stops the worker after half a minute without an event, and the
+ * tab left behind has its timers throttled to about one a minute after five,
+ * so the card's keeper stops keeping it awake. Adding a phrasing takes longer
+ * than that. Measured with the worker stopped while the builder was open: back
+ * on the posting, nothing said the match was out of date. The age limit is
+ * the trail's own, which is what "too old to mention" always meant.
  */
-const awaitingReturn = new Set();
+const awayKey = (tabId) => `jh-away:${tabId}`;
 
-chrome.tabs?.onActivated?.addListener(({ tabId }) => {
-  if (!awaitingReturn.delete(tabId)) return;
+chrome.tabs?.onActivated?.addListener(async ({ tabId }) => {
+  const key = awayKey(tabId);
+  const away = (await session().get(key).catch(() => ({})))[key];
+  if (!away) return;
+  await session().remove(key).catch(() => undefined);
+  if (Date.now() - (away.at ?? 0) > TRAIL_STALE_MS) return;
   chrome.tabs.sendMessage(tabId, { type: 'jh-came-back' }).catch(() => undefined);
 });
 
@@ -2910,7 +2921,7 @@ chrome.tabs?.onRemoved?.addListener(async (tabId) => {
   }
   // The branch stash goes with the tab it belonged to. It holds a whole
   // trail, first page's markup and all, and nothing else ever removed it.
-  session().remove([trailKey(tabId), framesKey(tabId), branchKey(tabId)]).catch(() => undefined);
+  session().remove([trailKey(tabId), framesKey(tabId), branchKey(tabId), awayKey(tabId)]).catch(() => undefined);
 });
 
 /*
