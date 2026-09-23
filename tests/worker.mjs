@@ -2046,6 +2046,32 @@ async function main() {
       check('the worker really was stopped while the editor was open', stopped);
       check('and on coming back the card still says the match may be out of date', /been editing the store/i.test(said), said.slice(-160));
     }
+
+    /*
+     * What the toolbar says is waiting.
+     *
+     * The popup stopped saying "tailored" because any proposal at all counts
+     * as holding a resume, and a proposal is now the resume exactly as it is
+     * kept until somebody ticks something — see `showOpenApplication`. The
+     * toolbar's tooltip is drawn from the same fact and went on saying it:
+     * "1 page read, a tailored resume is ready", over a resume nothing had
+     * touched.
+     */
+    group('The toolbar does not call an untouched resume tailored');
+    {
+      store.save = 'work';
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+      await ask(driver, 'clearTrail', {});
+      await ask(driver, 'analyze', { url: 'http://tooltip.example/jobs/1', title: 'Helios', html: '<p>one</p>', company: 'Helios' });
+      await ask(driver, 'saveWork', { work: { spec: { id: 'job-fake', extends: 'newgrad' } } });
+      const title = await driver.evaluate(async () => {
+        const tab = await chrome.tabs.getCurrent();
+        return chrome.action.getTitle({ tabId: tab.id });
+      });
+      check('the tooltip says the application is held', /1 page read/.test(title), title);
+      check('without claiming the resume was tailored', !/tailored/i.test(title), title);
+    }
   } finally {
     await context.close();
     store.close();

@@ -627,7 +627,12 @@ async function markTab(tabId, trail) {
      */
     const wrote = Boolean(held.work?.letter?.trim()) || Object.keys(held.work?.answersByQuestion ?? {}).length > 0;
     if (wrote) parts.push('your writing is being held');
-    else if (held.work?.spec) parts.push('a tailored resume is ready');
+    /*
+     * Not "tailored", which the popup stopped saying for the reason it gives
+     * in `showOpenApplication`: any proposal at all has a spec, and a proposal
+     * is the resume exactly as it is kept until somebody ticks something.
+     */
+    else if (held.work?.spec) parts.push('the resume for it is ready');
 
     await chrome.action.setBadgeText({ tabId, text: String(n) });
     await chrome.action.setBadgeBackgroundColor?.({ tabId, color: '#1a73e8' });
