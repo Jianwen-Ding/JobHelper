@@ -1225,6 +1225,16 @@ const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Ap
   <label for="sc-trans">Transfer university</label><input id="sc-trans" name="q_x8">
   <label for="sc-other">School (if other)</label><input id="sc-other" name="q_x9">
 
+  <!-- A typed signature, which signs whatever sits above it. -->
+  <label for="sig1">Type your full name to sign</label><input id="sig1" name="q_g1">
+  <label for="sig2">E-signature (type your name)</label><input id="sig2" name="q_g2">
+  <label for="sig3">Full legal name (signature)</label><input id="sig3" name="q_g3">
+  <fieldset>
+    <legend>Applicant Signature</legend>
+    <label for="sig4">Full Name</label><input id="sig4" name="q_g4">
+  </fieldset>
+  <label for="sig-in">Email you use to sign in</label><input id="sig-in" name="q_g5">
+
   <!-- The applicant's own, still filled. -->
   <label for="own-ln">Last name</label><input id="own-ln" name="q_ln">
   <label for="own-legal">Legal name</label><input id="own-legal" name="q_legal">
@@ -1888,6 +1898,24 @@ async function main() {
       'while "Do you have a phone number? If so, please share it.", "What is your cumulative GPA?" and "Do you have a LinkedIn profile?" still are',
       more['yn-ph2'] === PROFILE.phone && more['yn-what'] === '3.9' && more['yn-li'] === PROFILE.linkedin,
       `${more['yn-ph2']} / ${more['yn-what']} / ${more['yn-li']}`,
+    );
+
+    /*
+     * A name typed into a signature box is a signature: it certifies the
+     * attestation above it — "the information I have given is true", an
+     * at-will acknowledgement, a background-check release — in the
+     * applicant's name, before they have read it. Checkboxes are left for
+     * the applicant for the same reason.
+     */
+    group('A typed signature is the applicant\'s to give');
+    check('"Type your full name to sign" is left unsigned', more.sig1 === '', more.sig1);
+    check('nor "E-signature (type your name)"', more.sig2 === '', more.sig2);
+    check('nor "Full legal name (signature)"', more.sig3 === '', more.sig3);
+    check('nor "Full Name" under "Applicant Signature"', more.sig4 === '', more.sig4);
+    check(
+      'while "Email you use to sign in" and "Legal name" still are',
+      more['sig-in'] === PROFILE.email && more['own-legal'] === 'Jianwen Ding',
+      `${more['sig-in']} / ${more['own-legal']}`,
     );
 
     group('A declaration answered from a sentence');

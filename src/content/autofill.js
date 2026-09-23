@@ -288,6 +288,17 @@ const NOT_ABOUT_YOU = [
    * "Phone number for the phone interview" is the telephone box.
    */
   /\b(best|convenient|preferred|ideal)[\s_-]+times?\b|^(?![\s\S]*\bnumber\b)[\s\S]*\bphone[\s_-]+(interview|screen\w*)\b/i,
+  /*
+   * A signature, which is the applicant's to give. A name typed into one
+   * signs whatever sits above it — that everything on the form is true, an
+   * at-will acknowledgement, a release for a background check — and
+   * "Type your full name to sign", "E-signature (type your name)", "Full
+   * legal name (signature)" and "Full Name" under an "Applicant Signature"
+   * legend were each signed with the applicant's name before they had read
+   * it. Checkboxes are never ticked for the same reason. "Sign in" and
+   * "sign up" are not signing.
+   */
+  /\b(e-?)?signatures?\b|\be-?sign(ed|ing)?\b|\bsign(ed|ing)?\b(?![\s_-]+(?:in|up|on|out)\b)/i,
   // Where you heard about the job, which is not a profile of yours.
   /\b(did[\s_-]you[\s_-](?:first[\s_-])?hear|hear[\s_-](?:about|of)[\s_-](us|this)|referral)\b/i,
   // Citizenship, birth and residence are different questions with the same
