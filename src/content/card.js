@@ -3046,6 +3046,18 @@ export function createCard({
     if (state.showing !== which) parkShown();
     state.showing = which;
     state.spec = offer.spec;
+    /*
+     * Replaced, not merged over.
+     *
+     * The server leaves out what did not happen — `aiFailed`, `aiFailedKind`
+     * and `aiRaw` are `undefined` on a run that had nothing to report, and
+     * JSON drops them — so a proposal carries only the keys it has. Merging
+     * one over the last left the last one's there. Measured: an AI run that
+     * could not start, then the match worked out again from another base, and
+     * the card went on saying "The AI could not be started, so nothing was
+     * tailored" over a keyword list no AI had been asked about.
+     */
+    for (const k of PROPOSAL_KEYS) delete analysis[k];
     Object.assign(analysis, offer.analysis);
     state.builtWith = which === 'ai' ? 'ai' : 'none';
     state.render = null;

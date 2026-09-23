@@ -666,6 +666,71 @@ async function main() {
   );
 
   /*
+   * And a failure is about the run that failed, not the one after it.
+   *
+   * The server leaves out what did not happen — `aiFailed` and `aiRaw` are
+   * undefined on a run with nothing to report, and JSON drops them — and the
+   * card merged each proposal over the last. So an AI run that could not
+   * start, followed by the match worked out again from another base, kept
+   * the failure: "The AI could not be started, so nothing was tailored" over
+   * a keyword list no AI had been asked about.
+   */
+  const failureAfterwards = await inPage(async (createCard) => {
+    const base = (more) => ({
+      isJobPosting: true,
+      job: { title: 'Platform Engineer', company: 'Acme' },
+      spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+      baseLabel: 'New grad resume',
+      rationale: [],
+      diff: [],
+      tailor: 'match',
+      aiUsed: false,
+      ...more,
+    });
+    const handle = createCard({
+      analysis: base({}),
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action) => (action === 'aiStatus' ? { active: true, state: 'on' } : {}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const hints = () => [...root.querySelectorAll('.hint')].map((n) => n.textContent).join(' | ');
+    await new Promise((r) => setTimeout(r, 50));
+    const out = {};
+    for (const [what, failed] of [
+      ['started', { aiFailed: 'spawn /usr/local/bin/claude ENOENT', aiFailedKind: 'not-installed' }],
+      ['usable', { aiRaw: 'Sure! Here are some ideas.' }],
+    ]) {
+      handle.update(base(failed), { show: true });
+      const during = hints();
+      handle.update(base({ spec: { id: 'job-acme', label: 'Acme', extends: 'other' }, baseLabel: 'Other resume' }), {
+        show: true,
+      });
+      out[what] = { during, after: hints() };
+    }
+    return out;
+  });
+  check(
+    'a model that would not start is said on the run that failed',
+    /could not be started/i.test(failureAfterwards.started.during),
+    failureAfterwards.started.during.slice(0, 140),
+  );
+  check(
+    'and not on the keyword match worked out after it',
+    /exactly as you keep it/i.test(failureAfterwards.started.after) &&
+      !/could not be started/i.test(failureAfterwards.started.after),
+    failureAfterwards.started.after.slice(0, 140),
+  );
+  check(
+    'nor is a model that answered with prose',
+    /nothing usable/i.test(failureAfterwards.usable.during) &&
+      !/nothing usable/i.test(failureAfterwards.usable.after),
+    JSON.stringify(failureAfterwards.usable).slice(0, 240),
+  );
+
+  /*
    * What is still usable while the AI reads the posting.
    *
    * A tailoring pass is a model reading a job posting: minutes, not seconds.
