@@ -430,6 +430,26 @@ function dropPark(key, gone) {
   return unpark(key, (p) => JSON.stringify(p) === same);
 }
 
+/**
+ * The same entry, at every address it was parked under.
+ *
+ * `remember` and `clearTrail` park one entry under every page of the
+ * application, so that coming back to any of them finds it — which makes each
+ * of those a copy, and claiming one of them took only that one. Measured in
+ * tests/worker.mjs: a letter claimed on the posting was handed again to
+ * another tab opening the form, as "recovered from a tab that closed", while
+ * the tab that claimed it was open and holding it. The copies are one object
+ * written several times, so they are the entries that read back identical.
+ */
+async function dropParkEverywhere(gone) {
+  const same = JSON.stringify(gone);
+  const all = await session().get(null).catch(() => ({}));
+  for (const [key, record] of Object.entries(all)) {
+    if (!key.startsWith('jh-orphan:')) continue;
+    if (parkedAt(record).some((p) => JSON.stringify(p) === same)) await dropPark(key, gone);
+  }
+}
+
 async function parkWork(url, entry) {
   const key = orphanKey(url);
   /*
@@ -1501,6 +1521,8 @@ const handlers = {
           });
         }
         await dropPark(key, rescued);
+        // And its copies under the application's other pages.
+        await dropParkEverywhere(rescued);
         /*
          * And which of the two rescues this was, because they want different
          * sentences. A tab that closed and came back is a surprise worth

@@ -634,6 +634,48 @@ async function main() {
     }
 
     /*
+     * A claim takes every copy of what it claims, not only the one it found.
+     *
+     * Forgetting an application parks its writing under every page of it, so
+     * coming back to whichever page finds it. Claiming it took the copy at the
+     * page it was claimed from and left the others: open the form in another
+     * tab afterwards and it was handed the same letter as "recovered from a
+     * tab that closed", while the tab that had claimed it was open and
+     * holding it — one application, written in two places.
+     */
+    group('Claiming parked writing takes its copies at the other pages too');
+    {
+      const POSTING = 'http://careers.helios.example/jobs/sre';
+      const FORM = 'http://careers.helios.example/jobs/sre/apply';
+      store.save = 'work';
+      store.role = 'Platform Engineer';
+      await ask(driver, 'clearTrail', {});
+      await ask(driver, 'analyze', { url: POSTING, title: 'SRE', html: '<p>posting</p>' });
+      await ask(driver, 'analyze', { url: FORM, title: 'SRE', html: '<p>form</p>' });
+      await ask(driver, 'saveWork', { work: { letter: 'ONE-APPLICATION' } });
+      await ask(driver, 'clearTrail', {});
+      const parkedAtForm = await driver.evaluate(async (key) => Boolean((await chrome.storage.session.get(key))[key]), `jh-orphan:${FORM}`);
+
+      await ask(driver, 'analyze', { url: POSTING, title: 'SRE', html: '<p>posting</p>' });
+      const claimed = await ask(driver, 'takeWork', { page: { url: POSTING, title: 'SRE' } });
+
+      const other = await context.newPage();
+      await other.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+      await ask(other, 'analyze', { url: FORM, title: 'SRE', html: '<p>form</p>' });
+      const again = await ask(other, 'takeWork', { page: { url: FORM, title: 'SRE' } });
+      await ask(other, 'clearTrail', {});
+      await other.close();
+
+      check('it was parked at both pages', parkedAtForm === true, String(parkedAtForm));
+      check('and claimed at the posting', claimed.reply?.data?.work?.letter === 'ONE-APPLICATION', JSON.stringify(claimed.reply?.data));
+      check(
+        'so another tab on the form is not handed it again',
+        again.reply?.data?.work?.letter !== 'ONE-APPLICATION',
+        JSON.stringify(again.reply?.data),
+      );
+    }
+
+    /*
      * "Same job — put it back" has to put it back where it can be seen.
      *
      * The merge wrote the letter into the trail and answered with a summary,
