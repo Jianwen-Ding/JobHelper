@@ -262,6 +262,14 @@ const NOT_ABOUT_YOU = [
    * this way.
    */
   /\bdegree[\s_-]+of[\s_-]+(proficiency|fluency|familiarity|experience|expertise|comfort|confidence|knowledge|skill|understanding|competenc\w*)\b|\bto[\s_-]+(what|which|some|a|any|the)[\s_-]+degree\b/i,
+  /*
+   * The state that issued a licence, which is not where the applicant lives.
+   * Nursing, teaching, pharmacy and driving roles ask for it, and "State of
+   * licensure", "License state", "Driver's license issuing state" and
+   * "Issuing state" were each given the home state — a statement about a
+   * credential the applicant may hold somewhere else, or not at all.
+   */
+  /\blicen[cs]\w*\b[\s\S]{0,24}\b(state|province|country|jurisdiction)\b|\b(state|province|country|jurisdiction)\b[\s\S]{0,12}\blicen[cs]\w*|\bissu(ing|ed)\b[\s\S]{0,12}\b(state|province|country)\b|\b(state|province|country)\b[\s\S]{0,12}\bof[\s_-]+issu\w*/i,
   // Where you heard about the job, which is not a profile of yours.
   /\b(did[\s_-]you[\s_-](?:first[\s_-])?hear|hear[\s_-](?:about|of)[\s_-](us|this)|referral)\b/i,
   // Citizenship, birth and residence are different questions with the same

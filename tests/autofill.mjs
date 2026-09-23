@@ -1144,6 +1144,13 @@ const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Ap
   <label for="own-degree">Degree</label><input id="own-degree" name="q_d3">
   <label for="deg-pursue">What degree are you pursuing?</label><input id="deg-pursue" name="q_d4">
 
+  <!-- The state that issued a licence, which is not where the applicant lives. -->
+  <label for="licst1">State of licensure</label><input id="licst1" name="q_l1">
+  <label for="licst2">License state</label><input id="licst2" name="q_l2">
+  <label for="licst3">Driver's license issuing state</label><input id="licst3" name="q_l3">
+  <label for="licst4">Issuing state</label><input id="licst4" name="q_l4">
+  <label for="own-state">State/Province</label><input id="own-state" name="q_l5">
+
   <!-- The applicant's own, still filled. -->
   <label for="own-ln">Last name</label><input id="own-ln" name="q_ln">
   <label for="own-legal">Legal name</label><input id="own-legal" name="q_legal">
@@ -1698,6 +1705,13 @@ async function main() {
       more['own-degree'] === 'Bachelor of Science' && more['deg-pursue'] === 'Bachelor of Science',
       `${more['own-degree']} / ${more['deg-pursue']}`,
     );
+
+    group('The state that issued a licence');
+    check('"State of licensure" is not given the home state', more.licst1 === '', more.licst1);
+    check('nor "License state"', more.licst2 === '', more.licst2);
+    check('nor "Driver\'s license issuing state"', more.licst3 === '', more.licst3);
+    check('nor "Issuing state"', more.licst4 === '', more.licst4);
+    check('while "State/Province" still gets it', more['own-state'] === 'MA', more['own-state']);
 
     group('A declaration answered from a sentence');
     check(
