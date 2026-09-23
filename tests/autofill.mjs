@@ -1014,7 +1014,45 @@ const LOOSE_WIDGETS = `<!doctype html><html><head><meta charset="utf-8"><title>A
   });
 </script></body></html>`;
 
-const PAGES = { '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED };
+/*
+ * Words a profile pattern matches that are not asking for that field.
+ *
+ * "State" is a verb as often as a place: a free-text "Please state your
+ * reason for applying" was typed over with the applicant's state. "Country"
+ * appears in the commonest wording of the right-to-work question, and
+ * `address_country` sat above `work_authorization`, so the yes/no pair was
+ * offered "United States", matched neither button and was left blank. A phone
+ * extension box took the whole telephone number, and "Can we contact your
+ * current employer?" took the employer's name.
+ */
+const MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <label for="why">Please state your reason for applying</label><textarea id="why" name="q_why"></textarea>
+  <label for="why2">State why you are interested in this role</label><input id="why2" name="q_why2">
+
+  <fieldset>
+    <legend>Are you authorized to work in this country?</legend>
+    <label><input type="radio" name="auth" value="y"> Yes</label>
+    <label><input type="radio" name="auth" value="n"> No</label>
+  </fieldset>
+  <fieldset>
+    <legend>Are you legally eligible to work in the country where this job is located?</legend>
+    <label><input type="radio" name="elig" value="y"> Yes</label>
+    <label><input type="radio" name="elig" value="n"> No</label>
+  </fieldset>
+
+  <label for="ext">Phone extension</label><input id="ext" name="phone_ext">
+  <label for="contact">Can we contact your current employer?</label><input id="contact" name="q_contact">
+  <label for="empmail">Employer contact email</label><input id="empmail" name="emp_contact" type="email">
+
+  <!-- The fields these words were mistaken for, still filled. -->
+  <label for="st">State</label><input id="st" name="state">
+  <label for="ctry">Country</label><input id="ctry" name="country">
+  <label for="ph">Phone</label><input id="ph" name="phone">
+  <label for="co">Current employer</label><input id="co" name="current_company">
+</form></body></html>`;
+
+const PAGES = { '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -1419,6 +1457,37 @@ async function main() {
       `checked "${consent.spon}"`,
     );
     check('and the applicant\'s own email is still filled', consent.own === PROFILE.email, consent.own);
+
+    const misread = await page.goto(`${base}/misread`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm(profile);
+        const v = (id) => document.getElementById(id).value;
+        const ticked = (n) => document.querySelector(`input[name="${n}"]:checked`)?.value ?? '';
+        return {
+          why: v('why'), why2: v('why2'), ext: v('ext'), contact: v('contact'), empmail: v('empmail'),
+          st: v('st'), ctry: v('ctry'), ph: v('ph'), co: v('co'),
+          auth: ticked('auth'), elig: ticked('elig'),
+        };
+      }, { b: base, profile: { ...PROFILE, address_state: 'MA', current_company: 'Acme' } }),
+    );
+
+    group('Words a pattern matches that are not asking for that field');
+    check('"Please state your reason" is not given the applicant\'s state', misread.why === '', misread.why);
+    check('nor is "State why you are interested"', misread.why2 === '', misread.why2);
+    check('while a box labelled "State" still is', misread.st === 'MA', misread.st);
+    check(
+      'the right-to-work question that says "country" is answered from the right to work',
+      misread.auth === 'y',
+      `ticked "${misread.auth}"`,
+    );
+    check('and so is "legally eligible to work"', misread.elig === 'y', `ticked "${misread.elig}"`);
+    check('while a box labelled "Country" still gets the country', misread.ctry === 'United States', misread.ctry);
+    check('a phone extension box is not given the whole number', misread.ext === '', misread.ext);
+    check('while the phone box still is', misread.ph === '555-0100', misread.ph);
+    check('"Can we contact your current employer?" is not given the employer', misread.contact === '', misread.contact);
+    check('while "Current employer" still is', misread.co === 'Acme', misread.co);
+    check('"Employer contact email" is not given the applicant\'s email', misread.empmail === '', misread.empmail);
 
     group('A declaration answered from a sentence');
     check(

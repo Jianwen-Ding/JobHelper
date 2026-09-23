@@ -63,17 +63,15 @@ const FIELD_PATTERNS = [
   ['major', /\b(major|discipline|field[\s_-]?of[\s_-]?study|(course|area)[\s_-]?of[\s_-]?study)\b/i],
   ['school', /\b(school|university|college|institution|institute)\b/i],
   ['degree', /\b(degree)\b/i],
-  ['address_city', /\b(city|town)\b/i],
   /*
-   * Country before state, because the first pattern to match wins and
-   * "Country/Region" — which is what SuccessFactors, Workday and most of the
-   * enterprise systems call the field — matches `region`. It was being filled
-   * with a state, finding no such option, and reporting that the country had
-   * no matching option while leaving a required field empty.
+   * The two declarations above every address field. "Are you authorized to
+   * work in this country?" is the commonest wording of the right-to-work
+   * question, and with `address_country` first it claimed the question: the
+   * yes/no pair was offered "United States", matched neither button, and the
+   * required question was left blank. No address label says "authorized to
+   * work" or "sponsor", so nothing moves the other way. "Eligible to work" is
+   * the same question and matched nothing.
    */
-  ['address_country', /\b(country)\b/i],
-  ['address_state', /\b(state|province|region)\b/i],
-  ['location', /\b(location|where.*based)\b/i],
   /*
    * `\w*` where a stem was truncated. These two read as if they matched
    * anything starting with the stem, and matched nothing at all: a trailing
@@ -91,9 +89,27 @@ const FIELD_PATTERNS = [
    */
   [
     'work_authorization',
-    /\b(work[\s_-]?authoriz\w*|legally[\s_-]?authorized|authoriz\w+[\s_-]+to[\s_-]+work|right[\s_-]?to[\s_-]?work)\b/i,
+    /\b(work[\s_-]?authoriz\w*|legally[\s_-]?authorized|authoriz\w+[\s_-]+to[\s_-]+work|eligib\w*[\s_-]+to[\s_-]+work|right[\s_-]?to[\s_-]?work)\b/i,
   ],
   ['requires_sponsorship', /\b(sponsor\w*|visa[\s_-]?status)\b/i],
+  ['address_city', /\b(city|town)\b/i],
+  /*
+   * Country before state, because the first pattern to match wins and
+   * "Country/Region" — which is what SuccessFactors, Workday and most of the
+   * enterprise systems call the field — matches `region`. It was being filled
+   * with a state, finding no such option, and reporting that the country had
+   * no matching option while leaving a required field empty.
+   */
+  ['address_country', /\b(country)\b/i],
+  /*
+   * "State" the noun, not the verb: "Please state your reason for applying"
+   * is a free-text question, and it was typed over with the applicant's state.
+   */
+  [
+    'address_state',
+    /(?<!\bplease[\s_-]+)\b(state|province|region)\b(?![\s_-]+(?:your|why|how|what|whether|if|the|any|briefly|clearly|below)\b)/i,
+  ],
+  ['location', /\b(location|where.*based)\b/i],
 ];
 
 const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
@@ -141,6 +157,13 @@ const NOT_ABOUT_YOU = [
    * above, on the word those three happen to use.
    */
   /\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+(name|address|location|city|town|state|province|country|phone|telephone|email|zip|postal)\b/i,
+  /*
+   * Permission to contact an employer, which is a yes or a no and not the
+   * employer's name — "Can we contact your current employer?" took
+   * `current_company` — and the employer's own contact, which "Employer
+   * contact email" gave the applicant's address.
+   */
+  /\bcontact\b[\s\S]{0,30}\bemployers?\b|\bemployers?\b[\s\S]{0,20}\bcontact\b/i,
   // Where you heard about the job, which is not a profile of yours.
   /\b(did[\s_-]you[\s_-]hear|hear[\s_-]about[\s_-](us|this)|referral)\b/i,
   // Citizenship, birth and residence are different questions with the same
@@ -211,7 +234,12 @@ const NOT_ABOUT_YOU = [
  * where a label stops being its subject is how the first version of this
  * went wrong.
  */
-const DIALLING_CODE = /\b(country|area|dial(?:l?ing)?)[\s_-]?code\b/i;
+/*
+ * And the extension box beside it, which took the whole telephone number the
+ * same way. Read with the parentheses out for the same reason: "Phone (ext.
+ * optional)" is the telephone box.
+ */
+const DIALLING_CODE = /\b(country|area|dial(?:l?ing)?)[\s_-]?code\b|\bext(?:ension)?\b/i;
 
 /*
  * A label that is only "Country", whatever the field is named underneath.
