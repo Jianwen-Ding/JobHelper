@@ -1215,6 +1215,11 @@ const MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</
   <label for="fl1">First and Last Name</label><input id="fl1" name="q_fl1">
   <label for="fl2">First & Last Name</label><input id="fl2" name="q_fl2">
   <label for="fl3">First Name and Last Name</label><input id="fl3" name="q_fl3">
+  <!-- One half of it, named after the legal name it is part of. -->
+  <label for="ln1">Legal name (First)</label><input id="ln1" name="q_ln1">
+  <label for="ln2">Legal name (Last)</label><input id="ln2" name="q_ln2">
+  <label for="ln3">Legal name (Middle)</label><input id="ln3" name="q_ln3">
+  <label for="ln4">Full legal name (first, middle, last)</label><input id="ln4" name="q_ln4">
 
   <!-- Essay prompts that happen to say a profile word. -->
   <label for="e1">Tell us about a project you shipped at your current company</label><textarea id="e1" name="q_e1"></textarea>
@@ -1880,7 +1885,7 @@ async function main() {
         const v = (id) => document.getElementById(id).value;
         const ticked = (n) => document.querySelector(`input[name="${n}"]:checked`)?.value ?? '';
         return {
-          why: v('why'), why2: v('why2'), ext: v('ext'), contact: v('contact'), empmail: v('empmail'), tenure: v('tenure'), cpc: v('cpc'), say: v('say'), fulln: v('fulln'), fl1: v('fl1'), fl2: v('fl2'), fl3: v('fl3'), e1: v('e1'), e2: v('e2'), e3: v('e3'), e4: v('e4'), e5: v('e5'), f1: v('f1'), f2: v('f2'),
+          why: v('why'), why2: v('why2'), ext: v('ext'), contact: v('contact'), empmail: v('empmail'), tenure: v('tenure'), cpc: v('cpc'), say: v('say'), fulln: v('fulln'), fl1: v('fl1'), fl2: v('fl2'), fl3: v('fl3'), ln1: v('ln1'), ln2: v('ln2'), ln3: v('ln3'), ln4: v('ln4'), e1: v('e1'), e2: v('e2'), e3: v('e3'), e4: v('e4'), e5: v('e5'), f1: v('f1'), f2: v('f2'),
           st: v('st'), ctry: v('ctry'), ph: v('ph'), co: v('co'),
           auth: ticked('auth'), elig: ticked('elig'), applyin: ticked('applyin'),
         };
@@ -1928,6 +1933,19 @@ async function main() {
       [misread.fl1, misread.fl2, misread.fl3].every((v) => v === 'Jianwen Ding'),
       JSON.stringify([misread.fl1, misread.fl2, misread.fl3]),
     );
+    /*
+     * And one half of it, the half said in brackets after the name it belongs
+     * to. "Legal name" claimed the box as the whole name, so "Legal name
+     * (First)" and "Legal name (Last)" were both given "Jianwen Ding", and
+     * "(Middle)" — which the profile does not hold — the whole name as well.
+     */
+    check(
+      '"Legal name (First)" and "(Last)" are given their own half',
+      misread.ln1 === 'Jianwen' && misread.ln2 === 'Ding',
+      JSON.stringify([misread.ln1, misread.ln2]),
+    );
+    check('"Legal name (Middle)" is given nothing', misread.ln3 === '', misread.ln3);
+    check('while a legal name asked for whole, parts listed, still is', misread.ln4 === 'Jianwen Ding', misread.ln4);
     check('an essay about "your current company" is not given the employer', misread.e1 === '', misread.e1);
     check('"What did you study in school and why?" is not given the school', misread.e2 === '', misread.e2);
     check('"experience with state management" is not given the state', misread.e3 === '', misread.e3);

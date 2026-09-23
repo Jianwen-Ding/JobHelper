@@ -21,6 +21,17 @@ const FIELD_PATTERNS = [
    * name alone — half a name, in a box asking for all of it.
    */
   ['full_name', /\bfirst[\s_-]*(name[\s_-]*)?(and|&|\+)[\s_-]*last[\s_-]*name\b/i],
+  /*
+   * And one half of it, said in brackets after the name it is part of — above
+   * `legal name`, which claimed the box whole. "Legal name (First)" and "Legal
+   * name (Last)" were each given "Jianwen Ding", and "Legal name (Middle)" the
+   * whole name too, a middle name the profile does not hold. Only a bracket
+   * holding the one word: "Full legal name (first, middle, last)" asks for
+   * all of it. `middle_name` is never in a profile, so that box stays blank.
+   */
+  ['first_name', /\bname[\s_-]*\([\s_-]*(first|given)([\s_-]*name)?[\s_-]*\)/i],
+  ['last_name', /\bname[\s_-]*\([\s_-]*(last|family|surname)([\s_-]*name)?[\s_-]*\)/i],
+  ['middle_name', /\bname[\s_-]*\([\s_-]*middle([\s_-]*name)?[\s_-]*\)/i],
   ['first_name', /\b(first[\s_-]?name|given[\s_-]?name|forename|fname)\b/i],
   ['last_name', /\b(last[\s_-]?name|family[\s_-]?name|surname|lname)\b/i],
   ['full_name', /\b(full[\s_-]?name|your[\s_-]?name|candidate[\s_-]?name|legal[\s_-]?name)\b/i],
