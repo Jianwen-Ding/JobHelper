@@ -463,6 +463,32 @@ export function employerKey(name) {
   }
 }
 
+/*
+ * A job title as a key: the same words in the same order, and nothing else.
+ *
+ * The late-result check compared titles exactly, and one posting writes its
+ * title several ways — the JSON-LD's "Platform Engineer", the heading's
+ * "Platform engineer", a page title's "Platform Engineer – Remote" with
+ * whatever dash its author typed. Measured by lifting `sameJob` out of
+ * content.js: each of those against the card's "Platform Engineer" came back
+ * false, and a finished AI run on this very posting was announced as "not
+ * this posting" and dropped.
+ *
+ * Case, spacing and punctuation come off; words do not. Every letter and
+ * digit is kept in order, so "Senior Platform Engineer", "Platform Engineer
+ * II" and "Platform Engineer Intern" all stay different jobs from "Platform
+ * Engineer", and so do "Frontend" and "Front end", because running two words
+ * together is not punctuation. `+` and `#` are kept too: they are the
+ * difference between C++, C# and C, and a title is where that matters.
+ */
+export function titleKey(title) {
+  return String(title ?? '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}+#]+/gu, ' ')
+    .trim();
+}
+
 /**
  * Same application, a different one, or not clear enough to say.
  *

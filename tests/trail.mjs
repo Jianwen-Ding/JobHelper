@@ -348,11 +348,18 @@ describe('the same employer with and without its legal form', () => {
  */
 describe('a late AI result, against the posting on screen', async () => {
   const fsMod = await import('node:fs');
-  const { employerKey } = await import('../src/shared/trail.js');
+  const trailModule = await import('../src/shared/trail.js');
+  const { employerKey } = trailModule;
+  // Absent before the key existed; the lifted `sameJob` then falls back to
+  // comparing exactly, which is what the title tests below are measuring.
+  const titleKey = trailModule.titleKey ?? null;
   const source = fsMod.readFileSync(new URL('../src/content/content.js', import.meta.url), 'utf8');
   const from = source.indexOf('  const sameJob =');
   const to = source.indexOf(';\n', from);
-  const sameJob = new Function('employerKey', `${source.slice(from, to + 1)}\nreturn sameJob;`)(employerKey);
+  const sameJob = new Function('employerKey', 'titleKey', `${source.slice(from, to + 1)}\nreturn sameJob;`)(
+    employerKey,
+    titleKey,
+  );
   const job = (company, title = 'Platform Engineer') => ({ job: { company, title } });
 
   it('is lifted from the content script', () => {
@@ -368,6 +375,46 @@ describe('a late AI result, against the posting on screen', async () => {
     assert.equal(sameJob(job('Acme Labs'), job('Acme')), false);
     assert.equal(sameJob(job('Northwind, Inc.'), job('Acme, Inc.')), false);
     assert.equal(sameJob(job('Acme, Inc.', 'Data Scientist'), job('Acme')), false);
+  });
+
+  /*
+   * The title was compared exactly, and one posting writes its title more
+   * than one way: the JSON-LD says "Platform Engineer", the heading the
+   * server read says "Platform engineer", the page title "Platform Engineer –
+   * Remote" with the dash of whoever typed it. Each of those threw a finished
+   * AI run away as "not this posting".
+   */
+  it('lands on the same title written with other case, spacing or punctuation', () => {
+    const pairs = [
+      ['Platform engineer', 'Platform Engineer'],
+      ['Platform  Engineer ', 'Platform Engineer'],
+      ['Platform Engineer', 'Platform Engineer'],
+      ['Sr. Platform Engineer', 'Sr Platform Engineer'],
+      ['Platform Engineer, Payments', 'Platform Engineer - Payments'],
+      ['Platform Engineer (Remote)', 'Platform Engineer – Remote'],
+      ['Front-end Engineer', 'Front end Engineer'],
+    ];
+    for (const [a, b] of pairs) {
+      assert.equal(sameJob(job('Acme', a), job('Acme', b)), true, `${a} / ${b}`);
+      assert.equal(sameJob(job('Acme', b), job('Acme', a)), true, `${b} / ${a}`);
+    }
+  });
+
+  it('but not on a title that differs by a word, or by what the punctuation said', () => {
+    const pairs = [
+      ['Platform Engineer', 'Senior Platform Engineer'],
+      ['Platform Engineer', 'Platform Engineer II'],
+      ['Platform Engineer II', 'Platform Engineer III'],
+      ['Platform Engineer', 'Platform Engineer Intern'],
+      ['C++ Engineer', 'C Engineer'],
+      ['C# Developer', 'C Developer'],
+      ['Frontend Engineer', 'Front end Engineer'],
+      ['Platform Engineer', 'Plat form Engineer'],
+    ];
+    for (const [a, b] of pairs) {
+      assert.equal(sameJob(job('Acme', a), job('Acme', b)), false, `${a} / ${b}`);
+      assert.equal(sameJob(job('Acme', b), job('Acme', a)), false, `${b} / ${a}`);
+    }
   });
 });
 

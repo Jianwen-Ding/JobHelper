@@ -667,13 +667,22 @@
    */
   let employerKey = null;
 
+  /*
+   * And the title by the trail's `titleKey`, held the same way. Compared
+   * exactly, "Platform engineer" from one reading and "Platform Engineer"
+   * from another were two postings, and the finished run was dropped as "not
+   * this posting". Only case, spacing and punctuation are let go; a title that
+   * differs by a word — "Senior Platform Engineer" — is still another job.
+   */
+  let titleKey = null;
+
   /** Two analyses about the same opening, by what they say it is. */
   const sameJob = (a, b) =>
     Boolean(a?.job && b?.job) &&
     (employerKey
       ? employerKey(a.job.company) === employerKey(b.job.company)
       : (a.job.company ?? '') === (b.job.company ?? '')) &&
-    (a.job.title ?? '') === (b.job.title ?? '');
+    (titleKey ? titleKey(a.job.title) === titleKey(b.job.title) : (a.job.title ?? '') === (b.job.title ?? ''));
 
   /** Whether a model actually chose something, as the card reads it. */
   const wasDecided = (a) => a?.tailor === 'ai' && a?.aiUsed;
@@ -2477,6 +2486,7 @@
     .then((m) => {
       plainlyAnotherRole = m.plainlyAnotherRole;
       employerKey = m.employerKey;
+      titleKey = m.titleKey;
     })
     .catch(quietly);
 
