@@ -67,10 +67,18 @@ const FIELD_PATTERNS = [
    * you a recent graduate?" is a yes/no question, and a date is not its answer.
    */
   ['graduation_month', /(\bgrad\b|\bgraduat\w*|\bcompletion\b).{0,40}\bmonth\b|\bmonth\b.{0,40}\bgraduat/i],
-  ['graduation_year', /(\bgrad\b|\bgraduat\w*|\bcompletion\b).{0,40}\byear\b|\byear\b.{0,40}\bgraduat|\bclass\s*year\b/i],
+  // "Class of" and "Graduating class" are asking for the year, as "Class year" is.
+  ['graduation_year', /(\bgrad\b|\bgraduat\w*|\bcompletion\b).{0,40}\byear\b|\byear\b.{0,40}\bgraduat|\bclass\s*year\b|\bclass\s+of\b|\bgraduating\s+class\b/i],
+  /*
+   * And the date by the words that name the degree's end without saying
+   * "graduation": "Expected degree completion" was the example above and no
+   * pattern here knew it, so it fell through to `degree` and was given the
+   * degree's name. A completion date of anything else — a project, a course —
+   * is left alone.
+   */
   [
     'graduation_date',
-    /\bgrad(uation)?\s*date\b|\bdate\s*of\s*graduation\b|\b(expected|anticipated)\s*grad(uation)?\b|\bwhen\s+(do|will)\s+you\s+(expect\s+to\s+)?graduate\b/i,
+    /\bgrad(uation)?\s*date\b|\bdate\s*of\s*graduation\b|\b(expected|anticipated)\s*grad(uation)?\b|\bwhen\s+(do|will)\s+you\s+(expect\s+to\s+)?graduate\b|\bdegree\s+(completion|conferral|end)\b|\b(end|completion)\s*date\b.{0,20}\bgrad(uat\w*)?\b/i,
   ],
   /*
    * The grade and the subject above the school, for the reason graduation is:

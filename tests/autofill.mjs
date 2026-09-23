@@ -1598,7 +1598,22 @@ const CKEDITED = `<!doctype html><html><head><meta charset="utf-8"><title>Apply<
   </div>
 </form></body></html>`;
 
-const PAGES = { '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
+/*
+ * When the degree ends, in the words forms actually use for it. "Expected
+ * degree completion" was taken for the degree itself and given "Bachelor of
+ * Science"; "End date (graduation)" and "Class of" got nothing.
+ */
+const COMPLETION = `<!doctype html><form>
+  <label for="c1">Expected degree completion</label><input id="c1">
+  <label for="c2">Degree completion date</label><input id="c2">
+  <label for="c3">End date (graduation)</label><input id="c3">
+  <label for="c4">Class of</label><input id="c4">
+  <label for="c5">Graduating class</label><input id="c5">
+  <label for="c6">Project completion date</label><input id="c6">
+  <label for="c7">Degree</label><input id="c7">
+</form>`;
+
+const PAGES = { '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -2130,6 +2145,22 @@ async function main() {
         return Object.fromEntries([...document.querySelectorAll('input, select, textarea')].map((el) => [el.id, el.value]));
       }, { b: base, profile: { ...PROFILE, school: 'Northeastern University', gpa: '3.9' } }),
     );
+
+    const completion = await page.goto(`${base}/completion`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm(profile);
+        return Object.fromEntries([...document.querySelectorAll('input')].map((el) => [el.id, el.value]));
+      }, { b: base, profile: { ...PROFILE, degree: 'Bachelor of Science', graduation_year: '2027', graduation_month: 'May', graduation_date: 'May 2027' } }),
+    );
+    group('When the degree ends, however it is asked');
+    check('"Expected degree completion" gets the date, not the degree', completion.c1 === 'May 2027', completion.c1);
+    check('"Degree completion date" gets the date too', completion.c2 === 'May 2027', completion.c2);
+    check('"End date (graduation)" gets it', completion.c3 === 'May 2027', completion.c3);
+    check('"Class of" gets the year', completion.c4 === '2027', completion.c4);
+    check('"Graduating class" gets the year', completion.c5 === '2027', completion.c5);
+    check('"Project completion date" is nobody\'s graduation', completion.c6 === '', completion.c6);
+    check('and a box that is just "Degree" still gets the degree', completion.c7 === 'Bachelor of Science', completion.c7);
 
     group('Somebody else\'s details, under names the list did not have');
     check('"Referrer\'s email" is not given the applicant\'s email', more.refmail === '', more.refmail);
