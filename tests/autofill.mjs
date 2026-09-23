@@ -1471,7 +1471,9 @@ const STEPPED = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</
  * `selectionchange`. It takes pastes and typing through its own handlers.
  *
  * `reverting` is CKEditor 5: the same model, and a MutationObserver that puts
- * the element back the moment anything else changes it.
+ * the element back the moment anything else changes it. Its root's
+ * attributes are drawn from the model too, on every render — focusing it is
+ * one — so an attribute somebody else put there does not last.
  *
  * `reading` is Quill 1, TinyMCE and ProseMirror's fallback: the browser edits
  * and the editor reads the result back one paragraph per block, with text in
@@ -1506,8 +1508,10 @@ const EDITORS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</
     let paras = [''];
     let all = false;
     let observer = null;
+    const own = ['id', 'contenteditable', 'aria-labelledby'];
     const render = () => {
       observer?.disconnect();
+      if (revert) for (const a of root.getAttributeNames()) if (!own.includes(a)) root.removeAttribute(a);
       draw(root, paras);
       observer?.observe(root, { childList: true, characterData: true, subtree: true });
     };
@@ -1525,7 +1529,10 @@ const EDITORS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</
       if (e.inputType === 'insertText') put(e.data ?? '');
       if (e.inputType === 'insertParagraph') put('\\n');
     });
-    if (revert) observer = new MutationObserver(render);
+    if (revert) {
+      observer = new MutationObserver(render);
+      root.addEventListener('focus', render);
+    }
     else root.addEventListener('input', render);
     // Something already written in it, with the caret left at the end.
     paras = ['Old words the person typed.'];
@@ -3745,7 +3752,20 @@ async function main() {
           }
           const put = await m.insertAnswer(q.fieldId, text, q.question);
           await new Promise((r) => setTimeout(r, 50));
-          out[id] = { put, submitted: window.submitted(id).filter(Boolean) };
+          out[id] = { put, submitted: window.submitted(id).filter(Boolean), q };
+        }
+        /*
+         * And again, after the person has been in the box: an answer
+         * corrected on the card and put in a second time.
+         */
+        const rev = document.getElementById('rev');
+        rev.focus();
+        rev.blur();
+        if (out.rev.q) {
+          out.again = {
+            put: await m.insertAnswer(out.rev.q.fieldId, 'A corrected answer.', out.rev.q.question),
+            submitted: window.submitted('rev').filter(Boolean),
+          };
         }
         return out;
       }, { b: base, text: answer }),
@@ -3763,6 +3783,17 @@ async function main() {
       'one that puts its own document back (CKEditor 5) keeps the answer',
       edited.rev?.put === true && holds(edited.rev),
       JSON.stringify(edited.rev),
+    );
+    /*
+     * CKEditor 5 draws its root's attributes from its own model, so the mark
+     * findQuestions puts on the box is gone the first time anybody clicks
+     * in it. Against the real editor: click in, press Insert, and it refused
+     * with "that box on the page is gone" with the box in plain view.
+     */
+    check(
+      'and takes a corrected answer after the person has clicked in it',
+      edited.again?.put === true && JSON.stringify(edited.again?.submitted) === '["A corrected answer."]',
+      JSON.stringify(edited.again),
     );
     check(
       'one that reads the page back (Quill 1, TinyMCE) keeps both paragraphs',

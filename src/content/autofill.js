@@ -3181,6 +3181,25 @@ const FIELD_KEY = 'data-jobhelper-field';
 let fieldCounter = 0;
 
 /**
+ * The same marks, kept here as well as on the element.
+ *
+ * CKEditor 5 draws its editing root's attributes from its own model, so a
+ * mark put on the element is taken off the next time it renders — and
+ * focusing it is a render. Measured against the real editor: click in the
+ * box, press Insert, and it was refused with "that box on the page is gone or
+ * asks something else now", the box in plain view and asking the same thing.
+ * Held weakly, so a form that throws its boxes away does not keep them.
+ */
+const markedAs = new Map();
+
+function markedField(fieldId) {
+  const onPage = deepQueryAll(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`)[0];
+  if (onPage) return onPage;
+  const kept = markedAs.get(fieldId)?.deref();
+  return kept?.isConnected ? kept : undefined;
+}
+
+/**
  * Find the free-text questions on the page — the boxes that want a paragraph,
  * not a phone number. Returned rather than filled: a long-form answer is
  * something to read before it goes out under your name.
@@ -3228,6 +3247,7 @@ export function findQuestions() {
       id = `jh-${++fieldCounter}`;
       field.setAttribute(FIELD_KEY, id);
     }
+    markedAs.set(id, new WeakRef(field));
     found.push({
       fieldId: id,
       question,
@@ -3369,7 +3389,7 @@ const askedAs = (question) => cleanQuestion(question).replace(/\d+/g, '#').toLow
  * failed." and returned true. Where it no longer matches, nothing is written.
  */
 export async function insertAnswer(fieldId, text, question) {
-  const field = deepQueryAll(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`)[0];
+  const field = markedField(fieldId);
   if (!field) return false;
   if (question != null && askedAs(questionOf(field)) !== askedAs(question)) return false;
   if (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) {
