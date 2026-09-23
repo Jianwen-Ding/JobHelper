@@ -1713,6 +1713,69 @@ async function main() {
       check('and not the question that has gone', !after.includes('Why do you want to work at Helios?'), JSON.stringify(after));
       check('while a question typed in by hand stays', after.includes('What is your notice period?'), JSON.stringify(after));
     }
+
+    /*
+     * "Back to it", from the page it would take you back to.
+     *
+     * The panel is there whenever the tab holds an application, which
+     * includes the application's own form — and the button navigates the tab
+     * to the trail's last page, which is then the page on screen. Measured:
+     * pressed there, the form reloaded and what had been typed into the
+     * employer's boxes was gone.
+     */
+    group('The popup on the page it would send you back to');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Apply for Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1>
+          <form>
+            <label for="fn">First name</label><input id="fn" name="first_name">
+            <label for="ln">Last name</label><input id="ln" name="last_name">
+            <label for="em">Email</label><input id="em" type="email" name="email">
+            <label for="cv">Resume</label><input id="cv" type="file">
+            <label for="why">Why do you want to work at Helios?</label><textarea id="why" name="why"></textarea>
+          </form>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+
+      const page = await context.newPage();
+      const popup = await context.newPage();
+      let offered = null;
+      let panel = false;
+      let typed = null;
+      try {
+        await page.goto(`http://127.0.0.1:${site.address().port}/jobs/platform-engineer/apply`);
+        await page.locator('#jobhelper-card-host .card').waitFor({ timeout: 15_000 });
+        await page.waitForTimeout(1500);
+        await page.fill('#why', 'Typed into the form by hand.');
+
+        // A real popup reports on the page beneath it; opened as a tab, it
+        // has to be booted again with the page in front.
+        await popup.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+        await page.bringToFront();
+        await popup.evaluate(() => location.reload());
+        await popup.locator('#openApplication').waitFor({ state: 'visible', timeout: 10_000 }).catch(() => undefined);
+        panel = !(await popup.locator('#openApplication').isHidden());
+        offered = await popup.locator('#backToApplication').isVisible();
+        if (offered) {
+          await popup.locator('#backToApplication').click().catch(() => undefined);
+          await page.waitForTimeout(2000);
+        }
+        typed = await page.inputValue('#why').catch(() => null);
+      } finally {
+        await popup.close().catch(() => undefined);
+        await page.close();
+        site.close();
+        await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: false }));
+      }
+      check('the panel says which application this is', panel);
+      check('without offering to go back to the page already on screen', offered === false, `offered: ${offered}`);
+      check('and what was typed into the form is still there', typed === 'Typed into the form by hand.', JSON.stringify(typed));
+    }
   } finally {
     await context.close();
     store.close();

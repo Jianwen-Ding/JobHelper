@@ -241,6 +241,16 @@ async function showOpenApplication() {
   // Back to the last page of it, which is where you were when you wandered
   // off. Same tab, because the application is the tab.
   const last = pages[pages.length - 1];
+  /*
+   * Not offered from the page it would go back to.
+   *
+   * The panel shows on the application's own pages too, and the last of them
+   * is usually the form. Pressed there, "going back" is a reload: measured,
+   * the form came back empty, everything typed into the employer's boxes
+   * gone, from a button promising the opposite.
+   */
+  const bare = (url) => String(url ?? '').split('#')[0];
+  $('backToApplication').hidden = !last?.url || bare(last.url) === bare(tab.url);
   $('backToApplication').onclick = acts(async () => {
     if (!last?.url) return;
     await chrome.tabs.update(tab.id, { url: last.url });
