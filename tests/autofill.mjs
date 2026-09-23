@@ -1569,7 +1569,36 @@ const QUILL_ONE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply
   </div>
 </form></body></html>`;
 
-const PAGES = { '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
+/*
+ * CKEditor 5 put on two textareas, as it draws itself (the toolbar cut down to
+ * one button): the page's label and the textarea it names, hidden, and
+ * straight after it the editor, whose editing box has a label of its own that
+ * is the same on every CKEditor there is. The second one is the cover letter.
+ */
+const CKEDITED = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <label for="why">Why do you want to work at Acme?</label>
+  <textarea id="why" name="why" style="display: none;"></textarea>
+  <div class="ck ck-reset ck-editor ck-rounded-corners" role="application" aria-labelledby="ck-editor__label_1">
+    <label class="ck ck-label ck-voice-label" id="ck-editor__label_1">Rich Text Editor</label>
+    <div class="ck ck-editor__top ck-reset_all" role="presentation">
+      <div class="ck ck-toolbar" role="toolbar" aria-label="Editor toolbar"><button class="ck ck-button" type="button"><span class="ck ck-button__label">Bold</span></button></div>
+    </div>
+    <div class="ck ck-editor__main" role="presentation">
+      <div class="ck-blurred ck ck-content ck-editor__editable ck-rounded-corners ck-editor__editable_inline" lang="en" dir="ltr" role="textbox" aria-label="Editor editing area: main. Press Alt+0 for help." contenteditable="true"><p><br data-cke-filler="true"></p></div>
+    </div>
+  </div>
+  <label for="cover">Cover Letter</label>
+  <textarea id="cover" name="cover_letter" style="display: none;"></textarea>
+  <div class="ck ck-reset ck-editor ck-rounded-corners" role="application" aria-labelledby="ck-editor__label_2">
+    <label class="ck ck-label ck-voice-label" id="ck-editor__label_2">Rich Text Editor</label>
+    <div class="ck ck-editor__main" role="presentation">
+      <div class="ck-blurred ck ck-content ck-editor__editable ck-rounded-corners ck-editor__editable_inline" lang="en" dir="ltr" role="textbox" aria-label="Editor editing area: main. Press Alt+0 for help." contenteditable="true"><p><br data-cke-filler="true"></p></div>
+    </div>
+  </div>
+</form></body></html>`;
+
+const PAGES = { '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -3746,6 +3775,33 @@ async function main() {
       stepped.same === 'I led the migration.' && stepped.intoSame === true,
       JSON.stringify(stepped),
     );
+
+    /*
+     * CKEditor 5 labels every editing box it draws "Editor editing area:
+     * main. Press Alt+0 for help.", and that was the question the card
+     * offered — against the real editor, on a form whose label said "Why do
+     * you want to work here?". So the draft was asked for against that
+     * sentence, and an answer saved for next time was filed under a question
+     * every CKEditor form asks in exactly the same words.
+     */
+    const ck = await page.goto(`${base}/ckedited`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const found = m.findQuestions();
+        const why = found.find((q) => /Acme/.test(q.question));
+        return {
+          questions: found.map((q) => q.question),
+          put: why ? await m.insertAnswer(why.fieldId, 'Because Acme builds rockets.', why.question) : null,
+        };
+      }, { b: base }),
+    );
+    group('A CKEditor put on a labelled textarea');
+    check(
+      'asks what the page’s label says, and the cover letter is not a question',
+      JSON.stringify(ck.questions) === JSON.stringify(['Why do you want to work at Acme?']),
+      JSON.stringify(ck.questions),
+    );
+    check('and Insert still knows the box asks it', ck.put === true, String(ck.put));
 
     /*
      * Quill 1's paste catcher is a second contenteditable with no label, so

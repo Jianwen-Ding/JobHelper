@@ -3239,7 +3239,7 @@ export function findQuestions() {
      * question to draft an answer to, on the same card that already has a
      * cover letter step for it. One box, asked for twice.
      */
-    if (/cover\s*letter/i.test(describeField(field))) continue;
+    if (/cover\s*letter/i.test(describeField(takenOver(field) ?? field))) continue;
 
     /*
      * The placeholder, where there is no label at all.
@@ -3383,7 +3383,39 @@ export function isRequired(fieldId) {
 
 /** What a question box asks, as `findQuestions` reads it. */
 function questionOf(field) {
-  return cleanQuestion(questionFor(field) || field.getAttribute?.('placeholder') || '');
+  const asked = takenOver(field) ?? field;
+  return cleanQuestion(questionFor(asked) || asked.getAttribute?.('placeholder') || '');
+}
+
+/**
+ * The textarea a rich-text editor has been put on, where it has one.
+ *
+ * CKEditor, Summernote and their kind are started on a `<textarea>`: they
+ * hide it, keep it as what the form sends, and draw their own box straight
+ * after it. The page's label still names the textarea, and the box has a
+ * label of the editor's — CKEditor 5 calls every one it draws "Editor editing
+ * area: main. Press Alt+0 for help.", and that was the question the card
+ * offered, measured against the real editor under a label reading "Why do you
+ * want to work here?". A draft was asked for against that sentence, and an
+ * answer saved for next time was filed under words every CKEditor form uses.
+ *
+ * Only a hidden textarea immediately before the box or one of the few
+ * elements around it, and never past one that holds another place to write:
+ * the label of a different question is exactly what must not be borrowed.
+ */
+function takenOver(field) {
+  if (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) return null;
+  let node = field;
+  for (let i = 0; i < 3 && node; i++, node = node.parentElement) {
+    const before = node.previousElementSibling;
+    if (before instanceof HTMLTextAreaElement && before.getClientRects().length === 0) return before;
+    const around = node.parentElement;
+    const others = [...(around?.querySelectorAll('textarea, [contenteditable="true"]') ?? [])].filter(
+      (f) => f !== field && !f.contains(field) && !field.contains(f),
+    );
+    if (!around || others.length > 0) return null;
+  }
+  return null;
 }
 
 /*
