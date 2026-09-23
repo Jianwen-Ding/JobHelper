@@ -157,6 +157,9 @@ function namedBy(input) {
   return wordsOf(said).replace(/\s+/g, ' ').trim();
 }
 
+/** Somewhere to type or choose, which a heading never holds. See `aroundIt`. */
+const FIELDS = 'input:not([type="hidden"]), select, textarea';
+
 /**
  * And the text around it, for the many controls that carry no label at all.
  *
@@ -210,6 +213,19 @@ function aroundIt(input) {
       let room = 200;
       for (let before = node.previousElementSibling; before && room > 0; before = before.previousElementSibling) {
         if (before.querySelector?.('input[type="file"]') || before.matches?.('input[type="file"]')) break;
+        /*
+         * A heading, not the page. Dropzone.js appends each zone's input to
+         * the end of `<body>`, so what came "before" the first one was the
+         * whole form — every heading on it — and a script's source. That
+         * input said resume and cover letter both and took the resume, and
+         * the input that belonged to the Cover Letter zone was it. Measured
+         * against the real Dropzone 5 with that zone first: the resume held
+         * by Cover Letter, reported "Attached". Code is not words, and
+         * something holding fields of its own is a part of the form, which
+         * a heading never is.
+         */
+        if (before.matches?.('script, style, template, noscript')) continue;
+        if (before.matches?.(FIELDS) || before.querySelector?.(FIELDS)) break;
         const text = clean(before.textContent);
         if (!text) continue;
         said.unshift(text);

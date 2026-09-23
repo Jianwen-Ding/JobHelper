@@ -332,7 +332,52 @@ const REFUSES_IN_PREVIEW = page(`
   </script>
 `);
 
+/**
+ * Dropzone.js as it sets itself up by default: each zone makes a hidden file
+ * input and appends it to the end of `<body>`, far from the zone, takes a
+ * file from it or from a drop, draws a preview, and replaces the input. The
+ * Cover Letter zone is first on the page, so it made the first input. What
+ * each zone holds is `window.held`.
+ */
+const DROPZONE_JS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title>
+<script>
+  window.held = {};
+  document.addEventListener('DOMContentLoaded', () => {
+    for (const zone of document.querySelectorAll('.dropzone')) {
+      window.held[zone.id] = [];
+      const add = (f) => {
+        window.held[zone.id].push(f.name);
+        const shown = document.createElement('div');
+        shown.className = 'dz-preview dz-file-preview';
+        shown.innerHTML = '<div class="dz-filename"><span data-dz-name></span></div>';
+        shown.querySelector('span').textContent = f.name;
+        zone.append(shown);
+      };
+      const setup = () => {
+        const input = document.createElement('input');
+        input.type = 'file'; input.multiple = true; input.className = 'dz-hidden-input';
+        input.style.cssText = 'visibility:hidden;position:absolute;top:0;left:0;height:0;width:0';
+        document.body.append(input);
+        input.addEventListener('change', () => {
+          for (const f of input.files) add(f);
+          input.remove();
+          setup();
+        });
+      };
+      setup();
+      zone.addEventListener('dragover', (e) => e.preventDefault());
+      zone.addEventListener('drop', (e) => { e.preventDefault(); for (const f of e.dataTransfer.files) add(f); });
+    }
+  });
+</script></head>
+<body><form>
+  <label for="fn">First Name</label><input id="fn" name="first_name">
+  <div class="field"><h4>Cover Letter</h4> <div id="cover" class="dropzone dz-clickable"><div class="dz-message"><span>Drop files here to upload</span></div></div></div>
+  <div class="field"><h4>Resume/CV</h4> <div id="resume" class="dropzone dz-clickable"><div class="dz-message"><span>Drop files here to upload</span></div></div></div>
+</form></body></html>`;
+
 const PAGES = {
+  '/dropzone-js': DROPZONE_JS,
   '/refuses-by-name': REFUSES_BY_NAME,
   '/refuses-in-preview': REFUSES_IN_PREVIEW,
   '/two-zones': TWO_ZONES,
@@ -897,6 +942,27 @@ async function main() {
      * read as the chip `KEEPS_AS_CHIP` shows, and the card said "Attached"
      * over an empty box and a red message.
      */
+    /*
+     * Dropzone.js's inputs are at the end of the page, so nothing near one
+     * says whose it is — and the look back from the first one took the text
+     * of the whole form before it, and of the script, as if it were the
+     * heading. So the first input "said" resume and cover letter both and
+     * took the resume. Against the real Dropzone 5, with the Cover Letter
+     * zone first: the resume held by the Cover Letter zone, reported as
+     * "Attached".
+     */
+    group('Dropzone.js, with its inputs at the end of the page');
+    {
+      await run('/dropzone-js', [filed('Jianwen-Ding-Resume.pdf'), filed('Jianwen-Ding-Cover-Letter.pdf')]);
+      const held = await p.evaluate(() => window.held);
+      check('the resume is not given to the Cover Letter zone', !held.cover.includes('Jianwen-Ding-Resume.pdf'), JSON.stringify(held));
+      check(
+        'each zone ends up with its own document',
+        JSON.stringify(held.resume) === '["Jianwen-Ding-Resume.pdf"]' && JSON.stringify(held.cover) === '["Jianwen-Ding-Cover-Letter.pdf"]',
+        JSON.stringify(held),
+      );
+    }
+
     group('A widget that names the file it is refusing');
     for (const where of ['/refuses-by-name', '/refuses-in-preview']) {
       const { report, inBoxes } = await run(where, [filed('Jianwen-Ding-Resume.pdf')]);
