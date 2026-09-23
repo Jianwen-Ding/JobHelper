@@ -425,9 +425,34 @@ function surroundingWords(input) {
  * that puts the first in the legend and the second on the label has written
  * the same question as one that puts both on the label.
  */
+/*
+ * A place or a telephone asked inside a past job, or inside the education
+ * section, is that job's or that school's.
+ *
+ * The employer and school rules above want the owner and the place in one
+ * phrase — "Employer city", "School state" — and a form that asks a section
+ * at a time says the owner once, on the group: a fieldset whose legend is
+ * "Work Experience 1", a group labelled "Employment History" or "Education",
+ * and inside it plain "Location", "City", "State", "Country" and "Phone".
+ * Measured: every one of those was given the applicant's own home and
+ * number, a statement about where somebody else's office or campus is, once
+ * per row of the history. "School" under "Education" and "City" under
+ * "Contact Information" are still filled.
+ *
+ * The section is read from the group's name alone, never from the field's
+ * own words, so "Email (your education address is fine)" on an ordinary box
+ * is still the applicant's.
+ */
+const HISTORY_GROUP = /\b(work|employment|professional|job|career)[\s_-]+(experience|history)\b|\beducation\w*\b/i;
+const A_PLACE_OR_LINE = /\b(location|city|town|state|province|region|country|address|zip|postal|phone|telephone|mobile|e-?mail)\b/i;
+
 const isNotAboutYou = (description, label, around = '') => {
   const about = around ? `${around} ${description}` : description;
-  return asksForADiallingCode(description, label) || NOT_ABOUT_YOU.some((re) => re.test(about));
+  return (
+    asksForADiallingCode(description, label) ||
+    NOT_ABOUT_YOU.some((re) => re.test(about)) ||
+    (HISTORY_GROUP.test(around) && A_PLACE_OR_LINE.test(description))
+  );
 };
 
 /*

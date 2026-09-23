@@ -1158,6 +1158,29 @@ const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Ap
   <label for="phbest">Best phone number to reach you</label><input id="phbest" name="q_p4">
   <label for="phint">Phone number for the phone interview</label><input id="phint" name="q_p5">
 
+  <!-- A past job's place and telephone, and the school's, asked once in the group's name. -->
+  <fieldset>
+    <legend>Work Experience 1</legend>
+    <label for="wx-loc">Location</label><input id="wx-loc" name="q_h1">
+    <label for="wx-city">City</label><input id="wx-city" name="q_h2">
+    <label for="wx-phone">Phone</label><input id="wx-phone" name="q_h3">
+  </fieldset>
+  <div role="group" aria-labelledby="eh-head"><h4 id="eh-head">Employment History</h4>
+    <label for="eh-state">State</label><input id="eh-state" name="q_h4">
+    <label for="eh-ctry">Country</label><input id="eh-ctry" name="q_h5">
+  </div>
+  <fieldset>
+    <legend>Education</legend>
+    <label for="ed-sch">School</label><input id="ed-sch" name="q_h6">
+    <label for="ed-city">City</label><input id="ed-city" name="q_h7">
+    <label for="ed-state">State</label><input id="ed-state" name="q_h8">
+  </fieldset>
+  <fieldset>
+    <legend>Contact Information</legend>
+    <label for="ci-city">City</label><input id="ci-city" name="q_h9">
+    <label for="ci-loc">Location</label><input id="ci-loc" name="q_h10">
+  </fieldset>
+
   <!-- The applicant's own, still filled. -->
   <label for="own-ln">Last name</label><input id="own-ln" name="q_ln">
   <label for="own-legal">Legal name</label><input id="own-legal" name="q_legal">
@@ -1639,7 +1662,7 @@ async function main() {
         const m = await import(`${b}/autofill.js`);
         m.fillForm(profile);
         return Object.fromEntries([...document.querySelectorAll('input, select, textarea')].map((el) => [el.id, el.value]));
-      }, { b: base, profile: { ...PROFILE, address_state: 'MA', school: 'Northeastern University', website: 'jianwen.dev', graduation_year: '2027', major: 'Computer Science', degree: 'Bachelor of Science' } }),
+      }, { b: base, profile: { ...PROFILE, address_state: 'MA', location: 'Boston, MA', school: 'Northeastern University', website: 'jianwen.dev', graduation_year: '2027', major: 'Computer Science', degree: 'Bachelor of Science' } }),
     );
 
     group('Somebody else\'s details, under names the list did not have');
@@ -1728,6 +1751,26 @@ async function main() {
       'while "Best phone number to reach you" and "Phone number for the phone interview" still get it',
       more.phbest === PROFILE.phone && more.phint === PROFILE.phone,
       `${more.phbest} / ${more.phint}`,
+    );
+
+    /*
+     * A form that asks about a past job, or the school, a section at a time
+     * says whose it is once, on the group, and then asks "Location", "City",
+     * "State" and "Phone" like any other box. Each of those was given the
+     * applicant's own home and number — a false statement about where
+     * somebody else's office or campus is, on every row of the history.
+     */
+    group('A past job\'s place, and the school\'s, named once on the group');
+    check('"Location" under "Work Experience 1" is not given where the applicant lives', more['wx-loc'] === '', more['wx-loc']);
+    check('nor "City" there', more['wx-city'] === '', more['wx-city']);
+    check('nor is "Phone" there the applicant\'s number', more['wx-phone'] === '', more['wx-phone']);
+    check('nor "State" and "Country" in a group labelled "Employment History"', more['eh-state'] === '' && more['eh-ctry'] === '', `${more['eh-state']} / ${more['eh-ctry']}`);
+    check('nor "City" and "State" under "Education"', more['ed-city'] === '' && more['ed-state'] === '', `${more['ed-city']} / ${more['ed-state']}`);
+    check('while "School" under "Education" still gets the school', more['ed-sch'] === 'Northeastern University', more['ed-sch']);
+    check(
+      'and "City" and "Location" under "Contact Information" still get the applicant\'s',
+      more['ci-city'] === 'Boston' && more['ci-loc'] === 'Boston, MA',
+      `${more['ci-city']} / ${more['ci-loc']}`,
     );
 
     group('A declaration answered from a sentence');
