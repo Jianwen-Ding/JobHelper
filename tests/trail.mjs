@@ -1057,4 +1057,46 @@ describe('the page as sent includes its shadow roots', () => {
       await browser.close();
     }
   });
+
+  /*
+   * Except our own. The card and the "is this a job?" chip are shadow roots
+   * on the page like any other, and the card is up before the page is read
+   * and still up at every rebuild — so the page went to the server with the
+   * card inside it: the letter being written, the resume's own lines, and a
+   * feedback box labelled like a question, as though the posting had said
+   * them. `allRoots` in autofill.js has skipped the card for the same reason
+   * since it learned to walk shadow roots.
+   */
+  it('does not carry the card or the chip, only the page', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><title>Apply</title></head><body><h1>Platform Engineer</h1>
+        <apply-form id="form"></apply-form>
+        <div id="jobhelper-card-host"></div>
+        <div id="jobhelper-ask-host"></div></body></html>`);
+      // Attached from out here rather than by a script in the page, whose own
+      // source would otherwise carry the very words being looked for.
+      const html = await page.evaluate(async (js) => {
+        document.getElementById('form').attachShadow({ mode: 'open' }).innerHTML =
+          '<label>Why do you want to work at Acme?</label><textarea></textarea>';
+        document.getElementById('jobhelper-card-host').attachShadow({ mode: 'open' }).innerHTML =
+          '<p>Dear Hiring Manager, I led the migration of our billing system.</p><label>Anything to change?</label><textarea></textarea>';
+        document.getElementById('jobhelper-ask-host').attachShadow({ mode: 'open' }).innerHTML =
+          '<p>Is this a job you are applying for?</p>';
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        return mod.pageHtml(document);
+      }, source);
+      assert.ok(html.includes('Why do you want to work at Acme?'), 'the page\'s own shadow root is still sent');
+      for (const ours of ['Dear Hiring Manager', 'Anything to change?', 'Is this a job you are applying for?']) {
+        assert.ok(!html.includes(ours), `"${ours}" was sent as part of the page`);
+      }
+    } finally {
+      await browser.close();
+    }
+  });
 });

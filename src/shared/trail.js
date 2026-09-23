@@ -658,10 +658,23 @@ export function summarise(trail) {
  * included. Closed roots too where the extension API can open them. A page
  * with none is returned exactly as `outerHTML` has it.
  */
+/*
+ * Except ours. The card and the "is this a job?" chip are open shadow roots on
+ * the page like any other, and the card is up before the page is first read
+ * and at every rebuild after — so each page went to the server with the whole
+ * card written into it: the resume's changes line by line, every button, the
+ * questions it had already found, and a feedback box labelled "Anything to
+ * change?" as though the posting had asked it. `allRoots` in autofill.js
+ * skips the card for the same reason. By id, as there, because the hosts are
+ * found by id everywhere else.
+ */
+const OUR_HOSTS = new Set(['jobhelper-card-host', 'jobhelper-ask-host']);
+
 export function pageHtml(doc = document) {
   const extra = [];
   const seen = new Set();
   const rootOf = (el) => {
+    if (OUR_HOSTS.has(el.id)) return null;
     if (el.shadowRoot) return el.shadowRoot;
     try {
       return globalThis.chrome?.dom?.openOrClosedShadowRoot?.(el) ?? null;
