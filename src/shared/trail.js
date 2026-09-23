@@ -700,7 +700,55 @@ const OUR_HOSTS = new Set(['jobhelper-card-host', 'jobhelper-ask-host']);
 const EDITABLE = new Set(['', 'true', 'plaintext-only']);
 const ANSWERS = 'input, textarea, option, [contenteditable], [aria-checked], [aria-selected], [aria-pressed]';
 
+/*
+ * And the answer a select widget draws once something is picked in it.
+ *
+ * Dropping `selected` and `aria-selected` is the whole story for a native
+ * <select>, and the self-identification step rarely has one any more. Its
+ * gender, race, veteran and disability questions are drawn by a widget, and
+ * the widget writes the pick out as plain text beside the question — which
+ * nothing above touches. Measured in Chromium against this module, with each
+ * library's own markup after an option was clicked: react-select's
+ * `select__single-value` and its "option Female, selected." live region, MUI's
+ * `MuiSelect-select`, Headless UI's and Workday's listbox button, Radix's
+ * trigger, select2's `select2-selection__rendered` and Choices.js's chosen
+ * item all went to the server, and on to the AI, with the answer in them.
+ *
+ * So each of those places is emptied, with the attributes that repeat the
+ * pick: select2's `title`, Choices.js's `data-value`, the "Remove Asian" label
+ * on a chip's close button, which goes with the chip. The classes are the
+ * libraries' own, not a guess at what a chip looks like — react-select's
+ * `__single-value` and `__multi-value` under any class prefix, and its
+ * emotion `-singleValue` and `-multiValue` names when it has none; MUI's
+ * chips only inside a Select or as an Autocomplete tag. A posting's own
+ * "Location: Remote" chip is a `MuiChip-root` too, and is left alone. The
+ * question stays, because it is a label outside the widget; so does any list
+ * of options that is not the pick, like Choices.js's dropdown. On a page of
+ * 20,800 elements and 2.7MB the extra pass cost about 3ms where nothing
+ * matched, and about 12ms with 2,600 widgets to empty.
+ */
+const SHOWN_CHOICE = [
+  '[class*="__single-value"]',
+  '[class*="-singleValue"]',
+  '[class*="__multi-value"]',
+  '[class*="-multiValue"]',
+  '[id="aria-selection"]',
+  '[id="aria-focused"]',
+  '.MuiSelect-select',
+  '.MuiAutocomplete-tag',
+  'button[aria-haspopup="listbox"]',
+  'button[role="combobox"]',
+  '.select2-selection__rendered',
+  '.choices__list--single',
+  '.choices__list--multiple',
+].join(', ');
+const REPEATS_CHOICE = ['title', 'aria-label', 'data-value', 'value'];
+
 function scrubCopy(root) {
+  for (const el of root.querySelectorAll(SHOWN_CHOICE)) {
+    el.textContent = '';
+    for (const name of REPEATS_CHOICE) el.removeAttribute(name);
+  }
   for (const el of root.querySelectorAll(ANSWERS)) {
     if (el.localName === 'input') {
       if (!NAMES_ITSELF.test(el.type)) el.removeAttribute('value');

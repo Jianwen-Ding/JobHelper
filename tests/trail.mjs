@@ -1192,3 +1192,137 @@ describe('the page as sent includes its shadow roots', () => {
     }
   });
 });
+
+/*
+ * What a select widget shows once something has been picked in it.
+ *
+ * Dropping `selected` and `aria-selected` covers a native <select>, and most
+ * application forms no longer have one: the self-identification questions are
+ * drawn by a widget, and the widget writes the answer out as ordinary text
+ * beside the question. The markup below is what each library put in the page
+ * after an option was clicked in Chromium — react-select 5.10 (with
+ * Greenhouse's `select` class prefix, and without one), MUI 5.18 Select and
+ * Autocomplete, Headless UI 2.2 Listbox, Radix Select 2.3, select2 4.1 and
+ * Choices.js 11.2 — with inline styles and icons taken out. Workday's button
+ * is the shape tests/autofill.mjs models, which draws its choice on itself.
+ */
+const CHOSEN_IN_WIDGETS = `
+  <h1>Voluntary Self-Identification</h1>
+  <p>Female founders network, veterans and people with a disability are encouraged to apply.</p>
+  <div class="posting-tags"><div class="MuiChip-root MuiChip-filled"><span class="MuiChip-label">Location: Remote</span></div>
+    <span class="chip">Hybrid</span></div>
+
+  <label id="rs-g-l" for="rs-g">Gender</label>
+  <div class="css-b62m3t-container">
+    <span id="react-select-2-live-region" class="css-7pg0cj-a11yText"><span id="aria-selection">option ANSWER-RS-LIVE, selected.</span><span id="aria-focused"></span><span id="aria-results"></span><span id="aria-guidance">Select is focused ,type to refine list, press Down to open the menu, </span></span>
+    <span aria-live="polite" aria-atomic="false" aria-relevant="additions text" role="log" class="css-7pg0cj-a11yText"></span>
+    <div class="select__control css-t3ipsp-control"><div class="select__value-container select__value-container--has-value css-hlgwow">
+      <div class="select__single-value css-1dimb5e-singleValue">ANSWER-RS-SINGLE</div>
+      <div class="select__input-container css-19bb58m" data-value=""><input class="select__input" id="rs-g" type="text" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="rs-g-l" role="combobox" value=""></div>
+    </div></div>
+    <input name="gender" type="hidden" value="f">
+  </div>
+
+  <label id="rs-r-l">Race</label>
+  <div class="css-b62m3t-container"><div class="css-13cymwt-control"><div class="css-1dyz3mf">
+    <div class="css-1p3m7a8-multiValue"><div class="css-9jq23d">ANSWER-RS-CHIP</div><div role="button" class="css-v7duua" aria-label="Remove ANSWER-RS-REMOVE"></div></div>
+    <div class="css-19bb58m" data-value=""><input id="rs-r" type="text" aria-labelledby="rs-r-l" role="combobox" value=""></div>
+  </div></div></div>
+
+  <div class="MuiFormControl-root"><label class="MuiFormLabel-root MuiInputLabel-root" id="mui-v-label">Veteran status</label>
+    <div class="MuiInputBase-root MuiOutlinedInput-root">
+      <div tabindex="0" role="combobox" aria-controls=":r0:" aria-expanded="false" aria-haspopup="listbox" aria-labelledby="mui-v-label mui-v" id="mui-v" class="MuiSelect-select MuiSelect-outlined MuiInputBase-input">ANSWER-MUI-SELECT</div>
+      <input aria-invalid="false" aria-hidden="true" tabindex="-1" class="MuiSelect-nativeInput" value="pv">
+    </div></div>
+
+  <div class="MuiFormControl-root"><label class="MuiFormLabel-root MuiInputLabel-root" id="mui-e-label">Ethnicity</label>
+    <div class="MuiInputBase-root MuiOutlinedInput-root">
+      <div tabindex="0" role="combobox" aria-haspopup="listbox" aria-labelledby="mui-e-label mui-e" id="mui-e" class="MuiSelect-select MuiSelect-multiple MuiInputBase-input">
+        <div><div class="MuiChip-root MuiChip-filled"><span class="MuiChip-label">ANSWER-MUI-MULTI</span></div></div></div>
+    </div></div>
+
+  <div class="MuiAutocomplete-root"><div class="MuiFormControl-root"><label class="MuiFormLabel-root" for="mui-ac" id="mui-ac-label">Languages spoken at home</label>
+    <div class="MuiInputBase-root MuiAutocomplete-inputRoot">
+      <div class="MuiButtonBase-root MuiChip-root MuiChip-deletable MuiAutocomplete-tag MuiAutocomplete-tagSizeMedium" tabindex="-1" role="button" data-tag-index="0"><span class="MuiChip-label">ANSWER-MUI-TAG</span></div>
+      <input aria-invalid="false" autocomplete="off" id="mui-ac" type="text" class="MuiAutocomplete-input" role="combobox" value="">
+    </div></div></div>
+
+  <div data-headlessui-state=""><label id="headlessui-label-:r5:" data-headlessui-state="">Disability status</label>
+    <button id="hl-btn" type="button" aria-haspopup="listbox" aria-expanded="false" data-headlessui-state="" aria-labelledby="headlessui-label-:r5: hl-btn">ANSWER-HEADLESS</button></div>
+
+  <div><label id="rx-l">Are you Hispanic or Latino?</label>
+    <button type="button" role="combobox" aria-expanded="false" aria-autocomplete="none" dir="ltr" data-state="closed" id="rx-t" aria-labelledby="rx-l"><span>ANSWER-RADIX</span><span aria-hidden="true">▼</span></button></div>
+
+  <div><label id="wd-l">Please select your gender</label>
+    <button type="button" id="wd-g" aria-haspopup="listbox" aria-labelledby="wd-l">ANSWER-WORKDAY</button></div>
+
+  <label for="s2">Protected veteran status</label>
+  <span class="select2 select2-container select2-container--default" dir="ltr"><span class="selection">
+    <span class="select2-selection select2-selection--single" role="combobox" aria-haspopup="true" aria-expanded="false" tabindex="0" aria-labelledby="select2-s2-container">
+      <span class="select2-selection__rendered" id="select2-s2-container" role="textbox" aria-readonly="true" title="ANSWER-S2-TITLE">ANSWER-S2-SINGLE</span>
+      <span class="select2-selection__arrow" role="presentation"><b role="presentation"></b></span>
+    </span></span></span>
+
+  <label for="s2m">Race (select all that apply)</label>
+  <span class="select2 select2-container select2-container--default" dir="ltr"><span class="selection">
+    <span class="select2-selection select2-selection--multiple" role="combobox" aria-haspopup="true" aria-expanded="false" tabindex="-1">
+      <ul class="select2-selection__rendered" id="select2-s2m-container">
+        <li class="select2-selection__choice" title="ANSWER-S2M-TITLE"><button type="button" class="select2-selection__choice__remove" tabindex="-1" title="Remove item" aria-label="Remove item" aria-describedby="select2-s2m-container-choice-0jdg-ANSWERS2MID"><span aria-hidden="true">×</span></button><span class="select2-selection__choice__display" id="select2-s2m-container-choice-0jdg-ANSWERS2MID">ANSWER-S2M-CHIP</span></li>
+      </ul>
+      <span class="select2-search select2-search--inline"><textarea class="select2-search__field" aria-label="Search"></textarea></span>
+    </span></span></span>
+
+  <label for="ch">Pronouns</label>
+  <div class="choices" data-type="select-one" tabindex="0" role="combobox" aria-haspopup="true" aria-expanded="false">
+    <div class="choices__inner">
+      <div class="choices__list choices__list--single" role="listbox">
+        <div class="choices__item choices__item--selectable" data-item="" data-id="2" data-value="ANSWER-CH-VALUE" role="option">ANSWER-CH-SINGLE</div>
+      </div>
+    </div>
+    <div class="choices__list choices__list--dropdown" aria-expanded="false"><div class="choices__list" role="listbox">
+      <div id="choices--ch-item-choice-1" class="choices__item choices__item--choice choices__item--selectable" role="option" data-value="He/him">He/him</div>
+      <div id="choices--ch-item-choice-3" class="choices__item choices__item--choice choices__item--selectable" role="option" data-value="They/them">They/them</div>
+    </div></div>
+  </div>
+
+  <label for="chm">Sexual orientation</label>
+  <div class="choices" data-type="select-multiple" role="combobox" aria-haspopup="true" aria-expanded="false">
+    <div class="choices__inner">
+      <div class="choices__list choices__list--multiple" role="listbox">
+        <div class="choices__item choices__item--selectable" data-item="" data-id="1" data-value="ANSWER-CHM-VALUE" role="option" data-deletable="">ANSWER-CHM-CHIP<button type="button" class="choices__button" aria-label="Remove item: ANSWER-CHM-REMOVE" data-button="">Remove item</button></div>
+      </div>
+      <input type="search" class="choices__input choices__input--cloned" aria-label="Sexual orientation">
+    </div>
+  </div>
+  <button type="button" aria-haspopup="menu">Share this job</button>`;
+
+describe('the page as sent does not say which option a widget shows as chosen', () => {
+  it('empties what react-select, MUI, Headless UI, Radix, Workday, select2 and Choices.js draw as the answer', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><title>Apply</title></head><body>${CHOSEN_IN_WIDGETS}</body></html>`);
+      const html = await page.evaluate(async (js) => {
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        return mod.trimForStorage(mod.pageHtml(document));
+      }, source);
+      const leaked = html.match(/ANSWER-?[A-Z0-9-]*/g) ?? [];
+      assert.deepEqual(leaked, [], `the chosen answers were sent: ${leaked.join(', ')}`);
+      for (const kept of [
+        'Voluntary Self-Identification', 'Female founders network', 'Location: Remote', 'Hybrid',
+        'Gender', 'Race', 'Veteran status', 'Ethnicity', 'Languages spoken at home', 'Disability status',
+        'Are you Hispanic or Latino?', 'Please select your gender', 'Protected veteran status',
+        'Race (select all that apply)', 'Pronouns', 'Sexual orientation', 'He/him', 'They/them',
+        'Share this job', 'type to refine list',
+      ]) {
+        assert.ok(html.includes(kept), `"${kept}" was lost`);
+      }
+    } finally {
+      await browser.close();
+    }
+  });
+});
