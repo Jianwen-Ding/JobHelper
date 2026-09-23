@@ -109,7 +109,16 @@ const FIELD_PATTERNS = [
     'address_state',
     /(?<!\bplease[\s_-]+)\b(state|province|region)\b(?![\s_-]+(?:your|why|how|what|whether|if|the|any|briefly|clearly|below)\b)/i,
   ],
-  ['location', /\b(location|where.*based)\b/i],
+  /*
+   * "Where are you located?", "Where do you live?" and "Where do you
+   * currently reside?" are how custom questions ask for this, and only
+   * "Where are you based?" matched. Asked of the applicant as they are now:
+   * "Where would you like to be located?" is a preference, and stays blank.
+   */
+  [
+    'location',
+    /\b(location|where.*based)\b|\bwhere\s+(?:are|do)\s+you\s+(?:currently\s+)?(?:located|live|living|reside|residing)\b/i,
+  ],
 ];
 
 const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();

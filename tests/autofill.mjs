@@ -1253,6 +1253,12 @@ const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Ap
   <label for="kd5">GPA Scale</label><input id="kd5" name="q_k5">
   <label for="kd6">Degree Status</label><input id="kd6" name="q_k6">
 
+  <!-- Where the applicant is, asked as a question. -->
+  <label for="wh1">Where are you located?</label><input id="wh1" name="q_wh1">
+  <label for="wh2">Where do you live?</label><input id="wh2" name="q_wh2">
+  <label for="wh3">Where do you currently reside?</label><input id="wh3" name="q_wh3">
+  <label for="wh4">Where would you like to be located?</label><input id="wh4" name="q_wh4">
+
   <!-- The applicant's own, still filled. -->
   <label for="own-ln">Last name</label><input id="own-ln" name="q_ln">
   <label for="own-legal">Legal name</label><input id="own-legal" name="q_legal">
@@ -1969,6 +1975,16 @@ async function main() {
       more['own-phone'] === PROFILE.phone && more['own-email'] === PROFILE.email && more['own-degree'] === 'Bachelor of Science' && more['yn-what'] === '3.9',
       `${more['own-phone']} / ${more['own-email']} / ${more['own-degree']} / ${more['yn-what']}`,
     );
+
+    /*
+     * The commonest way a custom question asks for the applicant's location
+     * matched nothing: only "Where are you based?" did.
+     */
+    group('Where the applicant is, asked as a question');
+    check('"Where are you located?" gets the location', more.wh1 === 'Boston, MA', more.wh1);
+    check('and "Where do you live?"', more.wh2 === 'Boston, MA', more.wh2);
+    check('and "Where do you currently reside?"', more.wh3 === 'Boston, MA', more.wh3);
+    check('while "Where would you like to be located?" does not', more.wh4 === '', more.wh4);
 
     group('A declaration answered from a sentence');
     check(
