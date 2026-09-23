@@ -1066,7 +1066,28 @@ const MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</
   <label for="co">Current employer</label><input id="co" name="current_company">
 </form></body></html>`;
 
-const PAGES = { '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
+/*
+ * More labels that say a profile word about something that is not the
+ * applicant. Each field is empty unless its check says otherwise, and every
+ * one of them was filled — with a true fact about the applicant, given as the
+ * answer to a question about somebody or something else.
+ */
+const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <!-- Other people's contact details, under names the list did not have. -->
+  <label for="refmail">Referrer's email</label><input id="refmail" name="q_r1" type="email">
+  <label for="reflink">LinkedIn URL of your referrer</label><input id="reflink" name="q_r2">
+  <label for="recmail">Recruiter email</label><input id="recmail" name="q_r3">
+  <label for="profmail">Professor's email</label><input id="profmail" name="q_r4">
+  <label for="parphone">Parent's phone number</label><input id="parphone" name="q_r5">
+
+  <!-- The applicant's own, still filled. -->
+  <label for="own-email">Email</label><input id="own-email" name="email" type="email">
+  <label for="own-phone">Phone</label><input id="own-phone" name="phone">
+  <label for="own-li">LinkedIn</label><input id="own-li" name="li">
+</form></body></html>`;
+
+const PAGES = { '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -1513,6 +1534,26 @@ async function main() {
     check('"Which location are you applying for?" is not given where the applicant lives', misread.e5 === '', misread.e5);
     check('while a box labelled "LinkedIn profile" still gets it, multi-line or not', misread.f1 === 'linkedin.com/in/x', misread.f1);
     check('and "Which university did you graduate from?" still gets the school', misread.f2 === 'Northeastern University', misread.f2);
+
+    const more = await page.goto(`${base}/more-misread`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm(profile);
+        return Object.fromEntries([...document.querySelectorAll('input, select, textarea')].map((el) => [el.id, el.value]));
+      }, { b: base, profile: { ...PROFILE, address_state: 'MA', school: 'Northeastern University', website: 'jianwen.dev' } }),
+    );
+
+    group('Somebody else\'s details, under names the list did not have');
+    check('"Referrer\'s email" is not given the applicant\'s email', more.refmail === '', more.refmail);
+    check('"LinkedIn URL of your referrer" is not given the applicant\'s profile', more.reflink === '', more.reflink);
+    check('"Recruiter email" is not given the applicant\'s email', more.recmail === '', more.recmail);
+    check('"Professor\'s email" is not given the applicant\'s email', more.profmail === '', more.profmail);
+    check('"Parent\'s phone number" is not given the applicant\'s number', more.parphone === '', more.parphone);
+    check(
+      'while the applicant\'s own email, phone and LinkedIn still are',
+      more['own-email'] === PROFILE.email && more['own-phone'] === PROFILE.phone && more['own-li'] === PROFILE.linkedin,
+      `${more['own-email']} / ${more['own-phone']} / ${more['own-li']}`,
+    );
 
     group('A declaration answered from a sentence');
     check(

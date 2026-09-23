@@ -143,8 +143,18 @@ const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
  * signature line of a form they had not chosen to complete.
  */
 const NOT_ABOUT_YOU = [
-  // Somebody else's name, telephone number or address.
-  /\b(references?|referee|emergency|next[\s_-]?of[\s_-]?kin|guardian|spouse|supervisor|manager'?s?|recommender)\b/i,
+  /*
+   * Somebody else's name, telephone number or address.
+   *
+   * The people a form asks about were a short list, and the rest of them got
+   * the applicant: "Referrer's email", "Recruiter email" and "Professor's
+   * email" were filled with the applicant's own address, "LinkedIn URL of your
+   * referrer" with their own profile, and "Parent's phone number" — which the
+   * internship forms ask of students — with their own number. The employee
+   * who referred you is the commonest of these, and "referral" was already
+   * here for how you heard about the job; the person is not.
+   */
+  /\b(references?|referee|emergency|next[\s_-]?of[\s_-]?kin|guardian|spouse|supervisor|manager'?s?|recommender|referr(?:er|ers|ing|ed)|recruiters?|parents?|professors?|advis[oe]rs?)\b/i,
   /*
    * A previous employer's address, which the employment-history sections of
    * Taleo and BrassRing ask for field by field. "Employer City" matched
