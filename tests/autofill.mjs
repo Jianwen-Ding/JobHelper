@@ -1577,7 +1577,7 @@ const QUILL_ONE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply
  */
 const CKEDITED = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
 <form>
-  <label for="why">Why do you want to work at Acme?</label>
+  <label for="why">Why do you want to work at Acme? *</label>
   <textarea id="why" name="why" style="display: none;"></textarea>
   <div class="ck ck-reset ck-editor ck-rounded-corners" role="application" aria-labelledby="ck-editor__label_1">
     <label class="ck ck-label ck-voice-label" id="ck-editor__label_1">Rich Text Editor</label>
@@ -3791,6 +3791,7 @@ async function main() {
         const why = found.find((q) => /Acme/.test(q.question));
         return {
           questions: found.map((q) => q.question),
+          required: why ? m.isRequired(why.fieldId) : null,
           put: why ? await m.insertAnswer(why.fieldId, 'Because Acme builds rockets.', why.question) : null,
         };
       }, { b: base }),
@@ -3802,6 +3803,13 @@ async function main() {
       JSON.stringify(ck.questions),
     );
     check('and Insert still knows the box asks it', ck.put === true, String(ck.put));
+    /*
+     * Required by the same label. Read off the editor's own box, the
+     * asterisk on the page's label was never seen and the question came
+     * back optional, so the finished card left an empty required answer
+     * off its list of what the folder is missing.
+     */
+    check('and is required when the page’s label says so', ck.required === true, String(ck.required));
 
     /*
      * Quill 1's paste catcher is a second contenteditable with no label, so

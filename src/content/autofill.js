@@ -3360,8 +3360,11 @@ export function wantsCoverLetter() {
  * field and nothing else fillable, which is the rule `labelFor` already uses.
  */
 export function isRequired(fieldId) {
-  const field = deepQueryAll(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`)[0];
-  if (!field) return false;
+  const found = deepQueryAll(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`)[0];
+  if (!found) return false;
+  // Asked by the textarea an editor was put on, so required by its label too.
+  // See `takenOver`.
+  const field = takenOver(found) ?? found;
   if (field.required || field.getAttribute('aria-required') === 'true') return true;
 
   const marked = (text) => /\*|\brequired\b/i.test(text ?? '');
