@@ -7,7 +7,7 @@
 export const DEFAULTS = {
   /** Where ResumeM-M is listening. Loopback only — the server has no auth. */
   serverUrl: 'http://127.0.0.1:4600',
-  /** Resume the tailored version inherits from. */
+  /** Resume each tailored version is copied from. */
   baseResumeId: 'newgrad',
   /**
    * Send the posting to the configured AI CLI as well as the local tag match.
