@@ -647,6 +647,44 @@ export function summarise(trail) {
  * JSON-LD survives: it is inside a <script> tag and it is the single most
  * reliable source of what a posting says.
  */
+/**
+ * The page's markup, with what is inside its shadow roots.
+ *
+ * `outerHTML` stops at a shadow root, so a posting or an application form
+ * drawn inside a web component — which autofill reaches and fills — was sent
+ * to the server as the empty host element around it, and the letter and the
+ * answers were written without the questions. Each root's markup is added
+ * inside the body, marked with the element it belongs to, nested roots
+ * included. Closed roots too where the extension API can open them. A page
+ * with none is returned exactly as `outerHTML` has it.
+ */
+export function pageHtml(doc = document) {
+  const extra = [];
+  const seen = new Set();
+  const rootOf = (el) => {
+    if (el.shadowRoot) return el.shadowRoot;
+    try {
+      return globalThis.chrome?.dom?.openOrClosedShadowRoot?.(el) ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const walk = (root) => {
+    for (const el of root.querySelectorAll('*')) {
+      const shadow = rootOf(el);
+      if (!shadow || seen.has(shadow)) continue;
+      seen.add(shadow);
+      extra.push(`<div data-shadow-host="${el.localName}">${shadow.innerHTML}</div>`);
+      walk(shadow);
+    }
+  };
+  walk(doc);
+  const html = doc.documentElement.outerHTML;
+  if (extra.length === 0) return html;
+  const at = html.lastIndexOf('</body>');
+  return at < 0 ? html + extra.join('') : html.slice(0, at) + extra.join('') + html.slice(at);
+}
+
 export function trimForStorage(html, limit = 400_000) {
   const text = String(html ?? '')
     // Keep ld+json, drop every other script.

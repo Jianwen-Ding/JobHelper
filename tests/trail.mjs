@@ -964,3 +964,43 @@ describe('evidence about where you went, and not about which job', () => {
     });
   });
 });
+
+/*
+ * The page as sent, with what is inside its shadow roots.
+ *
+ * `document.documentElement.outerHTML` does not serialise a shadow root, so a
+ * posting or an application form rendered inside a web component — which
+ * autofill reaches and fills — never reached the server as text, and the AI
+ * wrote the letter and the answers without it.
+ */
+describe('the page as sent includes its shadow roots', () => {
+  it('carries the text of an open shadow root, and of one nested inside it', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><title>Apply</title></head><body><h1>Acme careers</h1>
+        <apply-form id="host"></apply-form>
+        <script>
+          const outer = document.getElementById('host').attachShadow({ mode: 'open' });
+          outer.innerHTML = '<h2>Platform Engineer</h2><label>Why do you want to work at Acme?</label><textarea></textarea><inner-part id="in"></inner-part>';
+          outer.getElementById('in').attachShadow({ mode: 'open' }).innerHTML = '<p>Salary: $150,000 to $180,000</p>';
+        </script></body></html>`);
+      const out = await page.evaluate(async (js) => {
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        const empty = document.implementation.createHTMLDocument('x');
+        return { html: mod.pageHtml(document), bare: mod.pageHtml(empty), plainOuter: empty.documentElement.outerHTML };
+      }, source);
+      assert.ok(out.html.includes('Why do you want to work at Acme?'), 'the shadow root\'s question is sent');
+      assert.ok(out.html.includes('Salary: $150,000 to $180,000'), 'and the nested one\'s salary');
+      assert.ok(out.html.includes('<h1>Acme careers</h1>'), 'and the page itself');
+      assert.ok(out.html.indexOf('Why do you want') < out.html.lastIndexOf('</body>'), 'inside the body');
+      assert.equal(out.bare, out.plainOuter, 'a page with no shadow roots is sent exactly as it was');
+    } finally {
+      await browser.close();
+    }
+  });
+});

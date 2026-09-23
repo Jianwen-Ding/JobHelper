@@ -1198,11 +1198,11 @@
    * the difference between a page that stutters and one that does not.
    */
   async function pagePayload() {
-    const { trimForStorage } = await imports.trail();
+    const { trimForStorage, pageHtml } = await imports.trail();
     return {
       url: location.href,
       title: document.title,
-      html: trimForStorage(document.documentElement.outerHTML, 2_000_000),
+      html: trimForStorage(pageHtml(document), 2_000_000),
     };
   }
 
@@ -2223,12 +2223,12 @@
         case 'jh-frame-html':
           answer(
             Promise.all([imports.autofill(), imports.trail()]).then(
-              ([{ looksLikeApplicationForm }, { trimForStorage }]) =>
+              ([{ looksLikeApplicationForm }, { trimForStorage, pageHtml }]) =>
                 looksLikeApplicationForm()
                   ? {
                       url: location.href,
                       title: document.title,
-                      html: trimForStorage(document.documentElement.outerHTML, 400_000),
+                      html: trimForStorage(pageHtml(document), 400_000),
                     }
                   : { html: '' },
             ),
