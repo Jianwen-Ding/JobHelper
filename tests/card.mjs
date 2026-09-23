@@ -1906,6 +1906,107 @@ async function main() {
   check('and comes down when it finishes', overlap.barAfter === false, JSON.stringify(overlap));
 
   /*
+   * The AI asked for again on the next page is a rebuild like any other.
+   *
+   * `retailor` is what the content script calls when an application whose
+   * resume the AI tailored arrives at its next page, and it is minutes long.
+   * The build buttons stay live meanwhile, and each of them takes a number so
+   * the newest press wins — but `retailor` took none. So pressing Keyword
+   * match while it read, and getting the match back first, was undone when
+   * the older AI reply arrived: it put the AI's proposal back on screen over
+   * the one just asked for. And arriving first, it cleared the label of the
+   * match still running.
+   *
+   * The content script hands the newest reply to `update` and returns the
+   * superseded one without it; this harness does the same.
+   */
+  console.log('\nThe AI asked for again does not land on top of a newer press');
+
+  const reRace = async (order) =>
+    inPage(async (createCard, staleFirst) => {
+      const job = { title: 'Platform Engineer', company: 'Acme' };
+      const reading = (choice, more) => ({
+        isJobPosting: true,
+        job,
+        spec: { id: 'job-acme', label: 'Acme', choices: { b_pipeline: choice } },
+        diff: [],
+        rationale: [],
+        ...more,
+      });
+      let releaseAi;
+      let releaseMatch;
+      let handle;
+      handle = createCard({
+        analysis: reading('v_base', { tailor: 'match', aiUsed: false }),
+        resumes: [{ id: 'base', label: 'New grad', base: true }],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async (action, payload) => {
+          if (action === 'aiStatus') return { active: true, state: 'on' };
+          if (action === 'render') return { pages: 1, fits: true };
+          if (action !== 'rebuild') return {};
+          if (payload.tailor === 'ai') {
+            return new Promise((r) => (releaseAi = () => r(reading('v_ai_again', { tailor: 'ai', aiUsed: true }))));
+          }
+          return new Promise((r) => {
+            releaseMatch = () => {
+              const next = reading('v_kafka', { tailor: 'match', aiUsed: false });
+              handle.update(next);
+              r(next);
+            };
+          });
+        },
+      });
+      // What the page before handed over: the AI's proposal, on screen.
+      handle.update(reading('v_ai', { tailor: 'ai', aiUsed: true }), { show: true });
+      await new Promise((r) => setTimeout(r, 120));
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      const named = (re) => [...root.querySelectorAll('button.mode')].find((b) => re.test(b.textContent));
+
+      handle.retailor('ai');
+      await new Promise((r) => setTimeout(r, 50));
+      named(/Keyword match/)?.click();
+      await new Promise((r) => setTimeout(r, 50));
+      const both = Boolean(releaseAi && releaseMatch);
+
+      let labelWhileMatching = null;
+      if (staleFirst) {
+        releaseAi();
+        await new Promise((r) => setTimeout(r, 80));
+        // Any repaint: the list arriving is one that happens on its own.
+        handle.setResumes([{ id: 'base', label: 'New grad', base: true }]);
+        labelWhileMatching = named(/Keyword match|Matching on keywords/)?.textContent?.trim() ?? null;
+        releaseMatch();
+      } else {
+        releaseMatch();
+        await new Promise((r) => setTimeout(r, 80));
+        releaseAi();
+      }
+      await new Promise((r) => setTimeout(r, 150));
+      return {
+        both,
+        labelWhileMatching,
+        lit: root.querySelector('.mode.on')?.textContent?.trim() ?? null,
+      };
+    }, order === 'stale-first');
+
+  const staleLast = await reRace('stale-last');
+  check('both really were in flight', staleLast.both === true, JSON.stringify(staleLast));
+  check(
+    'the match pressed while the AI read stays on screen when the AI answers after it',
+    // The match arrives with every box off, so it is "Use Original" that is lit.
+    typeof staleLast.lit === 'string' && !/AI/.test(staleLast.lit),
+    JSON.stringify(staleLast),
+  );
+  const staleFirst = await reRace('stale-first');
+  check(
+    'and the AI answering first does not say the match has finished',
+    staleFirst.labelWhileMatching === 'Matching on keywords…',
+    JSON.stringify(staleFirst),
+  );
+
+  /*
    * Feedback answered about a resume that is no longer the one on screen.
    *
    * "Apply feedback" sends the spec that is up when it is pressed, and a model

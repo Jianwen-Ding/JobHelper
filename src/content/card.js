@@ -6153,23 +6153,18 @@ export function createCard({
      */
     async retailor(mode) {
       if (mode !== 'ai' && mode !== 'match') return null;
-      state.rebuilding = mode;
-      try {
-        return await act('rebuild', { tailor: mode }, (result) => {
-          /*
-           * What came back, not what was asked for — see `rebuildAs`. And
-           * nothing at all when nothing came back: this wrote `'none'` on a
-           * run that had failed or been superseded, which is a claim about
-           * the proposal on screen made by a run that never produced one.
-           * With both readings kept it was visible — the AI's version on
-           * screen, its button lit, and the summary under it saying the
-           * resume was exactly as it is kept.
-           */
-          if (result?.spec) showOffer(slotOf(result));
-        });
-      } finally {
-        state.rebuilding = null;
-      }
+      /*
+       * Through `rebuildAs`, and so with a number like every other rebuild.
+       *
+       * This was a copy of it without the token. The build buttons stay live
+       * while it runs — it is the AI, and minutes — so pressing Keyword match
+       * meanwhile and getting the match back first was undone when this reply
+       * arrived: measured in tests/card.mjs, the AI's proposal went back on
+       * screen over the one just asked for, and arriving first instead, it
+       * cleared the running match's label. What `rebuildAs` shows on arrival
+       * is what came back, not what was asked for, which is what this did.
+       */
+      return rebuildAs(mode);
     },
     /**
      * The form asks for a cover letter after all.
