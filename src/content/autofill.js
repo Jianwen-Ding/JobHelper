@@ -3368,18 +3368,67 @@ const askedAs = (question) => cleanQuestion(question).replace(/\d+/g, '#').toLow
  * work at Acme?" wrote that answer into step two's "Describe a time you
  * failed." and returned true. Where it no longer matches, nothing is written.
  */
-export function insertAnswer(fieldId, text, question) {
+export async function insertAnswer(fieldId, text, question) {
   const field = deepQueryAll(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`)[0];
   if (!field) return false;
   if (question != null && askedAs(questionOf(field)) !== askedAs(question)) return false;
   if (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) {
     setValue(field, text);
-  } else {
-    field.textContent = text;
-    field.dispatchEvent(new Event('input', { bubbles: true }));
+  } else if (!(await pasteInto(field, text))) {
+    return false;
   }
   field.scrollIntoView({ behavior: 'smooth', block: 'center' });
   return true;
+}
+
+/**
+ * Put text into a rich-text editor the way the editor takes it: as a paste.
+ *
+ * A contenteditable box on an application form is almost never a bare
+ * `<div>`. It is Draft.js, Quill, ProseMirror, CKEditor or TinyMCE, and what
+ * the form submits is the editor's own document, not the element's text.
+ * Setting `textContent` wrote the words into the element and nowhere else.
+ * Measured against the real editors: Draft.js kept an empty EditorState and
+ * submitted nothing, CKEditor 5 put its own empty paragraph straight back,
+ * and Quill and ProseMirror kept the words but ran the paragraphs into one —
+ * while Insert returned true and the card said nothing was wrong.
+ *
+ * Every one of them handles a paste, because that is how people put an answer
+ * written elsewhere into them. So the box's contents are selected, the
+ * selection is left a turn to reach the editor — Draft.js, ProseMirror and
+ * CKEditor learn it from `selectionchange`, and pasted straight away they put
+ * the answer after what was there instead of in place of it — and a paste
+ * carrying the text is delivered. An editor that does not take pastes itself
+ * (a plain box, Quill 1, TinyMCE) gets the browser's own `insertText`, which
+ * those read off the DOM and which splits paragraphs as typing would.
+ *
+ * Then it is read back, because a paste is an event and an event nobody
+ * handled looks like one that worked. True only when the words are in the box.
+ */
+async function pasteInto(field, text) {
+  const doc = field.ownerDocument;
+  const settle = (ms) => new Promise((r) => setTimeout(r, ms));
+  field.focus({ preventScroll: true });
+  const all = doc.createRange();
+  all.selectNodeContents(field);
+  const selection = doc.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(all);
+  await settle(0);
+
+  const carrier = new DataTransfer();
+  carrier.setData('text/plain', text);
+  const paste = new ClipboardEvent('paste', { clipboardData: carrier, bubbles: true, cancelable: true });
+  field.dispatchEvent(paste);
+  if (!paste.defaultPrevented) doc.execCommand('insertText', false, text);
+
+  // Some take a paste on a timer of their own; Quill 1 does.
+  const flat = (s) => String(s ?? '').replace(/\s+/g, '');
+  for (let i = 0; i < 6; i++) {
+    if (flat(field.textContent).includes(flat(text))) return true;
+    await settle(40);
+  }
+  return false;
 }
 
 /**

@@ -212,7 +212,7 @@ async function main() {
       const m = await import(`${b}/autofill.js`);
       const report = m.fillForm(profile);
       const qs = m.findQuestions();
-      const inserted = qs[0] ? m.insertAnswer(qs[0].fieldId, 'Because I read your code.') : null;
+      const inserted = qs[0] ? await m.insertAnswer(qs[0].fieldId, 'Because I read your code.') : null;
       return {
         report,
         comboValue: document.getElementById('cb').value,

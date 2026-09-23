@@ -1461,7 +1461,89 @@ const STEPPED = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</
     <textarea id="c-box" name="project"></textarea></div>
 </form></body></html>`;
 
-const PAGES = { '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
+/*
+ * The three ways a rich-text editor keeps what is typed into it, each as
+ * small as it can be and still behave like the real thing towards a script.
+ *
+ * `controlled` is Draft.js (and Lexical, and Slate): the document is a model
+ * the element is drawn from, anything that turns up in the element some other
+ * way is drawn over on the next render, and where the caret is comes from
+ * `selectionchange`. It takes pastes and typing through its own handlers.
+ *
+ * `reverting` is CKEditor 5: the same model, and a MutationObserver that puts
+ * the element back the moment anything else changes it.
+ *
+ * `reading` is Quill 1, TinyMCE and ProseMirror's fallback: the browser edits
+ * and the editor reads the result back one paragraph per block, with text in
+ * an element collapsed the way HTML collapses it. It ignores a paste event
+ * that has nothing behind it, as those do.
+ *
+ * What each would submit is `submitted(id)`, and it is the editor's answer,
+ * not the element's.
+ */
+const EDITORS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div id="l-ctl">Why do you want to work at Acme?</div>
+  <div id="ctl" contenteditable="true" aria-labelledby="l-ctl"></div>
+  <div id="l-rev">Describe a project you are proud of.</div>
+  <div id="rev" contenteditable="true" aria-labelledby="l-rev"></div>
+  <div id="l-read">What would you change about our product?</div>
+  <div id="read" contenteditable="true" aria-labelledby="l-read"><p><br></p></div>
+</form>
+<script>
+  const models = {};
+  window.submitted = (id) => models[id]();
+  const draw = (root, paras) => root.replaceChildren(...paras.map((t) => {
+    const p = document.createElement('p');
+    if (t) p.textContent = t; else p.append(document.createElement('br'));
+    return p;
+  }));
+  const spansAll = (root) => {
+    const s = document.getSelection();
+    return s.rangeCount > 0 && root.contains(s.anchorNode) && s.getRangeAt(0).toString() === root.textContent;
+  };
+  function modelled(root, { revert }) {
+    let paras = [''];
+    let all = false;
+    let observer = null;
+    const render = () => {
+      observer?.disconnect();
+      draw(root, paras);
+      observer?.observe(root, { childList: true, characterData: true, subtree: true });
+    };
+    const put = (text) => {
+      const lines = text.split('\\n');
+      paras = all ? lines : [...paras.slice(0, -1), paras[paras.length - 1] + lines[0], ...lines.slice(1)];
+      render();
+    };
+    document.addEventListener('selectionchange', () => {
+      if (root.contains(document.getSelection().anchorNode)) all = spansAll(root);
+    });
+    root.addEventListener('paste', (e) => { e.preventDefault(); put(e.clipboardData.getData('text/plain')); });
+    root.addEventListener('beforeinput', (e) => {
+      e.preventDefault();
+      if (e.inputType === 'insertText') put(e.data ?? '');
+      if (e.inputType === 'insertParagraph') put('\\n');
+    });
+    if (revert) observer = new MutationObserver(render);
+    else root.addEventListener('input', render);
+    // Something already written in it, with the caret left at the end.
+    paras = ['Old words the person typed.'];
+    render();
+    models[root.id] = () => paras;
+  }
+  modelled(document.getElementById('ctl'), { revert: false });
+  modelled(document.getElementById('rev'), { revert: true });
+  const read = document.getElementById('read');
+  let readParas = [];
+  new MutationObserver(() => {
+    readParas = [...read.childNodes].map((n) => (n.textContent ?? '').replace(/\\s+/g, ' ').trim());
+  }).observe(read, { childList: true, characterData: true, subtree: true });
+  models.read = () => readParas;
+</script>
+</body></html>`;
+
+const PAGES = { '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -3616,8 +3698,8 @@ async function main() {
         // And the other box's counter ticking, which is not a new question.
         document.getElementById('c-label').textContent = 'Tell us about a project you led. (473 characters remaining)';
 
-        const intoOther = m.insertAnswer(why.fieldId, 'Because Acme builds rockets.', why.question);
-        const intoSame = m.insertAnswer(project.fieldId, 'I led the migration.', project.question);
+        const intoOther = await m.insertAnswer(why.fieldId, 'Because Acme builds rockets.', why.question);
+        const intoSame = await m.insertAnswer(project.fieldId, 'I led the migration.', project.question);
         return {
           intoOther,
           other: document.getElementById('q-box').value,
@@ -3637,6 +3719,55 @@ async function main() {
       'while a box whose label only counts characters still takes its answer',
       stepped.same === 'I led the migration.' && stepped.intoSame === true,
       JSON.stringify(stepped),
+    );
+
+    /*
+     * "Insert into form" into a rich-text editor, read back from the editor.
+     *
+     * Insert wrote `textContent` and fired `input`, which puts the words in
+     * the element and nowhere the form reads from. Against the real editors:
+     * Draft.js submitted nothing, CKEditor 5 drew its empty paragraph back
+     * over the answer, and Quill and ProseMirror kept one paragraph where
+     * there were two — each while Insert said it had worked. The fixtures
+     * are those three behaviours; see `EDITORS`.
+     */
+    const answer = 'First paragraph of the answer.\n\nSecond paragraph, after a blank line.';
+    const edited = await page.goto(`${base}/editors`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, text }) => {
+        const m = await import(`${b}/autofill.js`);
+        const found = m.findQuestions();
+        const out = {};
+        for (const [id, asked] of [['ctl', /Acme/], ['rev', /project/], ['read', /change/]]) {
+          const q = found.find((f) => asked.test(f.question));
+          if (!q) {
+            out[id] = { missing: found.map((f) => f.question) };
+            continue;
+          }
+          const put = await m.insertAnswer(q.fieldId, text, q.question);
+          await new Promise((r) => setTimeout(r, 50));
+          out[id] = { put, submitted: window.submitted(id).filter(Boolean) };
+        }
+        return out;
+      }, { b: base, text: answer }),
+    );
+    const both = ['First paragraph of the answer.', 'Second paragraph, after a blank line.'];
+    const holds = (r) => JSON.stringify(r?.submitted) === JSON.stringify(both);
+
+    group('Inserting an answer into a rich-text editor');
+    check(
+      'an editor drawn from its own model (Draft.js) submits the answer, in place of what was there',
+      edited.ctl?.put === true && holds(edited.ctl),
+      JSON.stringify(edited.ctl),
+    );
+    check(
+      'one that puts its own document back (CKEditor 5) keeps the answer',
+      edited.rev?.put === true && holds(edited.rev),
+      JSON.stringify(edited.rev),
+    );
+    check(
+      'one that reads the page back (Quill 1, TinyMCE) keeps both paragraphs',
+      edited.read?.put === true && holds(edited.read),
+      JSON.stringify(edited.read),
     );
   } finally {
     await browser.close();

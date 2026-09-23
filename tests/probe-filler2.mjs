@@ -160,7 +160,7 @@ async function main() {
         '<form><label for="q1">Why do you want to work here?</label><textarea id="q1"></textarea></form>';
       return {
         fieldId: first[0]?.fieldId,
-        insertReturned: m.insertAnswer(first[0].fieldId, 'Because I read your code.'),
+        insertReturned: await m.insertAnswer(first[0].fieldId, 'Because I read your code.'),
         valueInTheBox: document.getElementById('q1').value,
       };
     }));
