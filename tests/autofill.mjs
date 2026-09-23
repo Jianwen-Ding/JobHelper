@@ -836,6 +836,8 @@ const ELSEWHERE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply
 <form>
   <label for="uk">Are you authorized to work in the UK?</label>
   <select id="uk" name="q_uk"><option value="">--</option><option>Yes</option><option>No</option></select>
+  <!-- And the same question as a box to type in. -->
+  <label for="ukt">Are you authorized to work in the United Kingdom?</label><input id="ukt" name="q_ukt">
   <fieldset>
     <legend>Are you legally authorized to work in Canada?</legend>
     <label><input type="radio" name="ca" value="Yes"> Yes</label>
@@ -2637,6 +2639,7 @@ async function main() {
         const ticked = (n) => document.querySelector(`input[name="${n}"]:checked`)?.value ?? '';
         const out = {
           uk: document.getElementById('uk').value,
+          ukt: document.getElementById('ukt').value,
           ca: ticked('ca'),
           us: document.getElementById('us').value,
           sp: ticked('sp'),
@@ -2654,6 +2657,8 @@ async function main() {
       JSON.stringify(bare),
     );
     check('nor the Canadian one, nor UK sponsorship', bare.ca === '' && bare.uks === '', JSON.stringify(bare));
+    // Typed, it is the same declaration: "Yes" to the UK, in a box.
+    check('nor the UK question asked as a box to type in', bare.ukt === '', JSON.stringify(bare));
     check('while it still answers the US question and one naming none', bare.us === 'Yes' && bare.sp === 'No', JSON.stringify(bare));
     // And Workday's dropdown, which picks an option by its text the same way.
     const bareWidget = await page.goto(`${base}/paired-widgets`, { waitUntil: 'domcontentloaded' }).then(() =>

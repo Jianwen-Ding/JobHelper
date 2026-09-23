@@ -1842,13 +1842,18 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
       continue;
     }
 
+    /*
+     * Before any option is matched, because "Yes" matches "Yes" by its text
+     * whichever country is asked about — and before a box is typed into,
+     * which took the same "Yes" to "Are you authorized to work in the United
+     * Kingdom?". See `aboutAnotherCountry`.
+     */
+    if (aboutAnotherCountry(key, value, description, fields.address_country)) {
+      skipped.push({ key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) });
+      continue;
+    }
+
     if (input instanceof HTMLSelectElement) {
-      // Before any option is matched, because "Yes" matches "Yes" by its
-      // text whichever country is asked about. See `aboutAnotherCountry`.
-      if (aboutAnotherCountry(key, value, description, fields.address_country)) {
-        skipped.push({ key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) });
-        continue;
-      }
       /*
        * Only pick an option that plainly matches; never guess on a dropdown.
        * Compared through `clean` because the enterprise systems pad their
