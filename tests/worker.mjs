@@ -1460,6 +1460,60 @@ async function main() {
       check('the page was read', reads >= 1, `${reads} reads`);
       check('once, rather than on every tick of the page', reads === 1, `${reads} reads in five seconds`);
     }
+
+    /*
+     * A page that swaps its whole root element once the posting has loaded.
+     *
+     * The rescore tick only looks again when its MutationObserver has seen
+     * the page change, and the observer was attached to
+     * `document.documentElement` — the element, not the document. A page that
+     * builds the finished document off to one side and puts it in with
+     * `document.replaceChild(next, document.documentElement)` leaves the
+     * observer watching the old root, detached, where nothing ever changes
+     * again. The shell was scored, found wanting, and the posting that
+     * replaced it was never looked at: no card, on a page whose title names
+     * the role and whose JSON-LD says JobPosting.
+     */
+    group('A page that replaces its root element is still watched');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Loading</title><p>Loading…</p>
+          <script>
+            setTimeout(() => {
+              const next = document.createElement('html');
+              next.innerHTML = '<head><title>Platform Engineer at Helios</title>' +
+                '<script type="application/ld+json">{"@type":"JobPosting","title":"Platform Engineer"}<\\/script></head>' +
+                '<body><h1>Platform Engineer</h1><p>Helios is hiring. Responsibilities: build the platform. ' +
+                'Requirements: Go. Apply now to join our team.</p></body>';
+              document.replaceChild(next, document.documentElement);
+            }, 1500);
+          </script>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/p/8f2a1b`;
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+
+      const page = await context.newPage();
+      let seen = {};
+      try {
+        await page.goto(where);
+        await page.waitForTimeout(6000);
+        seen = await page.evaluate(() => ({
+          title: document.title,
+          card: Boolean(document.querySelector('#jobhelper-card-host')),
+        }));
+      } finally {
+        await page.close();
+        site.close();
+        await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: false }));
+      }
+
+      check('the page did replace its root', seen.title === 'Platform Engineer at Helios', JSON.stringify(seen));
+      check('and the posting it became gets its card', seen.card === true, JSON.stringify(seen));
+    }
   } finally {
     await context.close();
     store.close();

@@ -2449,7 +2449,18 @@
   const watcher = new MutationObserver(() => {
     pageChanged = true;
   });
-  watcher.observe(document.documentElement, { childList: true, subtree: true });
+  /*
+   * The document, not its root element. Attached to `documentElement`, the
+   * observer followed that element and nothing else: a page that builds its
+   * finished document off to one side and swaps it in with
+   * `document.replaceChild(next, document.documentElement)` left it watching
+   * the detached old root, so the shell was scored once and the posting that
+   * replaced it never — no card, under a title naming the role and a JSON-LD
+   * JobPosting (tests/worker.mjs). And a page with no root element at all by
+   * document idle threw here, at the top of the script, into the page's
+   * console, stopping everything below this line.
+   */
+  watcher.observe(document, { childList: true, subtree: true });
   teardown.push(() => watcher.disconnect());
 
   /**
