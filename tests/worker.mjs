@@ -1814,6 +1814,83 @@ async function main() {
       check('and turns off this extension’s instead', useAi === false && after?.ticked === false, JSON.stringify({ useAi, after }));
       check('so the panel says it is off, not that something needs fixing', after?.state === 'AI off', JSON.stringify(after));
     }
+
+    /*
+     * The worker stopped while the AI is reading.
+     *
+     * Chrome stops an extension's worker when it likes — an update, memory
+     * pressure, a crash — and a reply the card is waiting on goes with it.
+     * Nothing hangs: the channel closes and the card's request fails. But
+     * what it failed with was Chrome's own sentence, put on the card as it
+     * was: "A listener indicated an asynchronous response by returning true,
+     * but the message channel closed before a response was received".
+     */
+    group('The worker is stopped while the AI is reading');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1><p>Helios is hiring a Platform Engineer. Responsibilities: build the
+          platform. Requirements: Kubernetes, Go. Apply now to join our team.</p>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/jobs/platform-engineer`;
+      await driver.evaluate(() => chrome.storage.sync.set({ useAi: true, baseResumeId: 'newgrad' }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+
+      const job = await context.newPage();
+      let seen = {};
+      try {
+        await job.goto(where);
+        await job.waitForTimeout(500);
+        await driver.evaluate(async (url) => {
+          const [tab] = await chrome.tabs.query({ url });
+          await chrome.tabs.sendMessage(tab.id, { type: 'show-card' });
+        }, where);
+        const card = job.locator('#jobhelper-card-host');
+        const ai = card.locator('button.mode', { hasText: 'Have AI Tailor' });
+        await ai.waitFor({ timeout: 15_000 });
+        await job.waitForFunction(
+          () => {
+            const root = document.querySelector('#jobhelper-card-host')?.shadowRoot;
+            const b = [...(root?.querySelectorAll('button.mode') ?? [])].find((x) => /Have AI Tailor/.test(x.textContent));
+            return b && !b.disabled;
+          },
+          null,
+          { timeout: 15_000 },
+        );
+
+        store.heldAi = [];
+        await ai.click();
+        for (let i = 0; i < 100 && store.heldAi.length === 0; i++) await job.waitForTimeout(50);
+        seen.asked = store.heldAi.length;
+
+        // Marked, so the stop is proved rather than assumed.
+        await context.serviceWorkers()[0].evaluate(() => {
+          self.__sameWorker = true;
+        });
+        const cdp = await context.newCDPSession(job);
+        await cdp.send('ServiceWorker.enable').catch(() => undefined);
+        await cdp.send('ServiceWorker.stopAllWorkers').catch(() => undefined);
+        await job.waitForTimeout(2500);
+        // Anything through the worker brings it back.
+        await driver.evaluate(() => chrome.runtime.sendMessage({ type: 'getSettings' })).catch(() => undefined);
+        seen.stopped = !(await (context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker')))
+          .evaluate(() => Boolean(self.__sameWorker))
+          .catch(() => false));
+        seen.said = await job.evaluate(() => document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelector('.card')?.innerText ?? '');
+      } finally {
+        store.heldAi = null;
+        await job.close();
+        site.close();
+        await driver.evaluate(() => chrome.storage.sync.set({ useAi: false, baseResumeId: 'newgrad' }));
+      }
+
+      check('the AI really was reading, and the worker really was stopped', seen.asked === 1 && seen.stopped === true, JSON.stringify({ asked: seen.asked, stopped: seen.stopped }));
+      check('the card does not show Chrome’s own words for it', !/listener indicated|message channel closed/i.test(seen.said), seen.said.split('\n').slice(-1)[0]);
+      check('it says what happened and that it can be run again', /stopped[^.]*before[^.]*finished[\s\S]*again/i.test(seen.said), seen.said.split('\n').slice(-1)[0]);
+    }
   } finally {
     await context.close();
     store.close();

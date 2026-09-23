@@ -94,6 +94,23 @@
               reject(new Orphaned());
               return;
             }
+            /*
+             * The worker stopped with this request still in it — Chrome
+             * stops it when it likes: an update, memory pressure, a crash —
+             * and the reply went with it. Measured with an AI pass held open
+             * and the worker stopped: the card put Chrome's own sentence up
+             * as it came, "A listener indicated an asynchronous response by
+             * returning true, but the message channel closed before a
+             * response was received", which says nothing anybody can use.
+             */
+            if (/message (channel|port) closed/i.test(said)) {
+              reject(
+                new Error(
+                  'The browser stopped JobHelper’s background worker before this finished, so its answer was lost. Try it again.',
+                ),
+              );
+              return;
+            }
             reject(new Error(said));
           } else if (!response?.ok) {
             const failed = new Error(response?.error ?? 'No response from JobHelper');
