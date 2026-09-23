@@ -398,6 +398,31 @@ describe('what is worth keeping of a page', () => {
       assert.ok(kept.includes(option), `"${option}" was lost`);
     }
   });
+
+  /*
+   * However the tag is written. The scrub read a tag as `<input[^>]*>` and
+   * its type as `\btype=`: a `>` inside a quoted attribute ended the tag
+   * before the value, and `\b` matches after the hyphen in `data-type`, so a
+   * text box labelled for some script as a checkbox kept what was typed.
+   */
+  it('drops the typed value however the tag around it is written', () => {
+    const page =
+      '<input type="text" data-x="a>b" value="SECRET-A">' +
+      '<input data-type="checkbox" value="SECRET-B">' +
+      '<input type=text value="1 > 2 SECRET-C">' +
+      "<input title='say \"type=radio\"' value='SECRET-D'>" +
+      '<input type="checkbox" data-x="a>b" name="remote" value="Open to remote" checked>' +
+      '<select><option data-x="a>b" value="1" selected>Yes, I have a disability</option></select>' +
+      '<textarea placeholder="a>b">SECRET-E</textarea>';
+    const kept = trimForStorage(page);
+    for (const secret of ['SECRET-A', 'SECRET-B', 'SECRET-C', 'SECRET-D', 'SECRET-E']) {
+      assert.ok(!kept.includes(secret), `"${secret}" was sent: ${kept}`);
+    }
+    assert.ok(!/\schecked\b|\sselected\b/.test(kept), `the chosen option was marked: ${kept}`);
+    for (const option of ['value="Open to remote"', 'Yes, I have a disability', 'placeholder="a>b"']) {
+      assert.ok(kept.includes(option), `"${option}" was lost`);
+    }
+  });
 });
 
 describe('carrying less when there is no room', () => {

@@ -698,6 +698,45 @@ export function pageHtml(doc = document) {
   return at < 0 ? html + extra.join('') : html.slice(0, at) + extra.join('') + html.slice(at);
 }
 
+/*
+ * The inside of a tag, where a quoted attribute may hold a `>` of its own.
+ * Each alternative starts with a different character, so there is nothing to
+ * backtrack over.
+ */
+const TAG_BODY = String.raw`(?:[^>"']|"[^"]*"|'[^']*')*`;
+
+/* One attribute: its name, and its value in any of the three spellings. */
+const ATTRIBUTE = /\s+([^\s"'>/=]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s"'=<>`]+))?/g;
+
+/* Inputs whose value is the option's own name rather than what was typed. */
+const NAMES_ITSELF = /^(?:radio|checkbox|submit|button|reset|image)$/i;
+
+const unquote = (raw = '') => raw.replace(/^(["'])([\s\S]*)\1$/, '$2').trim();
+
+/*
+ * An `<input>` or `<option>` tag without the applicant's answer in it. The
+ * first `type` wins, as it does for the browser.
+ */
+function scrubTag(tag) {
+  const input = /^<input\b/i.test(tag);
+  let type = '';
+  if (input) {
+    for (const [, name, raw] of tag.matchAll(ATTRIBUTE)) {
+      if (name.toLowerCase() === 'type') {
+        type = unquote(raw);
+        break;
+      }
+    }
+  }
+  const keepValue = NAMES_ITSELF.test(type);
+  return tag.replace(ATTRIBUTE, (whole, name) => {
+    const n = name.toLowerCase();
+    if (n === 'checked' || n === 'selected') return '';
+    if (input && n === 'value' && !keepValue) return '';
+    return whole;
+  });
+}
+
 export function trimForStorage(html, limit = 400_000) {
   const text = String(html ?? '')
     // Keep ld+json, drop every other script.
@@ -707,31 +746,38 @@ export function trimForStorage(html, limit = 400_000) {
     .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, '')
     .replace(/<!--[\s\S]*?-->/g, '')
     /*
-     * What the applicant typed. React keeps an input's `value` attribute in
-     * step with what is typed, so a form captured after filling carried the
-     * SSN, the date of birth and the address in its markup, to the server and
-     * on to the AI. Radio, checkbox and button values are the options' own
-     * names and stay; a textarea keeps its tag and loses its text.
+     * What the applicant typed, and which of the options they chose.
+     *
+     * React keeps an input's `value` attribute in step with what is typed, so
+     * a form captured after filling carried the SSN, the date of birth and
+     * the address in its markup, to the server and on to the AI. Radio,
+     * checkbox and button values are the options' own names and stay; a
+     * textarea keeps its tag and loses its text.
+     *
+     * The chosen option is their answer as surely as a typed one. The options
+     * stay — they are the question — but the mark on the chosen one goes: a
+     * server-rendered step carries `checked` and `selected` on what was
+     * answered. On the voluntary self-identification step that is the
+     * applicant's gender, race, disability and veteran status, sent to the
+     * server and on to the AI beside a question they were entitled to
+     * decline.
+     *
+     * `pageHtml` now builds its markup from a scrubbed copy of the page, so
+     * for the page itself this is the second layer; it stays for any caller
+     * that hands over markup it did not get from there. And it reads the tag
+     * attribute by attribute, because the version before read it with
+     * `[^>]*` and `\btype=`, and both lied. A `>` inside a quoted attribute —
+     * `data-x="a>b"`, or a typed `1 > 2` — ended the "tag" early, so the
+     * `value` after it was never looked at and went out whole. And `\b`
+     * matches after a hyphen, so `data-type="checkbox"` on a text box read as
+     * a checkbox and kept what was typed in it. Measured against this module:
+     * `<input type="text" data-x="a>b" value="SECRET">`,
+     * `<input data-type="checkbox" value="SECRET">` and
+     * `<input type=text value="1 > 2 SECRET">` all came out with the secret.
      */
-    .replace(/<input\b[^>]*>/gi, (tag) =>
-      /\btype\s*=\s*["']?(?:radio|checkbox|submit|button|reset|image)\b/i.test(tag)
-        ? tag
-        : tag.replace(/\svalue\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, ''),
-    )
-    .replace(/(<textarea\b[^>]*>)[\s\S]*?(<\/textarea>)/gi, '$1$2')
-    /*
-     * And which of the options the applicant chose, which is their answer as
-     * surely as a typed one. The options stay — they are the question — but
-     * the mark on the chosen one went too: a server-rendered step carries
-     * `checked` and `selected` on what was answered, and every ARIA group
-     * carries `aria-checked="true"` on its pick. On the voluntary
-     * self-identification step that is the applicant's gender, race,
-     * disability and veteran status, sent to the server and on to the AI
-     * beside a question they were entitled to decline.
-     */
-    .replace(/<(?:input|option)\b[^>]*>/gi, (tag) =>
-      tag.replace(/\s(?:checked|selected)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?(?=[\s/>])/gi, ''),
-    )
+    .replace(new RegExp(`<(?:input|option)\\b${TAG_BODY}>`, 'gi'), scrubTag)
+    .replace(new RegExp(`(<textarea\\b${TAG_BODY}>)[\\s\\S]*?(<\\/textarea>)`, 'gi'), '$1$2')
+    // Every ARIA group carries `aria-checked="true"` on its pick.
     .replace(/\saria-(?:checked|selected|pressed)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/\n{3,}/g, '\n\n');
