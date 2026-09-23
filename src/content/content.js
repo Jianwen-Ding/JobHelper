@@ -612,6 +612,21 @@
   const startProposal = () => ({ build: ++rebuildSeq, on: pass });
   const stillWanted = (token) => token.build === rebuildSeq && token.on === pass;
 
+  /*
+   * Overtaken by another press on this page, rather than by the page moving on.
+   *
+   * The two used to go the same way — to `landLate`, which was written for the
+   * second and lands a reply on the card whenever the posting is the same one.
+   * On the same page it always is, so the newest press did not win: press
+   * Have AI Tailor, choose another resume to start from while it reads, and
+   * the new base's proposal went up and was then covered by the AI's answer
+   * for the base just turned away from — lit, and announced as "The AI
+   * finished tailoring this posting". Measured in tests/worker.mjs. The card
+   * drops the same reply by its own number (see `rebuildAs`); this is the
+   * half that reached the screen anyway.
+   */
+  const overtakenHere = (token) => token.on === pass && token.build !== rebuildSeq;
+
   /**
    * A proposal that finished after the card had moved on.
    *
@@ -1097,8 +1112,9 @@
         const next = await send('analyze', { ...(await applicationPayload()), ...tailoring(payload) });
         // See `startProposal`. Picking two bases in quick succession is
         // ordinary, and so is walking to the next posting while one is still
-        // being worked out. See `landLate` for where a superseded one goes.
-        if (!stillWanted(mine)) return landLate(next);
+        // being worked out. See `landLate` for where a superseded one goes,
+        // and `overtakenHere` for the one that goes nowhere.
+        if (!stillWanted(mine)) return overtakenHere(mine) ? null : landLate(next);
         analysis = next;
         cardHandle?.update(analysis);
         return analysis;
@@ -1123,7 +1139,7 @@
          */
         const mine = startProposal();
         const next = await send('analyze', { ...(await applicationPayload()), ...tailoring(payload) });
-        if (!stillWanted(mine)) return landLate(next);
+        if (!stillWanted(mine)) return overtakenHere(mine) ? null : landLate(next);
         analysis = next;
         cardHandle?.update(analysis);
         return analysis;

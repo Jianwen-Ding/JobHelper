@@ -109,14 +109,27 @@ function fakeStore() {
       } catch {
         /* the body is only used for the company name */
       }
-      return send({
-        isJobPosting: true,
-        kind: 'posting',
-        save: state.save,
-        // `company` set on the state is a page the analysis could not name.
-        job: { company: state.company ?? page.company ?? 'Helios', title: state.role, description: 'A job.', keywords: [] },
-        spec: { id: 'job-fake', extends: 'newgrad' },
-      });
+      const reply = () =>
+        send({
+          isJobPosting: true,
+          kind: 'posting',
+          save: state.save,
+          // `company` set on the state is a page the analysis could not name.
+          job: { company: state.company ?? page.company ?? 'Helios', title: state.role, description: 'A job.', keywords: [] },
+          // Built from the base that was asked for, and said to be, as the
+          // store does — so a proposal can be told apart by where it came from.
+          spec: { id: 'job-fake', extends: page.baseResumeId ?? 'newgrad' },
+          baseResumeId: page.baseResumeId ?? 'newgrad',
+          // An AI pass comes back as a decision; see `isDecision` in card.js.
+          ...(page.tailor === 'ai' ? { tailor: 'ai', aiUsed: true } : {}),
+        });
+      // An AI pass held open until the test lets it answer, which is the
+      // minutes a real one takes.
+      if (page.tailor === 'ai' && state.heldAi) {
+        state.heldAi.push(reply);
+        return;
+      }
+      return reply();
     }
     /*
      * The answer bank's matcher, whose grading is the whole point of the
@@ -144,7 +157,14 @@ function fakeStore() {
     }
     if (url === '/api/applications/bundle') return send({ ok: true, id: 'app-1', folder: '/tmp/x' });
     if (url === '/api/workspace') return send({ ok: true, id: 'ws-1', url: '/workspace/ws-1' });
-    if (url === '/api/resumes') return send({ resumes: [{ id: 'newgrad', label: 'New grad' }] });
+    // A bare list, which is what ResumeM-M's `/api/resumes` answers and what
+    // the card's picker reads.
+    if (url === '/api/resumes') {
+      return send([
+        { id: 'newgrad', label: 'New grad', base: true },
+        { id: 'intern', label: 'Summer intern', base: true },
+      ]);
+    }
     return send({ error: `no route ${url}` }, 404);
   });
 
@@ -1197,6 +1217,98 @@ async function main() {
         JSON.stringify(wedged.reply ?? null),
       );
       store.routes['/api/answers/match'] = 'ok';
+    }
+
+    /*
+     * An AI pass overtaken by another press on the same page stays overtaken.
+     *
+     * Every build the card starts takes a number in the content script, and a
+     * reply whose number is stale is handed to `landLate` — which was written
+     * for a pass the page had moved on from, and lands it on the card if the
+     * posting is the same one. On the same page it always is. So pressing Have
+     * AI Tailor, then choosing another resume to start from while it read,
+     * showed the new base's proposal and then — when the model answered — put
+     * the AI's proposal from the *old* base over it, with "The AI finished
+     * tailoring this posting" and its button lit. That is what would have
+     * been built and sent: a resume from the base just turned away from.
+     *
+     * Through a real page and the real content script, because that is where
+     * the number and `landLate` live; the store is the fake one above.
+     */
+    group('An AI pass overtaken on the same page does not land');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1><p>Helios is hiring a Platform Engineer. Responsibilities: build the
+          platform. Requirements: Kubernetes, Go. Apply now to join our team.</p>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/jobs/platform-engineer`;
+      await driver.evaluate(() => chrome.storage.sync.set({ useAi: true, baseResumeId: 'newgrad' }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+
+      const job = await context.newPage();
+      let seen = {};
+      try {
+        await job.goto(where);
+        await job.waitForTimeout(500);
+        await driver.evaluate(async (url) => {
+          const [tab] = await chrome.tabs.query({ url });
+          await chrome.tabs.sendMessage(tab.id, { type: 'show-card' });
+        }, where);
+        const card = job.locator('#jobhelper-card-host');
+        const ai = card.locator('button.mode', { hasText: 'Have AI Tailor' });
+        await ai.waitFor({ timeout: 15_000 });
+        await job.waitForFunction(
+          () => {
+            const root = document.querySelector('#jobhelper-card-host')?.shadowRoot;
+            const b = [...(root?.querySelectorAll('button.mode') ?? [])].find((x) => /Have AI Tailor/.test(x.textContent));
+            return b && !b.disabled && root.querySelector('select option[value="intern"]');
+          },
+          null,
+          { timeout: 15_000 },
+        );
+
+        store.heldAi = [];
+        await ai.click();
+        for (let i = 0; i < 100 && store.heldAi.length === 0; i++) await job.waitForTimeout(50);
+        const asked = store.heldAi.length;
+
+        // Another base, while the model reads.
+        const before = store.sentTo('/api/extension/analyze').length;
+        await card.locator('select').selectOption('intern');
+        for (let i = 0; i < 100 && store.sentTo('/api/extension/analyze').length === before; i++) await job.waitForTimeout(50);
+        await job.waitForTimeout(700);
+
+        // And now the model answers, for the base that was turned away from.
+        for (const reply of store.heldAi) reply();
+        store.heldAi = null;
+        await job.waitForTimeout(1200);
+
+        seen = await job.evaluate(() => {
+          const root = document.querySelector('#jobhelper-card-host')?.shadowRoot;
+          return {
+            lit: root?.querySelector('.mode.on')?.textContent?.trim() ?? null,
+            said: [...(root?.querySelectorAll('.ok-note') ?? [])].map((n) => n.textContent).join(' | '),
+          };
+        });
+        seen.asked = asked;
+      } finally {
+        store.heldAi = null;
+        await job.close();
+        site.close();
+        await driver.evaluate(() => chrome.storage.sync.set({ useAi: false, baseResumeId: 'newgrad' }));
+      }
+
+      check('the AI really was reading when the base changed', seen.asked === 1, JSON.stringify(seen));
+      check(
+        'its answer for the old base is not put over the new one',
+        typeof seen.lit === 'string' && !/AI/.test(seen.lit),
+        JSON.stringify(seen),
+      );
+      check('nor announced as this posting’s', !/AI finished tailoring this posting/.test(seen.said ?? ''), JSON.stringify(seen));
     }
   } finally {
     await context.close();
