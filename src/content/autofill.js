@@ -559,6 +559,35 @@ function asksForWriting(input) {
   return ESSAY_PROMPT.test(label);
 }
 
+/*
+ * A one-line box whose label asks for a yes or a no.
+ *
+ * The patterns read the profile word a question mentions, not what it asks,
+ * and a yes-or-no question is free to mention any of them. Measured: "Do you
+ * have a bachelor's degree?" was given "Master of Science", "Did you graduate
+ * from a US university?" the university's name, "Do you have a GPA of 3.0 or
+ * above?" the grade, "Can we text you at this phone number?" the number, and
+ * "Will you be located in New York City by the start date?" the city the
+ * applicant lives in — the last of which reads as a no to a question they may
+ * have meant to answer yes.
+ *
+ * Only a label that opens the way such a question does, and never where it
+ * goes on to ask for the thing — "Do you have a phone number? If so, please
+ * share it" still gets it. Nor for a link: "Do you have a LinkedIn profile?"
+ * answered with the profile is a yes that shows its working. A dropdown is
+ * left to its options, which say for themselves whether the answer is a
+ * value or a yes; the two declarations whose answer *is* a yes or a no keep
+ * their own handling.
+ */
+const YES_NO_OPENING = /^(?:are|is|was|were|do|does|did|have|has|had|will|would|can|could|may|should)\s+(?:you|we|your)\b/i;
+const ASKS_FOR_IT_TOO = /\bif\s+(?:so|yes)\b|\bplease\s+(?:provide|share|list|enter|include|give|add|specify)\b|\bwhat\s+is\b|\bwhich\b/i;
+
+function asksYesOrNo(input, key) {
+  if (input instanceof HTMLSelectElement || YES_NO_KEYS.has(key) || LINKS.has(key)) return false;
+  const label = withoutMarkers(labelFor(input));
+  return YES_NO_OPENING.test(label) && !ASKS_FOR_IT_TOO.test(label);
+}
+
 /**
  * "First" and "Last" under a legend that says "Name".
  *
@@ -1547,6 +1576,7 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
     const key = wholeDateKey(input, match[0], description);
     if (!fields[key]) continue;
     if (anotherLevelOfStudy(input, key, fields)) continue;
+    if (asksYesOrNo(input, key)) continue;
     let value = fields[key];
 
     const answered = input instanceof HTMLSelectElement ? selectIsAnswered(input) : Boolean(input.value);

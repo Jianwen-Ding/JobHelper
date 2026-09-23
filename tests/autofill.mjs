@@ -1096,6 +1096,17 @@ const MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</
  */
 const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
 <form>
+  <!-- A yes-or-no question in a one-line box, which no profile value answers.
+       First, so that no section heading above them is read as theirs. -->
+  <label for="yn-deg">Do you have a bachelor's degree?</label><input id="yn-deg" name="q_y1">
+  <label for="yn-sch">Did you graduate from a US university?</label><input id="yn-sch" name="q_y2">
+  <label for="yn-gpa">Do you have a GPA of 3.0 or above?</label><input id="yn-gpa" name="q_y3">
+  <label for="yn-ph">Can we text you at this phone number?</label><input id="yn-ph" name="q_y4">
+  <label for="yn-city">Will you be located in New York City by the start date?</label><input id="yn-city" name="q_y5">
+  <label for="yn-li">Do you have a LinkedIn profile?</label><input id="yn-li" name="q_y6">
+  <label for="yn-ph2">Do you have a phone number? If so, please share it.</label><input id="yn-ph2" name="q_y8">
+  <label for="yn-what">What is your cumulative GPA?</label><input id="yn-what" name="q_y7">
+
   <!-- Other people's contact details, under names the list did not have. -->
   <label for="refmail">Referrer's email</label><input id="refmail" name="q_r1" type="email">
   <label for="reflink">LinkedIn URL of your referrer</label><input id="reflink" name="q_r2">
@@ -1851,6 +1862,24 @@ async function main() {
       'while "School 1" and "School (if other)" still get it',
       more['sc-sch1'] === 'Northeastern University' && more['sc-other'] === 'Northeastern University',
       `${more['sc-sch1']} / ${more['sc-other']}`,
+    );
+
+    /*
+     * A question that wants a yes or a no, asked in a one-line box, has no
+     * profile value for an answer. Each was given whatever profile word it
+     * mentioned: "Master of Science" as whether somebody has a bachelor's,
+     * the city they live in as whether they will be in New York.
+     */
+    group('A yes-or-no question is not answered with a profile value');
+    check('"Do you have a bachelor\'s degree?" is not given the degree', more['yn-deg'] === '', more['yn-deg']);
+    check('nor "Did you graduate from a US university?" the school', more['yn-sch'] === '', more['yn-sch']);
+    check('nor "Do you have a GPA of 3.0 or above?" the grade', more['yn-gpa'] === '', more['yn-gpa']);
+    check('nor "Can we text you at this phone number?" the number', more['yn-ph'] === '', more['yn-ph']);
+    check('nor "Will you be located in New York City by the start date?" the city', more['yn-city'] === '', more['yn-city']);
+    check(
+      'while "Do you have a phone number? If so, please share it.", "What is your cumulative GPA?" and "Do you have a LinkedIn profile?" still are',
+      more['yn-ph2'] === PROFILE.phone && more['yn-what'] === '3.9' && more['yn-li'] === PROFILE.linkedin,
+      `${more['yn-ph2']} / ${more['yn-what']} / ${more['yn-li']}`,
     );
 
     group('A declaration answered from a sentence');
