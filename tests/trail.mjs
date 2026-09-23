@@ -294,6 +294,45 @@ describe('is this the same application', () => {
   });
 });
 
+/**
+ * One employer, written two ways.
+ *
+ * A posting's JSON-LD carries the legal name and the form it hands you to
+ * says the short one. The veto compared them exactly, so "Acme, Inc." and
+ * "Acme" were two employers and the form was split off confidently, with no
+ * chip — by every route that would otherwise have joined it.
+ */
+describe('the same employer with and without its legal form', () => {
+  const posting = at('https://careers.acme.com/jobs/platform-engineer', 'Acme, Inc.');
+
+  it('joins the form it hands you to, by the referrer', () => {
+    const page = { url: 'https://boards.greenhouse.io/acme/jobs/1', referrerHost: 'careers.acme.com', company: 'Acme' };
+    assert.equal(judgeApplication(trailOf(posting), page), 'same');
+  });
+
+  it('and by the Apply click', () => {
+    const trail = {
+      ...trailOf(posting),
+      expecting: { to: 'https://boards.greenhouse.io/acme/jobs/1', at: Date.now() },
+    };
+    assert.equal(judgeApplication(trail, { url: 'https://boards.greenhouse.io/acme/jobs/1', company: 'Acme' }), 'same');
+  });
+
+  it('and one step down the same path, however the suffix is written', () => {
+    for (const company of ['Acme', 'ACME Corp', 'Acme Inc', 'Acme, Inc']) {
+      const page = { url: 'https://careers.acme.com/jobs/platform-engineer/apply', company };
+      assert.equal(judgeApplication(trailOf(posting), page), 'same', company);
+    }
+  });
+
+  it('but still refuses a name that differs by more than its legal form', () => {
+    for (const company of ['Acme Labs', 'Acme Health', 'Northwind, Inc.']) {
+      const page = { url: 'https://careers.acme.com/jobs/platform-engineer/apply', company };
+      assert.equal(judgeApplication(trailOf(posting), page), 'different', company);
+    }
+  });
+});
+
 describe('what the card is told', () => {
   it('keeps the page text and the work to itself', () => {
     const trail = {

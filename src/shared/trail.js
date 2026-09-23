@@ -435,6 +435,34 @@ export function plainlyAnotherRole(a, b) {
   return true;
 }
 
+/*
+ * The employer's name without the part that says what kind of company it is.
+ *
+ * The company veto compared names exactly, lowercased, and the same employer
+ * is written more than one way within one application: a posting's JSON-LD
+ * carries the legal name — "Acme, Inc." — and the form it hands you to says
+ * "Acme" in its title. Measured against this module: a careers-site posting
+ * as "Acme, Inc." and its Greenhouse form as "Acme", arrived at by the Apply
+ * click, by the referrer, or one step down the same path, all came back
+ * `different` — the confident split, with no chip. The letter is parked and
+ * the form's card starts empty, one click into the application.
+ *
+ * Only the legal form comes off, and only at the end. "Acme Labs" and "Acme"
+ * stay two names, because those can be two companies; "Acme, Inc." and
+ * "Acme" cannot. A name that is nothing but a legal form is left as it was.
+ */
+const LEGAL_FORM =
+  /[\s,]+(inc|incorporated|llc|l\.l\.c|ltd|limited|corp|corporation|co|plc|gmbh|ag|sa|nv|bv|pty|oy|ab|lp|llp)\.?$/;
+
+function employerKey(name) {
+  let n = String(name ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  for (;;) {
+    const next = n.replace(LEGAL_FORM, '').trim();
+    if (next === n || !next) return n;
+    n = next;
+  }
+}
+
 /**
  * Same application, a different one, or not clear enough to say.
  *
@@ -483,7 +511,7 @@ export function judgeApplication(trail, page, now = Date.now()) {
     if (p?.url && namesAnotherJob(page.url, p.url)) return 'different';
   }
 
-  const co = (c) => (c ?? '').trim().toLowerCase();
+  const co = employerKey;
   const mine = co(page.company);
   const known = trail.pages.map((p) => co(p.company)).filter(Boolean);
   const otherEmployer = Boolean(mine) && known.length > 0 && !known.includes(mine);
