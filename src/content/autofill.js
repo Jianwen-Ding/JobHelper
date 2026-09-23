@@ -263,6 +263,13 @@ const NOT_ABOUT_YOU = [
    */
   /\bdegree[\s_-]+of[\s_-]+(proficiency|fluency|familiarity|experience|expertise|comfort|confidence|knowledge|skill|understanding|competenc\w*)\b|\bto[\s_-]+(what|which|some|a|any|the)[\s_-]+degree\b/i,
   /*
+   * A question about a field, which is not the field. Workday asks "Phone
+   * Device Type" beside the number, and "Phone Type", "Type of phone" and
+   * "Email type" were given the number and the address; "GPA Scale" was given
+   * the grade as its own scale, and "Degree Status" the degree's name.
+   */
+  /\b(phone|telephone|e-?mail|address)[\s_-]+(device[\s_-]+)?types?\b|\btypes?[\s_-]+of[\s_-]+(phone|telephone|e-?mail|address)\b|\b(gpa|grading)[\s_-]+scale\b|\bdegree[\s_-]+status\b/i,
+  /*
    * A second subject, degree or school, which the profile does not hold: it
    * holds one of each. "Second Major", "Double major", "Additional degree",
    * "Major 2" and "School 2" were each given the first again — a second major

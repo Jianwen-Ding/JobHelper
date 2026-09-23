@@ -1243,6 +1243,14 @@ const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Ap
   <label for="jl5">Location type</label><input id="jl5" name="q_j5">
   <label for="jl-own">Current location</label><input id="jl-own" name="q_j6">
 
+  <!-- What kind of phone, which scale, what status: about a field, not the field. -->
+  <label for="kd1">Phone Type</label><input id="kd1" name="q_k1">
+  <label for="kd2">Phone Device Type</label><input id="kd2" name="q_k2">
+  <label for="kd3">Type of phone</label><input id="kd3" name="q_k3">
+  <label for="kd4">Email type</label><input id="kd4" name="q_k4">
+  <label for="kd5">GPA Scale</label><input id="kd5" name="q_k5">
+  <label for="kd6">Degree Status</label><input id="kd6" name="q_k6">
+
   <!-- The applicant's own, still filled. -->
   <label for="own-ln">Last name</label><input id="own-ln" name="q_ln">
   <label for="own-legal">Legal name</label><input id="own-legal" name="q_legal">
@@ -1938,6 +1946,25 @@ async function main() {
     check('nor "Location of the role"', more.jl4 === '', more.jl4);
     check('nor "Location type"', more.jl5 === '', more.jl5);
     check('while "Current location" still gets it', more['jl-own'] === 'Boston, MA', more['jl-own']);
+
+    /*
+     * A question about a field is not the field. Workday asks "Phone Device
+     * Type" beside the number, and "Phone Type" and "Email type" were given
+     * the number and the address, "GPA Scale" the grade and "Degree Status"
+     * the degree's name.
+     */
+    group('What kind, which scale, what status');
+    check('"Phone Type" is not given the number', more.kd1 === '', more.kd1);
+    check('nor "Phone Device Type"', more.kd2 === '', more.kd2);
+    check('nor "Type of phone"', more.kd3 === '', more.kd3);
+    check('"Email type" is not given the address', more.kd4 === '', more.kd4);
+    check('"GPA Scale" is not given the grade', more.kd5 === '', more.kd5);
+    check('"Degree Status" is not given the degree', more.kd6 === '', more.kd6);
+    check(
+      'while "Phone", "Email", "Degree" and "What is your cumulative GPA?" still are',
+      more['own-phone'] === PROFILE.phone && more['own-email'] === PROFILE.email && more['own-degree'] === 'Bachelor of Science' && more['yn-what'] === '3.9',
+      `${more['own-phone']} / ${more['own-email']} / ${more['own-degree']} / ${more['yn-what']}`,
+    );
 
     group('A declaration answered from a sentence');
     check(
