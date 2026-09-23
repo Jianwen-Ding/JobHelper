@@ -253,6 +253,15 @@ const NOT_ABOUT_YOU = [
    * and "Major / field of study" are the subject and are still filled.
    */
   /\bmajor[\s_-]+(accomplish\w*|achievements?|projects?|challenges?|contributions?|responsibilit\w*|obstacles?|setbacks?|failures?|mistakes?|decisions?|milestones?|initiatives?)\b/i,
+  /*
+   * "Degree" the measure. "Degree of proficiency in Spanish" and "To what
+   * degree are you familiar with SQL?" matched `degree` and were given
+   * "Bachelor of Science" as a level of fluency. "What degree are you
+   * pursuing?" asks for the qualification in nearly the same words, so only
+   * "degree of" before a word for how much, and "to what degree", are read
+   * this way.
+   */
+  /\bdegree[\s_-]+of[\s_-]+(proficiency|fluency|familiarity|experience|expertise|comfort|confidence|knowledge|skill|understanding|competenc\w*)\b|\bto[\s_-]+(what|which|some|a|any|the)[\s_-]+degree\b/i,
   // Where you heard about the job, which is not a profile of yours.
   /\b(did[\s_-]you[\s_-](?:first[\s_-])?hear|hear[\s_-](?:about|of)[\s_-](us|this)|referral)\b/i,
   // Citizenship, birth and residence are different questions with the same

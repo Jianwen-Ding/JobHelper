@@ -1138,6 +1138,12 @@ const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Ap
   <label for="own-major">Major</label><input id="own-major" name="q_m4">
   <label for="int-major">Intended major</label><input id="int-major" name="q_m5">
 
+  <!-- "Degree" the measure. -->
+  <label for="degprof">Degree of proficiency in Spanish</label><input id="degprof" name="q_d1">
+  <label for="degfam">To what degree are you familiar with SQL?</label><input id="degfam" name="q_d2">
+  <label for="own-degree">Degree</label><input id="own-degree" name="q_d3">
+  <label for="deg-pursue">What degree are you pursuing?</label><input id="deg-pursue" name="q_d4">
+
   <!-- The applicant's own, still filled. -->
   <label for="own-ln">Last name</label><input id="own-ln" name="q_ln">
   <label for="own-legal">Legal name</label><input id="own-legal" name="q_legal">
@@ -1682,6 +1688,15 @@ async function main() {
       'while "Major" and "Intended major" still get it',
       more['own-major'] === 'Computer Science' && more['int-major'] === 'Computer Science',
       `${more['own-major']} / ${more['int-major']}`,
+    );
+
+    group('"Degree" the measure, which is not the qualification');
+    check('"Degree of proficiency in Spanish" is not given the degree', more.degprof === '', more.degprof);
+    check('nor "To what degree are you familiar with SQL?"', more.degfam === '', more.degfam);
+    check(
+      'while "Degree" and "What degree are you pursuing?" still get it',
+      more['own-degree'] === 'Bachelor of Science' && more['deg-pursue'] === 'Bachelor of Science',
+      `${more['own-degree']} / ${more['deg-pursue']}`,
     );
 
     group('A declaration answered from a sentence');
