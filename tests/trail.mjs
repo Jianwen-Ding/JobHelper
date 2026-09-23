@@ -1124,4 +1124,71 @@ describe('the page as sent includes its shadow roots', () => {
       await browser.close();
     }
   });
+
+  /*
+   * Nor the applicant's answers, from anywhere in the tree. A rich-text
+   * editor holds a draft essay as plain paragraphs under a `contenteditable`
+   * ancestor, which no expression over markup can find the end of, so the
+   * draft went to the server word for word. `pageHtml` now scrubs a copy of
+   * the page while it is still a tree — and the copy must be inert: the page's
+   * own custom elements are not constructed again, and its images are not
+   * fetched again, because of it.
+   */
+  it('does not carry what the applicant wrote or chose, and copies the page without side effects', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      const fetched = [];
+      await page.route('https://img.example/**', (route) => {
+        fetched.push(route.request().url());
+        return route.fulfill({ status: 200, contentType: 'image/gif', body: '' });
+      });
+      await page.setContent(`<!doctype html><html><head><title>Apply</title></head><body><h1>Platform Engineer</h1>
+        <img src="https://img.example/logo.gif" alt="Acme">
+        <label>Why Acme?</label><div class="ql-editor" contenteditable="true"><p>Draft one</p></div>
+        <label>Anything else?</label><div contenteditable><p>Draft two</p></div>
+        <label>Notes</label><div contenteditable="false"><p>Kept: the posting's own text</p></div>
+        <label>Name</label><input id="name" type="text" data-type="radio">
+        <label><input id="yes" type="radio" name="auth" value="Yes"> Yes</label>
+        <select id="d"><option value="0">No</option><option value="1">Yes, I have a disability</option></select>
+        <apply-form id="form"></apply-form>
+        <x-widget></x-widget></body></html>`);
+      const out = await page.evaluate(async (js) => {
+        window.constructed = 0;
+        customElements.define('x-widget', class extends HTMLElement {
+          constructor() {
+            super();
+            window.constructed += 1;
+          }
+        });
+        const name = document.getElementById('name');
+        name.setAttribute('value', 'SECRET-NAME');
+        document.getElementById('yes').setAttribute('checked', '');
+        document.getElementById('d').options[1].setAttribute('selected', '');
+        document.getElementById('form').attachShadow({ mode: 'open' }).innerHTML =
+          '<label>Tell us about a project</label><div contenteditable="plaintext-only">Draft three</div>' +
+          '<textarea>Draft four</textarea>';
+        const before = window.constructed;
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        const html = mod.pageHtml(document);
+        await new Promise((r) => setTimeout(r, 200));
+        return { html, constructedAgain: window.constructed - before };
+      }, source);
+      for (const answer of ['Draft one', 'Draft two', 'Draft three', 'Draft four', 'SECRET-NAME']) {
+        assert.ok(!out.html.includes(answer), `"${answer}" was sent as part of the page`);
+      }
+      assert.ok(!/\schecked\b|\sselected\b/.test(out.html), 'the chosen option was marked');
+      for (const question of ['Why Acme?', 'Anything else?', 'Tell us about a project', "Kept: the posting's own text", 'value="Yes"', 'Yes, I have a disability', 'contenteditable="true"']) {
+        assert.ok(out.html.includes(question), `"${question}" was lost`);
+      }
+      assert.equal(out.constructedAgain, 0, 'copying the page ran its custom elements');
+      assert.equal(fetched.length, 1, `copying the page fetched its images again: ${fetched.join(', ')}`);
+    } finally {
+      await browser.close();
+    }
+  });
 });
