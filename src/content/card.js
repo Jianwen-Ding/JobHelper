@@ -3203,7 +3203,24 @@ export function createCard({
       if (addOn && dropOn) return change.to;
       if (!addOn && !dropOn) return change.from;
       const kept = change.from.filter((id) => !(dropOn && dropped.includes(id)));
-      return addOn ? [...kept, ...added] : kept;
+      return inPlace(addOn ? [...kept, ...added] : kept);
+    };
+
+    /*
+     * Each item where the proposal puts it, and one the proposal dropped just
+     * after its neighbour in the base's list. The list prints in its own
+     * order, and additions were appended: base Python, Go, PHP with the AI
+     * adding Rust between Python and Go printed "Python, Go, PHP, Rust" once
+     * only the addition was ticked — an order neither list had.
+     */
+    const inPlace = (ids) => {
+      const at = new Map((change.to ?? []).map((id, i) => [id, i]));
+      let last = -1;
+      for (const id of change.from) {
+        if (at.has(id)) last = at.get(id);
+        else at.set(id, last + 0.5);
+      }
+      return [...ids].sort((a, b) => (at.get(a) ?? Infinity) - (at.get(b) ?? Infinity));
     };
 
     const want = wanted();

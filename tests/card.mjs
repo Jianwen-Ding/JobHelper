@@ -4441,6 +4441,72 @@ async function main() {
   check('a refused Insert says nothing was put in', refused.afterMiss === true, JSON.stringify(refused));
   check('and one that lands clears it', refused.afterHit === false, JSON.stringify(refused));
 
+  console.log('\nA skill added alone goes where the proposal puts it');
+
+  /*
+   * The list a group saves prints in its own order. Ticking only the adding
+   * half appended the addition to the base's list, so Rust, which the
+   * proposal puts between Python and Go, printed last.
+   */
+  const placed = await inPage(async (createCard) => {
+    const sent = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Backend Engineer', company: 'Ferrous' },
+        spec: {
+          id: 'job-ferrous',
+          label: 'Ferrous',
+          sections: [{ kind: 'skills', entries: [], items: { sk_lang: ['s_py', 's_rust', 's_go'] } }],
+        },
+        baseLabel: 'New grad resume',
+        tailor: 'ai',
+        aiUsed: true,
+        diff: [
+          { kind: 'added', where: 'Languages', text: 'Languages: added Rust' },
+          { kind: 'removed', where: 'Languages', text: 'Languages: dropped PHP — keeping Python, Rust, Go' },
+        ],
+        rationale: [],
+        skillChanges: [
+          { groupId: 'sk_lang', groupName: 'Languages', from: ['s_py', 's_go', 's_php'], to: ['s_py', 's_rust', 's_go'] },
+        ],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        return action === 'render' ? { pages: 1, fits: true } : {};
+      },
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    root.querySelector('.fold-changes')?.click();
+    const picks = () => [...root.querySelectorAll('.pick')];
+    const settle = () => new Promise((r) => setTimeout(r, 60));
+    const itemsNow = () => {
+      const spec = sent.filter((c) => c.action === 'render').at(-1)?.payload?.spec;
+      return (spec?.sections ?? []).find((x) => x.kind === 'skills')?.items?.sk_lang ?? null;
+    };
+    // Everything off first, whatever the card started with.
+    for (const [i, box] of [...root.querySelectorAll('.pick input')].entries()) {
+      if (box.checked) {
+        picks()[i].click();
+        await settle();
+      }
+    }
+    const adding = picks().findIndex((p) => /added Rust/.test(p.closest('.change')?.textContent ?? p.textContent));
+    picks()[adding < 0 ? 0 : adding].click();
+    await settle();
+    return { items: itemsNow(), boxes: picks().length };
+  });
+  check(
+    'the addition alone lands in its place, the kept skills around it',
+    JSON.stringify(placed.items) === JSON.stringify(['s_py', 's_rust', 's_go', 's_php']),
+    JSON.stringify(placed),
+  );
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);
