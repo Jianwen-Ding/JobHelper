@@ -350,7 +350,22 @@ async function showAiState() {
     }
     fix.disabled = true;
     try {
-      await send('setAiEnabled', { enabled: status.state !== 'on' });
+      /*
+       * Off is this extension's own switch, not ResumeM-M's.
+       *
+       * It flipped the server's, which the editor's AI answers to as well,
+       * and left the box here ticked — so the panel then read "Switched off in
+       * ResumeM-M" in amber with a "Turn it on" button, as though something
+       * had gone wrong, straight after being asked to turn it off. Unticking
+       * the box is what the box beside this button already does.
+       */
+      if (status.state === 'on') {
+        $('useAi').checked = false;
+        await send('setSettings', { patch: { useAi: false } });
+        await showAiState();
+        return;
+      }
+      await send('setAiEnabled', { enabled: true });
       // Turning the server's on is only half of it if this side is still off.
       if (status.state === 'server-off' && !$('useAi').checked) {
         $('useAi').checked = true;

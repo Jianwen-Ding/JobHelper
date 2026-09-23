@@ -1776,6 +1776,44 @@ async function main() {
       check('without offering to go back to the page already on screen', offered === false, `offered: ${offered}`);
       check('and what was typed into the form is still there', typed === 'Typed into the form by hand.', JSON.stringify(typed));
     }
+
+    /*
+     * "Turn off", beside "AI on".
+     *
+     * It flipped ResumeM-M's own switch — the one the editor's AI answers to
+     * as well — and left this extension's ticked, so the panel then read
+     * "Switched off in ResumeM-M" in amber with a "Turn it on" button, as
+     * though something were wrong, directly after being asked to turn it off.
+     */
+    group('Turning the AI off from the popup');
+    {
+      await driver.evaluate(() => chrome.storage.sync.set({ useAi: true }));
+      const configBefore = store.sentTo('/api/config').length;
+      const popup = await context.newPage();
+      let before = null;
+      let after = null;
+      try {
+        await popup.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+        const read = () =>
+          popup.evaluate(() => ({
+            state: document.getElementById('aiState').textContent,
+            fix: document.getElementById('aiFix').hidden ? null : document.getElementById('aiFix').textContent,
+            ticked: document.getElementById('useAi').checked,
+          }));
+        await popup.waitForFunction(() => document.getElementById('aiState').textContent === 'AI on', null, { timeout: 10_000 }).catch(() => undefined);
+        before = await read();
+        await popup.locator('#aiFix').click();
+        await popup.waitForTimeout(1500);
+        after = await read();
+      } finally {
+        await popup.close().catch(() => undefined);
+      }
+      const useAi = (await driver.evaluate(() => chrome.storage.sync.get('useAi'))).useAi;
+      check('the popup starts at "AI on", offering to turn it off', before?.state === 'AI on' && before?.fix === 'Turn off', JSON.stringify(before));
+      check('turning it off leaves ResumeM-M’s own switch alone', store.sentTo('/api/config').length === configBefore, `${store.sentTo('/api/config').length - configBefore} PUTs`);
+      check('and turns off this extension’s instead', useAi === false && after?.ticked === false, JSON.stringify({ useAi, after }));
+      check('so the panel says it is off, not that something needs fixing', after?.state === 'AI off', JSON.stringify(after));
+    }
   } finally {
     await context.close();
     store.close();
