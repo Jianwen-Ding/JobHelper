@@ -179,6 +179,15 @@ const NOT_ABOUT_YOU = [
    * and was given the employer's name in a box asking for a number.
    */
   /\b(years?|months?|how[\s_-]long|tenure|duration)\b[\s\S]{0,24}\b(current|present|most[\s_-]recent)\b/i,
+  /*
+   * And how many, of anything. No profile field is a count, and a count
+   * question names what it is counting: "How many years of mobile development
+   * experience do you have?" matched `phone` on the word "mobile" and was
+   * given the applicant's telephone number, and "How many years of college
+   * have you completed?" was given the university's name. Plural "years of"
+   * only — "Year of graduation" is a date and is asked for.
+   */
+  /\bhow[\s_-]+many\b|\byears[\s_-]+of\b/i,
   // How to say a name, which is not the name: "Pronunciation of your name".
   /\b(pronunc\w*|phonetic\w*)\b/i,
   // Where you heard about the job, which is not a profile of yours.

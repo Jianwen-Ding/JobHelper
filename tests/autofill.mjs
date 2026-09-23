@@ -1081,7 +1081,13 @@ const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Ap
   <label for="profmail">Professor's email</label><input id="profmail" name="q_r4">
   <label for="parphone">Parent's phone number</label><input id="parphone" name="q_r5">
 
+  <!-- Counts, which name what they are counting. -->
+  <label for="count1">How many years of mobile development experience do you have?</label><input id="count1" name="q_c1">
+  <label for="count2">How many years of college have you completed?</label><input id="count2" name="q_c2">
+  <label for="count3">Years of GitHub Actions experience</label><input id="count3" name="q_c3">
+
   <!-- The applicant's own, still filled. -->
+  <label for="gradyear">Year of graduation</label><input id="gradyear" name="q_gy">
   <label for="own-email">Email</label><input id="own-email" name="email" type="email">
   <label for="own-phone">Phone</label><input id="own-phone" name="phone">
   <label for="own-li">LinkedIn</label><input id="own-li" name="li">
@@ -1540,7 +1546,7 @@ async function main() {
         const m = await import(`${b}/autofill.js`);
         m.fillForm(profile);
         return Object.fromEntries([...document.querySelectorAll('input, select, textarea')].map((el) => [el.id, el.value]));
-      }, { b: base, profile: { ...PROFILE, address_state: 'MA', school: 'Northeastern University', website: 'jianwen.dev' } }),
+      }, { b: base, profile: { ...PROFILE, address_state: 'MA', school: 'Northeastern University', website: 'jianwen.dev', graduation_year: '2027' } }),
     );
 
     group('Somebody else\'s details, under names the list did not have');
@@ -1554,6 +1560,12 @@ async function main() {
       more['own-email'] === PROFILE.email && more['own-phone'] === PROFILE.phone && more['own-li'] === PROFILE.linkedin,
       `${more['own-email']} / ${more['own-phone']} / ${more['own-li']}`,
     );
+
+    group('A count, which no profile field is');
+    check('"How many years of mobile development experience" is not given the phone number', more.count1 === '', more.count1);
+    check('"How many years of college have you completed?" is not given the school', more.count2 === '', more.count2);
+    check('"Years of GitHub Actions experience" is not given the GitHub URL', more.count3 === '', more.count3);
+    check('while "Year of graduation" still gets the year', more.gradyear === '2027', more.gradyear);
 
     group('A declaration answered from a sentence');
     check(
