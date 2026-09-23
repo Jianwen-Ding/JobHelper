@@ -2360,6 +2360,85 @@ async function main() {
   check('with a way to paste it into the dialog', folderShown.canCopy === true);
   check('all of it before anything is filed', folderShown.filed === false);
 
+  /*
+   * And a box ticked after building reaches the folder, not only the preview.
+   *
+   * Only "Build resume" staged. Ticking a suggestion afterwards recompiled the
+   * preview and left the folder with the build from before — which is the
+   * file "Attach files" and the drag chips hand the form. The skills half had
+   * a second way to miss: the check for "anything to prepare" read `choices`
+   * and never `sections`, so a skills box ticked after a wording one looked
+   * like no change at all.
+   */
+  const tickedAfterBuilding = await inPage(async (createCard) => {
+    const sent = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: {
+          id: 'job-acme',
+          label: 'Acme',
+          choices: { b_pipeline: 'v_kafka' },
+          sections: [{ kind: 'skills', groups: ['sk_lang'], items: { sk_lang: ['s_py', 's_go'] } }],
+        },
+        baseLabel: 'New grad resume',
+        tailor: 'match',
+        diff: [
+          { kind: 'changed', where: 'Acme Co.', from: 'Built a pipeline', to: 'Built a Kafka pipeline' },
+          { kind: 'removed', where: 'Languages', text: 'Languages: dropped Ruby, PHP — keeping Python, Go' },
+        ],
+        rationale: [
+          { key: 'b_pipeline', from: 'v_base', to: 'v_kafka', toText: 'Built a Kafka pipeline', because: ['kafka'] },
+        ],
+        skillChanges: [
+          { groupId: 'sk_lang', groupName: 'Languages', from: ['s_py', 's_go', 's_rb', 's_php'], to: ['s_py', 's_go'] },
+        ],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload: JSON.parse(JSON.stringify(payload ?? {})) });
+        if (action === 'render') return { pages: 1, fits: true };
+        if (action === 'stage') return { currentDir: '/tmp/x', application: { id: 'app-1' } };
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const last = (action) => sent.filter((c) => c.action === action).at(-1)?.payload?.spec ?? null;
+    const shape = (spec) => JSON.stringify([spec?.choices ?? null, spec?.sections ?? null]);
+
+    byText('Build resume').click();
+    await wait(100);
+    root.querySelector('.fold-changes')?.click();
+    // Past `prepareSoon`'s debounce each time.
+    [...root.querySelectorAll('.pick input')][0]?.click();
+    await wait(1600);
+    const afterWording = { staged: shape(last('stage')), shown: shape(last('render')) };
+    [...root.querySelectorAll('.pick input')][1]?.click();
+    await wait(1600);
+    return {
+      afterWording,
+      afterSkills: { staged: shape(last('stage')), shown: shape(last('render')) },
+      stages: sent.filter((c) => c.action === 'stage').length,
+    };
+  });
+
+  check(
+    'a wording ticked after building reaches the folder',
+    tickedAfterBuilding.afterWording.staged === tickedAfterBuilding.afterWording.shown,
+    JSON.stringify(tickedAfterBuilding.afterWording),
+  );
+  check(
+    'and so does a skills group ticked after it',
+    tickedAfterBuilding.afterSkills.staged === tickedAfterBuilding.afterSkills.shown,
+    JSON.stringify(tickedAfterBuilding.afterSkills),
+  );
+
   console.log('\nA way out of a run that is taking too long');
 
   /*

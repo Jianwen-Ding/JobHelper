@@ -3227,6 +3227,24 @@ export function createCard({
         return;
       }
       state.render = r;
+      /*
+       * And the folder follows the preview, once there is a folder.
+       *
+       * Only "Build resume" staged after compiling. Every other compile is a
+       * box being ticked — a wording swapped in, a skills group narrowed,
+       * "Undo all" — and those recompiled the preview and left the folder
+       * holding the build from before. Measured: build, then tick one wording
+       * and one skills group; the preview showed `v_kafka` and a two-item
+       * Languages line, while the one `stage` ever sent still held `v_base`
+       * and all four languages — and that is the file "Attach files" and the
+       * drag chips hand the form.
+       *
+       * Gated on `state.staged`, so a card nobody has built on does not start
+       * filing an application as `applying` because a box was ticked while
+       * browsing. `prepareSoon` skips it when nothing that reaches a file has
+       * changed, which is the Build button's own stage landing first.
+       */
+      if (state.staged) prepareSoon();
     });
   }
 
@@ -3295,10 +3313,19 @@ export function createCard({
    */
   let lastPrepared = null;
   let preparing = null;
+  /*
+   * The skills lists are part of the file.
+   *
+   * This read `choices` and not `sections`, and a narrowed skills group is
+   * written to `sections[skills].items` — so ticking a skills suggestion after
+   * a wording one looked like nothing had changed and the folder kept a
+   * Languages line the preview no longer printed.
+   */
   const whatWouldBeStaged = () =>
     JSON.stringify([
       state.spec?.id ?? null,
       state.spec?.choices ?? null,
+      state.spec?.sections ?? null,
       state.letter ?? '',
       collectedAnswers(),
       state.naming ?? null,
