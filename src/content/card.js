@@ -1022,7 +1022,19 @@ export function createCard({
         Object.assign(analysis, state.offers[slot].analysis);
       }
     }
-    if (work.render) state.render = work.render;
+    /*
+     * The preview only with the resume it is a preview of.
+     *
+     * The spec above is held back when a proposal somebody asked for is
+     * already on screen; the compiled preview built from it was not, so it
+     * landed on top of that proposal. Measured, with an AI run started on
+     * the posting landing on the form before the carried work: the preview
+     * and "Open full size" were the page-before's build (`v_base`), "Mark as
+     * applied" was enabled because a render existed, and pressing it filed
+     * the AI's `v_ai`, which nothing had compiled. Without it the card says
+     * "Not compiled yet" over the AI's proposal, which is true.
+     */
+    if (work.render && (!work.spec || state.spec === work.spec)) state.render = work.render;
     if (work.staged) state.staged = work.staged;
     // One way only: the reports do not survive the page, so if this were
     // assigned rather than or-ed, walking from the form you filled to the next

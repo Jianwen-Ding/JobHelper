@@ -4047,6 +4047,69 @@ async function main() {
     `${JSON.stringify(carriedAi.ticks)} ${carriedAi.count}`,
   );
 
+  /*
+   * And the preview carried with a resume that was not restored.
+   *
+   * A proposal somebody asked for — the AI run started on the posting,
+   * landing on the form a moment before the carried work — keeps the screen,
+   * and the carried spec is held back. Its compiled preview was not: the card
+   * showed the page-before's build and enabled "Mark as applied" on the
+   * strength of it, and pressing that filed the AI's spec, which nothing had
+   * compiled.
+   */
+  const previewOfAnother = await inPage(async (createCard) => {
+    const sent = [];
+    const job = { title: 'Platform Engineer', company: 'Acme' };
+    const handle = createCard({
+      analysis: null,
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        return action === 'aiStatus' ? { active: true, state: 'on' } : action === 'render' ? { pages: 1, fits: true } : {};
+      },
+    });
+    const reading = (choice, more) => ({
+      isJobPosting: true,
+      job,
+      spec: { id: 'job-acme', label: 'Acme', choices: { b_pipeline: choice } },
+      diff: [],
+      rationale: [],
+      ...more,
+    });
+    handle.update(reading('v_kafka', { tailor: 'match', aiUsed: false }));
+    handle.update(reading('v_ai', { tailor: 'ai', aiUsed: true }), { show: true });
+    handle.restoreWork({
+      spec: { id: 'job-acme', label: 'Acme', choices: { b_pipeline: 'v_base' } },
+      builtWith: 'none',
+      render: { absolutePdfUrl: 'http://127.0.0.1:1/out/page-before.pdf', pages: 1, fits: true },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const mark = [...root.querySelectorAll('button')].find((b) => /Mark as applied/.test(b.textContent));
+    const open = [...root.querySelectorAll('a')].find((a) => /Open full size/.test(a.textContent));
+    const enabled = Boolean(mark && !mark.disabled);
+    mark?.click();
+    await new Promise((r) => setTimeout(r, 50));
+    return {
+      enabled,
+      preview: open?.href ?? null,
+      filed: sent.find((c) => c.action === 'bundle')?.payload?.spec?.choices ?? null,
+    };
+  });
+  check(
+    'a preview of the carried resume is not put over the proposal that kept the screen',
+    previewOfAnother.preview === null,
+    JSON.stringify(previewOfAnother),
+  );
+  check(
+    'so nothing is filed that was never compiled',
+    previewOfAnother.enabled === false && previewOfAnother.filed === null,
+    JSON.stringify(previewOfAnother),
+  );
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);
