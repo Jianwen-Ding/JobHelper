@@ -52,7 +52,7 @@ const NEVER_REMEMBER = [
   /\bbirth\s*(date|day)\b/i,
   /\bdob\b/i,
   /\bage\b/i,
-  /\bdriver'?s?\s*licen[cs]e\b/i,
+  /\bdriv(er'?s?|ing)\s*licen[cs]e\b/i,
   /\bpassport\b/i,
   /\bvisa\s*number\b/i,
   /\bbank\b/i,

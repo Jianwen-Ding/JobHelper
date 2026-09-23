@@ -92,6 +92,8 @@ const REFUSE = [
   ['Are you of Aboriginal descent?', 'No'],
   ['Are you a Torres Strait Islander?', 'No'],
   ['Do you identify as First Nations, Métis or Inuit?', 'No'],
+  // The UK wording of the licence question; only "driver's licence" was known.
+  ['Do you hold a full UK driving licence?', 'Yes'],
 ];
 
 test('and the ones that are nobody else’s business are refused', () => {
