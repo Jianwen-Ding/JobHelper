@@ -1233,6 +1233,9 @@ const MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</
 
   <!-- The fields these words were mistaken for, still filled. -->
   <label for="st">State</label><input id="st" name="state">
+  <!-- Both of them in one box. -->
+  <label for="cs1">City, State</label><input id="cs1" name="q_cs1">
+  <label for="cs2">City/State</label><input id="cs2" name="q_cs2">
   <label for="ctry">Country</label><input id="ctry" name="country">
   <label for="ph">Phone</label><input id="ph" name="phone">
   <label for="co">Current employer</label><input id="co" name="current_company">
@@ -1886,7 +1889,7 @@ async function main() {
         const ticked = (n) => document.querySelector(`input[name="${n}"]:checked`)?.value ?? '';
         return {
           why: v('why'), why2: v('why2'), ext: v('ext'), contact: v('contact'), empmail: v('empmail'), tenure: v('tenure'), cpc: v('cpc'), say: v('say'), fulln: v('fulln'), fl1: v('fl1'), fl2: v('fl2'), fl3: v('fl3'), ln1: v('ln1'), ln2: v('ln2'), ln3: v('ln3'), ln4: v('ln4'), e1: v('e1'), e2: v('e2'), e3: v('e3'), e4: v('e4'), e5: v('e5'), f1: v('f1'), f2: v('f2'),
-          st: v('st'), ctry: v('ctry'), ph: v('ph'), co: v('co'),
+          st: v('st'), cs1: v('cs1'), cs2: v('cs2'), ctry: v('ctry'), ph: v('ph'), co: v('co'),
           auth: ticked('auth'), elig: ticked('elig'), applyin: ticked('applyin'),
         };
       }, { b: base, profile: { ...PROFILE, address_state: 'MA', current_company: 'Acme', school: 'Northeastern University', location: 'Boston, MA' } }),
@@ -1896,6 +1899,16 @@ async function main() {
     check('"Please state your reason" is not given the applicant\'s state', misread.why === '', misread.why);
     check('nor is "State why you are interested"', misread.why2 === '', misread.why2);
     check('while a box labelled "State" still is', misread.st === 'MA', misread.st);
+    /*
+     * And a box asking for both. `city` came first and claimed it, so "City,
+     * State" and "City/State" were given "Boston" — half of what was asked,
+     * on a profile holding the other half.
+     */
+    check(
+      '"City, State" is given the city and the state',
+      misread.cs1 === 'Boston, MA' && misread.cs2 === 'Boston, MA',
+      JSON.stringify([misread.cs1, misread.cs2]),
+    );
     check(
       'the right-to-work question that says "country" is answered from the right to work',
       misread.auth === 'y',

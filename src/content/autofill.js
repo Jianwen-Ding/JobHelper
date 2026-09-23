@@ -118,6 +118,12 @@ const FIELD_PATTERNS = [
     /\b(work[\s_-]?authoriz\w*|legally[\s_-]?authorized|authoriz\w+[\s_-]+to[\s_-]+work|eligib\w*[\s_-]+to[\s_-]+work|right[\s_-]?to[\s_-]?work)\b/i,
   ],
   ['requires_sponsorship', /\b(sponsor\w*|visa[\s_-]?status)\b/i],
+  /*
+   * Both in one box, above the city, which claimed it: "City, State" and
+   * "City/State" were given "Boston" on a profile that also holds "MA". See
+   * `withCityAndState` for where the value comes from.
+   */
+  ['city_state', /\b(city|town)[\s_-]*(,|\/|&|and)[\s_-]*(state|province)\b/i],
   ['address_city', /\b(city|town)\b/i],
   /*
    * Country before state, because the first pattern to match wins and
@@ -1743,7 +1749,22 @@ function yesNoOption(key, value, options, asked = '') {
  * Fill what we can. Returns a report of what was filled and what was skipped,
  * so the user can see the difference between "done" and "done silently wrong".
  */
+/**
+ * The value for a box asking for the city and the state together.
+ *
+ * The store sends the two apart, as `address_city` and `address_state`, and
+ * nothing else says them together in the shape the box asks for — `location`
+ * is whatever was typed, "Boston, MA, USA" as often as "Boston, MA". Where
+ * there is no state to add, the city alone is what the box was given before.
+ */
+function withCityAndState(fields) {
+  if (fields.city_state || !fields.address_city) return fields;
+  const both = fields.address_state ? `${fields.address_city}, ${fields.address_state}` : fields.address_city;
+  return { ...fields, city_state: both };
+}
+
 export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
+  fields = withCityAndState(fields);
   const filled = [];
   const skipped = [];
 
@@ -2848,6 +2869,9 @@ function undoWidget(widget, box) {
  * time — a school list fetched as you type can take a second to arrive.
  */
 export async function fillComboboxes(fields, report, { patience = 1500 } = {}) {
+  // The same fields `fillForm` read, or a widget it named `city_state` has
+  // no value here.
+  fields = withCityAndState(fields);
   const pending = new Set(report.skipped.filter((s) => s.reason === PICK_BY_HAND).map((s) => s.key));
   if (pending.size === 0) return report;
 
