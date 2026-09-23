@@ -14,6 +14,13 @@ import { dependsOnEmployer, neverRemember, worthRemembering } from '../shared/re
 
 /** Map a stored profile key to the label/name patterns that mean it. */
 const FIELD_PATTERNS = [
+  /*
+   * Both halves in one box, above either half, because the first pattern to
+   * match claims the field: "First and Last Name" says "Last Name" whole and
+   * was given the surname alone, and "First Name and Last Name" the first
+   * name alone — half a name, in a box asking for all of it.
+   */
+  ['full_name', /\bfirst[\s_-]*(name[\s_-]*)?(and|&|\+)[\s_-]*last[\s_-]*name\b/i],
   ['first_name', /\b(first[\s_-]?name|given[\s_-]?name|forename|fname)\b/i],
   ['last_name', /\b(last[\s_-]?name|family[\s_-]?name|surname|lname)\b/i],
   ['full_name', /\b(full[\s_-]?name|your[\s_-]?name|candidate[\s_-]?name|legal[\s_-]?name)\b/i],
