@@ -263,6 +263,16 @@ const NOT_ABOUT_YOU = [
    */
   /\bdegree[\s_-]+of[\s_-]+(proficiency|fluency|familiarity|experience|expertise|comfort|confidence|knowledge|skill|understanding|competenc\w*)\b|\bto[\s_-]+(what|which|some|a|any|the)[\s_-]+degree\b/i,
   /*
+   * A second subject, degree or school, which the profile does not hold: it
+   * holds one of each. "Second Major", "Double major", "Additional degree",
+   * "Major 2" and "School 2" were each given the first again — a second major
+   * in the subject already named — and "Previous school" and "Transfer
+   * university" the school the applicant is at now, as the one they left.
+   * "School 1" is still filled, and so is "School (if other)", which is
+   * where the applicant's own school goes when the list does not have it.
+   */
+  /\b(second|secondary|double|dual|additional|another|2nd|third|3rd)[\s_-]+(majors?|degrees?|concentrations?|schools?|universit\w*|colleges?|institutions?)\b|\b(major|degree|school|university|college|institution)[\s_-]*#?[\s_-]*[2-9]\b|\b(previous\w*|former\w*|prior|past|transfer\w*)[\s_-]+(schools?|universit\w*|colleges?|institutions?|majors?|degrees?)\b/i,
+  /*
    * The state that issued a licence, which is not where the applicant lives.
    * Nursing, teaching, pharmacy and driving roles ask for it, and "State of
    * licensure", "License state", "Driver's license issuing state" and

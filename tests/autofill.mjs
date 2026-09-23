@@ -1195,6 +1195,17 @@ const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Ap
   <label for="lv-bmaj">Bachelor's Major</label><input id="lv-bmaj" name="q_v8">
   <label for="lv-deg">Degree (e.g. Master's, PhD)</label><input id="lv-deg" name="q_v9" placeholder="Master of Science">
 
+  <!-- A second subject, a second degree, a second row, another school. -->
+  <label for="sc-maj2">Second Major</label><input id="sc-maj2" name="q_x1">
+  <label for="sc-dbl">Double major</label><input id="sc-dbl" name="q_x2">
+  <label for="sc-add">Additional degree</label><input id="sc-add" name="q_x3">
+  <label for="sc-sch1">School 1</label><input id="sc-sch1" name="q_x4">
+  <label for="sc-sch2">School 2</label><input id="sc-sch2" name="q_x5">
+  <label for="sc-maj-2">Major 2</label><input id="sc-maj-2" name="q_x6">
+  <label for="sc-prev">Previous school</label><input id="sc-prev" name="q_x7">
+  <label for="sc-trans">Transfer university</label><input id="sc-trans" name="q_x8">
+  <label for="sc-other">School (if other)</label><input id="sc-other" name="q_x9">
+
   <!-- The applicant's own, still filled. -->
   <label for="own-ln">Last name</label><input id="own-ln" name="q_ln">
   <label for="own-legal">Legal name</label><input id="own-legal" name="q_legal">
@@ -1820,6 +1831,26 @@ async function main() {
       'with no degree to compare, "Undergraduate School" is left blank and "School" is not',
       noLevel['lv-usch'] === '' && noLevel.sch === 'Northeastern University',
       `${noLevel['lv-usch']} / ${noLevel.sch}`,
+    );
+
+    /*
+     * The profile holds one subject, one degree and one school, and a form
+     * that asks for a second is asking about one the profile does not hold.
+     * Each was given the first again — a second major in the same subject,
+     * the same university as the previous school it transferred from.
+     */
+    group('A second major, a second degree, another school');
+    check('"Second Major" is not given the major', more['sc-maj2'] === '', more['sc-maj2']);
+    check('nor "Double major"', more['sc-dbl'] === '', more['sc-dbl']);
+    check('"Additional degree" is not given the degree', more['sc-add'] === '', more['sc-add']);
+    check('"School 2" is not given the school again', more['sc-sch2'] === '', more['sc-sch2']);
+    check('nor "Major 2" the major', more['sc-maj-2'] === '', more['sc-maj-2']);
+    check('"Previous school" is not given the current one', more['sc-prev'] === '', more['sc-prev']);
+    check('nor "Transfer university"', more['sc-trans'] === '', more['sc-trans']);
+    check(
+      'while "School 1" and "School (if other)" still get it',
+      more['sc-sch1'] === 'Northeastern University' && more['sc-other'] === 'Northeastern University',
+      `${more['sc-sch1']} / ${more['sc-other']}`,
     );
 
     group('A declaration answered from a sentence');
