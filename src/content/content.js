@@ -1947,6 +1947,32 @@
        * pressing Submit again did nothing either. This file's header calls a
        * wrong "yes" the worst failure available; that was one.
        */
+
+      /*
+       * Flushed here, not left to the keeper.
+       *
+       * `holdASpace` — the thing that opens the Workspace draft — only runs
+       * off `saveWork`, which this page's keeper otherwise sends on a plain
+       * two-second interval. A short form is read, filled and sent well
+       * inside that window, so `applicationSent` could reach the store,
+       * mark the tracker row `applied`, and return — before the interval
+       * had ticked even once. No draft existed yet for `/api/extension/sent`
+       * to find and close, and none was ever going to arrive: the next tick
+       * would have opened one, but nobody presses Submit twice to give it
+       * the chance.
+       *
+       * Measured against tests/sending.mjs with the call below removed: four
+       * of the twenty-four sending fixtures had their draft opened a whole
+       * keeper tick after the application was filed as sent, and under the
+       * parallel runner one came back `applied` with no draft at all.
+       *
+       * Fired, not awaited: this is the same fire-and-forget write
+       * `saveWork` already makes off every keeper tick, and waiting for it
+       * here would hold up telling the person their application went out
+       * for a write this route does not need the answer to.
+       */
+      saveWorkNow?.();
+
       return send('applicationSent', {
         company: named.company,
         role: named.role,

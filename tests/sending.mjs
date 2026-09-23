@@ -154,7 +154,26 @@ async function walk(context, fixtures, fixture, { build = true } = {}) {
           (f) => f.application?.status === 'applied' && f.draft?.status === 'submitted',
         )
       : await new Promise((done) => setTimeout(() => done(filed(fixture.company)), 2000));
-    return { before, after, errors, page };
+    /*
+     * How far apart the draft and the send were, by the store's own clock.
+     *
+     * `holdASpace` is what opens the draft, and it used to run only off the
+     * keeper's two-second interval — decoupled from Submit — so a short form
+     * sent between ticks was filed as sent a whole tick before any draft
+     * existed for it, and under load with none at all. See `saveWorkNow` in
+     * `watchForSending`'s `took`, which flushes that save at the press.
+     *
+     * Both stamps are written by the store as each request lands, so this
+     * reads the gap itself rather than timing a poll from here — a loaded
+     * machine slows the two requests together, but it cannot make the next
+     * interval tick arrive sooner than the wall clock allows.
+     */
+    const appliedAt = Date.parse(
+      after.application?.history?.find((h) => h.status === 'applied')?.at ?? after.application?.appliedAt ?? '',
+    );
+    const draftAt = Date.parse(after.draft?.createdAt ?? '');
+    const draftGapMs = Number.isFinite(appliedAt) && Number.isFinite(draftAt) ? draftAt - appliedAt : null;
+    return { before, after, draftGapMs, errors, page };
   } finally {
     await page.close().catch(() => undefined);
   }
@@ -231,7 +250,7 @@ async function main() {
 
     /* ---- The systems, and the many ways they spell "send it" ---- */
     for await (const batch of inBatches(SENDS, timed)) {
-      for (const { fixture, before, after, errors } of batch) {
+      for (const { fixture, before, after, draftGapMs, errors } of batch) {
         group(`${fixture.name} — "${fixture.sends}"`);
         check(
           'the form is recognised as an application at all',
@@ -252,6 +271,18 @@ async function main() {
           'and the draft stops looking like something to finish',
           after.draft?.status === 'submitted',
           after.draft?.status ?? '(none)',
+        );
+        /*
+         * The draft was opened with the send, not merely by the time the
+         * checks above give up waiting. Opened only off the keeper's
+         * interval, it still arrives eventually on an unloaded machine —
+         * a whole tick after the application was filed as sent, and under
+         * load sometimes never. See `draftGapMs` in `walk`.
+         */
+        check(
+          'and the draft was opened with the send, not a keeper tick after it',
+          draftGapMs !== null && draftGapMs < 1000,
+          draftGapMs === null ? '(no draft, or no send recorded)' : `${draftGapMs}ms after the send`,
         );
         check('nothing was thrown at the page', errors.length === 0, errors.join(' | '));
       }
