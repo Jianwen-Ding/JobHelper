@@ -1687,6 +1687,33 @@ const handlers = {
     await markTab(id, merged);
     await session().remove(key).catch(() => undefined);
     /*
+     * And the copies the branch parked, now that the writing is back here.
+     *
+     * Branching parks what it leaves under every page of the old application
+     * — see `remember` — so that a tab closed on the new job can still reach
+     * the old one's letter. The merge put the writing back into this tab and
+     * left those parks where they were. Measured in tests/worker.mjs: a second
+     * tab opening the posting was handed the same letter as "recovered from a
+     * tab that closed", while the tab it came from was open and holding it —
+     * one application being written in two places, and sent from either.
+     *
+     * Only this tab's parks for this job. Another tab's, or another job's at
+     * the same address, are still somebody's only copy.
+     */
+    const leftJob = nameOfTrail(held.trail);
+    const ours = (p) => p.tab === id && (leftJob ? sameJob(p.job, leftJob) : !p.job);
+    for (const url of new Set((held.trail.pages ?? []).map((p) => p?.url).filter(Boolean))) {
+      const at = orphanKey(url);
+      await changeStored(at, async (stored) => {
+        const parked = parkedAt(stored);
+        const left = parked.filter((p) => !ours(p));
+        if (left.length === parked.length) return null;
+        if (left.length > 0) return { parked: left, at: Date.now() };
+        await session().remove(at).catch(() => undefined);
+        return null;
+      });
+    }
+    /*
      * With the writing, which `summarise` deliberately strips.
      *
      * The merge put the letter back into the trail and answered with a

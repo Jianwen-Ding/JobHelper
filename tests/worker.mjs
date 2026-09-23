@@ -575,6 +575,17 @@ async function main() {
       store.role = 'Platform Engineer';
       await ask(driver, 'analyze', { url: 'http://board.example/two?q=a', title: 'A', html: '<p>one</p>', company: 'Helios' });
       await ask(driver, 'saveWork', { work: { letter: 'PUT-THIS-BACK' } });
+      // Another tab's writing for another job, parked at the same address.
+      await driver.evaluate(
+        ([key]) =>
+          chrome.storage.session.set({
+            [key]: {
+              parked: [{ work: { letter: 'SOMEONE-ELSES' }, save: 'work', job: { role: 'Designer', company: 'Altair' }, tab: 424242, at: Date.now() }],
+              at: Date.now(),
+            },
+          }),
+        ['jh-orphan:http://board.example/two?q=a'],
+      );
 
       store.role = 'Data Scientist';
       await ask(driver, 'analyze', { url: 'http://board.example/two?q=b', title: 'B', html: '<p>two</p>', company: 'Helios' });
@@ -582,6 +593,38 @@ async function main() {
       check('the merge answers with the writing itself', back.reply?.data?.work?.letter === 'PUT-THIS-BACK', JSON.stringify(back.reply?.data?.work));
       check('and with the pages joined', (back.reply?.data?.pages ?? []).length === 2, `${back.reply?.data?.pages?.length} pages`);
       store.role = 'Platform Engineer';
+
+      /*
+       * And the copy the branch parked goes with it.
+       *
+       * Branching parks what it leaves under every page of the old
+       * application, so a closed tab's rescue can find it — and the merge put
+       * the writing back into this tab without taking those parks away. A
+       * second tab opening the posting then rescued the same letter as
+       * "recovered from a tab that closed", while the tab it came from was
+       * still open and still holding it: one application, being written in
+       * two places, each able to send.
+       */
+      const stillParked = await driver.evaluate(async (key) => {
+        const held = (await chrome.storage.session.get(key))[key];
+        return (held?.parked ?? []).map((p) => p.work?.letter);
+      }, 'jh-orphan:http://board.example/two?q=a');
+      check(
+        'while another tab’s writing parked at the same address stays',
+        JSON.stringify(stillParked) === JSON.stringify(['SOMEONE-ELSES']),
+        JSON.stringify(stillParked),
+      );
+      const elsewhere = await context.newPage();
+      await elsewhere.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+      await ask(elsewhere, 'analyze', { url: 'http://board.example/two?q=a', title: 'A', html: '<p>one</p>', company: 'Helios' });
+      const twice = await ask(elsewhere, 'takeWork', { page: { url: 'http://board.example/two?q=a', title: 'A' } });
+      await ask(elsewhere, 'clearTrail', {});
+      await elsewhere.close();
+      check(
+        'another tab on the same posting is not handed a second copy',
+        twice.reply?.data?.work?.letter !== 'PUT-THIS-BACK',
+        JSON.stringify(twice.reply?.data),
+      );
     }
 
     /*
