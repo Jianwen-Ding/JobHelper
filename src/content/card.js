@@ -4630,11 +4630,24 @@ export function createCard({
             textContent: 'Edit in ResumeM-M',
             title: 'Open this resume in the builder to add a bullet or another phrasing',
             disabled: !state.spec?.id,
-            onclick: () => {
+            onclick: async () => {
               // Remembered so that coming back here means something. See
               // `cameBack`.
               state.wentToEditor = true;
-              onAction('openTab', { url: `/#resumes/${encodeURIComponent(state.spec.id)}` });
+              /*
+               * The copy if the store has it, and the resume it was made from
+               * if not. The copy is only written when it is built or filed,
+               * and before then this opened an id with nothing behind it:
+               * the builder said the resume had been removed and stayed on
+               * whatever was open — often the base, where edits meant for
+               * this posting then went.
+               */
+              const id = state.spec.id;
+              const list = await Promise.resolve(onAction('listResumes', {})).catch(() => null);
+              const held = new Set((Array.isArray(list) ? list : list?.resumes ?? []).map((r) => r?.id));
+              const from = state.spec.copiedFrom;
+              const target = held.has(id) || !from || !held.has(from) ? id : from;
+              onAction('openTab', { url: `/#resumes/${encodeURIComponent(target)}` });
             },
           }),
         ]),

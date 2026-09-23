@@ -4566,6 +4566,78 @@ async function main() {
     JSON.stringify(edited),
   );
 
+  console.log('\nOpening the builder before the copy is in the store');
+
+  /*
+   * The tailored copy is only written to the store when it is built or
+   * filed. "Edit in ResumeM-M" opened it by id regardless, so before then the
+   * builder was sent to a resume that did not exist, said it had been
+   * removed, and stayed on whatever was open — often the base.
+   */
+  const opened = await inPage(async (createCard, given) => {
+    const urls = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Backend Engineer', company: 'Ferrous' },
+        spec: { id: 'job-ferrous', label: 'Ferrous', tier: 'temporary', copiedFrom: 'newgrad', sections: [] },
+        baseLabel: 'New grad resume',
+        tailor: 'none',
+        diff: [],
+        rationale: [],
+        skillChanges: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        if (action === 'openTab') urls.push(payload.url);
+        if (action === 'render') return { pages: 1, fits: true };
+        if (action === 'listResumes') return given.stored.map((id) => ({ id }));
+        return {};
+      },
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    [...root.querySelectorAll('button')].find((b) => /Edit in ResumeM-M/.test(b.textContent))?.click();
+    await new Promise((r) => setTimeout(r, 120));
+    return urls;
+  }, { stored: ['newgrad'] });
+  check('before it is built, the builder opens the resume it was made from', opened.at(-1) === '/#resumes/newgrad', JSON.stringify(opened));
+
+  const openedCopy = await inPage(async (createCard, given) => {
+    const urls = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Backend Engineer', company: 'Ferrous' },
+        spec: { id: 'job-ferrous', label: 'Ferrous', tier: 'temporary', copiedFrom: 'newgrad', sections: [] },
+        baseLabel: 'New grad resume',
+        tailor: 'none',
+        diff: [],
+        rationale: [],
+        skillChanges: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        if (action === 'openTab') urls.push(payload.url);
+        if (action === 'render') return { pages: 1, fits: true };
+        if (action === 'listResumes') return given.stored.map((id) => ({ id }));
+        return {};
+      },
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    [...root.querySelectorAll('button')].find((b) => /Edit in ResumeM-M/.test(b.textContent))?.click();
+    await new Promise((r) => setTimeout(r, 120));
+    return urls;
+  }, { stored: ['newgrad', 'job-ferrous'] });
+  check('and once it is in the store, the copy itself', openedCopy.at(-1) === '/#resumes/job-ferrous', JSON.stringify(openedCopy));
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);
