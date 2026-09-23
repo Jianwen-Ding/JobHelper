@@ -17,7 +17,6 @@ const KEEP = [
   ['Are you legally authorized to work in the United States?', 'Yes'],
   ['Will you now or in the future require sponsorship for employment visa status?', 'No'],
   ['How did you hear about this position?', 'LinkedIn'],
-  ['Have you previously been employed by this company?', 'No'],
   ['What is your state of residence?', 'Massachusetts'],
   ['Are you willing to relocate?', 'Yes'],
   ['Highest level of education completed', "Bachelor's degree"],
@@ -115,6 +114,69 @@ test('the equal-opportunity words do not refuse the ordinary questions they look
     'Are you willing to relocate to Sussex?',
     'Do you speak Latin or Greek?',
     'Will you require a transfer of your visa?',
+  ]) {
+    assert.equal(worthRemembering({ question, answer: 'Yes' }).keep, true, `${question} was refused`);
+  }
+});
+
+/*
+ * And the ones whose answer is about the employer rather than the person.
+ *
+ * "Have you previously been employed by this company?" was on the keep list
+ * above, and it is the same words on every form while the answer is not:
+ * measured end to end, "Yes" chosen on Acme's form went into the bank and
+ * Autofill put it into the same question on Helios's form, a false statement
+ * that the applicant had worked there. Every one of these is asked in words
+ * that do not change between employers, which is what makes the bank's match
+ * confident, and whose answer changes with the employer, which is what makes
+ * that match wrong.
+ */
+const ABOUT_THE_EMPLOYER = [
+  ['Have you previously been employed by this company?', 'Yes'],
+  ['Have you ever been employed with us?', 'Yes'],
+  ['Have you ever worked for Acme before?', 'Yes'],
+  // Workday's own wording.
+  ['Have you previously worked for Helios or any of its subsidiaries?', 'No'],
+  ['Have you ever worked here?', 'Yes'],
+  ['Have you interned at this company before?', 'Yes'],
+  ['Are you a current or former employee of Acme?', 'Yes'],
+  ['Are you a current employee?', 'No'],
+  ['Are you an ex-employee?', 'No'],
+  ['Do you have any relatives currently employed by Acme?', 'Yes'],
+  ['Do you have family members who work here?', 'Yes'],
+  ['Are you related to anyone who works for this company?', 'Yes'],
+  ['Do you know anyone who currently works at Acme?', 'Yes'],
+  ['Have you applied to Acme before?', 'Yes'],
+  ['Have you previously applied for a position with us?', 'Yes'],
+  ['Have you ever interviewed with us?', 'Yes'],
+  ['Were you referred by a current employee?', 'Yes'],
+  ['Were you referred to this position?', 'Yes'],
+];
+
+test('an answer that depends on the employer is not carried to the next one', () => {
+  for (const [question, answer] of ABOUT_THE_EMPLOYER) {
+    const said = worthRemembering({ question, answer });
+    assert.equal(said.keep, false, `${question} was kept`);
+    assert.match(said.why, /employer/, question);
+  }
+});
+
+/*
+ * And the questions that look like those and are about the person. The work
+ * authorisation question says "work for any employer" and is the most
+ * repeated question there is; refusing it would make the bank close to
+ * useless.
+ */
+test('the questions about the person that look like them are still kept', () => {
+  for (const question of [
+    'Are you legally authorized to work for any employer in the United States?',
+    'Have you worked with Kubernetes before?',
+    'Have you worked in a regulated industry?',
+    'Are you currently employed?',
+    'May we contact your current employer?',
+    'Are you willing to work in the office three days a week?',
+    'How did you hear about this position?',
+    'Do you have experience related to payments?',
   ]) {
     assert.equal(worthRemembering({ question, answer: 'Yes' }).keep, true, `${question} was refused`);
   }

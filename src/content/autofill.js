@@ -10,7 +10,7 @@
  * The privacy rule lives on its own, away from everything that reads a form,
  * because it is the part that has to be reviewable without reading this file.
  */
-import { neverRemember, worthRemembering } from '../shared/remembering.js';
+import { dependsOnEmployer, neverRemember, worthRemembering } from '../shared/remembering.js';
 
 /** Map a stored profile key to the label/name patterns that mean it. */
 const FIELD_PATTERNS = [
@@ -2379,8 +2379,10 @@ export function choiceQuestions() {
   for (const choice of rememberableChoices()) {
     if (choice.answered()) continue;
     // Never ask the bank about these, so that nothing puts one in it and
-    // nothing takes one out. See `NEVER_REMEMBER`.
-    if (neverRemember(choice.question)) continue;
+    // nothing takes one out. See `NEVER_REMEMBER`, and `DEPENDS_ON_EMPLOYER`
+    // for the second: a bank row from before that gate is another
+    // employer's answer.
+    if (neverRemember(choice.question) || dependsOnEmployer(choice.question)) continue;
     out.add(choice.question);
   }
   return [...out];
@@ -2405,7 +2407,10 @@ export function choiceQuestions() {
  * - Nothing personal, even if the bank holds it. `worthRemembering` keeps
  *   these out on the way in, but the bank is older than that gate and the
  *   Workspace lets answers be typed in by hand. A date of birth sitting in
- *   the bank must not be typed into a form by a machine.
+ *   the bank must not be typed into a form by a machine. Nor anything whose
+ *   answer belongs to one employer — see `DEPENDS_ON_EMPLOYER` — for the
+ *   same reason: the bank already holds "Yes, I have worked here" from
+ *   before that gate, and it was Acme's.
  * - Only an option that plainly matches. No yes/no coercion, no nearest
  *   option: the question match is already one inference, and stacking a
  *   second one on it is how a form comes to say "No" where its owner meant
@@ -2426,7 +2431,7 @@ function answerFromMemory(remembered) {
 
   for (const choice of rememberableChoices()) {
     if (choice.answered()) continue;
-    if (neverRemember(choice.question)) continue;
+    if (neverRemember(choice.question) || dependsOnEmployer(choice.question)) continue;
     const answer = bank.get(choice.question);
     if (!answer) continue;
 

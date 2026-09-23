@@ -2,9 +2,10 @@
  * What may be remembered from one application and offered on the next.
  *
  * Applying is the same twenty questions over and over — work authorisation,
- * sponsorship, how you heard about us, whether you have worked here before,
- * which state you live in — and answering them again every time is most of
- * what makes a form tedious. So the answers are kept.
+ * sponsorship, how you heard about us, which state you live in — and
+ * answering them again every time is most of what makes a form tedious. So
+ * the answers are kept. Not "whether you have worked here before", which
+ * this list once named: see `DEPENDS_ON_EMPLOYER`.
  *
  * Only the ones that were *chosen*, never the ones that were typed. That is a
  * scope decision and it does most of the safety work on its own: a chosen
@@ -142,6 +143,42 @@ const SENSITIVE_SHAPE = [
   /^\w{3,9}\s+\d{1,2},?\s+\d{4}$/,
 ];
 
+/**
+ * Questions asked in the same words by every employer, whose answer is about
+ * that employer.
+ *
+ * "Have you previously been employed by this company?" reads identically on
+ * Acme's form and on Helios's, so the store matches it word for word and calls
+ * the match confident — and the answer given to Acme is not the answer to
+ * Helios. Measured end to end: "Yes" chosen on Acme's form went into the bank,
+ * and Autofill on Helios's form put it into the same question there, telling
+ * Helios the applicant had worked for them. The bank is keyed on the question
+ * and nothing else, so there is nothing on the way out that could tell the two
+ * apart; they are refused on the way in and on the way out instead.
+ *
+ * Past tense on purpose. "Are you legally authorized to work for any employer"
+ * is the most repeated question there is and says "work for"; what is refused
+ * is having *worked* for, been *employed* by, *applied* to, being a current or
+ * former employee of, having family at, or being referred by someone at —
+ * the employer, however it is named. "Have you worked with Kubernetes" is
+ * about the person and is kept.
+ */
+const DEPENDS_ON_EMPLOYER = [
+  /\b(worked|interned)\s+(for|at|here)\b/i,
+  /\bemployed\s+(by|with|at|here)\b/i,
+  /\b(current|former|previous|past|ex)[\s-]+(or\s+(current|former|previous|past)\s+)?(employee|intern|contractor)s?\b/i,
+  /\b(relatives?|family\s+members?|related\s+to\s+(any|some)(one|body)|know\s+(any|some)(one|body))\b/i,
+  /\b(ever|previously|already|before)\s+(applied|interviewed)\b/i,
+  /\b(applied|interviewed)\b.*\b(before|previously|in\s+the\s+past)\b/i,
+  /\b(were\s+you\s+referred|referred\s+by)\b/i,
+];
+
+/** Whether this question's answer depends on who is asking it. */
+export function dependsOnEmployer(question) {
+  const text = String(question ?? '');
+  return DEPENDS_ON_EMPLOYER.some((re) => re.test(text));
+}
+
 /** Whether this question is one whose answer is never kept. */
 export function neverRemember(question) {
   const text = String(question ?? '');
@@ -180,6 +217,7 @@ export function worthRemembering({ question, answer } = {}) {
    */
   if (neverRemember(asked)) return { keep: false, why: 'this one is personal, so it is not kept' };
   if (looksPrivate(said)) return { keep: false, why: 'the answer looks personal, so it is not kept' };
+  if (dependsOnEmployer(asked)) return { keep: false, why: 'the answer depends on the employer, so it is not kept' };
 
   /*
    * A question nobody could match again is not worth a row in the bank. The

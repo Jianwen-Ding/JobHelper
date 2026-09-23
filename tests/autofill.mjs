@@ -549,18 +549,25 @@ const PHRASE_ANSWERS = `<!doctype html><html><head><meta charset="utf-8"><title>
  * The questions the profile cannot answer, which are the ones applying
  * actually repeats.
  *
- * Nothing in a ResumeM-M profile says whether somebody has worked here
- * before, how they heard about the job, or whether they will relocate. They
+ * Nothing in a ResumeM-M profile says how somebody prefers to work, how they
+ * heard about the job, or whether they will relocate. They
  * are asked on every application, in all three control shapes, and they are
  * what the answer bank exists to stop being typed twice.
  *
- * Two of these must stay untouched however the rest goes. `dob-month` is
+ * Three of these must stay untouched however the rest goes. `dob-month` is
  * personal and is refused even with a matching row in the bank; `team` is
  * ordinary and simply has no row, and a tool that guessed at it would be
- * putting somebody on a team they did not pick.
+ * putting somebody on a team they did not pick; and `prev` is asked in the
+ * same words by every employer while its answer belongs to one of them.
  */
 const REMEMBERED = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
 <form id="f">
+  <label for="arr">Which working arrangement do you prefer?</label>
+  <select id="arr" name="arrangement_q2">
+    <option value="">Select...</option><option>Remote</option><option>Hybrid</option><option>On-site</option>
+  </select>
+
+  <!-- The same words on every form, and the answer given to somebody else. -->
   <label for="prev">Have you previously been employed by this company?</label>
   <select id="prev" name="prev_emp_q3">
     <option value="">Select...</option><option>Yes</option><option>No</option>
@@ -3124,7 +3131,13 @@ async function main() {
      * too rather than trust what it was given.
      */
     const BANK = [
-      { question: 'Have you previously been employed by this company?', answer: 'No' },
+      { question: 'Which working arrangement do you prefer?', answer: 'Hybrid' },
+      /*
+       * Chosen on Acme's form, where it was true. The question matches this
+       * form's word for word — which is why the store calls it confident —
+       * and the answer is about Acme.
+       */
+      { question: 'Have you previously been employed by this company?', answer: 'Yes' },
       { question: 'Are you willing to relocate for this role?', answer: 'Yes' },
       { question: 'How did you hear about this position?', answer: 'LinkedIn' },
       { question: 'Month of birth', answer: 'April' },
@@ -3140,6 +3153,7 @@ async function main() {
           const val = (id) => document.getElementById(id).value;
           return {
             asked,
+            arr: val('arr'),
             prev: val('prev'),
             dobMonth: val('dob-month'),
             team: val('team'),
@@ -3164,7 +3178,7 @@ async function main() {
      * just comes out less filled than it should, which looks the same as a
      * tool that was never confident.
      */
-    check('a dropdown is answered from what was said last time', memory.prev === 'No', `"${memory.prev}"`);
+    check('a dropdown is answered from what was said last time', memory.arr === 'Hybrid', `"${memory.arr}"`);
     check('so is a radio group', memory.reloc === 'y', `"${memory.reloc}"`);
     check(
       'and a group built out of buttons',
@@ -3186,6 +3200,21 @@ async function main() {
       !memory.asked.some((q) => /birth/i.test(q)),
       memory.asked.filter((q) => /birth/i.test(q)).join(' | ') || `asked about ${memory.asked.length}`,
     );
+    /*
+     * Measured end to end before this was refused: "Yes" chosen on Acme's
+     * form was banked, and Autofill on Helios's form put it into the same
+     * question there — telling Helios the applicant used to work for them.
+     */
+    check(
+      'whether you have worked here before is not answered from another employer’s form',
+      memory.prev === '',
+      `"${memory.prev}"`,
+    );
+    check(
+      'and it is never even asked about',
+      !memory.asked.some((q) => /employed/i.test(q)),
+      memory.asked.filter((q) => /employed/i.test(q)).join(' | ') || `asked about ${memory.asked.length}`,
+    );
     check(
       'a question the bank has nothing for is left for the person',
       memory.team === '',
@@ -3203,7 +3232,7 @@ async function main() {
      */
     check(
       'only the questions worth asking the bank are sent',
-      memory.asked.length === 4 && memory.asked.every((q) => !/birth/i.test(q)),
+      memory.asked.length === 4 && memory.asked.every((q) => !/birth|employed/i.test(q)),
       memory.asked.join(' | '),
     );
     check(
@@ -3221,6 +3250,7 @@ async function main() {
           const m = await import(`${b}/autofill.js`);
           const report = m.fillForm(profile);
           return {
+            arr: document.getElementById('arr').value,
             prev: document.getElementById('prev').value,
             reloc: document.querySelector('input[name="reloc"]:checked')?.value ?? '',
             filled: report.filled.length,
@@ -3231,8 +3261,8 @@ async function main() {
     );
     check(
       'with no bank the form is exactly as it was',
-      noBank.prev === '' && noBank.reloc === '' && noBank.filled === 0,
-      `prev "${noBank.prev}", reloc "${noBank.reloc}", ${noBank.filled} filled`,
+      noBank.arr === '' && noBank.prev === '' && noBank.reloc === '' && noBank.filled === 0,
+      `arr "${noBank.arr}", prev "${noBank.prev}", reloc "${noBank.reloc}", ${noBank.filled} filled`,
     );
 
     /*
