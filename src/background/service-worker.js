@@ -965,7 +965,7 @@ async function askFrames(tabId, message) {
  * the write are two awaits — so it stays, in memory, for the in-flight case
  * only.
  */
-const holding = new Set();
+const holding = new Map();
 /**
  * Something the person made, as against something the card worked out.
  *
@@ -1031,8 +1031,16 @@ async function holdASpace(trail, tabId) {
   if (!company || !role) return;
 
   const key = heldKey(save, company, role, work.actedOnForm);
-  if (holding.has(key)) return;
-  holding.add(key);
+  // The write already in flight, handed to whoever else asks — a send waiting
+  // on its save has to wait on this, not on a call that returned at once.
+  if (holding.has(key)) return holding.get(key);
+  const run = holdTheSpace(key, save, company, role, trail, work);
+  holding.set(key, run);
+  return run;
+}
+
+/** The write `holdASpace` guards: one per key at a time. */
+async function holdTheSpace(key, save, company, role, trail, work) {
   try {
     if ((await session().get(key).catch(() => ({})))[key]) return;
     await session().set({ [key]: { at: Date.now() } }).catch(() => undefined);
@@ -1301,6 +1309,57 @@ async function remember(tab, page) {
   return { ...summarise(stored), startedFresh: !joins };
 }
 
+
+/**
+ * Saves still being written, by tab, until the draft each may open has been
+ * asked for. A send waits on its tab's; see `applicationSent`.
+ */
+const savesInFlight = new Map();
+
+/** How long a send waits for that save before being recorded regardless. */
+const SEND_WAITS_FOR_SAVE_MS = 3000;
+
+/**
+ * What `saveWork` does, returning the draft-opening write it started so the
+ * handler can say when it has settled.
+ */
+async function keepWork({ work, page }, tab) {
+  const trail = await readTrail(tab?.id);
+  // Only the application this tab is actually on. Without this a card left
+  // open on another posting would keep writing its work over this one's.
+  if (page && trail.pages.length > 0 && !sameApplication(trail, page)) return { reply: { ok: false } };
+  // And nothing at all into a tab that was told to start fresh, until it
+  // has read a page of its own. See `clearTrail`: the card's keeper is
+  // still running when that button is pressed.
+  if (trail.cleared && trail.pages.length === 0) return { reply: { ok: false } };
+  // And never nothing over something: a card that failed to analyse its page
+  // has an empty state, and saving it threw away the resume built on the
+  // page before.
+  if (!worthKeeping(work) && worthKeeping(trail.work)) return { reply: { ok: false } };
+
+  // Stamped, because `at` is what says the trail is still current — work
+  // written without it reads back as a trail from another sitting.
+  const next = { ...trail, work, at: Date.now() };
+  const written = await writeTrail(tab?.id, next);
+  /*
+   * The toolbar says "your writing is being held" the moment it is — and
+   * only then.
+   *
+   * `writeTrail` returns null when session storage refuses the write, which
+   * this file budgets for, and the badge was drawn from the in-memory
+   * `next` regardless. Measured with the quota filled: `saveWork` answered
+   * `{ok: false}`, the letter was in no storage anywhere, and the tooltip
+   * read "1 page read, your writing is being held". The only caller
+   * discards the reply, so that tooltip was the whole of what the user had
+   * to go on — and the note on `markTab` says the purpose of this line is
+   * to be believed when it says nothing was lost.
+   */
+  await markTab(tab?.id, written === null ? trail : next);
+  // Handed back rather than awaited here: the keeper does not wait on it,
+  // and a send does, through `savesInFlight`.
+  return { reply: { ok: written !== null }, holding: holdASpace(next, tab?.id) };
+}
+
 const handlers = {
   /** "There is a content script in this frame." Sent once, on load. */
   async frameReady(_payload, tab, sender) {
@@ -1423,40 +1482,30 @@ const handlers = {
    * moment the form appeared to put them in, which made the tool feel like it
    * had forgotten what you were doing — because it had.
    */
-  async saveWork({ work, page }, tab) {
-    const trail = await readTrail(tab?.id);
-    // Only the application this tab is actually on. Without this a card left
-    // open on another posting would keep writing its work over this one's.
-    if (page && trail.pages.length > 0 && !sameApplication(trail, page)) return { ok: false };
-    // And nothing at all into a tab that was told to start fresh, until it
-    // has read a page of its own. See `clearTrail`: the card's keeper is
-    // still running when that button is pressed.
-    if (trail.cleared && trail.pages.length === 0) return { ok: false };
-    // And never nothing over something: a card that failed to analyse its page
-    // has an empty state, and saving it threw away the resume built on the
-    // page before.
-    if (!worthKeeping(work) && worthKeeping(trail.work)) return { ok: false };
-
-    // Stamped, because `at` is what says the trail is still current — work
-    // written without it reads back as a trail from another sitting.
-    const next = { ...trail, work, at: Date.now() };
-    const written = await writeTrail(tab?.id, next);
+  async saveWork(payload, tab) {
     /*
-     * The toolbar says "your writing is being held" the moment it is — and
-     * only then.
-     *
-     * `writeTrail` returns null when session storage refuses the write, which
-     * this file budgets for, and the badge was drawn from the in-memory
-     * `next` regardless. Measured with the quota filled: `saveWork` answered
-     * `{ok: false}`, the letter was in no storage anywhere, and the tooltip
-     * read "1 page read, your writing is being held". The only caller
-     * discards the reply, so that tooltip was the whole of what the user had
-     * to go on — and the note on `markTab` says the purpose of this line is
-     * to be believed when it says nothing was lost.
+     * Registered before the first await, so a send that follows on the heels
+     * of this save — the content script flushes the work and reports the send
+     * in the same breath — finds it here and waits for it. See
+     * `applicationSent`.
      */
-    await markTab(tab?.id, written === null ? trail : next);
-    void holdASpace(next, tab?.id);
-    return { ok: written !== null };
+    const tabId = tab?.id;
+    let release;
+    const settled = new Promise((r) => (release = r));
+    savesInFlight.set(tabId, settled);
+    const free = () => {
+      release();
+      if (savesInFlight.get(tabId) === settled) savesInFlight.delete(tabId);
+    };
+    try {
+      const { reply, holding } = await keepWork(payload, tab);
+      if (holding) holding.catch(() => undefined).finally(free);
+      else free();
+      return reply;
+    } catch (err) {
+      free();
+      throw err;
+    }
   },
 
   /** The work from the pages before this one, if this page continues them. */
@@ -2591,6 +2640,20 @@ const handlers = {
    * the only side that knows how an application is named.
    */
   async applicationSent({ company, role, url, note }, tab) {
+    /*
+     * After the save the content script flushed on its way here, and the
+     * draft that save opens.
+     *
+     * The two leave the page together, and they raced: the send could be
+     * filed before the draft existed, and the draft then opened a moment
+     * later. Measured in tests/sending.mjs, the draft landed anywhere from
+     * before the send to 1.5 seconds after it under the parallel runner —
+     * which is why the check there failed now and then. Waiting here makes
+     * the order the one it was always meant to be. Bounded, because a store
+     * slow to open a draft is still no reason to hold up recording the send.
+     */
+    const saving = savesInFlight.get(tab?.id);
+    if (saving) await Promise.race([saving, new Promise((r) => setTimeout(r, SEND_WAITS_FOR_SAVE_MS))]);
     try {
       return await serverFetch('/api/extension/sent', {
         method: 'POST',

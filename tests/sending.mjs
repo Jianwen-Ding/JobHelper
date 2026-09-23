@@ -279,9 +279,15 @@ async function main() {
          * a whole tick after the application was filed as sent, and under
          * load sometimes never. See `draftGapMs` in `walk`.
          */
+        /*
+         * And before it, now, not merely soon after: the worker holds the send
+         * until the save flushed with it has opened the draft. Under a second
+         * was the old bar, when the two raced; the race put the draft anywhere
+         * up to 1.5 seconds late under the parallel runner.
+         */
         check(
           'and the draft was opened with the send, not a keeper tick after it',
-          draftGapMs !== null && draftGapMs < 1000,
+          draftGapMs !== null && draftGapMs <= 0,
           draftGapMs === null ? '(no draft, or no send recorded)' : `${draftGapMs}ms after the send`,
         );
         check('nothing was thrown at the page', errors.length === 0, errors.join(' | '));
