@@ -251,8 +251,10 @@ const NOT_ABOUT_YOU = [
    * of study — "Computer Science" as their greatest achievement. Only in
    * front of the nouns a question puts it before; "Major", "Intended major"
    * and "Major / field of study" are the subject and are still filled.
+   * "Nearest major city" and "Closest major metropolitan area" were given it
+   * too, as a place.
    */
-  /\bmajor[\s_-]+(accomplish\w*|achievements?|projects?|challenges?|contributions?|responsibilit\w*|obstacles?|setbacks?|failures?|mistakes?|decisions?|milestones?|initiatives?)\b/i,
+  /\bmajor[\s_-]+(accomplish\w*|achievements?|projects?|challenges?|contributions?|responsibilit\w*|obstacles?|setbacks?|failures?|mistakes?|decisions?|milestones?|initiatives?|cit(?:y|ies)|metro\w*|airports?)\b/i,
   /*
    * "Degree" the measure. "Degree of proficiency in Spanish" and "To what
    * degree are you familiar with SQL?" matched `degree` and were given

@@ -1154,6 +1154,8 @@ const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Ap
   <label for="majacc">Major accomplishment</label><input id="majacc" name="q_m1">
   <label for="majproj">Major project</label><input id="majproj" name="q_m2">
   <label for="majach">Your major achievements</label><input id="majach" name="q_m3">
+  <label for="majcity">Nearest major city</label><input id="majcity" name="q_m6">
+  <label for="majmetro">Closest major metropolitan area</label><input id="majmetro" name="q_m7">
   <label for="own-major">Major</label><input id="own-major" name="q_m4">
   <label for="int-major">Intended major</label><input id="int-major" name="q_m5">
 
@@ -1803,6 +1805,8 @@ async function main() {
     check('"Major accomplishment" is not given the major', more.majacc === '', more.majacc);
     check('nor "Major project"', more.majproj === '', more.majproj);
     check('nor "Your major achievements"', more.majach === '', more.majach);
+    check('"Nearest major city" is not given the major', more.majcity === '', more.majcity);
+    check('nor "Closest major metropolitan area"', more.majmetro === '', more.majmetro);
     check(
       'while "Major" and "Intended major" still get it',
       more['own-major'] === 'Computer Science' && more['int-major'] === 'Computer Science',
