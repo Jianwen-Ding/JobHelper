@@ -1097,7 +1097,15 @@ const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Ap
   <label for="unicity">What city is your university located in?</label><input id="unicity" name="q_s4">
   <label for="coweb">Company website</label><input id="coweb" name="q_s5">
 
+  <!-- A name the applicant used to have. -->
+  <label for="prevln">Previous last name(s)</label><input id="prevln" name="q_n1">
+  <label for="maiden">Maiden last name</label><input id="maiden" name="q_n2">
+  <label for="formern">Former legal name</label><input id="formern" name="q_n3">
+  <label for="prevused">Last name (previously used, if any)</label><input id="prevused" name="q_n4">
+
   <!-- The applicant's own, still filled. -->
+  <label for="own-ln">Last name</label><input id="own-ln" name="q_ln">
+  <label for="own-legal">Legal name</label><input id="own-legal" name="q_legal">
   <label for="sch">School</label><input id="sch" name="q_sch">
   <label for="pf">Portfolio</label><input id="pf" name="q_pf">
   <label for="gradyear">Year of graduation</label><input id="gradyear" name="q_gy">
@@ -1592,6 +1600,17 @@ async function main() {
     check('nor "What city is your university located in?"', more.unicity === '', more.unicity);
     check('"Company website" is not given the applicant\'s own site', more.coweb === '', more.coweb);
     check('while "School" still gets the school', more.sch === 'Northeastern University', more.sch);
+
+    group('A name the applicant used to have');
+    check('"Previous last name(s)" is not given the current surname', more.prevln === '', more.prevln);
+    check('nor "Maiden last name"', more.maiden === '', more.maiden);
+    check('"Former legal name" is not given the current name', more.formern === '', more.formern);
+    check('nor "Last name (previously used, if any)"', more.prevused === '', more.prevused);
+    check(
+      'while "Last name" and "Legal name" still are',
+      more['own-ln'] === 'Ding' && more['own-legal'] === 'Jianwen Ding',
+      `${more['own-ln']} / ${more['own-legal']}`,
+    );
 
     group('A declaration answered from a sentence');
     check(

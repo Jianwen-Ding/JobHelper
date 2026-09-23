@@ -200,6 +200,15 @@ const NOT_ABOUT_YOU = [
    * only — "Year of graduation" is a date and is asked for.
    */
   /\bhow[\s_-]+many\b|\byears[\s_-]+of\b/i,
+  /*
+   * A name the applicant used to have, which is exactly the one the profile
+   * does not hold. Background-check sections ask for it field by field:
+   * "Previous last name(s)", "Maiden last name" and "Prior surname" were each
+   * given the applicant's current surname, and "Former legal name" the whole
+   * current name — an answer that says nobody's name ever changed, on the
+   * part of the form used to run the check.
+   */
+  /\b(previous\w*|former\w*|prior|maiden|alias\w*|other|different)\b[\s\S]{0,20}\b(name|surname)s?\b|\b(name|surname)s?\b[\s\S]{0,24}\b(previous\w*|former\w*)\b/i,
   // How to say a name, which is not the name: "Pronunciation of your name".
   /\b(pronunc\w*|phonetic\w*)\b/i,
   /*
