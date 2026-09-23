@@ -1102,6 +1102,47 @@ function educationDateKey(input, description) {
   return which === 'start' ? `education_start_${part}` : `graduation_${part}`;
 }
 
+/*
+ * A school, a degree, a major, a grade or a date asked about one level of
+ * study, when the profile's education is at another.
+ *
+ * The profile holds one education, the newest, and the forms that ask for
+ * more than one say which they mean: "Undergraduate School", "Undergraduate
+ * GPA", "Bachelor's Major", "Graduate School", "PhD Institution". Measured
+ * against a profile holding a Master of Science: every one of those was given
+ * the master's — its university as the undergraduate school, its grade as the
+ * undergraduate GPA, "Master of Science" as the undergraduate degree — and
+ * against a bachelor's, "Graduate GPA" was given the bachelor's grade. A
+ * statement about a degree the applicant may not hold, on the part of the form
+ * an employer checks against a transcript.
+ *
+ * So a field that names a level is filled only when the profile's degree is at
+ * that level; with no level to compare, it is left blank, and a field that
+ * names none is unaffected. Read from the label and its group, with asides in
+ * parentheses taken out — "Degree (e.g. Bachelor's)" names an example, not a
+ * level — and never from a placeholder, which is where the examples go.
+ * "Graduate" only as an adjective in front of what it qualifies, so
+ * "Graduation date" and "Expected graduate year" are not a level.
+ */
+const EDUCATION_KEYS = /^(school|degree|major|gpa|graduation_\w+|education_start_\w+)$/;
+const ASKS_A_LEVEL = [
+  ['associate', /\bassociate'?s?[\s_-]+degree\b/i],
+  ['bachelor', /\bundergrad\w*|\bbachelor'?s?\b/i],
+  ['master', /\bmaster'?s?\b|\bmasters\b/i],
+  ['doctorate', /\bph\.?\s?d\b|\bdoctora(?:te|l)\b/i],
+  ['graduate', /\b(?:post[\s_-]?)?graduate[\s_-]+(?:school|gpa|degree|program\w*|studies|study|institution|university|college|major|education)\b/i],
+];
+
+function anotherLevelOfStudy(input, key, fields) {
+  if (!EDUCATION_KEYS.test(key)) return false;
+  const said = `${surroundingWords(input)} ${labelFor(input)}`.replace(/\([^)]*\)/g, ' ').replace(/[’]/g, "'");
+  const asked = ASKS_A_LEVEL.filter(([, re]) => re.test(said)).map(([level]) => level);
+  if (asked.length === 0) return false;
+  const held = degreeLevel(fields.degree ?? '');
+  if (!held) return true;
+  return !asked.some((level) => level === held || (level === 'graduate' && (held === 'master' || held === 'doctorate')));
+}
+
 /** Two option labels are the same answer if they read the same. */
 const sameOption = (a, b) => clean(a).toLowerCase() === clean(b).toLowerCase();
 
@@ -1495,6 +1536,7 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
 
     const key = wholeDateKey(input, match[0], description);
     if (!fields[key]) continue;
+    if (anotherLevelOfStudy(input, key, fields)) continue;
     let value = fields[key];
 
     const answered = input instanceof HTMLSelectElement ? selectIsAnswered(input) : Boolean(input.value);
@@ -2337,6 +2379,7 @@ function widgetChoices(fields, filled) {
     const dated = educationDateKey(widget, description);
     const key = dated || FIELD_PATTERNS.find(([, re]) => re.test(description))?.[0];
     if (!key || !fields[key] || already.has(key)) continue;
+    if (anotherLevelOfStudy(widget, key, fields)) continue;
     found.push({ key, description: description.slice(0, 60), el: widget });
     already.add(key);
   }

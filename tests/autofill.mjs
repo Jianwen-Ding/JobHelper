@@ -1181,6 +1181,20 @@ const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Ap
     <label for="ci-loc">Location</label><input id="ci-loc" name="q_h10">
   </fieldset>
 
+  <!-- One level of study named, against a profile whose degree is a bachelor's. -->
+  <label for="lv-gsch">Graduate School</label><input id="lv-gsch" name="q_v1">
+  <label for="lv-ggpa">Graduate GPA</label><input id="lv-ggpa" name="q_v2">
+  <label for="lv-msch">Master's degree institution</label><input id="lv-msch" name="q_v3">
+  <label for="lv-phd">PhD Institution</label><input id="lv-phd" name="q_v4">
+  <fieldset>
+    <legend>Graduate Education</legend>
+    <label for="lv-gmaj">Major</label><input id="lv-gmaj" name="q_v5">
+  </fieldset>
+  <label for="lv-usch">Undergraduate School</label><input id="lv-usch" name="q_v6">
+  <label for="lv-ugpa">Undergraduate GPA</label><input id="lv-ugpa" name="q_v7">
+  <label for="lv-bmaj">Bachelor's Major</label><input id="lv-bmaj" name="q_v8">
+  <label for="lv-deg">Degree (e.g. Master's, PhD)</label><input id="lv-deg" name="q_v9" placeholder="Master of Science">
+
   <!-- The applicant's own, still filled. -->
   <label for="own-ln">Last name</label><input id="own-ln" name="q_ln">
   <label for="own-legal">Legal name</label><input id="own-legal" name="q_legal">
@@ -1207,6 +1221,10 @@ const WIDGET_KEYS = `<!doctype html><html><head><meta charset="utf-8"><title>App
   <button type="button" id="k-cr" aria-haspopup="listbox" aria-labelledby="l-cr">Select One</button>
   <label id="l-st">State</label>
   <button type="button" id="k-st" aria-haspopup="listbox" aria-labelledby="l-st">Select One</button>
+  <label id="l-gs">Graduate School</label>
+  <button type="button" id="k-gs" aria-haspopup="listbox" aria-labelledby="l-gs">Select One</button>
+  <label id="l-us">Undergraduate School</label>
+  <button type="button" id="k-us" aria-haspopup="listbox" aria-labelledby="l-us">Select One</button>
 </form></body></html>`;
 
 const PAGES = { '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
@@ -1662,7 +1680,15 @@ async function main() {
         const m = await import(`${b}/autofill.js`);
         m.fillForm(profile);
         return Object.fromEntries([...document.querySelectorAll('input, select, textarea')].map((el) => [el.id, el.value]));
-      }, { b: base, profile: { ...PROFILE, address_state: 'MA', location: 'Boston, MA', school: 'Northeastern University', website: 'jianwen.dev', graduation_year: '2027', major: 'Computer Science', degree: 'Bachelor of Science' } }),
+      }, { b: base, profile: { ...PROFILE, address_state: 'MA', location: 'Boston, MA', school: 'Northeastern University', website: 'jianwen.dev', graduation_year: '2027', major: 'Computer Science', degree: 'Bachelor of Science', gpa: '3.9' } }),
+    );
+    // The same form, against a profile that names no degree at all.
+    const noLevel = await page.goto(`${base}/more-misread`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm(profile);
+        return Object.fromEntries([...document.querySelectorAll('input, select, textarea')].map((el) => [el.id, el.value]));
+      }, { b: base, profile: { ...PROFILE, school: 'Northeastern University', gpa: '3.9' } }),
     );
 
     group('Somebody else\'s details, under names the list did not have');
@@ -1771,6 +1797,29 @@ async function main() {
       'and "City" and "Location" under "Contact Information" still get the applicant\'s',
       more['ci-city'] === 'Boston' && more['ci-loc'] === 'Boston, MA',
       `${more['ci-city']} / ${more['ci-loc']}`,
+    );
+
+    /*
+     * The profile holds one education, the newest, and a form that asks for
+     * more than one says which level it means. Against a bachelor's, every
+     * graduate field was given the bachelor's school, grade and subject.
+     */
+    group('A level of study the profile\'s degree is not at');
+    check('"Graduate School" is not given the bachelor\'s university', more['lv-gsch'] === '', more['lv-gsch']);
+    check('nor "Graduate GPA" its grade', more['lv-ggpa'] === '', more['lv-ggpa']);
+    check('nor "Master\'s degree institution"', more['lv-msch'] === '', more['lv-msch']);
+    check('nor "PhD Institution"', more['lv-phd'] === '', more['lv-phd']);
+    check('nor "Major" under "Graduate Education"', more['lv-gmaj'] === '', more['lv-gmaj']);
+    check(
+      'while "Undergraduate School", "Undergraduate GPA" and "Bachelor\'s Major" still get the bachelor\'s',
+      more['lv-usch'] === 'Northeastern University' && more['lv-ugpa'] === '3.9' && more['lv-bmaj'] === 'Computer Science',
+      `${more['lv-usch']} / ${more['lv-ugpa']} / ${more['lv-bmaj']}`,
+    );
+    check('and an example in parentheses is not a level', more['lv-deg'] === 'Bachelor of Science', more['lv-deg']);
+    check(
+      'with no degree to compare, "Undergraduate School" is left blank and "School" is not',
+      noLevel['lv-usch'] === '' && noLevel.sch === 'Northeastern University',
+      `${noLevel['lv-usch']} / ${noLevel.sch}`,
     );
 
     group('A declaration answered from a sentence');
@@ -2080,6 +2129,7 @@ async function main() {
         return {
           stateOnly: named({ address_state: 'MA' }),
           both: named({ address_state: 'MA', address_country: 'United States' }),
+          levels: named({ school: 'Northeastern University', degree: 'Bachelor of Science' }),
         };
       }, { b: base }),
     );
@@ -2387,6 +2437,11 @@ async function main() {
       'and with both, each widget is named as its own question',
       JSON.stringify(widgetKeys.both) === JSON.stringify(['address_country: Country/Region', 'address_state: State']),
       JSON.stringify(widgetKeys.both),
+    );
+    check(
+      'a bachelor\'s school is named for the "Undergraduate School" widget, not the "Graduate School" one',
+      JSON.stringify(widgetKeys.levels) === JSON.stringify(['school: Undergraduate']),
+      JSON.stringify(widgetKeys.levels),
     );
 
     group('The job somebody holds now');
