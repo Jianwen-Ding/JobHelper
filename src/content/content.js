@@ -2199,7 +2199,9 @@
 
       // The page is sent with it: a card left open on another posting must not
       // be able to write its work over this application's.
-      send('saveWork', { work, page: pageIdentity() }).catch(() => undefined);
+      // Handed back, so a caller that must know the save has landed can wait
+      // for it. See `jh-flush-work`.
+      return send('saveWork', { work, page: pageIdentity() }).catch(() => undefined);
     };
     saveWorkNow = save;
     every(2000, save);
@@ -2410,8 +2412,13 @@
          */
         case 'jh-flush-work':
           if (window !== window.top) return false;
-          saveWorkNow?.();
-          answer(Promise.resolve(true));
+          /*
+           * Answered once the worker has taken the save, not the moment it is
+           * sent: the two travel separately, and an answer that overtook its
+           * own save left the worker nothing to wait for — the draft still
+           * opened after the send on "embedded-apply", 228ms late.
+           */
+          answer(Promise.resolve(saveWorkNow?.()).then(() => true));
           return true;
 
         default:
