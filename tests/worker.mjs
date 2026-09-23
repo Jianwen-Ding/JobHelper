@@ -576,6 +576,63 @@ async function main() {
      * a few milliseconds wide and one guess at it proves nothing. The other
      * letter has to survive every one of them.
      */
+    group('Claiming a park does not erase one that arrives meanwhile');
+    {
+      const WHERE = 'http://board.example/claimed';
+      const other = await context.newPage();
+      await other.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+      const lost = [];
+      const twice = [];
+      let claims = 0;
+      try {
+        // Negative: the other tab's park starts first, and its path is the
+        // longer of the two — a full sweep before the chain.
+        for (let delay = -16; delay <= 8; delay++) {
+          store.save = 'work';
+          store.role = 'Platform Engineer';
+          await ask(driver, 'clearTrail', {});
+          await ask(other, 'clearTrail', {});
+          await driver.evaluate((key) => chrome.storage.session.remove(key), `jh-orphan:${WHERE}`);
+          // This tab's own letter, parked, waiting to be claimed.
+          await ask(driver, 'analyze', { url: WHERE, title: 'Board', html: '<p>one</p>', company: 'Helios' });
+          await ask(driver, 'saveWork', { work: { letter: 'MINE' } });
+          await ask(driver, 'clearTrail', {});
+          await ask(driver, 'analyze', { url: WHERE, title: 'Board', html: '<p>one</p>', company: 'Helios' });
+
+          // Another tab, on another job at the same address, with a letter of
+          // its own that it is about to park there. The company is set on the
+          // store because that is what the analysis reads, whatever was sent.
+          store.company = 'Altair';
+          await ask(other, 'analyze', { url: WHERE, title: 'Board', html: '<p>two</p>', company: 'Altair' });
+          store.company = undefined;
+          await ask(other, 'saveWork', { work: { letter: `THEIRS-${delay}` } });
+
+          const later = (ms, fn) => new Promise((r) => setTimeout(r, Math.max(0, ms))).then(fn);
+          const [claimed] = await Promise.all([
+            later(-delay, () => ask(driver, 'takeWork', { page: { url: WHERE, title: 'Board' } })),
+            later(delay, () => ask(other, 'clearTrail', {})),
+          ]);
+          const left = await driver.evaluate(async (key) => {
+            const held = (await chrome.storage.session.get(key))[key];
+            return (held?.parked ?? []).map((p) => p.work?.letter);
+          }, `jh-orphan:${WHERE}`);
+          if (claimed.reply?.data?.work?.letter === 'MINE') claims++;
+          if (!left.includes(`THEIRS-${delay}`)) lost.push({ delay, left });
+          if (left.includes('MINE')) twice.push({ delay, left });
+        }
+      } finally {
+        await other.close();
+      }
+      check('every claim really was made', claims === 25, `${claims} of 25`);
+      check('the other tab’s letter survives the claim, at every delay', lost.length === 0, JSON.stringify(lost));
+      /*
+       * And the other half of the same stale write: a claim that lands after
+       * the park has re-read the list is written back over, and the letter
+       * just claimed is parked again, for another tab to claim a second time.
+       */
+      check('and the letter claimed is not left there to be claimed again', twice.length === 0, JSON.stringify(twice));
+    }
+
     /*
      * "Same job — put it back" has to put it back where it can be seen.
      *

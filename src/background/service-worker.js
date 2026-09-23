@@ -401,13 +401,33 @@ const sameJob = (job, other) =>
  * Put an application's writing aside under an address, without displacing
  * another job's writing parked at the same one.
  */
-/** Take one entry out of an address's parked work, leaving the rest. */
-async function dropPark(key, held, gone) {
-  const left = held.filter((p) => p !== gone);
-  await (left.length > 0
-    ? session().set({ [key]: { parked: left, at: Date.now() } })
-    : session().remove(key)
-  ).catch(() => undefined);
+/**
+ * Take what `isGone` names out of an address's parked work, leaving the rest.
+ *
+ * Through the same chain as `parkWork`, and over the list as it is when the
+ * turn comes rather than as it was when somebody last looked. `dropPark` was
+ * handed the list `takeWork` had read several turns earlier, across a real
+ * `await writeTrail`, and wrote it back minus the entry claimed. Measured in
+ * tests/worker.mjs, with another tab parking at the same address a couple of
+ * milliseconds either side of a claim: its letter was written and then
+ * erased, and at the neighbouring delays the claim was written over instead,
+ * leaving the letter just claimed parked for another tab to claim again.
+ */
+function unpark(key, isGone) {
+  return changeStored(key, async (stored) => {
+    const held = parkedAt(stored);
+    const left = held.filter((p) => !isGone(p));
+    if (left.length === held.length) return null;
+    if (left.length > 0) return { parked: left, at: Date.now() };
+    await session().remove(key).catch(() => undefined);
+    return null;
+  });
+}
+
+/** One entry, as it was read; see `unpark`. */
+function dropPark(key, gone) {
+  const same = JSON.stringify(gone);
+  return unpark(key, (p) => JSON.stringify(p) === same);
 }
 
 async function parkWork(url, entry) {
@@ -1480,7 +1500,7 @@ const handlers = {
             at: Date.now(),
           });
         }
-        await dropPark(key, held, rescued);
+        await dropPark(key, rescued);
         /*
          * And which of the two rescues this was, because they want different
          * sentences. A tab that closed and came back is a surprise worth
@@ -1518,7 +1538,7 @@ const handlers = {
       // Claimed or expired, this one goes either way. Leaving the stale ones
       // behind is how the space fills up; see `sweepOrphans`. The others stay
       // for the job they belong to.
-      await dropPark(key, held, rescued);
+      await dropPark(key, rescued);
     }
     return { work: trail.work ?? null };
   },
@@ -1703,15 +1723,7 @@ const handlers = {
     const leftJob = nameOfTrail(held.trail);
     const ours = (p) => p.tab === id && (leftJob ? sameJob(p.job, leftJob) : !p.job);
     for (const url of new Set((held.trail.pages ?? []).map((p) => p?.url).filter(Boolean))) {
-      const at = orphanKey(url);
-      await changeStored(at, async (stored) => {
-        const parked = parkedAt(stored);
-        const left = parked.filter((p) => !ours(p));
-        if (left.length === parked.length) return null;
-        if (left.length > 0) return { parked: left, at: Date.now() };
-        await session().remove(at).catch(() => undefined);
-        return null;
-      });
+      await unpark(orphanKey(url), ours);
     }
     /*
      * With the writing, which `summarise` deliberately strips.
