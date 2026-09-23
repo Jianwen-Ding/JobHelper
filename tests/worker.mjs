@@ -1569,6 +1569,67 @@ async function main() {
       check('and it is back on the page', seen.after?.back === true, JSON.stringify(seen));
       check('the same card, with whatever was in it', seen.after?.same === true, JSON.stringify(seen));
     }
+
+    /*
+     * A choice made once is remembered once.
+     *
+     * Every pass that finds an application form starts watching it for the
+     * choices made on it — and threw away the function that stops watching.
+     * A pass runs on every url change of a single-page form, on every press
+     * of the toolbar button, on a return from the back / forward cache; each
+     * one added another pair of document listeners. So a form walked through
+     * three steps by `pushState` sent each answer to the store four times,
+     * and every click on a radio ran a whole-document scan once per listener.
+     */
+    group('A choice made once is sent to the bank once');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Apply for Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1>
+          <form>
+            <label for="fn">First name</label><input id="fn" name="first_name">
+            <label for="ln">Last name</label><input id="ln" name="last_name">
+            <label for="em">Email</label><input id="em" type="email" name="email">
+            <label for="cv">Resume</label><input id="cv" type="file">
+            <label for="heard">How did you hear about this job?</label>
+            <select id="heard"><option value="">Select…</option><option>LinkedIn</option><option>A friend</option></select>
+            <button type="button">Next</button>
+          </form>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/jobs/platform-engineer/apply`;
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+
+      const page = await context.newPage();
+      let sent = null;
+      try {
+        await page.goto(where);
+        await page.locator('#jobhelper-card-host .card').waitFor({ timeout: 15_000 });
+        await page.waitForTimeout(1500);
+        // Three steps of a single-page form, each its own address.
+        for (const step of [2, 3, 4]) {
+          await page.evaluate((n) => history.pushState({}, '', `?step=${n}`), step);
+          await page.waitForTimeout(2500);
+        }
+        const before = store.sentTo('/api/answers/save').length;
+        await page.selectOption('#heard', 'LinkedIn');
+        await page.waitForTimeout(1000);
+        sent = store
+          .sentTo('/api/answers/save')
+          .slice(before)
+          .map((h) => JSON.parse(h.body || '{}').answer);
+      } finally {
+        await page.close();
+        site.close();
+        await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: false }));
+      }
+
+      check('the choice is remembered', (sent ?? []).includes('LinkedIn'), JSON.stringify(sent));
+      check('once, however many times the page was looked at', sent?.length === 1, JSON.stringify(sent));
+    }
   } finally {
     await context.close();
     store.close();

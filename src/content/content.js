@@ -399,6 +399,9 @@
   let dismissed = false;
   let analysis = null;
 
+  /** Stops the one watcher of choices made on this page's form; see `show`. */
+  let stopChoices = null;
+
   /**
    * Which pass owns the card.
    *
@@ -1862,7 +1865,19 @@
       .autofill()
       .then(({ watchChoices, looksLikeApplicationForm }) => {
         if (!current() || !looksLikeApplicationForm()) return;
-        watchChoices((said) => {
+        /*
+         * One watcher, whatever number of passes found the form.
+         *
+         * The function that stops watching was thrown away, and a pass runs on
+         * every url change of a single-page form, every press of the toolbar
+         * button and every return from the back / forward cache — each adding
+         * a pair of document listeners for the life of the page. Measured in
+         * tests/worker.mjs: a form taken through three `pushState` steps sent
+         * one choice to the store four times, and each radio click ran a
+         * whole-document scan once per listener.
+         */
+        stopChoices?.();
+        stopChoices = watchChoices((said) => {
           if (!said.keep) return;
           send('rememberChoice', { question: said.question, answer: said.answer }).catch(() => undefined);
         });
@@ -2617,6 +2632,11 @@
     // posting you have just left may already have spent.
     restartSending?.();
 
+    // And the choices watcher, which was for the form you have just left: the
+    // next page is watched only if its own pass finds a form on it.
+    stopChoices?.();
+    stopChoices = null;
+
     // Before the await, not after: the pass still running belongs to the url
     // that just went away, and it must stop being able to write to the card
     // from this instant rather than from whenever the import resolves.
@@ -2708,6 +2728,7 @@
     // Same reasoning: a chip whose Yes throws is worse than no chip.
     imports.ask().then(({ removeAsk }) => removeAsk()).catch(() => undefined);
     cardHandle = null;
+    stopChoices?.();
   });
 
   // A missing server must not spam every page the user opens.
