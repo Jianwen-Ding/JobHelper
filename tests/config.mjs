@@ -73,6 +73,22 @@ describe('the server address, as typed', () => {
   });
 
   /*
+   * A fragment or a query is not surplus that needs guessing about: nothing
+   * can be appended after one. The address people have to hand is the one in
+   * the editor's address bar — `http://127.0.0.1:4600/#resumes/newgrad` — and
+   * every request was built as that plus `/api/…`, which puts the path inside
+   * the fragment. The browser never sends a fragment, so every call went to
+   * the editor's own page and came back as HTML: "ResumeM-M sent something
+   * that is not JSON (200)" about a server that was running, on every page.
+   */
+  it('drops a fragment or a query, which nothing could be appended to', () => {
+    assert.equal(normaliseServerUrl('http://127.0.0.1:4600/#resumes/newgrad'), 'http://127.0.0.1:4600');
+    assert.equal(normaliseServerUrl('127.0.0.1:4600/#voice'), 'http://127.0.0.1:4600');
+    assert.equal(normaliseServerUrl('http://localhost:4600/?save=work'), 'http://localhost:4600');
+    assert.equal(normaliseServerUrl('http://127.0.0.1:4600/api#x'), 'http://127.0.0.1:4600/api');
+  });
+
+  /*
    * A scheme is not the same as a scheme this can be fetched from.
    *
    * The test was for *a* scheme, so anything with `://` in it went straight
