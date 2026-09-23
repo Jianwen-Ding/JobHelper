@@ -1891,6 +1891,56 @@ async function main() {
       check('the card does not show Chrome’s own words for it', !/listener indicated|message channel closed/i.test(seen.said), seen.said.split('\n').slice(-1)[0]);
       check('it says what happened and that it can be run again', /stopped[^.]*before[^.]*finished[\s\S]*again/i.test(seen.said), seen.said.split('\n').slice(-1)[0]);
     }
+
+    /*
+     * The worker stopped while it was opening a space.
+     *
+     * The mark that says "this application has its space" is written before
+     * the POST goes, so two keeper ticks cannot both send, and taken away
+     * again if the POST fails. A worker that is stopped mid-POST runs neither
+     * half of that: measured, the POST never answered, no row was opened, and
+     * after the restart three more saves sent nothing — the mark said held.
+     */
+    group('The worker is stopped while it is opening a space');
+    {
+      const orion = {
+        spec: { id: 'job-orion', generatedFor: { company: 'Orion', role: 'Site Reliability Engineer' } },
+        render: { pages: 1 },
+      };
+      const spaces = () => store.sentTo('/api/workspace').length;
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      await ask(driver, 'analyze', { url: 'http://orion.example/jobs/1', title: 'Orion', html: '<p>orion</p>', company: 'Orion' });
+
+      const before = spaces();
+      store.routes['/api/workspace'] = 'silent';
+      ask(driver, 'saveWork', { work: orion }).catch(() => undefined);
+      for (let i = 0; i < 100 && spaces() === before; i++) await new Promise((r) => setTimeout(r, 50));
+      const asked = spaces() - before;
+
+      await (context.serviceWorkers()[0] ?? worker).evaluate(() => {
+        globalThis.__jhStillTheSameWorker = true;
+      });
+      const cdp = await context.newCDPSession(driver);
+      await cdp.send('ServiceWorker.enable').catch(() => undefined);
+      await cdp.send('ServiceWorker.stopAllWorkers').catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 1000));
+      delete store.routes['/api/workspace'];
+
+      const woken = await ask(driver, 'saveWork', { work: orion });
+      for (let i = 0; i < 60 && spaces() < before + 2; i++) await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 400));
+      const fresh = await (context.serviceWorkers()[0] ?? worker)
+        .evaluate(() => globalThis.__jhStillTheSameWorker !== true)
+        .catch(() => false);
+      const afterRetry = spaces();
+      await ask(driver, 'saveWork', { work: orion });
+      await new Promise((r) => setTimeout(r, 600));
+
+      check('the POST went, and the worker was stopped under it', asked === 1 && fresh && woken.reply?.ok === true, JSON.stringify({ asked, fresh }));
+      check('the space is asked for again once the worker is back', afterRetry === before + 2, `${afterRetry - before - 1} pushes after the restart`);
+      check('and once only', spaces() === before + 2, `${spaces() - before} pushes in all`);
+    }
   } finally {
     await context.close();
     store.close();

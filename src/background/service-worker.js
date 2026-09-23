@@ -1039,11 +1039,28 @@ async function holdASpace(trail, tabId) {
   return run;
 }
 
+/**
+ * This worker, as against the one before it.
+ *
+ * `holdTheSpace` marks a space as held before its POST goes and unmarks it if
+ * the POST fails — and a worker stopped mid-POST runs neither half. Measured:
+ * the POST never answered, no row was opened, and after the restart every
+ * later save found the mark and sent nothing, so the application had no draft
+ * in the editor until its form was filled in. A mark still pending from a
+ * worker that no longer exists is an attempt that died, and is made again;
+ * if that one had in fact landed, the second is a merge of the same spec.
+ */
+const THIS_WORKER = `${Date.now()}-${Math.random()}`;
+
 /** The write `holdASpace` guards: one per key at a time. */
 async function holdTheSpace(key, save, company, role, trail, work) {
   try {
-    if ((await session().get(key).catch(() => ({})))[key]) return;
-    await session().set({ [key]: { at: Date.now() } }).catch(() => undefined);
+    const held = (await session().get(key).catch(() => ({})))[key];
+    if (held && !(held.pending && held.pending !== THIS_WORKER)) return;
+    await session().set({ [key]: { at: Date.now(), pending: THIS_WORKER } }).catch(() => undefined);
+    // Settled either way the store answers, so no later worker takes it for
+    // an attempt that died.
+    const settled = () => session().set({ [key]: { at: Date.now() } }).catch(() => undefined);
     try {
       await serverFetch('/api/workspace', {
         method: 'POST',
@@ -1091,6 +1108,7 @@ async function holdTheSpace(key, save, company, role, trail, work) {
           coverLetterRequired: Boolean(work.letter?.trim()) || undefined,
         }),
       });
+      await settled();
     } catch (err) {
       /*
        * A refusal stands. The store has looked at this company and role and
@@ -1099,7 +1117,7 @@ async function holdTheSpace(key, save, company, role, trail, work) {
        * and this pair is not asked about again. Dropping it would put the
        * write on every keeper tick for as long as the tab is open.
        */
-      if (err?.kind === 'not-a-job') return;
+      if (err?.kind === 'not-a-job') return settled();
       // Anything else, and the store may simply not be running, which is not
       // this save's problem: the work is already held in the browser either
       // way. Letting the key go means the next application tries again
