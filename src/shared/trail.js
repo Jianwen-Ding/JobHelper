@@ -821,7 +821,71 @@ const REPEATS_CHOICE = ['title', 'aria-label', 'data-value', 'value'];
 const OPTION_STATE_ATTRS = ['data-state', 'data-selected', 'data-headlessui-state', 'data-active', 'data-focus', 'data-highlighted'];
 const OPTION_STATE_CLASS = /selected|highlighted|focused|focusvisible|^css-/i;
 
+/*
+ * And the answers a review step writes out as text.
+ *
+ * Workday's last step, Taleo's "Review and Submit" and iCIMS's summary show
+ * every answer as ordinary text beside its question — no input, no widget,
+ * nothing the scrubs above look at. Measured in Chromium through the extension
+ * and then through ResumeM-M's own `mergeJobPages`: the description the server
+ * built for such a page, and handed to the AI, read "Social Security Number
+ * 123-45-6789 … Date of Birth 04/02/1999 … Gender Female … Disability Status
+ * Yes, I have a disability".
+ *
+ * So a short piece of text that names one of these questions, and is the whole
+ * of its element, has the next thing beside it emptied: the `<div>` after a
+ * label, the `<dd>` after a `<dt>`, the cell after a header cell or after
+ * another cell, the text after a `<strong>`. A label with its answer after a
+ * colon in the same text keeps the label. The questions are the identifiers
+ * and the equal-opportunity ones, the same families `remembering.js` refuses
+ * to keep; written out here rather than imported because this module is loaded
+ * on its own in places an import cannot follow.
+ *
+ * Only the answer, only where it is short, and never a control: a form's own
+ * "Gender" label with its `<select>` after it keeps its options, which are the
+ * question. A heading is not a label, so a posting's "Equal Opportunity and
+ * Disability Accommodation" keeps the paragraph under it; and the posting's
+ * sentence about race, gender and disability is far too long to be one. On
+ * the heavy posting in tests/fixtures.mjs (7,800 elements, 590kB) this pass
+ * took the capture from about 10ms to about 14ms.
+ */
+const STATED_PERSONAL =
+  /\b(ssn|social\s*security|national\s*insurance|tax\s*(id|identification)|(date|day|month|year)\s*of\s*birth|birth\s*(date|day)|dob|age|passport|driver'?s?\s*licen[cs]e|visa\s*number|(account|card|routing)\s*number|iban|sort\s*code|gender|sex|transgender|non-?binary|sexual\s*orientation|lgbt\w*|race|ethnicit(y|ies)|hispanic|latin[oaxe]s?|national\s*origin|indigenous|aboriginal|veteran|disab(led|ility|ilities)|criminal|convict\w*|felon(y|ies)|religion|marital|pregnan\w*)\b/i;
+const CONTROL =
+  'input, select, textarea, button, [contenteditable], [role="radio"], [role="checkbox"], [role="option"], [role="combobox"], [role="listbox"], [role="radiogroup"]';
+
+function scrubStatedAnswers(root) {
+  const labels = [];
+  const walker = (root.ownerDocument ?? root).createTreeWalker(root, 4 /* NodeFilter.SHOW_TEXT */);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const said = node.data.trim();
+    if (said && said.length <= 200) labels.push(node);
+  }
+  for (const node of labels) {
+    const said = node.data.trim();
+    const inline = /^([^:]{1,80}):\s*\S/.exec(said);
+    if (inline && STATED_PERSONAL.test(inline[1])) {
+      node.data = `${inline[1]}:`;
+      continue;
+    }
+    if (said.length > 80 || !STATED_PERSONAL.test(said)) continue;
+    let label = node.parentElement;
+    if (!label || label.textContent.trim() !== said) continue;
+    // Up through the wrappers that hold nothing else, to what sits beside it.
+    while (label.parentElement && label.parentElement !== root && label.parentElement.textContent.trim() === said) {
+      label = label.parentElement;
+    }
+    if (label.closest('h1, h2, h3, h4, h5, h6') || label.closest(CONTROL)) continue;
+    let next = label.nextSibling;
+    while (next && next.nodeType === 3 && !next.data.trim()) next = next.nextSibling;
+    if (!next || (next.textContent ?? '').trim().length > 200) continue;
+    if (next.nodeType === 3) next.data = ' ';
+    else if (next.nodeType === 1 && !next.matches(CONTROL) && !next.querySelector(CONTROL)) next.textContent = '';
+  }
+}
+
 function scrubCopy(root) {
+  scrubStatedAnswers(root);
   for (const el of root.querySelectorAll(SHOWN_CHOICE)) {
     el.textContent = '';
     for (const name of REPEATS_CHOICE) el.removeAttribute(name);

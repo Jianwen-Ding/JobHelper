@@ -1527,3 +1527,72 @@ describe('the page as sent does not say which option a widget shows as chosen', 
     }
   });
 });
+
+/*
+ * A review step, which writes every answer out as text beside its question.
+ *
+ * Workday's last step, Taleo's "Review and Submit", iCIMS's summary: no
+ * inputs, no widgets, nothing any scrub above looks at — the answers are
+ * ordinary text in a `<div>`, a `<dd>` or a table cell. Measured in Chromium
+ * through the extension against a fake store, and then through ResumeM-M's
+ * own `mergeJobPages`: the description the server built for this page, and
+ * handed to the AI, read "Social Security Number 123-45-6789 … Date of Birth
+ * 04/02/1999 … Gender Female … Ethnicity Asian … Disability Status Yes, I have
+ * a disability".
+ *
+ * The labels are the shapes these systems draw a label and its answer in:
+ * a label and a box beside it, a label wrapped a level deep, a definition
+ * list, a table row with a header cell and one without, and a label with its
+ * answer after a colon in the same text.
+ */
+const REVIEW_STEP = `
+  <h2>Review</h2>
+  <p>Helios is an equal opportunity employer. We consider applicants without regard to race, gender, disability or veteran status.</p>
+  <h3>My Information</h3>
+  <div><label>Legal Name</label><div>Jianwen Ding</div></div>
+  <div><label>Social Security Number</label><div>ANSWER-SSN</div></div>
+  <div><div class="lbl"><span>Date of Birth</span></div><div class="val">ANSWER-DOB</div></div>
+  <h3>Application Questions</h3>
+  <div><label>Are you legally authorized to work in the United States?</label><div>Kept: Yes</div></div>
+  <div><label>Have you ever been convicted of a felony?</label><div>ANSWER-CONVICTED</div></div>
+  <h3>Voluntary Disclosures</h3>
+  <dl><dt>Gender</dt><dd>ANSWER-GENDER</dd><dt>Location preference</dt><dd>Kept: Boston</dd></dl>
+  <table>
+    <tr><th>Ethnicity</th><td>ANSWER-ETHNICITY</td></tr>
+    <tr><td>Veteran Status</td><td>ANSWER-VETERAN</td></tr>
+  </table>
+  <p><strong>Are you Hispanic or Latino?</strong> ANSWER-HISPANIC</p>
+  <p>Disability Status: ANSWER-DISABILITY</p>
+  <h3>Equal Opportunity and Disability Accommodation</h3>
+  <p>Kept: we provide accommodations on request.</p>
+  <label for="g">Gender</label><select id="g"><option>Kept: Female</option><option>Kept: Male</option></select>`;
+
+describe('the page as sent does not carry answers a review step writes out', () => {
+  it('empties the answer beside a personal question, and leaves the rest of the page', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><title>Review</title></head><body>${REVIEW_STEP}</body></html>`);
+      const html = await page.evaluate(async (js) => {
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        return mod.trimForStorage(mod.pageHtml(document));
+      }, source);
+      const leaked = html.match(/ANSWER-[A-Z]+/g) ?? [];
+      assert.deepEqual(leaked, [], `the review step's answers were sent: ${leaked.join(', ')}`);
+      for (const kept of [
+        'Social Security Number', 'Date of Birth', 'Gender', 'Ethnicity', 'Veteran Status',
+        'Are you Hispanic or Latino?', 'Disability Status:', 'Have you ever been convicted of a felony?',
+        'without regard to race, gender, disability or veteran status', 'Jianwen Ding',
+        'Kept: Yes', 'Kept: Boston', 'Kept: we provide accommodations on request.', 'Kept: Female', 'Kept: Male',
+      ]) {
+        assert.ok(html.includes(kept), `"${kept}" was lost`);
+      }
+    } finally {
+      await browser.close();
+    }
+  });
+});
