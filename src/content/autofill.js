@@ -1489,6 +1489,31 @@ function sameAnswerSpelledOtherwise(key, option, value) {
     const month = monthOf(value);
     return Boolean(month) && month === monthOf(option);
   }
+  /*
+   * A graduation date against a list of them, spelled another way. Campus
+   * recruiting forms ask by term — "Spring 2027" — and others by number —
+   * "05/2027" — and "May 2027" matched neither, so the box was left empty.
+   * The terms are the academic ones: a May graduation is Spring, August is
+   * Summer, December is Fall. Winter only for January and February, where no
+   * other term claims the month.
+   */
+  if (key === 'graduation_date') {
+    const hit = /^([a-z]+)\s+(\d{4})$/i.exec(String(value).trim());
+    const month = hit ? monthOf(hit[1]) : null;
+    if (!month) return false;
+    const year = hit[2];
+    const said = clean(option);
+    const monthFirst = /^(\d{1,2})\s*[/.\-]\s*(\d{4})$/.exec(said);
+    const yearFirst = /^(\d{4})\s*[/.\-]\s*(\d{1,2})$/.exec(said);
+    if (monthFirst) return Number(monthFirst[1]) === month && monthFirst[2] === year;
+    if (yearFirst) return Number(yearFirst[2]) === month && yearFirst[1] === year;
+    const named = /^([a-z]+)\.?,?\s+(\d{4})$/i.exec(said);
+    if (!named || named[2] !== year) return false;
+    if (monthOf(named[1])) return monthOf(named[1]) === month;
+    const term = named[1].toLowerCase();
+    const TERM_MONTHS = { spring: [3, 4, 5], summer: [6, 7, 8], fall: [9, 10, 11, 12], autumn: [9, 10, 11, 12], winter: [1, 2] };
+    return (TERM_MONTHS[term] ?? []).includes(month);
+  }
   const wanted = placeKey(key, value);
   return Boolean(wanted) && wanted === placeKey(key, option);
 }

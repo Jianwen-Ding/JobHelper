@@ -1613,7 +1613,22 @@ const COMPLETION = `<!doctype html><form>
   <label for="c7">Degree</label><input id="c7">
 </form>`;
 
-const PAGES = { '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
+/*
+ * A graduation date asked as a list. Campus recruiting forms ask by term —
+ * "Spring 2027" — and others by number; May 2027 matched none of them.
+ */
+const TERMS = `<!doctype html><form>
+  <label for="t1">Expected graduation</label>
+  <select id="t1"><option value="">Select...</option><option>Fall 2026</option><option>Spring 2027</option><option>Summer 2027</option></select>
+  <label for="t2">Graduation date</label>
+  <select id="t2"><option value="">Select...</option><option>04/2027</option><option>05/2027</option><option>06/2027</option></select>
+  <label for="t3">Anticipated graduation</label>
+  <select id="t3"><option value="">Select...</option><option>Spring 2026</option><option>Fall 2027</option></select>
+  <label for="t4">Graduation date</label>
+  <select id="t4"><option value="">Select...</option><option>2027-04</option><option>2027-05</option></select>
+</form>`;
+
+const PAGES = { '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -2153,6 +2168,19 @@ async function main() {
         return Object.fromEntries([...document.querySelectorAll('input')].map((el) => [el.id, el.value]));
       }, { b: base, profile: { ...PROFILE, degree: 'Bachelor of Science', graduation_year: '2027', graduation_month: 'May', graduation_date: 'May 2027' } }),
     );
+    const terms = await page.goto(`${base}/terms`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm(profile);
+        return Object.fromEntries([...document.querySelectorAll('select')].map((el) => [el.id, el.value]));
+      }, { b: base, profile: { ...PROFILE, graduation_year: '2027', graduation_month: 'May', graduation_date: 'May 2027' } }),
+    );
+    group('A graduation date chosen from a list');
+    check('May 2027 is "Spring 2027" on a list of terms', terms.t1 === 'Spring 2027', terms.t1);
+    check('and "05/2027" on a list of numbers', terms.t2 === '05/2027', terms.t2);
+    check('and nothing on a list where no term is its own', terms.t3 === '', terms.t3);
+    check('and "2027-05" on a list written year first', terms.t4 === '2027-05', terms.t4);
+
     group('When the degree ends, however it is asked');
     check('"Expected degree completion" gets the date, not the degree', completion.c1 === 'May 2027', completion.c1);
     check('"Degree completion date" gets the date too', completion.c2 === 'May 2027', completion.c2);
