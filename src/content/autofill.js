@@ -245,6 +245,14 @@ const NOT_ABOUT_YOU = [
    * just the profile.
    */
   /\b(git-?hub|git-?lab|linked-?in)\b[\s\S]{0,20}\b(user[\s_-]?names?|handles?|user[\s_-]?ids?)\b|\b(user[\s_-]?names?|handles?)\b[\s\S]{0,20}\b(git-?hub|git-?lab|linked-?in)\b/i,
+  /*
+   * "Major" the adjective. "Major accomplishment", "Major project" and "Your
+   * major achievements" matched `major` and were given the applicant's field
+   * of study — "Computer Science" as their greatest achievement. Only in
+   * front of the nouns a question puts it before; "Major", "Intended major"
+   * and "Major / field of study" are the subject and are still filled.
+   */
+  /\bmajor[\s_-]+(accomplish\w*|achievements?|projects?|challenges?|contributions?|responsibilit\w*|obstacles?|setbacks?|failures?|mistakes?|decisions?|milestones?|initiatives?)\b/i,
   // Where you heard about the job, which is not a profile of yours.
   /\b(did[\s_-]you[\s_-](?:first[\s_-])?hear|hear[\s_-](?:about|of)[\s_-](us|this)|referral)\b/i,
   // Citizenship, birth and residence are different questions with the same

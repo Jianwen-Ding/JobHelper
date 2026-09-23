@@ -1131,6 +1131,13 @@ const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Ap
   <label for="liuser">Username on LinkedIn</label><input id="liuser" name="q_u3">
   <label for="gh-url">GitHub profile URL</label><input id="gh-url" name="q_u4">
 
+  <!-- "Major" the adjective. -->
+  <label for="majacc">Major accomplishment</label><input id="majacc" name="q_m1">
+  <label for="majproj">Major project</label><input id="majproj" name="q_m2">
+  <label for="majach">Your major achievements</label><input id="majach" name="q_m3">
+  <label for="own-major">Major</label><input id="own-major" name="q_m4">
+  <label for="int-major">Intended major</label><input id="int-major" name="q_m5">
+
   <!-- The applicant's own, still filled. -->
   <label for="own-ln">Last name</label><input id="own-ln" name="q_ln">
   <label for="own-legal">Legal name</label><input id="own-legal" name="q_legal">
@@ -1612,7 +1619,7 @@ async function main() {
         const m = await import(`${b}/autofill.js`);
         m.fillForm(profile);
         return Object.fromEntries([...document.querySelectorAll('input, select, textarea')].map((el) => [el.id, el.value]));
-      }, { b: base, profile: { ...PROFILE, address_state: 'MA', school: 'Northeastern University', website: 'jianwen.dev', graduation_year: '2027' } }),
+      }, { b: base, profile: { ...PROFILE, address_state: 'MA', school: 'Northeastern University', website: 'jianwen.dev', graduation_year: '2027', major: 'Computer Science', degree: 'Bachelor of Science' } }),
     );
 
     group('Somebody else\'s details, under names the list did not have');
@@ -1665,6 +1672,16 @@ async function main() {
       'while "GitHub profile URL" and "LinkedIn" still get theirs',
       more['gh-url'] === PROFILE.github && more['own-li'] === PROFILE.linkedin,
       `${more['gh-url']} / ${more['own-li']}`,
+    );
+
+    group('"Major" the adjective, which is not the subject');
+    check('"Major accomplishment" is not given the major', more.majacc === '', more.majacc);
+    check('nor "Major project"', more.majproj === '', more.majproj);
+    check('nor "Your major achievements"', more.majach === '', more.majach);
+    check(
+      'while "Major" and "Intended major" still get it',
+      more['own-major'] === 'Computer Science' && more['int-major'] === 'Computer Science',
+      `${more['own-major']} / ${more['int-major']}`,
     );
 
     group('A declaration answered from a sentence');
