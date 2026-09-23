@@ -1776,6 +1776,76 @@ async function main() {
   );
 
   /*
+   * An answer that names another employer is offered, not filled in — and
+   * what is not in the box is not sent.
+   *
+   * The box worked that out; everything that sends an answer read the bank's
+   * text directly. So on a Globex form the box stood empty behind "Start from
+   * what you told Acme" while "Acme is why I applied" went into the folder
+   * and the filed record of what was sent, and was carried to the next page
+   * as an answer written for this application, where it was filled in.
+   */
+  const borrowedAnswer = await inPage(async (createCard) => {
+    const sent = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Globex' },
+        spec: { id: 'job-globex', label: 'Globex' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [
+        { question: 'Why do you want to work here?', answer: 'Acme is why I applied.', confident: true, namesAnother: 'Acme' },
+      ],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        return action === 'render' ? { pages: 1, fits: true } : action === 'stage' ? { currentDir: '/tmp/x' } : {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => new RegExp(t).test(b.textContent));
+    await new Promise((r) => setTimeout(r, 50));
+    const box = root.querySelector('textarea[data-field^="answer:"]')?.value ?? null;
+    byText('Build resume')?.click();
+    await new Promise((r) => setTimeout(r, 100));
+    const before = {
+      box,
+      staged: sent.find((c) => c.action === 'stage')?.payload?.answers ?? null,
+      carried: handle.takeWork().answersByQuestion,
+    };
+    // Taken, on purpose: now it is in the box, and it goes.
+    byText('Start from what you told Acme')?.click();
+    await new Promise((r) => setTimeout(r, 50));
+    byText('Mark as applied')?.click();
+    await new Promise((r) => setTimeout(r, 100));
+    return { before, taken: sent.find((c) => c.action === 'bundle')?.payload?.answers ?? null };
+  });
+  check(
+    'an answer offered from another employer is not in its box',
+    borrowedAnswer.before.box === '',
+    JSON.stringify(borrowedAnswer.before),
+  );
+  check(
+    'nor in the folder',
+    JSON.stringify(borrowedAnswer.before.staged) === '[]',
+    JSON.stringify(borrowedAnswer.before),
+  );
+  check(
+    'nor carried to the next page as though it were written for this one',
+    JSON.stringify(borrowedAnswer.before.carried) === '{}',
+    JSON.stringify(borrowedAnswer.before),
+  );
+  check(
+    'and once taken, it is sent',
+    borrowedAnswer.taken?.[0]?.answer === 'Acme is why I applied.',
+    JSON.stringify(borrowedAnswer.taken),
+  );
+
+  /*
    * Two rebuilds really can be in flight now, so the bar has to belong to the
    * one still running. A set held one entry per name, so the fast one's
    * removal took the bar down while a model was still reading.

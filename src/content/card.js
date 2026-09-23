@@ -922,7 +922,7 @@ export function createCard({
        */
       answersByQuestion: Object.fromEntries(
         (state.questions ?? [])
-          .map((q) => [q.question, state.answers[q.question] ?? q.answer])
+          .map((q) => [q.question, answerShown(q)])
           .filter(([, a]) => a?.trim()),
       ),
     };
@@ -5297,10 +5297,27 @@ export function createCard({
    * Answers file and from the permanent record of what was sent, while every
    * box on screen was full.
    */
+  /**
+   * What a question's box holds, which is what is sent for it.
+   *
+   * The box itself has worked this out since answers naming another employer
+   * stopped being filled in — see `borrowed` in `drawQuestionsStep` — and
+   * everything that sends an answer went on reading `q.answer` straight off
+   * the bank. Measured, on a Globex form whose bank answer opens "Acme is why
+   * I applied": the box empty behind "Start from what you told Acme", and
+   * that sentence in the `stage` and `bundle` payloads, filed as what was
+   * sent to Globex, and in `takeWork`, which carried it to the next page as
+   * an answer typed for this application — where it went straight into the
+   * box, past the offer, because a carried answer is not borrowed.
+   */
+  function answerShown(q) {
+    return state.answers[q.question] ?? (q.namesAnother ? '' : (q.answer ?? ''));
+  }
+
   function collectedAnswers() {
     const out = new Map();
     for (const q of state.questions ?? []) {
-      const answer = state.answers[q.question] ?? q.answer ?? '';
+      const answer = answerShown(q);
       if (answer.trim()) out.set(q.question, answer);
     }
     // Questions typed in by hand are in `state.answers` and on no page.
@@ -5353,7 +5370,7 @@ export function createCard({
                 // here and left behind is an answer written twice.
                 questions: (state.questions ?? []).map((q) => ({
                   ...q,
-                  answer: state.answers[q.question] ?? q.answer ?? '',
+                  answer: answerShown(q),
                 })),
                 coverLetter: state.letter ?? '',
               },
@@ -5540,7 +5557,7 @@ export function createCard({
     const missing = [];
     if (state.letterNeeded && !state.letter?.trim()) missing.push('a cover letter');
     const unanswered = (state.questions ?? []).filter(
-      (q) => q.required !== false && !(state.answers[q.question] ?? q.answer ?? '').trim(),
+      (q) => q.required !== false && !answerShown(q).trim(),
     ).length;
     if (unanswered > 0) missing.push(`${unanswered} ${unanswered === 1 ? 'answer' : 'answers'}`);
 
