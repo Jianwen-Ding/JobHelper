@@ -315,6 +315,14 @@ const NOT_ABOUT_YOU = [
   /\b(prefer\w*|desired|requested)\b[\s\S]{0,24}\b(location|city|town|country|office|site)\b/i,
   // "Which location are you applying for?" is the same question again.
   /\b(location|city|town|country|office|site)\b[\s\S]{0,24}\b(prefer\w*|desired|requested|applying)\b/i,
+  /*
+   * Where the job is, which is the employer's to say. "Job location",
+   * "Office location", "Work location", "Location of the role" and
+   * "Location type" — remote, hybrid or on site — were each given the city
+   * the applicant lives in, as though that answered which office they are
+   * applying to. "Current location" and a plain "Location" are still theirs.
+   */
+  /\b(job|office|role|position|work)[\s_-]+locations?\b|\blocations?[\s_-]+(?:of|for)[\s_-]+(?:the|this)[\s_-]+(?:role|job|position|opening)\b|\blocation[\s_-]+type\b/i,
   // Relocation is about somewhere you are not. "Which city would you relocate
   // to?" was answered with the city the applicant already lives in.
   /\brelocat\w*/i,

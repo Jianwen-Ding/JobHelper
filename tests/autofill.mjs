@@ -1235,6 +1235,14 @@ const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Ap
   </fieldset>
   <label for="sig-in">Email you use to sign in</label><input id="sig-in" name="q_g5">
 
+  <!-- Where the job is, and what kind of place it is, which is not where the applicant lives. -->
+  <label for="jl1">Job location</label><input id="jl1" name="q_j1">
+  <label for="jl2">Office location</label><input id="jl2" name="q_j2">
+  <label for="jl3">Work location</label><input id="jl3" name="q_j3">
+  <label for="jl4">Location of the role</label><input id="jl4" name="q_j4">
+  <label for="jl5">Location type</label><input id="jl5" name="q_j5">
+  <label for="jl-own">Current location</label><input id="jl-own" name="q_j6">
+
   <!-- The applicant's own, still filled. -->
   <label for="own-ln">Last name</label><input id="own-ln" name="q_ln">
   <label for="own-legal">Legal name</label><input id="own-legal" name="q_legal">
@@ -1917,6 +1925,19 @@ async function main() {
       more['sig-in'] === PROFILE.email && more['own-legal'] === 'Jianwen Ding',
       `${more['sig-in']} / ${more['own-legal']}`,
     );
+
+    /*
+     * Where the job is, and whether it is remote, hybrid or on site, were each
+     * given the city the applicant lives in — which answers "which office are
+     * you applying to" with a place the employer may not have an office in.
+     */
+    group('Where the job is, which is not where the applicant lives');
+    check('"Job location" is not given the applicant\'s location', more.jl1 === '', more.jl1);
+    check('nor "Office location"', more.jl2 === '', more.jl2);
+    check('nor "Work location"', more.jl3 === '', more.jl3);
+    check('nor "Location of the role"', more.jl4 === '', more.jl4);
+    check('nor "Location type"', more.jl5 === '', more.jl5);
+    check('while "Current location" still gets it', more['jl-own'] === 'Boston, MA', more['jl-own']);
 
     group('A declaration answered from a sentence');
     check(
