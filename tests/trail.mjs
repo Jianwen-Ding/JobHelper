@@ -344,6 +344,33 @@ describe('what is worth keeping of a page', () => {
   it('is unbothered by nothing at all', () => {
     assert.equal(trimForStorage(undefined), '');
   });
+
+  /*
+   * What the applicant typed never leaves with the page.
+   *
+   * React keeps an input's `value` attribute in step with what is typed, so a
+   * form page captured after it was filled carried the social security
+   * number, the date of birth and the address in its markup, to the server
+   * and on to the AI. The questions are what the AI needs; the answers are
+   * the applicant's. Radio and checkbox values are the options' own names —
+   * part of the question — and stay.
+   */
+  it('drops typed values and textarea contents, keeping the questions and the options', () => {
+    const page =
+      '<label for="ssn">Social Security Number</label><input id="ssn" type="text" value="123-45-6789">' +
+      "<label>Date of birth</label><input type=date value='1999-02-03'>" +
+      '<label>Address</label><input value=12MainSt name="addr">' +
+      '<label>Why us?</label><textarea name="why">My private draft answer</textarea>' +
+      '<label><input type="radio" name="auth" value="Yes" checked> Yes</label>' +
+      '<label><input type="checkbox" name="remote" value="Open to remote"> Open to remote</label>';
+    const kept = trimForStorage(page);
+    for (const secret of ['123-45-6789', '1999-02-03', '12MainSt', 'My private draft answer']) {
+      assert.ok(!kept.includes(secret), `"${secret}" was sent`);
+    }
+    for (const question of ['Social Security Number', 'Date of birth', 'Address', 'Why us?', 'value="Yes"', 'value="Open to remote"']) {
+      assert.ok(kept.includes(question), `"${question}" was lost`);
+    }
+  });
 });
 
 describe('carrying less when there is no room', () => {

@@ -693,6 +693,19 @@ export function trimForStorage(html, limit = 400_000) {
     .replace(/<svg\b[^>]*>[\s\S]*?<\/svg>/gi, '')
     .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, '')
     .replace(/<!--[\s\S]*?-->/g, '')
+    /*
+     * What the applicant typed. React keeps an input's `value` attribute in
+     * step with what is typed, so a form captured after filling carried the
+     * SSN, the date of birth and the address in its markup, to the server and
+     * on to the AI. Radio, checkbox and button values are the options' own
+     * names and stay; a textarea keeps its tag and loses its text.
+     */
+    .replace(/<input\b[^>]*>/gi, (tag) =>
+      /\btype\s*=\s*["']?(?:radio|checkbox|submit|button|reset|image)\b/i.test(tag)
+        ? tag
+        : tag.replace(/\svalue\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, ''),
+    )
+    .replace(/(<textarea\b[^>]*>)[\s\S]*?(<\/textarea>)/gi, '$1$2')
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/\n{3,}/g, '\n\n');
 
