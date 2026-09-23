@@ -825,6 +825,45 @@ const WIDGETS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply �
 </script></body></html>`;
 
 /*
+ * The right to work somewhere else.
+ *
+ * A profile's declaration is a sentence, and it names where it is true:
+ * "Authorized to work in the US". A global employer's form asks it of the
+ * country the job is in — "Are you authorized to work in the UK?" — and the
+ * sentence says nothing about the UK.
+ */
+const ELSEWHERE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <label for="uk">Are you authorized to work in the UK?</label>
+  <select id="uk" name="q_uk"><option value="">--</option><option>Yes</option><option>No</option></select>
+  <fieldset>
+    <legend>Are you legally authorized to work in Canada?</legend>
+    <label><input type="radio" name="ca" value="Yes"> Yes</label>
+    <label><input type="radio" name="ca" value="No"> No</label>
+  </fieldset>
+  <div role="radiogroup" aria-label="Will you require sponsorship to work in the United Kingdom?">
+    <div role="radio" id="uks-y" aria-checked="false" tabindex="0">Yes</div>
+    <div role="radio" id="uks-n" aria-checked="false" tabindex="0">No</div>
+  </div>
+  <!-- And the country the sentence is about, and a question that names none. -->
+  <label for="us">Are you legally authorized to work in the United States?</label>
+  <select id="us" name="q_us"><option value="">--</option><option>Yes</option><option>No</option></select>
+  <fieldset>
+    <legend>Will you now or in the future require sponsorship?</legend>
+    <label><input type="radio" name="sp" value="Yes"> Yes</label>
+    <label><input type="radio" name="sp" value="No"> No</label>
+  </fieldset>
+</form>
+<script>
+  for (const el of document.querySelectorAll('[role="radio"]')) {
+    el.addEventListener('click', () => {
+      for (const sib of el.parentElement.querySelectorAll('[role="radio"]')) sib.setAttribute('aria-checked', 'false');
+      el.setAttribute('aria-checked', 'true');
+    });
+  }
+</script></body></html>`;
+
+/*
  * The two-declarations question on Workday's own control.
  *
  * Workday asks every yes/no as a button that opens a listbox, and
@@ -1405,7 +1444,7 @@ const STEPPED = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</
     <textarea id="c-box" name="project"></textarea></div>
 </form></body></html>`;
 
-const PAGES = { '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
+const PAGES = { '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -2494,6 +2533,53 @@ async function main() {
           submits: window.submits,
         };
       }, { b: base }),
+    );
+    const elsewhere = await page.goto(`${base}/elsewhere`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = {
+          work_authorization: 'Authorized to work in the US',
+          requires_sponsorship: 'I do not require sponsorship in the US',
+        };
+        const report = m.fillForm(fields);
+        const ticked = (n) => document.querySelector(`input[name="${n}"]:checked`)?.value ?? '';
+        const uk = document.getElementById('uk').value;
+        const ca = ticked('ca');
+        const us = document.getElementById('us').value;
+        const sp = ticked('sp');
+        // The buttons alone, because a key answered anywhere else on the form
+        // is not answered again by a group of buttons.
+        for (const el of document.querySelectorAll('form > :not([role="radiogroup"])')) el.remove();
+        m.fillForm(fields);
+        return {
+          uk,
+          ca,
+          uks: [...document.querySelectorAll('[role="radio"]')].filter((el) => el.getAttribute('aria-checked') === 'true').map((el) => el.id).join(','),
+          us,
+          sp,
+          skipped: report.skipped.map((x) => `${x.key}:${x.reason}:${x.description}`),
+        };
+      }, { b: base }),
+    );
+    group('The right to work somewhere the profile does not say');
+    /*
+     * Measured before: all three answered from "Authorized to work in the US"
+     * and "I do not require sponsorship in the US" — "Yes" to the UK and to
+     * Canada, and "No" to needing UK sponsorship. Each is a declaration about
+     * a country the applicant never made one about, and for most people a
+     * false one.
+     */
+    check(
+      'a US declaration does not answer the UK question',
+      elsewhere.uk === '' && elsewhere.skipped.some((x) => /^work_authorization:.*another country.*UK/.test(x)),
+      JSON.stringify(elsewhere),
+    );
+    check('nor the Canadian one, as radio buttons', elsewhere.ca === '', JSON.stringify(elsewhere));
+    check('nor UK sponsorship, as buttons', elsewhere.uks === '', JSON.stringify(elsewhere));
+    check(
+      'while the US question and one naming no country are answered',
+      elsewhere.us === 'Yes' && elsewhere.sp === 'No',
+      JSON.stringify(elsewhere),
     );
     const paired = await page.goto(`${base}/paired-widgets`, { waitUntil: 'domcontentloaded' }).then(() =>
       page.evaluate(async ({ b }) => {

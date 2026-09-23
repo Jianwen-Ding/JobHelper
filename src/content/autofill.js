@@ -1650,11 +1650,71 @@ function yesNoFrom(value, key) {
 }
 
 /**
- * The option that answers a yes/no question, where the labels are yes and no
- * and the profile's answer is a phrase. `undefined` unless all of that holds.
+ * The countries a declaration or a question names.
+ *
+ * A declaration is a sentence and it says where it is true: "Authorized to
+ * work in the US". A global employer asks the same question of the country
+ * the job is in, and the sentence says nothing about that one. Measured: "Are
+ * you authorized to work in the UK?" and "…in Canada?" were answered "Yes"
+ * from "Authorized to work in the US", and "Will you require sponsorship to
+ * work in the United Kingdom?" "No" from "I do not require sponsorship in the
+ * US" — declarations about countries the applicant never made one about, and
+ * for most people false ones.
+ *
+ * The short forms in capitals only, because "us" is a pronoun: "Are you
+ * authorized to work for us?" names nobody. A question naming no country —
+ * "this country", "the country where this job is located" — is still read as
+ * the profile's own, which is what it always was.
  */
-function yesNoOption(key, value, options) {
+const COUNTRIES = [
+  // [code, the short forms (as capitals), the names (in any case)]
+  ['us', /\b(?:US|USA|U\.S\.(?:A\.)?)(?!\w)/, /\bunited\s+states\b|\bamerica\b/i],
+  ['uk', /\b(?:UK|U\.K\.)(?!\w)/, /\bunited\s+kingdom\b|\b(?:great\s+)?britain\b|\bengland\b|\bscotland\b|\bwales\b/i],
+  ['eu', /\b(?:EU|EEA|E\.U\.)(?!\w)/, /\beuropean\s+(?:union|economic\s+area)\b|\beurope\b/i],
+  ['ca', null, /\bcanad\w*/i],
+  ['au', null, /\baustralia\w*/i],
+  ['nz', null, /\bnew\s+zealand\b/i],
+  ['ie', null, /\bireland\b/i],
+  ['in', null, /\bindia\b/i],
+  ['sg', null, /\bsingapore\b/i],
+  ['de', null, /\bgermany\b/i],
+  ['fr', null, /\bfrance\b/i],
+  ['nl', null, /\bnetherlands\b/i],
+  ['mx', null, /\bmexico\b/i],
+  ['jp', null, /\bjapan\b/i],
+  ['il', null, /\bisrael\b/i],
+];
+
+function countriesIn(text) {
+  const said = String(text ?? '');
+  const out = new Set();
+  for (const [code, short, name] of COUNTRIES) {
+    if (short?.test(said) || name.test(said)) out.add(code);
+  }
+  return out;
+}
+
+/** Whether a yes/no declaration names one country and the question another. */
+function aboutAnotherCountry(key, value, asked) {
+  if (!YES_NO_KEYS.has(key)) return false;
+  const declared = countriesIn(value);
+  const wanted = countriesIn(asked);
+  if (declared.size === 0 || wanted.size === 0) return false;
+  for (const code of wanted) if (declared.has(code)) return false;
+  return true;
+}
+
+const ANOTHER_COUNTRY = 'your answer is about another country';
+
+/**
+ * The option that answers a yes/no question, where the labels are yes and no
+ * and the profile's answer is a phrase. `undefined` unless all of that holds,
+ * and unless the phrase and the question are about the same country — see
+ * `aboutAnotherCountry`.
+ */
+function yesNoOption(key, value, options, asked = '') {
   if (!YES_NO_KEYS.has(key)) return undefined;
+  if (aboutAnotherCountry(key, value, asked)) return undefined;
 
   const labelled = options.map((o) => ({ o, said: clean(o.label).toLowerCase() }));
   const yes = labelled.find((x) => x.said === 'yes');
@@ -1786,6 +1846,7 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
           key,
           value,
           choosable.filter((o) => !looksLikePlaceholder(o, input)).map((o) => ({ label: o.textContent, el: o })),
+          description,
         )?.el;
       if (option) {
         nativeSet(input, 'value', option.value);
@@ -1808,7 +1869,8 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
         input.dispatchEvent(new Event('change', { bubbles: true }));
         filled.push({ key, value });
       } else {
-        skipped.push({ key, reason: 'no matching option', description: description.slice(0, 60) });
+        const reason = aboutAnotherCountry(key, value, description) ? ANOTHER_COUNTRY : 'no matching option';
+        skipped.push({ key, reason, description: description.slice(0, 60) });
       }
       continue;
     }
@@ -1991,9 +2053,10 @@ function answerChoiceButtons(fields, overwrite, already) {
     const wanted =
       options.find((el) => sameOption(labelOf(el), value)) ??
       // And a yes/no pair against a phrase, on the same terms as a radio's.
-      yesNoOption(key, value, options.map((el) => ({ label: labelOf(el), el })))?.el;
+      yesNoOption(key, value, options.map((el) => ({ label: labelOf(el), el })), description)?.el;
     if (!wanted) {
-      skipped.push({ key, reason: 'no matching option', description: description.slice(0, 60) });
+      const reason = aboutAnotherCountry(key, value, description) ? ANOTHER_COUNTRY : 'no matching option';
+      skipped.push({ key, reason, description: description.slice(0, 60) });
       continue;
     }
 
@@ -2300,9 +2363,11 @@ function answerRadioGroups(fields, overwrite) {
         key,
         value,
         radios.map((radio) => ({ label: optionLabelFor(radio), el: radio })),
+        description,
       )?.el;
     if (!wanted) {
-      skipped.push({ key, reason: 'no matching option', description: description.slice(0, 60) });
+      const reason = aboutAnotherCountry(key, value, description) ? ANOTHER_COUNTRY : 'no matching option';
+      skipped.push({ key, reason, description: description.slice(0, 60) });
       continue;
     }
 
