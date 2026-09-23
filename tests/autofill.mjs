@@ -825,6 +825,49 @@ const WIDGETS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply �
 </script></body></html>`;
 
 /*
+ * The two-declarations question on Workday's own control.
+ *
+ * Workday asks every yes/no as a button that opens a listbox, and
+ * `fillComboboxes` drives those. `handBack` keeps the authorization-without-
+ * sponsorship pair from being answered off one of its halves on a dropdown,
+ * a radio group and a group of buttons — and it was never asked of these.
+ * Below it, the plain question, which is answerable.
+ */
+const PAIRED_WIDGETS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Workday</title></head><body>
+<form>
+  <label id="l-both">Are you legally authorized to work in the United States without sponsorship?</label>
+  <div><button type="button" id="w-both" aria-haspopup="listbox" aria-controls="lb-both" aria-labelledby="l-both">Select One</button>
+    <input type="hidden" id="h-both"></div>
+  <label id="l-able">Are you able to work in the U.S. without sponsorship?</label>
+  <div><button type="button" id="w-able" aria-haspopup="listbox" aria-controls="lb-able" aria-labelledby="l-able">Select One</button>
+    <input type="hidden" id="h-able"></div>
+  <label id="l-auth">Are you legally authorized to work in the United States?</label>
+  <div><button type="button" id="w-auth" aria-haspopup="listbox" aria-controls="lb-auth" aria-labelledby="l-auth">Select One</button>
+    <input type="hidden" id="h-auth"></div>
+</form>
+<script>
+  for (const name of ['both', 'able', 'auth']) {
+    const button = document.getElementById('w-' + name);
+    button.addEventListener('click', () => {
+      if (document.getElementById('lb-' + name)) return;
+      const list = document.createElement('ul');
+      list.id = 'lb-' + name; list.setAttribute('role', 'listbox');
+      for (const text of ['Yes', 'No']) {
+        const o = document.createElement('li');
+        o.setAttribute('role', 'option'); o.textContent = text;
+        o.addEventListener('click', () => {
+          button.textContent = text;
+          document.getElementById('h-' + name).value = text;
+          list.remove();
+        });
+        list.append(o);
+      }
+      button.after(list);
+    });
+  }
+</script></body></html>`;
+
+/*
  * The same place, spelled the list's way. The store says "MA" and "United
  * States", which is what the live payload sends; a State list says
  * "Massachusetts" with values that are names or numbers, and a Country list
@@ -1351,7 +1394,7 @@ const STEPPED = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</
     <textarea id="c-box" name="project"></textarea></div>
 </form></body></html>`;
 
-const PAGES = { '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
+const PAGES = { '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -2420,6 +2463,40 @@ async function main() {
         };
       }, { b: base }),
     );
+    const paired = await page.goto(`${base}/paired-widgets`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { work_authorization: 'Yes', requires_sponsorship: 'Yes' };
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        const read = (id) => document.getElementById(id).value;
+        return {
+          both: read('h-both'),
+          able: read('h-able'),
+          auth: read('h-auth'),
+          skipped: report.skipped.map((x) => `${x.key}:${x.reason}:${x.description}`),
+        };
+      }, { b: base }),
+    );
+    group('The two-declarations question on a Workday dropdown');
+    /*
+     * Measured before: against a profile that is authorized and needs
+     * sponsorship — anybody on a student visa — the first was answered "Yes"
+     * from the authorization alone and the second "Yes" from the sponsorship
+     * alone, both declaring a right to work unsponsored that the applicant
+     * does not have. And the plain question under them, the one that could
+     * be answered, was left blank: the first widget had claimed its key.
+     */
+    check(
+      'authorized without sponsorship is not answered from one half',
+      paired.both === '' && paired.skipped.some((x) => /^work_authorization:this one asks two things at once:.*without spons/.test(x)),
+      JSON.stringify(paired),
+    );
+    check(
+      'nor able to work without sponsorship',
+      paired.able === '' && paired.skipped.some((x) => /^work_authorization:this one asks two things at once:.*able to work/.test(x)),
+      JSON.stringify(paired),
+    );
+    check('while the plain question is answered', paired.auth === 'Yes', JSON.stringify(paired));
     const places = await page.goto(`${base}/places`, { waitUntil: 'domcontentloaded' }).then(() =>
       page.evaluate(async ({ b }) => {
         const m = await import(`${b}/autofill.js`);

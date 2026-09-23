@@ -565,11 +565,12 @@ const asksBothAtOnce = (description) =>
  * properly, which is what this restores. A question about the applicant's own
  * right to work is theirs however it is phrased.
  */
+const TWO_AT_ONCE = 'this one asks two things at once';
 const handBack = (description, skipped) => {
   if (!asksBothAtOnce(description)) return false;
   skipped.push({
     key: 'work_authorization',
-    reason: 'this one asks two things at once',
+    reason: TWO_AT_ONCE,
     description: description.slice(0, 60),
   });
   return true;
@@ -2536,6 +2537,23 @@ function widgetChoices(fields, filled) {
 
     const description = describeField(widget);
     if (!description) continue;
+    /*
+     * Handed back here too, as `handBack` hands it back everywhere else.
+     *
+     * Workday asks every yes/no as one of these, and this was the one path
+     * that never asked. Measured against a profile that is authorized and
+     * needs sponsorship: "Are you legally authorized to work in the United
+     * States without sponsorship?" was answered "Yes" from the authorization
+     * alone, "Are you able to work in the U.S. without sponsorship?" "Yes"
+     * from the sponsorship alone — both declaring a right to work unsponsored
+     * that the applicant does not have — and the plain question below them
+     * was left blank, because the first had claimed its key. So it claims
+     * nothing, is never driven, and is reported for what it is.
+     */
+    if (asksBothAtOnce(description)) {
+      found.push({ key: 'work_authorization', description: description.slice(0, 60), el: widget, both: true });
+      continue;
+    }
     if (isNotAboutYou(description, clean(labelFor(widget)), surroundingWords(widget), boundedSection(widget))) continue;
 
     /*
@@ -2567,7 +2585,11 @@ function widgetChoices(fields, filled) {
 }
 
 function unfillableChoices(fields, filled) {
-  return widgetChoices(fields, filled).map(({ key, description }) => ({ key, reason: PICK_BY_HAND, description }));
+  return widgetChoices(fields, filled).map(({ key, description, both }) => ({
+    key,
+    reason: both ? TWO_AT_ONCE : PICK_BY_HAND,
+    description,
+  }));
 }
 
 /* ---------------------------------------------------------------------- *
@@ -2740,8 +2762,8 @@ export async function fillComboboxes(fields, report, { patience = 1500 } = {}) {
   if (pending.size === 0) return report;
 
   const done = [];
-  for (const { key, el: widget } of widgetChoices(fields, report.filled)) {
-    if (!pending.has(key)) continue;
+  for (const { key, el: widget, both } of widgetChoices(fields, report.filled)) {
+    if (both || !pending.has(key)) continue;
     const value = String(fields[key]);
     const box = typingBoxOf(widget);
     const hiddenBefore = hiddenPartner(widget)?.value ?? '';
