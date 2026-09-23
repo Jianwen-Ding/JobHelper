@@ -1116,7 +1116,24 @@ const MORE_MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Ap
   <label for="own-li">LinkedIn</label><input id="own-li" name="li">
 </form></body></html>`;
 
-const PAGES = { '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
+/*
+ * Two widgets, and a profile that holds the state and not the country.
+ *
+ * The order of the patterns puts country above state because
+ * "Country/Region" matches `region`; the widget report walked past country
+ * when the profile had none and named the Country/Region widget as the state.
+ * Having claimed the state there, it then had nothing to say about the State
+ * widget below it, which is the one the person needed pointing at.
+ */
+const WIDGET_KEYS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Widget keys</title></head><body>
+<form>
+  <label id="l-cr">Country/Region</label>
+  <button type="button" id="k-cr" aria-haspopup="listbox" aria-labelledby="l-cr">Select One</button>
+  <label id="l-st">State</label>
+  <button type="button" id="k-st" aria-haspopup="listbox" aria-labelledby="l-st">Select One</button>
+</form></body></html>`;
+
+const PAGES = { '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -1909,6 +1926,17 @@ async function main() {
         return Object.fromEntries(['cc', 'ct', 'mre', 'hco', 'hti', 'cl'].map((id) => [id, document.getElementById(id).value]));
       }, { b: base }),
     );
+    const widgetKeys = await page.goto(`${base}/widget-keys`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const named = (fields) =>
+          m.fillForm(fields).skipped.filter((x) => /by hand/.test(x.reason)).map((x) => `${x.key}: ${x.description.split(' ')[0]}`);
+        return {
+          stateOnly: named({ address_state: 'MA' }),
+          both: named({ address_state: 'MA', address_country: 'United States' }),
+        };
+      }, { b: base }),
+    );
     const widgets = await page.goto(`${base}/widgets`, { waitUntil: 'domcontentloaded' }).then(() =>
       page.evaluate(async ({ b }) => {
         const m = await import(`${b}/autofill.js`);
@@ -2201,6 +2229,18 @@ async function main() {
       'no list it chose from is left open',
       widgets.openLists.every((id) => id === 'lb-state'),
       JSON.stringify(widgets.openLists),
+    );
+
+    group('A widget is the question its label asks, whatever the profile holds');
+    check(
+      'a Country/Region widget is not named as the state when the profile has no country',
+      JSON.stringify(widgetKeys.stateOnly) === JSON.stringify(['address_state: State']),
+      JSON.stringify(widgetKeys.stateOnly),
+    );
+    check(
+      'and with both, each widget is named as its own question',
+      JSON.stringify(widgetKeys.both) === JSON.stringify(['address_country: Country/Region', 'address_state: State']),
+      JSON.stringify(widgetKeys.both),
     );
 
     group('The job somebody holds now');

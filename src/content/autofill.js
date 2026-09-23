@@ -2231,14 +2231,29 @@ function widgetChoices(fields, filled) {
     if (!description) continue;
     if (isNotAboutYou(description, clean(labelFor(widget)), surroundingWords(widget))) continue;
 
+    /*
+     * The first pattern that matches, and only then whether the profile has
+     * it — the rule `fillForm` follows, for the reason it gives there.
+     *
+     * This still searched for the first pattern that matched *and* had a
+     * value *and* was not already claimed, so it walked past country on a
+     * profile with no country and named a "Country/Region" widget as the
+     * state, `region` being a state word. Measured on a form with a
+     * Country/Region widget above a State widget and a profile holding only
+     * the state: the report said the state was to be picked by hand at the
+     * Country/Region widget, and — the state now being claimed — said nothing
+     * about the State widget at all. `fillComboboxes` then typed the state
+     * into the country box.
+     *
+     * What a widget asks does not depend on what the profile holds or what
+     * has been claimed already; a widget whose question the profile cannot
+     * answer, or that has been answered elsewhere, is simply not named.
+     */
     const dated = educationDateKey(widget, description);
-    const match =
-      dated && fields[dated] && !already.has(dated)
-        ? [dated]
-        : FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key] && !already.has(key));
-    if (!match) continue;
-    found.push({ key: match[0], description: description.slice(0, 60), el: widget });
-    already.add(match[0]);
+    const key = dated || FIELD_PATTERNS.find(([, re]) => re.test(description))?.[0];
+    if (!key || !fields[key] || already.has(key)) continue;
+    found.push({ key, description: description.slice(0, 60), el: widget });
+    already.add(key);
   }
   return found;
 }
