@@ -6163,11 +6163,28 @@ export function createCard({
      * point of "Edit in ResumeM-M" is to go and add the phrasing this posting
      * wants, and the proposal on screen was made before it existed.
      */
-    cameBack() {
+    async cameBack() {
       if (!state.wentToEditor || state.editedElsewhere) return;
       state.wentToEditor = false;
       state.editedElsewhere = true;
       draw();
+      /*
+       * And the copy as it was left there. "Edit in ResumeM-M" opens this
+       * very resume, and whatever was switched on or off in the builder was
+       * lost on the way back: the card still held the copy as it had it, and
+       * filing, the letter and the AI all send that whole — so "Mark as
+       * applied" wrote the card's old skills back over the ones just chosen.
+       * Only where the store has it and it has changed; a copy never filed
+       * is not in the store, and the card's is the only one there is.
+       */
+      const id = state.spec?.id;
+      if (!id) return;
+      const list = await Promise.resolve(onAction('listResumes', {})).catch(() => null);
+      const stored = (Array.isArray(list) ? list : list?.resumes ?? []).find((r) => r?.id === id);
+      if (!stored || state.spec?.id !== id || JSON.stringify(stored) === JSON.stringify(state.spec)) return;
+      state.spec = stored;
+      state.render = null;
+      await compile();
     },
 
     /** The pages this application spans, as the trail grows. */

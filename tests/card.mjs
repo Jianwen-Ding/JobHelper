@@ -4507,6 +4507,65 @@ async function main() {
     JSON.stringify(placed),
   );
 
+  console.log('\nComing back from the builder with the copy edited there');
+
+  /*
+   * "Edit in ResumeM-M" opens the tailored copy itself. What was changed on
+   * it there was then thrown away: the card still held the copy as it was,
+   * and filing sends that whole — so "Mark as applied" wrote the card's old
+   * skills back over the ones just chosen in the builder.
+   */
+  const edited = await inPage(async (createCard) => {
+    const sent = [];
+    const stored = {
+      id: 'job-ferrous',
+      label: 'Ferrous',
+      tier: 'temporary',
+      sections: [{ kind: 'skills', entries: [], groups: ['sk_lang'], items: { sk_lang: ['s_py', 's_go', 's_rust'] } }],
+    };
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Backend Engineer', company: 'Ferrous' },
+        spec: {
+          id: 'job-ferrous',
+          label: 'Ferrous',
+          tier: 'temporary',
+          sections: [{ kind: 'skills', entries: [], groups: ['sk_lang'], items: { sk_lang: ['s_py', 's_go'] } }],
+        },
+        baseLabel: 'New grad resume',
+        tailor: 'none',
+        diff: [],
+        rationale: [],
+        skillChanges: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        if (action === 'render') return { pages: 1, fits: true };
+        if (action === 'listResumes') return [stored];
+        return {};
+      },
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const to = [...root.querySelectorAll('button')].find((b) => /Edit in ResumeM-M/.test(b.textContent));
+    if (!to) return { error: 'no Edit in ResumeM-M button' };
+    to.click();
+    await handle.cameBack();
+    await new Promise((r) => setTimeout(r, 120));
+    const spec = sent.filter((c) => c.action === 'render').at(-1)?.payload?.spec;
+    return { items: (spec?.sections ?? []).find((x) => x.kind === 'skills')?.items?.sk_lang ?? null };
+  });
+  check(
+    'the card takes up the copy as it was left in the builder',
+    JSON.stringify(edited.items) === JSON.stringify(['s_py', 's_go', 's_rust']),
+    JSON.stringify(edited),
+  );
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);

@@ -2520,7 +2520,9 @@
      */
     if (message?.type === 'jh-came-back') {
       try {
-        cardHandle?.cameBack?.();
+        // Asynchronous now — it fetches the copy as the builder left it — so
+        // a failure there is caught the same way a throw here is.
+        Promise.resolve(cardHandle?.cameBack?.()).catch(() => undefined);
       } catch {
         // An orphaned card. Not worth an error on the page.
       }
