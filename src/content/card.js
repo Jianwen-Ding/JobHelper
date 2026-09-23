@@ -4176,7 +4176,21 @@ export function createCard({
    */
   function applyAnswer(question, before, text) {
     if (!text?.trim()) return false;
-    if ((state.answers[question] ?? '') !== before) {
+    /*
+     * Nothing in `state.answers` is nobody having written anything.
+     *
+     * Only typing, a carried answer or an earlier draft puts a question in
+     * `state.answers`; until then its box shows the bank's answer, and that is
+     * what both callers hand in as `before`. This compared `before` against
+     * `state.answers[question] ?? ''`, so on every question the bank knew the
+     * two differed before anyone touched a key. Measured: "Rewrite for this
+     * role" on a stored answer left it as it was and said "You were writing
+     * while that ran, so what you wrote was kept", and "Write all 2 answers"
+     * threw both drafts away with "— 2 answers" — on the questions a rewrite
+     * is for, the ones answered for another company.
+     */
+    const now = state.answers[question];
+    if (now !== undefined && now !== before) {
       state.kept = [...new Set([...(state.kept ?? []), question])];
       const n = state.kept.length;
       state.answerNote =

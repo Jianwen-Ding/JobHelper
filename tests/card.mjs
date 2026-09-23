@@ -1697,6 +1697,85 @@ async function main() {
   check('counting them, because one run can collide with several', /2 answers/.test(clash.said ?? ''), String(clash.said));
 
   /*
+   * And an answer the bank put in the box is not somebody writing.
+   *
+   * The box shows the stored answer until somebody types, and that stored
+   * answer is what the run is handed as "before". The check compared it
+   * against `state.answers[question] ?? ''` — empty until a key is pressed —
+   * so every question the bank knew looked written-over. "Rewrite for this
+   * role" on a stored answer changed nothing and said "You were writing while
+   * that ran", and "Write all" threw away every draft for such questions.
+   *
+   * Two questions the bank knows, one run: the one nobody touches takes the
+   * draft, and the one typed into while it ran keeps what was typed.
+   */
+  const bankRewrite = await inPage(async (createCard) => {
+    let release;
+    const held = new Promise((r) => (release = r));
+    let ids = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [
+        { question: 'Why us?', answer: 'Because of the mission.', confident: true },
+        { question: 'Tell us about a project.', answer: 'I built a scheduler.', confident: false },
+      ],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'answer:Why us?') return { executed: true, output: 'Rewritten for Acme.' };
+        if (action === 'writeApplication') {
+          ids = payload.questions.map((q) => q.id);
+          return held;
+        }
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const box = (q) => root.querySelector(`textarea[data-field="answer:${q}"]`);
+    const said = () => root.textContent.match(/You were writing while that ran[^.]*\./)?.[0] ?? null;
+    await new Promise((r) => setTimeout(r, 120));
+
+    [...root.querySelectorAll('button')].find((b) => /Rewrite for this role/.test(b.textContent))?.click();
+    await new Promise((r) => setTimeout(r, 120));
+    const one = { box: box('Why us?')?.value ?? null, said: said() };
+
+    // The next run over both, with the second typed into while it is out.
+    [...root.querySelectorAll('button')].find((b) => /Write all 2 answers/.test(b.textContent))?.click();
+    await new Promise((r) => setTimeout(r, 120));
+    const typed = box('Tell us about a project.');
+    typed.value = 'Mine, typed while it ran.';
+    typed.dispatchEvent(new Event('input', { bubbles: true }));
+    release({ oneRun: true, answers: { [ids[0]]: 'All at once for Acme.', [ids[1]]: 'The run wrote this.' } });
+    await new Promise((r) => setTimeout(r, 200));
+    return {
+      one,
+      all: { why: box('Why us?')?.value ?? null, project: box('Tell us about a project.')?.value ?? null, said: said() },
+    };
+  });
+  check(
+    'rewriting a stored answer puts the rewrite in its box',
+    bankRewrite.one.box === 'Rewritten for Acme.' && bankRewrite.one.said === null,
+    JSON.stringify(bankRewrite.one),
+  );
+  check(
+    'and one run over stored answers fills the ones nobody touched',
+    bankRewrite.all.why === 'All at once for Acme.',
+    JSON.stringify(bankRewrite.all),
+  );
+  check(
+    'while one typed into as it ran still keeps what was typed, and says so',
+    bankRewrite.all.project === 'Mine, typed while it ran.' && /kept\.$/.test(bankRewrite.all.said ?? ''),
+    JSON.stringify(bankRewrite.all),
+  );
+
+  /*
    * Two rebuilds really can be in flight now, so the bar has to belong to the
    * one still running. A set held one entry per name, so the fast one's
    * removal took the bar down while a model was still reading.
