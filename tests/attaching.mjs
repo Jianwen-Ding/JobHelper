@@ -376,7 +376,20 @@ const DROPZONE_JS = `<!doctype html><html><head><meta charset="utf-8"><title>App
   <div class="field"><h4>Resume/CV</h4> <div id="resume" class="dropzone dz-clickable"><div class="dz-message"><span>Drop files here to upload</span></div></div></div>
 </form></body></html>`;
 
+/**
+ * Two upload controls as a framework renders them: no whitespace anywhere
+ * between the elements, so the label's text runs straight into the button's
+ * in `textContent` — "Cover LetterAttach". Nothing else names either box.
+ */
+const RUN_TOGETHER = page(
+  '<div class="upload"><div class="label">Resume</div><div class="wrap"><button type="button">Attach</button>' +
+    '<input id="u1" type="file" class="visually-hidden"></div></div>' +
+    '<div class="upload"><div class="label">Cover Letter</div><div class="wrap"><button type="button">Attach</button>' +
+    '<input id="u2" type="file" class="visually-hidden"></div></div>',
+);
+
 const PAGES = {
+  '/run-together': RUN_TOGETHER,
   '/dropzone-js': DROPZONE_JS,
   '/refuses-by-name': REFUSES_BY_NAME,
   '/refuses-in-preview': REFUSES_IN_PREVIEW,
@@ -942,6 +955,24 @@ async function main() {
      * read as the chip `KEEPS_AS_CHIP` shows, and the card said "Attached"
      * over an empty box and a red message.
      */
+    /*
+     * Markup with no whitespace between its elements, which is what React and
+     * every other framework render. `textContent` joins a label to the button
+     * after it — "cover letterattach" — and `\bcover letter\b` cannot see
+     * the words in that. Measured: the cover letter "no box here asks for
+     * it" beside a box labelled Cover Letter, and with a plain "Resume"
+     * label the resume too.
+     */
+    group('Labels and buttons with no space between them');
+    {
+      const { report, inBoxes } = await run('/run-together', [
+        filed('Jianwen-Ding-Resume.pdf'),
+        filed('Jianwen-Ding-Cover-Letter.pdf'),
+      ]);
+      check('the resume goes in the box under Resume', inBoxes.u1?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(report));
+      check('and the letter in the one under Cover Letter', inBoxes.u2?.[0] === 'Jianwen-Ding-Cover-Letter.pdf', JSON.stringify(report));
+    }
+
     /*
      * Dropzone.js's inputs are at the end of the page, so nothing near one
      * says whose it is — and the look back from the first one took the text

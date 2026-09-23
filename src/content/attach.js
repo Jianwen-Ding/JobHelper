@@ -129,6 +129,27 @@ export function wordsOf(text) {
 }
 
 /**
+ * An element's words as somebody reading it sees them.
+ *
+ * `textContent` joins text across element boundaries with nothing between,
+ * and a framework renders no whitespace between elements — so a label and
+ * the button after it read "cover letterattach", in which `\bcover
+ * letter\b` finds nothing. Measured on two upload controls rendered that
+ * way, labelled Resume and Cover Letter and named nothing else: both files
+ * "no box here asks for it". Text from different nodes is kept apart here,
+ * and a script's or stylesheet's is left out.
+ */
+function textOf(el) {
+  if (!el) return '';
+  const parts = [];
+  const walk = (el.ownerDocument ?? document).createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+    if (!/^(SCRIPT|STYLE|NOSCRIPT)$/.test(n.parentElement?.tagName ?? '')) parts.push(n.nodeValue);
+  }
+  return parts.join(' ');
+}
+
+/**
  * What a box says about itself, without borrowing from its neighbours.
  *
  * Its own label, its name and id, whatever accessibility text it carries.
@@ -226,7 +247,7 @@ function aroundIt(input) {
          */
         if (before.matches?.('script, style, template, noscript')) continue;
         if (before.matches?.(FIELDS) || before.querySelector?.(FIELDS)) break;
-        const text = clean(before.textContent);
+        const text = clean(textOf(before));
         if (!text) continue;
         said.unshift(text);
         room -= text.length;
@@ -234,7 +255,7 @@ function aroundIt(input) {
       if (said.length > 0) return said.join(' ');
       break;
     }
-    const text = clean(holder.textContent);
+    const text = clean(textOf(holder));
     if (text && text.length < 400) best = text;
   }
   return best;
@@ -556,10 +577,10 @@ function dropZones(root = document) {
  */
 function zoneSays(zone, zones) {
   const clean = (text) => wordsOf(text).replace(/\s+/g, ' ').trim();
-  let said = clean(`${zone.getAttribute('aria-label') ?? ''} ${zone.textContent ?? ''}`);
+  let said = clean(`${zone.getAttribute('aria-label') ?? ''} ${textOf(zone)}`);
   for (let holder = zone.parentElement, up = 0; holder && up < 4; holder = holder.parentElement, up++) {
     if (zones.some((z) => z !== zone && holder.contains(z))) break;
-    const text = clean(holder.textContent);
+    const text = clean(textOf(holder));
     if (text && text.length < 400) said = text;
   }
   return said;
