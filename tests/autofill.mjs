@@ -1157,6 +1157,13 @@ const MISREAD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</
     <label><input type="radio" name="elig" value="y"> Yes</label>
     <label><input type="radio" name="elig" value="n"> No</label>
   </fieldset>
+  <!-- The same again as the global employers put it, whose "country … applying"
+       is also how "Which country are you applying for?" begins. -->
+  <fieldset>
+    <legend>Are you legally authorized to work in the country to which you are applying?</legend>
+    <label><input type="radio" name="applyin" value="y"> Yes</label>
+    <label><input type="radio" name="applyin" value="n"> No</label>
+  </fieldset>
 
   <label for="ext">Phone extension</label><input id="ext" name="phone_ext">
   <label for="contact">Can we contact your current employer?</label><input id="contact" name="q_contact">
@@ -1832,7 +1839,7 @@ async function main() {
         return {
           why: v('why'), why2: v('why2'), ext: v('ext'), contact: v('contact'), empmail: v('empmail'), tenure: v('tenure'), cpc: v('cpc'), say: v('say'), fulln: v('fulln'), e1: v('e1'), e2: v('e2'), e3: v('e3'), e4: v('e4'), e5: v('e5'), f1: v('f1'), f2: v('f2'),
           st: v('st'), ctry: v('ctry'), ph: v('ph'), co: v('co'),
-          auth: ticked('auth'), elig: ticked('elig'),
+          auth: ticked('auth'), elig: ticked('elig'), applyin: ticked('applyin'),
         };
       }, { b: base, profile: { ...PROFILE, address_state: 'MA', current_company: 'Acme', school: 'Northeastern University', location: 'Boston, MA' } }),
     );
@@ -1847,6 +1854,17 @@ async function main() {
       `ticked "${misread.auth}"`,
     );
     check('and so is "legally eligible to work"', misread.elig === 'y', `ticked "${misread.elig}"`);
+    /*
+     * Read as "Which location are you applying for?", whose rule wants a place
+     * and then "applying" a few words on, so the right-to-work question was
+     * excluded — and an exclusion says nothing: a required question left blank
+     * under a card that did not mention it.
+     */
+    check(
+      'and "authorized to work in the country to which you are applying"',
+      misread.applyin === 'y',
+      `ticked "${misread.applyin}"`,
+    );
     check('while a box labelled "Country" still gets the country', misread.ctry === 'United States', misread.ctry);
     check('a phone extension box is not given the whole number', misread.ext === '', misread.ext);
     check('while the phone box still is', misread.ph === '555-0100', misread.ph);

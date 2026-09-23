@@ -340,7 +340,14 @@ const NOT_ABOUT_YOU = [
    */
   /\b(prefer\w*|desired|requested)\b[\s\S]{0,24}\b(location|city|town|country|office|site)\b/i,
   // "Which location are you applying for?" is the same question again.
-  /\b(location|city|town|country|office|site)\b[\s\S]{0,24}\b(prefer\w*|desired|requested|applying)\b/i,
+  /*
+   * But not a place named by the job, "the country to which you are
+   * applying", which is how the global employers ask the right to work: it
+   * matched this rule and was excluded, and an exclusion says nothing, so a
+   * required question was left blank with the card silent about it. "The
+   * country where this job is located" was always answered.
+   */
+  /\b(location|city|town|country|office|site)\b(?!\s+(?:(?:to|in|for)\s+which\s+)?you(?:\s+are|'re)\s+applying)[\s\S]{0,24}\b(prefer\w*|desired|requested|applying)\b/i,
   /*
    * Where the job is, which is the employer's to say. "Job location",
    * "Office location", "Work location", "Location of the role" and
