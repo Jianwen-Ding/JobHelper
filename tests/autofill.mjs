@@ -2377,7 +2377,26 @@ const ASKED_TWICE = `<!doctype html><html><head><meta charset="utf-8"><title>App
 </script>
 </body></html>`;
 
-const PAGES = { '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
+/*
+ * The most recent job, asked for in so many words — each measured live and
+ * left empty with a fake profile whose one job had ended: Vanta's Ashby board
+ * (its two boxes, labelled by a <label> over an id-named input), Samsara's and
+ * Reddit's Greenhouse custom questions. "Current company" is Lever's, and
+ * asks about now.
+ */
+const MOST_RECENT_JOB = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Vanta</title></head><body>
+<form>
+  <label for="bda8d900-0cf3-45fd-92b5-b27939491378">Current/Most Recent Company Name*</label>
+  <input id="bda8d900-0cf3-45fd-92b5-b27939491378" name="bda8d900-0cf3-45fd-92b5-b27939491378" type="text" required>
+  <label for="5a3467b2-1e5c-4109-93a2-9003d24a8d48">Current/Most Recent Job Title*</label>
+  <input id="5a3467b2-1e5c-4109-93a2-9003d24a8d48" name="5a3467b2-1e5c-4109-93a2-9003d24a8d48" type="text" required>
+  <label for="question_68391427">Most Recent Employer*</label><input id="question_68391427" type="text" aria-required="true">
+  <label for="question_69095951">Please provide the name of your current (or most recent) company*</label><input id="question_69095951" type="text" aria-required="true">
+  <label for="org">Current company</label><input id="org" name="org" type="text">
+  <label for="leaving">Reason for leaving your most recent employer</label><input id="leaving" type="text">
+</form></body></html>`;
+
+const PAGES = { '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -5625,6 +5644,37 @@ async function main() {
       twice.wrapped === 'No' && twice.sponsorships === 3,
       JSON.stringify(twice),
     );
+
+    const RECENT_JOBS = [
+      { company: 'Older Co', title: 'Tutor', start: { year: 2023, month: 1 }, end: { year: 2024, month: 5 }, current: false, description: '' },
+      { company: 'Example Co', title: 'Software Engineering Intern', start: { year: 2025, month: 6 }, end: { year: 2025, month: 8 }, current: false, description: '' },
+    ];
+    const recentJob = (history, extra = {}) => page.goto(`${base}/most-recent-job`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields, history }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm(fields, { history });
+        return [...document.querySelectorAll('input')].map((el) => el.value);
+      }, { b: base, fields: { ...SWEEP, ...extra }, history }));
+    const ended = await recentJob(RECENT_JOBS);
+    const still = await recentJob(RECENT_JOBS, { current_company: 'Now Inc', current_title: 'Engineer' });
+    const tied = await recentJob([RECENT_JOBS[1], { ...RECENT_JOBS[1], company: 'Same Month LLC' }]);
+    group('A question asking for the most recent job');
+    check(
+      'Vanta\'s "Current/Most Recent" company and title, Samsara\'s "Most Recent Employer" and Reddit\'s "current (or most recent) company" get the job that ended last',
+      JSON.stringify(ended.slice(0, 4)) === '["Example Co","Software Engineering Intern","Example Co","Example Co"]',
+      JSON.stringify(ended),
+    );
+    check(
+      'while "Current company" still says nothing about a job that has ended, and a reason for leaving is not a company',
+      ended[4] === '' && ended[5] === '',
+      JSON.stringify(ended),
+    );
+    check(
+      'a job still going is the most recent one',
+      JSON.stringify(still.slice(0, 5)) === '["Now Inc","Engineer","Now Inc","Now Inc","Now Inc"]',
+      JSON.stringify(still),
+    );
+    check('two jobs that ended the same month give nothing', tied.slice(0, 4).every((v) => v === ''), JSON.stringify(tied));
   } finally {
     await browser.close();
     server.close();

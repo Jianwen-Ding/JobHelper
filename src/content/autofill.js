@@ -63,8 +63,14 @@ const FIELD_PATTERNS = [
    * `name="org"` with "Current company" as its only label, and it read as
    * nothing at all.
    */
-  ['current_company', /\b(current|present|most[\s_-]*recent)[\s_-]*(company|employer|organi[sz]ation|org)\b/i],
-  ['current_title', /\b(current|present|most[\s_-]*recent)[\s_-]*(job[\s_-]*)?(title|role|position)\b/i],
+  /*
+   * And a bracket closed between them: Reddit's Greenhouse board asks "Please
+   * provide the name of your current (or most recent) company", and ")"
+   * stood between "recent" and "company". See `mostRecentJob` for what a
+   * question saying "most recent" is given.
+   */
+  ['current_company', /\b(current|present|most[\s_-]*recent)\)?[\s_-]*(company|employer|organi[sz]ation|org)\b/i],
+  ['current_title', /\b(current|present|most[\s_-]*recent)\)?[\s_-]*(job[\s_-]*)?(title|role|position)\b/i],
   /*
    * When the degree ends. Above school and degree on purpose: the first
    * pattern to match claims the field, and "Graduation date from your
@@ -269,8 +275,13 @@ const NOT_ABOUT_YOU = [
    * name" further on, which still excludes. Every doubt leaves it blank. The
    * rest of the list — the employer's address, location, phone — is
    * somebody else's however current they are.
+   *
+   * "Current/Most Recent Company Name" opens the same way, twice over, and is
+   * how Ashby boards ask it: measured live on Vanta's, where it was excluded
+   * as a past employer's and left blank. So a "current" may be followed by
+   * "/ most recent" or "(or most recent)" before the name.
    */
-  /\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+(address|location|city|town|state|province|country|phone|telephone|email|zip|postal|web[\s_-]?site|url)\b|(?<!^[\W_]*(?:current|present|most[\s_-]*recent)[\s_-]+)\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+name\b/i,
+  /\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+(address|location|city|town|state|province|country|phone|telephone|email|zip|postal|web[\s_-]?site|url)\b|(?<!^[\W_]*(?:current|present|most[\s_-]*recent)(?:[\s_]*(?:\/|\(?\s*or\b)[\s_]*most[\s_-]*recent\)?)?[\s_-]+)\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+name\b/i,
   /*
    * And the school's, which the education sections of the older systems ask
    * for the same way. `school` sits above every address pattern, so "School
@@ -286,6 +297,13 @@ const NOT_ABOUT_YOU = [
    * contact email" gave the applicant's address.
    */
   /\bcontact\b[\s\S]{0,30}\bemployers?\b|\bemployers?\b[\s\S]{0,20}\bcontact\b/i,
+  /*
+   * Why somebody left, which is not where they were: "Reason for leaving your
+   * most recent employer" would otherwise take the employer's name as its
+   * reason. Nothing has been measured filling it — it is here because asking
+   * for the most recent employer (see `mostRecentJob`) is what reaches it.
+   */
+  /\breasons?\b[\s\S]{0,30}\bleav\w*|\bwhy\b[\s\S]{0,20}\bleav\w*/i,
   /*
    * How long, not who. "Years at current company" matched `current_company`
    * and was given the employer's name in a box asking for a number.
@@ -2090,6 +2108,37 @@ const NOT_LISTED = new RegExp(
   'i',
 );
 
+/*
+ * The job a question asking for the "most recent" one means, from the resume.
+ *
+ * The store sends `current_company` and `current_title` only for a job whose
+ * dates run to the present, and on purpose: "Current company" answered with
+ * the last place somebody worked says they work there now. But plenty of
+ * forms ask for the last one in so many words, and mark it required.
+ * Measured live with a fake profile whose one job (Example Co, Software
+ * Engineering Intern, Jun–Aug 2025) has ended: Vanta's Ashby board left
+ * "Current/Most Recent Company Name" and "Current/Most Recent Job Title"
+ * empty, Samsara's Greenhouse board "Most Recent Employer", and Reddit's
+ * "Please provide the name of your current (or most recent) company" — each
+ * required, each a question the resume being attached plainly answers.
+ *
+ * So a question that says "most recent" is given the newest job on the
+ * resume: one still going, else the one that ended last. Two that cannot be
+ * told apart — both still going, or ending in the same month — give nothing,
+ * as the store's own `currentJob` does. A question saying only "current" is
+ * not touched: it still gets the store's answer or nothing.
+ */
+const MOST_RECENT = /\bmost[\s_-]*recent\b/i;
+
+function mostRecentJob(history) {
+  const jobs = (Array.isArray(history) ? history : []).filter((job) => job?.company);
+  if (jobs.length <= 1) return jobs[0];
+  const ended = (job) => (job.current ? Infinity : job.end?.year ? job.end.year * 12 + (job.end.month ?? 12) : undefined);
+  const ranked = jobs.map((job) => ({ job, at: ended(job) })).filter((r) => r.at !== undefined).sort((a, b) => b.at - a.at);
+  if (ranked.length === 0 || ranked[0].at === ranked[1]?.at) return undefined;
+  return ranked[0].job;
+}
+
 function withCityAndState(fields) {
   if (fields.city_state || !fields.address_city) return fields;
   const both = fields.address_state ? `${fields.address_city}, ${fields.address_state}` : fields.address_city;
@@ -2098,6 +2147,13 @@ function withCityAndState(fields) {
 
 export function fillForm(fields, { overwrite = false, remembered = [], history = [] } = {}) {
   fields = withCityAndState(fields);
+  // For a question asking about the most recent job. See `mostRecentJob`.
+  const recent = mostRecentJob(history);
+  const lately = {
+    ...fields,
+    current_company: fields.current_company || recent?.company,
+    current_title: fields.current_company ? fields.current_title : fields.current_title || recent?.title,
+  };
   const filled = [];
   const skipped = [];
   // A new pass: what an earlier one pressed has been drawn, or was refused.
@@ -2140,7 +2196,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     const dated = educationDateKey(input, description);
     const found = dated ? [dated] : FIELD_PATTERNS.find(([, re]) => re.test(description));
     const named = found && !dated ? [addressPartByLabel(clean(labelFor(input)), found[0])] : found;
-    let match = named && fields[named[0]] ? named : undefined;
+    const answers = MOST_RECENT.test(labelFor(input)) ? lately : fields;
+    let match = named && answers[named[0]] ? named : undefined;
 
     if (!match && fields.full_name && BARE_NAME.test(withoutMarkers(labelFor(input)))) {
       match = ['full_name'];
@@ -2152,12 +2209,12 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     if (!match) continue;
 
     const key = wholeDateKey(input, match[0], description);
-    if (!fields[key]) continue;
+    if (!answers[key]) continue;
     // A box for the answer a list above it did not have. See `NOT_LISTED`.
     if (!(input instanceof HTMLSelectElement) && NOT_LISTED.test(description)) continue;
     if (anotherLevelOfStudy(input, key, fields)) continue;
     if (asksYesOrNo(input, key)) continue;
-    let value = fields[key];
+    let value = answers[key];
 
     const answered =
       input instanceof HTMLSelectElement
