@@ -3910,6 +3910,17 @@ async function main() {
     handle.setTrail({ pages: [posting, form(1), form(2)] });
     seen.againLater = read();
 
+    /*
+     * A later page that asks something. Workday's "Application Questions"
+     * is the fourth page of five, well after the resume is built — and the
+     * reduced card has no questions in it, so the three essay boxes on it
+     * were nowhere on the card: "questions not scanned".
+     */
+    handle.setQuestions([{ question: 'What technical skills do you hope to use in this position?', fieldId: 'jh-q-1', answer: '', confident: false }]);
+    seen.asks = { ...read(), questions: root.querySelectorAll('.q').length };
+    handle.setQuestions([]);
+    seen.askedNothing = read();
+
     // Somebody asks for the whole card back.
     root.querySelector('.body.reduced .link')?.click();
     seen.expanded = read();
@@ -3978,6 +3989,12 @@ async function main() {
     JSON.stringify(reducing.firstForm.buttons),
   );
   check('and the page after it is again', reducing.againLater.small === true, reducing.againLater.why);
+  check(
+    'but not a page that asks questions: answering them is what is left to do there',
+    reducing.asks.small === false && reducing.asks.questions === 1,
+    JSON.stringify({ small: reducing.asks.small, questions: reducing.asks.questions }),
+  );
+  check('and it reduces again once there is nothing to answer', reducing.askedNothing.small === true, reducing.askedNothing.why);
   check('asking for everything brings it back', reducing.expanded.small === false, JSON.stringify(reducing.expanded.buttons));
   check(
     'and it stays back — a guess overruled once is not made again',

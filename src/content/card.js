@@ -6047,6 +6047,14 @@ export function createCard({
      * on it, so the whole of what it leaves would have been useless.
      */
     if (!isForm) return false;
+    /*
+     * Nor on a page that asks something. Reducing takes away what is already
+     * done, and this page's questions are not done — they are the reason to
+     * be on it. Workday's "Application Questions" is the fourth page of five,
+     * long after the resume is built, and the reduced card has no questions
+     * in it: three required essay boxes on the page and none on the card.
+     */
+    if ((state.questions ?? []).length > 0) return false;
     const earlier = (state.trail?.pages ?? []).filter((p) => p.url !== location.href);
     if (!earlier.some((p) => p.kind === 'application')) return false;
     return Boolean(state.render || state.staged || state.bundle);
