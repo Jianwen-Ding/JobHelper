@@ -1656,6 +1656,96 @@ const PREFIXED = `<!doctype html><form>
  * one to pick by hand, and never tried the State at all — the id's "country"
  * made the box labelled State read as the country question.
  */
+/*
+ * Greenhouse's current education block, as its react-select behaves on the
+ * live board (measured on job-boards.greenhouse.io/spacex): nothing is
+ * offered until the menu is opened by a press on the control — typing into a
+ * closed one changes nothing — the school list is a search against the
+ * board's API that takes a moment to answer, and Degree and Discipline are
+ * fixed lists that filter by what is typed, as react-select's do. So typing
+ * "Bachelor of Science" into the degree filters out "Bachelor's Degree",
+ * which is the answer spelled the form's way.
+ *
+ * Reported: "didn't correctly fill in university history". All three were
+ * left on "Select...".
+ */
+const GREENHOUSE_EDUCATION = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — SpaceX</title></head><body>
+<form id="application-form">
+  <label id="country-label" for="country">Country<span>*</span></label>
+  <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+    <input id="country" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="country-label" autocomplete="off"></div></div></div>
+  <div class="education--form">
+    <label id="school--0-label" for="school--0">School<span>*</span></label>
+    <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+      <input id="school--0" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="school--0-label" autocomplete="off"></div></div></div>
+    <label id="degree--0-label" for="degree--0">Degree<span>*</span></label>
+    <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+      <input id="degree--0" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="degree--0-label" autocomplete="off"></div></div></div>
+    <label id="discipline--0-label" for="discipline--0">Discipline<span>*</span></label>
+    <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+      <input id="discipline--0" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="discipline--0-label" autocomplete="off"></div></div></div>
+  </div>
+</form>
+<script>
+  function select(id, { search = null, fixed = null, delay = 0 }) {
+    const input = document.getElementById(id);
+    const control = input.closest('.select__control');
+    let open = false;
+    let list = null;
+    let asked = 0;
+    const close = () => { list?.remove(); list = null; open = false; input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-controls'); };
+    const render = (items) => {
+      list?.remove();
+      list = document.createElement('div');
+      list.id = 'react-select-' + id + '-listbox';
+      list.setAttribute('role', 'listbox');
+      for (const text of items) {
+        const o = document.createElement('div');
+        o.setAttribute('role', 'option');
+        o.className = 'select__option';
+        o.textContent = text;
+        o.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          control.querySelector('.select__placeholder')?.remove();
+          let shown = control.querySelector('.select__single-value');
+          if (!shown) {
+            shown = document.createElement('div');
+            shown.className = 'select__single-value';
+            control.querySelector('.select__value-container').prepend(shown);
+          }
+          shown.textContent = text;
+          input.value = '';
+          close();
+        });
+        list.append(o);
+      }
+      control.parentElement.append(list);
+      input.setAttribute('aria-controls', list.id);
+    };
+    const load = (term) => {
+      const mine = ++asked;
+      if (fixed) return render(fixed.filter((t) => t.toLowerCase().includes(term)));
+      list?.remove();
+      setTimeout(() => { if (open && mine === asked) render(search(term)); }, delay);
+    };
+    control.addEventListener('mousedown', () => {
+      if (open) return;
+      open = true;
+      input.setAttribute('aria-expanded', 'true');
+      load('');
+    });
+    input.addEventListener('input', () => { if (open) load(input.value.toLowerCase()); });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+  }
+  const SCHOOLS = ['Acadia University', 'Adelphi University', 'University of Texas at Arlington', 'University of Texas at Austin', 'University of Texas at Dallas'];
+  select('school--0', { search: (term) => (term ? SCHOOLS.filter((s) => s.toLowerCase().includes(term)) : SCHOOLS.slice(0, 2)), delay: 1200 });
+  select('degree--0', { fixed: ['High School', "Associate's Degree", "Bachelor's Degree", "Master's Degree", 'Doctor of Philosophy (Ph.D.)'] });
+  select('discipline--0', { fixed: ['Computer Engineering', 'Computer Science', 'Mechanical Engineering'] });
+  // The country beside the phone, which Greenhouse lists with each dialling code.
+  select('country', { fixed: ['United States +1', 'Afghanistan +93', 'American Samoa +1', 'United States Minor Outlying Islands +1'] });
+</script>
+</body></html>`;
+
 const WORKDAY_MY_INFO = `<!doctype html><html><head><meta charset="utf-8"><title>My Information</title></head><body>
 <div data-automation-id="applyFlowMyInfoPage">
 <div data-automation-id="formField-country"><label for="country--country">Country<abbr>*</abbr></label>
@@ -1712,7 +1802,7 @@ const WORKDAY_MY_INFO = `<!doctype html><html><head><meta charset="utf-8"><title
 </script>
 </body></html>`;
 
-const PAGES = { '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO };
+const PAGES = { '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -4102,6 +4192,36 @@ async function main() {
     );
     check('the number goes in its own box', myInfo.phone === '(703) 555-0100', myInfo.phone);
     check('and nothing is left open, in well under the time a person would wait', !myInfo.open && myInfo.ms < 5000, `${myInfo.ms}ms`);
+
+    /* ---------------- Greenhouse's education block ---------------- */
+    const education = await page.goto(`${base}/greenhouse-education`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { school: 'University of Texas at Austin', degree: 'Bachelor of Science', major: 'Computer Science', address_country: 'United States' };
+        const began = performance.now();
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        const shown = (id) => document.getElementById(id).closest('.select__control').querySelector('.select__single-value')?.textContent ?? '';
+        return {
+          ms: Math.round(performance.now() - began),
+          school: shown('school--0'),
+          degree: shown('degree--0'),
+          discipline: shown('discipline--0'),
+          country: shown('country'),
+          filled: report.filled.map((x) => x.key),
+          byHand: report.skipped.filter((x) => /by hand/.test(x.reason)).map((x) => x.key),
+        };
+      }, { b: base }),
+    );
+    group('Greenhouse: the education block');
+    check('the school, from a list that searches only once it is open', education.school === 'University of Texas at Austin', education.school);
+    check('the degree, by its level, from a fixed list', education.degree === "Bachelor's Degree", education.degree);
+    check('the discipline', education.discipline === 'Computer Science', education.discipline);
+    check('the country, from a list that writes each one\'s dialling code after it', education.country === 'United States +1', education.country);
+    check(
+      'all three counted as chosen',
+      ['school', 'degree', 'major'].every((k) => education.filled.includes(k)) && education.byHand.length === 0,
+      JSON.stringify({ filled: education.filled, byHand: education.byHand, ms: education.ms }),
+    );
   } finally {
     await browser.close();
     server.close();

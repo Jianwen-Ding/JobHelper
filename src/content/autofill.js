@@ -1462,7 +1462,13 @@ const COUNTRY_SPELLINGS = [
 
 /** One spelling for everything the table says is the same place. */
 function placeKey(key, text) {
-  const said = clean(text).toLowerCase().replace(/\s*\([^)]*\)\s*$/, '');
+  /*
+   * An aside at the end is not part of the name: "(+1)", and the dialling
+   * code Greenhouse writes after every country in its phone's country list —
+   * "United States +1" — which "United States" never matched, so the required
+   * Country beside the phone number was left empty.
+   */
+  const said = clean(text).toLowerCase().replace(/\s*\([^)]*\)\s*$/, '').replace(/\s+\+\d{1,4}$/, '');
   if (key === 'address_state') {
     const code = said.toUpperCase();
     if (REGIONS[code]) return code;
@@ -2841,6 +2847,41 @@ function unfillableChoices(fields, filled) {
 const pause = (ms) => new Promise((done) => setTimeout(done, ms));
 
 /** Poll until `find` answers something, or give up. */
+/*
+ * How long a widget's options may sit unchanged, without the answer among
+ * them, before that is taken as the answer. A list that has arrived and
+ * stopped changing is not going to grow the option; waiting out the whole
+ * patience on it only made a form with several of them slow.
+ */
+const SETTLED_MS = 800;
+
+/**
+ * This widget's option for the answer, as its list arrives — or nothing,
+ * once the list has settled without it, or when nothing has appeared by
+ * `quiet`, or at `patience`.
+ */
+async function waitForOption(widget, key, value, openBefore, { patience, quiet = patience }) {
+  const began = Date.now();
+  let seen = null;
+  let since = began;
+  for (;;) {
+    const options = optionsOf(widget, openBefore);
+    const hit = exactOption(options, key, value);
+    if (hit) return hit;
+    const now = Date.now();
+    const said = options.map((o) => o.textContent).join('\n');
+    if (said !== seen) {
+      seen = said;
+      since = now;
+    } else if (options.length && now - since >= SETTLED_MS) {
+      return null;
+    }
+    if (!options.length && now - began >= quiet) return null;
+    if (now - began >= patience) return null;
+    await pause(50);
+  }
+}
+
 async function waitFor(find, patience) {
   const until = Date.now() + patience;
   for (;;) {
@@ -2993,7 +3034,19 @@ function widgetShowsAnAnswer(widget) {
  * an ignored click beside a paragraph naming the city was reported as filled.
  */
 function controlOf(widget) {
-  return widget.closest?.('[class*="control"], [class*="select"], [class*="combobox"]') ?? widget;
+  /*
+   * Its wrapper, not itself, and a near one. `closest` starts at the element
+   * it is called on, and react-select's box is `class="select__input"` — so on
+   * Greenhouse the "control" was the empty text box, a choice that had plainly
+   * taken read as ignored, and each one was taken back out and reported as
+   * still to pick. A few levels only, so that a page-wide wrapper whose class
+   * happens to say "select" cannot lend its text to a click that did nothing.
+   */
+  let at = widget.parentElement;
+  for (let up = 0; at && up < 4; up++, at = at.parentElement) {
+    if (at.matches?.('[class*="control"], [class*="select"], [class*="combobox"]')) return at;
+  }
+  return widget;
 }
 
 /**
@@ -3041,7 +3094,13 @@ function undoWidget(widget, box) {
  * Async, and after `fillForm`, because a widget opens and fills in on its own
  * time — a school list fetched as you type can take a second to arrive.
  */
-export async function fillComboboxes(fields, report, { patience = 1500 } = {}) {
+/*
+ * Long enough for a school list that is a search against the board's API to
+ * answer; a list that is already there and does not hold the answer is given
+ * up on as soon as it settles (see `waitForOption`), so this is not paid by
+ * every widget that has no option for its answer.
+ */
+export async function fillComboboxes(fields, report, { patience = 4000 } = {}) {
   // The same fields `fillForm` read, or a widget it named `city_state` has
   // no value here.
   fields = withCityAndState(fields);
@@ -3069,12 +3128,31 @@ export async function fillComboboxes(fields, report, { patience = 1500 } = {}) {
 
     widget.focus?.();
     const openBefore = new Set(visibleListboxes());
+    let option = null;
     if (box) {
-      setValue(box, value);
+      /*
+       * Opened first, the way a person opens it, and looked at before
+       * anything is typed.
+       *
+       * Greenhouse's react-select offers nothing until its menu is open, and
+       * typing into a closed one changes nothing: the school, the degree and
+       * the discipline were typed into and left on "Select...". And a fixed
+       * list filters by what is typed, so typing the store's wording —
+       * "Bachelor of Science" — filters out the answer spelled the form's
+       * way, "Bachelor's Degree". So the list is read as it opens, and only
+       * where the answer is not in it is it typed, which is how a list that
+       * is a search — every school there is — gets asked.
+       */
+      press(box);
+      option = await waitForOption(widget, key, value, openBefore, { patience: 2000, quiet: 400 });
+      if (!option) {
+        setValue(box, value);
+        option = await waitForOption(widget, key, value, openBefore, { patience });
+      }
     } else {
       press(widget);
+      option = await waitForOption(widget, key, value, openBefore, { patience });
     }
-    const option = await waitFor(() => exactOption(optionsOf(widget, openBefore), key, value), patience);
     if (!option) {
       undoWidget(widget, box);
       continue;
