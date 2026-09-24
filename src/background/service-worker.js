@@ -1362,8 +1362,17 @@ async function remember(tab, page) {
  */
 const savesInFlight = new Map();
 
-/** How long a send waits for that save before being recorded regardless. */
-const SEND_WAITS_FOR_SAVE_MS = 3000;
+/**
+ * How long a send waits for that save before being recorded regardless.
+ *
+ * Ten seconds, not three. The save's draft request commits the tailored
+ * resume before it opens the draft, and a commit on a busy machine is slow:
+ * measured with the wait cut to 300ms, the draft landed 47–182ms after the
+ * send on an idle machine, and at three seconds under the parallel runner it
+ * still landed after it now and then ("embedded-apply", 228–399ms late).
+ * Nothing waits on this but the record of the send — the form has gone.
+ */
+const SEND_WAITS_FOR_SAVE_MS = 10_000;
 
 /**
  * What `saveWork` does, returning the draft-opening write it started so the
