@@ -193,6 +193,8 @@ button:disabled { opacity: .38; cursor: default; }
 button:disabled:hover { background: #fff; border-color: var(--line); }
 
 .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+/* \`hidden\` has to beat a class that sets \`display\`, or it hides nothing. */
+[hidden] { display: none !important; }
 .row.gap { margin-top: 10px; }
 .grow { flex: 1 1 auto; }
 .hint { color: var(--muted); font-size: 12px; line-height: 1.55; }
@@ -406,6 +408,12 @@ textarea {
 }
 textarea:focus-visible { outline: 0; border-color: #c8d8f7; box-shadow: 0 0 0 3px var(--accent-soft); }
 textarea.tall { min-height: 160px; }
+/* What to change about a draft: one line beside the button that sends it. */
+input.change {
+  flex: 1 1 180px; min-width: 0; font: inherit; font-size: 12px; padding: 5px 8px;
+  border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: #fff;
+}
+input.change:focus-visible { outline: 0; border-color: #c8d8f7; box-shadow: 0 0 0 3px var(--accent-soft); }
 select {
   font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px;
   max-width: 100%; background: #fff; color: var(--ink);
@@ -784,6 +792,19 @@ export function createCard({
     answers: {},
     /** Questions whose last "Insert into form" put nothing in, by question. */
     insertMissed: {},
+    /**
+     * What to change about a drafted answer, by question, and about the
+     * letter — typed beside the box and sent with the next redraft. See
+     * `whatToChange` in ResumeM-M.
+     */
+    changeAnswer: {},
+    changeLetter: '',
+    /**
+     * What a redraft replaced, so it can be put back. A redraft asked for
+     * with a sentence about what was wrong still takes the paragraph it was
+     * given, and the only safe way to let it is to keep that paragraph.
+     */
+    replaced: { letter: null, answers: {} },
     feedback: '',
     autofillReport: null,
     /** What the last press of Attach put into the form, and what it could not. */
@@ -3785,7 +3806,7 @@ export function createCard({
    * date in place on each keystroke. Rebuilt on every draw, so these always
    * point at the buttons currently on screen rather than at detached ones.
    */
-  const letterControls = { save: null, copy: null, typeset: null, note: null };
+  const letterControls = { save: null, copy: null, typeset: null, note: null, change: null, redraft: null };
 
   function syncLetterControls() {
     const written = Boolean(state.letter?.trim());
@@ -3798,6 +3819,9 @@ export function createCard({
     if (letterControls.note) {
       letterControls.note.textContent = state.letterSaved ? 'Future drafts will start from this one.' : '';
     }
+    // The line for what to change, over a letter there is to change.
+    if (letterControls.change) letterControls.change.hidden = !written && state.replaced.letter == null;
+    if (letterControls.redraft) letterControls.redraft.disabled = busyIn('drafting') || !written;
   }
 
   function drawFit() {
@@ -4049,6 +4073,44 @@ export function createCard({
     const mine = state.letter ?? '';
 
     return act('coverLetter', { spec: state.spec }, (r) => applyLetterReply(mine, r));
+  }
+
+  /**
+   * A new draft of the letter in the box, told what to change.
+   *
+   * Not `draftLetter`: that one fills an empty box and only *offers* its draft
+   * over a written one, which is right for a draft nobody asked to replace
+   * their paragraph and wrong here, where replacing it is the request. What it
+   * replaced is kept, so it can be put back. The draft goes with the request
+   * only beside something to change about it — "Redraft" with nothing said is
+   * a fresh draft, not an instruction to keep everything as it is.
+   */
+  function redraftLetter() {
+    const mine = state.letter ?? '';
+    const change = state.changeLetter?.trim();
+    const payload = { spec: state.spec };
+    if (change) Object.assign(payload, { feedback: change, draft: mine });
+    return act('coverLetter', payload, (r) => {
+      if (!r) return;
+      state.priorLetters = r.priorLetters ?? state.priorLetters;
+      // Written in while it ran: theirs, and this reply is not.
+      if ((state.letter ?? '') !== mine) {
+        state.letterSource = 'You were writing while this ran, so what you wrote was kept.';
+        return;
+      }
+      if (r.body?.trim()) {
+        state.replaced.letter = mine;
+        state.letter = r.body;
+        state.changeLetter = '';
+        state.letterSaved = false;
+        state.letterSource = change ? 'Rewritten as you asked.' : 'Redrafted from your previous letters.';
+        prepareSoon();
+      } else if (!r.executed) {
+        state.letterSource = 'The AI is off, so the letter cannot be redrafted. It is as you left it.';
+      } else {
+        state.letterSource = 'The AI returned nothing, so the letter is as you left it.';
+      }
+    });
   }
 
   /**
@@ -5026,6 +5088,50 @@ export function createCard({
                   textContent: state.letterSaved ? 'Future drafts will start from this one.' : '',
                 })),
               ]),
+              /*
+               * What to change about it, said to the AI. Only over a letter
+               * there is — an empty box has "Draft a letter" above it — and
+               * with the way back to what the redraft replaced.
+               */
+              (letterControls.change = h(
+                'div',
+                { className: 'row gap', hidden: !state.letter?.trim() && state.replaced.letter == null },
+                [
+                    h('input', {
+                      className: 'change',
+                      type: 'text',
+                      dataset: { field: 'change:letter' },
+                      value: state.changeLetter ?? '',
+                      placeholder: 'Tell the AI what to change (optional)',
+                      oninput: (e) => {
+                        state.changeLetter = e.target.value;
+                      },
+                    }),
+                    (letterControls.redraft = aiButton(
+                      {
+                        className: 'tiny',
+                        title: 'Write it again, changed the way the line beside this says. Runs your AI command.',
+                        disabled: busyIn('drafting') || !state.letter?.trim(),
+                        onclick: redraftLetter,
+                      },
+                      busyLabel('coverLetter', 'Redraft', 'Drafting…'),
+                    )),
+                    state.replaced.letter != null
+                      ? h('button', {
+                          className: 'link',
+                          textContent: 'Put back what you had',
+                          onclick: () => {
+                            state.letter = state.replaced.letter;
+                            state.replaced.letter = null;
+                            state.letterSaved = false;
+                            state.letterSource = 'Put back as you had it.';
+                            prepareSoon();
+                            draw();
+                          },
+                        })
+                      : null,
+                ],
+              )),
               drawPdfPane('letter', state.letterRender?.pdfUrl, 'letter'),
               state.letterRender
                 ? h('div', { className: 'row gap' }, [
@@ -5574,7 +5680,15 @@ export function createCard({
                 // What is in the box now, so the reply can tell its own work
                 // from anything written during the minutes it takes.
                 const typedBefore = state.answers[q.question] ?? value;
-                return act(`answer:${q.question}`, { question: q.question, force: true, limit: q.limit, spec: state.spec }, (r) => {
+                /*
+                 * What they want changed, with the draft it is about. Only
+                 * with something typed in the line beside the button: a plain
+                 * rewrite asks exactly what it always asked.
+                 */
+                const change = state.changeAnswer[q.question]?.trim();
+                const payload = { question: q.question, force: true, limit: q.limit, spec: state.spec };
+                if (change) Object.assign(payload, { feedback: change, draft: typedBefore });
+                return act(`answer:${q.question}`, payload, (r) => {
                   /*
                    * `executed` first, not `output` first.
                    *
@@ -5588,7 +5702,11 @@ export function createCard({
                    * it here, and this no longer reaches for it either.
                    */
                   if (r?.executed && r.output) {
-                    applyAnswer(q.question, typedBefore, r.output);
+                    // Kept, so it can be put back — see `state.replaced`.
+                    if (applyAnswer(q.question, typedBefore, r.output)) {
+                      if (typedBefore.trim()) state.replaced.answers[q.question] = typedBefore;
+                      state.changeAnswer[q.question] = '';
+                    }
                   } else if (r && !r.executed) {
                     state.error =
                       'The AI is off, so a new answer cannot be drafted. Anything you type here is saved for next time.';
@@ -5628,6 +5746,40 @@ export function createCard({
               }),
           }),
         ]),
+        /*
+         * What to change, said to the AI rather than done by hand.
+         *
+         * Asked for: "you should be able to load feedback into the AI
+         * answers, at least an extra field for that". The line goes with the
+         * next press of the button above, with the answer as it stands; and
+         * what the redraft replaced can be put back, because a rewrite you
+         * asked for can still be worse than what you had.
+         */
+        q.yours
+          ? null
+          : h('div', { className: 'row gap' }, [
+              h('input', {
+                className: 'change',
+                type: 'text',
+                dataset: { field: `change:${q.question}` },
+                value: state.changeAnswer[q.question] ?? '',
+                placeholder: 'Tell the AI what to change (optional)',
+                oninput: (e) => {
+                  state.changeAnswer[q.question] = e.target.value;
+                },
+              }),
+              state.replaced.answers[q.question] !== undefined
+                ? h('button', {
+                    className: 'link',
+                    textContent: 'Put back what you had',
+                    onclick: () => {
+                      state.answers[q.question] = state.replaced.answers[q.question];
+                      delete state.replaced.answers[q.question];
+                      draw();
+                    },
+                  })
+                : null,
+            ]),
       ]);
       step.append(box);
     }

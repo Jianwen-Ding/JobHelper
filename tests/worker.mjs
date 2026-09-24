@@ -440,6 +440,19 @@ async function main() {
       // One answer drafted on its own goes beside the same resume, so the
       // store can show it as what the reader already has.
       await ask(driver, 'answerQuestion', { question: 'Why us?', force: true, spec, job });
+      /*
+       * A redraft told what to change carries the draft and the words about
+       * it; a plain draft asks exactly what it always asked.
+       */
+      await ask(driver, 'answerQuestion', { question: 'Why us?', force: true, spec, job, draft: 'My first go.', feedback: ' Shorter. ' });
+      const redraft = JSON.parse(store.sentTo('/api/ai/answer').slice(-1)[0]?.body || '{}');
+      check('a redraft of an answer carries the draft and what to change', redraft.draft === 'My first go.' && redraft.feedback === 'Shorter.', JSON.stringify(redraft));
+      await ask(driver, 'coverLetter', { spec, job, draft: 'Dear Helios,', feedback: 'Open with the posting.' });
+      const letterRedraft = JSON.parse(store.sentTo('/api/ai/cover-letter').slice(-1)[0]?.body || '{}');
+      check('and so does a redraft of the letter', letterRedraft.draft === 'Dear Helios,' && letterRedraft.feedback === 'Open with the posting.', JSON.stringify(letterRedraft));
+      await ask(driver, 'coverLetter', { spec, job, draft: '   ', feedback: '' });
+      const plain = JSON.parse(store.sentTo('/api/ai/cover-letter').slice(-1)[0]?.body || '{}');
+      check('while a plain draft sends neither', !('draft' in plain) && !('feedback' in plain), JSON.stringify(Object.keys(plain)));
       for (const route of ['/api/ai/cover-letter', '/api/extension/write', '/api/ai/tailor', '/api/render/letter', '/api/ai/answer']) {
         const body = JSON.parse(store.sentTo(route).slice(-1)[0]?.body || '{}');
         check(

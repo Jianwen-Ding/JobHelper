@@ -163,6 +163,17 @@ function stopReason() {
 }
 
 /**
+ * A draft and what to change about it, only as much of it as was given — so a
+ * plain first draft asks exactly what it always asked.
+ */
+function revision({ draft, feedback }) {
+  const out = {};
+  if (typeof draft === 'string' && draft.trim()) out.draft = draft;
+  if (typeof feedback === 'string' && feedback.trim()) out.feedback = feedback.trim();
+  return out;
+}
+
+/**
  * Which resume a letter, an answer or a re-tailor is written from.
  *
  * The card's resume is a proposal the store is not given until the folder is
@@ -2517,7 +2528,7 @@ const handlers = {
   },
 
   /** Answer one question, reusing a stored answer unless asked to redraft. */
-  async answerQuestion({ question, force, job, limit, spec }, tab) {
+  async answerQuestion({ question, force, job, limit, spec, draft, feedback }, tab) {
     return stoppably(tab, 'answerQuestion', (signal) =>
       serverFetch('/api/ai/answer', {
         method: 'POST',
@@ -2535,6 +2546,9 @@ const handlers = {
            * one of them. See `writingFrom`.
            */
           ...(spec ? writingFrom(spec) : {}),
+          // A redraft told what to change: the answer in the box, and what
+          // they said about it. See `whatToChange` in ResumeM-M.
+          ...revision({ draft, feedback }),
           // Mapped into the server's shape, as `coverLetter` does below.
           job: job
             ? {
@@ -2614,7 +2628,7 @@ const handlers = {
    * Draft a cover letter. The server returns the relevant previous letters
    * whether or not the AI runs, so there is always something to start from.
    */
-  async coverLetter({ spec, job }, tab) {
+  async coverLetter({ spec, job, draft, feedback }, tab) {
     return stoppably(tab, 'coverLetter', (signal) =>
       serverFetch('/api/ai/cover-letter', {
         method: 'POST',
@@ -2622,6 +2636,7 @@ const handlers = {
         timeoutMs: SLOW_TIMEOUT_MS,
         body: JSON.stringify({
           ...writingFrom(spec),
+          ...revision({ draft, feedback }),
           job: {
             jobTitle: job.title,
             company: job.company,

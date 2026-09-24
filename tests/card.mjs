@@ -4311,6 +4311,104 @@ async function main() {
   check('drafting one answer tells the run the limit', limits.one?.limit === 40, JSON.stringify(limits.one));
   // And the resume it goes beside, so the answer can leave its lines to it.
   check('and the resume it goes beside', limits.one?.spec?.id === 'job-acme', JSON.stringify(limits.one));
+
+  console.log('\nTelling the AI what to change about a draft');
+
+  /*
+   * Asked for: "you should be able to load feedback into the AI answers (at
+   * least an extra field for that)". The line beside an answer, and beside
+   * the letter, goes with the next redraft together with the text it is
+   * about — and what the redraft replaced can be put back, because a rewrite
+   * you asked for can still be worse than what you had.
+   */
+  const changed = await inPage(async (createCard) => {
+    const sent = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme', description: 'Kafka and Go.' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [{ question: 'Why us?', answer: 'My first go.', confident: true, fieldId: 'jh-1' }],
+      needsCoverLetter: true,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'answer:Why us?') return { executed: true, output: 'A shorter answer about the on-call story.' };
+        if (action === 'coverLetter') return { executed: true, body: 'Dear Acme, the letter rewritten as asked.', priorLetters: [] };
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    await wait(120);
+    const byText = (t, scope = root) => [...scope.querySelectorAll('button')].find((b) => new RegExp(t).test(b.textContent));
+    const type = (el, text) => {
+      el.value = text;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const answerBox = () => root.querySelector('textarea[data-field="answer:Why us?"]');
+
+    const line = root.querySelector('input[data-field="change:Why us?"]');
+    if (!line) return { error: 'no line for what to change beside the answer' };
+    type(line, 'Shorter, and use the on-call story.');
+    byText('Rewrite for this role', root.querySelector('.q'))?.click();
+    await wait(150);
+    const askedAnswer = sent.find((c) => c.action === 'answer:Why us?')?.payload ?? null;
+    const rewritten = answerBox()?.value;
+    const lineAfter = root.querySelector('input[data-field="change:Why us?"]')?.value;
+    byText('Put back what you had', root.querySelector('.q'))?.click();
+    await wait(80);
+    const putBack = answerBox()?.value;
+
+    // The letter: nothing to change until there is one.
+    const letterLine = () => root.querySelector('input[data-field="change:letter"]');
+    const hiddenOverEmpty = letterLine()?.closest('.row')?.hidden ?? null;
+    type(root.querySelector('textarea[data-field="letter"]'), 'Dear Acme, my own letter.');
+    const shownOverLetter = letterLine()?.closest('.row')?.hidden === false;
+    type(letterLine(), 'Open with the posting.');
+    byText('Redraft')?.click();
+    await wait(150);
+    const askedLetter = sent.filter((c) => c.action === 'coverLetter').at(-1)?.payload ?? null;
+    const letterAfter = root.querySelector('textarea[data-field="letter"]')?.value;
+    byText('Put back what you had')?.click();
+    await wait(80);
+    const letterBack = root.querySelector('textarea[data-field="letter"]')?.value;
+
+    return { askedAnswer, rewritten, lineAfter, putBack, hiddenOverEmpty, shownOverLetter, askedLetter, letterAfter, letterBack };
+  });
+  check('an answer carries a line for what to change', !changed.error, changed.error ?? '');
+  check(
+    'and it goes with the rewrite, beside the answer it is about',
+    changed.askedAnswer?.feedback === 'Shorter, and use the on-call story.' && changed.askedAnswer?.draft === 'My first go.',
+    JSON.stringify(changed.askedAnswer),
+  );
+  check(
+    'the rewrite lands, and the line empties for the next one',
+    changed.rewritten === 'A shorter answer about the on-call story.' && changed.lineAfter === '',
+    JSON.stringify({ rewritten: changed.rewritten, line: changed.lineAfter }),
+  );
+  check('and what it replaced can be put back', changed.putBack === 'My first go.', String(changed.putBack));
+  check(
+    'the letter’s line waits for a letter to be about',
+    changed.hiddenOverEmpty === true && changed.shownOverLetter === true,
+    JSON.stringify({ hidden: changed.hiddenOverEmpty, shown: changed.shownOverLetter }),
+  );
+  check(
+    'and goes with the redraft, beside the letter in the box and the resume it goes with',
+    changed.askedLetter?.feedback === 'Open with the posting.' &&
+      changed.askedLetter?.draft === 'Dear Acme, my own letter.' &&
+      changed.askedLetter?.spec?.id === 'job-acme',
+    JSON.stringify(changed.askedLetter),
+  );
+  check(
+    'the redraft replaces the letter, as asked, and the letter can be put back',
+    changed.letterAfter === 'Dear Acme, the letter rewritten as asked.' && changed.letterBack === 'Dear Acme, my own letter.',
+    JSON.stringify({ after: changed.letterAfter, back: changed.letterBack }),
+  );
   check(
     'and so does writing them all at once, only for the box that has one',
     limits.all?.[0]?.limit === 40 && limits.all?.[1]?.limit === undefined,

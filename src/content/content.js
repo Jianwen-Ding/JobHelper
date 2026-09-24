@@ -1068,7 +1068,7 @@
         });
 
       case 'coverLetter':
-        return send('coverLetter', { spec: payload.spec, job: analysis.job });
+        return send('coverLetter', { spec: payload.spec, job: analysis.job, draft: payload.draft, feedback: payload.feedback });
 
       /*
        * Let go of what is in the air. Straight through, because which requests
