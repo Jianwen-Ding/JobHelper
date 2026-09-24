@@ -4136,10 +4136,36 @@ async function addAnother(section, had) {
   }, 3000);
 }
 
+/*
+ * One education, and the first block's dates.
+ *
+ * With one school on the resume this used to return straight away — "one
+ * education is the profile's fields, and those have been through the form
+ * already". But they have not all been: the first pass reads a date as the
+ * degree's only under a heading that says so (`educationDateKey`), and the
+ * heading here is a `<p>`. Measured on Twitch's live board
+ * (job-boards.greenhouse.io/twitch), one education — Northeastern
+ * University, BS Computer Science, September 2023 to May 2027 — came out
+ * with School, Degree and Discipline chosen and Start date month, Start date
+ * year, End date month and End date year all empty, and nothing in the
+ * report about any of them. The two-education fill had been giving the
+ * first block its dates all along; the one-education fill, which is most
+ * people's, never did.
+ *
+ * So one education takes the same first-block route with less: its start
+ * and end, month and year, from the resume's own entry, into the first
+ * block only, and only into a date that is empty and that the first pass
+ * did not already try. Nothing else a one-education fill does changes —
+ * no block is added, no school, degree or discipline is touched, and a
+ * block showing some other school is left exactly as it was, since those
+ * dates would be somebody else's.
+ */
+const EDUCATION_DATE = /^(education_start|graduation)_(month|year|date)$/;
+
 export async function fillEducation(education, fields, report, { patience = 4000 } = {}) {
   const schools = Array.isArray(education) ? education.filter((e) => clean(e?.school)) : [];
-  // One education is the profile's fields, and those have been through the form already.
-  if (schools.length < 2) return report;
+  if (schools.length === 0) return report;
+  const onlyOne = schools.length === 1;
   let section = educationSection();
   if (!section) return report;
 
@@ -4155,6 +4181,8 @@ export async function fillEducation(education, fields, report, { patience = 4000
 
   const waiting = () => schools.some((_, i) => !used.has(i));
   for (let n = 0; ; n++) {
+    // One education has the first block and no other. See `EDUCATION_DATE`.
+    if (onlyOne && n > 0) break;
     // A section the page drew again is found again, never counted as empty.
     if (!section.box.isConnected) section = educationSection();
     if (!section) break;
@@ -4175,6 +4203,8 @@ export async function fillEducation(education, fields, report, { patience = 4000
 
     let index;
     const shown = schoolShown(block.get('school'));
+    // Another school's block, whose dates these are not; left, and not remarked on.
+    if (onlyOne && shown && !sameSchool(schools[0].school, shown)) break;
     if (shown) {
       index = schools.findIndex((e, i) => !used.has(i) && sameSchool(e.school, shown));
       if (index < 0) {
@@ -4183,6 +4213,10 @@ export async function fillEducation(education, fields, report, { patience = 4000
       }
     } else if (n === 0 && owner >= 0) {
       index = owner;
+    } else if (onlyOne) {
+      // A block asking about a level this education is not at is not its block.
+      if (!fits(block, educationFields(schools[0]))) break;
+      index = 0;
     } else {
       index = schools.findIndex((e, i) => !used.has(i) && fits(block, educationFields(e)));
       if (index < 0) {
@@ -4205,6 +4239,7 @@ export async function fillEducation(education, fields, report, { patience = 4000
     const f = educationFields(schools[index]);
     for (const [key, control] of block) {
       if ((n === 0 && tried.has(key)) || !f[key] || !control.isConnected) continue;
+      if (onlyOne && !EDUCATION_DATE.test(key)) continue;
       if (partAnswered(control) || anotherLevelOfStudy(control, key, f)) continue;
       const got = await fillEducationPart(control, key, f[key], f, patience);
       if (got.reason) skipped.push(got);

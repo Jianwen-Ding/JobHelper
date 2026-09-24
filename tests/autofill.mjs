@@ -1978,6 +1978,8 @@ const GREENHOUSE_STRIPE = `<!doctype html><html><head><meta charset="utf-8"><tit
  * the level it asks about, the first "Undergraduate" and every one added
  * "Graduate"; `?chosen` arrives with a second block already showing a school
  * (Acadia University, or the one named), and `&degree=` a degree in it too.
+ * `?first=` arrives with the first block's school already chosen, and
+ * `?dated` with its Start date already January 2022.
  */
 const GREENHOUSE_MORE_EDUCATION = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Twitch</title></head><body>
 <form id="application-form">
@@ -2086,9 +2088,9 @@ const GREENHOUSE_MORE_EDUCATION = `<!doctype html><html><head><meta charset="utf
     const school = select('school--' + n, { fetch: search(SCHOOLS, 3), delay: 250 });
     const degree = select('degree--' + n, { fetch: search(DEGREES, 10), delay: 300 });
     select('discipline--' + n, { fetch: search(DISCIPLINES, 3), delay: 150 });
-    select('start-month--' + n, { fetch: search(MONTHS, 12) });
+    const startMonth = select('start-month--' + n, { fetch: search(MONTHS, 12) });
     select('end-month--' + n, { fetch: search(MONTHS, 12) });
-    return { school, degree };
+    return { school, degree, startMonth };
   }
   // The board adds the block a moment after the press, as React renders it.
   document.getElementById('education-add').addEventListener('click', () => { __pressed.education++; setTimeout(addBlock, 120); });
@@ -2100,7 +2102,12 @@ const GREENHOUSE_MORE_EDUCATION = `<!doctype html><html><head><meta charset="utf
     form.querySelectorAll('[for]').forEach((el) => el.setAttribute('for', el.getAttribute('for').replace(/--\\d+$/, '--' + n)));
     document.getElementById('employment-add').before(form);
   });
-  addBlock();
+  const first = addBlock();
+  if (query.has('first')) first.school(query.get('first'));
+  if (query.has('dated')) {
+    first.startMonth('January');
+    document.getElementById('start-year--0').value = '2022';
+  }
   if (query.has('chosen')) {
     const begun = addBlock();
     begun.school(query.get('chosen') || 'Acadia University');
@@ -5138,6 +5145,10 @@ async function main() {
             pressed: window.__pressed,
             jobs: document.querySelectorAll('.employment--form').length,
             same: JSON.stringify(first) === JSON.stringify(report),
+            // What `fillEducation` added to the report, and whether it left the rest of it alone.
+            added: report.filled.slice(first.filled.length).map((x) => x.key),
+            kept: JSON.stringify(report.filled.slice(0, first.filled.length)) === JSON.stringify(first.filled) &&
+              JSON.stringify(report.skipped) === JSON.stringify(first.skipped),
             filled: report.filled.map((x) => x.key + (x.education ? `#${x.education}` : '')),
             skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`),
           };
@@ -5150,8 +5161,18 @@ async function main() {
     };
     const MASTERS = { school: 'Boston University', degree: 'Master of Science', major: 'Computer Science', start: { year: 2027, month: 9 }, end: { year: 2028, month: 5 } };
     const BACHELORS = { school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science', start: { year: 2023, month: 9 }, end: { year: 2027, month: 5 } };
+    // The one education most people have, as the store sends it: the profile's fields and the resume's one entry.
+    const ONE = {
+      first_name: 'Morgan', school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science',
+      education_start_month: 'September', education_start_year: '2023', education_start_date: 'September 2023',
+      graduation_month: 'May', graduation_year: '2027', graduation_date: 'May 2027',
+    };
     const two = await educations(NEWEST, [MASTERS, BACHELORS]);
-    const oneOnly = await educations(NEWEST, [MASTERS]);
+    const oneOnly = await educations(ONE, [BACHELORS]);
+    const oneDated = await educations(ONE, [BACHELORS], '?dated');
+    // A profile without the discipline the resume's entry has: still only the dates.
+    const oneNoMajor = await educations({ ...ONE, major: '' }, [BACHELORS]);
+    const oneElsewhere = await educations(ONE, [BACHELORS], `?first=${encodeURIComponent('Acadia University')}`);
     const bachelorFirst = await educations(
       { first_name: 'Morgan', school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science' },
       [BACHELORS, { school: 'Boston Latin School', degree: 'High School Diploma', end: { year: 2023, month: 6 } }],
@@ -5187,10 +5208,41 @@ async function main() {
       two.blocks.length === 2 && two.pressed.education === 1 && two.pressed.employment === 0 && two.jobs === 1,
       JSON.stringify({ blocks: two.blocks.length, pressed: two.pressed, jobs: two.jobs }),
     );
+    /*
+     * One education. Measured on Twitch's live board before this was fixed:
+     * School, Degree and Discipline chosen, and the Start and End month and
+     * year all left empty with nothing said about them, because the
+     * one-education fill returned before reaching the dates the first pass
+     * cannot read under a `<p>` heading.
+     */
     check(
-      'one education changes nothing: no block is added and the report is the one it was',
-      oneOnly.blocks.length === 1 && oneOnly.pressed.education === 0 && oneOnly.same && oneOnly.blocks[0]?.['start-year'] === '',
-      JSON.stringify(oneOnly),
+      'one education gets its start and end, month and year, in its one block',
+      oneOnly.blocks[0]?.['start-month'] === 'September' && oneOnly.blocks[0]?.['start-year'] === '2023' &&
+        oneOnly.blocks[0]?.['end-month'] === 'May' && oneOnly.blocks[0]?.['end-year'] === '2027' &&
+        ['education_start_month', 'education_start_year', 'graduation_month', 'graduation_year'].every((k) => oneOnly.added.includes(k)),
+      JSON.stringify({ block: oneOnly.blocks[0], added: oneOnly.added }),
+    );
+    check(
+      'and nothing else changes: no block is added, and the rest of the report is the one it was',
+      oneOnly.blocks.length === 1 && oneOnly.pressed.education === 0 && oneOnly.pressed.employment === 0 && oneOnly.kept &&
+        oneOnly.added.every((k) => /^(education_start|graduation)_/.test(k)) &&
+        oneOnly.blocks[0]?.school === 'Northeastern University' && oneOnly.blocks[0]?.degree === "Bachelor's Degree" && oneOnly.blocks[0]?.discipline === 'Computer Science' &&
+        oneNoMajor.blocks[0]?.discipline === '' && oneNoMajor.kept && oneNoMajor.added.every((k) => /^(education_start|graduation)_/.test(k)) &&
+        oneNoMajor.blocks[0]?.['end-year'] === '2027',
+      JSON.stringify({ oneOnly, oneNoMajor }),
+    );
+    check(
+      'a date already entered for the one education is not written over',
+      oneDated.blocks[0]?.['start-month'] === 'January' && oneDated.blocks[0]?.['start-year'] === '2022' &&
+        oneDated.blocks[0]?.['end-month'] === 'May' && oneDated.blocks[0]?.['end-year'] === '2027' &&
+        !oneDated.added.includes('education_start_month') && !oneDated.added.includes('education_start_year'),
+      JSON.stringify({ block: oneDated.blocks[0], added: oneDated.added }),
+    );
+    check(
+      'a first block already showing another school is not given this one\'s dates',
+      oneElsewhere.blocks.length === 1 && oneElsewhere.blocks[0]?.school === 'Acadia University' &&
+        ['start-month', 'start-year', 'end-month', 'end-year'].every((k) => oneElsewhere.blocks[0]?.[k] === '') && oneElsewhere.same,
+      JSON.stringify(oneElsewhere),
     );
     check(
       'a block asking about graduate school is not given a high school',

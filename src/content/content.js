@@ -640,7 +640,7 @@
     // exact options only, and seen to have taken, or put back as they were.
     const report = await fillComboboxes(fields, fillForm(fields, { remembered, history }));
     // Last, the resume's other schools, one "Add another" at a time. See
-    // `fillEducation`: nothing changes for a resume with one.
+    // `fillEducation`: a resume with one gets only its dates, in the first block.
     return fillEducation(education, fields, report);
   }
 
