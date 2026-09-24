@@ -6551,11 +6551,29 @@ export function createCard({
      *   The resume it was made from, which a copy does not follow. Said,
      *   with a way to build again from it; see `drawBaseChanged`.
      */
-    async checkFresh() {
+    /**
+     * Something in ResumeM-M changed, while this card was on screen.
+     *
+     * Everything the card holds from the store is asked for again: the list
+     * of resumes, so a variation saved there is in the picker without the
+     * card being put up again, and the copy and what it prints, through
+     * `checkFresh` — the same answers coming back to the tab gets.
+     */
+    async storeChanged() {
+      const list = await Promise.resolve(onAction('listResumes', {})).catch(() => null);
+      const listed = Array.isArray(list) ? list : list?.resumes;
+      if (Array.isArray(listed) && JSON.stringify(listed) !== JSON.stringify(resumes)) {
+        resumes = listed;
+        draw();
+      }
+      await this.checkFresh({ now: true });
+    },
+
+    async checkFresh({ now: asked = false } = {}) {
       const of = state.spec;
       if (!of?.id || !state.render || busyIn('compile') || state.rebuilding) return;
       const now = Date.now();
-      if (now - (state.freshAt ?? 0) < 3000) return;
+      if (!asked && now - (state.freshAt ?? 0) < 3000) return;
       state.freshAt = now;
       const reply = await Promise.resolve(onAction('fresh', { spec: of })).catch(() => null);
       if (!reply || state.spec !== of) return;

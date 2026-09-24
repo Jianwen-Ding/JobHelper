@@ -2290,6 +2290,27 @@
     };
     saveWorkNow = save;
     every(2000, save);
+
+    /*
+     * And the store, watched while the card is in front of somebody.
+     *
+     * The card builds from ResumeM-M and then holds what it built, so a
+     * change made there — a variation saved, a bullet reworded, the copy
+     * edited — reached it only on coming back to the tab, and a new
+     * variation not at all until the card was put up again. The store says in
+     * one short string whether anything has moved (`/api/revision`); asked
+     * every few seconds while this tab is visible, and never while it is not,
+     * and the card is told the moment it does. See `storeChanged` in the card.
+     */
+    let revision = null;
+    every(4000, async () => {
+      if (document.visibilityState !== 'visible' || !cardHandle?.storeChanged) return;
+      const now = (await send('revision').catch(() => null))?.revision;
+      if (!now) return;
+      const moved = revision !== null && now !== revision;
+      revision = now;
+      if (moved) await cardHandle?.storeChanged?.();
+    });
     // A navigation is exactly when this matters, and exactly when an interval
     // is least likely to have just run.
     const onHide = () => save();

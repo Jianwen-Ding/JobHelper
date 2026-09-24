@@ -23,6 +23,8 @@ const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)),
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
 const COMPANY = 'Quillon Systems';
 const HOST = '#jobhelper-card-host';
+/** The variation this suite saves while the card is open, and takes away after. */
+const ADDED = 'freshness-added-variation';
 
 let passed = 0;
 let failed = 0;
@@ -208,7 +210,39 @@ async function main() {
         );
       }
     }
+
+    /*
+     * And without leaving the tab at all. Reported: "when you add a variation
+     * in ResumeM-M it should automatically reflect in JobHelper" — the card's
+     * picker was filled once, when the card went up, so a variation saved in
+     * the editor was not there until it was put up again. Nothing here brings
+     * the tab back into view; the card has to notice on its own.
+     */
+    group('A change in ResumeM-M while the card is open, with no trip away from it');
+    {
+      const base = (await api('/resumes')).find?.((r) => r.id === copy.copiedFrom) ??
+        (await api('/resumes')).resumes?.find?.((r) => r.id === copy.copiedFrom);
+      await fetch(`${SERVER}/api/resumes/${ADDED}?create=1`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...base, id: ADDED, label: 'Freshly added variation', tier: 'extended', copiedFrom: base.id }),
+      });
+      const listed = await page
+        .waitForFunction(
+          () => [...(document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelectorAll('select[title="Which resume to start from"] option') ?? [])]
+            .some((o) => o.textContent.includes('Freshly added variation')),
+          undefined,
+          { timeout: 20_000, polling: 250 },
+        )
+        .then(() => true)
+        .catch(() => false);
+      check('a variation saved there appears in the card\'s picker on its own', listed);
+
+      await put('/profile', { ...profile, phone: '555-0142' });
+      check('and a change to what the resume prints is compiled again on its own', await says(/what the resume says changed there/, 20_000));
+    }
   } finally {
+    await fetch(`${SERVER}/api/resumes/${ADDED}`, { method: 'DELETE' }).catch(() => undefined);
     if (profile) await put('/profile', profile).catch(() => undefined);
     await cleanStore(SERVER, [COMPANY]).catch(() => undefined);
     await context.close();

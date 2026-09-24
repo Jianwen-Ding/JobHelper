@@ -2279,6 +2279,11 @@ const handlers = {
   },
 
   /** Compile a proposed spec so the user can look at it before committing. */
+  /** One short string that moves whenever anything in the save changes. */
+  async revision() {
+    return serverFetch('/api/revision');
+  },
+
   /** Whether the resume the card holds is still what the store would give it. */
   async fresh({ spec }) {
     return serverFetch('/api/extension/fresh', { method: 'POST', body: JSON.stringify({ spec }) });
