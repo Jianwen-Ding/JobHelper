@@ -2227,7 +2227,24 @@ const JOBS = [
   },
 ];
 
-const PAGES = { '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
+/*
+ * The name *of* something, as Datadog's Greenhouse board asks it — measured
+ * live on job-boards.greenhouse.io/embed/job_app?for=datadog, where the
+ * applicant's own name was typed into the first of these. The others are the
+ * same shape on the same kind of board: a thing's name, not a person's.
+ */
+const NAME_OF_A_THING = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Datadog</title></head><body>
+<form id="application-form">
+  <label for="first_name">First Name*</label><input id="first_name" type="text">
+  <label for="question_69008301">Please share the full name of your major/final year specialization(s) as it would appear on your diploma.*</label>
+  <input id="question_69008301" type="text" aria-required="true">
+  <label for="q_school">Full name of your university (no abbreviations)</label><input id="q_school" type="text">
+  <label for="q_company">Legal name of the company you work for now</label><input id="q_company" type="text">
+  <label for="q_full">Full Legal Name*</label><input id="q_full" type="text">
+  <label for="q_yours">Your name</label><input id="q_yours" type="text">
+</form></body></html>`;
+
+const PAGES = { '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -5360,6 +5377,37 @@ async function main() {
       'while a description outside the work history is still a question',
       JSON.stringify(begun.questions) === '["Project description"]',
       JSON.stringify(begun.questions),
+    );
+
+    /* ---------------- Found filling live forms with a fake profile ---------------- */
+    const SWEEP = {
+      first_name: 'Morgan', last_name: 'Testwell', full_name: 'Morgan Testwell', email: 'morgan.testwell@example.com', phone: '(555) 010-0199',
+      school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science',
+      address_city: 'Boston', address_state: 'MA', address_country: 'United States',
+      work_authorization: 'Authorized to work in the US', requires_sponsorship: 'No',
+    };
+    const named = await page.goto(`${base}/name-of-a-thing`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm(fields);
+        return Object.fromEntries(['first_name', 'question_69008301', 'q_school', 'q_company', 'q_full', 'q_yours'].map((id) => [id, document.getElementById(id).value]));
+      }, { b: base, fields: SWEEP }),
+    );
+    group('The full name of something, which is not the applicant\'s name');
+    check(
+      'Datadog\'s "full name of your major" is given the subject, not the applicant\'s name',
+      named.question_69008301 === 'Computer Science',
+      JSON.stringify(named),
+    );
+    check(
+      'the full name of a university is the school, and the legal name of a company is left alone',
+      named.q_school === 'Northeastern University' && named.q_company === '',
+      JSON.stringify(named),
+    );
+    check(
+      '"Full Legal Name" and "Your name" are still the applicant\'s',
+      named.q_full === 'Morgan Testwell' && named.q_yours === 'Morgan Testwell' && named.first_name === 'Morgan',
+      JSON.stringify(named),
     );
   } finally {
     await browser.close();

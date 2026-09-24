@@ -34,7 +34,16 @@ const FIELD_PATTERNS = [
   ['middle_name', /\bname[\s_-]*\([\s_-]*middle([\s_-]*name)?[\s_-]*\)/i],
   ['first_name', /\b(first[\s_-]?name|given[\s_-]?name|forename|fname)\b/i],
   ['last_name', /\b(last[\s_-]?name|family[\s_-]?name|surname|lname)\b/i],
-  ['full_name', /\b(full[\s_-]?name|your[\s_-]?name|candidate[\s_-]?name|legal[\s_-]?name)\b/i],
+  /*
+   * Not the full name *of* something. Datadog's Greenhouse board asks "Please
+   * share the full name of your major/final year specialization(s) as it
+   * would appear on your diploma", and it was given "Morgan Testwell" —
+   * measured live, a person's name typed in as their degree subject. A name
+   * followed by "of your", "of the" or "of this" is a thing's name: the
+   * subject, the school, the company's legal name. Left to the patterns below,
+   * which read "major" in it and give the subject, and otherwise to nothing.
+   */
+  ['full_name', /\b(full[\s_-]?name|your[\s_-]?name|candidate[\s_-]?name|legal[\s_-]?name)\b(?![\s_-]+of[\s_-]+(?:your|the|this|that|each|any|a|an)\b)/i],
   ['email', /\b(e-?mail)\b/i],
   /*
    * "Number" on its own is far too broad — requisition number, employee
