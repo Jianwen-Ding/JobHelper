@@ -2479,9 +2479,13 @@ const handlers = {
       body: JSON.stringify({ questions }),
     }).catch(() => null);
 
+    /*
+     * With the row each came from, so that an answer changed after it was
+     * filled goes back onto that row. See `FROM_BANK` in autofill.js.
+     */
     const answers = (reply?.matches ?? [])
       .filter((m) => m?.confident && m.answer)
-      .map((m) => ({ question: m.question, answer: m.answer }));
+      .map((m) => ({ question: m.question, answer: m.answer, ...(m.item?.id ? { itemId: m.item.id } : {}) }));
     return { answers };
   },
 
@@ -2605,6 +2609,31 @@ const handlers = {
       method: 'POST',
       body: JSON.stringify({ question, answer, label: 'Chosen on a form' }),
     });
+  },
+
+  /**
+   * What was typed into a form's short boxes, kept when it was sent or left.
+   *
+   * The same bank and the same route as `rememberChoice`, labelled for where
+   * it came from, and one after another: each save reads the bank and writes
+   * it back whole, so two at once can each write over the other's.
+   *
+   * `itemId` is the row a box was filled from, when it was, so that changing
+   * what was filled replaces that row's answer rather than starting another
+   * one under the second form's wording. As with choices, the refusal
+   * happened on the page — see `worthRememberingTyped`.
+   */
+  async rememberTyped({ answers }) {
+    let kept = 0;
+    for (const { question, answer, itemId } of Array.isArray(answers) ? answers : []) {
+      if (!question?.trim() || !answer?.trim()) continue;
+      const reply = await serverFetch('/api/answers/save', {
+        method: 'POST',
+        body: JSON.stringify({ question, answer, label: 'Typed on a form', ...(itemId ? { itemId } : {}) }),
+      }).catch(() => null);
+      if (reply?.ok) kept++;
+    }
+    return { ok: true, kept };
   },
 
   async saveAnswer({ question, answer, itemId, label }) {

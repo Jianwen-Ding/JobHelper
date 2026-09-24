@@ -625,6 +625,37 @@ const REMEMBERED = `<!doctype html><html><head><meta charset="utf-8"><title>Appl
 </script></body></html>`;
 
 /*
+ * Short boxes the profile has nothing for, as Greenhouse and Lever draw their
+ * custom questions: a label, a one-line input named after the question's id.
+ * The bank below has a row for every one of them, so which get filled is
+ * decided by the rules and not by what happens to be in it.
+ */
+const TYPED = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<h2>Apply for this job</h2>
+<form id="f">
+  <label for="fn">First Name</label><input id="fn" name="first_name">
+  <label for="pname">Preferred first name</label><input id="pname" name="question_1001">
+  <label for="heard">How did you hear about us?</label><input id="heard" name="question_1002">
+  <label for="start">Earliest start date</label><input id="start" name="question_1003">
+  <label for="portfolio">Portfolio link</label><input id="portfolio" name="question_1004" type="url">
+  <!-- A number box, and the answer from last time is words. -->
+  <label for="salary">Expected salary (USD)</label><input id="salary" name="question_1005" type="number">
+  <!-- Answered by hand already. -->
+  <label for="employer">Current employer</label><input id="employer" name="question_1006" value="Typed by hand">
+  <!-- Rows in the bank for each of these, and none to be used. -->
+  <label for="ref">Reference name</label><input id="ref" name="question_1007">
+  <label for="natid">National ID number</label><input id="natid" name="question_1008">
+  <label for="paid">Current salary</label><input id="paid" name="question_1009">
+  <label for="named">Do you use Helios products today?</label><input id="named" name="question_1010">
+  <fieldset><legend>Emergency contact</legend>
+    <label for="ec">Full name of your contact</label><input id="ec" name="question_1011">
+  </fieldset>
+  <!-- The card's, not this: a question in a box of its own. -->
+  <label for="more">How did you hear about us? Tell us more.</label><textarea id="more" name="question_1012"></textarea>
+  <label for="town">Town search</label><input id="town" role="combobox" aria-autocomplete="list" name="question_1013">
+</form></body></html>`;
+
+/*
  * Ashby's yes/no questions, as its application forms draw them — measured on
  * live boards at jobs.ashbyhq.com (Replit, OpenAI, Notion, Ramp, Ashby's
  * own). Each question is a `[data-field-path]` entry: a `<label>` whose `for`
@@ -2637,7 +2668,7 @@ const ADDS_ITS_CODE = `<!doctype html><html><head><meta charset="utf-8"><title>A
 </script>
 </body></html>`;
 
-const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
+const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -4974,6 +5005,174 @@ async function main() {
       'with no bank the form is exactly as it was',
       noBank.arr === '' && noBank.prev === '' && noBank.reloc === '' && noBank.filled === 0,
       `arr "${noBank.arr}", prev "${noBank.prev}", reloc "${noBank.reloc}", ${noBank.filled} filled`,
+    );
+
+    /* ---------------- Answers typed on the last form ---------------- */
+
+    /*
+     * The bank as the worker hands it over, with a row for every box on the
+     * page — including the ones nothing may ever answer from it, because the
+     * bank is older than these rules and the Workspace lets rows be typed in
+     * by hand. `itemId` is the row each came from.
+     */
+    const TYPED_BANK = [
+      { question: 'First Name', answer: 'Jay', itemId: 'ans_first' },
+      { question: 'Preferred first name', answer: 'Jay', itemId: 'ans_pname' },
+      { question: 'How did you hear about us?', answer: 'A friend on the payments team', itemId: 'ans_heard' },
+      { question: 'Earliest start date', answer: 'Two weeks after an offer', itemId: 'ans_start' },
+      { question: 'Portfolio link', answer: 'https://example.dev/work', itemId: 'ans_portfolio' },
+      { question: 'Expected salary (USD)', answer: '$150,000 base', itemId: 'ans_salary' },
+      { question: 'Current employer', answer: 'Northwind Analytics', itemId: 'ans_employer' },
+      { question: 'Reference name', answer: 'Pat Example', itemId: 'ans_ref' },
+      { question: 'National ID number', answer: 'AB1234567', itemId: 'ans_natid' },
+      { question: 'Current salary', answer: '$128,000', itemId: 'ans_paid' },
+      { question: 'Do you use Helios products today?', answer: 'Yes, daily', itemId: 'ans_named' },
+      { question: 'Full name of your contact', answer: 'Sam Example', itemId: 'ans_ec' },
+      { question: 'How did you hear about us? Tell us more.', answer: 'At a meetup', itemId: 'ans_more' },
+      { question: 'Town search', answer: 'Boston', itemId: 'ans_town' },
+    ];
+    const TYPED_IDS = ['fn', 'pname', 'heard', 'start', 'portfolio', 'salary', 'employer', 'ref', 'natid', 'paid', 'named', 'ec', 'more', 'town'];
+    const typed = (profile) =>
+      page.goto(`${base}/typed`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(
+          async ({ b, profile, bank, ids }) => {
+            const m = await import(`${b}/autofill.js`);
+            const asked = m.typedQuestions(profile, 'Helios Systems');
+            const report = m.fillForm(profile, { remembered: bank, company: 'Helios Systems' });
+            return {
+              asked,
+              values: Object.fromEntries(ids.map((id) => [id, document.getElementById(id).value])),
+              fromMemory: report.filled.filter((f) => f.remembered).map((f) => f.question),
+              skipped: report.skipped.filter((s) => s.key === 'remembered').map((s) => s.reason),
+            };
+          },
+          { b: base, profile, bank: TYPED_BANK, ids: TYPED_IDS },
+        ),
+      );
+    const onTyped = await typed(PROFILE);
+    const withSite = await typed({ ...PROFILE, website: 'https://jianwen.example' });
+    const noBankTyped = await page.goto(`${base}/typed`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm(profile);
+        return document.getElementById('pname').value;
+      }, { b: base, profile: PROFILE }),
+    );
+
+    group('Answers typed on the last form');
+    check(
+      'the short boxes the profile has nothing for are the ones the bank is asked about',
+      JSON.stringify(onTyped.asked) ===
+        JSON.stringify(['Preferred first name', 'How did you hear about us?', 'Earliest start date', 'Portfolio link', 'Expected salary (USD)']),
+      JSON.stringify(onTyped.asked),
+    );
+    check(
+      'and they are typed back in from what was said last time',
+      onTyped.values.pname === 'Jay' && onTyped.values.heard === 'A friend on the payments team' &&
+        onTyped.values.start === 'Two weeks after an offer' && onTyped.values.portfolio === 'https://example.dev/work',
+      JSON.stringify(onTyped.values),
+    );
+    check(
+      'the report names each box filled from them',
+      JSON.stringify(onTyped.fromMemory) ===
+        JSON.stringify(['Preferred first name', 'How did you hear about us?', 'Earliest start date', 'Portfolio link']),
+      JSON.stringify(onTyped.fromMemory),
+    );
+    check(
+      'a box the profile fills is filled from the profile, whatever the bank says',
+      onTyped.values.fn === 'Jianwen' && !onTyped.asked.includes('First Name'),
+      `"${onTyped.values.fn}"`,
+    );
+    check(
+      'and one it could fill but has nothing for is the person’s, until the profile has it',
+      onTyped.asked.includes('Portfolio link') && !withSite.asked.includes('Portfolio link') &&
+        withSite.values.portfolio === 'https://jianwen.example',
+      JSON.stringify({ without: onTyped.values.portfolio, with: withSite.values.portfolio }),
+    );
+    check(
+      'a box already answered by hand is left as it was',
+      onTyped.values.employer === 'Typed by hand' && !onTyped.asked.includes('Current employer'),
+      `"${onTyped.values.employer}"`,
+    );
+    check(
+      'a box that will not take the answer is put back and said so',
+      onTyped.values.salary === '' && onTyped.skipped.includes('the box would not take the answer you gave before'),
+      JSON.stringify({ salary: onTyped.values.salary, skipped: onTyped.skipped }),
+    );
+    const refusedTyped = ['ref', 'natid', 'paid', 'named', 'ec'].filter((id) => onTyped.values[id] !== '');
+    check(
+      'nobody else’s details, no identifier, no salary history and nothing naming this employer is typed in, rows or not',
+      refusedTyped.length === 0 && !onTyped.asked.some((q) => /reference|national|current salary|helios|contact/i.test(q)),
+      refusedTyped.map((id) => `${id}: "${onTyped.values[id]}"`).join(' | ') || JSON.stringify(onTyped.asked),
+    );
+    check(
+      'nor the card’s questions, nor a search box',
+      onTyped.values.more === '' && onTyped.values.town === '',
+      JSON.stringify({ more: onTyped.values.more, town: onTyped.values.town }),
+    );
+    /*
+     * Measured on the walk before this: "Preferred first name" was given the
+     * legal first name, which filled the box and so kept the name typed there
+     * last time from ever coming back.
+     */
+    check('a preferred name is not given the legal one', noBankTyped === '', `"${noBankTyped}"`);
+
+    /*
+     * And the other half: what the person types is told, and what Autofill
+     * writes is not. Typed through the browser — Playwright's typing is
+     * trusted input, as a person's is — and written through `fillForm`, whose
+     * events are not.
+     */
+    await page.goto(`${base}/typed`, { waitUntil: 'domcontentloaded' });
+    await page.evaluate(async ({ b, profile, bank }) => {
+      const m = await import(`${b}/autofill.js`);
+      window.__said = [];
+      window.__typed = m.watchTyped((x) => window.__said.push(x), { profile: () => profile, company: () => 'Helios Systems' });
+      m.fillForm(profile, { remembered: bank, company: 'Helios Systems' });
+    }, { b: base, profile: PROFILE, bank: TYPED_BANK });
+    const afterFill = await page.evaluate(() => window.__said.length);
+    await page.fill('#salary', '150000');
+    await page.fill('#start', 'Four weeks after an offer');
+    await page.fill('#ref', 'Pat Example');
+    await page.fill('#employer', '');
+    // Typed into and never left: `take` is what reads this one.
+    await page.click('#pname');
+    await page.keyboard.press('End');
+    await page.keyboard.type('ie');
+    const beforeTake = await page.evaluate(() => window.__said.map((x) => x.question));
+    const watched = await page.evaluate(() => {
+      window.__typed.take();
+      window.__typed.stop();
+      return window.__said.map(({ question, answer, keep, itemId, why }) => ({ question, answer, keep, itemId, why }));
+    });
+    const said = (q) => watched.filter((x) => x.question === q).at(-1);
+    check('what Autofill writes is not taken for something the person typed', afterFill === 0, `${afterFill} told`);
+    check(
+      'what the person types is told as each box is left',
+      beforeTake.includes('Expected salary (USD)') &&
+        said('Expected salary (USD)')?.answer === '150000' && said('Expected salary (USD)')?.keep === true,
+      JSON.stringify({ beforeTake, salary: said('Expected salary (USD)') }),
+    );
+    check(
+      'an answer changed after it was filled is told with the row it was filled from',
+      said('Earliest start date')?.answer === 'Four weeks after an offer' && said('Earliest start date')?.itemId === 'ans_start',
+      JSON.stringify(said('Earliest start date')),
+    );
+    // Not even told: the box is not one whose answer is the person's to keep.
+    check(
+      'somebody else’s details typed in never leave the page',
+      said('Reference name') === undefined,
+      JSON.stringify(said('Reference name') ?? 'not told'),
+    );
+    check(
+      'a box emptied is told as nothing to keep',
+      said('Current employer')?.keep === false && said('Current employer')?.answer === '',
+      JSON.stringify(said('Current employer')),
+    );
+    check(
+      'and the box still being typed in when the form is sent is read then',
+      !beforeTake.includes('Preferred first name') && said('Preferred first name')?.answer === 'Jayie',
+      JSON.stringify({ beforeTake, pname: said('Preferred first name') }),
     );
 
     /* ---------------- Ashby: yes and no as two pressed buttons ---------------- */

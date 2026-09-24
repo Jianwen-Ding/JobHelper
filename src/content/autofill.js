@@ -10,7 +10,13 @@
  * The privacy rule lives on its own, away from everything that reads a form,
  * because it is the part that has to be reviewable without reading this file.
  */
-import { dependsOnEmployer, neverRemember, worthRemembering } from '../shared/remembering.js';
+import {
+  dependsOnEmployer,
+  mayRememberTyped,
+  neverRemember,
+  worthRemembering,
+  worthRememberingTyped,
+} from '../shared/remembering.js';
 
 /** Map a stored profile key to the label/name patterns that mean it. */
 const FIELD_PATTERNS = [
@@ -362,6 +368,16 @@ const NOT_ABOUT_YOU = [
   /\b(previous\w*|former\w*|prior|maiden|alias\w*|other|different)\b[\s\S]{0,20}\b(name|surname)s?\b|\b(name|surname)s?\b[\s\S]{0,24}\b(previous\w*|former\w*)\b/i,
   // How to say a name, which is not the name: "Pronunciation of your name".
   /\b(pronunc\w*|phonetic\w*)\b/i,
+  /*
+   * And the name somebody goes by, which the profile does not hold either.
+   * Measured with the walk in tests/reusing.mjs: "Preferred first name" and
+   * "Preferred last name" matched `first_name` and `last_name` and were given
+   * the legal ones — the one answer each box is there to be different from —
+   * and because the box was then full, "Jay" typed there on the last form
+   * could never be put back. Left empty, it is the person's, and the answer
+   * they gave last time is what fills it. See `typedBox`.
+   */
+  /\b(preferred|nick|chosen)[\s_-]*((first|given|last|family|middle)[\s_-]*)?name\b|\bgo(?:es)?[\s_-]+by\b|\bknown[\s_-]+as\b/i,
   /*
    * The password to a link, which is not the link. Design roles ask for a
    * "Portfolio password" beside the portfolio URL, and as a plain text box —
@@ -2267,7 +2283,7 @@ function withCityAndState(fields) {
   return { ...fields, city_state: both };
 }
 
-export function fillForm(fields, { overwrite = false, remembered = [], history = [] } = {}) {
+export function fillForm(fields, { overwrite = false, remembered = [], history = [], company = '' } = {}) {
   fields = withResidence(withCityAndState(fields));
   // For a question asking about the most recent job. See `mostRecentJob`.
   const recent = mostRecentJob(history);
@@ -2547,9 +2563,11 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
    * person applying knows — which is the only kind the bank holds.
    */
   const memory = answerFromMemory(remembered);
+  // And what was typed, into the short boxes the profile had nothing for.
+  const typed = answerTypedFromMemory(remembered, fields, company);
   // And the jobs on the resume, into the blocks a work history is asked in.
   const work = fillWorkHistory(history, { overwrite });
-  const done = [...filled, ...radios.filled, ...buttons.filled, ...memory.filled, ...work.filled];
+  const done = [...filled, ...radios.filled, ...buttons.filled, ...memory.filled, ...typed.filled, ...work.filled];
 
   /*
    * A control the memory pass answered is not still waiting, whatever an
@@ -2566,7 +2584,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
 
   return {
     filled: done,
-    skipped: [...waiting, ...memory.skipped, ...work.skipped, ...unfillableChoices(fields, done)],
+    skipped: [...waiting, ...memory.skipped, ...typed.skipped, ...work.skipped, ...unfillableChoices(fields, done)],
   };
 }
 
@@ -3526,17 +3544,13 @@ function answerFromMemory(remembered) {
   const skipped = [];
   if (!Array.isArray(remembered) || remembered.length === 0) return { filled, skipped };
 
-  const bank = new Map();
-  for (const { question, answer } of remembered) {
-    const asked = clean(question);
-    if (asked && String(answer ?? '').trim()) bank.set(asked, String(answer).trim());
-  }
+  const bank = bankFrom(remembered);
   if (bank.size === 0) return { filled, skipped };
 
   for (const choice of rememberableChoices()) {
     if (choice.answered()) continue;
     if (neverRemember(choice.question) || dependsOnEmployer(choice.question)) continue;
-    const answer = bank.get(choice.question);
+    const answer = bank.get(choice.question)?.answer;
     if (!answer) continue;
 
     const took = choice.choose(answer);
@@ -3550,6 +3564,237 @@ function answerFromMemory(remembered) {
     } else skipped.push({ ...row, reason: 'the answer you gave before is not one of the options here' });
   }
   return { filled, skipped };
+}
+
+/** The bank as the worker handed it over, by the question it was asked about. */
+function bankFrom(remembered) {
+  const bank = new Map();
+  for (const { question, answer, itemId } of Array.isArray(remembered) ? remembered : []) {
+    const asked = clean(question);
+    if (asked && String(answer ?? '').trim()) bank.set(asked, { answer: String(answer).trim(), itemId });
+  }
+  return bank;
+}
+
+/* ------------------------ Answers typed on the last form ------------------------ */
+
+/*
+ * The short boxes nothing in the profile answers, typed into by hand on every
+ * application.
+ *
+ * Measured with the walk in tests/reusing.mjs — a Greenhouse-shaped form
+ * answered once by hand and sent, then a Lever-shaped one asking the same
+ * questions in its own words. Of the eight short boxes on the first form
+ * ("How did you hear about us?", "Earliest start date", "Expected salary",
+ * "Current employer", "Preferred first name", "Portfolio link", and "Are you
+ * 18 or older?" and "Willing to relocate?" asked as text), none went into the
+ * bank and none came back on the second: the chosen answers were kept, and
+ * these — the ones that are actually typed, letter by letter, each time —
+ * never were.
+ *
+ * One line only. A `<textarea>` is the card's: `findQuestions` offers every
+ * one that asks something, the bank is matched against it there, and "Save
+ * for next time" keeps it — so a second route into the bank for the same box
+ * would be two answers to one question, kept two ways. A combobox is a search
+ * box, not an answer; a date or a telephone box is the profile's or nobody's.
+ */
+const ONE_LINE = new Set(['text', 'search', 'url', 'number']);
+
+/*
+ * Somebody else's details, by the box's own words or the group around it —
+ * the first of `NOT_ABOUT_YOU`, which is the one about people. The rest of
+ * that list is what the profile does not answer ("How did you hear about
+ * us?", "Are you willing to relocate?"), which is exactly what this is for.
+ */
+const OTHER_PEOPLE = NOT_ABOUT_YOU[0];
+
+/**
+ * The profile key this box asks for, the way `fillForm` would find it — or
+ * null when the profile could never answer it.
+ */
+function profileKeyOf(input, description) {
+  const label = clean(labelFor(input));
+  if (asksBothAtOnce(description)) return 'work_authorization';
+  if (isNotAboutYou(description, label, surroundingWords(input), boundedSection(input))) return null;
+  const dated = educationDateKey(input, description);
+  const found = dated ? [dated] : FIELD_PATTERNS.find(([, re]) => re.test(description));
+  let key = found ? (dated ? found[0] : addressPartByLabel(label, found[0])) : null;
+  if (!key && BARE_NAME.test(withoutMarkers(labelFor(input)))) key = 'full_name';
+  if (!key) key = nameHalf(input);
+  if (!key) return null;
+  key = wholeDateKey(input, key, description);
+  // Asked as a yes or a no, `fillForm` leaves it, so the profile does not answer it.
+  return asksYesOrNo(input, key) ? null : key;
+}
+
+/**
+ * Whether this is a short box whose answer is the person's to type, and what
+ * it asks. `fields` is the profile as the last Autofill had it: a box the
+ * profile has a value for is the profile's, and one it could fill but has
+ * nothing for — "Portfolio link" on a profile with no website — is the
+ * person's. With no profile to go on, every box the profile *could* answer is
+ * taken to be the profile's, which only ever keeps less.
+ */
+function typedBox(input, fields) {
+  if (!(input instanceof HTMLInputElement) || !ONE_LINE.has(input.type)) return null;
+  if (isDisabled(input) || input.readOnly || isWidgetChoice(input)) return null;
+  if (rootOf(input)?.host?.id === OURS) return null;
+  const description = describeField(input);
+  if (!description) return null;
+  /*
+   * Not `asksForWriting`, which reads a one-line box's label for the way an
+   * essay prompt opens so that the profile is not typed into one — and "How
+   * did you hear about us?" opens that way. Measured: the commonest of these
+   * questions was the one box on the form never kept. Whether an answer is
+   * writing is read off the answer instead; see `worthRememberingTyped`.
+   */
+  const question = clean(questionFor(input));
+  if (question.length < 8) return null;
+  if (OTHER_PEOPLE.test(`${surroundingWords(input)} ${description}`)) return null;
+  // A row of a past job or a school is the resume's. See `fillWorkHistory`.
+  if (inWorkHistory(input) || EDUCATION_SECTION.test(sectionOf(input))) return null;
+  const key = profileKeyOf(input, description);
+  if (key && (!fields || withCityAndState(fields)[key])) return null;
+  return { question, description, el: input };
+}
+
+function typedBoxes(fields) {
+  const found = [];
+  for (const input of deepQueryAll('input')) {
+    if (!isFillable(input)) continue;
+    const box = typedBox(input, fields);
+    if (box) found.push(box);
+  }
+  return found;
+}
+
+/**
+ * The typed questions on this page worth asking the bank about: empty, and
+ * none that `mayRememberTyped` refuses — so nothing personal, nobody else's
+ * and nothing about this employer is asked about, as well as never kept.
+ */
+export function typedQuestions(fields = null, company = '') {
+  const out = new Set();
+  for (const box of typedBoxes(fields)) {
+    if (box.el.value.trim()) continue;
+    if (!mayRememberTyped(box.question, company).keep) continue;
+    out.add(box.question);
+  }
+  return [...out];
+}
+
+/*
+ * Which bank row filled a box, so that changing what was put there changes
+ * that row rather than starting another. The bank keys a row on the question
+ * as it was first asked; the second form's wording is a different string, and
+ * saved under it the corrected answer sat beside the old one — and the old
+ * one, found first, was what the third form got.
+ */
+const FROM_BANK = new WeakMap();
+
+/**
+ * Type back the answers this person typed on the last form that asked.
+ *
+ * The same three refusals as `answerFromMemory`: nothing already answered,
+ * nothing `worthRememberingTyped` would not have kept, and only what the box
+ * takes as it is — a box that will not hold it is put back as it was.
+ */
+function answerTypedFromMemory(remembered, fields, company) {
+  const filled = [];
+  const skipped = [];
+  const bank = bankFrom(remembered);
+  if (bank.size === 0) return { filled, skipped };
+
+  for (const box of typedBoxes(fields)) {
+    if (box.el.value.trim()) continue;
+    const kept = bank.get(box.question);
+    if (!kept) continue;
+    if (!worthRememberingTyped({ question: box.question, answer: kept.answer, company }).keep) continue;
+
+    const row = { key: 'remembered', value: kept.answer, description: box.description.slice(0, 60) };
+    setValue(box.el, kept.answer);
+    if (box.el.value !== kept.answer || browserWouldRefuse(box.el)) {
+      setValue(box.el, '');
+      skipped.push({ ...row, reason: 'the box would not take the answer you gave before' });
+      continue;
+    }
+    if (kept.itemId) FROM_BANK.set(box.el, kept.itemId);
+    filled.push({ ...row, question: box.question, remembered: true, typed: true });
+  }
+  return { filled, skipped };
+}
+
+/**
+ * Watch what the person types into those boxes, so the next form can have it.
+ *
+ * Written down when the application is sent or the form is left, not as it
+ * is typed: `take` is what the caller calls then. What is typed is told as it
+ * settles — each `change`, which is a box being left — so the card can say
+ * what will be kept and offer not to; and `take` reads every box typed in
+ * again, because the last one is often still being typed in when Submit is
+ * pressed.
+ *
+ * Only what a person typed: `isTrusted`, so what Autofill wrote — which fires
+ * the same events, deliberately, so the page's framework hears it — is never
+ * taken for an answer the person gave. Changing what Autofill wrote is
+ * typing, and is kept. `profile` answers the profile as the last Autofill had
+ * it; see `typedBox`.
+ *
+ * Returns `{ stop, take }`.
+ */
+export function watchTyped(tell, { profile = () => null, company = () => '' } = {}) {
+  const typed = new Set();
+  const read = (input) => {
+    let box;
+    try {
+      box = typedBox(input, profile());
+    } catch {
+      return null;
+    }
+    if (!box) return null;
+    const answer = clean(input.value);
+    const verdict = worthRememberingTyped({ question: box.question, answer, company: company() });
+    const itemId = FROM_BANK.get(input);
+    return verdict.keep
+      ? { question: box.question, answer, keep: true, ...(itemId ? { itemId } : {}) }
+      : { question: box.question, answer, keep: false, why: verdict.why };
+  };
+  const targetOf = (event) => {
+    if (!event.isTrusted) return null;
+    const target = event.composedPath?.()?.[0] ?? event.target;
+    return target instanceof HTMLInputElement ? target : null;
+  };
+  const onInput = (event) => {
+    const input = targetOf(event);
+    if (input) typed.add(input);
+  };
+  const onChange = (event) => {
+    const input = targetOf(event);
+    if (!input) return;
+    typed.add(input);
+    const said = read(input);
+    if (said) tell(said);
+  };
+  document.addEventListener('input', onInput, true);
+  document.addEventListener('change', onChange, true);
+  return {
+    stop() {
+      document.removeEventListener('input', onInput, true);
+      document.removeEventListener('change', onChange, true);
+    },
+    /*
+     * Every box typed in that is still on the page, read as it stands. One
+     * gone with its step was told when it was left, and that stands.
+     */
+    take() {
+      for (const input of typed) {
+        if (!input.isConnected) continue;
+        const said = read(input);
+        if (said) tell(said);
+      }
+      typed.clear();
+    },
+  };
 }
 
 /** Whether an ARIA option is the one marked as chosen. */
