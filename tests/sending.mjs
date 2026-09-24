@@ -149,7 +149,17 @@ async function walk(context, fixtures, fixture, { build = true } = {}) {
     }
 
     // The keeper writes on an interval, and the space is opened from there.
-    const before = await awaitFiled(fixture.company, (f) => f.application?.status === 'applying');
+    /*
+     * A receipt carries no save of its own — it is the page after the form —
+     * so a walk ending in one waits for the keeper to have opened the draft,
+     * as it has for anyone who spent longer than a couple of seconds on the
+     * form. Pressed sooner, under the parallel runner, there was no draft to
+     * close and no work to name the application by.
+     */
+    const before = await awaitFiled(
+      fixture.company,
+      (f) => f.application?.status === 'applying' && (!fixture.receipt || Boolean(f.draft)),
+    );
     await press(page, fixture.sends, { inFrame: fixture.inFrame });
 
     /*
@@ -230,6 +240,8 @@ async function* inBatches(list, run) {
  */
 const MINE = [...SENDS, ...DOES_NOT_SEND, RECEIPT_APPLY, RECEIPT_ELSEWHERE, RECEIPT_EMBED, NAMELESS_APPLY]
   .map((f) => f.company)
+  // What the nameless step is filed under when its names regress; see there.
+  .concat(['careers.corvane.test'])
   .concat(['Novena', 'Larkspur', 'Marlow Systems']);
 
 async function main() {

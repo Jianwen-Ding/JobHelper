@@ -792,8 +792,9 @@ export const EMBEDDED_SUBSCRIBE_FRAME = {
  * for applying". Four real applications went out this way unrecorded: the
  * press missed, and nothing else was listened to.
  */
-const RECEIPT_FORM = ({ name, path, company, title, thanks }) =>
-  form({
+const RECEIPT_FORM = ({ name, path, company, title, thanks }) => ({
+  receipt: true,
+  ...form({
     name,
     path,
     company,
@@ -803,7 +804,8 @@ const RECEIPT_FORM = ({ name, path, company, title, thanks }) =>
       ${FIELDS}
       <button type="button" onclick="${thanks}">Continue</button>
     </form>`,
-  });
+  }),
+});
 
 export const RECEIPT_APPLY = RECEIPT_FORM({
   name: 'receipt-after-an-unseen-press',
@@ -858,6 +860,7 @@ export const RECEIPT_EMBED = {
   sends: 'Continue',
   sent: true,
   inFrame: true,
+  receipt: true,
   html: page(
     'Software Engineer — Calloway Maritime',
     'Calloway Maritime',
