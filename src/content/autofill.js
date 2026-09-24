@@ -139,10 +139,17 @@ const FIELD_PATTERNS = [
    * And "for employment" where the same question says "to work": "Are you
    * currently eligible for employment in the US?" matched nothing, so the
    * required question was neither answered nor reported.
+   *
+   * And spelled with an "s", as the European boards spell it. Datadog's
+   * Greenhouse board asks "Are you legally authorised to work full-time in the
+   * country where this job is based?", which matched none of these, fell
+   * through to `address_country` on the word "country", and was reported —
+   * measured live — as a country still to be picked by hand from a Yes/No
+   * list. The rest of this file already reads both spellings of the answer.
    */
   [
     'work_authorization',
-    /\b(work[\s_-]?authoriz\w*|legally[\s_-]?authorized|(authoriz|eligib)\w*[\s_-]+(to[\s_-]+work|for[\s_-]+employment)|right[\s_-]?to[\s_-]?work)\b/i,
+    /\b(work[\s_-]?authori[sz]\w*|legally[\s_-]?authori[sz]ed|(authori[sz]|eligib)\w*[\s_-]+(to[\s_-]+work|for[\s_-]+employment)|right[\s_-]?to[\s_-]?work)\b/i,
   ],
   ['requires_sponsorship', /\b(sponsor\w*|visa[\s_-]?status)\b/i],
   /*

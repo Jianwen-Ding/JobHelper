@@ -2260,6 +2260,11 @@ const COUNTRY_NAMED = `<!doctype html><html><head><meta charset="utf-8"><title>A
   <select id="q_br"><option value="">Select...</option><option>Yes</option><option>No</option></select>
   <label for="q_us">Are you legally authorized to work in the United States?</label>
   <select id="q_us"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <!-- Datadog's, spelled the European way: measured live, read as a country question. -->
+  <label for="question_69008308">Are you legally authorised to work full-time in the country where this job is based?*</label>
+  <select id="question_69008308"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <label for="q_uk_s">Are you authorised to work in the United Kingdom?</label>
+  <select id="q_uk_s"><option value="">Select...</option><option>Yes</option><option>No</option></select>
 </form>
 <script>
   // The react-select shape of GREENHOUSE_EDUCATION, with a fixed Yes/No list.
@@ -5653,6 +5658,8 @@ async function main() {
           es: document.querySelector('#q_es')?.closest('.select__control')?.querySelector('.select__single-value')?.textContent ?? '',
           br: document.getElementById('q_br').value,
           us: document.getElementById('q_us').value,
+          authorised: document.getElementById('question_69008308').value,
+          ukS: document.getElementById('q_uk_s').value,
           skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
         };
       }, { b: base, fields: SWEEP }),
@@ -5661,6 +5668,11 @@ async function main() {
     check(
       'Affirm\'s "sponsorship … in Spain?" is not answered from a US declaration, and says why',
       countryNamed.es === '' && countryNamed.skipped.includes('requires_sponsorship: your answer is about another country'),
+      JSON.stringify(countryNamed),
+    );
+    check(
+      '"authorised" with an s is the right-to-work question, answered like "authorized", and not reported as a country',
+      countryNamed.authorised === 'Yes' && countryNamed.ukS === '' && !countryNamed.skipped.some((s) => s.startsWith('address_country')),
       JSON.stringify(countryNamed),
     );
     check(
