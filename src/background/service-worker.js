@@ -2517,7 +2517,7 @@ const handlers = {
   },
 
   /** Answer one question, reusing a stored answer unless asked to redraft. */
-  async answerQuestion({ question, force, job, limit }, tab) {
+  async answerQuestion({ question, force, job, limit, spec }, tab) {
     return stoppably(tab, 'answerQuestion', (signal) =>
       serverFetch('/api/ai/answer', {
         method: 'POST',
@@ -2528,6 +2528,13 @@ const handlers = {
           force,
           // The box's own `maxlength`, so the draft is written to fit it.
           limit,
+          /*
+           * The resume this answer goes beside, so the prompt can show it as
+           * what the reader already has. Without it the answer was written
+           * with no idea which lines were already on the page — and retold
+           * one of them. See `writingFrom`.
+           */
+          ...(spec ? writingFrom(spec) : {}),
           // Mapped into the server's shape, as `coverLetter` does below.
           job: job
             ? {

@@ -634,7 +634,6 @@ export function removeCard() {
  *   saying so is a card that can never be put back. See `putUpCard`.
  */
 
-/** "412 / 500", and a warning once past it. Nothing where the box has no limit. */
 /**
  * A word limit the question states for itself, or nothing.
  *
@@ -671,6 +670,7 @@ function countWords(counter, text, limit) {
   counter.classList.toggle('over', over);
 }
 
+/** "412 / 500", and a warning once past it. Nothing where the box has no limit. */
 function countAgainst(counter, text, limit) {
   if (!counter || !limit) return;
   const length = String(text ?? '').length;
@@ -4206,7 +4206,7 @@ export function createCard({
           if (wantsLetter) await draftLetter();
           for (const slot of slots) {
             const before = state.answers[slot.question] ?? slot.before;
-            await act(`answer:${slot.question}`, { question: slot.question, force: true, limit: slot.limit }, (one) => {
+            await act(`answer:${slot.question}`, { question: slot.question, force: true, limit: slot.limit, spec: state.spec }, (one) => {
               if (one?.executed && one.output) applyAnswer(slot.question, before, one.output);
             });
           }
@@ -5574,7 +5574,7 @@ export function createCard({
                 // What is in the box now, so the reply can tell its own work
                 // from anything written during the minutes it takes.
                 const typedBefore = state.answers[q.question] ?? value;
-                return act(`answer:${q.question}`, { question: q.question, force: true, limit: q.limit }, (r) => {
+                return act(`answer:${q.question}`, { question: q.question, force: true, limit: q.limit, spec: state.spec }, (r) => {
                   /*
                    * `executed` first, not `output` first.
                    *

@@ -437,7 +437,10 @@ async function main() {
       await ask(driver, 'writeApplication', { spec, job, letter: { required: true, body: '' }, questions: [] });
       await ask(driver, 'refine', { spec, job, feedback: 'More Kafka.' });
       await ask(driver, 'renderLetter', { body: 'Dear Helios,', spec });
-      for (const route of ['/api/ai/cover-letter', '/api/extension/write', '/api/ai/tailor', '/api/render/letter']) {
+      // One answer drafted on its own goes beside the same resume, so the
+      // store can show it as what the reader already has.
+      await ask(driver, 'answerQuestion', { question: 'Why us?', force: true, spec, job });
+      for (const route of ['/api/ai/cover-letter', '/api/extension/write', '/api/ai/tailor', '/api/render/letter', '/api/ai/answer']) {
         const body = JSON.parse(store.sentTo(route).slice(-1)[0]?.body || '{}');
         check(
           `${route} names the resume it was copied from, and carries the copy`,

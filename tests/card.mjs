@@ -4309,6 +4309,8 @@ async function main() {
     JSON.stringify(limits.after),
   );
   check('drafting one answer tells the run the limit', limits.one?.limit === 40, JSON.stringify(limits.one));
+  // And the resume it goes beside, so the answer can leave its lines to it.
+  check('and the resume it goes beside', limits.one?.spec?.id === 'job-acme', JSON.stringify(limits.one));
   check(
     'and so does writing them all at once, only for the box that has one',
     limits.all?.[0]?.limit === 40 && limits.all?.[1]?.limit === undefined,
