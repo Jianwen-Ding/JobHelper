@@ -4354,6 +4354,9 @@ async function main() {
 
     const line = root.querySelector('input[data-field="change:Why us?"]');
     if (!line) return { error: 'no line for what to change beside the answer' };
+    // `.change` is a row in the list of resume changes: a box wearing it was
+    // styled as one and counted as one, three empty rows reading " → ".
+    const posingAsChanges = [...root.querySelectorAll('.change')].filter((n) => n.matches('input, textarea')).length;
     type(line, 'Shorter, and use the on-call story.');
     byText('Rewrite for this role', root.querySelector('.q'))?.click();
     await wait(150);
@@ -4378,9 +4381,10 @@ async function main() {
     await wait(80);
     const letterBack = root.querySelector('textarea[data-field="letter"]')?.value;
 
-    return { askedAnswer, rewritten, lineAfter, putBack, hiddenOverEmpty, shownOverLetter, askedLetter, letterAfter, letterBack };
+    return { askedAnswer, rewritten, lineAfter, putBack, hiddenOverEmpty, shownOverLetter, askedLetter, letterAfter, letterBack, posingAsChanges };
   });
   check('an answer carries a line for what to change', !changed.error, changed.error ?? '');
+  check('and it is not mistaken for a row in the list of changes', changed.posingAsChanges === 0, String(changed.posingAsChanges));
   check(
     'and it goes with the rewrite, beside the answer it is about',
     changed.askedAnswer?.feedback === 'Shorter, and use the on-call story.' && changed.askedAnswer?.draft === 'My first go.',

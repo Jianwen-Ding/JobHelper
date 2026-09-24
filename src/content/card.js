@@ -408,12 +408,16 @@ textarea {
 }
 textarea:focus-visible { outline: 0; border-color: #c8d8f7; box-shadow: 0 0 0 3px var(--accent-soft); }
 textarea.tall { min-height: 160px; }
-/* What to change about a draft: one line beside the button that sends it. */
-input.change {
+/*
+ * What to change about a draft: one line beside the button that sends it.
+ * Not \`.change\` — that is a row in the list of resume changes, and a box
+ * wearing it was styled as one and counted as one.
+ */
+input.redo {
   flex: 1 1 180px; min-width: 0; font: inherit; font-size: 12px; padding: 5px 8px;
   border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: #fff;
 }
-input.change:focus-visible { outline: 0; border-color: #c8d8f7; box-shadow: 0 0 0 3px var(--accent-soft); }
+input.redo:focus-visible { outline: 0; border-color: #c8d8f7; box-shadow: 0 0 0 3px var(--accent-soft); }
 select {
   font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px;
   max-width: 100%; background: #fff; color: var(--ink);
@@ -5098,7 +5102,7 @@ export function createCard({
                 { className: 'row gap', hidden: !state.letter?.trim() && state.replaced.letter == null },
                 [
                     h('input', {
-                      className: 'change',
+                      className: 'redo',
                       type: 'text',
                       dataset: { field: 'change:letter' },
                       value: state.changeLetter ?? '',
@@ -5759,7 +5763,7 @@ export function createCard({
           ? null
           : h('div', { className: 'row gap' }, [
               h('input', {
-                className: 'change',
+                className: 'redo',
                 type: 'text',
                 dataset: { field: `change:${q.question}` },
                 value: state.changeAnswer[q.question] ?? '',
