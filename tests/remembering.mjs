@@ -94,6 +94,16 @@ const REFUSE = [
   ['Do you identify as First Nations, Métis or Inuit?', 'No'],
   // The UK wording of the licence question; only "driver's licence" was known.
   ['Do you hold a full UK driving licence?', 'Yes'],
+  /*
+   * A government number by the name most countries give it, and what
+   * somebody is paid now — both asked as dropdowns often enough, and neither
+   * matched anything here.
+   */
+  ['National ID number', 'AB1234567'],
+  ['Government ID type', 'Passport'],
+  ['Current salary range', '$120k–$140k'],
+  ['What was your salary in your last position?', '$120k–$140k'],
+  ['What are you currently earning?', '$120k–$140k'],
 ];
 
 test('and the ones that are nobody else’s business are refused', () => {
@@ -102,6 +112,15 @@ test('and the ones that are nobody else’s business are refused', () => {
     assert.equal(said.keep, false, `${question} was kept`);
     assert.match(said.why, /personal/);
   }
+});
+
+/*
+ * What somebody is paid, as against what they are asking for: a dropdown of
+ * bands is how plenty of forms ask either, and only the second is kept.
+ */
+test('salary history is refused however it is asked, and expectations are not', () => {
+  assert.equal(worthRemembering({ question: 'Current annual salary range', answer: '$120k–$140k' }).keep, false);
+  assert.equal(worthRemembering({ question: 'Desired salary range', answer: '$140k–$160k' }).keep, true);
 });
 
 /*

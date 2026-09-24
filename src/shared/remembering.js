@@ -34,11 +34,10 @@
  * and a check that fires on those teaches nobody anything while quietly
  * refusing ordinary questions.
  *
- * "Salary" and "notice period" are deliberately *not* on this list. They are
- * personal, and they are also different for every application — remembering
- * them would be wrong for the ordinary reason that the answer changes, not
- * because keeping them is dangerous. They simply do not match anything in
- * `CHOOSABLE`, so nothing here reaches them.
+ * "Salary" and "notice period" are deliberately *not* on this list. What you
+ * are asking for and how much notice you have to give are the same answer
+ * next week, and are exactly what somebody tires of typing. What you are paid
+ * *now*, or were paid before, is on it: see the salary history below.
  */
 const NEVER_REMEMBER = [
   /\bssn\b/i,
@@ -117,6 +116,24 @@ const NEVER_REMEMBER = [
   /\bpregnan/i,
   /\bmedical\b/i,
   /\bhealth\b/i,
+  /*
+   * Government numbers by the names the list above did not know. "National
+   * ID number" and "Government ID" are how the forms outside the US and the
+   * UK ask for the thing `ssn` and `national insurance` are there to refuse.
+   */
+  /\b(national|government|state|citizen|personal)[\s-]*(id|identity|identification)\b/i,
+  /*
+   * What somebody is paid now, or was paid before.
+   *
+   * Asking for it is against the law in a growing list of places, and an
+   * answer given to one employer is the number the next one negotiates down
+   * from. What somebody *expects* is theirs to repeat, and is kept.
+   */
+  /\b(current|present|previous|prior|past|last|most\s+recent|existing)\s+(annual\s+|base\s+|total\s+|gross\s+)?(salary|compensation|pay|wages?|ctc|earnings|remuneration|package)\b/i,
+  /\b(salary|compensation|pay|wage)\s+history\b/i,
+  /\b(currently|previously)\s+(earn|make|paid)\b/i,
+  /\b(were|are)\s+you\s+(currently\s+)?(earning|making|paid)\b/i,
+  /\b(salary|compensation|pay)\b[^.?]{0,30}\b(last|previous|prior|former)\s+(position|role|job|employer|company)\b/i,
 ];
 
 /**
