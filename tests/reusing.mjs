@@ -229,8 +229,9 @@ const SECOND_FORM = typedPosting({
     box('now-paid', 'What is your current salary?'),
     box('ref-name', 'Reference name'),
     box('whyus', 'What makes Orbital Labs the right next step for you?'),
+    // New here, typed, and then not wanted kept.
     box('tz', 'Which time zone do you work in?'),
-    // New here and kept: see the wait below.
+    // And new here and kept, typed after it: see the wait below.
     box('days', 'Which days suit you for interviews?'),
   ].join('\n'),
 });
@@ -387,21 +388,38 @@ async function walkTwoForms(context, fixtures) {
     touched.length === 0,
     touched.map((id) => `${id}: "${got[id]}"`).join(' | ') || 'latest start, last name, current salary, reference, why us, time zone',
   );
+  const note = ((await cardOf(second).locator('.ok-note').first().innerText().catch(() => '')) ?? '').trim();
+  check(
+    'the card names the boxes it filled from answers given before, so they can be checked',
+    /from answers you gave before/i.test(note) && /How did you hear about this job\?/.test(note) &&
+      /What is your expected salary\?/.test(note) && /Which working arrangement do you prefer\?/.test(note),
+    note || '(no note)',
+  );
 
   /*
-   * Then the person changes one, and types one new. The change goes onto
-   * the answer it replaced, so the next form gets the new figure and not the
-   * first form's.
+   * Then the person changes one and types two new, and says not to keep one
+   * of those. The change goes onto the answer it replaced, so the next form
+   * gets the new figure and not the first form's.
    */
   await second.fill('#salary', '$160,000 base');
+  await second.fill('#tz', 'US Eastern');
   await second.fill('#days', 'Tuesdays and Thursdays');
   await second.locator('h1').click();
+  const offer = cardOf(second).getByRole('button', { name: /Don.t keep “Which time zone do you work in\?”/ });
+  await offer.waitFor({ timeout: 10_000 }).catch(() => undefined);
+  check(
+    'the card says what it will keep, with a way to not keep each one',
+    (await offer.count()) === 1,
+    ((await cardOf(second).locator('.to-keep').innerText().catch(() => '')) ?? '').replace(/\s+/g, ' ') || '(nothing about keeping)',
+  );
+  await offer.click().catch(() => undefined);
   await second.click('button[type=submit]');
   await second.waitForURL(/thanks/, { timeout: 15_000 }).catch(() => undefined);
   /*
    * Until the last of them has landed. The worker saves them one after
    * another in the order they were typed, so once the interview days are in
-   * the bank everything before them has been saved or not.
+   * the bank the time zone has been saved or not — and waiting on the salary
+   * alone read the bank between the two and passed whatever became of it.
    */
   const afterSecond = await until(async () => {
     const bank = await bankOf();
@@ -416,6 +434,11 @@ async function walkTwoForms(context, fixtures) {
     answerOf(bankLater.find((a) => a.question === 'Expected salary')) === '$160,000 base' &&
       !bankLater.some((a) => a.question === 'What is your expected salary?'),
     bankLater.filter((a) => /salary/i.test(a.question)).map((a) => `${a.question} = ${answerOf(a)}`).join(' | '),
+  );
+  check(
+    'and the one the person said not to keep is not kept',
+    !bankLater.some((a) => /time zone/i.test(a.question) || a.variants.some((v) => v.text === 'US Eastern')),
+    bankLater.map((a) => a.question).join(' | '),
   );
   await second.close();
 

@@ -4919,6 +4919,93 @@ async function main() {
   );
   check('and says Attach files again once it is done', attaching.after.attach === 'Attach files' && !attaching.after.attachDisabled, JSON.stringify(attaching.after));
 
+  console.log('\nWhat is kept from this form, and what came from the last one');
+
+  /*
+   * Autofill names the boxes it filled from answers given before, so they
+   * can be read before sending — a figure or a date typed in by a machine is
+   * a thing to check — and the card lists what will be kept from this form,
+   * each with a way to leave it out.
+   */
+  const keeping = await inPage(async (createCard) => {
+    const asked = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary', sections: [] },
+        tailor: 'none',
+        diff: [],
+        rationale: [],
+        skillChanges: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      isForm: true,
+      onAction: (action, payload) => {
+        asked.push({ action, payload });
+        if (action === 'autofill') {
+          return Promise.resolve({
+            filled: [
+              { key: 'email', value: 'x@example.com' },
+              { key: 'remembered', value: 'LinkedIn', question: 'How did you hear about this job?', remembered: true, typed: true },
+              { key: 'remembered', value: 'Hybrid', question: 'Which working arrangement do you prefer?', remembered: true },
+            ],
+            skipped: [],
+          });
+        }
+        if (action === 'aiStatus') return Promise.resolve({ state: 'off', active: false, serverEnabled: false });
+        return Promise.resolve({});
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const button = (re) => [...root.querySelectorAll('button')].find((b) => re.test(b.textContent));
+    button(/^Autofill this form/)?.click();
+    await new Promise((r) => setTimeout(r, 50));
+    const note = root.querySelector('.ok-note')?.textContent ?? '';
+    handle.setToKeep([
+      { question: 'Earliest start date', answer: 'Two weeks after an offer' },
+      { question: 'Which time zone do you work in?', answer: 'US Eastern' },
+    ]);
+    await new Promise((r) => setTimeout(r, 20));
+    const listed = root.querySelector('.to-keep')?.textContent ?? '';
+    const leave = [...root.querySelectorAll('.to-keep button')].find((b) => /Which time zone/.test(b.ariaLabel ?? ''));
+    leave?.click();
+    await new Promise((r) => setTimeout(r, 20));
+    const after = root.querySelector('.to-keep')?.textContent ?? '';
+    handle.setToKeep([]);
+    await new Promise((r) => setTimeout(r, 20));
+    return {
+      note,
+      listed,
+      after,
+      gone: root.querySelector('.to-keep') === null,
+      told: asked.filter((a) => a.action === 'dontKeep').map((a) => a.payload),
+    };
+  });
+  check(
+    'the autofill note names each box filled from answers given before',
+    /2 of them from answers you gave before/.test(keeping.note) &&
+      keeping.note.includes('“How did you hear about this job?”') &&
+      keeping.note.includes('“Which working arrangement do you prefer?”'),
+    keeping.note,
+  );
+  check(
+    'what will be kept from this form is listed, question and answer',
+    /Earliest start date — Two weeks after an offer/.test(keeping.listed) && /Which time zone do you work in\? — US Eastern/.test(keeping.listed),
+    keeping.listed,
+  );
+  check(
+    'and one can be left out, which tells the page not to keep it',
+    !/time zone/.test(keeping.after) && /Earliest start date/.test(keeping.after) &&
+      JSON.stringify(keeping.told) === JSON.stringify([{ question: 'Which time zone do you work in?' }]),
+    JSON.stringify({ after: keeping.after, told: keeping.told }),
+  );
+  check('with nothing to keep, nothing is said about it', keeping.gone, String(keeping.gone));
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);

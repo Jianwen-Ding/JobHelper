@@ -427,16 +427,21 @@
   /**
    * And the one of what is typed into its short boxes, with what it has
    * heard: the answers to keep, by question, until the application is sent or
-   * the form is left — see `keepTyped`. `typedProfile` is the profile as the
-   * last Autofill had it, which is what says a box is the profile's rather
-   * than the person's.
+   * the form is left — see `keepTyped` — and the questions the person said
+   * not to keep. `typedProfile` is the profile as the last Autofill had it,
+   * which is what says a box is the profile's rather than the person's.
    */
   let typedWatch = null;
   const typedToKeep = new Map();
+  const typedNotKept = new Set();
   let typedProfile = null;
 
   /** Who this page is applying to, for the rules that refuse naming them. */
   const companyHere = () => analysis?.spec?.generatedFor?.company || analysis?.job?.company || '';
+
+  /** The card's list of what will be kept, drawn again from `typedToKeep`. */
+  const showTypedToKeep = () =>
+    cardHandle?.setToKeep?.([...typedToKeep].map(([question, { answer }]) => ({ question, answer })));
 
   /**
    * Put what was typed on this form into the bank, now.
@@ -444,9 +449,9 @@
    * Called when the application is sent and when the form is left — its
    * `pagehide`, and a route change on a board that never unloads — and not
    * as each box is typed in, so the answer kept is the one the person ended
-   * on. One message for all of them: `pagehide` is the moment a page is
-   * least able to wait, and the worker saves them one after another from
-   * there.
+   * on, and one they have said not to keep never leaves the page. One message
+   * for all of them: `pagehide` is the moment a page is least able to wait,
+   * and the worker saves them one after another from there.
    */
   const keepTyped = () => {
     typedWatch?.take();
@@ -454,6 +459,7 @@
     const answers = [...typedToKeep].map(([question, { answer, itemId }]) => ({ question, answer, itemId }));
     typedToKeep.clear();
     send('rememberTyped', { answers }).catch(() => undefined);
+    showTypedToKeep();
   };
 
   /** Stops the watcher that re-reads the form's questions; see `watchQuestions`. */
@@ -989,6 +995,13 @@
 
       case 'autofill':
         return runAutofill();
+
+      /** One typed answer the person does not want kept. See `keepTyped`. */
+      case 'dontKeep':
+        typedNotKept.add(payload.question);
+        typedToKeep.delete(payload.question);
+        showTypedToKeep();
+        return { ok: true };
 
       /*
        * The upload boxes, from the folder the card would otherwise ask you to
@@ -2029,13 +2042,15 @@
           /*
            * And what is typed, held until the form is sent or left. An
            * emptied box, or one whose answer is refused, takes its question
-           * off the list.
+           * off the list; one the person said not to keep stays off it.
            */
           typedWatch?.stop();
           typedWatch = watchTyped(
             (said) => {
-              if (said.keep) typedToKeep.set(said.question, { answer: said.answer, itemId: said.itemId });
-              else typedToKeep.delete(said.question);
+              if (said.keep && !typedNotKept.has(said.question)) {
+                typedToKeep.set(said.question, { answer: said.answer, itemId: said.itemId });
+              } else typedToKeep.delete(said.question);
+              showTypedToKeep();
             },
             { profile: () => typedProfile, company: companyHere },
           );
@@ -2917,6 +2932,7 @@
     stopChoices = null;
     typedWatch?.stop();
     typedWatch = null;
+    typedNotKept.clear();
     stopQuestions?.();
     stopQuestions = null;
 

@@ -813,6 +813,12 @@ export function createCard({
     replaced: { letter: null, answers: {} },
     feedback: '',
     autofillReport: null,
+    /**
+     * What was typed on this form that will be kept for the next one, as
+     * `[{ question, answer }]` — told by content.js as each box is left, and
+     * put in the bank when the form is sent or left. See `drawToKeep`.
+     */
+    toKeep: [],
     /** What the last press of Attach put into the form, and what it could not. */
     attachReport: null,
     /**
@@ -5419,6 +5425,7 @@ export function createCard({
               })
             : null,
         drawAutofillNote(),
+        drawToKeep(),
         drawAttachNote(),
       ]),
     );
@@ -5559,8 +5566,22 @@ export function createCard({
      * once, as a count, because the point is to prompt a look rather than to
      * list the questions back.
      */
-    const remembered = r.filled.filter((f) => f.remembered).length;
-    if (remembered) parts.push(`${remembered} of them from answers you gave before`);
+    /*
+     * Named, not only counted, once typed answers come back too. A count was
+     * enough while the bank only ever ticked a box somebody could see had an
+     * answer beside it; a salary figure or a start date typed into a box by a
+     * machine is a thing to read before sending, and "3 of them" does not say
+     * which three. The questions as this form asks them, since that is what
+     * is on screen to look for.
+     */
+    const remembered = r.filled.filter((f) => f.remembered);
+    if (remembered.length) {
+      const which = remembered.map((f) => f.question).filter(Boolean);
+      parts.push(
+        `${remembered.length} of them from answers you gave before` +
+          (which.length ? ` (${which.map((q) => `“${q}”`).join(', ')})` : ''),
+      );
+    }
 
     /*
      * Skipped is not one thing. A field left alone because it already had an
@@ -6142,6 +6163,7 @@ export function createCard({
           })
         : null,
       drawAutofillNote(),
+      drawToKeep(),
       drawAttachNote(),
       h(
         'div',
@@ -6290,6 +6312,39 @@ export function createCard({
     );
   }
 
+  /**
+   * What will be kept from this form for the next one, with a way to not.
+   *
+   * Beside the Autofill note, because that is where the answers come back
+   * next time and so where somebody looks to see what this tool knows. Each
+   * row is the question and what was typed, as the bank will hold it, and a
+   * button that leaves that one out — a figure typed for one employer that
+   * should not be offered to the next, a box answered in a hurry. Nothing is
+   * kept until the form is sent or left, so the button is always in time.
+   */
+  function drawToKeep() {
+    if (!(state.toKeep ?? []).length) return null;
+    return h('div', { className: 'hint to-keep', style: 'margin-top:8px' }, [
+      h('div', { textContent: 'Kept for the next form, once this one is sent or left:' }),
+      ...state.toKeep.map(({ question, answer }) =>
+        h('div', { className: 'row' }, [
+          h('span', { className: 'grow', textContent: `${question} — ${answer}` }),
+          h('button', {
+            className: 'link',
+            textContent: 'Don’t keep',
+            ariaLabel: `Don’t keep “${question}”`,
+            title: 'Leave this answer out of the ones offered on the next form',
+            onclick: () => {
+              state.toKeep = state.toKeep.filter((k) => k.question !== question);
+              draw();
+              onAction('dontKeep', { question }).catch(() => undefined);
+            },
+          }),
+        ]),
+      ),
+    ]);
+  }
+
   /** And the same for the last press of Attach. */
   function drawAttachNote() {
     return (
@@ -6419,6 +6474,7 @@ export function createCard({
       ...dragChips(),
       h('div', { className: 'row' }, formActions()),
       state.autofillReport ? drawAutofillNote() : null,
+      drawToKeep(),
       state.attachReport ? drawAttachNote() : null,
       h('button', {
         className: 'link',
@@ -6693,6 +6749,12 @@ export function createCard({
 
     /** Put back the work from the page this one continues. */
     restoreWork,
+    /** What will be kept from this form's typed answers. See `drawToKeep`. */
+    setToKeep(list) {
+      state.toKeep = Array.isArray(list) ? list : [];
+      draw();
+    },
+
     /** Something that happened and went well. See `state.note`. */
     say(text) {
       state.note = text;
