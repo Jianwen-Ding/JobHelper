@@ -3341,8 +3341,65 @@ async function main() {
         outOfTen: pick('9.1', BANDS),
         gap: pick('3.745', ['3.50 - 3.74', '3.75 - 4.00']),
         notRounded: pick('3.85', ['4.0', '3.9', '3.8']),
+        // SpaceX's, measured on the live board: every grade out of 4.0.
+        outOfFour: pick('3.8', ['Not applicable/Do not recall', '4.0 out of 4.0', '3.9 out of 4.0', '3.8 out of 4.0', '3.7 out of 4.0', 'Below 3.0 out of 4.0']),
+        belowOutOfFour: pick('2.6', ['Not applicable/Do not recall', '3.1 out of 4.0', '3.0 out of 4.0', 'Below 3.0 out of 4.0']),
+        slashed: pick('3.7', ['3.5/4.0 - 4.0/4.0', '3.0/4.0 - 3.49/4.0']),
+        outOfFive: pick('3.8', ['3.8 out of 5.0', '4.0 out of 5.0']),
       };
     }, { b: base });
+    /*
+     * A phone box that keeps the digits and drops the rest, as Greenhouse's
+     * intl-tel-input does to "(555) 010-0199" — to what a person types and to
+     * what is filled alike. Filled, it was reported "would not take it".
+     */
+    const phones = await page.evaluate(async ({ b }) => {
+      const m = await import(`${b}/autofill.js`);
+      const fill = (reformat) => {
+        document.body.innerHTML = '<form><label for="p">Phone</label><input id="p" type="tel"></form>';
+        const box = document.getElementById('p');
+        box.addEventListener('input', () => { box.value = reformat(box.value); });
+        const report = m.fillForm({ phone: '(555) 010-0199' });
+        return { value: box.value, filled: report.filled.some((x) => x.key === 'phone'), skipped: report.skipped.map((x) => x.reason) };
+      };
+      return {
+        digits: fill((v) => v.replace(/\D/g, '')),
+        // A box that keeps only some of them has not taken it.
+        cut: fill((v) => v.replace(/\D/g, '').slice(0, 6)),
+      };
+    }, { b: base });
+    /*
+     * Work authorization asked as statements, not as yes or no — SpaceX's,
+     * measured on the live board. Left for the person against a profile that
+     * says "Authorized to work in the US" and no sponsorship.
+     */
+    const statements = await page.evaluate(async ({ b }) => {
+      const m = await import(`${b}/autofill.js`);
+      const SAID = ['I am authorized to work in the United States for any employer', 'I am authorized to work in the United States for my present employer only',
+        'I require sponsorship to work in the United States', 'I am not authorized to work in the United States', 'My status to work in the United States is unknown'];
+      const pick = (fields, options = SAID) => {
+        document.body.innerHTML = `<form><label for="w">Are you legally authorized to work in the United States?</label><select id="w"><option value="">Select...</option>${options
+          .map((o) => `<option>${o}</option>`).join('')}</select></form>`;
+        m.fillForm(fields);
+        return document.getElementById('w').value;
+      };
+      return {
+        free: pick({ work_authorization: 'Authorized to work in the US', requires_sponsorship: 'No' }),
+        sponsored: pick({ work_authorization: 'Authorized to work in the US', requires_sponsorship: 'Yes' }),
+        unsaid: pick({ work_authorization: 'Authorized to work in the US' }),
+        plain: pick({ work_authorization: 'Authorized to work in the US', requires_sponsorship: 'No' }, ['I am authorized to work in the United States', 'I am not authorized to work in the United States']),
+      };
+    }, { b: base });
+    group('Work authorization asked as statements');
+    check('authorized with no sponsorship: "for any employer"', statements.free === 'I am authorized to work in the United States for any employer', `"${statements.free}"`);
+    check('needing sponsorship: the statement that says so', statements.sponsored === 'I require sponsorship to work in the United States', `"${statements.sponsored}"`);
+    check('a plain "I am authorized" where nothing narrower is offered', statements.plain === 'I am authorized to work in the United States', `"${statements.plain}"`);
+    check('and nothing where the profile does not say whether sponsorship is needed', statements.unsaid === '', `"${statements.unsaid}"`);
+
+    group('A phone box that keeps the digits and drops the formatting');
+    check('is filled, and counted as filled', phones.digits.value === '5550100199' && phones.digits.filled, JSON.stringify(phones.digits));
+    check('while one that drops digits is still reported', !phones.cut.filled && phones.cut.skipped.includes('the field would not take it'), JSON.stringify(phones.cut));
+
     group('A GPA against a list of bands');
     check(
       'a grade takes the band that holds it',
@@ -3356,6 +3413,12 @@ async function main() {
     );
     check('"less than", and a dash of any width', grades.under === 'Less than 3.0' && grades.dash === '3.5–4.0', JSON.stringify([grades.under, grades.dash]));
     check('a bare number, by its value', grades.point === '3.8', `"${grades.point}"`);
+    check(
+      'a grade written out of 4.0, as SpaceX lists them',
+      grades.outOfFour === '3.8 out of 4.0' && grades.belowOutOfFour === 'Below 3.0 out of 4.0' && grades.slashed === '3.5/4.0 - 4.0/4.0',
+      JSON.stringify([grades.outOfFour, grades.belowOutOfFour, grades.slashed]),
+    );
+    check('but never one out of anything else', grades.outOfFive === '', `"${grades.outOfFive}"`);
     check(
       'and nothing for a grade no band holds, one not out of four, or one that would have to be rounded',
       grades.outOfTen === '' && grades.gap === '' && grades.notRounded === '',

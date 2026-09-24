@@ -1590,7 +1590,15 @@ const GPA_BANDS = [
 
 /** The range an option states, or null when it states none. */
 function gpaBand(option) {
-  const said = clean(option).replace(/\s+/g, ' ');
+  /*
+   * With its scale written beside each grade — "3.8 out of 4.0", as SpaceX
+   * lists every one, or "3.5/4.0 - 4.0/4.0" — read off and set aside. Only a
+   * scale of four: a band out of five is not where a four-point grade goes.
+   */
+  const OUT_OF = /\s*(?:\/|out\s+of)\s*(\d+(?:\.\d+)?)/gi;
+  const scales = [...clean(option).matchAll(OUT_OF)].map((m) => Number(m[1]));
+  if (scales.some((scale) => scale !== 4)) return null;
+  const said = clean(option).replace(OUT_OF, '').replace(/\s+/g, ' ');
   for (const [re, band] of GPA_BANDS) {
     const hit = re.exec(said);
     if (hit) return band(...hit.slice(1).map(Number));
@@ -1915,6 +1923,41 @@ function yesNoOption(key, value, options, asked = '') {
   return answer === 'yes' ? yes.o : answer === 'no' ? no.o : undefined;
 }
 
+/*
+ * Work authorization asked as statements rather than as yes or no.
+ *
+ * SpaceX's reads "I am authorized to work in the United States for any
+ * employer", "…for my present employer only", "I require sponsorship…",
+ * "I am not authorized…", "My status… is unknown", and was left for the
+ * person against a profile that says "Authorized to work in the US" and no
+ * sponsorship. Each statement is read for what it claims, and one is chosen
+ * only where the profile's two answers make it true and it is the only one:
+ * needing sponsorship picks the statement that says so; authorized without
+ * it picks "for any employer"; a plain "I am authorized" only where nothing
+ * narrower is offered. "Present employer only" and "unknown" are never
+ * chosen, and nothing is where the profile does not say about sponsorship.
+ */
+function statementKind(text) {
+  const said = clean(text).toLowerCase();
+  if (/\bnot\s+(?:legally\s+)?authori[sz]ed\b/.test(said)) return 'not-authorized';
+  if (/\b(?:require|need)s?\b[^.]*\bsponsor/.test(said)) return /\b(?:not|no|without|never)\b/.test(said) ? 'any-employer' : 'needs-sponsorship';
+  if (!/\bauthori[sz]ed\b/.test(said)) return null;
+  if (/\bonly\b|\bunknown\b|\bpresent employer\b|\bcurrent employer\b/.test(said)) return 'restricted';
+  return /\bany employer\b|\bwithout restriction\b/.test(said) ? 'any-employer' : 'authorized';
+}
+
+function authorizationStatement(options, fields, textOf = (o) => o.textContent) {
+  const authorized = yesNoFrom(fields?.work_authorization ?? '', 'work_authorization');
+  const sponsor = yesNoFrom(fields?.requires_sponsorship ?? '', 'requires_sponsorship');
+  const of = (kind) => options.filter((o) => statementKind(textOf(o)) === kind);
+  const only = (list) => (list.length === 1 ? list[0] : null);
+  if (sponsor === 'yes') return only(of('needs-sponsorship'));
+  if (authorized !== 'yes') return null;
+  if (sponsor === 'no' && of('any-employer').length) return only(of('any-employer'));
+  // Nothing narrower on offer: "I am authorized" is true either way.
+  return of('any-employer').length || of('restricted').length ? null : only(of('authorized'));
+}
+
 /**
  * Fill what we can. Returns a report of what was filled and what was skipped,
  * so the user can see the difference between "done" and "done silently wrong".
@@ -2073,7 +2116,11 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
           value,
           choosable.filter((o) => !looksLikePlaceholder(o, input)).map((o) => ({ label: o.textContent, el: o })),
           description,
-        )?.el;
+        )?.el ??
+        // Or statements about it. See `authorizationStatement`.
+        (key === 'work_authorization' && !aboutAnotherCountry(key, value, description)
+          ? authorizationStatement(choosable, fields)
+          : null);
       if (option) {
         nativeSet(input, 'value', option.value);
         /*
@@ -2124,7 +2171,15 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
      * blank, and the user submitted a form missing a required phone number
      * having been told it was done.
      */
-    if (input.value !== String(value)) {
+    /*
+     * A phone box that kept every digit and dropped the formatting has taken
+     * it: Greenhouse's intl-tel-input turns "(555) 010-0199" into
+     * "5550100199", as it does to what a person types, and the number was
+     * reported refused while it sat in the box.
+     */
+    const digits = (v) => String(v).replace(/\D/g, '');
+    const sameNumber = /phone/.test(key) && digits(value).length >= 7 && digits(input.value) === digits(value);
+    if (input.value !== String(value) && !sameNumber) {
       skipped.push({ key, reason: 'the field would not take it', description: description.slice(0, 60) });
       continue;
     }
@@ -3216,6 +3271,7 @@ function exactOption(options, key, value, fields = {}) {
     options.find((o) => sameOption(o.textContent, value)) ??
     (key === 'gpa' ? gpaOption(options, value) : null) ??
     (PLACE_KEYS.has(key) ? placeOption(options, fields) : null) ??
+    (key === 'work_authorization' ? authorizationStatement(options, fields) : null) ??
     options.find((o) => sameAnswerSpelledOtherwise(key, o.textContent, value)) ??
     null
   );
