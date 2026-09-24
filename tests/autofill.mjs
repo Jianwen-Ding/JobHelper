@@ -2220,10 +2220,12 @@ const WORKDAY_EXPERIENCE_BEGUN = `<!doctype html><html><head><meta charset="utf-
  * And the date behaves as it does live, because each of those is a way the
  * fill has been seen to go wrong:
  *   - the month box rewrites "06" as "6" as soon as it takes it;
- *   - a filled month moves the caret on to the year a moment later;
- *   - focus arriving in a date from outside it is sent to its first box;
+ *   - a month filled while the caret is in it moves it on to the year a
+ *     moment later;
+ *   - focus arriving in a date from outside it is sent to its first box, and
+ *     a box takes what is written into it only while it has the focus;
  *   - the date is taken — what Save and Continue checks — only when focus
- *     leaves it, read from both boxes at that moment. `data-committed` holds
+ *     leaves it, from what each box took. `data-committed` holds
  *     what was taken, and Workday's "The field From is required and must have
  *     a value" is a `data-committed` of "".
  */
@@ -2250,25 +2252,32 @@ const WORKDAY_DATES = `<!doctype html><html><head><meta charset="utf-8"><title>M
 </div>
 <div role="group" aria-labelledby="Education-section"><h4 id="Education-section">Education</h4>
   <div role="group" aria-labelledby="Education-1-panel"><div><h5 id="Education-1-panel">Education 1</h5></div>
+    <div data-automation-id="formField-schoolName"><label for="education-66--schoolName"><span>School or University<abbr aria-hidden="true">*</abbr></span></label><div><input type="text" id="education-66--schoolName" name="schoolName" aria-required="true"></div></div>
     ${workdayDate('education-66--firstYearAttended', 'From', ['Year'])}
     ${workdayDate('education-66--lastYearAttended', 'To (Actual or Expected)', ['Year'])}
   </div>
+  <div><button data-automation-id="add-button" type="button">Add Another</button></div>
 </div>
 </div>
 <script>
   for (const wrapper of document.querySelectorAll('[data-automation-id="dateInputWrapper"]')) {
     const boxes = [...wrapper.querySelectorAll('input[role="spinbutton"]')];
     const [month, year] = boxes.length === 2 ? boxes : [null, boxes[0]];
+    const entered = new Map();
+    for (const box of boxes) box.addEventListener('input', () => {
+      if (box === month && /^0\\d$/.test(month.value)) month.value = String(Number(month.value));
+      if (document.activeElement === box) entered.set(box, box.value);
+    });
     if (month) month.addEventListener('input', () => {
-      if (/^0\\d$/.test(month.value)) month.value = String(Number(month.value));
-      if (month.value) setTimeout(() => year.focus(), 0);
+      if (month.value && document.activeElement === month) setTimeout(() => { if (document.activeElement === month) year.focus(); }, 0);
     });
     wrapper.addEventListener('focusin', (e) => {
       if (!wrapper.contains(e.relatedTarget) && e.target !== boxes[0]) boxes[0].focus();
     });
     wrapper.addEventListener('focusout', (e) => {
       if (wrapper.contains(e.relatedTarget)) return;
-      wrapper.dataset.committed = month ? (month.value || year.value ? month.value + '/' + year.value : '') : year.value;
+      const m = entered.get(month) ?? '', y = entered.get(year) ?? '';
+      wrapper.dataset.committed = month ? (m || y ? m + '/' + y : '') : y;
     });
   }
 </script>
@@ -5888,11 +5897,15 @@ async function main() {
     const liveDates = await page.goto(`${base}/workday-dates`, { waitUntil: 'domcontentloaded' }).then(() =>
       page.evaluate(async ({ b, jobs }) => {
         const m = await import(`${b}/autofill.js`);
-        const report = m.fillForm({}, { history: jobs });
+        // As content.js's `fillThisDocument` calls it.
+        const fields = { school: 'Northeastern University', education_start_year: '2023', graduation_year: '2027' };
+        const education = [{ school: 'Northeastern University', start: { year: 2023, month: 9 }, end: { year: 2027, month: 5 } }];
+        const report = await m.fillEducation(education, fields, await m.fillComboboxes(fields, m.fillForm(fields, { history: jobs }), { history: jobs }));
         await new Promise((r) => setTimeout(r, 50));
         const v = (id) => document.getElementById(id).value;
         const at = 'workExperience-93--';
         return {
+          taken: ['workExperience-93--startDate', 'workExperience-93--endDate', 'education-66--firstYearAttended', 'education-66--lastYearAttended'].map((id) => document.getElementById(id).dataset.committed),
           from: `${v(`${at}startDate-dateSectionMonth-input`)}/${v(`${at}startDate-dateSectionYear-input`)}`,
           to: `${v(`${at}endDate-dateSectionMonth-input`)}/${v(`${at}endDate-dateSectionYear-input`)}`,
           title: v(`${at}jobTitle`),
@@ -5911,6 +5924,11 @@ async function main() {
       'and a month the box rewrites from "06" to "6" is reported filled, not refused',
       liveDates.filled.includes('job_start_month') && liveDates.filled.includes('job_end_month') && !liveDates.skipped.some((s) => /month/.test(s)),
       JSON.stringify({ filled: liveDates.filled, skipped: liveDates.skipped }),
+    );
+    check(
+      'and Workday takes each date as a whole: the job\'s From and To and the degree\'s years are what leaving them commits',
+      JSON.stringify(liveDates.taken) === '["6/2025","8/2025","2023","2027"]',
+      JSON.stringify(liveDates.taken),
     );
 
     /* ---------------- Found filling live forms with a fake profile ---------------- */

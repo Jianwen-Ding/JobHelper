@@ -1253,10 +1253,35 @@ function nativeSet(element, property, value) {
 }
 
 /** Set a value in a way React and friends actually notice. */
+/*
+ * A date drawn as spin buttons is taken when focus leaves it, and only then.
+ *
+ * Workday's From and To are a month and a year `role="spinbutton"` box inside
+ * one wrapper, and the wrapper reads both boxes into the date — what Save and
+ * Continue checks — on the blur that takes focus out of it. Written without
+ * focus, as every other box is, the boxes showed 06/2025 and Workday answered
+ * "The field From is required and must have a value", for the job's From and
+ * To and for the degree's years alike. Measured live on NVIDIA's and Intel's
+ * My Experience with a fake profile. Blurred after each box it was worse:
+ * the month was taken alone, "Invalid Date: 06/", because focus coming back
+ * into the date is sent to its first box and the year's blur never happened.
+ *
+ * So a spin button is focused before it is written, and focus leaves only
+ * after the last box of its date, the way a person tabs through it. Measured
+ * live after on Intel: Save and Continue took the From and To.
+ */
 function setValue(input, value) {
+  const spin = input.getAttribute?.('role') === 'spinbutton';
+  if (spin) input.focus?.();
   nativeSet(input, 'value', value);
   input.dispatchEvent(new Event('input', { bubbles: true }));
   input.dispatchEvent(new Event('change', { bubbles: true }));
+  if (spin && lastBoxOfItsDate(input)) input.blur?.();
+}
+
+function lastBoxOfItsDate(input) {
+  const boxes = input.closest('[role="group"]')?.querySelectorAll('[role="spinbutton"]');
+  return !boxes?.length || boxes[boxes.length - 1] === input;
 }
 
 /**
