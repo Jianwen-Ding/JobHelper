@@ -1557,6 +1557,62 @@ function sameAnswerSpelledOtherwise(key, option, value) {
   return Boolean(wanted) && wanted === placeKey(key, option);
 }
 
+/*
+ * A GPA against a list of bands.
+ *
+ * Grade dropdowns list ranges — "3.50 - 3.74", "3.75 - 4.00" — or thresholds
+ * — "3.0+", "3.5 and above", "Less than 3.0" — and the store holds the grade
+ * as one number, "3.8", which matched none of them, so the box was left empty.
+ *
+ * The band that holds the grade, and of those the tightest: the highest lower
+ * bound, then the narrowest. A threshold list holds a 3.8 in "2.5+", "3.0+"
+ * and "3.5+" alike, and every one of them is true; only the last says what
+ * the grade is. A bare number is a band of one, so "3.80" is the option "3.8"
+ * — compared as numbers, never rounded. Nothing for a grade above 4: the
+ * bands are written on a four-point scale, and a grade out of ten is not on
+ * one.
+ */
+const GRADE = String.raw`(\d(?:\.\d{1,3})?)`;
+const GPA_BANDS = [
+  // "3.50 - 3.74", "3.5–3.74", "3.5 to 3.74"
+  [new RegExp(String.raw`^${GRADE}\s*(?:-|–|—|to)\s*${GRADE}$`, 'i'), (lo, hi) => ({ lo, hi })],
+  // "3.5+", "3.5 and above", "3.5 or higher"
+  [new RegExp(String.raw`^${GRADE}\s*(?:\+|and above|or above|and higher|or higher|or more)$`, 'i'), (lo) => ({ lo, hi: 4 })],
+  // "at least 3.5", "minimum 3.5"
+  [new RegExp(String.raw`^(?:at least|minimum(?: of)?)\s*${GRADE}$`, 'i'), (lo) => ({ lo, hi: 4 })],
+  // "above 3.5", "over 3.5", "greater than 3.5"
+  [new RegExp(String.raw`^(?:above|over|greater than|more than)\s*${GRADE}$`, 'i'), (lo) => ({ lo, hi: 4, loOpen: true })],
+  // "below 2.0", "under 2.0", "less than 2.0"
+  [new RegExp(String.raw`^(?:below|under|less than)\s*${GRADE}$`, 'i'), (hi) => ({ lo: 0, hi, hiOpen: true })],
+  // "3.8"
+  [new RegExp(String.raw`^${GRADE}$`), (at) => ({ lo: at, hi: at })],
+];
+
+/** The range an option states, or null when it states none. */
+function gpaBand(option) {
+  const said = clean(option).replace(/\s+/g, ' ');
+  for (const [re, band] of GPA_BANDS) {
+    const hit = re.exec(said);
+    if (hit) return band(...hit.slice(1).map(Number));
+  }
+  return null;
+}
+
+/** The option whose band holds this grade most tightly, or null. */
+function gpaOption(options, value, textOf = (o) => o.textContent) {
+  const said = clean(value);
+  if (!/^\d(?:\.\d{1,3})?$/.test(said) || Number(said) > 4) return null;
+  const grade = Number(said);
+  const holds = (b) => (b.loOpen ? grade > b.lo : grade >= b.lo) && (b.hiOpen ? grade < b.hi : grade <= b.hi);
+  let best = null;
+  for (const option of options) {
+    const band = gpaBand(textOf(option));
+    if (!band || !holds(band)) continue;
+    if (!best || band.lo > best.band.lo || (band.lo === best.band.lo && band.hi < best.band.hi)) best = { option, band };
+  }
+  return best?.option ?? null;
+}
+
 /**
  * "December 2026" written the way this particular box wants it.
  *
@@ -1959,6 +2015,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
       const choosable = [...input.options].filter((o) => !isDisabled(o));
       const option =
         choosable.find((o) => sameOption(o.textContent, value) || sameOption(o.value, value)) ??
+        // A grade against a list of bands. See `gpaOption`.
+        (key === 'gpa' ? gpaOption(choosable, value) : null) ??
         /*
          * The same answer spelled the list's way: a month as "Dec" or "12", a
          * state as its name or its code, a country by its long name. Only for
@@ -3123,6 +3181,7 @@ function optionsOf(widget, openBefore = null) {
 function exactOption(options, key, value) {
   return (
     options.find((o) => sameOption(o.textContent, value)) ??
+    (key === 'gpa' ? gpaOption(options, value) : null) ??
     options.find((o) => sameAnswerSpelledOtherwise(key, o.textContent, value)) ??
     null
   );

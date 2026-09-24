@@ -3306,6 +3306,55 @@ async function main() {
     check('but never a different specific degree', degrees.notArts === '', `"${degrees.notArts}"`);
     check('and an MBA is left for the person rather than guessed a master’s', degrees.notMba === '', `"${degrees.notMba}"`);
 
+    /*
+     * A GPA dropdown lists bands — "3.50 - 3.74", "3.75 - 4.00" — or
+     * thresholds — "3.0+", "3.5 and above" — and the store holds the grade as
+     * one number. "3.8" matched none of them, so the box was left empty.
+     */
+    const grades = await page.evaluate(async ({ b }) => {
+      const m = await import(`${b}/autofill.js`);
+      const pick = (value, options) => {
+        document.body.innerHTML = `<form><label for="g">GPA</label><select id="g"><option value="">Select...</option>${options
+          .map((o) => `<option>${o}</option>`)
+          .join('')}</select></form>`;
+        m.fillForm({ gpa: value });
+        return document.getElementById('g').value;
+      };
+      const BANDS = ['Below 2.50', '2.50 - 2.99', '3.00 - 3.49', '3.50 - 3.74', '3.75 - 4.00'];
+      return {
+        top: pick('3.8', BANDS),
+        edge: pick('3.74', BANDS),
+        floor: pick('3.5', BANDS),
+        low: pick('2.1', BANDS),
+        thresholds: pick('3.8', ['2.5+', '3.0+', '3.5+']),
+        between: pick('3.2', ['2.5 and above', '3.0 and above', '3.5 and above']),
+        under: pick('2.7', ['Less than 3.0', '3.0 or higher']),
+        dash: pick('3.6', ['3.0–3.49', '3.5–4.0']),
+        point: pick('3.80', ['4.0', '3.9', '3.8', '3.7']),
+        outOfTen: pick('9.1', BANDS),
+        gap: pick('3.745', ['3.50 - 3.74', '3.75 - 4.00']),
+        notRounded: pick('3.85', ['4.0', '3.9', '3.8']),
+      };
+    }, { b: base });
+    group('A GPA against a list of bands');
+    check(
+      'a grade takes the band that holds it',
+      grades.top === '3.75 - 4.00' && grades.edge === '3.50 - 3.74' && grades.floor === '3.50 - 3.74' && grades.low === 'Below 2.50',
+      JSON.stringify(grades),
+    );
+    check(
+      'the tightest of several thresholds, not the first that is true',
+      grades.thresholds === '3.5+' && grades.between === '3.0 and above',
+      JSON.stringify([grades.thresholds, grades.between]),
+    );
+    check('"less than", and a dash of any width', grades.under === 'Less than 3.0' && grades.dash === '3.5–4.0', JSON.stringify([grades.under, grades.dash]));
+    check('a bare number, by its value', grades.point === '3.8', `"${grades.point}"`);
+    check(
+      'and nothing for a grade no band holds, one not out of four, or one that would have to be rounded',
+      grades.outOfTen === '' && grades.gap === '' && grades.notRounded === '',
+      JSON.stringify([grades.outOfTen, grades.gap, grades.notRounded]),
+    );
+
     group('Academic boxes that name the institution, and school the profile is not about');
     check('a University box still takes the school', academics['a-uni'] === 'Northeastern University', `"${academics['a-uni']}"`);
     check(
@@ -4277,6 +4326,27 @@ async function main() {
       ['school', 'degree', 'major'].every((k) => education.filled.includes(k)) && education.byHand.length === 0,
       JSON.stringify({ filled: education.filled, byHand: education.byHand, ms: education.ms }),
     );
+
+    // The GPA bands again, drawn the way this form draws a dropdown.
+    const gpaWidget = await page.goto(`${base}/greenhouse-education`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        document.querySelector('.education--form').insertAdjacentHTML(
+          'beforeend',
+          `<label id="gpa--0-label" for="gpa--0">GPA</label>
+          <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+            <input id="gpa--0" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="gpa--0-label" autocomplete="off"></div></div></div>`,
+        );
+        select('gpa--0', { fixed: ['Below 2.50', '2.50 - 2.99', '3.00 - 3.49', '3.50 - 3.74', '3.75 - 4.00'] });
+        const fields = { gpa: '3.8' };
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        return {
+          shown: document.getElementById('gpa--0').closest('.select__control').querySelector('.select__single-value')?.textContent ?? '',
+          filled: report.filled.map((x) => x.key),
+        };
+      }, { b: base }),
+    );
+    check('a GPA widget takes the band that holds the grade', gpaWidget.shown === '3.75 - 4.00' && gpaWidget.filled.includes('gpa'), JSON.stringify(gpaWidget));
 
     /* ---------------- Workday's My Experience: a work history ---------------- */
     /*
