@@ -1335,6 +1335,18 @@ const EDUCATION_SECTION = /\b(education|academic\w*|schools?|degrees?)\b/i;
  * education section they are left alone, exactly as before.
  */
 function educationDateKey(input, description) {
+  const key = educationDatePart(description);
+  if (!key || !EDUCATION_SECTION.test(sectionOf(input))) return null;
+  return key;
+}
+
+/*
+ * Which end of a degree, and which part of that date, words like these ask
+ * for — whether or not anything says they are about a degree. Only for a
+ * caller that already knows: `educationDateKey` asks the section, and
+ * `fillEducation` has the Education section in hand.
+ */
+function educationDatePart(description) {
   if (!/\b(date|month|year)\b/i.test(description)) return null;
   /*
    * Workday says neither: its education block asks for the "First Year
@@ -1348,7 +1360,6 @@ function educationDateKey(input, description) {
       ? 'end'
       : null;
   if (!which) return null;
-  if (!EDUCATION_SECTION.test(sectionOf(input))) return null;
   const part = /\bmonth\b/i.test(description) ? 'month' : /\byear\b/i.test(description) ? 'year' : 'date';
   return which === 'start' ? `education_start_${part}` : `graduation_${part}`;
 }
@@ -2019,6 +2030,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
   fields = withCityAndState(fields);
   const filled = [];
   const skipped = [];
+  // A new pass: what an earlier one pressed has been drawn, or was refused.
+  pressedNow = new WeakSet();
 
   const inputs = deepQueryAll('input, textarea, select');
   for (const input of inputs) {
@@ -2515,9 +2528,140 @@ function ariaChoiceGroups() {
     const description = clean([question, group.getAttribute('aria-label'), id].filter(Boolean).join(' '));
     if (!description) continue;
 
-    found.push({ group, options, question, description });
+    found.push({ group, options, question, description, chosen: isMarkedChosen, toggles: false });
+  }
+  return [...found, ...pressedButtonGroups()];
+}
+
+/*
+ * A question answered by pressing one of a few buttons, as Ashby asks every
+ * yes/no.
+ *
+ * Measured on live Ashby application forms (jobs.ashbyhq.com — Replit,
+ * OpenAI, Notion, Ramp and Ashby's own board, September 2026): each yes/no
+ * question is a `[data-field-path]` entry holding a `<label>` with the
+ * question — its `for` names no element — and then
+ *
+ *   <div class="… ashby-application-form-input-yesno">
+ *     <button aria-pressed="false" data-option="yes">Yes</button>
+ *     <button aria-pressed="false" data-option="no">No</button>
+ *     <input type="checkbox" tabindex="-1" name="<the field path>">
+ *   </div>
+ *
+ * No role anywhere — not on the buttons, not on the container — so
+ * `ariaChoiceGroups` above, which reads `role="radio"` and `role="option"`,
+ * saw nothing; nor is there a radio or a select for the other passes. Replit's
+ * form asks five of these, two of them "Are you legally authorized to work in
+ * the United States?" and "Will you now, or in the future, require
+ * sponsorship…", and against a profile saying "Authorized to work in the US"
+ * and "No" both were left unpressed and neither was mentioned in the report:
+ * `skipped: []`, the card saying the form was done. `choiceQuestions` did not
+ * list them either, so an answer given to one could never be remembered or
+ * offered back.
+ *
+ * What the page does, measured there with the same probe:
+ *
+ *   - `aria-pressed` is the answer. A click presses that button and lets go
+ *     of the other; clicking the pressed one again lets go of it, leaving
+ *     the question unanswered. So a button already pressed is never pressed
+ *     again here.
+ *   - It is written by React a microtask after the click, not during it.
+ *     Read back synchronously it still says "false", so this cannot be seen
+ *     to take inside `fillForm` — see `seePresses`, which reads it once the
+ *     page has had its turn.
+ *   - The checkbox is `display: none` and is `checked` for Yes and unchecked
+ *     for No — it cannot say No, so it is not a read-back — and clicking it
+ *     presses Yes. It belongs to the buttons and is never touched: `isFillable`
+ *     turns away every checkbox and every control with no box, and nothing
+ *     below goes near it.
+ *   - Neither button has a `type`, so each is a submit button — but there is
+ *     no `<form>`, so pressing one sends nothing. One that would send its
+ *     form (`wouldSubmit`) is not a choice and is never pressed.
+ *
+ * So a group is: between two and eight visible buttons, every one carrying
+ * `aria-pressed`, that are the only buttons in their container, with nothing
+ * else in there a person could type in or tick. That last is what keeps out
+ * a row of toggles beside a text box, and the toolbar roles keep out an
+ * editor's Bold and Italic, which are `aria-pressed` buttons too.
+ */
+const TOGGLE_BARS = '[role="toolbar"], [role="menubar"], [role="tablist"], [contenteditable=""], [contenteditable="true"]';
+const isPressed = (el) => el.getAttribute('aria-pressed') === 'true';
+
+function pressedButtonGroups() {
+  const visible = (el) => el.getClientRects().length > 0;
+  const found = [];
+  const seen = new Set();
+  for (const button of deepQueryAll('button[aria-pressed]')) {
+    const group = button.parentElement;
+    if (!group || seen.has(group)) continue;
+    seen.add(group);
+    if (isDisabled(group) || !visible(group) || group.closest(TOGGLE_BARS)) continue;
+    const buttons = [...group.querySelectorAll('button, [role="button"]')].filter(visible);
+    const options = buttons.filter(
+      (el) => el.localName === 'button' && el.parentElement === group && el.hasAttribute('aria-pressed') && !el.hasAttribute('role'),
+    );
+    if (options.length < 2 || options.length > 8 || options.length !== buttons.length) continue;
+    if (options.some((el) => isDisabled(el) || wouldSubmit(el) || clean(el.getAttribute('aria-label') || el.textContent).length > 80)) continue;
+    // The hidden checkbox Ashby keeps beside them has no box; anything that has one is another field.
+    if ([...group.querySelectorAll(ANOTHER_FIELD)].some(visible)) continue;
+
+    const question = choiceQuestionFor(group);
+    const description = clean([question, group.getAttribute('aria-label'), group.getAttribute('id')].filter(Boolean).join(' '));
+    if (!description) continue;
+    found.push({ group, options, question, description, chosen: isPressed, toggles: true });
   }
   return found;
+}
+
+/*
+ * Pressed, and not yet seen to have taken — see `pressedButtonGroups`.
+ *
+ * Each is a row in `skipped` saying to pick it by hand, which is what it is
+ * until the page says otherwise, and what `fillForm` reports if nothing ever
+ * reads it back. `seePresses` does, at the top of `fillComboboxes`, and moves
+ * the ones the page took into `filled`. Keyed by the row itself, so nothing
+ * that is not a plain value goes into the report — a frame's report crosses
+ * a message boundary.
+ */
+const UNSEEN = new WeakMap();
+// The groups pressed on this pass, which read as unanswered until the page
+// renders, and must not be pressed a second time by the memory pass: a
+// second press of the same button lets go of it.
+let pressedNow = new WeakSet();
+
+/** Whether this button, and no other in its group, is the one pressed. */
+const pressedAlone = (wanted, options) => isPressed(wanted) && options.every((el) => el === wanted || !isPressed(el));
+
+/**
+ * Press one button of a group and say what can be said now: `true` if the
+ * page already shows it pressed, alone; `false` if it cannot be pressed;
+ * otherwise the `{ wanted, options }` to read back once the page has run.
+ */
+function pressChoice(group, options, wanted) {
+  if (pressedAlone(wanted, options)) return true;
+  if (isPressed(wanted)) return false;
+  pressedNow.add(group);
+  wanted.click();
+  return pressedAlone(wanted, options) || { wanted, options };
+}
+
+/** Wait for what was pressed to show pressed, and count only what does. */
+async function seePresses(report, patience = 1000) {
+  const waiting = report.skipped.filter((s) => UNSEEN.has(s));
+  if (waiting.length === 0) return report;
+  const took = (s) => {
+    const { wanted, options } = UNSEEN.get(s);
+    return wanted.isConnected && pressedAlone(wanted, options);
+  };
+  await waitFor(() => waiting.every(took) || null, patience);
+  const seen = waiting.filter(took);
+  const answered = new Set(seen.map((s) => s.description));
+  return {
+    ...report,
+    filled: [...report.filled, ...seen.map((s) => UNSEEN.get(s).row)],
+    // And whatever else said this control was still waiting. See the same in `fillForm`.
+    skipped: report.skipped.filter((s) => !answered.has(s.description)),
+  };
 }
 
 function answerChoiceButtons(fields, overwrite, already) {
@@ -2525,7 +2669,7 @@ function answerChoiceButtons(fields, overwrite, already) {
   const skipped = [];
   const taken = new Set(already.map((f) => f.key));
 
-  for (const { group, options, question, description } of ariaChoiceGroups()) {
+  for (const { group, options, question, description, chosen, toggles } of ariaChoiceGroups()) {
     // The same three gates, in the same order, as `fillForm` and
     // `answerRadioGroups`. See `handBack`.
     if (handBack(description, skipped)) continue;
@@ -2539,7 +2683,6 @@ function answerChoiceButtons(fields, overwrite, already) {
 
     const [key] = match;
     const value = fields[key];
-    const chosen = (el) => el.getAttribute('aria-checked') === 'true' || el.getAttribute('aria-selected') === 'true';
 
     if (options.some(chosen) && !overwrite) {
       skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
@@ -2576,7 +2719,23 @@ function answerChoiceButtons(fields, overwrite, already) {
      * So: click, which is what a person does and what every framework is
      * listening for, and then believe the page. If it did not mark the option
      * chosen, it is reported as needing a hand rather than claimed.
+     *
+     * A group of pressed buttons is the same, except that its page answers
+     * a microtask late and a second press undoes the first — see
+     * `pressedButtonGroups`. So it is pressed once, and the reading back is
+     * `seePresses`'s, from a row that says "by hand" until then.
      */
+    if (toggles) {
+      const got = pressChoice(group, options, wanted);
+      taken.add(key);
+      if (got === true) filled.push({ key, value });
+      else {
+        const row = { key, reason: 'the page did not take it — pick this one by hand', description: description.slice(0, 60) };
+        if (got) UNSEEN.set(row, { ...got, row: { key, value } });
+        skipped.push(row);
+      }
+      continue;
+    }
     wanted.click();
     if (chosen(wanted)) {
       filled.push({ key, value });
@@ -2959,13 +3118,14 @@ function rememberableChoices() {
     );
   }
 
-  for (const { group, options, question, description } of ariaChoiceGroups()) {
+  for (const { group, options, question, description, chosen, toggles } of ariaChoiceGroups()) {
     add(
       question,
       description,
       group,
-      () => options.some(isMarkedChosen),
-      (answer) => chooseInAria(options, answer),
+      // Pressed on this pass and not drawn yet is answered. See `pressedNow`.
+      () => options.some(chosen) || (toggles && pressedNow.has(group)),
+      (answer) => (toggles ? pressInGroup(group, options, answer) : chooseInAria(options, answer)),
     );
   }
 
@@ -3036,8 +3196,13 @@ function answerFromMemory(remembered) {
 
     const took = choice.choose(answer);
     const row = { key: 'remembered', value: answer, description: choice.description.slice(0, 60) };
-    if (took) filled.push({ ...row, question: choice.question, remembered: true });
-    else skipped.push({ ...row, reason: 'the answer you gave before is not one of the options here' });
+    if (took === true) filled.push({ ...row, question: choice.question, remembered: true });
+    else if (took) {
+      // Pressed, and read back by `seePresses` once the page has drawn it.
+      const waiting = { ...row, reason: 'the page did not take it — pick this one by hand' };
+      UNSEEN.set(waiting, { ...took, row: { ...row, question: choice.question, remembered: true } });
+      skipped.push(waiting);
+    } else skipped.push({ ...row, reason: 'the answer you gave before is not one of the options here' });
   }
   return { filled, skipped };
 }
@@ -3087,6 +3252,16 @@ function chooseInAria(options, answer) {
   // and forging it puts a tick over a form that will submit blank. See
   // `answerChoiceButtons`.
   return isMarkedChosen(wanted);
+}
+
+/**
+ * Press the button of a group that says the answer, and nothing near it —
+ * the same plain match as the rest of the memory pass. What comes back is
+ * `pressChoice`'s: seen now, not possible, or to be read back later.
+ */
+function pressInGroup(group, options, answer) {
+  const wanted = options.find((el) => sameOption(clean(el.getAttribute('aria-label') || el.textContent), answer));
+  return wanted ? pressChoice(group, options, wanted) : false;
 }
 
 /**
@@ -3622,6 +3797,8 @@ async function pickListedPlaces(fields) {
 }
 
 export async function fillComboboxes(fields, report, { patience = 4000 } = {}) {
+  // What `fillForm` pressed, now that the page has had its turn to draw it.
+  report = await seePresses(report);
   // The same fields `fillForm` read, or a widget it named `city_state` has
   // no value here.
   fields = withCityAndState(fields);
@@ -3638,70 +3815,10 @@ export async function fillComboboxes(fields, report, { patience = 4000 } = {}) {
   for (const { key, el: widget, both, elsewhere, asked } of widgetChoices(fields, report.filled)) {
     if (both || elsewhere || !pending.has(key)) continue;
     const value = String(fields[key]);
-    const box = typingBoxOf(widget);
-    const hiddenBefore = hiddenPartner(widget)?.value ?? '';
-    const shownBefore = clean(controlOf(widget).textContent).toLowerCase();
-
-    /*
-     * Never a control that would send the form.
-     *
-     * A `<button>` with no `type` inside a form *is* a submit button — that is
-     * the default, and a Workday-style dropdown written without `type="button"`
-     * is one. Pressing it to open its list submitted the application instead:
-     * the page navigated away mid-fill, half the form empty, and nothing came
-     * back to say so. A widget that has to be pressed to open, and would send
-     * the form if pressed, is left for the person, exactly as before.
-     */
-    if (!box && wouldSubmit(widget)) continue;
-
-    widget.focus?.();
-    const openBefore = new Set(visibleListboxes());
-    let option = null;
-    if (box) {
-      /*
-       * Opened first, the way a person opens it, and looked at before
-       * anything is typed.
-       *
-       * Greenhouse's react-select offers nothing until its menu is open, and
-       * typing into a closed one changes nothing: the school, the degree and
-       * the discipline were typed into and left on "Select...". And a fixed
-       * list filters by what is typed, so typing the store's wording —
-       * "Bachelor of Science" — filters out the answer spelled the form's
-       * way, "Bachelor's Degree". So the list is read as it opens, and only
-       * where the answer is not in it is it typed, which is how a list that
-       * is a search — every school there is — gets asked.
-       *
-       * The whole patience for that first look, not two seconds of it, for a
-       * list that says it is still loading: `quiet` only counts once it has
-       * stopped saying so (see `waitForOption`), so a list that is there and
-       * lacks the answer costs what it did, and one still on its way is
-       * waited for rather than typed over.
-       */
-      press(box);
-      option = await waitForOption(widget, key, value, openBefore, { patience, quiet: 400, fields, asked });
-      if (!option) {
-        setValue(box, value);
-        option = await waitForOption(widget, key, value, openBefore, { patience, fields, asked });
-      }
-    } else {
-      press(widget);
-      option = await waitForOption(widget, key, value, openBefore, { patience, fields, asked });
-    }
-    if (!option) {
-      // Looked for in a list that opened, and not in it. See `NOT_LISTED`.
-      if (menuIsOpen(widget, box, openBefore)) unlisted.add(key);
-      undoWidget(widget, box);
-      continue;
-    }
-    // Read before the press: a menu that closes takes its options with it.
-    const chosen = option.textContent;
-    press(option);
-    await pause(60);
-    if (!tookIt(widget, box, option, value, hiddenBefore, chosen, shownBefore)) {
-      undoWidget(widget, box);
-      continue;
-    }
-    done.push({ key, value, widget: true });
+    const how = await chooseInWidget(widget, key, value, { patience, fields, asked });
+    // Looked for in a list that opened, and not in it. See `NOT_LISTED`.
+    if (how === 'unlisted') unlisted.add(key);
+    if (how === 'chose') done.push({ key, value, widget: true });
   }
 
   const chose = new Set(done.map((d) => d.key));
@@ -3710,6 +3827,82 @@ export async function fillComboboxes(fields, report, { patience = 4000 } = {}) {
     filled: [...report.filled, ...done, ...fillNotListed(fields, unlisted)],
     skipped: report.skipped.filter((s) => !(s.reason === PICK_BY_HAND && chose.has(s.key))),
   };
+}
+
+/**
+ * Choose one answer in one widget, the way `fillComboboxes` always has — on
+ * its own so that an Education block added after the fill (see
+ * `fillEducation`) is driven by exactly the same rules as the first one, and
+ * the two cannot drift.
+ *
+ * Says what happened: `chose` when the widget is seen to hold the answer,
+ * `unlisted` when its list opened and the answer was not in it, and anything
+ * else when nothing was chosen. Whatever did not take is put back as it was.
+ */
+async function chooseInWidget(widget, key, value, { patience, fields, asked }) {
+  const box = typingBoxOf(widget);
+  const hiddenBefore = hiddenPartner(widget)?.value ?? '';
+  const shownBefore = clean(controlOf(widget).textContent).toLowerCase();
+
+  /*
+   * Never a control that would send the form.
+   *
+   * A `<button>` with no `type` inside a form *is* a submit button — that is
+   * the default, and a Workday-style dropdown written without `type="button"`
+   * is one. Pressing it to open its list submitted the application instead:
+   * the page navigated away mid-fill, half the form empty, and nothing came
+   * back to say so. A widget that has to be pressed to open, and would send
+   * the form if pressed, is left for the person, exactly as before.
+   */
+  if (!box && wouldSubmit(widget)) return 'left';
+
+  widget.focus?.();
+  const openBefore = new Set(visibleListboxes());
+  let option = null;
+  if (box) {
+    /*
+     * Opened first, the way a person opens it, and looked at before
+     * anything is typed.
+     *
+     * Greenhouse's react-select offers nothing until its menu is open, and
+     * typing into a closed one changes nothing: the school, the degree and
+     * the discipline were typed into and left on "Select...". And a fixed
+     * list filters by what is typed, so typing the store's wording —
+     * "Bachelor of Science" — filters out the answer spelled the form's
+     * way, "Bachelor's Degree". So the list is read as it opens, and only
+     * where the answer is not in it is it typed, which is how a list that
+     * is a search — every school there is — gets asked.
+     *
+     * The whole patience for that first look, not two seconds of it, for a
+     * list that says it is still loading: `quiet` only counts once it has
+     * stopped saying so (see `waitForOption`), so a list that is there and
+     * lacks the answer costs what it did, and one still on its way is
+     * waited for rather than typed over.
+     */
+    press(box);
+    option = await waitForOption(widget, key, value, openBefore, { patience, quiet: 400, fields, asked });
+    if (!option) {
+      setValue(box, value);
+      option = await waitForOption(widget, key, value, openBefore, { patience, fields, asked });
+    }
+  } else {
+    press(widget);
+    option = await waitForOption(widget, key, value, openBefore, { patience, fields, asked });
+  }
+  if (!option) {
+    const opened = menuIsOpen(widget, box, openBefore);
+    undoWidget(widget, box);
+    return opened ? 'unlisted' : 'missed';
+  }
+  // Read before the press: a menu that closes takes its options with it.
+  const chosen = option.textContent;
+  press(option);
+  await pause(60);
+  if (!tookIt(widget, box, option, value, hiddenBefore, chosen, shownBefore)) {
+    undoWidget(widget, box);
+    return 'ignored';
+  }
+  return 'chose';
 }
 
 /** Whether a widget's own menu is showing. */
@@ -3739,6 +3932,322 @@ function fillNotListed(fields, unlisted) {
     if (input.value === value) filled.push({ key, value, notListed: true, description: description.slice(0, 60) });
   }
   return filled;
+}
+
+/* ------------------- More than one education, from the resume ------------------- */
+
+/*
+ * An Education section that asks one school at a time, with "Add another" for
+ * the next.
+ *
+ * Measured on Greenhouse's new boards — SpaceX (job-boards.greenhouse.io/spacex)
+ * and Stripe's embed (job-boards.greenhouse.io/embed/job_app?for=stripe) — the
+ * section is one `education--container` holding an `education--form` per
+ * school and, after the last, `<button type="button" class="add-another-button">
+ * Add another</button>`. A block is School, Degree and Discipline as
+ * react-select widgets with ids `school--0`, `degree--0`, `discipline--0`, and
+ * on Stripe a "Start date year" box, `start-year--0`, `type=number`; other
+ * boards add the start and end month and the end year. Pressing the button
+ * appends a second block whose ids end `--1`, and puts the caret in its School.
+ * Its heading, "Education", is a `<p>`, which is why nothing that reads
+ * headings (`sectionOf`) knows these fields are a degree's.
+ *
+ * The profile's fields describe one education — the newest, see
+ * `newestEducation` in the store — so a bachelor's and a master's had the
+ * master's put in the first block and the bachelor's left for the person to
+ * add, and to pick out of three searched lists again, from the resume they
+ * were attaching.
+ *
+ * So the resume's own list, `education`, in its order, one per block:
+ *
+ *   - The first block is left to the fill that has already been through it.
+ *     It is the one the profile's fields went into, so it belongs to the
+ *     education they describe; only what that fill never tried is added — the
+ *     dates of a section whose heading it could not read — and only where it
+ *     is empty. Which education that is has to be plain: a profile school the
+ *     resume does not list is a first block this cannot account for, and then
+ *     nothing is added at all, rather than risk the same school twice.
+ *   - A block somebody has already chosen a school in keeps it, and is
+ *     finished from that school's education where empty. A school the resume
+ *     does not list is left exactly as it was, and said so.
+ *   - An empty block takes the next education not yet placed, of a level the
+ *     block does not rule out — see `anotherLevelOfStudy`, which is asked of
+ *     every part as it is for the first block, with this education's degree.
+ *     A block no remaining school fits — "Graduate School" when only a high
+ *     school is left — is left empty and said so, and none more is added.
+ *   - Only then is "Add another" pressed, once per education still to place,
+ *     and never to make more blocks than the resume has educations. The
+ *     block it adds is waited for, and filled like the rest; one that does
+ *     not appear ends it, and is said so.
+ *
+ * The button has to be the Education section's own: the nearest thing above
+ * it that holds a field holds a School, and nothing that is somebody's name,
+ * contact details, right to work or job. An "Add another" under a work
+ * history, or one whose nearest fields are the whole form, is not pressed.
+ * Nor is one that would send the form, or a link. Every widget is driven by
+ * `chooseInWidget`, on exactly the terms of the first block: the exact
+ * answer, seen to have taken, or put back.
+ */
+const ADD_ANOTHER = /^\+?\s*add\s+(?:another|more|new|an?\s+other|education|school|degree)\b[\w\s]*\+?$/i;
+const EDUCATION_PART = /^(school|degree|major|gpa|graduation_(month|year|date)|education_start_(month|year|date))$/;
+// A school's own place, which an education block may ask and nothing here answers.
+const A_SCHOOLS_PLACE = new Set(['address_city', 'address_state', 'address_country', 'city_state', 'location']);
+const SECTION_CONTROLS = `${A_CONTROL}, [role="combobox"]:not(input), [aria-haspopup="listbox"]:not(input)`;
+
+/**
+ * What one control in an Education section is: a part of an education, a
+ * school's place (null, like a box that says nothing), or `foreign` — a field
+ * that is not about a school at all, which means this is not the section.
+ */
+function educationPartOf(control) {
+  const description = describeField(control);
+  if (!description || NOT_LISTED.test(description)) return null;
+  const key = educationDatePart(description) ?? FIELD_PATTERNS.find(([, re]) => re.test(description))?.[0];
+  if (key && EDUCATION_PART.test(key)) return wholeDateKey(control, key, description);
+  if (key) return A_SCHOOLS_PLACE.has(key) ? null : 'foreign';
+  const job = control.localName === 'input' || control.localName === 'textarea' ? jobPartOf(control)?.part : null;
+  return ['company', 'title', 'description'].includes(job) ? 'foreign' : null;
+}
+
+/**
+ * The blocks of an Education section, in the order the page asks them — a
+ * part seen a second time starting the next, as `fillWorkHistory` reads a
+ * work history. Null when the section holds something that is not education.
+ */
+function educationBlocks(box) {
+  const blocks = [];
+  let block = null;
+  for (const control of box.querySelectorAll(SECTION_CONTROLS)) {
+    if (isDisabled(control) || control.getClientRects().length === 0) continue;
+    if (control.type === 'checkbox' || control.type === 'radio') continue;
+    const part = educationPartOf(control);
+    if (part === 'foreign') return null;
+    if (!part) continue;
+    if (!block || block.has(part)) blocks.push((block = new Map()));
+    block.set(part, control);
+  }
+  return blocks;
+}
+
+/** The page's one Education section with an "Add another", and that button. */
+function educationSection() {
+  const found = [];
+  for (const button of deepQueryAll('button, [role="button"], input[type="button"]')) {
+    const said = clean(button.textContent || button.value || button.getAttribute('aria-label'));
+    if (said.length > 40 || !ADD_ANOTHER.test(said)) continue;
+    if (isDisabled(button) || wouldSubmit(button) || button.closest('a[href]') || button.getClientRects().length === 0) continue;
+    let box = button.parentElement;
+    while (box && !box.querySelector(SECTION_CONTROLS)) box = box.parentElement;
+    if (!box || ['form', 'body', 'html'].includes(box.localName)) continue;
+    const blocks = educationBlocks(box);
+    if (!blocks?.some((b) => b.has('school'))) continue;
+    found.push({ box, button });
+  }
+  // Two of them is a page where pressing either is a guess.
+  return found.length === 1 ? found[0] : null;
+}
+
+/** The same school, however much of its name each side writes. */
+function sameSchool(a, b) {
+  const flat = (text) => String(text ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const x = flat(a);
+  const y = flat(b);
+  return Boolean(x && y) && (x === y || x.includes(y) || y.includes(x));
+}
+
+/** Whether a control already holds an answer, by what it shows. */
+function partAnswered(control) {
+  if (control instanceof HTMLSelectElement) return selectIsAnswered(control);
+  if (isWidgetChoice(control)) return widgetShowsAnAnswer(control);
+  return Boolean(control.value);
+}
+
+/** The school a block shows as chosen, or nothing. */
+function schoolShown(control) {
+  if (!control || !partAnswered(control)) return '';
+  if (control instanceof HTMLSelectElement) return clean(control.selectedOptions[0]?.textContent);
+  if (isWidgetChoice(control)) return drawnValue(controlOf(control)) || clean(control.textContent) || clean(control.value);
+  return clean(control.value);
+}
+
+/** One education as the fields for its block, keyed as the profile's are. */
+function educationFields(school) {
+  const f = {};
+  for (const key of ['school', 'degree', 'major', 'gpa']) if (clean(school?.[key])) f[key] = clean(school[key]);
+  const at = (when, prefix) => {
+    const year = Number(when?.year);
+    if (!year) return;
+    f[`${prefix}_year`] = String(year);
+    const month = Number(when.month);
+    if (month >= 1 && month <= 12) {
+      f[`${prefix}_month`] = monthWord(month);
+      f[`${prefix}_date`] = `${monthWord(month)} ${year}`;
+    } else {
+      f[`${prefix}_date`] = String(year);
+    }
+  };
+  at(school?.start, 'education_start');
+  at(school?.end, 'graduation');
+  return f;
+}
+
+/** Put one part of an education into its control, as the first block's are put. */
+async function fillEducationPart(control, key, value, f, patience) {
+  const description = describeField(control);
+  if (isWidgetChoice(control)) {
+    const how = await chooseInWidget(control, key, value, { patience, fields: f, asked: description });
+    if (how === 'chose') return { key, value, widget: true };
+    return { key, reason: how === 'unlisted' ? 'no matching option' : PICK_BY_HAND, description: description.slice(0, 60) };
+  }
+  if (control instanceof HTMLSelectElement) {
+    const choosable = [...control.options].filter((o) => !isDisabled(o));
+    const option =
+      choosable.find((o) => sameOption(o.textContent, value) || sameOption(o.value, value)) ??
+      (key === 'gpa' ? gpaOption(choosable, value) : null) ??
+      choosable.find((o) => sameAnswerSpelledOtherwise(key, o.textContent, value) || sameAnswerSpelledOtherwise(key, o.value, value));
+    if (!option) return { key, reason: 'no matching option', description: description.slice(0, 60) };
+    nativeSet(control, 'value', option.value);
+    if (control.selectedOptions[0] !== option) return { key, reason: 'the field would not take it', description: description.slice(0, 60) };
+    control.dispatchEvent(new Event('input', { bubbles: true }));
+    control.dispatchEvent(new Event('change', { bubbles: true }));
+    return { key, value };
+  }
+  // A box: the date written the way it wants it, as `fillForm` writes one.
+  let written = String(value);
+  if (key.startsWith('graduation_') && control.type === 'month' && f.graduation_date) written = graduationFor(control, f.graduation_date);
+  else if (key.startsWith('education_start_') && control.type === 'month' && f.education_start_date) written = graduationFor(control, f.education_start_date);
+  else if (key === 'graduation_date' || key === 'education_start_date') written = graduationFor(control, written);
+  const before = control.value;
+  setValue(control, written);
+  if (control.value !== written || browserWouldRefuse(control)) {
+    setValue(control, before);
+    return { key, reason: 'the field would not take it', description: description.slice(0, 60) };
+  }
+  return { key, value: written };
+}
+
+/** Press the section's "Add another" and wait for the block it adds. */
+async function addAnother(section, had) {
+  press(section.button);
+  return waitFor(() => {
+    const now = educationSection();
+    const blocks = now && educationBlocks(now.box);
+    return blocks && blocks.length > had ? { section: now, blocks } : null;
+  }, 3000);
+}
+
+/*
+ * One education, and the first block's dates.
+ *
+ * With one school on the resume this used to return straight away — "one
+ * education is the profile's fields, and those have been through the form
+ * already". But they have not all been: the first pass reads a date as the
+ * degree's only under a heading that says so (`educationDateKey`), and the
+ * heading here is a `<p>`. Measured on Twitch's live board
+ * (job-boards.greenhouse.io/twitch), one education — Northeastern
+ * University, BS Computer Science, September 2023 to May 2027 — came out
+ * with School, Degree and Discipline chosen and Start date month, Start date
+ * year, End date month and End date year all empty, and nothing in the
+ * report about any of them. The two-education fill had been giving the
+ * first block its dates all along; the one-education fill, which is most
+ * people's, never did.
+ *
+ * So one education takes the same first-block route with less: its start
+ * and end, month and year, from the resume's own entry, into the first
+ * block only, and only into a date that is empty and that the first pass
+ * did not already try. Nothing else a one-education fill does changes —
+ * no block is added, no school, degree or discipline is touched, and a
+ * block showing some other school is left exactly as it was, since those
+ * dates would be somebody else's.
+ */
+const EDUCATION_DATE = /^(education_start|graduation)_(month|year|date)$/;
+
+export async function fillEducation(education, fields, report, { patience = 4000 } = {}) {
+  const schools = Array.isArray(education) ? education.filter((e) => clean(e?.school)) : [];
+  if (schools.length === 0) return report;
+  const onlyOne = schools.length === 1;
+  let section = educationSection();
+  if (!section) return report;
+
+  const owner = fields?.school ? schools.findIndex((e) => sameSchool(e.school, fields.school)) : -1;
+  if (fields?.school && owner < 0) return report;
+  // What the first pass looked at, in the first block. Not asked twice.
+  const tried = new Set([...report.filled, ...report.skipped].map((x) => x.key));
+
+  const filled = [];
+  const skipped = [];
+  const used = new Set();
+  const fits = (block, f) => ![...block].some(([key, control]) => anotherLevelOfStudy(control, key, f));
+
+  const waiting = () => schools.some((_, i) => !used.has(i));
+  for (let n = 0; ; n++) {
+    // One education has the first block and no other. See `EDUCATION_DATE`.
+    if (onlyOne && n > 0) break;
+    // A section the page drew again is found again, never counted as empty.
+    if (!section.box.isConnected) section = educationSection();
+    if (!section) break;
+    let blocks = educationBlocks(section.box) ?? [];
+    let added = false;
+    if (n >= blocks.length) {
+      if (!waiting() || blocks.length >= schools.length) break;
+      const grown = await addAnother(section, blocks.length);
+      if (!grown) {
+        skipped.push({ key: 'school', reason: 'the form would not add another', description: 'Education' });
+        break;
+      }
+      ({ section, blocks } = grown);
+      added = true;
+      if (n >= blocks.length) break;
+    }
+    const block = blocks[n];
+
+    let index;
+    const shown = schoolShown(block.get('school'));
+    // Another school's block, whose dates these are not; left, and not remarked on.
+    if (onlyOne && shown && !sameSchool(schools[0].school, shown)) break;
+    if (shown) {
+      index = schools.findIndex((e, i) => !used.has(i) && sameSchool(e.school, shown));
+      if (index < 0) {
+        skipped.push({ key: 'school', reason: 'this school is not on the resume', description: shown.slice(0, 60) });
+        continue;
+      }
+    } else if (n === 0 && owner >= 0) {
+      index = owner;
+    } else if (onlyOne) {
+      // A block asking about a level this education is not at is not its block.
+      if (!fits(block, educationFields(schools[0]))) break;
+      index = 0;
+    } else {
+      index = schools.findIndex((e, i) => !used.has(i) && fits(block, educationFields(e)));
+      if (index < 0) {
+        /*
+         * A block asking about a level — "Graduate School" — that none of the
+         * schools still to place is at. Said, because it is a block the person
+         * may have to take out again; and if it is one this just added, no
+         * more are, since the next would be asked the same way.
+         */
+        if (waiting()) {
+          const asked = describeField(block.get('school') ?? [...block.values()][0]);
+          skipped.push({ key: 'school', reason: 'no school left on the resume is at the level this one asks about', description: asked.slice(0, 60) });
+        }
+        if (added) break;
+        continue;
+      }
+    }
+    used.add(index);
+
+    const f = educationFields(schools[index]);
+    for (const [key, control] of block) {
+      if ((n === 0 && tried.has(key)) || !f[key] || !control.isConnected) continue;
+      if (onlyOne && !EDUCATION_DATE.test(key)) continue;
+      if (partAnswered(control) || anotherLevelOfStudy(control, key, f)) continue;
+      const got = await fillEducationPart(control, key, f[key], f, patience);
+      if (got.reason) skipped.push(got);
+      else filled.push({ ...got, education: index + 1 });
+    }
+  }
+
+  return { ...report, filled: [...report.filled, ...filled], skipped: [...report.skipped, ...skipped] };
 }
 
 /**
@@ -3860,6 +4369,25 @@ export function watchChoices(tell) {
         answer: optionLabelFor(control),
       };
     }
+    /*
+     * A pressed button — Ashby's Yes and No, see `pressedButtonGroups` — is
+     * read the same way, from the same walk the reuse side makes, and
+     * *after* the page's own handler: this listener is on `document` in the
+     * capture phase, so it runs before the page's, and the page writes
+     * `aria-pressed` a microtask after that. Pressing the pressed one lets
+     * go of it, and that is not an answer to keep; so the button is asked
+     * again once the page has run, and only a pressed one is written down.
+     */
+    const button = control?.closest?.('button[aria-pressed]');
+    if (button) {
+      const group = pressedButtonGroups().find((g) => g.options.includes(button));
+      if (!group) return null;
+      return {
+        question: clean(group.question),
+        answer: clean(button.getAttribute('aria-label') || button.textContent),
+        once: () => isPressed(button),
+      };
+    }
     const option = control?.closest?.('[role="radio"], [role="option"]');
     if (option) {
       const group = option.closest('[role="radiogroup"], [role="listbox"], [role="group"]');
@@ -3883,14 +4411,22 @@ export function watchChoices(tell) {
       return;
     }
     if (!said?.question || !said?.answer) return;
+    const { once, ...answer } = said;
     /*
      * The refusal is here rather than at the far end, so nothing personal
      * leaves the page at all — not to the worker, not to the store, not into
      * a log on the way. See `worthRemembering`.
      */
-    const verdict = worthRemembering(said);
-    tell(verdict.keep ? { ...said, keep: true } : { ...said, keep: false, why: verdict.why });
+    const write = () => {
+      const verdict = worthRemembering(answer);
+      tell(verdict.keep ? { ...answer, keep: true } : { ...answer, keep: false, why: verdict.why });
+    };
+    if (!once) return write();
+    setTimeout(() => {
+      if (watching && once()) write();
+    }, 0);
   };
+  let watching = true;
 
   /*
    * `change` for the native controls, which is what a browser fires when a
@@ -3901,6 +4437,7 @@ export function watchChoices(tell) {
   document.addEventListener('change', look, true);
   document.addEventListener('click', look, true);
   return () => {
+    watching = false;
     document.removeEventListener('change', look, true);
     document.removeEventListener('click', look, true);
   };

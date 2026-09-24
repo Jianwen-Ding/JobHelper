@@ -602,9 +602,11 @@
     const data = await send('autofillData');
     // The jobs on the resume being sent, for a form's work-history blocks.
     const history = Array.isArray(data.history) ? data.history : [];
-    const here = await fillThisDocument(data.fields, history);
+    // And its schools, for an Education section that adds a block per school.
+    const education = Array.isArray(data.education) ? data.education : [];
+    const here = await fillThisDocument(data.fields, history, education);
 
-    const { frames } = await send('fillFrames', { fields: data.fields, history }).catch(() => ({ frames: [] }));
+    const { frames } = await send('fillFrames', { fields: data.fields, history, education }).catch(() => ({ frames: [] }));
     return {
       filled: [...here.filled, ...frames.flatMap((f) => f.filled ?? [])],
       skipped: [...here.skipped, ...frames.flatMap((f) => f.skipped ?? [])],
@@ -626,8 +628,8 @@
    * is string equality. Every failure path ends in an empty list, which is
    * the behaviour this had before the bank existed.
    */
-  async function fillThisDocument(fields, history = []) {
-    const { fillForm, fillComboboxes, choiceQuestions } = await imports.autofill();
+  async function fillThisDocument(fields, history = [], education = []) {
+    const { fillForm, fillComboboxes, fillEducation, choiceQuestions } = await imports.autofill();
     const questions = choiceQuestions();
     const remembered = questions.length
       ? await send('rememberedAnswers', { questions })
@@ -636,7 +638,10 @@
       : [];
     // And then the widgets `fillForm` could only name. See `fillComboboxes`:
     // exact options only, and seen to have taken, or put back as they were.
-    return fillComboboxes(fields, fillForm(fields, { remembered, history }));
+    const report = await fillComboboxes(fields, fillForm(fields, { remembered, history }));
+    // Last, the resume's other schools, one "Add another" at a time. See
+    // `fillEducation`: a resume with one gets only its dates, in the first block.
+    return fillEducation(education, fields, report);
   }
 
   /**
@@ -663,6 +668,27 @@
    * just there. It is a placeholder either way, but it is a true one, and it
    * is the one that tells you which application this is.
    */
+  /*
+   * The names an application is filed under, the same on every path.
+   *
+   * The store settles them when it builds the resume — the page's employer,
+   * or its own tidied reading of the address ("careers.activision.com" is
+   * Activision) — and writes them on the copy as `generatedFor`; the keeper
+   * opens the workspace under those and a send is recorded under them. Staging,
+   * building and "Write these in ResumeM-M" used the page's own reading with
+   * the hostname behind it, so on a Phenom apply page, titled "Apply" and
+   * naming nobody, the tracker got a row reading "careers.activision.com /
+   * Unknown role" beside the one the workspace had opened. One application
+   * is one pair of names, whichever button filed it.
+   */
+  const filedAs = () => {
+    const settled = analysis?.spec?.generatedFor;
+    return {
+      company: settled?.company || analysis?.job?.company || whoIsHiring(),
+      role: settled?.role || analysis?.job?.title || 'Unknown role',
+    };
+  };
+
   const whoIsHiring = () => {
     try {
       return new URL(location.href).hostname.replace(/^www\./, '');
@@ -993,6 +1019,9 @@
       case 'listResumes':
         return send('listResumes');
 
+      case 'fresh':
+        return send('fresh', { spec: payload.spec });
+
       case 'attachFiles': {
         const got = await send('attachments', { application: payload.application ?? null });
         const files = got?.files ?? [];
@@ -1089,8 +1118,7 @@
       case 'openWorkspace': {
         const { wantsCoverLetter } = await imports.autofill();
         const result = await send('openWorkspace', {
-          company: analysis.job.company ?? whoIsHiring(),
-          role: analysis.job.title ?? 'Unknown role',
+          ...filedAs(),
           url: location.href,
           source: new URL(location.href).hostname,
           jobDescription: analysis.job.description ?? '',
@@ -1153,8 +1181,7 @@
         return send('stage', {
           spec: payload.spec,
           resumeId: payload.spec.id,
-          company: analysis.job.company ?? whoIsHiring(),
-          role: analysis.job.title ?? 'Unknown role',
+          ...filedAs(),
           url: location.href,
           source: new URL(location.href).hostname,
           status: 'applying',
@@ -1171,8 +1198,7 @@
         return send('bundle', {
           spec: payload.spec,
           resumeId: payload.spec.id,
-          company: analysis.job.company ?? whoIsHiring(),
-          role: analysis.job.title ?? 'Unknown role',
+          ...filedAs(),
           url: location.href,
           source: new URL(location.href).hostname,
           /*
@@ -2264,6 +2290,11 @@
     // listener's — see the `jh-came-back` message.
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') onHide();
+      /*
+       * And back in view: whatever was changed in ResumeM-M meanwhile may
+       * not be what the card is holding. See `checkFresh` in the card.
+       */
+      else cardHandle?.checkFresh?.().catch?.(() => undefined);
     };
     document.addEventListener('visibilitychange', onVisibility);
 
@@ -2432,7 +2463,7 @@
               // The one that must not be got wrong. Anything else on the page
               // gets nothing about the person using it.
               looksLikeApplicationForm()
-                ? fillThisDocument(message.payload?.fields ?? {}, message.payload?.history ?? [])
+                ? fillThisDocument(message.payload?.fields ?? {}, message.payload?.history ?? [], message.payload?.education ?? [])
                 : { filled: [], skipped: [] },
             ),
           );

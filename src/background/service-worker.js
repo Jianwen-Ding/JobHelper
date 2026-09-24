@@ -1541,9 +1541,9 @@ const handlers = {
   },
 
   /** Fill the form in every sub-frame from the same profile. */
-  async fillFrames({ fields, history = [] }, tab) {
+  async fillFrames({ fields, history = [], education = [] }, tab) {
     if (tab?.id === undefined) return { frames: [] };
-    const replies = await askFrames(tab.id, { type: 'jh-frame-fill', payload: { fields, history } });
+    const replies = await askFrames(tab.id, { type: 'jh-frame-fill', payload: { fields, history, education } });
     return { frames: replies.map(({ frameId, data }) => ({ frameId, ...data })) };
   },
 
@@ -2279,6 +2279,11 @@ const handlers = {
   },
 
   /** Compile a proposed spec so the user can look at it before committing. */
+  /** Whether the resume the card holds is still what the store would give it. */
+  async fresh({ spec }) {
+    return serverFetch('/api/extension/fresh', { method: 'POST', body: JSON.stringify({ spec }) });
+  },
+
   async render({ spec }) {
     const result = await serverFetch('/api/render', {
       method: 'POST',
@@ -2764,8 +2769,24 @@ const handlers = {
      * embed is judged by the careers site around it.
      */
     if (receipt) {
+      /*
+       * And, failing both, what the trail wrote down about the form's page
+       * when it was read — the page itself, not a save of the card's work,
+       * so it is there even when the press came before the keeper's first
+       * tick. Measured under the parallel runner: a receipt two seconds after
+       * the build, no save of the work anywhere yet, and the application left
+       * at Applying beside a confirmation page. Not reproduced on demand by
+       * the suite: the save the form makes as it unloads usually lands first,
+       * and a test that could not tell this line from its absence was taken
+       * out rather than kept as false comfort.
+       */
+      // Never the receipt itself, which the trail may have read as a page of
+      // its own: a confirmation is not evidence of which job it confirms.
+      const read = [...(trail?.pages ?? [])].reverse().find((p) => p.company && p.role && p.url !== url);
       const named =
-        trail?.work?.spec?.generatedFor ?? (inFrame && tab?.id !== undefined ? await askThePage(tab.id) : null);
+        trail?.work?.spec?.generatedFor ??
+        (inFrame && tab?.id !== undefined ? await askThePage(tab.id) : null) ??
+        (read ? { company: read.company, role: read.role } : null);
       if (!named?.company || !named?.role) return { ok: false };
       if (!(Date.now() - (trail.at ?? 0) <= RECEIPT_WINDOW_MS)) return { ok: false };
       const been = new Set((trail.pages ?? []).map((p) => rootOf(hostOf(p.url))).filter(Boolean));

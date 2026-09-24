@@ -32,6 +32,7 @@ import {
   RECEIPT_ELSEWHERE,
   RECEIPT_EMBED,
   RECEIPT_DOCUMENTS,
+  NAMELESS_APPLY,
 } from './ats-web.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -148,7 +149,17 @@ async function walk(context, fixtures, fixture, { build = true } = {}) {
     }
 
     // The keeper writes on an interval, and the space is opened from there.
-    const before = await awaitFiled(fixture.company, (f) => f.application?.status === 'applying');
+    /*
+     * A receipt carries no save of its own — it is the page after the form —
+     * so a walk ending in one waits for the keeper to have opened the draft,
+     * as it has for anyone who spent longer than a couple of seconds on the
+     * form. Pressed sooner, under the parallel runner, there was no draft to
+     * close and no work to name the application by.
+     */
+    const before = await awaitFiled(
+      fixture.company,
+      (f) => f.application?.status === 'applying' && (!fixture.receipt || Boolean(f.draft)),
+    );
     await press(page, fixture.sends, { inFrame: fixture.inFrame });
 
     /*
@@ -227,8 +238,10 @@ async function* inBatches(list, run) {
  * been filed as sent before its form was submitted. It had been sent, the run
  * before.
  */
-const MINE = [...SENDS, ...DOES_NOT_SEND, RECEIPT_APPLY, RECEIPT_ELSEWHERE, RECEIPT_EMBED]
+const MINE = [...SENDS, ...DOES_NOT_SEND, RECEIPT_APPLY, RECEIPT_ELSEWHERE, RECEIPT_EMBED, NAMELESS_APPLY]
   .map((f) => f.company)
+  // What the nameless step is filed under when its names regress; see there.
+  .concat(['careers.corvane.test'])
   .concat(['Novena', 'Larkspur', 'Marlow Systems']);
 
 async function main() {
@@ -242,13 +255,20 @@ async function main() {
     RECEIPT_ELSEWHERE,
     RECEIPT_EMBED,
     ...RECEIPT_DOCUMENTS,
+    NAMELESS_APPLY,
   ]);
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-send-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     executablePath: findChromium(),
     headless: true,
     viewport: { width: 1280, height: 950 },
-    args: ['--no-sandbox', `--disable-extensions-except=${extensionRoot}`, `--load-extension=${extensionRoot}`],
+    args: [
+      '--no-sandbox',
+      `--disable-extensions-except=${extensionRoot}`,
+      `--load-extension=${extensionRoot}`,
+      // A careers host of the company's own. See `NAMELESS_APPLY`.
+      '--host-resolver-rules=MAP careers.corvane.test 127.0.0.1',
+    ],
   });
 
   const started = Date.now();
@@ -424,6 +444,35 @@ async function main() {
         after.application?.status === 'applying',
         after.application?.status ?? '(none)',
       );
+    }
+
+    /*
+     * A step that names nobody, on the company's own careers host. The store
+     * reads "Corvane" off `careers.corvane.test` and files the workspace
+     * under it; staging the files filed a second row under the bare hostname
+     * and "Unknown role", because the card read its own fallbacks instead.
+     */
+    group('An apply step that names nobody is one application, named for the site');
+    {
+      const page = await context.newPage();
+      try {
+        const at = new URL(fixtures.urlFor(NAMELESS_APPLY));
+        await page.goto(`http://careers.corvane.test:${at.port}${NAMELESS_APPLY.path}${NAMELESS_APPLY.query}`, {
+          waitUntil: 'domcontentloaded',
+        });
+        await settled(page);
+        await cardOf(page).getByRole('button', { name: 'Build resume' }).click();
+        await cardOf(page).locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
+        await awaitFiled('corvane', (f) => f.application && f.draft);
+        await page.waitForTimeout(2500);
+        const apps = (await fetch(`${SERVER}/api/applications`).then((r) => r.json())).applications ?? [];
+        const rows = apps.filter((a) => /corvane/i.test(`${a.company} ${a.url ?? ''}`));
+        check('it is filed once', rows.length === 1, JSON.stringify(rows.map((a) => [a.company, a.role])));
+        check('under the name the site gives, not its address', rows.every((a) => a.company === 'Corvane'), rows.map((a) => a.company).join(', '));
+        check('and says it does not know the role, in so many words', rows.every((a) => a.role === 'Unknown role'), rows.map((a) => a.role).join(', '));
+      } finally {
+        await page.close().catch(() => undefined);
+      }
     }
 
     /*

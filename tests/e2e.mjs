@@ -952,12 +952,22 @@ async function main() {
       // makes a chip worth having. See the done panel's case below.
       const resume = before.filter({ hasText: /-Resume/ }).first();
       await resume.hover();
-      await page.waitForTimeout(1200);
-      const carried = await resume.evaluate((chip) => {
-        const carrier = new DataTransfer();
-        chip.dispatchEvent(new DragEvent('dragstart', { dataTransfer: carrier, bubbles: true, cancelable: true }));
-        return [...carrier.files].map((f) => ({ name: f.name, size: f.size }));
-      });
+      /*
+       * Asked until the chip has them, not after a fixed pause. The pointer
+       * arriving is what fetches them (see `warmFiles`), and a chip pressed
+       * before they land refuses the drag and says to try again — which is
+       * the behaviour, not the failure. A second and a bit was enough on an
+       * idle machine and not under the parallel runner.
+       */
+      let carried = [];
+      for (let i = 0; i < 40 && carried.length === 0; i++) {
+        await page.waitForTimeout(250);
+        carried = await resume.evaluate((chip) => {
+          const carrier = new DataTransfer();
+          chip.dispatchEvent(new DragEvent('dragstart', { dataTransfer: carrier, bubbles: true, cancelable: true }));
+          return [...carrier.files].map((f) => ({ name: f.name, size: f.size }));
+        });
+      }
       check('with the bytes in them', (carried[0]?.size ?? 0) > 100, JSON.stringify(carried));
     }
 
