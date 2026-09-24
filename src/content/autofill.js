@@ -2461,8 +2461,18 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
      * "5550100199", as it does to what a person types, and the number was
      * reported refused while it sat in the box.
      */
+    /*
+     * And one that put its own dialling code in front: Teamtailor's
+     * intl-tel-input rewrites "(555) 010-0199" as "+1 555-010-0199" as it is
+     * typed. Measured live on owlco.na.teamtailor.com: the number sat in the
+     * box and the card said the field would not take it. Only a "+" and at
+     * most three digits more, in front of every digit that was given.
+     */
     const digits = (v) => String(v).replace(/\D/g, '');
-    const sameNumber = /phone/.test(key) && digits(value).length >= 7 && digits(input.value) === digits(value);
+    const withTheirCode = (shown, given) =>
+      /^\s*\+/.test(shown) && !/^\s*\+/.test(given) && digits(shown).endsWith(digits(given)) && digits(shown).length - digits(given).length <= 3;
+    const sameNumber =
+      /phone/.test(key) && digits(value).length >= 7 && (digits(input.value) === digits(value) || withTheirCode(input.value, String(value)));
     if (input.value !== String(value) && !sameNumber) {
       skipped.push({ key, reason: 'the field would not take it', description: description.slice(0, 60) });
       continue;

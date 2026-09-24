@@ -2596,7 +2596,27 @@ const LIVES_IN = `<!doctype html><html><head><meta charset="utf-8"><title>Apply<
 </script>
 </body></html>`;
 
-const PAGES = { '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
+/*
+ * Teamtailor's telephone box (measured live on owlco.na.teamtailor.com): an
+ * intl-tel-input that rewrites what is typed with the selected country's code
+ * in front, "+1 555-010-0199".
+ */
+const ADDS_ITS_CODE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Owl.co</title></head><body>
+<form>
+  <label for="candidate_phone">Phone*Required</label>
+  <div><button type="button" aria-label="Change country, selected United States (+1)" aria-haspopup="dialog">US</button>
+  <input type="tel" id="candidate_phone" name="candidate[phone]" placeholder="+1 201-555-0123"></div>
+</form>
+<script>
+  const box = document.getElementById('candidate_phone');
+  box.addEventListener('input', () => {
+    const d = box.value.replace(/\\D/g, '').replace(/^1(?=\\d{10}$)/, '');
+    if (d.length === 10) box.value = '+1 ' + d.slice(0, 3) + '-' + d.slice(3, 6) + '-' + d.slice(6);
+  });
+</script>
+</body></html>`;
+
+const PAGES = { '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -6016,6 +6036,20 @@ async function main() {
       'and with no country in the profile none of them is answered',
       nowhere.greenhouse === '' && nowhere.lever === '' && nowhere.jazz === '' && nowhere.canada === '',
       JSON.stringify(nowhere),
+    );
+
+    const addsCode = await page.goto(`${base}/adds-its-code`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        return { phone: document.getElementById('candidate_phone').value, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields: SWEEP }),
+    );
+    group('A telephone box that puts its own dialling code in front');
+    check(
+      'Teamtailor\'s "+1 555-010-0199" is the number that was given, and is reported filled, not refused',
+      addsCode.phone === '+1 555-010-0199' && addsCode.filled.includes('phone') && !addsCode.skipped.some((s) => s.startsWith('phone')),
+      JSON.stringify(addsCode),
     );
   } finally {
     await browser.close();
