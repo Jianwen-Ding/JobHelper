@@ -124,7 +124,7 @@ function fakeStore() {
           job: { company: state.company ?? page.company ?? 'Helios', title: state.role, description: 'A job.', keywords: [] },
           // Built from the base that was asked for, and said to be, as the
           // store does — so a proposal can be told apart by where it came from.
-          spec: { id: 'job-fake', extends: page.baseResumeId ?? 'newgrad' },
+          spec: { id: 'job-fake', tier: 'temporary', copiedFrom: page.baseResumeId ?? 'newgrad' },
           baseResumeId: page.baseResumeId ?? 'newgrad',
           // An AI pass comes back as a decision; see `isDecision` in card.js.
           ...(page.tailor === 'ai' ? { tailor: 'ai', aiUsed: true } : {}),
@@ -420,6 +420,31 @@ async function main() {
       const hit = store.sentTo('/api/ai/answer').slice(-1)[0];
       const body = JSON.parse(hit?.body || '{}');
       check('the limit goes with the question', body.limit === 280 && body.question === 'Why us?', hit?.body ?? '(not sent)');
+    }
+
+    /*
+     * The card's resume is a proposal the store has not been given, so its id
+     * names nothing there. These asked with `spec.extends ?? spec.id`, and a
+     * proposal carries no `extends` since resumes stopped inheriting: the
+     * proposal's own id went, and the store answered "No resume named …".
+     */
+    group('Writing from the card sends the proposal, and a resume the store has');
+    {
+      store.save = 'work';
+      const spec = { id: 'job-fake', label: 'Helios', tier: 'temporary', copiedFrom: 'newgrad', sections: [] };
+      const job = { title: 'Engineer', company: 'Helios', description: 'A job.' };
+      await ask(driver, 'coverLetter', { spec, job });
+      await ask(driver, 'writeApplication', { spec, job, letter: { required: true, body: '' }, questions: [] });
+      await ask(driver, 'refine', { spec, job, feedback: 'More Kafka.' });
+      await ask(driver, 'renderLetter', { body: 'Dear Helios,', spec });
+      for (const route of ['/api/ai/cover-letter', '/api/extension/write', '/api/ai/tailor', '/api/render/letter']) {
+        const body = JSON.parse(store.sentTo(route).slice(-1)[0]?.body || '{}');
+        check(
+          `${route} names the resume it was copied from, and carries the copy`,
+          body.resumeId === 'newgrad' && body.spec?.id === 'job-fake',
+          JSON.stringify({ resumeId: body.resumeId, spec: body.spec?.id }),
+        );
+      }
     }
 
     group('A rescue onto a page nobody could name says which job it was for');
@@ -2064,7 +2089,7 @@ async function main() {
       store.company = undefined;
       await ask(driver, 'clearTrail', {});
       await ask(driver, 'analyze', { url: 'http://tooltip.example/jobs/1', title: 'Helios', html: '<p>one</p>', company: 'Helios' });
-      await ask(driver, 'saveWork', { work: { spec: { id: 'job-fake', extends: 'newgrad' } } });
+      await ask(driver, 'saveWork', { work: { spec: { id: 'job-fake', tier: 'temporary', copiedFrom: 'newgrad' } } });
       const title = await driver.evaluate(async () => {
         const tab = await chrome.tabs.getCurrent();
         return chrome.action.getTitle({ tabId: tab.id });

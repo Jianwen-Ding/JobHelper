@@ -4971,14 +4971,14 @@ export function createCard({
                   title: 'Compile it the way it will be sent',
                   onclick: () =>
                     /*
-                     * The base, not the proposal: a tailored spec only exists
-                     * in this card until the folder is prepared, so asking the
-                     * store to set a letter to match it would be asking about
-                     * a resume it has never seen. What the letter borrows is
-                     * the margins and the name at the top, and those come from
-                     * the base either way.
+                     * The proposal itself: it only exists in this card until
+                     * the folder is prepared, so the store cannot look it up
+                     * by id. This sent `extends` for that reason, which
+                     * resumes no longer carry — the proposal's id went, found
+                     * nothing, and the letter came out in the save's default
+                     * margins and name rather than the resume's.
                      */
-                    act('renderLetter', { body: state.letter, resumeId: state.spec?.extends ?? state.spec?.id }, (r) => {
+                    act('renderLetter', { body: state.letter, spec: state.spec }, (r) => {
                       state.letterRender = r;
                     }),
                 })),

@@ -656,9 +656,12 @@ async function main() {
       `${JSON.stringify(afterFold)} (was ${drawn.dark} dark)`,
     );
 
-    /* The posting asks for a cover letter, so the card drafts one unasked. */
+    /*
+     * The posting asks for a cover letter, so the card has a place for one.
+     * Nothing is drafted into it unasked any more — see the offer below.
+     */
     await card.locator('textarea.tall').waitFor({ timeout: 60_000 });
-    check('a letter is drafted because the form asks for one, with no click', true);
+    check('a cover letter box is there because the form asks for one', true);
 
     /* Questions found on the page and paired with the answer bank. */
     const questions = await card.locator('.q').all();
@@ -816,7 +819,20 @@ async function main() {
      * asked for one. Now the previous letter is offered by name and waits.
      */
     const offer = card.getByRole('button', { name: /^Start from "/ });
+    /*
+     * And it is offered at all. The save this runs against holds a letter, so
+     * an empty offer means the request for it failed — which it did on every
+     * posting for a while, silently, because this read "if there is one".
+     * The card asked with `spec.extends ?? spec.id`; resumes stopped
+     * inheriting, the proposal's own id went instead, and the store, which
+     * has not been given the proposal yet, answered "No resume named …".
+     */
+    // Nothing is drafted until asked, so it is asked: with the AI off this is
+    // the request that comes back with the letters to start from.
+    await card.getByRole('button', { name: 'Draft a letter' }).click();
+    await offer.first().waitFor({ timeout: 30_000 }).catch(() => {});
     const offered_letter = await offer.count();
+    check('the previous letter is offered to start from', offered_letter > 0, `${offered_letter} offered`);
     if (offered_letter > 0) {
       const before = await card.locator('textarea.tall').first().inputValue();
       check('a previous letter is offered rather than adopted', before.trim() === '', before.slice(0, 40));
@@ -857,6 +873,9 @@ async function main() {
        * sent it without one.
        */
       await card.getByRole('button', { name: 'Mark as applied' }).click();
+      // Filing folds the card away; see "File it" below.
+      await card.locator('.folded-title.applied').waitFor({ timeout: 90_000 });
+      await card.getByRole('button', { name: 'Unfold JobHelper' }).click();
       await card.locator('.done-box').waitFor({ timeout: 90_000 });
       const body = await card.innerText();
       check('a folder missing the letter the form wants says so', /Not in this folder: a cover letter/.test(body));

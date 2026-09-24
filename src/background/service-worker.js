@@ -162,6 +162,23 @@ function stopReason() {
 }
 
 /**
+ * Which resume a letter, an answer or a re-tailor is written from.
+ *
+ * The card's resume is a proposal the store is not given until the folder is
+ * built, so its own id names nothing there. This used to send the resume it
+ * inherited from instead — `spec.extends ?? spec.id` — and resumes stopped
+ * inheriting: `extends` is always missing now, the proposal's id went, and
+ * every letter asked for from the card came back "No resume named …".
+ *
+ * The proposal itself goes, which the server writes from; `copiedFrom` goes as
+ * the id, so a server that predates taking the proposal still finds a resume
+ * that exists.
+ */
+function writingFrom(spec) {
+  return { resumeId: spec?.copiedFrom ?? spec?.id, spec };
+}
+
+/**
  * Run `fn` with a signal the tab can abort, and forget the controller after.
  *
  * Held as a set per tab, and each controller remembers `what` it is for,
@@ -2250,11 +2267,11 @@ const handlers = {
    * — which is why the resume's id travels with it. A preview compile: the
    * copy that gets attached is built again when the folder is.
    */
-  async renderLetter({ body, company, role, resumeId }) {
+  async renderLetter({ body, company, role, resumeId, spec }) {
     const result = await serverFetch('/api/render/letter', {
       method: 'POST',
       timeoutMs: SLOW_TIMEOUT_MS,
-      body: JSON.stringify({ body, company, role, resumeId }),
+      body: JSON.stringify({ body, company, role, ...(spec ? writingFrom(spec) : { resumeId }) }),
     });
     const { serverUrl } = await getSettings();
     return { ...result, absolutePdfUrl: `${serverUrl.replace(/\/$/, '')}${result.pdfUrl}` };
@@ -2287,7 +2304,7 @@ const handlers = {
       method: 'POST',
       timeoutMs: SLOW_TIMEOUT_MS,
       body: JSON.stringify({
-        resumeId: spec.extends ?? spec.id,
+        ...writingFrom(spec),
         job: {
           jobTitle: job?.title,
           company: job?.company,
@@ -2562,10 +2579,9 @@ const handlers = {
         signal,
         timeoutMs: SLOW_TIMEOUT_MS,
         body: JSON.stringify({
-          // The base, as `coverLetter` does: a tailored spec exists only in
-          // the card until the folder is built, so the store has never seen
-          // it.
-          resumeId: spec.extends ?? spec.id,
+          // A tailored spec exists only in the card until the folder is
+          // built, so the store has never seen it: see `writingFrom`.
+          ...writingFrom(spec),
           job: {
             jobTitle: job.title,
             company: job.company,
@@ -2590,7 +2606,7 @@ const handlers = {
         signal,
         timeoutMs: SLOW_TIMEOUT_MS,
         body: JSON.stringify({
-          resumeId: spec.extends ?? spec.id,
+          ...writingFrom(spec),
           job: {
             jobTitle: job.title,
             company: job.company,
