@@ -2396,7 +2396,74 @@ const MOST_RECENT_JOB = `<!doctype html><html><head><meta charset="utf-8"><title
   <label for="leaving">Reason for leaving your most recent employer</label><input id="leaving" type="text">
 </form></body></html>`;
 
-const PAGES = { '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
+/*
+ * Greenhouse's Employment block, in the markup its current boards use —
+ * measured live on Coinbase's and Lyft's (job-boards.greenhouse.io/embed/
+ * job_app?for=coinbase, for=lyft), where every one of these was required and
+ * left empty for a fake profile holding one job. The section is named by a
+ * `<p>`, not a heading; the months are react-selects and the years plain
+ * boxes. The Education block below it uses the same words for its dates and
+ * must stay the degree's.
+ */
+const monthsList = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const ghSelect = (id, label) => `<div><label id="${id}-label" for="${id}">${label}<span aria-hidden="true">*</span></label>
+    <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+    <div class="select__input-container" data-value=""><input id="${id}" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="${id}-label" aria-required="true" autocomplete="off"></div></div></div></div></div>`;
+const ghText = (id, label) => `<div><div><label id="${id}-label" for="${id}">${label}<span aria-hidden="true">*</span></label><input id="${id}" aria-label="${label}" aria-required="true" type="text" maxlength="255"></div></div>`;
+const GREENHOUSE_EMPLOYMENT = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Coinbase</title></head><body>
+<form id="application-form">
+  ${ghText('first_name', 'First Name')}
+  <div><hr><div><p>Employment</p></div>
+    ${ghText('company-name-0', 'Company name')}
+    ${ghText('title-0', 'Title')}
+    <div>${ghSelect('start-date-month-0', 'Start date month')}${ghText('start-date-year-0', 'Start date year')}</div>
+    <div>${ghSelect('end-date-month-0', 'End date month')}${ghText('end-date-year-0', 'End date year')}</div>
+    <div id="current-role-0"><input type="checkbox" id="current-role-0_1" name="current-role-0" value="1"><label for="current-role-0_1">Current role</label></div>
+    <!-- Education in the same wrapper, so only its own heading says whose dates these are. -->
+    <div><p>Education</p></div>
+    <div class="education--form">
+      ${ghSelect('start-month--0', 'Start date month')}${ghText('start-year--0', 'Start date year')}
+    </div>
+  </div>
+</form>
+<script>
+  function select(id, fixed) {
+    const input = document.getElementById(id);
+    const control = input.closest('.select__control');
+    let list = null;
+    const close = () => { list?.remove(); list = null; input.setAttribute('aria-expanded', 'false'); };
+    const render = (items) => {
+      list?.remove();
+      list = document.createElement('div');
+      list.id = 'react-select-' + id + '-listbox';
+      list.setAttribute('role', 'listbox');
+      for (const text of items) {
+        const o = document.createElement('div');
+        o.setAttribute('role', 'option');
+        o.textContent = text;
+        o.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          control.querySelector('.select__placeholder')?.remove();
+          let shown = control.querySelector('.select__single-value');
+          if (!shown) { shown = document.createElement('div'); shown.className = 'select__single-value'; control.querySelector('.select__value-container').prepend(shown); }
+          shown.textContent = text;
+          input.value = '';
+          close();
+        });
+        list.append(o);
+      }
+      control.parentElement.append(list);
+      input.setAttribute('aria-controls', list.id);
+    };
+    control.addEventListener('mousedown', () => { if (list) return; input.setAttribute('aria-expanded', 'true'); render(fixed); });
+    input.addEventListener('input', () => { if (list) render(fixed.filter((t) => t.toLowerCase().includes(input.value.toLowerCase()))); });
+  }
+  const MONTHS = ${JSON.stringify(monthsList)};
+  for (const id of ['start-date-month-0', 'end-date-month-0', 'start-month--0']) select(id, MONTHS);
+</script>
+</body></html>`;
+
+const PAGES = { '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -5675,6 +5742,50 @@ async function main() {
       JSON.stringify(still),
     );
     check('two jobs that ended the same month give nothing', tied.slice(0, 4).every((v) => v === ''), JSON.stringify(tied));
+
+    const EXAMPLE_JOB = [{ company: 'Example Co', title: 'Software Engineering Intern', start: { year: 2025, month: 6 }, end: { year: 2025, month: 8 }, current: false, description: '• Built example things' }];
+    const employment = (history) => page.goto(`${base}/greenhouse-employment`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields, history }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(fields, m.fillForm(fields, { history }), { patience: 800, history });
+        const v = (id) => document.getElementById(id).value;
+        const shown = (id) => document.getElementById(id).closest('.select__control').querySelector('.select__single-value')?.textContent ?? '';
+        return {
+          company: v('company-name-0'), title: v('title-0'),
+          start: `${shown('start-date-month-0')} ${v('start-date-year-0')}`, end: `${shown('end-date-month-0')} ${v('end-date-year-0')}`,
+          current: document.getElementById('current-role-0_1').checked,
+          education: `${shown('start-month--0')} ${v('start-year--0')}`,
+          filled: report.filled.map((f) => f.key),
+        };
+      }, { b: base, fields: SWEEP, history }));
+    const job = await employment(EXAMPLE_JOB);
+    const noJob = await employment([]);
+    const stillThere = await employment([{ ...EXAMPLE_JOB[0], current: true, end: undefined }]);
+    // A second job on the resume, which a block wrongly taken for employment would be given.
+    const twoJobs = await employment([...EXAMPLE_JOB, { company: 'Older Co', title: 'Tutor', start: { year: 2023, month: 1 }, end: { year: 2024, month: 5 }, current: false, description: '' }]);
+    group('Greenhouse: an Employment block under a <p>, from the resume being sent');
+    check(
+      'the company and the title go in',
+      job.company === 'Example Co' && job.title === 'Software Engineering Intern',
+      JSON.stringify(job),
+    );
+    check(
+      'and the start and the end, the month chosen from its list and the year typed',
+      job.start === 'June 2025' && job.end === 'August 2025' && job.current === false &&
+        // Each once: a month list is chosen from, never typed into as well.
+        ['job_start_month', 'job_end_month', 'job_start_year', 'job_end_year'].every((k) => job.filled.filter((f) => f === k).length === 1),
+      JSON.stringify(job),
+    );
+    check(
+      'a job still going ticks "Current role" and leaves the end for the form',
+      stillThere.current === true && stillThere.end === ' ' && stillThere.start === 'June 2025',
+      JSON.stringify(stillThere),
+    );
+    check(
+      'the Education block\'s "Start date" in the same words is never given the job\'s, and nothing is filled without a resume',
+      job.education === ' ' && twoJobs.education === ' ' && twoJobs.company === 'Example Co' && noJob.company === '' && noJob.start === ' ',
+      JSON.stringify({ job: job.education, twoJobs, noJob }),
+    );
   } finally {
     await browser.close();
     server.close();

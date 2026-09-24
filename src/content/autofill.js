@@ -2462,7 +2462,43 @@ function inWorkHistory(input) {
       clean(at.querySelector(':scope > legend, :scope > h2, :scope > h3, :scope > h4, :scope > h5')?.textContent);
     if (WORK_HISTORY.test(named)) return true;
   }
-  return WORK_HISTORY.test(boundedSection(input));
+  return WORK_HISTORY.test(boundedSection(input)) || underPlainHeading(input, EMPLOYMENT_HEADING);
+}
+
+/*
+ * A section named by a paragraph rather than a heading.
+ *
+ * Greenhouse's current boards title their Employment block with
+ * `<div><p>Employment</p></div>` as the first child of the block, then one
+ * wrapper per field, and none of that is a heading, a legend or a group — so
+ * the block read as no work history at all. Measured live on Coinbase's and
+ * Lyft's boards with a fake profile holding one job: Company name, Title and
+ * the start and end, month and year, all required, all left empty.
+ *
+ * Read the way a person reads it: from the field outwards, the nearest thing
+ * before it at each level that holds words and no control. A `<label>` is the
+ * field's own and is stepped past; the first other one is the section's
+ * heading, and it answers — this section if it says so exactly, and no
+ * section at all otherwise. So an Education block under its own "Education"
+ * paragraph is never taken for an employment one, whatever sits above it.
+ */
+const EMPLOYMENT_HEADING = /^(employment|employment\s+history|work\s+experience|work\s+history|professional\s+experience|experience)$/i;
+
+function underPlainHeading(input, heading) {
+  // From a widget's whole control, whose own "Select..." is not a heading.
+  const start = isWidgetChoice(input) ? controlOf(input) : input;
+  for (let at = start, n = 0; at?.parentElement && n < 6; at = at.parentElement, n++) {
+    if (at.parentElement.localName === 'form' || at.parentElement.localName === 'body') return false;
+    for (let before = at.previousElementSibling; before; before = before.previousElementSibling) {
+      if (before.querySelector(A_CONTROL) || before.matches(A_CONTROL)) continue;
+      const words = clean(before.textContent);
+      if (!words) continue;
+      const label = before.matches('label') ? before : before.querySelector('label');
+      if (label && clean(label.textContent) === words) break;
+      return heading.test(withoutMarkers(words));
+    }
+  }
+  return false;
 }
 
 /*
@@ -2503,6 +2539,9 @@ function jobPartOf(input) {
     if ((part === 'current') !== (kind === 'checkbox')) continue;
     return { part };
   }
+  // Both at once, as Greenhouse's Employment block labels them: "Start date month", "End date year".
+  const named = label.match(/^\s*(start|end)\s+date\s+(month|year)\s*$/i);
+  if (named && kind === 'text') return { part: named[1].toLowerCase(), half: named[2].toLowerCase() };
   // A month box and a year box, together one end of the job: Workday's From and To.
   const half = /^\s*(month|mm)\s*$/i.test(label || input.placeholder) ? 'month' : /^\s*(year|yyyy)\s*$/i.test(label || input.placeholder) ? 'year' : null;
   if (kind !== 'text' || !half) return null;
@@ -2535,14 +2574,29 @@ const monthWord = (month) => MONTH_NAMES[month - 1].replace(/^./, (c) => c.toUpp
 export function fillWorkHistory(history, { overwrite = false } = {}) {
   const filled = [];
   const skipped = [];
-  if (!Array.isArray(history) || history.length === 0) return { filled, skipped };
+  for (const { block, job } of jobBlocks(history, skipped)) fillJob(block, job, overwrite, filled, skipped);
+  return { filled, skipped };
+}
+
+/*
+ * A month asked as a list, which `fillJob` cannot type into: Greenhouse's
+ * Employment block asks "Start date month" and "End date month" as
+ * react-select widgets beside plain year boxes. Found with the rest of the
+ * block, and chosen once the page can be waited on — see `fillComboboxes`.
+ */
+const isMonthWidget = (input, found) => found.half === 'month' && isWidgetChoice(input) && !isDisabled(input) && input.getClientRects().length > 0;
+
+/** Each work-history block on the page, and the job on the resume it is for. */
+function jobBlocks(history, skipped = []) {
+  const pairs = [];
+  if (!Array.isArray(history) || history.length === 0) return pairs;
 
   const blocks = [];
   let block = null;
   for (const input of deepQueryAll('input, textarea')) {
     const found = jobPartOf(input);
     if (!found) continue;
-    const usable = found.part === 'current' ? !isDisabled(input) && input.getClientRects().length > 0 : isFillable(input);
+    const usable = found.part === 'current' ? !isDisabled(input) && input.getClientRects().length > 0 : isFillable(input) || isMonthWidget(input, found);
     if (!usable || !inWorkHistory(input)) continue;
     const slot = found.half ? `${found.part}.${found.half}` : found.part;
     if (!block || block.has(slot)) blocks.push((block = new Map()));
@@ -2572,15 +2626,33 @@ export function fillWorkHistory(history, { overwrite = false } = {}) {
       if (index < 0) break;
     }
     used.add(index);
-    fillJob(b, history[index], overwrite, filled, skipped);
+    pairs.push({ block: b, job: history[index] });
   }
-  return { filled, skipped };
+  return pairs;
+}
+
+/** The job months `fillJob` left to a widget, chosen the way every widget is. */
+async function fillJobMonths(history, patience) {
+  const done = [];
+  for (const { block, job } of jobBlocks(history)) {
+    for (const [part, when] of [['start', job.start], ['end', job.current ? null : job.end]]) {
+      const widget = block.get(`${part}.month`);
+      if (!when?.month || !widget || !isWidgetChoice(widget) || widgetShowsAnAnswer(widget)) continue;
+      const value = monthWord(when.month);
+      if ((await chooseInWidget(widget, `job_${part}_month`, value, { patience, fields: {}, asked: '' })) === 'chose') {
+        done.push({ key: `job_${part}_month`, value, widget: true });
+      }
+    }
+  }
+  return done;
 }
 
 function fillJob(block, job, overwrite, filled, skipped) {
   const put = (slot, key, value) => {
     const input = block.get(slot);
     if (!input || value === undefined || value === null || value === '') return;
+    // A list is chosen from later, not typed into. See `fillJobMonths`.
+    if (isWidgetChoice(input)) return;
     if (input.value && !overwrite) return;
     const written = slot === 'start' || slot === 'end' ? graduationFor(input, value) : String(value);
     setValue(input, written);
@@ -3961,9 +4033,12 @@ async function pickListedPlaces(fields) {
   }
 }
 
-export async function fillComboboxes(fields, report, { patience = 4000 } = {}) {
+export async function fillComboboxes(fields, report, { patience = 4000, history = [] } = {}) {
   // What `fillForm` pressed, now that the page has had its turn to draw it.
   report = await seePresses(report);
+  // The months of the jobs `fillForm` put in, where the form asks them as lists.
+  const months = await fillJobMonths(history, patience);
+  if (months.length) report = { ...report, filled: [...report.filled, ...months] };
   // The same fields `fillForm` read, or a widget it named `city_state` has
   // no value here.
   fields = withCityAndState(fields);
