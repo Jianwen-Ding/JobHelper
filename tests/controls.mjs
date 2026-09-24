@@ -695,10 +695,18 @@ async function main() {
          * a resume that suits this posting better still sorts above it,
          * which is what a ranked list is for.
          */
+        /*
+         * By the name, whatever mark is in front of it. The star is the
+         * store's separate judgement of which resumes are clearly ahead, and
+         * whether one of these two earns it depends on how the rest of this
+         * shared save happens to score — it was read here as part of the
+         * name, so the order passed and the check failed on "★ Platform
+         * Engineer — Helios".
+         */
         const built = shape?.find((g) => g.label === 'Built for a posting');
         check(
           'and this company is first among the ones built for a posting',
-          built?.options?.[0]?.startsWith('Platform Engineer — Helios'),
+          built?.options?.[0]?.replace(/^★\s*/, '').startsWith('Platform Engineer — Helios'),
           JSON.stringify(built?.options?.slice(0, 3)),
         );
         await page.close();
