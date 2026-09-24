@@ -168,6 +168,29 @@ async function main() {
           'and offers to build it again, rather than doing it',
           (await card.getByRole('button', { name: 'Build it again from there' }).count()) === 1,
         );
+
+        /*
+         * Pressed, it builds the copy "the same way as before" — and before,
+         * on this card, was the keyword list. The list is what the card is
+         * for; a rebuild that comes back without it has built a different
+         * thing from the one it said it would.
+         */
+        const offered = async () => {
+          const said = (await card.locator('.diff-head .count').first().textContent({ timeout: 5_000 }).catch(() => '')) ?? '';
+          return Number(said.match(/(\d+) changes?$/)?.[1] ?? 0);
+        };
+        const listBefore = await offered();
+        await card.getByRole('button', { name: 'Build it again from there' }).click();
+        // The old build's badge goes when the new proposal lands, and the
+        // new one's arrives with its compile.
+        await card.locator('.fit.ok, .fit.bad').waitFor({ state: 'detached', timeout: 30_000 }).catch(() => undefined);
+        await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
+        const listAfter = await offered();
+        check(
+          'and building it again keeps the keyword suggestions it was showing',
+          listBefore > 0 && listAfter === listBefore,
+          `${listBefore} before, ${listAfter} after`,
+        );
       }
     }
   } finally {

@@ -3365,7 +3365,19 @@ export function createCard({
   function drawBaseChanged() {
     const base = state.baseChanged;
     if (!base) return null;
-    const mode = state.builtWith === 'ai' ? 'ai' : state.builtWith === 'match' ? 'match' : 'none';
+    /*
+     * The AI's, or the keyword list — never `none`.
+     *
+     * This read `'match'` off `builtWith` and fell through to `'none'`
+     * otherwise, but `builtWith` has not been `'match'` since the match
+     * became a list of offers: `showOffer` writes `'ai'` or `'none'`. So on
+     * every card that was not the AI's the rebuild asked for no tailoring at
+     * all, and the store answered as asked — a copy with no rationale. The
+     * suggestions went with it. Measured in tests/freshness.mjs: "5 changes"
+     * over the list before the press, "0 changes" after it. The same reading
+     * as `switchBaseTo`, which rebuilds for the same reason.
+     */
+    const mode = state.builtWith === 'ai' ? 'ai' : 'match';
     return h('div', { className: 'hint stale' }, [
       h('span', { textContent: `“${base.label}” changed in ResumeM-M after this copy was made. ` }),
       h('button', {
