@@ -1096,10 +1096,17 @@ async function main() {
       await ask(driver, 'clearTrail', {});
       await ask(driver, 'analyze', { url: 'http://g.example/jobs/intern', title: 'Helios', html: '<p>intern</p>', company: 'Helios' });
 
-      const asked = () => store.sentTo('/api/autofill').slice(-1)[0]?.query;
+      /*
+       * The resume itself, not only its choices: a work-history section wants
+       * the jobs it lists and the lines it prints, which the wordings alone
+       * cannot say. POST, because the card's resume is a proposal the store
+       * has not been given.
+       */
+      const hit = () => store.sentTo('/api/autofill').slice(-1)[0];
+      const asked = () => JSON.parse(hit()?.body || '{}');
 
       await ask(driver, 'autofillData', {});
-      check('with nothing built, it asks without naming a resume', asked()?.has('choices') === false, asked()?.toString());
+      check('with nothing built, it asks without a resume of its own', !asked().spec && hit()?.method === 'POST', hit()?.body ?? '(not sent)');
 
       await ask(driver, 'saveWork', {
         work: {
@@ -1108,8 +1115,12 @@ async function main() {
         },
       });
       await ask(driver, 'autofillData', {});
-      const sent = JSON.parse(asked()?.get('choices') ?? '{}');
-      check('once a resume is built, its choices go with the request', sent['edu_neu.dates'] === 'v_dec2026', JSON.stringify(sent));
+      const sent = asked();
+      check(
+        'once a resume is built, it goes with the request, choices and all',
+        sent.spec?.id === 'job-intern' && sent.spec?.choices?.['edu_neu.dates'] === 'v_dec2026',
+        JSON.stringify(sent),
+      );
     }
 
     group('Holding a space in the editor');

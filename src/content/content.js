@@ -599,9 +599,11 @@
    */
   async function runAutofill() {
     const data = await send('autofillData');
-    const here = await fillThisDocument(data.fields);
+    // The jobs on the resume being sent, for a form's work-history blocks.
+    const history = Array.isArray(data.history) ? data.history : [];
+    const here = await fillThisDocument(data.fields, history);
 
-    const { frames } = await send('fillFrames', { fields: data.fields }).catch(() => ({ frames: [] }));
+    const { frames } = await send('fillFrames', { fields: data.fields, history }).catch(() => ({ frames: [] }));
     return {
       filled: [...here.filled, ...frames.flatMap((f) => f.filled ?? [])],
       skipped: [...here.skipped, ...frames.flatMap((f) => f.skipped ?? [])],
@@ -623,7 +625,7 @@
    * is string equality. Every failure path ends in an empty list, which is
    * the behaviour this had before the bank existed.
    */
-  async function fillThisDocument(fields) {
+  async function fillThisDocument(fields, history = []) {
     const { fillForm, fillComboboxes, choiceQuestions } = await imports.autofill();
     const questions = choiceQuestions();
     const remembered = questions.length
@@ -633,7 +635,7 @@
       : [];
     // And then the widgets `fillForm` could only name. See `fillComboboxes`:
     // exact options only, and seen to have taken, or put back as they were.
-    return fillComboboxes(fields, fillForm(fields, { remembered }));
+    return fillComboboxes(fields, fillForm(fields, { remembered, history }));
   }
 
   /**
@@ -2398,7 +2400,7 @@
               // The one that must not be got wrong. Anything else on the page
               // gets nothing about the person using it.
               looksLikeApplicationForm()
-                ? fillThisDocument(message.payload?.fields ?? {})
+                ? fillThisDocument(message.payload?.fields ?? {}, message.payload?.history ?? [])
                 : { filled: [], skipped: [] },
             ),
           );

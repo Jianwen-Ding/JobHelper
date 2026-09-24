@@ -1850,7 +1850,7 @@ function withCityAndState(fields) {
   return { ...fields, city_state: both };
 }
 
-export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
+export function fillForm(fields, { overwrite = false, remembered = [], history = [] } = {}) {
   fields = withCityAndState(fields);
   const filled = [];
   const skipped = [];
@@ -2081,7 +2081,9 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
    * person applying knows — which is the only kind the bank holds.
    */
   const memory = answerFromMemory(remembered);
-  const done = [...filled, ...radios.filled, ...buttons.filled, ...memory.filled];
+  // And the jobs on the resume, into the blocks a work history is asked in.
+  const work = fillWorkHistory(history, { overwrite });
+  const done = [...filled, ...radios.filled, ...buttons.filled, ...memory.filled, ...work.filled];
 
   /*
    * A control the memory pass answered is not still waiting, whatever an
@@ -2098,8 +2100,181 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
 
   return {
     filled: done,
-    skipped: [...waiting, ...memory.skipped, ...unfillableChoices(fields, done)],
+    skipped: [...waiting, ...memory.skipped, ...work.skipped, ...unfillableChoices(fields, done)],
   };
+}
+
+/* ------------------------- A past job, from the resume ------------------------- */
+
+/*
+ * Where a field says it is part of a job history.
+ *
+ * Read off the groups it sits in, the heading bounding it, or its own id —
+ * never off the words around a whole form, because "experience" is a word a
+ * form uses about everything. Workday's ids say it outright
+ * (`workExperience-3--jobTitle`), and its blocks are groups headed "Work
+ * Experience 1".
+ */
+const WORK_HISTORY = /\b(work|employment|professional|job|career)[\s_-]*(experience|history)\b|\bexperience[\s_-]*\d+\b|\b(employer|job|position)[\s_-]*\d+\b/i;
+
+function inWorkHistory(input) {
+  const own = [input.id, input.name, input.getAttribute('data-automation-id')].map(asWords).join(' ');
+  if (WORK_HISTORY.test(own)) return true;
+  for (let at = input.parentElement, n = 0; at && n < 8; at = at.parentElement, n++) {
+    if (!at.matches('[role="group"], fieldset, section')) continue;
+    const named =
+      clean(at.getAttribute('aria-label')) ||
+      clean(fromLabelledBy(at)) ||
+      clean(at.querySelector(':scope > legend, :scope > h2, :scope > h3, :scope > h4, :scope > h5')?.textContent);
+    if (WORK_HISTORY.test(named)) return true;
+  }
+  return WORK_HISTORY.test(boundedSection(input));
+}
+
+/*
+ * Which part of a past job a field asks for, by its label alone.
+ *
+ * Not by the whole description: "From" and "To" are the entire label of the
+ * two date fields on Workday, and a two-letter word looked for in a string
+ * carrying the field's name and id would be found everywhere.
+ */
+const JOB_PARTS = [
+  ['current', /\b(i\s+)?(currently|still)\s+(work|am\s+employed)\b|\bcurrent(ly)?\s+(job|role|position|employer|employed)\b/i],
+  ['description', /\b(description|responsibilit(y|ies)|duties|accomplishments?|achievements?)\b/i],
+  ['title', /\b(job|position|role)[\s_-]*title\b|^\s*(title|position|role)\s*$/i],
+  ['company', /\b(company|employer|organi[sz]ation)([\s_-]*name)?\b/i],
+  ['location', /^\s*((job|work|office)\s+)?(location|city)\s*$/i],
+  ['start', /^\s*(from|start(ing)?(\s+date)?|date\s+from|started)\s*$/i],
+  ['end', /^\s*(to|end(ing)?(\s+date)?|date\s+to|until|ended)\s*$/i],
+];
+
+/** The label of the date a month or year box is one half of. */
+function dateHalfOf(input) {
+  for (let at = input.parentElement, n = 0; at && n < 4; at = at.parentElement, n++) {
+    if (at.matches('[role="group"], fieldset')) {
+      const named = clean(at.getAttribute('aria-label')) || clean(fromLabelledBy(at)) || clean(at.querySelector(':scope > legend')?.textContent);
+      if (named) return withoutMarkers(named);
+    }
+  }
+  return '';
+}
+
+function jobPartOf(input) {
+  const label = withoutMarkers(labelFor(input));
+  const kind = input instanceof HTMLTextAreaElement ? 'textarea' : input.type === 'checkbox' ? 'checkbox' : input.localName === 'input' ? 'text' : null;
+  if (!kind) return null;
+  for (const [part, re] of JOB_PARTS) {
+    if (!re.test(label)) continue;
+    if ((part === 'description') !== (kind === 'textarea')) continue;
+    if ((part === 'current') !== (kind === 'checkbox')) continue;
+    return { part };
+  }
+  // A month box and a year box, together one end of the job: Workday's From and To.
+  const half = /^\s*(month|mm)\s*$/i.test(label || input.placeholder) ? 'month' : /^\s*(year|yyyy)\s*$/i.test(label || input.placeholder) ? 'year' : null;
+  if (kind !== 'text' || !half) return null;
+  const end = dateHalfOf(input);
+  if (/^\s*(from|start)/i.test(end)) return { part: 'start', half };
+  if (/^\s*(to|end)/i.test(end)) return { part: 'end', half };
+  return null;
+}
+
+/** "December", for a box that takes a date as a person writes it. */
+const monthWord = (month) => MONTH_NAMES[month - 1].replace(/^./, (c) => c.toUpperCase());
+
+/**
+ * The jobs on the resume being sent, into the blocks a form asks a work
+ * history in.
+ *
+ * Workday's "My Experience" wants each job as Job Title, Company, Location,
+ * "I currently work here", From, To and Role Description, and none of it was
+ * filled: the profile knows one current job, and the Role Description — the
+ * box that most plainly *is* the resume — was left for the person to type out
+ * again, job by job, from the document they were attaching.
+ *
+ * The blocks are read in the order the page asks them, a part seen a second
+ * time starting the next job. A block somebody has begun is filled only for
+ * the job it names, and only where it is still empty; an empty block takes
+ * the next job on the resume, in the resume's order. Nothing here writes: the
+ * words are the resume's own, and a block for a job it does not list is left
+ * exactly as it was.
+ */
+export function fillWorkHistory(history, { overwrite = false } = {}) {
+  const filled = [];
+  const skipped = [];
+  if (!Array.isArray(history) || history.length === 0) return { filled, skipped };
+
+  const blocks = [];
+  let block = null;
+  for (const input of deepQueryAll('input, textarea')) {
+    const found = jobPartOf(input);
+    if (!found) continue;
+    const usable = found.part === 'current' ? !isDisabled(input) && input.getClientRects().length > 0 : isFillable(input);
+    if (!usable || !inWorkHistory(input)) continue;
+    const slot = found.half ? `${found.part}.${found.half}` : found.part;
+    if (!block || block.has(slot)) blocks.push((block = new Map()));
+    block.set(slot, input);
+  }
+
+  const flat = (text) => String(text ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const used = new Set();
+  for (const b of blocks) {
+    const typedCompany = flat(b.get('company')?.value);
+    const typedTitle = flat(b.get('title')?.value);
+    let index = -1;
+    if (typedCompany || typedTitle) {
+      index = history.findIndex(
+        (job, i) =>
+          !used.has(i) &&
+          (typedCompany
+            ? flat(job.company) && (flat(job.company).includes(typedCompany) || typedCompany.includes(flat(job.company)))
+            : flat(job.title) === typedTitle),
+      );
+      if (index < 0) {
+        skipped.push({ key: 'work_history', reason: 'this job is not on the resume', description: clean(b.get('company')?.value || b.get('title')?.value).slice(0, 60) });
+        continue;
+      }
+    } else {
+      index = history.findIndex((_, i) => !used.has(i));
+      if (index < 0) break;
+    }
+    used.add(index);
+    fillJob(b, history[index], overwrite, filled, skipped);
+  }
+  return { filled, skipped };
+}
+
+function fillJob(block, job, overwrite, filled, skipped) {
+  const put = (slot, key, value) => {
+    const input = block.get(slot);
+    if (!input || value === undefined || value === null || value === '') return;
+    if (input.value && !overwrite) return;
+    const written = slot === 'start' || slot === 'end' ? graduationFor(input, value) : String(value);
+    setValue(input, written);
+    if (input.value === written) filled.push({ key, value: written.slice(0, 80) });
+    else skipped.push({ key, reason: 'the field would not take it', description: clean(labelFor(input)).slice(0, 60) });
+  };
+  put('title', 'job_title', job.title);
+  put('company', 'job_company', job.company);
+  put('location', 'job_location', job.location);
+  put('description', 'job_description', job.description);
+
+  /*
+   * "I currently work here" is the resume's "Present", not a consent box — so
+   * it is ticked for the job that says so, and never unticked: a box already
+   * ticked is somebody's statement about their own job.
+   */
+  const current = block.get('current');
+  if (current && job.current && !current.checked) {
+    current.click();
+    if (current.checked) filled.push({ key: 'job_current', value: 'yes' });
+  }
+
+  for (const [part, when] of [['start', job.start], ['end', job.current ? null : job.end]]) {
+    if (!when?.year) continue;
+    put(part, `job_${part}`, when.month ? `${monthWord(when.month)} ${when.year}` : String(when.year));
+    if (when.month) put(`${part}.month`, `job_${part}_month`, String(when.month).padStart(2, '0'));
+    put(`${part}.year`, `job_${part}_year`, String(when.year));
+  }
 }
 
 /* ------------------- Choices that are buttons, not inputs ------------------- */
@@ -3455,6 +3630,17 @@ export function findQuestions() {
      * cover letter step for it. One box, asked for twice.
      */
     if (/cover\s*letter/i.test(describeField(takenOver(field) ?? field))) continue;
+
+    /*
+     * Nor a past job's description. Workday's "My Experience" has a Role
+     * Description in every work-history block, and it passed every test below
+     * — so the card listed "Role Description" once per job as questions for
+     * the AI to write, keyed by their words so that every job shared one
+     * answer. It is the resume's own lines for that job, which autofill copies
+     * in; see `fillWorkHistory`. The model writes letters and answers, never
+     * the resume.
+     */
+    if (field instanceof HTMLTextAreaElement && jobPartOf(field)?.part === 'description' && inWorkHistory(field)) continue;
 
     /*
      * The placeholder, where there is no label at all.

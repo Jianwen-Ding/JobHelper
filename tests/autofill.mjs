@@ -1802,7 +1802,62 @@ const WORKDAY_MY_INFO = `<!doctype html><html><head><meta charset="utf-8"><title
 </script>
 </body></html>`;
 
-const PAGES = { '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION };
+/*
+ * Workday's My Experience step, as far as a work history goes: a block per
+ * job, each a group headed "Work Experience N", with Job Title, Company,
+ * Location, "I currently work here", From and To as a month box and a year
+ * box each, and Role Description. The ids are Workday's own shape.
+ */
+const workdayJob = (n, typed = {}) => `
+  <div role="group" aria-labelledby="we-${n}" data-automation-id="workExperience-${n}">
+    <h4 id="we-${n}">Work Experience ${n}</h4>
+    <label for="workExperience-${n}--jobTitle">Job Title<abbr title="required">*</abbr></label>
+    <input type="text" id="workExperience-${n}--jobTitle" value="${typed.title ?? ''}">
+    <label for="workExperience-${n}--companyName">Company<abbr title="required">*</abbr></label>
+    <input type="text" id="workExperience-${n}--companyName" value="${typed.company ?? ''}">
+    <label for="workExperience-${n}--location">Location</label>
+    <input type="text" id="workExperience-${n}--location">
+    <input type="checkbox" id="workExperience-${n}--currentlyWorkHere">
+    <label for="workExperience-${n}--currentlyWorkHere">I currently work here</label>
+    ${['startDate', 'endDate'].map((d) => `
+    <div><label id="workExperience-${n}--${d}-label">${d === 'startDate' ? 'From' : 'To'}<abbr title="required">*</abbr></label>
+      <div role="group" aria-labelledby="workExperience-${n}--${d}-label">
+        <input type="text" role="spinbutton" aria-label="Month" placeholder="MM" id="workExperience-${n}--${d}-month">
+        <input type="text" role="spinbutton" aria-label="Year" placeholder="YYYY" id="workExperience-${n}--${d}-year">
+      </div></div>`).join('')}
+    <label for="workExperience-${n}--roleDescription">Role Description</label>
+    <textarea id="workExperience-${n}--roleDescription">${typed.description ?? ''}</textarea>
+  </div>`;
+const WORKDAY_EXPERIENCE = `<!doctype html><html><head><meta charset="utf-8"><title>My Experience</title></head><body>
+<h2>My Experience</h2>
+<div role="group" aria-labelledby="we-head"><h3 id="we-head">Work Experience</h3>${workdayJob(1)}${workdayJob(2)}</div>
+<label for="why">Why do you want to work on this team?</label><textarea id="why"></textarea>
+</body></html>`;
+const WORKDAY_EXPERIENCE_BEGUN = `<!doctype html><html><head><meta charset="utf-8"><title>My Experience</title></head><body>
+<div role="group" aria-labelledby="we-head"><h3 id="we-head">Work Experience</h3>${workdayJob(1, { company: 'Acme' })}${workdayJob(2, { description: 'My own words about it.' })}${workdayJob(3, { company: 'Globex' })}</div>
+<label for="project">Project description</label><textarea id="project"></textarea>
+</body></html>`;
+const JOBS = [
+  {
+    company: 'Vega Analytics',
+    title: 'Backend Engineer',
+    location: 'Boston, MA',
+    start: { year: 2023, month: 6 },
+    current: true,
+    description: '• Built a Kafka pipeline handling 2M events/day\n• Cut latency from 900ms to 180ms',
+  },
+  {
+    company: 'Acme Co.',
+    title: 'Software Engineer Co-op',
+    location: 'Boston, MA',
+    start: { year: 2022, month: 7 },
+    end: { year: 2022, month: 12 },
+    current: false,
+    description: '• Raised coverage from 41% to 88%',
+  },
+];
+
+const PAGES = { '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -4221,6 +4276,93 @@ async function main() {
       'all three counted as chosen',
       ['school', 'degree', 'major'].every((k) => education.filled.includes(k)) && education.byHand.length === 0,
       JSON.stringify({ filled: education.filled, byHand: education.byHand, ms: education.ms }),
+    );
+
+    /* ---------------- Workday's My Experience: a work history ---------------- */
+    /*
+     * Reported: the Role Description "should be filled with resume stuff".
+     * Each block takes a job from the resume being sent — its title, company,
+     * place, dates and the lines it prints — and nothing a model wrote.
+     */
+    const readJobs = () => {
+      const v = (id) => document.getElementById(id);
+      return [1, 2, 3].map((n) => (v(`workExperience-${n}--jobTitle`)
+        ? {
+            title: v(`workExperience-${n}--jobTitle`).value,
+            company: v(`workExperience-${n}--companyName`).value,
+            location: v(`workExperience-${n}--location`).value,
+            current: v(`workExperience-${n}--currentlyWorkHere`).checked,
+            from: `${v(`workExperience-${n}--startDate-month`).value}/${v(`workExperience-${n}--startDate-year`).value}`,
+            to: `${v(`workExperience-${n}--endDate-month`).value}/${v(`workExperience-${n}--endDate-year`).value}`,
+            description: v(`workExperience-${n}--roleDescription`).value,
+          }
+        : null)).filter(Boolean);
+    };
+    const experience = await page.goto(`${base}/workday-experience`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, jobs, read }) => {
+        const m = await import(`${b}/autofill.js`);
+        const before = m.findQuestions().map((q) => q.question);
+        const bare = m.fillForm({ address_city: 'McLean' });
+        const report = m.fillForm({ address_city: 'McLean' }, { history: jobs });
+        return { before, bare: bare.filled.map((f) => f.key), filled: report.filled.map((f) => f.key), jobs: new Function(`return (${read})()`)() };
+      }, { b: base, jobs: JOBS, read: readJobs.toString() }),
+    );
+    group('Workday: My Experience, from the resume being sent');
+    check(
+      'each job goes into a block of its own, in the resume\'s order',
+      experience.jobs[0]?.company === 'Vega Analytics' && experience.jobs[0]?.title === 'Backend Engineer' &&
+        experience.jobs[1]?.company === 'Acme Co.' && experience.jobs[1]?.title === 'Software Engineer Co-op',
+      JSON.stringify(experience.jobs.map((j) => [j.company, j.title])),
+    );
+    check(
+      'with the lines the resume prints for it as the Role Description',
+      experience.jobs[0]?.description === JOBS[0].description && experience.jobs[1]?.description === JOBS[1].description,
+      JSON.stringify(experience.jobs.map((j) => j.description)),
+    );
+    check(
+      'the dates in the month and year boxes, and "I currently work here" for the one that is still going',
+      experience.jobs[0]?.from === '06/2023' && experience.jobs[0]?.to === '/' && experience.jobs[0]?.current === true &&
+        experience.jobs[1]?.from === '07/2022' && experience.jobs[1]?.to === '12/2022' && experience.jobs[1]?.current === false,
+      JSON.stringify(experience.jobs.map((j) => [j.from, j.to, j.current])),
+    );
+    check('the job\'s place, not the applicant\'s home', experience.jobs.every((j) => j.location === 'Boston, MA'), JSON.stringify(experience.jobs.map((j) => j.location)));
+    check('and nothing at all without a resume to fill it from', experience.bare.length === 0, JSON.stringify(experience.bare));
+    check(
+      'a Role Description is not offered as a question for the AI to write',
+      JSON.stringify(experience.before) === '["Why do you want to work on this team?"]',
+      JSON.stringify(experience.before),
+    );
+
+    const begun = await page.goto(`${base}/workday-experience-begun`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, jobs, read }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm({}, { history: jobs });
+        return {
+          jobs: new Function(`return (${read})()`)(),
+          skipped: report.skipped.filter((x) => x.key === 'work_history').map((x) => x.description),
+          questions: m.findQuestions().map((q) => q.question),
+        };
+      }, { b: base, jobs: JOBS, read: readJobs.toString() }),
+    );
+    check(
+      'a block somebody has begun is filled for the job it names',
+      begun.jobs[0]?.company === 'Acme' && begun.jobs[0]?.title === 'Software Engineer Co-op' && begun.jobs[0]?.description === JOBS[1].description,
+      JSON.stringify(begun.jobs[0]),
+    );
+    check(
+      'and the next empty one takes the job still left, keeping what was typed there',
+      begun.jobs[1]?.company === 'Vega Analytics' && begun.jobs[1]?.description === 'My own words about it.',
+      JSON.stringify(begun.jobs[1]),
+    );
+    check(
+      'a job the resume does not list is left exactly as it was, and said so',
+      begun.jobs[2]?.company === 'Globex' && begun.jobs[2]?.title === '' && begun.jobs[2]?.description === '' && JSON.stringify(begun.skipped) === '["Globex"]',
+      JSON.stringify({ job: begun.jobs[2], skipped: begun.skipped }),
+    );
+    check(
+      'while a description outside the work history is still a question',
+      JSON.stringify(begun.questions) === '["Project description"]',
+      JSON.stringify(begun.questions),
     );
   } finally {
     await browser.close();

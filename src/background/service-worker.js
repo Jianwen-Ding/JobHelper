@@ -1531,9 +1531,9 @@ const handlers = {
   },
 
   /** Fill the form in every sub-frame from the same profile. */
-  async fillFrames({ fields }, tab) {
+  async fillFrames({ fields, history = [] }, tab) {
     if (tab?.id === undefined) return { frames: [] };
-    const replies = await askFrames(tab.id, { type: 'jh-frame-fill', payload: { fields } });
+    const replies = await askFrames(tab.id, { type: 'jh-frame-fill', payload: { fields, history } });
     return { frames: replies.map(({ frameId, data }) => ({ frameId, ...data })) };
   },
 
@@ -2424,12 +2424,17 @@ const handlers = {
    */
   async autofillData(_payload, tab) {
     const trail = await readTrail(tab?.id);
-    const choices = trail?.work?.spec?.choices;
-    const query =
-      choices && typeof choices === 'object' && Object.keys(choices).length > 0
-        ? `?choices=${encodeURIComponent(JSON.stringify(choices))}`
-        : '';
-    return serverFetch(`/api/autofill${query}`);
+    const spec = trail?.work?.spec;
+    /*
+     * The resume itself, not only its `choices`: a form's work-history blocks
+     * want the jobs it lists and the lines it prints for each, which the
+     * wordings alone cannot say. The card's resume where there is one, and
+     * otherwise the one picked in the popup — a form reached before any card
+     * was put up is still being filled for somebody's resume.
+     */
+    const settings = spec ? null : await getSettings().catch(() => null);
+    const which = spec ? writingFrom(spec) : settings?.baseResumeId ? { resumeId: settings.baseResumeId } : {};
+    return serverFetch('/api/autofill', { method: 'POST', body: JSON.stringify(which) });
   },
 
   /**
