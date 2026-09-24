@@ -437,7 +437,23 @@ async function main() {
       await ask(driver, 'writeApplication', { spec, job, letter: { required: true, body: '' }, questions: [] });
       await ask(driver, 'refine', { spec, job, feedback: 'More Kafka.' });
       await ask(driver, 'renderLetter', { body: 'Dear Helios,', spec });
-      for (const route of ['/api/ai/cover-letter', '/api/extension/write', '/api/ai/tailor', '/api/render/letter']) {
+      // One answer drafted on its own goes beside the same resume, so the
+      // store can show it as what the reader already has.
+      await ask(driver, 'answerQuestion', { question: 'Why us?', force: true, spec, job });
+      /*
+       * A redraft told what to change carries the draft and the words about
+       * it; a plain draft asks exactly what it always asked.
+       */
+      await ask(driver, 'answerQuestion', { question: 'Why us?', force: true, spec, job, draft: 'My first go.', feedback: ' Shorter. ' });
+      const redraft = JSON.parse(store.sentTo('/api/ai/answer').slice(-1)[0]?.body || '{}');
+      check('a redraft of an answer carries the draft and what to change', redraft.draft === 'My first go.' && redraft.feedback === 'Shorter.', JSON.stringify(redraft));
+      await ask(driver, 'coverLetter', { spec, job, draft: 'Dear Helios,', feedback: 'Open with the posting.' });
+      const letterRedraft = JSON.parse(store.sentTo('/api/ai/cover-letter').slice(-1)[0]?.body || '{}');
+      check('and so does a redraft of the letter', letterRedraft.draft === 'Dear Helios,' && letterRedraft.feedback === 'Open with the posting.', JSON.stringify(letterRedraft));
+      await ask(driver, 'coverLetter', { spec, job, draft: '   ', feedback: '' });
+      const plain = JSON.parse(store.sentTo('/api/ai/cover-letter').slice(-1)[0]?.body || '{}');
+      check('while a plain draft sends neither', !('draft' in plain) && !('feedback' in plain), JSON.stringify(Object.keys(plain)));
+      for (const route of ['/api/ai/cover-letter', '/api/extension/write', '/api/ai/tailor', '/api/render/letter', '/api/ai/answer']) {
         const body = JSON.parse(store.sentTo(route).slice(-1)[0]?.body || '{}');
         check(
           `${route} names the resume it was copied from, and carries the copy`,
@@ -1080,10 +1096,17 @@ async function main() {
       await ask(driver, 'clearTrail', {});
       await ask(driver, 'analyze', { url: 'http://g.example/jobs/intern', title: 'Helios', html: '<p>intern</p>', company: 'Helios' });
 
-      const asked = () => store.sentTo('/api/autofill').slice(-1)[0]?.query;
+      /*
+       * The resume itself, not only its choices: a work-history section wants
+       * the jobs it lists and the lines it prints, which the wordings alone
+       * cannot say. POST, because the card's resume is a proposal the store
+       * has not been given.
+       */
+      const hit = () => store.sentTo('/api/autofill').slice(-1)[0];
+      const asked = () => JSON.parse(hit()?.body || '{}');
 
       await ask(driver, 'autofillData', {});
-      check('with nothing built, it asks without naming a resume', asked()?.has('choices') === false, asked()?.toString());
+      check('with nothing built, it asks without a resume of its own', !asked().spec && hit()?.method === 'POST', hit()?.body ?? '(not sent)');
 
       await ask(driver, 'saveWork', {
         work: {
@@ -1092,8 +1115,12 @@ async function main() {
         },
       });
       await ask(driver, 'autofillData', {});
-      const sent = JSON.parse(asked()?.get('choices') ?? '{}');
-      check('once a resume is built, its choices go with the request', sent['edu_neu.dates'] === 'v_dec2026', JSON.stringify(sent));
+      const sent = asked();
+      check(
+        'once a resume is built, it goes with the request, choices and all',
+        sent.spec?.id === 'job-intern' && sent.spec?.choices?.['edu_neu.dates'] === 'v_dec2026',
+        JSON.stringify(sent),
+      );
     }
 
     group('Holding a space in the editor');

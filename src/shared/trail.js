@@ -667,6 +667,38 @@ export function sameApplication(trail, page, now = Date.now()) {
   return judgeApplication(trail, page, now) !== 'different';
 }
 
+/**
+ * Whether a page carries on the application in hand closely enough to be read
+ * without being asked about: reached by pressing Apply on it, or further down
+ * the same posting's own address on the same site.
+ *
+ * For the score gate, which decides whether a page is read at all, and which
+ * let a page below the threshold through only once something had been written
+ * into the application. Pressing Apply straight away writes nothing, and the
+ * first page of a form can be almost empty — Oracle Recruiting Cloud's is an
+ * email box and a terms box, reached by `pushState`, under a title that names
+ * no role the way the title test reads it — so the card went, and the form
+ * had no "Autofill this form" on it at all.
+ *
+ * Narrower than `sameApplication` on purpose. That one also joins a page on
+ * another site by its referrer or by a link, which is right for deciding where
+ * a page that is being read belongs and wrong for deciding to read it: every
+ * "About us" and "Benefits" link out of a posting would bring the card with it.
+ * The click and the posting's own path are the two witnesses that say this
+ * page is the application rather than merely near it.
+ */
+export function carriesOn(trail, page, now = Date.now()) {
+  if (!trail?.pages?.length || !page?.url) return false;
+  if (judgeApplication(trail, page, now) === 'different') return false;
+  if (wasExpected(trail, page.url, now)) return true;
+  const here = hostOf(page.url);
+  if (!here) return false;
+  return trail.pages.some((p) => {
+    const there = hostOf(p.url);
+    return Boolean(there) && (here === there || rootOf(here) === rootOf(there)) && relatedPath(page.url, p.url);
+  });
+}
+
 /** The trail without the page text, or the work, which the card has no use for. */
 export function summarise(trail) {
   const { work, expecting, ...rest } = trail;
@@ -854,6 +886,29 @@ const STATED_PERSONAL =
 const CONTROL =
   'input, select, textarea, button, [contenteditable], [role="radio"], [role="checkbox"], [role="option"], [role="combobox"], [role="listbox"], [role="radiogroup"]';
 
+/*
+ * Unless the pair is a requirement rather than an answer.
+ *
+ * A posting states what it asks of the applicant in the shape a review step
+ * writes out what the applicant said: "Driver's license: Required", "Minimum
+ * age: 21", a passport over "Must travel to Canada monthly". Every one was
+ * emptied — measured through this module on a delivery-driver posting, eight
+ * of its ten requirement lines went to the AI as the label alone — so the
+ * letter and the answers were written without the job's own requirements.
+ *
+ * What marks one is the language of a requirement: on the label, "Minimum
+ * age" or "Age requirement"; after it, "required", "must", "18 or older". Not
+ * "required" on the label, which is how a form marks a field — "Gender
+ * (Required)" is a question, and its answer still goes. And an answer to one
+ * of these questions does not talk like a requirement: "Female",
+ * "04/02/1999", "I am not a protected veteran". "Or older" alone does both —
+ * "18 or older" is a posting's minimum and "40 and over" an age bracket
+ * somebody ticked — so it counts only at the ages a minimum is set at.
+ */
+const REQUIREMENT_LABEL = /\b(minimum|requirements?|at\s+least)\b/i;
+const REQUIREMENT_SAID =
+  /\b(required|requirements?|must|minimum|at\s+least|mandatory|preferred|encouraged)\b|\b(?:1[6-9]|2[01])(?:\s*\+|\s+(?:years?\s+(?:of\s+age\s+|old\s+)?)?(?:or|and)\s+(?:older|over|above))/i;
+
 function scrubStatedAnswers(root) {
   const labels = [];
   const walker = (root.ownerDocument ?? root).createTreeWalker(root, 4 /* NodeFilter.SHOW_TEXT */);
@@ -865,10 +920,12 @@ function scrubStatedAnswers(root) {
     const said = node.data.trim();
     const inline = /^([^:]{1,80}):\s*\S/.exec(said);
     if (inline && STATED_PERSONAL.test(inline[1])) {
-      node.data = `${inline[1]}:`;
+      const rest = said.slice(inline[0].length - 1);
+      if (!REQUIREMENT_LABEL.test(inline[1]) && !REQUIREMENT_SAID.test(rest)) node.data = `${inline[1]}:`;
       continue;
     }
     if (said.length > 80 || !STATED_PERSONAL.test(said)) continue;
+    if (REQUIREMENT_LABEL.test(said)) continue;
     let label = node.parentElement;
     if (!label || label.textContent.trim() !== said) continue;
     // Up through the wrappers that hold nothing else, to what sits beside it.
@@ -879,6 +936,7 @@ function scrubStatedAnswers(root) {
     let next = label.nextSibling;
     while (next && next.nodeType === 3 && !next.data.trim()) next = next.nextSibling;
     if (!next || (next.textContent ?? '').trim().length > 200) continue;
+    if (REQUIREMENT_SAID.test(next.textContent ?? '')) continue;
     if (next.nodeType === 3) next.data = ' ';
     else if (next.nodeType === 1 && !next.matches(CONTROL) && !next.querySelector(CONTROL)) next.textContent = '';
   }

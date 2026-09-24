@@ -252,6 +252,44 @@ const REMOUNTS = page(`
   </script>
 `);
 
+/**
+ * Greenhouse's job board, as Stripe's embed draws it and as measured there:
+ * each upload is a `file-upload__wrapper` holding the Attach button and a
+ * hidden input. On \`change\` the input goes, a progress bar stands in while
+ * the file is sent to the board's storage, and the name is written half a
+ * second later. \`?fail\` ends the upload in an error naming the file.
+ */
+const GREENHOUSE_BOARD = page(`
+  <div class="application--questions">
+    ${['resume', 'cover_letter'].map((id) => `<div class="field-wrapper"><div class="file-upload" id="field-${id}">
+      <div class="upload-label">${id === 'resume' ? 'Resume/CV' : 'Cover Letter'}</div>
+      <div class="file-upload__wrapper"><div class="button-container"><div class="secondary-button"><div>
+        <button type="button" class="btn btn--rounded">Attach</button>
+        <label class="visually-hidden" for="${id}">Attach</label>
+        <input id="${id}" class="visually-hidden" type="file" accept=".pdf,.doc,.docx,.txt,.rtf">
+      </div></div></div></div>
+    </div></div>`).join('')}
+  </div>
+  <script>
+    window.held = {};
+    for (const input of document.querySelectorAll('input[type=file]')) {
+      input.addEventListener('change', () => {
+        const file = input.files[0];
+        const wrapper = input.closest('.file-upload__wrapper');
+        wrapper.innerHTML = '<div role="progressbar" aria-valuenow="0" class="file-upload__progressbar"><span></span></div>';
+        setTimeout(() => {
+          const fail = location.search.includes('fail');
+          if (!fail) window.held[input.id] = file.name;
+          wrapper.innerHTML = fail
+            ? '<div class="helper-text helper-text--error"><p></p></div>'
+            : '<div class="file-upload__filename"><p class="body body__secondary"></p></div>';
+          wrapper.querySelector('p').textContent = fail ? file.name + ' could not be uploaded' : file.name;
+        }, 500);
+      });
+    }
+  </script>
+`);
+
 /** A form built as a web component, which is how a modern one is built. */
 const SHADOW = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head>
 <body><div id="host"></div><script>
@@ -404,6 +442,7 @@ const PAGES = {
   '/reclaims': RECLAIMS,
   '/keeps-as-chip': KEEPS_AS_CHIP,
   '/remounts': REMOUNTS,
+  '/greenhouse-board': GREENHOUSE_BOARD,
   '/shadow': SHADOW,
   '/menu': MENU,
   '/dropzone': DROPZONE,
@@ -1016,6 +1055,22 @@ async function main() {
       check('and it is not claimed as attached', report.placed.length === 0, JSON.stringify(report.placed));
     }
 
+    group('A board that uploads the file before it shows it');
+    {
+      const { report } = await run('/greenhouse-board', [filed('Jianwen-Ding-Resume.pdf'), filed('Jianwen-Ding-Cover-Letter.pdf')]);
+      const held = await p.evaluate(() => window.held);
+      check('the board kept both', held.resume === 'Jianwen-Ding-Resume.pdf' && held.cover_letter === 'Jianwen-Ding-Cover-Letter.pdf', JSON.stringify(held));
+      check('and both are reported as attached, not refused', report.placed.length === 2 && report.unplaced.length === 0, JSON.stringify(report));
+    }
+    {
+      const { report } = await run('/greenhouse-board?fail', [filed('Jianwen-Ding-Resume.pdf')]);
+      check(
+        'while an upload that ends in an error is not claimed as attached',
+        report.placed.every((f) => f.sure === false),
+        JSON.stringify(report),
+      );
+    }
+
     /*
      * A zero-byte body is what a file still being written looks like — the
      * folder is streamed to as each document is built. Nothing noticed:
@@ -1093,6 +1148,14 @@ async function main() {
       const { inBoxes, report } = await dropAt('/hidden', 'button', [filed('Jianwen-Ding-Resume.pdf')]);
       check('the hidden input behind it takes the file', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes.rs));
       check('and it is reported as placed', report.placed.length === 1, JSON.stringify(report.placed));
+    }
+
+    group('A chip let go of over the Attach button on a Greenhouse board');
+    {
+      const { report } = await dropAt('/greenhouse-board', '#field-cover_letter button', [filed('Jianwen-Ding-Cover-Letter.pdf')]);
+      const held = await p.evaluate(() => window.held);
+      check('the box behind that button takes it', held.cover_letter === 'Jianwen-Ding-Cover-Letter.pdf' && !held.resume, JSON.stringify(held));
+      check('and the card is told it went in', report.placed.length === 1, JSON.stringify(report));
     }
 
     group('A chip let go of on a drop zone that has no input at all');

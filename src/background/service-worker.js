@@ -9,11 +9,14 @@ import { getSettings } from '../shared/config.js';
 import {
   EXPECTATION_MS,
   employerKey,
+  hostOf,
+  rootOf,
   judgeApplication,
   keepPages,
   plainlyAnotherRole,
   lighten,
   sameApplication,
+  carriesOn,
   summarise,
   trimForStorage,
   wasExpected,
@@ -159,6 +162,17 @@ function stopReason() {
   const err = new Error('Stopped.');
   err.jobhelper = { stopped: true };
   return err;
+}
+
+/**
+ * A draft and what to change about it, only as much of it as was given — so a
+ * plain first draft asks exactly what it always asked.
+ */
+function revision({ draft, feedback }) {
+  const out = {};
+  if (typeof draft === 'string' && draft.trim()) out.draft = draft;
+  if (typeof feedback === 'string' && feedback.trim()) out.feedback = feedback.trim();
+  return out;
 }
 
 /**
@@ -1392,6 +1406,14 @@ const savesInFlight = new Map();
 const SEND_WAITS_FOR_SAVE_MS = 10_000;
 
 /**
+ * How long after the application was last worked on a page saying it was
+ * received still counts as saying so about that one. An hour: a long form is
+ * written in one sitting, and a tab come back to the next day on another
+ * posting's confirmation is not this application's.
+ */
+const RECEIPT_WINDOW_MS = 60 * 60 * 1000;
+
+/**
  * What `saveWork` does, returning the draft-opening write it started so the
  * handler can say when it has settled.
  */
@@ -1519,9 +1541,9 @@ const handlers = {
   },
 
   /** Fill the form in every sub-frame from the same profile. */
-  async fillFrames({ fields }, tab) {
+  async fillFrames({ fields, history = [] }, tab) {
     if (tab?.id === undefined) return { frames: [] };
-    const replies = await askFrames(tab.id, { type: 'jh-frame-fill', payload: { fields } });
+    const replies = await askFrames(tab.id, { type: 'jh-frame-fill', payload: { fields, history } });
     return { frames: replies.map(({ frameId, data }) => ({ frameId, ...data })) };
   },
 
@@ -1742,16 +1764,23 @@ const handlers = {
    * in it, the card comes up and `remember` decides whether this page joins,
    * branches, or starts afresh — which is the question that was owed.
    *
-   * Deliberately not about whether this page belongs. That is
-   * `sameApplication`'s judgement and it is made later, with the page read;
-   * this only says there is something here to be judged against.
+   * Where the page belongs is still `sameApplication`'s judgement, made
+   * later with the page read; this only says there is something here to be
+   * judged against — or, with `carriesOn`, that this page is plainly the next
+   * page of it: pressed into from the posting, or further down the posting's
+   * own address. That is the case "something written" missed: somebody who
+   * presses Apply at once has written nothing, and the first form page of an
+   * Oracle application is an email box under the posting's title, scoring
+   * under the threshold. See `carriesOn` in trail.js for why the looser joins
+   * — a referrer, a link — are not enough to read a page on.
    */
-  async openHere(_payload, tab) {
+  async openHere({ page } = {}, tab) {
     await inheritIfNew(tab?.id, tab?.openerTabId);
     const trail = await readTrail(tab?.id);
     return {
       open: (trail?.pages ?? []).length > 0,
       made: madeSomething(trail?.work),
+      carriesOn: Boolean(page && carriesOn(trail, page)),
       job: nameOfTrail(trail),
     };
   },
@@ -2405,12 +2434,17 @@ const handlers = {
    */
   async autofillData(_payload, tab) {
     const trail = await readTrail(tab?.id);
-    const choices = trail?.work?.spec?.choices;
-    const query =
-      choices && typeof choices === 'object' && Object.keys(choices).length > 0
-        ? `?choices=${encodeURIComponent(JSON.stringify(choices))}`
-        : '';
-    return serverFetch(`/api/autofill${query}`);
+    const spec = trail?.work?.spec;
+    /*
+     * The resume itself, not only its `choices`: a form's work-history blocks
+     * want the jobs it lists and the lines it prints for each, which the
+     * wordings alone cannot say. The card's resume where there is one, and
+     * otherwise the one picked in the popup — a form reached before any card
+     * was put up is still being filled for somebody's resume.
+     */
+    const settings = spec ? null : await getSettings().catch(() => null);
+    const which = spec ? writingFrom(spec) : settings?.baseResumeId ? { resumeId: settings.baseResumeId } : {};
+    return serverFetch('/api/autofill', { method: 'POST', body: JSON.stringify(which) });
   },
 
   /**
@@ -2509,7 +2543,7 @@ const handlers = {
   },
 
   /** Answer one question, reusing a stored answer unless asked to redraft. */
-  async answerQuestion({ question, force, job, limit }, tab) {
+  async answerQuestion({ question, force, job, limit, spec, draft, feedback }, tab) {
     return stoppably(tab, 'answerQuestion', (signal) =>
       serverFetch('/api/ai/answer', {
         method: 'POST',
@@ -2520,6 +2554,16 @@ const handlers = {
           force,
           // The box's own `maxlength`, so the draft is written to fit it.
           limit,
+          /*
+           * The resume this answer goes beside, so the prompt can show it as
+           * what the reader already has. Without it the answer was written
+           * with no idea which lines were already on the page — and retold
+           * one of them. See `writingFrom`.
+           */
+          ...(spec ? writingFrom(spec) : {}),
+          // A redraft told what to change: the answer in the box, and what
+          // they said about it. See `whatToChange` in ResumeM-M.
+          ...revision({ draft, feedback }),
           // Mapped into the server's shape, as `coverLetter` does below.
           job: job
             ? {
@@ -2599,7 +2643,7 @@ const handlers = {
    * Draft a cover letter. The server returns the relevant previous letters
    * whether or not the AI runs, so there is always something to start from.
    */
-  async coverLetter({ spec, job }, tab) {
+  async coverLetter({ spec, job, draft, feedback }, tab) {
     return stoppably(tab, 'coverLetter', (signal) =>
       serverFetch('/api/ai/cover-letter', {
         method: 'POST',
@@ -2607,6 +2651,7 @@ const handlers = {
         timeoutMs: SLOW_TIMEOUT_MS,
         body: JSON.stringify({
           ...writingFrom(spec),
+          ...revision({ draft, feedback }),
           job: {
             jobTitle: job.title,
             company: job.company,
@@ -2681,8 +2726,53 @@ const handlers = {
    * application in flight, so the worst this can do is finish something that
    * had already started.
    */
-  async applicationSentHere({ note, url }, tab) {
+  async applicationSentHere({ note, url, receipt = false, above = [] }, tab) {
+    /*
+     * A receipt is often the page after the form, and the form's last save
+     * of the work is sent as it unloads — so the two cross: measured on the
+     * send walk, a press two seconds after the build reached the receipt
+     * before that save had written the trail, found no work to file it
+     * under, and the application stayed at Applying. Registered the moment
+     * it arrives, so waiting for it here is waiting for the right thing.
+     */
+    /*
+     * And a receipt from a frame has the form's page still around it, holding
+     * the card: that page is asked to save first, as a send from a frame is
+     * (see `applicationSent`), because the work it last saved may not yet
+     * say which job this is.
+     */
+    const inFrame = above.length > 0;
+    let saving = receipt ? savesInFlight.get(tab?.id) : null;
+    if (receipt && !saving && inFrame && tab?.id !== undefined) {
+      await chrome.tabs.sendMessage(tab.id, { type: 'jh-flush-work' }, { frameId: 0 }).catch(() => undefined);
+      saving = savesInFlight.get(tab.id);
+    }
+    if (saving) await Promise.race([saving, new Promise((r) => setTimeout(r, SEND_WAITS_FOR_SAVE_MS))]);
     const trail = await readTrail(tab?.id);
+    /*
+     * A page saying it has received an application is evidence about the
+     * application this tab is on only if the tab is still on it: the same
+     * sitting, and a site that application has already been through. The
+     * receipt is often on a page the card never looked at — a Greenhouse
+     * confirmation inside Stripe's page, Workday's dialog — so it names
+     * nothing itself. The top page is asked only when the receipt is in a
+     * frame, where the top page is still the one the application was built
+     * on; a receipt that replaced the page would be asking the confirmation
+     * itself, which has nothing true to say about which job it was.
+     *
+     * `above` is the origins the frame sits under, so a receipt drawn in an
+     * embed is judged by the careers site around it.
+     */
+    if (receipt) {
+      const named =
+        trail?.work?.spec?.generatedFor ?? (inFrame && tab?.id !== undefined ? await askThePage(tab.id) : null);
+      if (!named?.company || !named?.role) return { ok: false };
+      if (!(Date.now() - (trail.at ?? 0) <= RECEIPT_WINDOW_MS)) return { ok: false };
+      const been = new Set((trail.pages ?? []).map((p) => rootOf(hostOf(p.url))).filter(Boolean));
+      const here = [url, ...above].map((u) => rootOf(hostOf(u))).filter(Boolean);
+      if (!here.some((r) => been.has(r))) return { ok: false };
+      return handlers.applicationSent({ company: named.company, role: named.role, url, note }, tab);
+    }
     /*
      * The trail first, and the page itself when the trail has nothing yet.
      *

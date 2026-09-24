@@ -23,7 +23,16 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { serveFixtures, findChromium, pointExtensionAt, requireOpenSave, cleanStore } from './fixtures.mjs';
-import { SENDS, DOES_NOT_SEND, FRAME_DOCUMENTS } from './ats-web.mjs';
+import {
+  SENDS,
+  DOES_NOT_SEND,
+  FRAME_DOCUMENTS,
+  EMBEDDED_APPLY,
+  RECEIPT_APPLY,
+  RECEIPT_ELSEWHERE,
+  RECEIPT_EMBED,
+  RECEIPT_DOCUMENTS,
+} from './ats-web.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
@@ -105,7 +114,13 @@ async function press(page, name, { inFrame = false } = {}) {
  * the answer arrives ends each one when it is true — which for a submission
  * is a few hundred milliseconds, not two seconds.
  */
-async function awaitFiled(company, wanted, within = 9000) {
+/*
+ * Longer than the worker's own wait: a send is held until the save flushed
+ * with it has landed, for up to `SEND_WAITS_FOR_SAVE_MS` (ten seconds), so a
+ * window shorter than that fails a send that is merely slow. A send that has
+ * landed ends the wait at once, so the length only costs time on a failure.
+ */
+async function awaitFiled(company, wanted, within = 15_000) {
   const until = Date.now() + within;
   for (;;) {
     const now = await filed(company);
@@ -212,14 +227,22 @@ async function* inBatches(list, run) {
  * been filed as sent before its form was submitted. It had been sent, the run
  * before.
  */
-const MINE = [...SENDS, ...DOES_NOT_SEND]
+const MINE = [...SENDS, ...DOES_NOT_SEND, RECEIPT_APPLY, RECEIPT_ELSEWHERE, RECEIPT_EMBED]
   .map((f) => f.company)
   .concat(['Novena', 'Larkspur', 'Marlow Systems']);
 
 async function main() {
   await requireOpenSave(SERVER);
   await cleanStore(SERVER, MINE).catch(() => undefined);
-  const fixtures = await serveFixtures([...SENDS, ...DOES_NOT_SEND, ...FRAME_DOCUMENTS]);
+  const fixtures = await serveFixtures([
+    ...SENDS,
+    ...DOES_NOT_SEND,
+    ...FRAME_DOCUMENTS,
+    RECEIPT_APPLY,
+    RECEIPT_ELSEWHERE,
+    RECEIPT_EMBED,
+    ...RECEIPT_DOCUMENTS,
+  ]);
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-send-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     executablePath: findChromium(),
@@ -310,6 +333,97 @@ async function main() {
         );
         check(`${fixture.name}: nothing thrown`, errors.length === 0, errors.join(' | '));
       }
+    }
+
+    /*
+     * A send from inside a frame asks the top document for its work, and is
+     * answered once that work has been saved.
+     *
+     * The frame's script runs no keeper — the card and the keeper are in the
+     * top document — so a form submitted inside an iframe flushes nothing, and
+     * the worker asks the top frame for a save before it files the send. The
+     * answer to that question was written into the frames' own listener,
+     * behind a check that only the top frame answers, which in that listener
+     * is never so: nobody answered, and the send was filed without waiting.
+     * "embedded-apply" above saw it only when Submit beat the keeper's
+     * two-second tick — the draft 1.4 seconds after the send — so it failed
+     * now and then rather than every time. Asked directly here, it fails
+     * every time it is broken.
+     */
+    group('A send from inside a frame asks the top document for its work');
+    {
+      const page = await context.newPage();
+      try {
+        // At an address of its own. The walk above closed its tab on this
+        // posting, and a closed tab's work waits at its address for the next
+        // tab opened there — so the same address arrives with the resume
+        // already built and no "Build resume" to press.
+        await page.goto(`${fixtures.urlFor(EMBEDDED_APPLY)}?asked=1`, { waitUntil: 'domcontentloaded' });
+        await settled(page);
+        await cardOf(page).getByRole('button', { name: 'Build resume' }).click();
+        await cardOf(page).locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
+
+        const asked = await (context.serviceWorkers()[0] ?? worker).evaluate(async (url) => {
+          const tab = (await chrome.tabs.query({})).find((t) => t.url === url);
+          if (!tab) return { reply: { threw: `no tab at ${url}` }, began: 0, savedAt: 0 };
+          const key = `trail:${tab.id}`;
+          const began = Date.now();
+          let reply;
+          try {
+            reply = await chrome.tabs.sendMessage(tab.id, { type: 'jh-flush-work' }, { frameId: 0 });
+          } catch (err) {
+            reply = { threw: String(err?.message ?? err) };
+          }
+          const savedAt = (await chrome.storage.session.get(key))[key]?.at ?? 0;
+          return { reply: reply ?? null, began, savedAt };
+        }, page.url());
+
+        check('the top document answers the worker', asked.reply?.ok === true, JSON.stringify(asked.reply));
+        check(
+          'and only once the work it was asked for has been saved',
+          asked.savedAt >= asked.began,
+          asked.savedAt ? `saved ${asked.savedAt - asked.began}ms after the ask` : '(never saved)',
+        );
+      } finally {
+        await page.close().catch(() => undefined);
+      }
+    }
+
+    /*
+     * A press nobody saw, and the page after it saying it has the
+     * application. The press is caught from outside the portal on a control
+     * that is entirely the portal's; the receipt is the stronger evidence and
+     * nothing listened for it. Walked one at a time: the second is judged by
+     * waiting, and a wait is only a fair window on its own.
+     */
+    group('A send whose press was never seen, taken from the page that says it arrived');
+    {
+      const { before, after } = await walk(context, fixtures, RECEIPT_APPLY);
+      check('the press itself is not one the watcher knows', before.application?.status === 'applying', before.application?.status ?? '(none)');
+      check('the receipt files it as sent', after.application?.status === 'applied', after.application?.status ?? '(none)');
+      check('and closes its draft', after.draft?.status === 'submitted', after.draft?.status ?? '(none)');
+      check(
+        'saying why',
+        /said the application was received/.test(after.application?.history?.at(-1)?.note ?? ''),
+        after.application?.history?.at(-1)?.note ?? '(no history)',
+      );
+    }
+    {
+      const { after } = await walk(context, fixtures, RECEIPT_EMBED);
+      check(
+        'and one drawn inside an embed from another site, judged by the page around it',
+        after.application?.status === 'applied',
+        after.application?.status ?? '(none)',
+      );
+    }
+    {
+      const wrong = { ...RECEIPT_ELSEWHERE, sent: false };
+      const { after } = await walk(context, fixtures, wrong);
+      check(
+        'while a receipt on another site says nothing about this one',
+        after.application?.status === 'applying',
+        after.application?.status ?? '(none)',
+      );
     }
 
     /*
@@ -579,6 +693,39 @@ async function main() {
             recorded === shouldRecord,
             `recorded=${recorded}`,
           );
+        } finally {
+          await bare.close().catch(() => undefined);
+        }
+      }
+    }
+
+    /*
+     * What counts as the page saying so. Against the real module in a bare
+     * page, like the refusals above: the question is only which words, where.
+     */
+    group('What a receipt looks like');
+    {
+      const src = fs.readFileSync(path.join(extensionRoot, 'src/shared/sending.js'), 'utf8');
+      const cases = [
+        ['Greenhouse\u2019s confirmation heading', true, '<h1>Thank you for applying.</h1>'],
+        ['a dialog drawn over the form', true, '<form><input></form><div role="dialog"><h2>Application Submitted</h2><p>Your application has been submitted.</p></div>'],
+        ['a status line', true, '<div role="status">Your application was successfully submitted</div>'],
+        ['a title and nothing else', true, '<title>Application received</title><p>Done.</p>', true],
+        ['thanks for interest, on the description', false, '<h2>Thank you for your interest in Acme</h2>'],
+        ['the invitation to apply, on the form', false, '<h2>Submit your application</h2>'],
+        ['a thank-you the form holds hidden until later', false, '<h1 style="display:none">Thank you for applying</h1><form><input></form>'],
+        ['the words in a paragraph of help text', false, '<p>Once your application has been submitted you will get an email.</p>'],
+        ['a status too long to be one line', false, `<div role="status">${'Your application has been submitted to the queue. '.repeat(6)}</div>`],
+      ];
+      for (const [what, says, html, own] of cases) {
+        const bare = await context.newPage();
+        try {
+          await bare.setContent(own ? `<!doctype html>${html}` : `<!doctype html><title>Apply</title>${html}`);
+          const got = await bare.evaluate(async (js) => {
+            const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+            return mod.saysItWasReceived(document);
+          }, src);
+          check(says ? `${what} says it` : `${what} does not`, got === says, `said=${got}`);
         } finally {
           await bare.close().catch(() => undefined);
         }

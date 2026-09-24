@@ -429,6 +429,106 @@ export const WORKDAY = {
 };
 
 /**
+ * Oracle Recruiting Cloud's shape, taken from a live one.
+ *
+ * A single-page board like Workday, with two differences that matter. The
+ * posting declares itself with JSON-LD and Apply takes it away; and the first
+ * page of the form is a sign-in step that is barely a form — an email box, a
+ * hidden honeypot, a terms box and Next — under the posting's own title,
+ * written "Role - Company Careers" with a plain hyphen, which names no role
+ * the way the title test reads it. So on its own the step scores under the
+ * threshold and says nothing, and only the tab's trail knows it is the form
+ * for the posting just read. The markup is Oracle's own: `input-row`
+ * classes, the `primary-email` and `honey-pot` names.
+ */
+const ORACLE_EMAIL_STEP = `
+    <h2>Job application form</h2>
+    <p>You don't need to have an account. Get started right away by simply using your email.</p>
+    <div class="input-row">
+      <label class="input-row__label" for="primary-email-0">Email Address</label>
+      <input class="input-row__control" type="email" id="primary-email-0" name="primary-email">
+    </div>
+    <div class="input-row" style="position:absolute;left:-9999px">
+      <label class="input-row__label" for="honey-pot-1">honeypot</label>
+      <input class="input-row__control" id="honey-pot-1" name="honey-pot" tabindex="-1" autocomplete="off">
+    </div>
+    <div class="input-row">
+      <input type="checkbox" id="legal-disclaimer-checkbox" class="input-row__hidden-control">
+      <label for="legal-disclaimer-checkbox">I agree with the terms and conditions</label>
+    </div>
+    <button type="button">Cancel</button><button type="submit">Next</button>`;
+
+export const ORACLE_CE = {
+  name: 'oracle-ce',
+  path: '/oracle/sites/jobs/job/11514',
+  company: 'Orion',
+  title: 'Platform Engineer',
+  html: page(
+    'Platform Engineer - Orion Careers',
+    'Orion',
+    `<div id="view">${ROLE_BODY}<p><button id="apply" type="button" class="apply-now-button">Apply Now</button></p></div>`,
+    `<script type="application/ld+json" id="ld">{"@context":"https://schema.org","@type":"JobPosting","title":"Platform Engineer","hiringOrganization":{"@type":"Organization","name":"Orion"}}</script>
+     <script>
+       document.getElementById('apply').addEventListener('click', () => {
+         history.pushState({}, '', '/oracle/sites/jobs/job/11514/apply/email');
+         document.getElementById('ld').remove();
+         document.getElementById('view').innerHTML = ${JSON.stringify(ORACLE_EMAIL_STEP)};
+       });
+     </script>`,
+  ),
+};
+
+/**
+ * Workday's steps, as they arrive: Apply routes to `/apply/applyManually`,
+ * the first step is drawn a few seconds later, and every step after it is
+ * swapped in where the last one was with the address unchanged.
+ *
+ * Reported against a live Workday application: "Why are you interested in
+ * working for CrowdStrike?" on the Application Questions step was not on the
+ * card. The page was read as the route changed, before the step existed, so
+ * it did not look like a form yet and the watcher that reads questions again
+ * as a form moves on was never started — and nothing after it changed the
+ * address to start a fresh read.
+ */
+const WORKDAY_INFO_STEP = `
+    <h2>My Information</h2>
+    <label for="wd-first">First Name</label><input id="wd-first" name="legalName--firstName">
+    <label for="wd-last">Last Name</label><input id="wd-last" name="legalName--lastName">
+    <label for="wd-email">Email Address</label><input id="wd-email" type="email">
+    <button type="button" id="wd-next">Save and Continue</button>`;
+const WORKDAY_QUESTIONS_STEP = `
+    <h2>Application Questions 1 of 2</h2>
+    <label for="wd-why">Why are you interested in working for Orion?</label>
+    <textarea id="wd-why"></textarea>
+    <label id="wd-elig-l">Are you eligible to work in the country in which this position is located?</label>
+    <button type="button" id="wd-elig" aria-haspopup="listbox" aria-labelledby="wd-elig-l">Select One</button>`;
+
+export const WORKDAY_STEPS = {
+  name: 'workday-steps',
+  path: '/wdsteps/orion/job/platform-engineer',
+  company: 'Orion',
+  title: 'Platform Engineer',
+  html: page(
+    'Platform Engineer at Orion',
+    'Orion',
+    `<div id="view">${ROLE_BODY}<p><button id="apply" type="button">Apply</button></p></div>`,
+    `<script>
+       document.getElementById('apply').addEventListener('click', () => {
+         history.pushState({}, '', '/wdsteps/orion/job/platform-engineer/apply/applyManually');
+         document.title = 'Workday';
+         document.getElementById('view').innerHTML = '<p>Loading…</p>';
+         setTimeout(() => {
+           document.getElementById('view').innerHTML = ${JSON.stringify(WORKDAY_INFO_STEP)};
+           document.getElementById('wd-next').addEventListener('click', () => {
+             document.getElementById('view').innerHTML = ${JSON.stringify(WORKDAY_QUESTIONS_STEP)};
+           });
+         }, 5000);
+       });
+     </script>`,
+  ),
+};
+
+/**
  * A company's own careers page handing off to an applicant tracking system:
  * a different host, and the link carries rel="noreferrer", so by the time the
  * second page loads there is nothing on it that points back.
@@ -1613,7 +1713,7 @@ export const NAVIGATION = [
   CYGNUS_BOARD, CYGNUS_ROLE_A, CYGNUS_ROLE_B, FRAMED_ROLE, FRAMED_FORM, ADVERT_FRAME, ADVERT_CONTENT,
   EMBEDDED_BOARD, EMBEDDED_BOARD_FRAME, BLOG_WITH_FORM, BLOG_ENQUIRY_FRAME, LATE_RENDER,
   CROWDED_PAGE, CROWDED_PAGE_FORM,
-  LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY,
+  LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY, ORACLE_CE, WORKDAY_STEPS,
   OWN_SITE, ATS_FORM, ATS_FORM_UNANSWERABLE, NEW_TAB_ROLE, NEW_TAB_FORM, NEW_TAB_ASIDE, NEW_TAB_BENEFITS, STEP_ONE, STEP_TWO, STEP_TWO_FORM, SPA_BOARD,
   ONE_ADDRESS_BOARD, SOLO_ROLE, SOLO_OTHER, SOLO_OTHER_FORM, NIMBUS_ROLE, NIMBUS_QUIET_FORM,
   LETTER_SPA, LETTER_SPA_FORM, LETTER_SPA_PLAIN,

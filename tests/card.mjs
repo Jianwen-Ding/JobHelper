@@ -3837,6 +3837,51 @@ async function main() {
   check('and offers nothing to press', returned.buttons.length === 0, JSON.stringify(returned.buttons));
   check('and drops the warning colour', returned.back === true, String(returned.back));
 
+  console.log('\nCounting the words of an answer');
+
+  /*
+   * Reported: "there should be a word count in the question side". The card
+   * counted characters only, and only where the box carried a `maxlength` —
+   * and the limits people are held to are the ones the question states in
+   * words, which no box enforces: SpaceX asks for "150 words or less".
+   */
+  const wordCounts = await inPage((createCard) => {
+    const handle = createCard({
+      analysis: { isJobPosting: true, job: { title: 'Engineer', company: 'SpaceX' }, spec: { id: 'job-spacex' }, rationale: [] },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      isForm: true,
+      onAction: async () => ({}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    handle.setQuestions([
+      {
+        question: 'Please provide a short description (150 words or less) of any hands-on technical project in which you participated.',
+        fieldId: 'jh-q-1',
+        answer: 'I built a rocket avionics board.',
+        confident: false,
+      },
+      { question: 'What technical skills do you hope to use in this position?', fieldId: 'jh-q-2', answer: '', confident: false },
+      { question: 'Tell us about yourself (no more than 200 words).', fieldId: 'jh-q-3', answer: '', confident: false },
+    ]);
+    const counts = () => [...root.querySelectorAll('.q .wordcount')].map((c) => ({ text: c.textContent, over: c.classList.contains('over') }));
+    const before = counts();
+    const box = root.querySelector('textarea[data-field^="answer:Please provide"]');
+    box.value = Array.from({ length: 151 }, (_, i) => `word${i}`).join(' ');
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    return { before, after: counts() };
+  });
+  check('an answer is counted against the limit its question states', wordCounts.before[0]?.text === '6 / 150 words', JSON.stringify(wordCounts.before[0]));
+  check('and a question with no limit still shows how long the answer is', wordCounts.before[1]?.text === '0 words', JSON.stringify(wordCounts.before[1]));
+  check('"no more than 200 words" is a limit too', wordCounts.before[2]?.text === '0 / 200 words', JSON.stringify(wordCounts.before[2]));
+  check(
+    'going over is said, as it is typed',
+    /^151 \/ 150 words — 1 over/.test(wordCounts.after[0]?.text ?? '') && wordCounts.after[0]?.over === true,
+    JSON.stringify(wordCounts.after[0]),
+  );
+
   console.log('\nThe card on a later page of an application');
 
   /*
@@ -3910,6 +3955,17 @@ async function main() {
     handle.setTrail({ pages: [posting, form(1), form(2)] });
     seen.againLater = read();
 
+    /*
+     * A later page that asks something. Workday's "Application Questions"
+     * is the fourth page of five, well after the resume is built — and the
+     * reduced card has no questions in it, so the three essay boxes on it
+     * were nowhere on the card: "questions not scanned".
+     */
+    handle.setQuestions([{ question: 'What technical skills do you hope to use in this position?', fieldId: 'jh-q-1', answer: '', confident: false }]);
+    seen.asks = { ...read(), questions: root.querySelectorAll('.q').length };
+    handle.setQuestions([]);
+    seen.askedNothing = read();
+
     // Somebody asks for the whole card back.
     root.querySelector('.body.reduced .link')?.click();
     seen.expanded = read();
@@ -3978,6 +4034,12 @@ async function main() {
     JSON.stringify(reducing.firstForm.buttons),
   );
   check('and the page after it is again', reducing.againLater.small === true, reducing.againLater.why);
+  check(
+    'but not a page that asks questions: answering them is what is left to do there',
+    reducing.asks.small === false && reducing.asks.questions === 1,
+    JSON.stringify({ small: reducing.asks.small, questions: reducing.asks.questions }),
+  );
+  check('and it reduces again once there is nothing to answer', reducing.askedNothing.small === true, reducing.askedNothing.why);
   check('asking for everything brings it back', reducing.expanded.small === false, JSON.stringify(reducing.expanded.buttons));
   check(
     'and it stays back — a guess overruled once is not made again',
@@ -4247,6 +4309,165 @@ async function main() {
     JSON.stringify(limits.after),
   );
   check('drafting one answer tells the run the limit', limits.one?.limit === 40, JSON.stringify(limits.one));
+  // And the resume it goes beside, so the answer can leave its lines to it.
+  check('and the resume it goes beside', limits.one?.spec?.id === 'job-acme', JSON.stringify(limits.one));
+
+  console.log('\nTelling the AI what to change about a draft');
+
+  /*
+   * Asked for: "you should be able to load feedback into the AI answers (at
+   * least an extra field for that)". The line beside an answer, and beside
+   * the letter, goes with the next redraft together with the text it is
+   * about — and what the redraft replaced can be put back, because a rewrite
+   * you asked for can still be worse than what you had.
+   */
+  const changed = await inPage(async (createCard) => {
+    const sent = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme', description: 'Kafka and Go.' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [{ question: 'Why us?', answer: 'My first go.', confident: true, fieldId: 'jh-1' }],
+      needsCoverLetter: true,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'answer:Why us?') return { executed: true, output: 'A shorter answer about the on-call story.' };
+        if (action === 'coverLetter') return { executed: true, body: 'Dear Acme, the letter rewritten as asked.', priorLetters: [] };
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    await wait(120);
+    const byText = (t, scope = root) => [...scope.querySelectorAll('button')].find((b) => new RegExp(t).test(b.textContent));
+    const type = (el, text) => {
+      el.value = text;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const answerBox = () => root.querySelector('textarea[data-field="answer:Why us?"]');
+
+    const line = root.querySelector('input[data-field="change:Why us?"]');
+    if (!line) return { error: 'no line for what to change beside the answer' };
+    // `.change` is a row in the list of resume changes: a box wearing it was
+    // styled as one and counted as one, three empty rows reading " → ".
+    const posingAsChanges = [...root.querySelectorAll('.change')].filter((n) => n.matches('input, textarea')).length;
+    type(line, 'Shorter, and use the on-call story.');
+    byText('Rewrite for this role', root.querySelector('.q'))?.click();
+    await wait(150);
+    const askedAnswer = sent.find((c) => c.action === 'answer:Why us?')?.payload ?? null;
+    const rewritten = answerBox()?.value;
+    const lineAfter = root.querySelector('input[data-field="change:Why us?"]')?.value;
+    byText('Put back what you had', root.querySelector('.q'))?.click();
+    await wait(80);
+    const putBack = answerBox()?.value;
+
+    // The letter: nothing to change until there is one.
+    const letterLine = () => root.querySelector('input[data-field="change:letter"]');
+    const hiddenOverEmpty = letterLine()?.closest('.row')?.hidden ?? null;
+    type(root.querySelector('textarea[data-field="letter"]'), 'Dear Acme, my own letter.');
+    const shownOverLetter = letterLine()?.closest('.row')?.hidden === false;
+    type(letterLine(), 'Open with the posting.');
+    byText('Redraft')?.click();
+    await wait(150);
+    const askedLetter = sent.filter((c) => c.action === 'coverLetter').at(-1)?.payload ?? null;
+    const letterAfter = root.querySelector('textarea[data-field="letter"]')?.value;
+    byText('Put back what you had')?.click();
+    await wait(80);
+    const letterBack = root.querySelector('textarea[data-field="letter"]')?.value;
+
+    return { askedAnswer, rewritten, lineAfter, putBack, hiddenOverEmpty, shownOverLetter, askedLetter, letterAfter, letterBack, posingAsChanges };
+  });
+  check('an answer carries a line for what to change', !changed.error, changed.error ?? '');
+  check('and it is not mistaken for a row in the list of changes', changed.posingAsChanges === 0, String(changed.posingAsChanges));
+  check(
+    'and it goes with the rewrite, beside the answer it is about',
+    changed.askedAnswer?.feedback === 'Shorter, and use the on-call story.' && changed.askedAnswer?.draft === 'My first go.',
+    JSON.stringify(changed.askedAnswer),
+  );
+  check(
+    'the rewrite lands, and the line empties for the next one',
+    changed.rewritten === 'A shorter answer about the on-call story.' && changed.lineAfter === '',
+    JSON.stringify({ rewritten: changed.rewritten, line: changed.lineAfter }),
+  );
+  check('and what it replaced can be put back', changed.putBack === 'My first go.', String(changed.putBack));
+  check(
+    'the letter’s line waits for a letter to be about',
+    changed.hiddenOverEmpty === true && changed.shownOverLetter === true,
+    JSON.stringify({ hidden: changed.hiddenOverEmpty, shown: changed.shownOverLetter }),
+  );
+  check(
+    'and goes with the redraft, beside the letter in the box and the resume it goes with',
+    changed.askedLetter?.feedback === 'Open with the posting.' &&
+      changed.askedLetter?.draft === 'Dear Acme, my own letter.' &&
+      changed.askedLetter?.spec?.id === 'job-acme',
+    JSON.stringify(changed.askedLetter),
+  );
+  check(
+    'the redraft replaces the letter, as asked, and the letter can be put back',
+    changed.letterAfter === 'Dear Acme, the letter rewritten as asked.' && changed.letterBack === 'Dear Acme, my own letter.',
+    JSON.stringify({ after: changed.letterAfter, back: changed.letterBack }),
+  );
+
+  console.log('\nThe list of pages stays open through a repaint');
+
+  /*
+   * It was rebuilt closed on every redraw, and the card redraws on its own —
+   * so the list snapped shut under somebody reading it. Measured in
+   * tests/controls.mjs under load: a redraw landed between opening it and
+   * pressing "Not this one", and the press waited out its thirty seconds for
+   * a button inside a closed list. The repaint here comes before the
+   * `toggle` event has even been delivered, which is that exact window.
+   */
+  const trailOpen = await inPage(async (createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action) => (action === 'aiStatus' ? { active: true, state: 'on' } : {}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const pages = [
+      { url: 'https://acme.test/jobs/1', kind: 'posting', title: 'Platform Engineer' },
+      { url: 'https://acme.test/apply', kind: 'application', title: 'Apply' },
+    ];
+    handle.setTrail({ pages });
+    await new Promise((r) => setTimeout(r, 60));
+    const list = () => root.querySelector('details.trail');
+    if (!list()) return { error: 'no list of pages' };
+    list().querySelector('summary').click();
+    // Repainted in the same task as the click, before `toggle` is delivered.
+    handle.setTrail({ pages });
+    const rightAway = list()?.open;
+    const reachable = [...(list()?.querySelectorAll('button') ?? [])].some((b) => /Not this one/.test(b.textContent) && b.getClientRects().length > 0);
+    await new Promise((r) => setTimeout(r, 60));
+    handle.setTrail({ pages });
+    const later = list()?.open;
+    list().querySelector('summary').click();
+    await new Promise((r) => setTimeout(r, 60));
+    handle.setTrail({ pages });
+    const shut = list()?.open;
+    return { rightAway, reachable, later, shut };
+  });
+  check('the list of pages is there to open', !trailOpen.error, trailOpen.error ?? '');
+  check(
+    'and stays open through a repaint, even one before the browser has said it opened',
+    trailOpen.rightAway === true && trailOpen.reachable === true && trailOpen.later === true,
+    JSON.stringify(trailOpen),
+  );
+  check('while one closed stays closed', trailOpen.shut === false, JSON.stringify(trailOpen));
   check(
     'and so does writing them all at once, only for the box that has one',
     limits.all?.[0]?.limit === 40 && limits.all?.[1]?.limit === undefined,

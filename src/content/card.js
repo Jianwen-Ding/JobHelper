@@ -193,6 +193,8 @@ button:disabled { opacity: .38; cursor: default; }
 button:disabled:hover { background: #fff; border-color: var(--line); }
 
 .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+/* \`hidden\` has to beat a class that sets \`display\`, or it hides nothing. */
+[hidden] { display: none !important; }
 .row.gap { margin-top: 10px; }
 .grow { flex: 1 1 auto; }
 .hint { color: var(--muted); font-size: 12px; line-height: 1.55; }
@@ -222,6 +224,9 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .faint { color: var(--faint); font-size: 11px; }
 .count { text-align: right; margin-top: 2px; }
 .count.over { color: var(--bad); }
+/* A limit the question states in words: said, not refused, so amber. */
+.wordcount { text-align: right; margin-top: 2px; }
+.wordcount.over { color: var(--warn); }
 
 .job { margin-bottom: 12px; }
 .job .role { font-weight: 500; font-size: 16px; line-height: 1.3; }
@@ -403,6 +408,16 @@ textarea {
 }
 textarea:focus-visible { outline: 0; border-color: #c8d8f7; box-shadow: 0 0 0 3px var(--accent-soft); }
 textarea.tall { min-height: 160px; }
+/*
+ * What to change about a draft: one line beside the button that sends it.
+ * Not \`.change\` — that is a row in the list of resume changes, and a box
+ * wearing it was styled as one and counted as one.
+ */
+input.redo {
+  flex: 1 1 180px; min-width: 0; font: inherit; font-size: 12px; padding: 5px 8px;
+  border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: #fff;
+}
+input.redo:focus-visible { outline: 0; border-color: #c8d8f7; box-shadow: 0 0 0 3px var(--accent-soft); }
 select {
   font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px;
   max-width: 100%; background: #fff; color: var(--ink);
@@ -631,6 +646,42 @@ export function removeCard() {
  *   saying so is a card that can never be put back. See `putUpCard`.
  */
 
+/**
+ * A word limit the question states for itself, or nothing.
+ *
+ * "(150 words or less)", "no more than 200 words", "250 words max", "a
+ * 200-word limit", "maximum of 300 words". Forms rarely enforce these — the
+ * box takes whatever is put in it — so it is the person who has to keep to
+ * it, and the count is how they can.
+ */
+export function statedWordLimit(question) {
+  const said = String(question ?? '');
+  const hit =
+    /\b(\d{2,4})\s*-?\s*words?\s*(?:or\s+(?:less|fewer)|max(?:imum)?\b|limit\b|at\s+most\b)/i.exec(said) ??
+    /\b(?:no\s+more\s+than|not\s+(?:to\s+)?exceed(?:ing)?|up\s+to|max(?:imum)?(?:\s+of)?|at\s+most|within|under|limit(?:ed)?\s+(?:of|to))\s+(\d{2,4})\s*words?\b/i.exec(said);
+  return hit ? Number(hit[1]) : null;
+}
+
+const wordsIn = (text) => (String(text ?? '').trim().match(/\S+/g) ?? []).length;
+
+/*
+ * The words in an answer, and against the question's own limit where it
+ * states one. Every answer gets it: most boxes carry no limit a script can
+ * read, and "keep it short" is only something you can do while you can see
+ * how long it is.
+ */
+function countWords(counter, text, limit) {
+  if (!counter) return;
+  const n = wordsIn(text);
+  const over = Boolean(limit) && n > limit;
+  counter.textContent = limit
+    ? over
+      ? `${n} / ${limit} words — ${n - limit} over what the question asks for`
+      : `${n} / ${limit} words`
+    : `${n} ${n === 1 ? 'word' : 'words'}`;
+  counter.classList.toggle('over', over);
+}
+
 /** "412 / 500", and a warning once past it. Nothing where the box has no limit. */
 function countAgainst(counter, text, limit) {
   if (!counter || !limit) return;
@@ -703,6 +754,8 @@ export function createCard({
       : withAllOff(analysis?.spec ?? null, analysis?.rationale, analysis?.skillChanges),
     /** The pages this application is being written from. See drawTrail. */
     trail: null,
+    /** Whether that list is open — kept, because a redraw rebuilds it. */
+    trailOpen: false,
     render: null,
     busy: null,
     error: null,
@@ -745,6 +798,19 @@ export function createCard({
     answers: {},
     /** Questions whose last "Insert into form" put nothing in, by question. */
     insertMissed: {},
+    /**
+     * What to change about a drafted answer, by question, and about the
+     * letter — typed beside the box and sent with the next redraft. See
+     * `whatToChange` in ResumeM-M.
+     */
+    changeAnswer: {},
+    changeLetter: '',
+    /**
+     * What a redraft replaced, so it can be put back. A redraft asked for
+     * with a sentence about what was wrong still takes the paragraph it was
+     * given, and the only safe way to let it is to keep that paragraph.
+     */
+    replaced: { letter: null, answers: {} },
     feedback: '',
     autofillReport: null,
     /** What the last press of Attach put into the form, and what it could not. */
@@ -2448,7 +2514,17 @@ export function createCard({
       Object.keys(state.carriedOver ?? {}).length ? 'your answers' : null,
     ].filter(Boolean);
 
-    return h('details', { className: 'trail' }, [
+    /*
+     * Open where it was left open.
+     *
+     * It was rebuilt closed on every redraw, and the card redraws on its own —
+     * a render finishing, a progress tick, a question arriving — so the list
+     * snapped shut under somebody reading it, taking the button they were
+     * reaching for with it. Measured in tests/controls.mjs: under load a
+     * redraw landed between opening the list and pressing "Not this one",
+     * and the press waited thirty seconds for a button inside a closed list.
+     */
+    const list = h('details', { className: 'trail', open: state.trailOpen }, [
       h('summary', { textContent: `Writing from ${pages.length} pages of this application` }),
       brought.length
         ? h('div', { className: 'trail-kept', textContent: `Carried over: ${brought.join(', ')}.` })
@@ -2461,6 +2537,10 @@ export function createCard({
         onclick: () => act('clearTrail', {}, (trail) => (state.trail = trail)),
       }),
     ]);
+    list.addEventListener('toggle', () => {
+      state.trailOpen = list.open;
+    });
+    return list;
   }
 
   function stepHead(n, title, done = false) {
@@ -3746,7 +3826,7 @@ export function createCard({
    * date in place on each keystroke. Rebuilt on every draw, so these always
    * point at the buttons currently on screen rather than at detached ones.
    */
-  const letterControls = { save: null, copy: null, typeset: null, note: null };
+  const letterControls = { save: null, copy: null, typeset: null, note: null, change: null, redraft: null };
 
   function syncLetterControls() {
     const written = Boolean(state.letter?.trim());
@@ -3759,6 +3839,9 @@ export function createCard({
     if (letterControls.note) {
       letterControls.note.textContent = state.letterSaved ? 'Future drafts will start from this one.' : '';
     }
+    // The line for what to change, over a letter there is to change.
+    if (letterControls.change) letterControls.change.hidden = !written && state.replaced.letter == null;
+    if (letterControls.redraft) letterControls.redraft.disabled = busyIn('drafting') || !written;
   }
 
   function drawFit() {
@@ -4013,6 +4096,44 @@ export function createCard({
   }
 
   /**
+   * A new draft of the letter in the box, told what to change.
+   *
+   * Not `draftLetter`: that one fills an empty box and only *offers* its draft
+   * over a written one, which is right for a draft nobody asked to replace
+   * their paragraph and wrong here, where replacing it is the request. What it
+   * replaced is kept, so it can be put back. The draft goes with the request
+   * only beside something to change about it — "Redraft" with nothing said is
+   * a fresh draft, not an instruction to keep everything as it is.
+   */
+  function redraftLetter() {
+    const mine = state.letter ?? '';
+    const change = state.changeLetter?.trim();
+    const payload = { spec: state.spec };
+    if (change) Object.assign(payload, { feedback: change, draft: mine });
+    return act('coverLetter', payload, (r) => {
+      if (!r) return;
+      state.priorLetters = r.priorLetters ?? state.priorLetters;
+      // Written in while it ran: theirs, and this reply is not.
+      if ((state.letter ?? '') !== mine) {
+        state.letterSource = 'You were writing while this ran, so what you wrote was kept.';
+        return;
+      }
+      if (r.body?.trim()) {
+        state.replaced.letter = mine;
+        state.letter = r.body;
+        state.changeLetter = '';
+        state.letterSaved = false;
+        state.letterSource = change ? 'Rewritten as you asked.' : 'Redrafted from your previous letters.';
+        prepareSoon();
+      } else if (!r.executed) {
+        state.letterSource = 'The AI is off, so the letter cannot be redrafted. It is as you left it.';
+      } else {
+        state.letterSource = 'The AI returned nothing, so the letter is as you left it.';
+      }
+    });
+  }
+
+  /**
    * What to do with a drafted letter, wherever it came from.
    *
    * Lifted out of `draftLetter` so the one-run write can land its letter by
@@ -4167,7 +4288,7 @@ export function createCard({
           if (wantsLetter) await draftLetter();
           for (const slot of slots) {
             const before = state.answers[slot.question] ?? slot.before;
-            await act(`answer:${slot.question}`, { question: slot.question, force: true, limit: slot.limit }, (one) => {
+            await act(`answer:${slot.question}`, { question: slot.question, force: true, limit: slot.limit, spec: state.spec }, (one) => {
               if (one?.executed && one.output) applyAnswer(slot.question, before, one.output);
             });
           }
@@ -4987,6 +5108,50 @@ export function createCard({
                   textContent: state.letterSaved ? 'Future drafts will start from this one.' : '',
                 })),
               ]),
+              /*
+               * What to change about it, said to the AI. Only over a letter
+               * there is — an empty box has "Draft a letter" above it — and
+               * with the way back to what the redraft replaced.
+               */
+              (letterControls.change = h(
+                'div',
+                { className: 'row gap', hidden: !state.letter?.trim() && state.replaced.letter == null },
+                [
+                    h('input', {
+                      className: 'redo',
+                      type: 'text',
+                      dataset: { field: 'change:letter' },
+                      value: state.changeLetter ?? '',
+                      placeholder: 'Tell the AI what to change (optional)',
+                      oninput: (e) => {
+                        state.changeLetter = e.target.value;
+                      },
+                    }),
+                    (letterControls.redraft = aiButton(
+                      {
+                        className: 'tiny',
+                        title: 'Write it again, changed the way the line beside this says. Runs your AI command.',
+                        disabled: busyIn('drafting') || !state.letter?.trim(),
+                        onclick: redraftLetter,
+                      },
+                      busyLabel('coverLetter', 'Redraft', 'Drafting…'),
+                    )),
+                    state.replaced.letter != null
+                      ? h('button', {
+                          className: 'link',
+                          textContent: 'Put back what you had',
+                          onclick: () => {
+                            state.letter = state.replaced.letter;
+                            state.replaced.letter = null;
+                            state.letterSaved = false;
+                            state.letterSource = 'Put back as you had it.';
+                            prepareSoon();
+                            draw();
+                          },
+                        })
+                      : null,
+                ],
+              )),
               drawPdfPane('letter', state.letterRender?.pdfUrl, 'letter'),
               state.letterRender
                 ? h('div', { className: 'row gap' }, [
@@ -5445,6 +5610,9 @@ export function createCard({
        */
       const counter = q.limit ? h('div', { className: 'count faint' }) : null;
       countAgainst(counter, value, q.limit);
+      const wordLimit = statedWordLimit(q.question);
+      const words = h('div', { className: 'wordcount faint' });
+      countWords(words, value, wordLimit);
 
       const box = h('div', { className: 'q' }, [
         h('div', { className: 'qt' }, [document.createTextNode(q.question), badge]),
@@ -5473,8 +5641,10 @@ export function createCard({
           oninput: (e) => {
             state.answers[q.question] = e.target.value;
             countAgainst(counter, e.target.value, q.limit);
+            countWords(words, e.target.value, wordLimit);
           },
         }),
+        words,
         counter,
         h('div', { className: 'row gap' }, [
           h('button', {
@@ -5530,7 +5700,15 @@ export function createCard({
                 // What is in the box now, so the reply can tell its own work
                 // from anything written during the minutes it takes.
                 const typedBefore = state.answers[q.question] ?? value;
-                return act(`answer:${q.question}`, { question: q.question, force: true, limit: q.limit }, (r) => {
+                /*
+                 * What they want changed, with the draft it is about. Only
+                 * with something typed in the line beside the button: a plain
+                 * rewrite asks exactly what it always asked.
+                 */
+                const change = state.changeAnswer[q.question]?.trim();
+                const payload = { question: q.question, force: true, limit: q.limit, spec: state.spec };
+                if (change) Object.assign(payload, { feedback: change, draft: typedBefore });
+                return act(`answer:${q.question}`, payload, (r) => {
                   /*
                    * `executed` first, not `output` first.
                    *
@@ -5544,7 +5722,11 @@ export function createCard({
                    * it here, and this no longer reaches for it either.
                    */
                   if (r?.executed && r.output) {
-                    applyAnswer(q.question, typedBefore, r.output);
+                    // Kept, so it can be put back — see `state.replaced`.
+                    if (applyAnswer(q.question, typedBefore, r.output)) {
+                      if (typedBefore.trim()) state.replaced.answers[q.question] = typedBefore;
+                      state.changeAnswer[q.question] = '';
+                    }
                   } else if (r && !r.executed) {
                     state.error =
                       'The AI is off, so a new answer cannot be drafted. Anything you type here is saved for next time.';
@@ -5584,6 +5766,40 @@ export function createCard({
               }),
           }),
         ]),
+        /*
+         * What to change, said to the AI rather than done by hand.
+         *
+         * Asked for: "you should be able to load feedback into the AI
+         * answers, at least an extra field for that". The line goes with the
+         * next press of the button above, with the answer as it stands; and
+         * what the redraft replaced can be put back, because a rewrite you
+         * asked for can still be worse than what you had.
+         */
+        q.yours
+          ? null
+          : h('div', { className: 'row gap' }, [
+              h('input', {
+                className: 'redo',
+                type: 'text',
+                dataset: { field: `change:${q.question}` },
+                value: state.changeAnswer[q.question] ?? '',
+                placeholder: 'Tell the AI what to change (optional)',
+                oninput: (e) => {
+                  state.changeAnswer[q.question] = e.target.value;
+                },
+              }),
+              state.replaced.answers[q.question] !== undefined
+                ? h('button', {
+                    className: 'link',
+                    textContent: 'Put back what you had',
+                    onclick: () => {
+                      state.answers[q.question] = state.replaced.answers[q.question];
+                      delete state.replaced.answers[q.question];
+                      draw();
+                    },
+                  })
+                : null,
+            ]),
       ]);
       step.append(box);
     }
@@ -5859,6 +6075,13 @@ export function createCard({
    * it in the meantime.
    */
   function draw() {
+    /*
+     * The list of pages as it stands on screen, whatever its events have said
+     * so far: `toggle` arrives a task after the click, and a repaint in that
+     * gap built the list closed under the hand that had just opened it.
+     */
+    const shownTrail = card.querySelector('details.trail');
+    if (shownTrail) state.trailOpen = shownTrail.open;
     const active = root.activeElement;
     const focused = active && active !== card ? active.dataset?.field : null;
     const caret = focused ? { start: active.selectionStart, end: active.selectionEnd } : null;
@@ -6047,6 +6270,14 @@ export function createCard({
      * on it, so the whole of what it leaves would have been useless.
      */
     if (!isForm) return false;
+    /*
+     * Nor on a page that asks something. Reducing takes away what is already
+     * done, and this page's questions are not done — they are the reason to
+     * be on it. Workday's "Application Questions" is the fourth page of five,
+     * long after the resume is built, and the reduced card has no questions
+     * in it: three required essay boxes on the page and none on the card.
+     */
+    if ((state.questions ?? []).length > 0) return false;
     const earlier = (state.trail?.pages ?? []).filter((p) => p.url !== location.href);
     if (!earlier.some((p) => p.kind === 'application')) return false;
     return Boolean(state.render || state.staged || state.bundle);

@@ -300,8 +300,13 @@
    * What it is evidence of is that the page is part of a hiring system at all,
    * and that is the question the chip exists to ask.
    */
+  /*
+   * Oracle Recruiting Cloud by its path rather than its host: every tenant is
+   * `<pod>.fa.<dc>.oraclecloud.com`, which also serves the rest of Oracle's
+   * cloud, and only the candidate side lives under `/CandidateExperience/`.
+   */
   const ON_A_TRACKER =
-    /\b(greenhouse|lever|workday|myworkdayjobs|ashby|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite|bamboohr|rippling|breezy|recruitee|teamtailor|jazzhr|successfactors|brassring)\b/i;
+    /\b(greenhouse|lever|workday|myworkdayjobs|ashby|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite|bamboohr|rippling|breezy|recruitee|teamtailor|jazzhr|successfactors|brassring|candidateexperience)\b/i;
   const ON_A_BOARD = /\b(indeed|linkedin|glassdoor|monster|ziprecruiter|dice|wellfound|otta|builtin|simplyhired|seek)\b/i;
 
   /*
@@ -489,6 +494,7 @@
 
   /** Stopping and restarting the one-send-per-document watcher on this page. */
   let stopSending = null;
+  let stopReceipt = null;
   let restartSending = null;
 
   /** The questions on this page, wherever on it they are. */
@@ -552,7 +558,7 @@
    * document is looked at on the tick; when it has moved on, the whole
    * reading runs again, frames included, with the bank matched afresh.
    */
-  function watchQuestions(findQuestions, current) {
+  function watchQuestions(findQuestions, current, onChanged) {
     const asked = () =>
       findQuestions()
         .map((q) => q.question.replace(/\d+/g, '#').toLowerCase())
@@ -566,6 +572,7 @@
     const tick = setInterval(() => {
       if (!changed || !cardHandle || dismissed || !current()) return;
       changed = false;
+      onChanged?.();
       const now = asked();
       if (now === readAs) return;
       readAs = now;
@@ -593,9 +600,11 @@
    */
   async function runAutofill() {
     const data = await send('autofillData');
-    const here = await fillThisDocument(data.fields);
+    // The jobs on the resume being sent, for a form's work-history blocks.
+    const history = Array.isArray(data.history) ? data.history : [];
+    const here = await fillThisDocument(data.fields, history);
 
-    const { frames } = await send('fillFrames', { fields: data.fields }).catch(() => ({ frames: [] }));
+    const { frames } = await send('fillFrames', { fields: data.fields, history }).catch(() => ({ frames: [] }));
     return {
       filled: [...here.filled, ...frames.flatMap((f) => f.filled ?? [])],
       skipped: [...here.skipped, ...frames.flatMap((f) => f.skipped ?? [])],
@@ -617,7 +626,7 @@
    * is string equality. Every failure path ends in an empty list, which is
    * the behaviour this had before the bank existed.
    */
-  async function fillThisDocument(fields) {
+  async function fillThisDocument(fields, history = []) {
     const { fillForm, fillComboboxes, choiceQuestions } = await imports.autofill();
     const questions = choiceQuestions();
     const remembered = questions.length
@@ -627,7 +636,7 @@
       : [];
     // And then the widgets `fillForm` could only name. See `fillComboboxes`:
     // exact options only, and seen to have taken, or put back as they were.
-    return fillComboboxes(fields, fillForm(fields, { remembered }));
+    return fillComboboxes(fields, fillForm(fields, { remembered, history }));
   }
 
   /**
@@ -1062,7 +1071,7 @@
         });
 
       case 'coverLetter':
-        return send('coverLetter', { spec: payload.spec, job: analysis.job });
+        return send('coverLetter', { spec: payload.spec, job: analysis.job, draft: payload.draft, feedback: payload.feedback });
 
       /*
        * Let go of what is in the air. Straight through, because which requests
@@ -1422,8 +1431,9 @@
      * behaviour being fixed.
      */
     if (heldFor.url === location.href) return heldFor.answer;
-    const held = await send('openHere', {}).catch(() => null);
-    heldFor = { url: location.href, answer: Boolean(held?.open && held?.made) };
+    const held = await send('openHere', { page: pageIdentity() }).catch(() => null);
+    // Something written, or this page plainly the next one — see `carriesOn`.
+    heldFor = { url: location.href, answer: Boolean(held?.open && (held?.made || held?.carriesOn)) };
     return heldFor.answer;
   }
 
@@ -1935,11 +1945,37 @@
     imports
       .autofill()
       .then(({ watchChoices, looksLikeApplicationForm, findQuestions }) => {
-        if (!current() || !looksLikeApplicationForm()) return;
-        // And its questions, for a form that moves on in place. One watcher,
-        // for the reason given below for the choices.
+        if (!current()) return;
+        /*
+         * The choices are watched only once this page is a form, and that
+         * can be later than now. See below.
+         */
+        const watchTheForm = () => {
+          if (stopChoices || !looksLikeApplicationForm()) return;
+          stopChoices = watchChoices((said) => {
+            if (!said.keep) return;
+            send('rememberChoice', { question: said.question, answer: said.answer }).catch(() => undefined);
+          });
+        };
+        /*
+         * And its questions, for a form that moves on in place — watched on
+         * any page the card is up on, not only one that already looked like
+         * a form when it was read.
+         *
+         * Workday reads as a route change and draws its first step seconds
+         * later, so the page was read as "Loading…", did not look like a
+         * form, and no watcher was started; every step after that is swapped
+         * in where the last one was with the address unchanged, so nothing
+         * read the page again. "Why are you interested in working for
+         * CrowdStrike?" was on the page and never on the card. The watcher
+         * only reads while a card is up, so this costs nothing anywhere else,
+         * and it is what notices the form arriving — which is when the
+         * choices start to be watched too.
+         *
+         * One watcher, for the reason given below for the choices.
+         */
         stopQuestions?.();
-        stopQuestions = watchQuestions(findQuestions, current);
+        stopQuestions = watchQuestions(findQuestions, current, watchTheForm);
         /*
          * One watcher, whatever number of passes found the form.
          *
@@ -1952,10 +1988,8 @@
          * whole-document scan once per listener.
          */
         stopChoices?.();
-        stopChoices = watchChoices((said) => {
-          if (!said.keep) return;
-          send('rememberChoice', { question: said.question, answer: said.answer }).catch(() => undefined);
-        });
+        stopChoices = null;
+        watchTheForm();
       })
       .catch(() => undefined);
 
@@ -2065,7 +2099,20 @@
    * same verdict from the same rules rather than from a second copy of them.
    */
   async function watchForSending() {
-    const { watchForSending: watch } = await imports.sending();
+    const { watchForSending: watch, watchForReceipt: watchReceipt } = await imports.sending();
+    /*
+     * And the page saying it has the application, for a send whose press was
+     * never seen. Filed from the trail rather than from `analysis`: the
+     * receipt is usually a page the card never read. See
+     * `applicationSentHere`, which decides whether it belongs to this tab's
+     * application at all.
+     */
+    const sayReceived = (how) =>
+      send('applicationSentHere', { note: how, url: location.href, receipt: true })
+        .then((reply) => {
+          if (reply?.ok !== false) cardHandle?.setStatus?.('Recorded as sent.');
+        })
+        .catch(() => undefined);
     const took = (how) => {
       /*
        * Only on the page where an application is actually sent.
@@ -2151,6 +2198,7 @@
     };
 
     stopSending = watch(document, took);
+    stopReceipt = watchReceipt(document, sayReceived);
     /*
      * And begun again at each posting, because the watcher is one send per
      * document and a single-page board is one document for the afternoon.
@@ -2164,8 +2212,11 @@
     restartSending = () => {
       stopSending?.();
       stopSending = watch(document, took);
+      stopReceipt?.();
+      stopReceipt = watchReceipt(document, sayReceived);
     };
     teardown.push(() => stopSending?.());
+    teardown.push(() => stopReceipt?.());
   }
 
   function keepWorkSafe() {
@@ -2271,7 +2322,7 @@
      */
     imports
       .sending()
-      .then(({ watchForSending }) =>
+      .then(({ watchForSending, watchForReceipt }) => {
         // Answering whether it was taken, for the same reason the top
         // document does: the one send a frame has must not be spent on a
         // record that never reached the store.
@@ -2279,8 +2330,22 @@
           send('applicationSentHere', { note: how, url: location.href })
             .then((reply) => reply?.ok !== false)
             .catch(() => false),
-        ),
-      )
+        );
+        /*
+         * And the receipt, which on an embedded board is drawn in here: the
+         * frame goes to Greenhouse's confirmation while the careers page
+         * around it stays exactly as it was. Sent with the origins above it,
+         * because this frame's own address is the board's, not the employer's.
+         */
+        watchForReceipt(document, (how) =>
+          send('applicationSentHere', {
+            note: how,
+            url: location.href,
+            receipt: true,
+            above: [...(location.ancestorOrigins ?? [])],
+          }).catch(() => undefined),
+        );
+      })
       .catch(() => undefined);
 
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -2367,7 +2432,7 @@
               // The one that must not be got wrong. Anything else on the page
               // gets nothing about the person using it.
               looksLikeApplicationForm()
-                ? fillThisDocument(message.payload?.fields ?? {})
+                ? fillThisDocument(message.payload?.fields ?? {}, message.payload?.history ?? [])
                 : { filled: [], skipped: [] },
             ),
           );
@@ -2402,23 +2467,6 @@
                 insertAnswer(message.payload?.fieldId, message.payload?.text, message.payload?.question),
               ),
           );
-          return true;
-
-        /*
-         * The worker asking for this page's work now, because a send has just
-         * been reported and nothing was flushed with it — the form was in an
-         * iframe, whose script runs no keeper. Only the top frame answers:
-         * it is where the card and the keeper are.
-         */
-        case 'jh-flush-work':
-          if (window !== window.top) return false;
-          /*
-           * Answered once the worker has taken the save, not the moment it is
-           * sent: the two travel separately, and an answer that overtook its
-           * own save left the worker nothing to wait for — the draft still
-           * opened after the send on "embedded-apply", 228ms late.
-           */
-          answer(Promise.resolve(saveWorkNow?.()).then(() => true));
           return true;
 
         default:
@@ -2511,6 +2559,28 @@
       });
       return false;
     }
+    /*
+     * The worker asking for this page's work now, because a frame on it has
+     * just reported a send and nothing was flushed with it — a frame's script
+     * runs no keeper. The card and the keeper are here.
+     *
+     * Answered once the worker has taken the save, not the moment it is sent:
+     * the two travel separately, and an answer that overtook its own save left
+     * the worker nothing to wait for.
+     *
+     * In this listener, the top document's. It was written into the frames'
+     * listener behind a check that only the top frame answers — never so in
+     * that listener — so nobody answered, and every send from an embedded
+     * form was filed without waiting for its draft: "embedded-apply" in
+     * tests/sending.mjs, the draft opened 298ms to 1.4s after the send
+     * whenever Submit beat the keeper's tick.
+     */
+    if (message?.type === 'jh-flush-work') {
+      Promise.resolve(saveWorkNow?.())
+        .then(() => sendResponse({ ok: true, data: true }))
+        .catch((err) => sendResponse({ ok: false, error: err.message }));
+      return true;
+    }
     if (message?.type === 'autofill') {
       runAutofill()
         .then((report) => sendResponse({ ok: true, data: report }))
@@ -2562,7 +2632,9 @@
    * loading is not going to.
    */
   const RESCORE_WINDOW_MS = 60_000;
-  const loadedAt = Date.now();
+  // Reset by a route change, which is a page as far as this is concerned: see
+  // `startOver`.
+  let loadedAt = Date.now();
   let pageChanged = false;
   const watcher = new MutationObserver(() => {
     pageChanged = true;
@@ -2727,6 +2799,21 @@
     // And the one send this document's watcher had to give, which the
     // posting you have just left may already have spent.
     restartSending?.();
+
+    /*
+     * And the second look, for the page this is now.
+     *
+     * The window it runs in was counted from when the document loaded and
+     * the watcher was switched off for good when it closed, so a route change
+     * a minute in — reading a posting for longer than that before pressing
+     * Apply — got the one look this function takes, a few hundred
+     * milliseconds after the url changed, at a form the board had not drawn
+     * yet. Nothing looked again. A route change is a new page here in every
+     * other respect, and it is one for this too.
+     */
+    loadedAt = Date.now();
+    pageChanged = false;
+    watcher.observe(document, { childList: true, subtree: true });
 
     // And the choices watcher, which was for the form you have just left: the
     // next page is watched only if its own pass finds a form on it.

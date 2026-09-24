@@ -14,6 +14,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   EXPECTATION_MS,
+  carriesOn,
   keepPages,
   rootOf,
   lighten,
@@ -291,6 +292,49 @@ describe('is this the same application', () => {
 
   it('says no to a page with no address at all', () => {
     assert.equal(sameApplication(trailOf(at('https://x.com/a')), {}), false);
+  });
+});
+
+/**
+ * Whether a page is plainly the next page of the application in hand, which
+ * is what lets a thin form step be read before anything has been written.
+ *
+ * Oracle Recruiting Cloud's first form page is an email box under the
+ * posting's title, reached by pushState from the posting's own address. It
+ * scored under the threshold, and with nothing written the card went.
+ */
+describe('a page carrying on the application in hand', () => {
+  const posting = at('https://ebfr.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/jobs/job/11514', 'Oceaneering');
+
+  it('is the posting\'s own apply steps, on its own address', () => {
+    for (const step of ['apply/email', 'apply/section/1', 'apply/section/3']) {
+      assert.equal(carriesOn(trailOf(posting), { url: `${posting.url}/${step}` }), true, step);
+    }
+  });
+
+  it('is where Apply was pressed to, on another site', () => {
+    const trail = { ...trailOf(at('https://careers.acme.com/jobs/platform-engineer', 'Acme')), expecting: { to: 'https://acme.bytedance.example/n/c/8f2a1b', at: Date.now() } };
+    assert.equal(carriesOn(trail, { url: 'https://acme.bytedance.example/n/c/8f2a1b' }), true);
+  });
+
+  /*
+   * The joins `sameApplication` also accepts, and that must not be enough to
+   * read a page on: every link out of a posting would bring the card along.
+   */
+  it('is not a page on another site that merely came from it', () => {
+    const trail = trailOf(at('https://careers.acme.com/jobs/platform-engineer', 'Acme'));
+    const about = { url: 'https://acme.example/about', referrerHost: 'careers.acme.com' };
+    assert.equal(sameApplication(trail, about), true, 'the looser judge joins it');
+    assert.equal(carriesOn(trail, about), false);
+  });
+
+  it('is not another page of the same site, nor another job on it', () => {
+    assert.equal(carriesOn(trailOf(posting), { url: 'https://ebfr.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/jobs/my-profile' }), false);
+    assert.equal(carriesOn(trailOf(posting), { url: 'https://ebfr.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/jobs/job/11999/apply/email' }), false);
+  });
+
+  it('is nothing at all in a tab with no application', () => {
+    assert.equal(carriesOn(trailOf(), { url: `${posting.url}/apply/email` }), false);
   });
 });
 
@@ -1591,6 +1635,60 @@ describe('the page as sent does not carry answers a review step writes out', () 
       ]) {
         assert.ok(html.includes(kept), `"${kept}" was lost`);
       }
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+/*
+ * A posting's requirements, which look exactly like a review step's answers.
+ *
+ * "Driver's license: Required", "Minimum age: 21", a passport over "Must
+ * travel to Canada monthly": the label names one of the personal questions,
+ * and the scrub above emptied whatever came after it. Measured through this
+ * module on a delivery-driver posting, eight of its ten requirement lines
+ * went to the AI as the label alone. Below them, a review step's answers
+ * under the same labels — one of them marked "(Required)", as forms mark a
+ * field — which must still go.
+ */
+const REQUIREMENTS = `
+  <h1>Delivery Driver — Northwind Logistics</h1>
+  <h2>Requirements</h2>
+  <p>Driver's license: KEPT-A valid, clean record required</p>
+  <p>Minimum age: KEPT-21</p>
+  <dl><dt>Driver's License</dt><dd>KEPT-Class C required</dd><dt>Age</dt><dd>KEPT-18 or older</dd></dl>
+  <table><tr><th>Passport</th><td>KEPT-Must travel to Canada monthly</td></tr></table>
+  <ul><li><strong>Age requirement</strong> KEPT-Must be 21 or older to drive</li></ul>
+  <div><span>Driver's license</span><span>KEPT-Required</span></div>
+  <p>Veteran status: KEPT-Veterans encouraged to apply</p>
+  <p>Age: KEPT-18+</p>
+  <h2>Review your application</h2>
+  <div><label>Gender (Required)</label><div>ANSWER-GENDER</div></div>
+  <dl><dt>Date of Birth *</dt><dd>ANSWER-DOB</dd><dt>Age</dt><dd>ANSWER-34</dd></dl>
+  <dl><dt>Age range</dt><dd>ANSWER-AGEBAND 40 and over</dd></dl>
+  <p>Age: ANSWER-OVER 55 or older</p>
+  <div><label>Driver's License Number</label><div>ANSWER-LICENSE</div></div>
+  <p>Disability Status: ANSWER-DISABILITY No, I do not have a disability</p>`;
+
+describe('the page as sent keeps what a posting requires', () => {
+  it('keeps a requirement under a personal label, and still empties an answer under one', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><title>Delivery Driver</title></head><body>${REQUIREMENTS}</body></html>`);
+      const html = await page.evaluate(async (js) => {
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        return mod.trimForStorage(mod.pageHtml(document));
+      }, source);
+      const lost = [...REQUIREMENTS.matchAll(/KEPT-[^<]+/g)].map((m) => m[0].trim()).filter((fact) => !html.includes(fact));
+      assert.deepEqual(lost, [], `the posting's requirements were emptied: ${lost.join(' | ')}`);
+      const leaked = html.match(/ANSWER-[A-Z0-9]+/g) ?? [];
+      assert.deepEqual(leaked, [], `answers were sent: ${leaked.join(', ')}`);
     } finally {
       await browser.close();
     }
