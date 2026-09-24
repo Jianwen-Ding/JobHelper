@@ -1638,6 +1638,8 @@ const PREFIXED = `<!doctype html><form>
   <label for="p2">LinkedIn URL</label><input id="p2" value="https://www.linkedin.com/in/">
   <label for="p3">GitHub</label><input id="p3" value="https://github.com/">
   <label for="p4">Website</label><input id="p4" value="https://someone-else.dev">
+  <label for="p5">Phone</label><input id="p5" type="tel" value="+1">
+  <label for="p6">Mobile number</label><input id="p6" type="tel" value="+1 617 555 0199">
 </form>`;
 
 const PAGES = { '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
@@ -2199,6 +2201,9 @@ async function main() {
     check('nor is the site\'s own prefix', /linkedin\.com\/in\/x/.test(prefixed.p2), prefixed.p2);
     check('nor GitHub\'s', /github\.com\/x/.test(prefixed.p3), prefixed.p3);
     check('while an address somebody typed is left alone', prefixed.p4 === 'https://someone-else.dev', prefixed.p4);
+    // A dialling code on its own is the form's hint too — kept in front of the number.
+    check('a phone box holding only "+1" gets the number after it', prefixed.p5 === '+1 555-0100', prefixed.p5);
+    check('and one holding a whole number is left alone', prefixed.p6 === '+1 617 555 0199', prefixed.p6);
 
     group('A graduation date chosen from a list');
     check('May 2027 is "Spring 2027" on a list of terms', terms.t1 === 'Spring 2027', terms.t1);

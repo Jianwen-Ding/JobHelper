@@ -1175,6 +1175,9 @@ const LINKS = new Set(['linkedin', 'github', 'website']);
  * there as a hint. Read as answered, it was left alone and sent as a profile
  * of nothing. A scheme, a host, and at most the site's own path prefix.
  */
+/** A phone box holding the country's code and nothing else — "+1", "+44". */
+const ONLY_A_DIALLING_CODE = /^\s*\+\d{1,4}\s*$/;
+
 function onlyTheStartOfAnAddress(value) {
   return /^\s*(https?:\/\/)?(www\.)?((linkedin\.com(\/in)?|github\.com)\/?)?\s*$/i.test(value) && /\S/.test(value);
 }
@@ -1882,10 +1885,17 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
     const answered =
       input instanceof HTMLSelectElement
         ? selectIsAnswered(input)
-        : Boolean(input.value) && !(LINKS.has(key) && onlyTheStartOfAnAddress(input.value));
+        : Boolean(input.value) &&
+          !(LINKS.has(key) && onlyTheStartOfAnAddress(input.value)) &&
+          !(key === 'phone' && ONLY_A_DIALLING_CODE.test(input.value));
     if (answered && !overwrite) {
       skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
       continue;
+    }
+    // The dialling code the form put there stays, in front of a number that
+    // does not carry one of its own.
+    if (key === 'phone' && ONLY_A_DIALLING_CODE.test(input.value) && !/^\s*\+/.test(String(value))) {
+      value = `${input.value.trim()} ${String(value).trim()}`;
     }
 
     /*
