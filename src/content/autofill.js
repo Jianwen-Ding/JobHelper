@@ -848,6 +848,25 @@ function wholeDateKey(input, key, description) {
  */
 const OURS = 'jobhelper-card-host';
 
+/**
+ * The events this file dispatches itself, so `watchChoices` does not take
+ * Autofill's own filling for a choice somebody made.
+ *
+ * It did: every option Autofill picked fired the same `change` a person's
+ * pick fires, and went into the bank as "Chosen on a form". A choice filled
+ * from a row worded one way was saved again under the form's wording, as a
+ * second row — measured in tests/reusing.mjs, "Which working arrangement do
+ * you prefer?" beside the "…for this position?" it was filled from — and a
+ * guess nobody checked was written down as their answer. By the event object
+ * rather than by `isTrusted`: a page's own scripts, and many real pickers,
+ * dispatch untrusted events for choices a person did make.
+ */
+const OUR_EVENTS = new WeakSet();
+const ours = (event) => {
+  OUR_EVENTS.add(event);
+  return event;
+};
+
 function allRoots(root = document, out = [root]) {
   for (const element of root.querySelectorAll('*')) {
     if (element.id === OURS) continue;
@@ -1271,8 +1290,8 @@ function nativeSet(element, property, value) {
 /** Set a value in a way React and friends actually notice. */
 function setValue(input, value) {
   nativeSet(input, 'value', value);
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  input.dispatchEvent(new Event('change', { bubbles: true }));
+  input.dispatchEvent(ours(new Event('input', { bubbles: true })));
+  input.dispatchEvent(ours(new Event('change', { bubbles: true })));
 }
 
 /**
@@ -2470,8 +2489,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
         }
         // Both, because choosing from a list fires both. `change` alone is
         // what a script fires, and some widgets only listen for `input`.
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
+        input.dispatchEvent(ours(new Event('input', { bubbles: true })));
+        input.dispatchEvent(ours(new Event('change', { bubbles: true })));
         filled.push({ key, value });
       } else {
         const reason = aboutAnotherCountry(key, value, description) ? ANOTHER_COUNTRY : 'no matching option';
@@ -3420,8 +3439,8 @@ function answerRadioGroups(fields, overwrite) {
     wanted.click();
     if (!wanted.checked) {
       nativeSet(wanted, 'checked', true);
-      wanted.dispatchEvent(new Event('input', { bubbles: true }));
-      wanted.dispatchEvent(new Event('change', { bubbles: true }));
+      wanted.dispatchEvent(ours(new Event('input', { bubbles: true })));
+      wanted.dispatchEvent(ours(new Event('change', { bubbles: true })));
     }
     filled.push({ key, value: fields[key] });
   }
@@ -3810,8 +3829,8 @@ function chooseInSelect(select, answer) {
   // Two options can share a value, so the write can land on the placeholder.
   // The same read-back `fillForm` does, and for the same reason.
   if (select.selectedOptions[0] !== option) return false;
-  select.dispatchEvent(new Event('input', { bubbles: true }));
-  select.dispatchEvent(new Event('change', { bubbles: true }));
+  select.dispatchEvent(ours(new Event('input', { bubbles: true })));
+  select.dispatchEvent(ours(new Event('change', { bubbles: true })));
   return true;
 }
 
@@ -3826,8 +3845,8 @@ function chooseInRadios(radios, answer) {
   wanted.click();
   if (!wanted.checked) {
     nativeSet(wanted, 'checked', true);
-    wanted.dispatchEvent(new Event('input', { bubbles: true }));
-    wanted.dispatchEvent(new Event('change', { bubbles: true }));
+    wanted.dispatchEvent(ours(new Event('input', { bubbles: true })));
+    wanted.dispatchEvent(ours(new Event('change', { bubbles: true })));
   }
   return wanted.checked;
 }
@@ -4171,7 +4190,7 @@ function exactOption(options, key, value, fields = {}, asked = '') {
 function press(el) {
   for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
     const Ctor = type.startsWith('pointer') && typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
-    el.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, view: window }));
+    el.dispatchEvent(ours(new Ctor(type, { bubbles: true, cancelable: true, view: window })));
   }
 }
 
@@ -4346,7 +4365,7 @@ function wouldSubmit(el) {
 /** Put the widget back as it was: nothing typed, nothing open. */
 function undoWidget(widget, box) {
   if (box) setValue(box, '');
-  (box ?? widget).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  (box ?? widget).dispatchEvent(ours(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
   (box ?? widget).blur?.();
 }
 
@@ -4398,9 +4417,9 @@ async function pickListedPlaces(fields) {
     const typed = box?.value.trim();
     if (!typed) continue;
     box.focus?.();
-    box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Unidentified', bubbles: true }));
+    box.dispatchEvent(ours(new KeyboardEvent('keydown', { key: 'Unidentified', bubbles: true })));
     setValue(box, typed);
-    box.dispatchEvent(new KeyboardEvent('keyup', { key: 'Unidentified', bubbles: true }));
+    box.dispatchEvent(ours(new KeyboardEvent('keyup', { key: 'Unidentified', bubbles: true })));
     const drawn = () =>
       [...hidden.parentElement.querySelectorAll('[role="option"], [class*="location"]:not(input), [class*="suggestion"]')].filter(
         (el) => el.childElementCount === 0 && el.getClientRects().length > 0,
@@ -4730,8 +4749,8 @@ async function fillEducationPart(control, key, value, f, patience) {
     if (!option) return { key, reason: 'no matching option', description: description.slice(0, 60) };
     nativeSet(control, 'value', option.value);
     if (control.selectedOptions[0] !== option) return { key, reason: 'the field would not take it', description: description.slice(0, 60) };
-    control.dispatchEvent(new Event('input', { bubbles: true }));
-    control.dispatchEvent(new Event('change', { bubbles: true }));
+    control.dispatchEvent(ours(new Event('input', { bubbles: true })));
+    control.dispatchEvent(ours(new Event('change', { bubbles: true })));
     return { key, value };
   }
   // A box: the date written the way it wants it, as `fillForm` writes one.
@@ -5038,6 +5057,8 @@ export function watchChoices(tell) {
   };
 
   const look = (event) => {
+    // Autofill's own filling, not a choice. See `OUR_EVENTS`.
+    if (OUR_EVENTS.has(event)) return;
     const target = event.composedPath?.()?.[0] ?? event.target;
     if (!target || rootOf(target)?.host?.id === OURS) return;
     let said;
