@@ -1640,3 +1640,57 @@ describe('the page as sent does not carry answers a review step writes out', () 
     }
   });
 });
+
+/*
+ * A posting's requirements, which look exactly like a review step's answers.
+ *
+ * "Driver's license: Required", "Minimum age: 21", a passport over "Must
+ * travel to Canada monthly": the label names one of the personal questions,
+ * and the scrub above emptied whatever came after it. Measured through this
+ * module on a delivery-driver posting, eight of its ten requirement lines
+ * went to the AI as the label alone. Below them, a review step's answers
+ * under the same labels — one of them marked "(Required)", as forms mark a
+ * field — which must still go.
+ */
+const REQUIREMENTS = `
+  <h1>Delivery Driver — Northwind Logistics</h1>
+  <h2>Requirements</h2>
+  <p>Driver's license: KEPT-A valid, clean record required</p>
+  <p>Minimum age: KEPT-21</p>
+  <dl><dt>Driver's License</dt><dd>KEPT-Class C required</dd><dt>Age</dt><dd>KEPT-18 or older</dd></dl>
+  <table><tr><th>Passport</th><td>KEPT-Must travel to Canada monthly</td></tr></table>
+  <ul><li><strong>Age requirement</strong> KEPT-Must be 21 or older to drive</li></ul>
+  <div><span>Driver's license</span><span>KEPT-Required</span></div>
+  <p>Veteran status: KEPT-Veterans encouraged to apply</p>
+  <p>Age: KEPT-18+</p>
+  <h2>Review your application</h2>
+  <div><label>Gender (Required)</label><div>ANSWER-GENDER</div></div>
+  <dl><dt>Date of Birth *</dt><dd>ANSWER-DOB</dd><dt>Age</dt><dd>ANSWER-34</dd></dl>
+  <dl><dt>Age range</dt><dd>ANSWER-AGEBAND 40 and over</dd></dl>
+  <p>Age: ANSWER-OVER 55 or older</p>
+  <div><label>Driver's License Number</label><div>ANSWER-LICENSE</div></div>
+  <p>Disability Status: ANSWER-DISABILITY No, I do not have a disability</p>`;
+
+describe('the page as sent keeps what a posting requires', () => {
+  it('keeps a requirement under a personal label, and still empties an answer under one', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><title>Delivery Driver</title></head><body>${REQUIREMENTS}</body></html>`);
+      const html = await page.evaluate(async (js) => {
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        return mod.trimForStorage(mod.pageHtml(document));
+      }, source);
+      const lost = [...REQUIREMENTS.matchAll(/KEPT-[^<]+/g)].map((m) => m[0].trim()).filter((fact) => !html.includes(fact));
+      assert.deepEqual(lost, [], `the posting's requirements were emptied: ${lost.join(' | ')}`);
+      const leaked = html.match(/ANSWER-[A-Z0-9]+/g) ?? [];
+      assert.deepEqual(leaked, [], `answers were sent: ${leaked.join(', ')}`);
+    } finally {
+      await browser.close();
+    }
+  });
+});

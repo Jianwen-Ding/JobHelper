@@ -886,6 +886,29 @@ const STATED_PERSONAL =
 const CONTROL =
   'input, select, textarea, button, [contenteditable], [role="radio"], [role="checkbox"], [role="option"], [role="combobox"], [role="listbox"], [role="radiogroup"]';
 
+/*
+ * Unless the pair is a requirement rather than an answer.
+ *
+ * A posting states what it asks of the applicant in the shape a review step
+ * writes out what the applicant said: "Driver's license: Required", "Minimum
+ * age: 21", a passport over "Must travel to Canada monthly". Every one was
+ * emptied — measured through this module on a delivery-driver posting, eight
+ * of its ten requirement lines went to the AI as the label alone — so the
+ * letter and the answers were written without the job's own requirements.
+ *
+ * What marks one is the language of a requirement: on the label, "Minimum
+ * age" or "Age requirement"; after it, "required", "must", "18 or older". Not
+ * "required" on the label, which is how a form marks a field — "Gender
+ * (Required)" is a question, and its answer still goes. And an answer to one
+ * of these questions does not talk like a requirement: "Female",
+ * "04/02/1999", "I am not a protected veteran". "Or older" alone does both —
+ * "18 or older" is a posting's minimum and "40 and over" an age bracket
+ * somebody ticked — so it counts only at the ages a minimum is set at.
+ */
+const REQUIREMENT_LABEL = /\b(minimum|requirements?|at\s+least)\b/i;
+const REQUIREMENT_SAID =
+  /\b(required|requirements?|must|minimum|at\s+least|mandatory|preferred|encouraged)\b|\b(?:1[6-9]|2[01])(?:\s*\+|\s+(?:years?\s+(?:of\s+age\s+|old\s+)?)?(?:or|and)\s+(?:older|over|above))/i;
+
 function scrubStatedAnswers(root) {
   const labels = [];
   const walker = (root.ownerDocument ?? root).createTreeWalker(root, 4 /* NodeFilter.SHOW_TEXT */);
@@ -897,10 +920,12 @@ function scrubStatedAnswers(root) {
     const said = node.data.trim();
     const inline = /^([^:]{1,80}):\s*\S/.exec(said);
     if (inline && STATED_PERSONAL.test(inline[1])) {
-      node.data = `${inline[1]}:`;
+      const rest = said.slice(inline[0].length - 1);
+      if (!REQUIREMENT_LABEL.test(inline[1]) && !REQUIREMENT_SAID.test(rest)) node.data = `${inline[1]}:`;
       continue;
     }
     if (said.length > 80 || !STATED_PERSONAL.test(said)) continue;
+    if (REQUIREMENT_LABEL.test(said)) continue;
     let label = node.parentElement;
     if (!label || label.textContent.trim() !== said) continue;
     // Up through the wrappers that hold nothing else, to what sits beside it.
@@ -911,6 +936,7 @@ function scrubStatedAnswers(root) {
     let next = label.nextSibling;
     while (next && next.nodeType === 3 && !next.data.trim()) next = next.nextSibling;
     if (!next || (next.textContent ?? '').trim().length > 200) continue;
+    if (REQUIREMENT_SAID.test(next.textContent ?? '')) continue;
     if (next.nodeType === 3) next.data = ' ';
     else if (next.nodeType === 1 && !next.matches(CONTROL) && !next.querySelector(CONTROL)) next.textContent = '';
   }
