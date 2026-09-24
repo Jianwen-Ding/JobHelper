@@ -3396,6 +3396,57 @@ async function main() {
     check('a plain "I am authorized" where nothing narrower is offered', statements.plain === 'I am authorized to work in the United States', `"${statements.plain}"`);
     check('and nothing where the profile does not say whether sponsorship is needed', statements.unsaid === '', `"${statements.unsaid}"`);
 
+    /*
+     * Lever's "Current location": a text box whose keystrokes search places
+     * and draw them below it, and a hidden `selectedLocation` that only a
+     * pick fills — measured on a live Lever form, where typing "Boston" drew
+     * "Boston, MA, USA", "Boston, NY, USA" and more. Filled as text, the
+     * hidden half stayed empty: a location Lever was never told was chosen.
+     */
+    const lever = await page.evaluate(async ({ b }) => {
+      const m = await import(`${b}/autofill.js`);
+      const PLACES = ['Boston, MA, USA', 'Boston, Lincolnshire, England, GBR', 'Boston, Davao Oriental, Davao Region, PHL', 'Boston, NY, USA'];
+      const run = async (fields) => {
+        document.body.innerHTML = `<form><ul><li class="application-question"><label><div class="application-label">Current location <span class="required">✱</span></div>
+          <div class="application-field"><input class="location-input" id="location-input" type="text" name="location" required>
+          <input id="selected-location" type="hidden" name="selectedLocation">
+          <div class="dropdown-container"><div class="dropdown-results"></div></div></div></label></li></ul></form>`;
+        const box = document.getElementById('location-input');
+        const results = document.querySelector('.dropdown-results');
+        let keyed = false;
+        box.addEventListener('keydown', () => { keyed = true; });
+        box.addEventListener('keyup', () => {
+          if (!keyed) return;
+          const term = box.value.split(',')[0].trim().toLowerCase();
+          setTimeout(() => {
+            results.innerHTML = '';
+            for (const name of PLACES.filter((p) => p.toLowerCase().startsWith(term))) {
+              const row = document.createElement('div');
+              row.className = 'dropdown-location';
+              row.textContent = name;
+              row.addEventListener('click', () => {
+                box.value = name;
+                document.getElementById('selected-location').value = JSON.stringify({ name, id: `id-${name}` });
+                results.innerHTML = '';
+              });
+              results.append(row);
+            }
+          }, 300);
+        });
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        return { text: box.value, chosen: document.getElementById('selected-location').value, filled: report.filled.map((x) => x.key) };
+      };
+      return {
+        ma: await run({ location: 'Boston, MA', address_city: 'Boston', address_state: 'MA', address_country: 'United States' }),
+        ny: await run({ location: 'Boston, NY', address_city: 'Boston', address_state: 'NY', address_country: 'United States' }),
+        noState: await run({ location: 'Boston', address_city: 'Boston', address_country: 'United States' }),
+      };
+    }, { b: base });
+    group("Lever: Current location, chosen from what its search draws");
+    check('the place whose city, state and country are the profile\'s', lever.ma.chosen.includes('"Boston, MA, USA"') && lever.ma.text === 'Boston, MA, USA', JSON.stringify(lever.ma));
+    check('by the state the profile holds', lever.ny.chosen.includes('"Boston, NY, USA"'), JSON.stringify(lever.ny));
+    check('and with no state, the typed text is left and nothing is chosen', lever.noState.chosen === '' && lever.noState.text === 'Boston', JSON.stringify(lever.noState));
+
     group('A phone box that keeps the digits and drops the formatting');
     check('is filled, and counted as filled', phones.digits.value === '5550100199' && phones.digits.filled, JSON.stringify(phones.digits));
     check('while one that drops digits is still reported', !phones.cut.filled && phones.cut.skipped.includes('the field would not take it'), JSON.stringify(phones.cut));

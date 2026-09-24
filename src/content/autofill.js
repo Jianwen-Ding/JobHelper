@@ -3445,10 +3445,45 @@ function undoWidget(widget, box) {
  * up on as soon as it settles (see `waitForOption`), so this is not paid by
  * every widget that has no option for its answer.
  */
+/*
+ * A place typed into a box whose keystrokes search places and draw them
+ * beneath it, with a hidden field that only a pick fills.
+ *
+ * Lever's "Current location" is one: typing "Boston" asks its own search and
+ * draws "Boston, MA, USA", "Boston, NY, USA" and more, and choosing one writes
+ * `selectedLocation`. Filled as text, the box read "Boston, MA" and the hidden
+ * half stayed empty — a location Lever was never told was chosen. So the
+ * text is announced as a keystroke would announce it, and the one suggestion
+ * whose city, state and country are the profile's is chosen — only that, and
+ * only when exactly one is. Otherwise the typed text stays as it was.
+ */
+const LISTED_PLACE = /selected[\s_-]*location|location[\s_-]*(?:id|selected)/i;
+
+async function pickListedPlaces(fields) {
+  for (const hidden of deepQueryAll('input[type="hidden"]')) {
+    if (hidden.value || !LISTED_PLACE.test(`${hidden.name} ${hidden.id}`)) continue;
+    const box = hidden.parentElement?.querySelector('input[type="text"], input:not([type])');
+    const typed = box?.value.trim();
+    if (!typed) continue;
+    box.focus?.();
+    box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Unidentified', bubbles: true }));
+    setValue(box, typed);
+    box.dispatchEvent(new KeyboardEvent('keyup', { key: 'Unidentified', bubbles: true }));
+    const drawn = () =>
+      [...hidden.parentElement.querySelectorAll('[role="option"], [class*="location"]:not(input), [class*="suggestion"]')].filter(
+        (el) => el.childElementCount === 0 && el.getClientRects().length > 0,
+      );
+    const option = await waitFor(() => placeOption(drawn(), fields), 3000);
+    if (option) press(option);
+    await pause(60);
+  }
+}
+
 export async function fillComboboxes(fields, report, { patience = 4000 } = {}) {
   // The same fields `fillForm` read, or a widget it named `city_state` has
   // no value here.
   fields = withCityAndState(fields);
+  await pickListedPlaces(fields);
   const pending = new Set(report.skipped.filter((s) => s.reason === PICK_BY_HAND).map((s) => s.key));
   if (pending.size === 0) return report;
 
