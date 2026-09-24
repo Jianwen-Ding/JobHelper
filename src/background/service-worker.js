@@ -9,6 +9,8 @@ import { getSettings } from '../shared/config.js';
 import {
   EXPECTATION_MS,
   employerKey,
+  hostOf,
+  rootOf,
   judgeApplication,
   keepPages,
   plainlyAnotherRole,
@@ -1404,6 +1406,14 @@ const savesInFlight = new Map();
 const SEND_WAITS_FOR_SAVE_MS = 10_000;
 
 /**
+ * How long after the application was last worked on a page saying it was
+ * received still counts as saying so about that one. An hour: a long form is
+ * written in one sitting, and a tab come back to the next day on another
+ * posting's confirmation is not this application's.
+ */
+const RECEIPT_WINDOW_MS = 60 * 60 * 1000;
+
+/**
  * What `saveWork` does, returning the draft-opening write it started so the
  * handler can say when it has settled.
  */
@@ -2716,8 +2726,53 @@ const handlers = {
    * application in flight, so the worst this can do is finish something that
    * had already started.
    */
-  async applicationSentHere({ note, url }, tab) {
+  async applicationSentHere({ note, url, receipt = false, above = [] }, tab) {
+    /*
+     * A receipt is often the page after the form, and the form's last save
+     * of the work is sent as it unloads — so the two cross: measured on the
+     * send walk, a press two seconds after the build reached the receipt
+     * before that save had written the trail, found no work to file it
+     * under, and the application stayed at Applying. Registered the moment
+     * it arrives, so waiting for it here is waiting for the right thing.
+     */
+    /*
+     * And a receipt from a frame has the form's page still around it, holding
+     * the card: that page is asked to save first, as a send from a frame is
+     * (see `applicationSent`), because the work it last saved may not yet
+     * say which job this is.
+     */
+    const inFrame = above.length > 0;
+    let saving = receipt ? savesInFlight.get(tab?.id) : null;
+    if (receipt && !saving && inFrame && tab?.id !== undefined) {
+      await chrome.tabs.sendMessage(tab.id, { type: 'jh-flush-work' }, { frameId: 0 }).catch(() => undefined);
+      saving = savesInFlight.get(tab.id);
+    }
+    if (saving) await Promise.race([saving, new Promise((r) => setTimeout(r, SEND_WAITS_FOR_SAVE_MS))]);
     const trail = await readTrail(tab?.id);
+    /*
+     * A page saying it has received an application is evidence about the
+     * application this tab is on only if the tab is still on it: the same
+     * sitting, and a site that application has already been through. The
+     * receipt is often on a page the card never looked at — a Greenhouse
+     * confirmation inside Stripe's page, Workday's dialog — so it names
+     * nothing itself. The top page is asked only when the receipt is in a
+     * frame, where the top page is still the one the application was built
+     * on; a receipt that replaced the page would be asking the confirmation
+     * itself, which has nothing true to say about which job it was.
+     *
+     * `above` is the origins the frame sits under, so a receipt drawn in an
+     * embed is judged by the careers site around it.
+     */
+    if (receipt) {
+      const named =
+        trail?.work?.spec?.generatedFor ?? (inFrame && tab?.id !== undefined ? await askThePage(tab.id) : null);
+      if (!named?.company || !named?.role) return { ok: false };
+      if (!(Date.now() - (trail.at ?? 0) <= RECEIPT_WINDOW_MS)) return { ok: false };
+      const been = new Set((trail.pages ?? []).map((p) => rootOf(hostOf(p.url))).filter(Boolean));
+      const here = [url, ...above].map((u) => rootOf(hostOf(u))).filter(Boolean);
+      if (!here.some((r) => been.has(r))) return { ok: false };
+      return handlers.applicationSent({ company: named.company, role: named.role, url, note }, tab);
+    }
     /*
      * The trail first, and the page itself when the trail has nothing yet.
      *

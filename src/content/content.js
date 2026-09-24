@@ -494,6 +494,7 @@
 
   /** Stopping and restarting the one-send-per-document watcher on this page. */
   let stopSending = null;
+  let stopReceipt = null;
   let restartSending = null;
 
   /** The questions on this page, wherever on it they are. */
@@ -2098,7 +2099,20 @@
    * same verdict from the same rules rather than from a second copy of them.
    */
   async function watchForSending() {
-    const { watchForSending: watch } = await imports.sending();
+    const { watchForSending: watch, watchForReceipt: watchReceipt } = await imports.sending();
+    /*
+     * And the page saying it has the application, for a send whose press was
+     * never seen. Filed from the trail rather than from `analysis`: the
+     * receipt is usually a page the card never read. See
+     * `applicationSentHere`, which decides whether it belongs to this tab's
+     * application at all.
+     */
+    const sayReceived = (how) =>
+      send('applicationSentHere', { note: how, url: location.href, receipt: true })
+        .then((reply) => {
+          if (reply?.ok !== false) cardHandle?.setStatus?.('Recorded as sent.');
+        })
+        .catch(() => undefined);
     const took = (how) => {
       /*
        * Only on the page where an application is actually sent.
@@ -2184,6 +2198,7 @@
     };
 
     stopSending = watch(document, took);
+    stopReceipt = watchReceipt(document, sayReceived);
     /*
      * And begun again at each posting, because the watcher is one send per
      * document and a single-page board is one document for the afternoon.
@@ -2197,8 +2212,11 @@
     restartSending = () => {
       stopSending?.();
       stopSending = watch(document, took);
+      stopReceipt?.();
+      stopReceipt = watchReceipt(document, sayReceived);
     };
     teardown.push(() => stopSending?.());
+    teardown.push(() => stopReceipt?.());
   }
 
   function keepWorkSafe() {
@@ -2304,7 +2322,7 @@
      */
     imports
       .sending()
-      .then(({ watchForSending }) =>
+      .then(({ watchForSending, watchForReceipt }) => {
         // Answering whether it was taken, for the same reason the top
         // document does: the one send a frame has must not be spent on a
         // record that never reached the store.
@@ -2312,8 +2330,22 @@
           send('applicationSentHere', { note: how, url: location.href })
             .then((reply) => reply?.ok !== false)
             .catch(() => false),
-        ),
-      )
+        );
+        /*
+         * And the receipt, which on an embedded board is drawn in here: the
+         * frame goes to Greenhouse's confirmation while the careers page
+         * around it stays exactly as it was. Sent with the origins above it,
+         * because this frame's own address is the board's, not the employer's.
+         */
+        watchForReceipt(document, (how) =>
+          send('applicationSentHere', {
+            note: how,
+            url: location.href,
+            receipt: true,
+            above: [...(location.ancestorOrigins ?? [])],
+          }).catch(() => undefined),
+        );
+      })
       .catch(() => undefined);
 
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

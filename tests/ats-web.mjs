@@ -782,6 +782,113 @@ export const EMBEDDED_SUBSCRIBE_FRAME = {
 };
 
 /** The frame documents, which are served but never visited directly. */
+/* ------------------------------------------------------------------ *
+ * The page that says it has the application                           *
+ * ------------------------------------------------------------------ */
+
+/**
+ * A form whose last press the watcher cannot see — it says "Continue", which
+ * is not a send by any rule — and which goes on to a page saying "Thank you
+ * for applying". Four real applications went out this way unrecorded: the
+ * press missed, and nothing else was listened to.
+ */
+const RECEIPT_FORM = ({ name, path, company, title, thanks }) =>
+  form({
+    name,
+    path,
+    company,
+    title,
+    sends: 'Continue',
+    inner: `<form onsubmit="event.preventDefault();">
+      ${FIELDS}
+      <button type="button" onclick="${thanks}">Continue</button>
+    </form>`,
+  });
+
+export const RECEIPT_APPLY = RECEIPT_FORM({
+  name: 'receipt-after-an-unseen-press',
+  path: '/receipt/apply/41877',
+  company: 'Tessaly Freight',
+  title: 'Platform Engineer',
+  thanks: "location.href = '/receipt/apply/41877/confirmation'",
+});
+
+export const RECEIPT_THANKS = {
+  name: 'receipt-confirmation',
+  path: '/receipt/apply/41877/confirmation',
+  html: page(
+    'Tessaly Freight',
+    'Tessaly Freight',
+    '<h1>Thank you for applying.</h1><p>We will be in touch if your background fits the role.</p>',
+  ),
+};
+
+/**
+ * The same, with the receipt on another site: a tab that sent one
+ * application and then, in the same tab, reads the confirmation of another
+ * somewhere else has not sent this one. `localhost` and `127.0.0.1` are two
+ * sites as far as the trail is concerned.
+ */
+export const RECEIPT_ELSEWHERE = RECEIPT_FORM({
+  name: 'receipt-on-another-site',
+  path: '/receipt/apply/52190',
+  company: 'Oxmoor Instruments',
+  title: 'Data Engineer',
+  thanks: "location.href = 'http://localhost:' + location.port + '/receipt/elsewhere/confirmation'",
+});
+
+export const RECEIPT_ELSEWHERE_THANKS = {
+  name: 'receipt-elsewhere-confirmation',
+  path: '/receipt/elsewhere/confirmation',
+  html: page('Application received', 'Somewhere else', '<h1>Your application has been submitted</h1>'),
+};
+
+/**
+ * Stripe's shape: the careers page on one site, the board in a frame from
+ * another, and the board's confirmation drawn in that frame while the page
+ * around it stays as it was. The frame is put on `localhost` so its own
+ * address is a site the trail has never been to — only the page it sits in
+ * vouches for it.
+ */
+export const RECEIPT_EMBED = {
+  name: 'receipt-in-an-embed',
+  path: '/careers/receipt-embed/77310',
+  company: 'Calloway Maritime',
+  title: 'Software Engineer',
+  sends: 'Continue',
+  sent: true,
+  inFrame: true,
+  html: page(
+    'Software Engineer — Calloway Maritime',
+    'Calloway Maritime',
+    `<h2>Software Engineer</h2>${FORM_WORDS}
+     <script>document.write('<iframe src="http://localhost:' + location.port +
+       '/embed/receipt/77310" title="Application form" width="720" height="620"></iframe>');</script>`,
+  ),
+};
+
+const RECEIPT_EMBED_FRAME = {
+  name: 'receipt-in-an-embed-frame',
+  path: '/embed/receipt/77310',
+  html: page(
+    'Application form',
+    'Apply',
+    `${FORM_WORDS}
+     <form onsubmit="event.preventDefault();">
+       ${FIELDS}
+       <button type="button" onclick="location.href = '/embed/receipt/77310/confirmation'">Continue</button>
+     </form>`,
+  ),
+};
+
+const RECEIPT_EMBED_THANKS = {
+  name: 'receipt-in-an-embed-confirmation',
+  path: '/embed/receipt/77310/confirmation',
+  html: page('Application form', 'Calloway Maritime', '<h1>Thank you for applying.</h1>'),
+};
+
+export const RECEIPT_DOCUMENTS = [RECEIPT_THANKS, RECEIPT_ELSEWHERE_THANKS, RECEIPT_EMBED_FRAME, RECEIPT_EMBED_THANKS];
+
 export const FRAME_DOCUMENTS = [EMBEDDED_APPLY_FRAME, EMBEDDED_SUBSCRIBE_FRAME];
 
 

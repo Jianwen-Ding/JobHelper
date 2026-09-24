@@ -177,6 +177,85 @@ function refusedByTheBrowser(button) {
 }
 
 /**
+ * The words a portal says an application with, once it has it.
+ *
+ * The press is the evidence this file was written around, and it is the
+ * weaker half: it has to be caught, from outside the portal, on a control
+ * whose words, element and validation are all the portal's own. Four real
+ * applications in one afternoon — a Greenhouse board, Amazon's flow and two
+ * Workday tenants — went out without their press being taken, and sat at
+ * Applying.
+ *
+ * The page after is the stronger half. "Thank you for applying" and "Your
+ * application has been submitted" are said only once something has been
+ * sent, and every system tested ends that way. Each phrase needs its verb and
+ * its object: "Thank you for your interest" is on the description page, and
+ * "Submit your application" is on the form.
+ */
+const RECEIVED =
+  /\bthanks?( you)?( so much)? for (applying|your application|submitting)\b|\b(your )?application (has been|was|is) (successfully )?(submitted|received|sent|complete[d]?)\b|\bapplication (successfully )?(submitted|received)\b|\bwe(['’]ve| have) (successfully )?received your application\b|\byou(['’]ve| have) (successfully )?applied\b|\bsuccessfully (applied|submitted)\b/i;
+
+/**
+ * Where a portal says it, rather than anywhere at all.
+ *
+ * A heading, a dialog or a status region, and short: a candidate dashboard
+ * lists "Application submitted" as the state of every job ever sent, in rows,
+ * and a help page explains what happens "once your application has been
+ * submitted" in paragraphs. Neither is this page saying this one arrived.
+ */
+const SAYS_IT = 'h1, h2, h3, [role="dialog"], [role="alertdialog"], [role="alert"], [role="status"], [aria-live]';
+const SAID_SHORT = 240;
+
+/** Whether this document says the application it held has been received. */
+export function saysItWasReceived(doc) {
+  if (RECEIVED.test(doc?.title ?? '')) return true;
+  for (const el of doc?.querySelectorAll?.(SAYS_IT) ?? []) {
+    // Drawn, not merely present: forms carry the thank-you they will show
+    // later, hidden, from the moment they load.
+    if (!el.getClientRects?.().length) continue;
+    const said = (el.innerText ?? el.textContent ?? '').replace(/\s+/g, ' ').trim();
+    if (said && said.length <= SAID_SHORT && RECEIVED.test(said)) return true;
+  }
+  return false;
+}
+
+/**
+ * Watch a document for it saying so, and tell once.
+ *
+ * Looked for at once and then as the page changes, because the receipt is as
+ * often drawn over the form as navigated to: Workday's is a dialog on the
+ * same page. Only for a while, since almost every document this runs in is
+ * nothing to do with applying, and a change a quarter of an hour after load
+ * is not the answer to a press.
+ *
+ * `tell` answering `false` spends nothing, as with `watchForSending`, but the
+ * look is not repeated on every change after that: a document that says it
+ * and was not taken will go on saying it, and asking the worker the same
+ * question on every mutation of a busy page is waste.
+ */
+export function watchForReceipt(doc, tell, { within = 15 * 60 * 1000, settle = 400 } = {}) {
+  let told = false;
+  let timer = null;
+  const look = () => {
+    timer = null;
+    if (told || !saysItWasReceived(doc)) return;
+    told = true;
+    tell('The page said the application was received');
+  };
+  const observer = new MutationObserver(() => {
+    if (!told && !timer) timer = setTimeout(look, settle);
+  });
+  observer.observe(doc.documentElement ?? doc, { childList: true, subtree: true, characterData: true });
+  const until = setTimeout(() => observer.disconnect(), within);
+  look();
+  return () => {
+    observer.disconnect();
+    clearTimeout(until);
+    if (timer) clearTimeout(timer);
+  };
+}
+
+/**
  * Watch a document for its application being sent, and say so once.
  *
  * Both listeners are in capture phase: a handler that calls preventDefault and
