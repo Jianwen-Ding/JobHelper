@@ -38,6 +38,7 @@ import {
   ONE_ADDRESS_BOARD,
   NIMBUS_ROLE,
   NIMBUS_QUIET_FORM,
+  ORACLE_CE,
   SOLO_ROLE,
   SOLO_OTHER,
   OWN_SITE,
@@ -288,6 +289,47 @@ async function main() {
 
       const onForm = await page.locator('#q1').count();
       check('workday: the form really did replace the description', onForm === 1);
+      await page.close();
+    }
+
+    /* ---- Oracle's shape: a thin first step, and nothing built yet ---- */
+    /*
+     * Every case above presses "Build resume" before Apply, and that is what
+     * carried the card through: something made counts as an application
+     * under way, which lets a page below the threshold through. Pressing
+     * Apply straight away — which is what most people do — made nothing,
+     * and Oracle's first form page is an email box and a terms box under a
+     * title that names no role the way the title test reads it. It scored
+     * under the threshold, the card went, and there was no "Autofill this
+     * form" anywhere on the form. Reported against a live Oracle Recruiting
+     * Cloud posting.
+     */
+    group('A thin first form step, reached before anything was built');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(ORACLE_CE), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      await page.click('#apply');
+      await page.waitForTimeout(3500);
+      // Tolerant: a card that never comes back is the failure being checked,
+      // and `settled` would throw on it rather than say so.
+      const back = await page
+        .locator(`${HOST} .card .role`)
+        .waitFor({ timeout: 25_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (back) await settled(page);
+      const card = cardOf(page);
+      check('oracle: the card came back on the form step', (await card.count()) > 0);
+      if (await card.count()) {
+        const shown = (await card.locator('.role').textContent().catch(() => ''))?.trim();
+        check('oracle: still knows the role', shown === 'Platform Engineer', shown);
+        check(
+          'oracle: offers to fill the form in',
+          (await card.getByRole('button', { name: 'Autofill this form' }).count()) > 0,
+        );
+      }
+      check('oracle: the form really did replace the description', (await page.locator('#primary-email-0').count()) === 1);
       await page.close();
     }
 

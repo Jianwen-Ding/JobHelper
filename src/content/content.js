@@ -300,8 +300,13 @@
    * What it is evidence of is that the page is part of a hiring system at all,
    * and that is the question the chip exists to ask.
    */
+  /*
+   * Oracle Recruiting Cloud by its path rather than its host: every tenant is
+   * `<pod>.fa.<dc>.oraclecloud.com`, which also serves the rest of Oracle's
+   * cloud, and only the candidate side lives under `/CandidateExperience/`.
+   */
   const ON_A_TRACKER =
-    /\b(greenhouse|lever|workday|myworkdayjobs|ashby|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite|bamboohr|rippling|breezy|recruitee|teamtailor|jazzhr|successfactors|brassring)\b/i;
+    /\b(greenhouse|lever|workday|myworkdayjobs|ashby|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite|bamboohr|rippling|breezy|recruitee|teamtailor|jazzhr|successfactors|brassring|candidateexperience)\b/i;
   const ON_A_BOARD = /\b(indeed|linkedin|glassdoor|monster|ziprecruiter|dice|wellfound|otta|builtin|simplyhired|seek)\b/i;
 
   /*
@@ -1422,8 +1427,9 @@
      * behaviour being fixed.
      */
     if (heldFor.url === location.href) return heldFor.answer;
-    const held = await send('openHere', {}).catch(() => null);
-    heldFor = { url: location.href, answer: Boolean(held?.open && held?.made) };
+    const held = await send('openHere', { page: pageIdentity() }).catch(() => null);
+    // Something written, or this page plainly the next one — see `carriesOn`.
+    heldFor = { url: location.href, answer: Boolean(held?.open && (held?.made || held?.carriesOn)) };
     return heldFor.answer;
   }
 
@@ -2562,7 +2568,9 @@
    * loading is not going to.
    */
   const RESCORE_WINDOW_MS = 60_000;
-  const loadedAt = Date.now();
+  // Reset by a route change, which is a page as far as this is concerned: see
+  // `startOver`.
+  let loadedAt = Date.now();
   let pageChanged = false;
   const watcher = new MutationObserver(() => {
     pageChanged = true;
@@ -2727,6 +2735,21 @@
     // And the one send this document's watcher had to give, which the
     // posting you have just left may already have spent.
     restartSending?.();
+
+    /*
+     * And the second look, for the page this is now.
+     *
+     * The window it runs in was counted from when the document loaded and
+     * the watcher was switched off for good when it closed, so a route change
+     * a minute in — reading a posting for longer than that before pressing
+     * Apply — got the one look this function takes, a few hundred
+     * milliseconds after the url changed, at a form the board had not drawn
+     * yet. Nothing looked again. A route change is a new page here in every
+     * other respect, and it is one for this too.
+     */
+    loadedAt = Date.now();
+    pageChanged = false;
+    watcher.observe(document, { childList: true, subtree: true });
 
     // And the choices watcher, which was for the form you have just left: the
     // next page is watched only if its own pass finds a form on it.

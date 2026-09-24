@@ -14,6 +14,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   EXPECTATION_MS,
+  carriesOn,
   keepPages,
   rootOf,
   lighten,
@@ -291,6 +292,49 @@ describe('is this the same application', () => {
 
   it('says no to a page with no address at all', () => {
     assert.equal(sameApplication(trailOf(at('https://x.com/a')), {}), false);
+  });
+});
+
+/**
+ * Whether a page is plainly the next page of the application in hand, which
+ * is what lets a thin form step be read before anything has been written.
+ *
+ * Oracle Recruiting Cloud's first form page is an email box under the
+ * posting's title, reached by pushState from the posting's own address. It
+ * scored under the threshold, and with nothing written the card went.
+ */
+describe('a page carrying on the application in hand', () => {
+  const posting = at('https://ebfr.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/jobs/job/11514', 'Oceaneering');
+
+  it('is the posting\'s own apply steps, on its own address', () => {
+    for (const step of ['apply/email', 'apply/section/1', 'apply/section/3']) {
+      assert.equal(carriesOn(trailOf(posting), { url: `${posting.url}/${step}` }), true, step);
+    }
+  });
+
+  it('is where Apply was pressed to, on another site', () => {
+    const trail = { ...trailOf(at('https://careers.acme.com/jobs/platform-engineer', 'Acme')), expecting: { to: 'https://acme.bytedance.example/n/c/8f2a1b', at: Date.now() } };
+    assert.equal(carriesOn(trail, { url: 'https://acme.bytedance.example/n/c/8f2a1b' }), true);
+  });
+
+  /*
+   * The joins `sameApplication` also accepts, and that must not be enough to
+   * read a page on: every link out of a posting would bring the card along.
+   */
+  it('is not a page on another site that merely came from it', () => {
+    const trail = trailOf(at('https://careers.acme.com/jobs/platform-engineer', 'Acme'));
+    const about = { url: 'https://acme.example/about', referrerHost: 'careers.acme.com' };
+    assert.equal(sameApplication(trail, about), true, 'the looser judge joins it');
+    assert.equal(carriesOn(trail, about), false);
+  });
+
+  it('is not another page of the same site, nor another job on it', () => {
+    assert.equal(carriesOn(trailOf(posting), { url: 'https://ebfr.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/jobs/my-profile' }), false);
+    assert.equal(carriesOn(trailOf(posting), { url: 'https://ebfr.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/jobs/job/11999/apply/email' }), false);
+  });
+
+  it('is nothing at all in a tab with no application', () => {
+    assert.equal(carriesOn(trailOf(), { url: `${posting.url}/apply/email` }), false);
   });
 });
 

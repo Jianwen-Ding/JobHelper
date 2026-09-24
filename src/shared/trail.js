@@ -667,6 +667,38 @@ export function sameApplication(trail, page, now = Date.now()) {
   return judgeApplication(trail, page, now) !== 'different';
 }
 
+/**
+ * Whether a page carries on the application in hand closely enough to be read
+ * without being asked about: reached by pressing Apply on it, or further down
+ * the same posting's own address on the same site.
+ *
+ * For the score gate, which decides whether a page is read at all, and which
+ * let a page below the threshold through only once something had been written
+ * into the application. Pressing Apply straight away writes nothing, and the
+ * first page of a form can be almost empty — Oracle Recruiting Cloud's is an
+ * email box and a terms box, reached by `pushState`, under a title that names
+ * no role the way the title test reads it — so the card went, and the form
+ * had no "Autofill this form" on it at all.
+ *
+ * Narrower than `sameApplication` on purpose. That one also joins a page on
+ * another site by its referrer or by a link, which is right for deciding where
+ * a page that is being read belongs and wrong for deciding to read it: every
+ * "About us" and "Benefits" link out of a posting would bring the card with it.
+ * The click and the posting's own path are the two witnesses that say this
+ * page is the application rather than merely near it.
+ */
+export function carriesOn(trail, page, now = Date.now()) {
+  if (!trail?.pages?.length || !page?.url) return false;
+  if (judgeApplication(trail, page, now) === 'different') return false;
+  if (wasExpected(trail, page.url, now)) return true;
+  const here = hostOf(page.url);
+  if (!here) return false;
+  return trail.pages.some((p) => {
+    const there = hostOf(p.url);
+    return Boolean(there) && (here === there || rootOf(here) === rootOf(there)) && relatedPath(page.url, p.url);
+  });
+}
+
 /** The trail without the page text, or the work, which the card has no use for. */
 export function summarise(trail) {
   const { work, expecting, ...rest } = trail;

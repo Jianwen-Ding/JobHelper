@@ -14,6 +14,7 @@ import {
   plainlyAnotherRole,
   lighten,
   sameApplication,
+  carriesOn,
   summarise,
   trimForStorage,
   wasExpected,
@@ -1742,16 +1743,23 @@ const handlers = {
    * in it, the card comes up and `remember` decides whether this page joins,
    * branches, or starts afresh — which is the question that was owed.
    *
-   * Deliberately not about whether this page belongs. That is
-   * `sameApplication`'s judgement and it is made later, with the page read;
-   * this only says there is something here to be judged against.
+   * Where the page belongs is still `sameApplication`'s judgement, made
+   * later with the page read; this only says there is something here to be
+   * judged against — or, with `carriesOn`, that this page is plainly the next
+   * page of it: pressed into from the posting, or further down the posting's
+   * own address. That is the case "something written" missed: somebody who
+   * presses Apply at once has written nothing, and the first form page of an
+   * Oracle application is an email box under the posting's title, scoring
+   * under the threshold. See `carriesOn` in trail.js for why the looser joins
+   * — a referrer, a link — are not enough to read a page on.
    */
-  async openHere(_payload, tab) {
+  async openHere({ page } = {}, tab) {
     await inheritIfNew(tab?.id, tab?.openerTabId);
     const trail = await readTrail(tab?.id);
     return {
       open: (trail?.pages ?? []).length > 0,
       made: madeSomething(trail?.work),
+      carriesOn: Boolean(page && carriesOn(trail, page)),
       job: nameOfTrail(trail),
     };
   },
