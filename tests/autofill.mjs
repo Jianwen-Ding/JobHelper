@@ -2207,6 +2207,72 @@ const WORKDAY_EXPERIENCE_BEGUN = `<!doctype html><html><head><meta charset="utf-
 <div role="group" aria-labelledby="we-head"><h3 id="we-head">Work Experience</h3>${workdayJob(1, { company: 'Acme' })}${workdayJob(2, { description: 'My own words about it.' })}${workdayJob(3, { company: 'Globex' })}</div>
 <label for="project">Project description</label><textarea id="project"></textarea>
 </body></html>`;
+/*
+ * Workday's My Experience as it is drawn live — measured on NVIDIA's and
+ * Intel's tenants (nvidia.wd5.myworkdayjobs.com, intel.wd1.myworkdayjobs.com)
+ * with a fake profile, after pressing Work Experience's "Add". Each date is a
+ * `<fieldset>` whose `<legend>` says "From" or "To", five wrappers above the
+ * month box; the group around the two boxes names itself by an
+ * `aria-labelledby` pointing at an element that is not on the page, and the
+ * boxes say only "Month" and "Year" in their `aria-label`s, with no
+ * placeholder. The Education block beside it asks its years the same way.
+ *
+ * And the date behaves as it does live, because each of those is a way the
+ * fill has been seen to go wrong:
+ *   - the month box rewrites "06" as "6" as soon as it takes it;
+ *   - a filled month moves the caret on to the year a moment later;
+ *   - focus arriving in a date from outside it is sent to its first box;
+ *   - the date is taken — what Save and Continue checks — only when focus
+ *     leaves it, read from both boxes at that moment. `data-committed` holds
+ *     what was taken, and Workday's "The field From is required and must have
+ *     a value" is a `data-committed` of "".
+ */
+const workdayDate = (id, legend, parts = ['Month', 'Year']) => `
+  <div data-automation-id="formField-${id.split('--')[1]}"><fieldset><legend><label id="label-${id}"><span>${legend}<abbr aria-hidden="true">*</abbr></span></label></legend>
+    <div><div><div aria-hidden="true" id="helpText-${id}">current value is ${parts.map((p) => (p === 'Month' ? 'MM' : 'YYYY')).join('/')}</div>
+      <div id="${id}" aria-labelledby="hiddenDateValueId-${id}" role="group" data-automation-id="dateInputWrapper" data-committed=""><div tabindex="-1">${parts.map((p, i) => `${i ? '<div>/</div>' : ''}
+        <div id="${id}-dateSection${p}" tabindex="-1"><div aria-hidden="true" data-automation-id="dateSection${p}-display">${p === 'Month' ? 'MM' : 'YYYY'}</div>
+          <input role="spinbutton" aria-label="${p}" aria-valuemin="1" aria-valuemax="${p === 'Month' ? 12 : 9999}" id="${id}-dateSection${p}-input" data-automation-id="dateSection${p}-input" value=""></div>`).join('')}
+      </div><div aria-label="Calendar" data-automation-id="dateIcon" role="button" tabindex="0"></div></div>
+    </div></div></fieldset></div>`;
+const WORKDAY_DATES = `<!doctype html><html><head><meta charset="utf-8"><title>My Experience</title></head><body>
+<div data-automation-id="applyFlowMyExpPage">
+<div role="group" aria-labelledby="Work-Experience-section"><h4 id="Work-Experience-section">Work Experience</h4>
+  <div role="group" aria-labelledby="Work-Experience-1-panel"><div><h5 id="Work-Experience-1-panel">Work Experience 1</h5></div>
+    <div data-automation-id="formField-jobTitle"><label for="workExperience-93--jobTitle"><span>Job Title<abbr aria-hidden="true">*</abbr></span></label><div><input type="text" id="workExperience-93--jobTitle" name="jobTitle" aria-required="true"></div></div>
+    <div data-automation-id="formField-companyName"><label for="workExperience-93--companyName"><span>Company<abbr aria-hidden="true">*</abbr></span></label><div><input type="text" id="workExperience-93--companyName" name="companyName" aria-required="true"></div></div>
+    <div data-automation-id="formField-location"><label for="workExperience-93--location">Location</label><div><input type="text" id="workExperience-93--location" name="location"></div></div>
+    <div data-automation-id="formField-currentlyWorkHere"><label for="workExperience-93--currentlyWorkHere">I currently work here</label><input type="checkbox" id="workExperience-93--currentlyWorkHere" name="currentlyWorkHere"></div>
+    ${workdayDate('workExperience-93--startDate', 'From')}
+    ${workdayDate('workExperience-93--endDate', 'To')}
+    <div data-automation-id="formField-roleDescription"><label for="workExperience-93--roleDescription">Role Description</label><textarea id="workExperience-93--roleDescription"></textarea></div>
+  </div>
+</div>
+<div role="group" aria-labelledby="Education-section"><h4 id="Education-section">Education</h4>
+  <div role="group" aria-labelledby="Education-1-panel"><div><h5 id="Education-1-panel">Education 1</h5></div>
+    ${workdayDate('education-66--firstYearAttended', 'From', ['Year'])}
+    ${workdayDate('education-66--lastYearAttended', 'To (Actual or Expected)', ['Year'])}
+  </div>
+</div>
+</div>
+<script>
+  for (const wrapper of document.querySelectorAll('[data-automation-id="dateInputWrapper"]')) {
+    const boxes = [...wrapper.querySelectorAll('input[role="spinbutton"]')];
+    const [month, year] = boxes.length === 2 ? boxes : [null, boxes[0]];
+    if (month) month.addEventListener('input', () => {
+      if (/^0\\d$/.test(month.value)) month.value = String(Number(month.value));
+      if (month.value) setTimeout(() => year.focus(), 0);
+    });
+    wrapper.addEventListener('focusin', (e) => {
+      if (!wrapper.contains(e.relatedTarget) && e.target !== boxes[0]) boxes[0].focus();
+    });
+    wrapper.addEventListener('focusout', (e) => {
+      if (wrapper.contains(e.relatedTarget)) return;
+      wrapper.dataset.committed = month ? (month.value || year.value ? month.value + '/' + year.value : '') : year.value;
+    });
+  }
+</script>
+</body></html>`;
 const JOBS = [
   {
     company: 'Vega Analytics',
@@ -2637,7 +2703,7 @@ const ADDS_ITS_CODE = `<!doctype html><html><head><meta charset="utf-8"><title>A
 </script>
 </body></html>`;
 
-const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
+const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/workday-dates': WORKDAY_DATES };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -5812,6 +5878,34 @@ async function main() {
       'while a description outside the work history is still a question',
       JSON.stringify(begun.questions) === '["Project description"]',
       JSON.stringify(begun.questions),
+    );
+
+    /*
+     * The same step as Workday draws it live, with the one job a fake resume
+     * lists. See `WORKDAY_DATES`.
+     */
+    const INTERNSHIP = [{ company: 'Example Co', title: 'Software Engineering Intern', start: { year: 2025, month: 6 }, end: { year: 2025, month: 8 }, current: false, description: '• Built example things for testing' }];
+    const liveDates = await page.goto(`${base}/workday-dates`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, jobs }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm({}, { history: jobs });
+        await new Promise((r) => setTimeout(r, 50));
+        const v = (id) => document.getElementById(id).value;
+        const at = 'workExperience-93--';
+        return {
+          from: `${v(`${at}startDate-dateSectionMonth-input`)}/${v(`${at}startDate-dateSectionYear-input`)}`,
+          to: `${v(`${at}endDate-dateSectionMonth-input`)}/${v(`${at}endDate-dateSectionYear-input`)}`,
+          title: v(`${at}jobTitle`),
+          filled: report.filled.map((f) => f.key),
+          skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, jobs: INTERNSHIP }),
+    );
+    group('Workday: My Experience as it is drawn live');
+    check(
+      'a job\'s From and To are filled, though the words "From" and "To" are a legend five wrappers above the boxes',
+      liveDates.title === 'Software Engineering Intern' && liveDates.from === '6/2025' && liveDates.to === '8/2025',
+      JSON.stringify(liveDates),
     );
 
     /* ---------------- Found filling live forms with a fake profile ---------------- */

@@ -2651,8 +2651,20 @@ const JOB_PARTS = [
 ];
 
 /** The label of the date a month or year box is one half of. */
+/*
+ * Seven wrappers up, not four. Workday draws the date as a `<fieldset>` whose
+ * `<legend>` says "From", and the month box sits five wrappers below it: its
+ * own section, a focus holder, the `role="group"` — which names itself by an
+ * `aria-labelledby` pointing at nothing on the page, so it says nothing — and
+ * two layout divs. Measured live on NVIDIA's and Intel's My Experience with a
+ * fake resume holding one job: Job Title, Company and Role Description were
+ * filled and the required From and To left empty, unreported, because the
+ * climb stopped a level short of the legend. The first named group on the way
+ * up still answers, so a date inside a block named "Work Experience 1" is
+ * never read as that block's name.
+ */
 function dateHalfOf(input) {
-  for (let at = input.parentElement, n = 0; at && n < 4; at = at.parentElement, n++) {
+  for (let at = input.parentElement, n = 0; at && n < 7; at = at.parentElement, n++) {
     if (at.matches('[role="group"], fieldset')) {
       const named = clean(at.getAttribute('aria-label')) || clean(fromLabelledBy(at)) || clean(at.querySelector(':scope > legend')?.textContent);
       if (named) return withoutMarkers(named);
