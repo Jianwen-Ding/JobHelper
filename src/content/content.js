@@ -638,7 +638,8 @@
       : [];
     // And then the widgets `fillForm` could only name. See `fillComboboxes`:
     // exact options only, and seen to have taken, or put back as they were.
-    const report = await fillComboboxes(fields, fillForm(fields, { remembered, history }));
+    // The history too, for the job months a form asks as lists. See `fillJobMonths`.
+    const report = await fillComboboxes(fields, fillForm(fields, { remembered, history }), { history });
     // Last, the resume's other schools, one "Add another" at a time. See
     // `fillEducation`: a resume with one gets only its dates, in the first block.
     return fillEducation(education, fields, report);

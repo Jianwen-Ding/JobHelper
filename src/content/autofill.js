@@ -34,7 +34,16 @@ const FIELD_PATTERNS = [
   ['middle_name', /\bname[\s_-]*\([\s_-]*middle([\s_-]*name)?[\s_-]*\)/i],
   ['first_name', /\b(first[\s_-]?name|given[\s_-]?name|forename|fname)\b/i],
   ['last_name', /\b(last[\s_-]?name|family[\s_-]?name|surname|lname)\b/i],
-  ['full_name', /\b(full[\s_-]?name|your[\s_-]?name|candidate[\s_-]?name|legal[\s_-]?name)\b/i],
+  /*
+   * Not the full name *of* something. Datadog's Greenhouse board asks "Please
+   * share the full name of your major/final year specialization(s) as it
+   * would appear on your diploma", and it was given "Morgan Testwell" —
+   * measured live, a person's name typed in as their degree subject. A name
+   * followed by "of your", "of the" or "of this" is a thing's name: the
+   * subject, the school, the company's legal name. Left to the patterns below,
+   * which read "major" in it and give the subject, and otherwise to nothing.
+   */
+  ['full_name', /\b(full[\s_-]?name|your[\s_-]?name|candidate[\s_-]?name|legal[\s_-]?name)\b(?![\s_-]+of[\s_-]+(?:your|the|this|that|each|any|a|an)\b)/i],
   ['email', /\b(e-?mail)\b/i],
   /*
    * "Number" on its own is far too broad — requisition number, employee
@@ -54,8 +63,14 @@ const FIELD_PATTERNS = [
    * `name="org"` with "Current company" as its only label, and it read as
    * nothing at all.
    */
-  ['current_company', /\b(current|present|most[\s_-]*recent)[\s_-]*(company|employer|organi[sz]ation|org)\b/i],
-  ['current_title', /\b(current|present|most[\s_-]*recent)[\s_-]*(job[\s_-]*)?(title|role|position)\b/i],
+  /*
+   * And a bracket closed between them: Reddit's Greenhouse board asks "Please
+   * provide the name of your current (or most recent) company", and ")"
+   * stood between "recent" and "company". See `mostRecentJob` for what a
+   * question saying "most recent" is given.
+   */
+  ['current_company', /\b(current|present|most[\s_-]*recent)\)?[\s_-]*(company|employer|organi[sz]ation|org)\b/i],
+  ['current_title', /\b(current|present|most[\s_-]*recent)\)?[\s_-]*(job[\s_-]*)?(title|role|position)\b/i],
   /*
    * When the degree ends. Above school and degree on purpose: the first
    * pattern to match claims the field, and "Graduation date from your
@@ -68,7 +83,14 @@ const FIELD_PATTERNS = [
    */
   ['graduation_month', /(\bgrad\b|\bgraduat\w*|\bcompletion\b).{0,40}\bmonth\b|\bmonth\b.{0,40}\bgraduat/i],
   // "Class of" and "Graduating class" are asking for the year, as "Class year" is.
-  ['graduation_year', /(\bgrad\b|\bgraduat\w*|\bcompletion\b).{0,40}\byear\b|\byear\b.{0,40}\bgraduat|\bclass\s*year\b|\bclass\s+of\b|\bgraduating\s+class\b/i],
+  /*
+   * And "What year will you complete your degree?", which is Okta's Greenhouse
+   * board's: it says neither "graduate" nor "completion", fell through to
+   * `degree`, and — measured live — was reported as a degree with no
+   * matching option in a list of years. Only with the degree named after the
+   * verb: "the year you completed the course" is not a graduation.
+   */
+  ['graduation_year', /(\bgrad\b|\bgraduat\w*|\bcompletion\b).{0,40}\byear\b|\byear\b.{0,40}\bgraduat|\byear\b.{0,40}\bcomplete\b.{0,20}\b(degree|studies|bachelor\w*|master\w*|program(me)?)\b|\bclass\s*year\b|\bclass\s+of\b|\bgraduating\s+class\b/i],
   /*
    * And the date by the words that name the degree's end without saying
    * "graduation": "Expected degree completion" was the example above and no
@@ -124,12 +146,38 @@ const FIELD_PATTERNS = [
    * And "for employment" where the same question says "to work": "Are you
    * currently eligible for employment in the US?" matched nothing, so the
    * required question was neither answered nor reported.
+   *
+   * And spelled with an "s", as the European boards spell it. Datadog's
+   * Greenhouse board asks "Are you legally authorised to work full-time in the
+   * country where this job is based?", which matched none of these, fell
+   * through to `address_country` on the word "country", and was reported —
+   * measured live — as a country still to be picked by hand from a Yes/No
+   * list. The rest of this file already reads both spellings of the answer.
    */
   [
     'work_authorization',
-    /\b(work[\s_-]?authoriz\w*|legally[\s_-]?authorized|(authoriz|eligib)\w*[\s_-]+(to[\s_-]+work|for[\s_-]+employment)|right[\s_-]?to[\s_-]?work)\b/i,
+    /\b(work[\s_-]?authori[sz]\w*|legally[\s_-]?authori[sz]ed|(authori[sz]|eligib)\w*[\s_-]+(to[\s_-]+work|for[\s_-]+employment)|right[\s_-]?to[\s_-]?work)\b/i,
   ],
   ['requires_sponsorship', /\b(sponsor\w*|visa[\s_-]?status)\b/i],
+  /*
+   * Whether the applicant lives in a country the question names — a yes or a
+   * no that the profile's own country answers. Asked on three systems in the
+   * sweep and answered on none, because no pattern read it: Discord's
+   * Greenhouse board ("Are you currently located in the US?"), JumpCloud's
+   * Lever form ("Do you currently live in the United States of America?")
+   * and Prometheum's JazzHR form ("Do you currently reside in the United
+   * States or Canada?"), each required, each measured live left blank and
+   * unreported. Only with a country named, and only "Yes" for the profile's
+   * own — see `aboutAnotherCountry` — so "Are you located in the Bay Area?"
+   * is not read at all and a question about another country is handed back.
+   * Below the right to work and sponsorship, which claim a question that
+   * mentions residence too; above the address, which would otherwise read
+   * "United States" in it as a country to fill in.
+   */
+  [
+    'lives_in_country',
+    /\b(?:do|are)\s+you\s+(?:currently\s+|presently\s+|now\s+)?(?:live|living|reside|residing|located|based)\s+(?:in|within)\s+(?:the\s+)?(?:US|USA|U\.S\.(?:A\.)?|United\s+States|America|Canada|UK|U\.K\.|United\s+Kingdom)(?![\w.])/i,
+  ],
   /*
    * Both in one box, above the city, which claimed it: "City, State" and
    * "City/State" were given "Boston" on a profile that also holds "MA". See
@@ -260,8 +308,13 @@ const NOT_ABOUT_YOU = [
    * name" further on, which still excludes. Every doubt leaves it blank. The
    * rest of the list — the employer's address, location, phone — is
    * somebody else's however current they are.
+   *
+   * "Current/Most Recent Company Name" opens the same way, twice over, and is
+   * how Ashby boards ask it: measured live on Vanta's, where it was excluded
+   * as a past employer's and left blank. So a "current" may be followed by
+   * "/ most recent" or "(or most recent)" before the name.
    */
-  /\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+(address|location|city|town|state|province|country|phone|telephone|email|zip|postal|web[\s_-]?site|url)\b|(?<!^[\W_]*(?:current|present|most[\s_-]*recent)[\s_-]+)\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+name\b/i,
+  /\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+(address|location|city|town|state|province|country|phone|telephone|email|zip|postal|web[\s_-]?site|url)\b|(?<!^[\W_]*(?:current|present|most[\s_-]*recent)(?:[\s_]*(?:\/|\(?\s*or\b)[\s_]*most[\s_-]*recent\)?)?[\s_-]+)\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+name\b/i,
   /*
    * And the school's, which the education sections of the older systems ask
    * for the same way. `school` sits above every address pattern, so "School
@@ -277,6 +330,13 @@ const NOT_ABOUT_YOU = [
    * contact email" gave the applicant's address.
    */
   /\bcontact\b[\s\S]{0,30}\bemployers?\b|\bemployers?\b[\s\S]{0,20}\bcontact\b/i,
+  /*
+   * Why somebody left, which is not where they were: "Reason for leaving your
+   * most recent employer" would otherwise take the employer's name as its
+   * reason. Nothing has been measured filling it — it is here because asking
+   * for the most recent employer (see `mostRecentJob`) is what reaches it.
+   */
+  /\breasons?\b[\s\S]{0,30}\bleav\w*|\bwhy\b[\s\S]{0,20}\bleav\w*/i,
   /*
    * How long, not who. "Years at current company" matched `current_company`
    * and was given the employer's name in a box asking for a number.
@@ -933,8 +993,17 @@ function labelFor(input) {
   const described = fromLabelledBy(input);
   if (described) return described;
 
+  /*
+   * Unless it only names the kind of control. Rippling's custom questions are
+   * each a widget whose `aria-label` is "Select" — the question itself is a
+   * `<p>` in the block above — so every one of them was described as
+   * "Select": measured live on two Rippling boards (ats.rippling.com/capacity
+   * and /closinglock), "Do you have the unrestricted right to work for any
+   * employer…?" and the rest came out as nothing anybody could match. Such a
+   * label is kept for last, below, and used only if nothing says more.
+   */
   const aria = clean(input.getAttribute('aria-label'));
-  if (aria) return aria;
+  if (aria && !CONTROL_WORD.test(aria)) return aria;
 
   /*
    * Positional fallback: the nearest preceding element that reads like a label.
@@ -968,14 +1037,34 @@ function labelFor(input) {
    * holds a second field, it is the form rather than this field's own group,
    * and whatever label it holds belongs to something else.
    */
+  /*
+   * The same climb, for a question that is not marked as a label at all: the
+   * first thing in the group, holding words and no field of its own. That is
+   * Rippling's shape — `<div><div><p>question</p></div></div>` and then the
+   * field's own wrapper — and its textareas, which have no `aria-label` to
+   * fall back on, were not even offered as questions to answer.
+   */
+  /*
+   * Seven levels, because a widget is deep: Rippling's `role="combobox"` sits
+   * six wrappers below the block holding its question. Every level still has
+   * to hold this one field and no other, which is what bounds the climb.
+   */
   let group = input.parentElement;
-  for (let i = 0; i < 4 && group; i++, group = group.parentElement) {
-    if (group.querySelectorAll(ANOTHER_FIELD).length !== 1) break;
+  for (let i = 0; i < 7 && group; i++, group = group.parentElement) {
+    // One field, whether it is an input or a widget `<div>` (which the old
+    // test, "exactly one input", stopped at before it had begun).
+    if (group.querySelectorAll(`${ANOTHER_FIELD}, [role="combobox"]`).length > 1) break;
     const heading = group.querySelector('label,legend,th,.label,[class*="label"]');
     if (heading && !heading.contains(input)) return clean(heading.textContent);
+    const lead = group.firstElementChild;
+    const said = lead && !lead.contains(input) && !lead.querySelector(ANOTHER_FIELD) ? clean(lead.textContent) : '';
+    if (said && said.length < 300) return said;
   }
-  return '';
+  return aria;
 }
+
+/** An `aria-label` that names the control rather than the question. */
+const CONTROL_WORD = /^(select|search|choose|pick|select an option|select one|dropdown|combobox|text ?area|input)\.*$/i;
 
 /**
  * Everything a field's label might be hiding in. The explicit label leads, so
@@ -1910,7 +1999,68 @@ const COUNTRIES = [
   ['mx', null, /\bmexico\b/i],
   ['jp', null, /\bjapan\b/i],
   ['il', null, /\bisrael\b/i],
+  /*
+   * And the rest of the places the global boards hire in. A country missing
+   * from this list is a country no question can name, so a question about it
+   * reads as one naming none — the profile's own — and is answered for it.
+   * Measured live on Affirm's Greenhouse board: "Do you now or in the future
+   * require sponsorship for employment visa status in Spain?" was answered
+   * "No" from a profile that only ever said it needs none in the US.
+   *
+   * Names only, never short forms, and only names nothing else is called:
+   * Georgia is also a state and Jordan a person, so neither is here, and a
+   * question naming them is read as it always was.
+   */
+  ['es', null, /\bspain\b/i],
+  ['pt', null, /\bportugal\b/i],
+  ['it', null, /\bital(?:y|ian)\b/i],
+  ['pl', null, /\bpoland\b/i],
+  ['ch', null, /\bswitzerland\b/i],
+  ['se', null, /\bsweden\b/i],
+  ['no', null, /\bnorway\b/i],
+  ['dk', null, /\bdenmark\b/i],
+  ['fi', null, /\bfinland\b/i],
+  ['be', null, /\bbelgium\b/i],
+  ['at', null, /\baustria\b/i],
+  ['cz', null, /\bczech(?:ia|\s+republic)\b/i],
+  ['ro', null, /\bromania\b/i],
+  ['gr', null, /\bgreece\b/i],
+  ['br', null, /\bbrazil\b/i],
+  ['ar', null, /\bargentina\b/i],
+  ['cl', null, /\bchile\b/i],
+  ['co', null, /\bcolombia\b/i],
+  ['cn', null, /\bchina\b/i],
+  ['hk', null, /\bhong\s+kong\b/i],
+  ['tw', null, /\btaiwan\b/i],
+  ['kr', null, /\b(?:south\s+)?korea\b/i],
+  ['ph', null, /\bphilippines\b/i],
+  ['my', null, /\bmalaysia\b/i],
+  ['id', null, /\bindonesia\b/i],
+  ['vn', null, /\bvietnam\b/i],
+  ['th', null, /\bthailand\b/i],
+  ['ae', null, /\bunited\s+arab\s+emirates\b|\bu\.?a\.?e\.?\b|\bdubai\b/i],
+  ['za', null, /\bsouth\s+africa\b/i],
+  ['ng', null, /\bnigeria\b/i],
+  ['tr', null, /\bt(?:ü|u)rk(?:ey|iye)\b/i],
 ];
+
+/*
+ * The dialling code of each country above, for a telephone box a form has
+ * already started with its own. See the phone note in `fillForm`.
+ */
+const DIALLING_CODES = {
+  us: '+1', ca: '+1', uk: '+44', ie: '+353', in: '+91', sg: '+65', de: '+49', fr: '+33', nl: '+31', mx: '+52',
+  jp: '+81', il: '+972', au: '+61', nz: '+64', es: '+34', pt: '+351', it: '+39', pl: '+48', ch: '+41', se: '+46',
+  no: '+47', dk: '+45', fi: '+358', be: '+32', at: '+43', cz: '+420', ro: '+40', gr: '+30', br: '+55', ar: '+54',
+  cl: '+56', co: '+57', cn: '+86', hk: '+852', tw: '+886', kr: '+82', ph: '+63', my: '+60', id: '+62', vn: '+84',
+  th: '+66', ae: '+971', za: '+27', ng: '+234', tr: '+90',
+};
+
+/** The dialling code of the one country `text` names, or `undefined`. */
+function diallingCodeFor(text) {
+  const named = [...countriesIn(text)];
+  return named.length === 1 ? DIALLING_CODES[named[0]] : undefined;
+}
 
 function countriesIn(text) {
   const said = String(text ?? '');
@@ -1933,6 +2083,12 @@ function countriesIn(text) {
  * nothing to compare, and the answer stands as it always did.
  */
 function aboutAnotherCountry(key, value, asked, home) {
+  // Where somebody lives is only ever the profile's own country. See `lives_in_country`.
+  if (key === 'lives_in_country') {
+    const here = countriesIn(home);
+    const named = countriesIn(asked);
+    return here.size > 0 && named.size > 0 && ![...named].some((code) => here.has(code));
+  }
   if (!YES_NO_KEYS.has(key)) return false;
   let declared = countriesIn(value);
   if (declared.size === 0) declared = countriesIn(home);
@@ -1992,10 +2148,23 @@ function yesNoOption(key, value, options, asked = '') {
  * narrower is offered. "Present employer only" and "unknown" are never
  * chosen, and nothing is where the profile does not say about sponsorship.
  */
+/*
+ * Whether a statement about sponsorship denies needing it — in the words
+ * around the need, not anywhere in the sentence. Any "no" at all counted, so
+ * the answer "No, I need sponsorship now." read as a statement that no
+ * sponsorship is needed: measured live on Datadog's Greenhouse board, whose
+ * list is "Yes, no restriction." / "Yes, but I will need sponsorship in the
+ * future." / "No, I need sponsorship now.", a profile needing none was given
+ * the last. A "No," that answers the question is followed by a comma, and a
+ * denial of the need sits in the same clause as it.
+ */
+const DENIES_THE_NEED =
+  /\b(?:not|never|without|don'?t|doesn'?t|won'?t)\b[^.,;]{0,24}\b(?:require|need)|\b(?:require|need)s?\s+no\b|\bno\s+(?:visa\s+)?sponsor/;
+
 function statementKind(text) {
   const said = clean(text).toLowerCase();
   if (/\bnot\s+(?:legally\s+)?authori[sz]ed\b/.test(said)) return 'not-authorized';
-  if (/\b(?:require|need)s?\b[^.]*\bsponsor/.test(said)) return /\b(?:not|no|without|never)\b/.test(said) ? 'any-employer' : 'needs-sponsorship';
+  if (/\b(?:require|need)s?\b[^.]*\bsponsor/.test(said)) return DENIES_THE_NEED.test(said) ? 'any-employer' : 'needs-sponsorship';
   if (!/\bauthori[sz]ed\b/.test(said)) return null;
   if (/\bonly\b|\bunknown\b|\bpresent employer\b|\bcurrent employer\b/.test(said)) return 'restricted';
   return /\bany employer\b|\bwithout restriction\b/.test(said) ? 'any-employer' : 'authorized';
@@ -2052,6 +2221,46 @@ const NOT_LISTED = new RegExp(
   'i',
 );
 
+/*
+ * The job a question asking for the "most recent" one means, from the resume.
+ *
+ * The store sends `current_company` and `current_title` only for a job whose
+ * dates run to the present, and on purpose: "Current company" answered with
+ * the last place somebody worked says they work there now. But plenty of
+ * forms ask for the last one in so many words, and mark it required.
+ * Measured live with a fake profile whose one job (Example Co, Software
+ * Engineering Intern, Jun–Aug 2025) has ended: Vanta's Ashby board left
+ * "Current/Most Recent Company Name" and "Current/Most Recent Job Title"
+ * empty, Samsara's Greenhouse board "Most Recent Employer", and Reddit's
+ * "Please provide the name of your current (or most recent) company" — each
+ * required, each a question the resume being attached plainly answers.
+ *
+ * So a question that says "most recent" is given the newest job on the
+ * resume: one still going, else the one that ended last. Two that cannot be
+ * told apart — both still going, or ending in the same month — give nothing,
+ * as the store's own `currentJob` does. A question saying only "current" is
+ * not touched: it still gets the store's answer or nothing.
+ */
+const MOST_RECENT = /\bmost[\s_-]*recent\b/i;
+
+function mostRecentJob(history) {
+  const jobs = (Array.isArray(history) ? history : []).filter((job) => job?.company);
+  if (jobs.length <= 1) return jobs[0];
+  const ended = (job) => (job.current ? Infinity : job.end?.year ? job.end.year * 12 + (job.end.month ?? 12) : undefined);
+  const ranked = jobs.map((job) => ({ job, at: ended(job) })).filter((r) => r.at !== undefined).sort((a, b) => b.at - a.at);
+  if (ranked.length === 0 || ranked[0].at === ranked[1]?.at) return undefined;
+  return ranked[0].job;
+}
+
+/*
+ * "Yes" to "Do you live in <country>?", wherever the profile has a country.
+ * The question decides whether it is asked of this country: see
+ * `aboutAnotherCountry`.
+ */
+function withResidence(fields) {
+  return fields.address_country && !fields.lives_in_country ? { ...fields, lives_in_country: 'Yes' } : fields;
+}
+
 function withCityAndState(fields) {
   if (fields.city_state || !fields.address_city) return fields;
   const both = fields.address_state ? `${fields.address_city}, ${fields.address_state}` : fields.address_city;
@@ -2059,7 +2268,14 @@ function withCityAndState(fields) {
 }
 
 export function fillForm(fields, { overwrite = false, remembered = [], history = [] } = {}) {
-  fields = withCityAndState(fields);
+  fields = withResidence(withCityAndState(fields));
+  // For a question asking about the most recent job. See `mostRecentJob`.
+  const recent = mostRecentJob(history);
+  const lately = {
+    ...fields,
+    current_company: fields.current_company || recent?.company,
+    current_title: fields.current_company ? fields.current_title : fields.current_title || recent?.title,
+  };
   const filled = [];
   const skipped = [];
   // A new pass: what an earlier one pressed has been drawn, or was refused.
@@ -2102,7 +2318,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     const dated = educationDateKey(input, description);
     const found = dated ? [dated] : FIELD_PATTERNS.find(([, re]) => re.test(description));
     const named = found && !dated ? [addressPartByLabel(clean(labelFor(input)), found[0])] : found;
-    let match = named && fields[named[0]] ? named : undefined;
+    const answers = MOST_RECENT.test(labelFor(input)) ? lately : fields;
+    let match = named && answers[named[0]] ? named : undefined;
 
     if (!match && fields.full_name && BARE_NAME.test(withoutMarkers(labelFor(input)))) {
       match = ['full_name'];
@@ -2114,12 +2331,12 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     if (!match) continue;
 
     const key = wholeDateKey(input, match[0], description);
-    if (!fields[key]) continue;
+    if (!answers[key]) continue;
     // A box for the answer a list above it did not have. See `NOT_LISTED`.
     if (!(input instanceof HTMLSelectElement) && NOT_LISTED.test(description)) continue;
     if (anotherLevelOfStudy(input, key, fields)) continue;
     if (asksYesOrNo(input, key)) continue;
-    let value = fields[key];
+    let value = answers[key];
 
     const answered =
       input instanceof HTMLSelectElement
@@ -2133,8 +2350,21 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     }
     // The dialling code the form put there stays, in front of a number that
     // does not carry one of its own.
+    /*
+     * Unless it is some other country's. The code a form starts its box with
+     * is the employer's guess, and it is usually the employer's own country:
+     * Recruitee boards open the box on "+49" for a German company and "+31"
+     * for a Dutch one. Measured live on personio.recruitee.com and
+     * jobs.channable.com with a fake profile living in the United States:
+     * "(555) 010-0199" went in as "+49 5550 100199" and "+31 5550100199" — a
+     * German and a Dutch number nobody answers, reported as filled. Where the
+     * profile names its country and that country's code is known, the number
+     * goes in behind that code instead; with no country to go on, the form's
+     * guess is kept, as it always was.
+     */
     if (key === 'phone' && ONLY_A_DIALLING_CODE.test(input.value) && !/^\s*\+/.test(String(value))) {
-      value = `${input.value.trim()} ${String(value).trim()}`;
+      const code = diallingCodeFor(fields.address_country) ?? input.value.trim();
+      value = `${code} ${String(value).trim()}`;
     }
 
     /*
@@ -2263,8 +2493,18 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
      * "5550100199", as it does to what a person types, and the number was
      * reported refused while it sat in the box.
      */
+    /*
+     * And one that put its own dialling code in front: Teamtailor's
+     * intl-tel-input rewrites "(555) 010-0199" as "+1 555-010-0199" as it is
+     * typed. Measured live on owlco.na.teamtailor.com: the number sat in the
+     * box and the card said the field would not take it. Only a "+" and at
+     * most three digits more, in front of every digit that was given.
+     */
     const digits = (v) => String(v).replace(/\D/g, '');
-    const sameNumber = /phone/.test(key) && digits(value).length >= 7 && digits(input.value) === digits(value);
+    const withTheirCode = (shown, given) =>
+      /^\s*\+/.test(shown) && !/^\s*\+/.test(given) && digits(shown).endsWith(digits(given)) && digits(shown).length - digits(given).length <= 3;
+    const sameNumber =
+      /phone/.test(key) && digits(value).length >= 7 && (digits(input.value) === digits(value) || withTheirCode(input.value, String(value)));
     if (input.value !== String(value) && !sameNumber) {
       skipped.push({ key, reason: 'the field would not take it', description: description.slice(0, 60) });
       continue;
@@ -2354,7 +2594,43 @@ function inWorkHistory(input) {
       clean(at.querySelector(':scope > legend, :scope > h2, :scope > h3, :scope > h4, :scope > h5')?.textContent);
     if (WORK_HISTORY.test(named)) return true;
   }
-  return WORK_HISTORY.test(boundedSection(input));
+  return WORK_HISTORY.test(boundedSection(input)) || underPlainHeading(input, EMPLOYMENT_HEADING);
+}
+
+/*
+ * A section named by a paragraph rather than a heading.
+ *
+ * Greenhouse's current boards title their Employment block with
+ * `<div><p>Employment</p></div>` as the first child of the block, then one
+ * wrapper per field, and none of that is a heading, a legend or a group — so
+ * the block read as no work history at all. Measured live on Coinbase's and
+ * Lyft's boards with a fake profile holding one job: Company name, Title and
+ * the start and end, month and year, all required, all left empty.
+ *
+ * Read the way a person reads it: from the field outwards, the nearest thing
+ * before it at each level that holds words and no control. A `<label>` is the
+ * field's own and is stepped past; the first other one is the section's
+ * heading, and it answers — this section if it says so exactly, and no
+ * section at all otherwise. So an Education block under its own "Education"
+ * paragraph is never taken for an employment one, whatever sits above it.
+ */
+const EMPLOYMENT_HEADING = /^(employment|employment\s+history|work\s+experience|work\s+history|professional\s+experience|experience)$/i;
+
+function underPlainHeading(input, heading) {
+  // From a widget's whole control, whose own "Select..." is not a heading.
+  const start = isWidgetChoice(input) ? controlOf(input) : input;
+  for (let at = start, n = 0; at?.parentElement && n < 6; at = at.parentElement, n++) {
+    if (at.parentElement.localName === 'form' || at.parentElement.localName === 'body') return false;
+    for (let before = at.previousElementSibling; before; before = before.previousElementSibling) {
+      if (before.querySelector(A_CONTROL) || before.matches(A_CONTROL)) continue;
+      const words = clean(before.textContent);
+      if (!words) continue;
+      const label = before.matches('label') ? before : before.querySelector('label');
+      if (label && clean(label.textContent) === words) break;
+      return heading.test(withoutMarkers(words));
+    }
+  }
+  return false;
 }
 
 /*
@@ -2395,6 +2671,9 @@ function jobPartOf(input) {
     if ((part === 'current') !== (kind === 'checkbox')) continue;
     return { part };
   }
+  // Both at once, as Greenhouse's Employment block labels them: "Start date month", "End date year".
+  const named = label.match(/^\s*(start|end)\s+date\s+(month|year)\s*$/i);
+  if (named && kind === 'text') return { part: named[1].toLowerCase(), half: named[2].toLowerCase() };
   // A month box and a year box, together one end of the job: Workday's From and To.
   const half = /^\s*(month|mm)\s*$/i.test(label || input.placeholder) ? 'month' : /^\s*(year|yyyy)\s*$/i.test(label || input.placeholder) ? 'year' : null;
   if (kind !== 'text' || !half) return null;
@@ -2427,14 +2706,29 @@ const monthWord = (month) => MONTH_NAMES[month - 1].replace(/^./, (c) => c.toUpp
 export function fillWorkHistory(history, { overwrite = false } = {}) {
   const filled = [];
   const skipped = [];
-  if (!Array.isArray(history) || history.length === 0) return { filled, skipped };
+  for (const { block, job } of jobBlocks(history, skipped)) fillJob(block, job, overwrite, filled, skipped);
+  return { filled, skipped };
+}
+
+/*
+ * A month asked as a list, which `fillJob` cannot type into: Greenhouse's
+ * Employment block asks "Start date month" and "End date month" as
+ * react-select widgets beside plain year boxes. Found with the rest of the
+ * block, and chosen once the page can be waited on — see `fillComboboxes`.
+ */
+const isMonthWidget = (input, found) => found.half === 'month' && isWidgetChoice(input) && !isDisabled(input) && input.getClientRects().length > 0;
+
+/** Each work-history block on the page, and the job on the resume it is for. */
+function jobBlocks(history, skipped = []) {
+  const pairs = [];
+  if (!Array.isArray(history) || history.length === 0) return pairs;
 
   const blocks = [];
   let block = null;
   for (const input of deepQueryAll('input, textarea')) {
     const found = jobPartOf(input);
     if (!found) continue;
-    const usable = found.part === 'current' ? !isDisabled(input) && input.getClientRects().length > 0 : isFillable(input);
+    const usable = found.part === 'current' ? !isDisabled(input) && input.getClientRects().length > 0 : isFillable(input) || isMonthWidget(input, found);
     if (!usable || !inWorkHistory(input)) continue;
     const slot = found.half ? `${found.part}.${found.half}` : found.part;
     if (!block || block.has(slot)) blocks.push((block = new Map()));
@@ -2464,15 +2758,33 @@ export function fillWorkHistory(history, { overwrite = false } = {}) {
       if (index < 0) break;
     }
     used.add(index);
-    fillJob(b, history[index], overwrite, filled, skipped);
+    pairs.push({ block: b, job: history[index] });
   }
-  return { filled, skipped };
+  return pairs;
+}
+
+/** The job months `fillJob` left to a widget, chosen the way every widget is. */
+async function fillJobMonths(history, patience) {
+  const done = [];
+  for (const { block, job } of jobBlocks(history)) {
+    for (const [part, when] of [['start', job.start], ['end', job.current ? null : job.end]]) {
+      const widget = block.get(`${part}.month`);
+      if (!when?.month || !widget || !isWidgetChoice(widget) || widgetShowsAnAnswer(widget)) continue;
+      const value = monthWord(when.month);
+      if ((await chooseInWidget(widget, `job_${part}_month`, value, { patience, fields: {}, asked: '' })) === 'chose') {
+        done.push({ key: `job_${part}_month`, value, widget: true });
+      }
+    }
+  }
+  return done;
 }
 
 function fillJob(block, job, overwrite, filled, skipped) {
   const put = (slot, key, value) => {
     const input = block.get(slot);
     if (!input || value === undefined || value === null || value === '') return;
+    // A list is chosen from later, not typed into. See `fillJobMonths`.
+    if (isWidgetChoice(input)) return;
     if (input.value && !overwrite) return;
     const written = slot === 'start' || slot === 'end' ? graduationFor(input, value) : String(value);
     setValue(input, written);
@@ -2963,6 +3275,7 @@ function optionLabelFor(radio) {
 /** The answers a form offers as options rather than asking you to type. */
 const CHOOSABLE = new Set([
   'work_authorization',
+  'lives_in_country',
   'requires_sponsorship',
   'address_country',
   'address_state',
@@ -3318,9 +3631,32 @@ const PICK_BY_HAND = 'this one has to be picked by hand';
  * element — shared by the report below and by `fillComboboxes`, so the two
  * cannot disagree about which widget is which question.
  */
+/*
+ * One widget per question, not one per key.
+ *
+ * Every key used to be claimed by the first widget that asked it, and by any
+ * box `fillForm` had already typed it into, so a second question wanting the
+ * same answer was never named, never driven and never reported. Measured live
+ * on Greenhouse boards with a fake profile: GitLab's required "What is your
+ * current country of residence?", Chime's required "Country" and Brex's
+ * required "What country are you based in?" were all left on "Select..."
+ * because the phone's country picker, above them, had taken
+ * `address_country`; Affirm's required phone country was left empty because a
+ * text box lower down had; and Anthropic's required "Will you now or will you
+ * in the future require employment visa sponsorship…" was left blank because
+ * "Do you require visa sponsorship?" had taken `requires_sponsorship`. Each
+ * is the same answer to a question asked twice.
+ *
+ * The education keys are still claimed once. A second School or Degree is
+ * another school, and `fillEducation` fills those one block at a time from
+ * the resume; given the first answer again they would all say the newest one.
+ * And a widget inside another — a combobox `<div>` around its own text box —
+ * is the same question once.
+ */
 function widgetChoices(fields, filled) {
-  const already = new Set(filled.map((f) => f.key));
+  const already = new Set(filled.map((f) => f.key).filter((key) => EDUCATION_KEYS.test(key)));
   const found = [];
+  const seen = [];
 
   for (const widget of deepQueryAll(
     '[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"]',
@@ -3370,6 +3706,8 @@ function widgetChoices(fields, filled) {
     const dated = educationDateKey(widget, description);
     const key = dated || addressPartByLabel(clean(labelFor(widget)), FIELD_PATTERNS.find(([, re]) => re.test(description))?.[0]);
     if (!key || !fields[key] || already.has(key)) continue;
+    if (seen.some((other) => other.contains(widget) || widget.contains(other))) continue;
+    seen.push(widget);
     /*
      * One already showing an answer is answered, and claims its question.
      *
@@ -3382,7 +3720,7 @@ function widgetChoices(fields, filled) {
      * tool's to reopen.
      */
     if (widgetShowsAnAnswer(widget)) {
-      already.add(key);
+      if (EDUCATION_KEYS.test(key)) already.add(key);
       continue;
     }
     if (anotherLevelOfStudy(widget, key, fields)) continue;
@@ -3390,7 +3728,7 @@ function widgetChoices(fields, filled) {
     // list picks "Yes" by its text too. See `aboutAnotherCountry`.
     const elsewhere = aboutAnotherCountry(key, fields[key], description, fields.address_country);
     found.push({ key, description: description.slice(0, 60), asked: description, el: widget, elsewhere });
-    already.add(key);
+    if (EDUCATION_KEYS.test(key)) already.add(key);
   }
   return found;
 }
@@ -3828,12 +4166,15 @@ async function pickListedPlaces(fields) {
   }
 }
 
-export async function fillComboboxes(fields, report, { patience = 4000 } = {}) {
+export async function fillComboboxes(fields, report, { patience = 4000, history = [] } = {}) {
   // What `fillForm` pressed, now that the page has had its turn to draw it.
   report = await seePresses(report);
+  // The months of the jobs `fillForm` put in, where the form asks them as lists.
+  const months = await fillJobMonths(history, patience);
+  if (months.length) report = { ...report, filled: [...report.filled, ...months] };
   // The same fields `fillForm` read, or a widget it named `city_state` has
   // no value here.
-  fields = withCityAndState(fields);
+  fields = withResidence(withCityAndState(fields));
   await pickListedPlaces(fields);
   const pending = new Set(report.skipped.filter((s) => s.reason === PICK_BY_HAND).map((s) => s.key));
   // The lists that were looked in and did not have the answer. See `NOT_LISTED`.
@@ -3844,20 +4185,24 @@ export async function fillComboboxes(fields, report, { patience = 4000 } = {}) {
   }
 
   const done = [];
-  for (const { key, el: widget, both, elsewhere, asked } of widgetChoices(fields, report.filled)) {
+  // Which question each choice answered: a key can now be asked twice.
+  const chose = new Set();
+  for (const { key, el: widget, both, elsewhere, asked, description } of widgetChoices(fields, report.filled)) {
     if (both || elsewhere || !pending.has(key)) continue;
     const value = String(fields[key]);
     const how = await chooseInWidget(widget, key, value, { patience, fields, asked });
     // Looked for in a list that opened, and not in it. See `NOT_LISTED`.
     if (how === 'unlisted') unlisted.add(key);
-    if (how === 'chose') done.push({ key, value, widget: true });
+    if (how === 'chose') {
+      done.push({ key, value, widget: true });
+      chose.add(`${key}\u0000${description}`);
+    }
   }
 
-  const chose = new Set(done.map((d) => d.key));
   return {
     ...report,
     filled: [...report.filled, ...done, ...fillNotListed(fields, unlisted)],
-    skipped: report.skipped.filter((s) => !(s.reason === PICK_BY_HAND && chose.has(s.key))),
+    skipped: report.skipped.filter((s) => !(s.reason === PICK_BY_HAND && chose.has(`${s.key}\u0000${s.description}`))),
   };
 }
 

@@ -2248,7 +2248,396 @@ ${[
   </select></div>`).join('')}
 </form></div></body></html>`;
 
-const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
+/*
+ * The name *of* something, as Datadog's Greenhouse board asks it — measured
+ * live on job-boards.greenhouse.io/embed/job_app?for=datadog, where the
+ * applicant's own name was typed into the first of these. The others are the
+ * same shape on the same kind of board: a thing's name, not a person's.
+ */
+const NAME_OF_A_THING = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Datadog</title></head><body>
+<form id="application-form">
+  <label for="first_name">First Name*</label><input id="first_name" type="text">
+  <label for="question_69008301">Please share the full name of your major/final year specialization(s) as it would appear on your diploma.*</label>
+  <input id="question_69008301" type="text" aria-required="true">
+  <label for="q_school">Full name of your university (no abbreviations)</label><input id="q_school" type="text">
+  <label for="q_company">Legal name of the company you work for now</label><input id="q_company" type="text">
+  <label for="q_full">Full Legal Name*</label><input id="q_full" type="text">
+  <label for="q_yours">Your name</label><input id="q_yours" type="text">
+</form></body></html>`;
+
+/*
+ * A yes/no about a country the old list did not know, as Affirm's Greenhouse
+ * board asks it (measured live, job-boards.greenhouse.io/affirm): the
+ * sponsorship question as a react-select whose options are Yes and No, beside
+ * the same question about the US on another board. The Spanish one was
+ * answered "No" from a profile that only said it needs none in the US.
+ */
+const COUNTRY_NAMED = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Affirm</title></head><body>
+<form id="application-form">
+  <label id="q_es-label" for="q_es">Do you now or in the future require sponsorship for employment visa status in Spain?*</label>
+  <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+    <div class="select__input-container" data-value=""><input id="q_es" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="q_es-label" autocomplete="off"></div></div></div></div>
+  <label for="q_br">Are you authorized to work in Brazil?</label>
+  <select id="q_br"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <label for="q_us">Are you legally authorized to work in the United States?</label>
+  <select id="q_us"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <!-- Datadog's, spelled the European way: measured live, read as a country question. -->
+  <label for="question_69008308">Are you legally authorised to work full-time in the country where this job is based?*</label>
+  <select id="question_69008308"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <label for="q_uk_s">Are you authorised to work in the United Kingdom?</label>
+  <select id="q_uk_s"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+</form>
+<script>
+  // The react-select shape of GREENHOUSE_EDUCATION, with a fixed Yes/No list.
+  const input = document.getElementById('q_es');
+  const control = input.closest('.select__control');
+  control.addEventListener('mousedown', () => {
+    if (document.getElementById('q_es-listbox')) return;
+    const list = document.createElement('div');
+    list.id = 'q_es-listbox';
+    list.setAttribute('role', 'listbox');
+    for (const text of ['Yes', 'No']) {
+      const o = document.createElement('div');
+      o.setAttribute('role', 'option');
+      o.textContent = text;
+      o.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        control.querySelector('.select__placeholder')?.remove();
+        const shown = document.createElement('div');
+        shown.className = 'select__single-value';
+        shown.textContent = text;
+        control.querySelector('.select__value-container').prepend(shown);
+        list.remove();
+      });
+      list.append(o);
+    }
+    control.parentElement.append(list);
+    input.setAttribute('aria-expanded', 'true');
+    input.setAttribute('aria-controls', list.id);
+  });
+</script>
+</body></html>`;
+
+/*
+ * Recruitee's telephone box, as it arrives on a Dutch company's board
+ * (measured live on jobs.channable.com and personio.recruitee.com): a country
+ * button beside a `type=tel` box that already holds the employer's own
+ * dialling code, "+31" or "+49". The applicant lives somewhere else.
+ */
+const EMPLOYERS_CODE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Channable</title></head><body>
+<form><fieldset><legend>My information</legend>
+  <label for="input-candidate.name-3">Full name *</label><input type="text" id="input-candidate.name-3" name="candidate.name" required>
+  <label for="input-candidate.phone-5">Phone number *</label>
+  <div><button type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Select country calling code: Netherlands">Netherlands</button>
+  <input type="tel" name="candidate.phone" id="input-candidate.phone-5" placeholder="Your phone number" value="+31" required></div>
+</fieldset></form></body></html>`;
+
+/*
+ * The same answer asked twice on one Greenhouse board, in the react-select
+ * shape of GREENHOUSE_EDUCATION. Each pair was measured live with a fake
+ * profile, and the second of it left on "Select...": GitLab's and Chime's
+ * country of residence under the phone's country picker, Anthropic's second
+ * sponsorship question under its first, and — Affirm's shape — the phone's
+ * country picker under nothing at all once a text box had taken the country.
+ * The second School is Greenhouse's second education block, which is
+ * `fillEducation`'s to fill from the resume and must not be given the first.
+ */
+const ASKED_TWICE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — GitLab</title></head><body>
+<form id="application-form">
+  <label for="question_text_country">What country do you live in?</label><input id="question_text_country" type="text">
+  <fieldset><legend>Phone</legend>
+  ${['country:Country*', 'question_residence:What is your current country of residence?*', 'question_sp1:Do you require visa sponsorship?*',
+    'question_sp2:Will you now or will you in the future require employment visa sponsorship to work in the country in which the job you are applying for is located?*']
+    .map((pair) => { const [id, label] = pair.split(':'); return `<label id="${id}-label" for="${id}">${label}</label>
+  <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+    <div class="select__input-container" data-value=""><input id="${id}" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="${id}-label" autocomplete="off"></div></div></div></div>`; }).join('\n  ')}
+  </fieldset>
+  <!-- One question in the ARIA 1.1 shape: a combobox <div> around its own list box. -->
+  <label id="question_wrapped-label">Will you need us to sponsor a work visa?*</label>
+  <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+    <div id="question_wrapped_outer" role="combobox" aria-haspopup="listbox" aria-labelledby="question_wrapped-label">
+    <input id="question_wrapped" class="select__input" aria-autocomplete="list" aria-expanded="false" aria-labelledby="question_wrapped-label" autocomplete="off"></div></div></div></div>
+  ${[0, 1].map((n) => `<div class="education--form"><label id="school--${n}-label" for="school--${n}">School</label>
+  <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+    <div class="select__input-container" data-value=""><input id="school--${n}" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="school--${n}-label" autocomplete="off"></div></div></div></div></div>`).join('\n  ')}
+</form>
+<script>
+  function select(id, fixed) {
+    const input = document.getElementById(id);
+    const control = input.closest('.select__control');
+    let list = null;
+    const close = () => { list?.remove(); list = null; input.setAttribute('aria-expanded', 'false'); };
+    const render = (items) => {
+      list?.remove();
+      list = document.createElement('div');
+      list.id = 'react-select-' + id + '-listbox';
+      list.setAttribute('role', 'listbox');
+      for (const text of items) {
+        const o = document.createElement('div');
+        o.setAttribute('role', 'option');
+        o.textContent = text;
+        o.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          control.querySelector('.select__placeholder')?.remove();
+          let shown = control.querySelector('.select__single-value');
+          if (!shown) { shown = document.createElement('div'); shown.className = 'select__single-value'; control.querySelector('.select__value-container').prepend(shown); }
+          shown.textContent = text;
+          input.value = '';
+          close();
+        });
+        list.append(o);
+      }
+      control.parentElement.append(list);
+      input.setAttribute('aria-controls', list.id);
+    };
+    control.addEventListener('mousedown', () => { if (list) return; input.setAttribute('aria-expanded', 'true'); render(fixed); });
+    input.addEventListener('input', () => { if (list) render(fixed.filter((t) => t.toLowerCase().includes(input.value.toLowerCase()))); });
+  }
+  select('country', ['Canada', 'United States']);
+  select('question_residence', ['Canada', 'United States']);
+  select('question_sp1', ['Yes', 'No']);
+  select('question_sp2', ['Yes', 'No']);
+  select('question_wrapped', ['Yes', 'No']);
+  select('school--0', ['Acadia University', 'Northeastern University']);
+  select('school--1', ['Acadia University', 'Northeastern University']);
+</script>
+</body></html>`;
+
+/*
+ * The most recent job, asked for in so many words — each measured live and
+ * left empty with a fake profile whose one job had ended: Vanta's Ashby board
+ * (its two boxes, labelled by a <label> over an id-named input), Samsara's and
+ * Reddit's Greenhouse custom questions. "Current company" is Lever's, and
+ * asks about now.
+ */
+const MOST_RECENT_JOB = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Vanta</title></head><body>
+<form>
+  <label for="bda8d900-0cf3-45fd-92b5-b27939491378">Current/Most Recent Company Name*</label>
+  <input id="bda8d900-0cf3-45fd-92b5-b27939491378" name="bda8d900-0cf3-45fd-92b5-b27939491378" type="text" required>
+  <label for="5a3467b2-1e5c-4109-93a2-9003d24a8d48">Current/Most Recent Job Title*</label>
+  <input id="5a3467b2-1e5c-4109-93a2-9003d24a8d48" name="5a3467b2-1e5c-4109-93a2-9003d24a8d48" type="text" required>
+  <label for="question_68391427">Most Recent Employer*</label><input id="question_68391427" type="text" aria-required="true">
+  <label for="question_69095951">Please provide the name of your current (or most recent) company*</label><input id="question_69095951" type="text" aria-required="true">
+  <label for="org">Current company</label><input id="org" name="org" type="text">
+  <label for="leaving">Reason for leaving your most recent employer</label><input id="leaving" type="text">
+</form></body></html>`;
+
+/*
+ * Greenhouse's Employment block, in the markup its current boards use —
+ * measured live on Coinbase's and Lyft's (job-boards.greenhouse.io/embed/
+ * job_app?for=coinbase, for=lyft), where every one of these was required and
+ * left empty for a fake profile holding one job. The section is named by a
+ * `<p>`, not a heading; the months are react-selects and the years plain
+ * boxes. The Education block below it uses the same words for its dates and
+ * must stay the degree's.
+ */
+const monthsList = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const ghSelect = (id, label) => `<div><label id="${id}-label" for="${id}">${label}<span aria-hidden="true">*</span></label>
+    <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+    <div class="select__input-container" data-value=""><input id="${id}" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="${id}-label" aria-required="true" autocomplete="off"></div></div></div></div></div>`;
+const ghText = (id, label) => `<div><div><label id="${id}-label" for="${id}">${label}<span aria-hidden="true">*</span></label><input id="${id}" aria-label="${label}" aria-required="true" type="text" maxlength="255"></div></div>`;
+const GREENHOUSE_EMPLOYMENT = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Coinbase</title></head><body>
+<form id="application-form">
+  ${ghText('first_name', 'First Name')}
+  <div><hr><div><p>Employment</p></div>
+    ${ghText('company-name-0', 'Company name')}
+    ${ghText('title-0', 'Title')}
+    <div>${ghSelect('start-date-month-0', 'Start date month')}${ghText('start-date-year-0', 'Start date year')}</div>
+    <div>${ghSelect('end-date-month-0', 'End date month')}${ghText('end-date-year-0', 'End date year')}</div>
+    <div id="current-role-0"><input type="checkbox" id="current-role-0_1" name="current-role-0" value="1"><label for="current-role-0_1">Current role</label></div>
+    <!-- Education in the same wrapper, so only its own heading says whose dates these are. -->
+    <div><p>Education</p></div>
+    <div class="education--form">
+      ${ghSelect('start-month--0', 'Start date month')}${ghText('start-year--0', 'Start date year')}
+    </div>
+  </div>
+</form>
+<script>
+  function select(id, fixed) {
+    const input = document.getElementById(id);
+    const control = input.closest('.select__control');
+    let list = null;
+    const close = () => { list?.remove(); list = null; input.setAttribute('aria-expanded', 'false'); };
+    const render = (items) => {
+      list?.remove();
+      list = document.createElement('div');
+      list.id = 'react-select-' + id + '-listbox';
+      list.setAttribute('role', 'listbox');
+      for (const text of items) {
+        const o = document.createElement('div');
+        o.setAttribute('role', 'option');
+        o.textContent = text;
+        o.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          control.querySelector('.select__placeholder')?.remove();
+          let shown = control.querySelector('.select__single-value');
+          if (!shown) { shown = document.createElement('div'); shown.className = 'select__single-value'; control.querySelector('.select__value-container').prepend(shown); }
+          shown.textContent = text;
+          input.value = '';
+          close();
+        });
+        list.append(o);
+      }
+      control.parentElement.append(list);
+      input.setAttribute('aria-controls', list.id);
+    };
+    control.addEventListener('mousedown', () => { if (list) return; input.setAttribute('aria-expanded', 'true'); render(fixed); });
+    input.addEventListener('input', () => { if (list) render(fixed.filter((t) => t.toLowerCase().includes(input.value.toLowerCase()))); });
+  }
+  const MONTHS = ${JSON.stringify(monthsList)};
+  for (const id of ['start-date-month-0', 'end-date-month-0', 'start-month--0']) select(id, MONTHS);
+</script>
+</body></html>`;
+
+/*
+ * A right-to-work list written as statements, as Datadog's Greenhouse board
+ * writes it (measured live, job-boards.greenhouse.io/embed/job_app?for=
+ * datadog). "No, I need sponsorship now." was chosen for a profile that needs
+ * none: its opening "No" was read as denying the need.
+ */
+const SPONSORSHIP_STATEMENTS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Datadog</title></head><body>
+<form>
+  <label for="s1">Work authorization status</label>
+  <select id="s1"><option value="">Select...</option><option>Yes, no restriction.</option><option>Yes, but I will need sponsorship in the future.</option><option>No, I need sponsorship now.</option></select>
+  <label for="s2">Work authorization</label>
+  <select id="s2"><option value="">Select...</option><option>No, I need sponsorship now.</option><option>I am authorized to work for any employer and do not require sponsorship.</option></select>
+  <label for="s3">Work authorization</label>
+  <select id="s3"><option value="">Select...</option><option>I will need sponsorship.</option><option>No sponsorship needed; I am authorized to work for any employer.</option></select>
+</form></body></html>`;
+
+/*
+ * Rippling's custom questions, in its markup (measured live on
+ * ats.rippling.com/capacity/jobs/…/apply): the question a `<p>` in a block of
+ * its own, then the field six wrappers down — a `role="combobox"` `<div>`
+ * whose only label is `aria-label="Select"`, or a bare `<textarea>`. Every one
+ * was described as "Select" or as nothing.
+ */
+const ripplingQuestion = (question, field) => `<div><div><div><p>${question}<div></div></p></div></div>
+  <div data-testid="field"><div><div data-testid="customQuestions.q"><div><div data-testid="select-controller"><div>${field}</div></div></div></div></div></div></div>`;
+const RIPPLING_QUESTIONS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Capacity</title></head><body>
+<form><h4>Application: Technical Delivery Junior Engineer</h4>
+  <div data-testid="field"><div><span id="field-8-label">First name</span><span>*</span></div>
+    <div><div data-testid="first_name"><input id="field-8" aria-labelledby="field-8-label" placeholder="First name" name="Pncq3PwexY"></div></div></div>
+  ${ripplingQuestion('Do you have the unrestricted right to work for any employer within the country where the job posting indicates the role is located and for which you are applying?',
+    '<div id="field-55" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-label="Select" aria-required="true" tabindex="0"><p>Select</p></div>')}
+  ${ripplingQuestion('Will you now or in the future require sponsorship to work in the country where the job is located?',
+    '<div id="field-61" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-label="Select" aria-required="true" tabindex="0"><p>Select</p></div>')}
+  ${ripplingQuestion('Describe your experience with or interest in SaaS platforms.', '<textarea maxlength="10000" required id="field-91" aria-multiline="true"></textarea>')}
+</form>
+<script>
+  for (const box of document.querySelectorAll('[role="combobox"]')) {
+    box.addEventListener('click', () => {
+      if (document.getElementById(box.id + '-list')) return;
+      const list = document.createElement('div');
+      list.id = box.id + '-list';
+      list.setAttribute('role', 'listbox');
+      for (const text of ['Yes', 'No']) {
+        const o = document.createElement('div');
+        o.setAttribute('role', 'option');
+        o.textContent = text;
+        o.addEventListener('click', () => { box.querySelector('p').textContent = text; list.remove(); box.setAttribute('aria-expanded', 'false'); });
+        list.append(o);
+      }
+      box.after(list);
+      box.setAttribute('aria-expanded', 'true');
+      box.setAttribute('aria-controls', list.id);
+    });
+  }
+</script>
+</body></html>`;
+
+/*
+ * Okta's graduation year, as its Greenhouse board asks it (measured live on
+ * boards.greenhouse.io/okta): a list of years under a question that never
+ * says "graduate".
+ */
+const COMPLETE_YOUR_DEGREE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Okta</title></head><body>
+<form>
+  <label for="question_69105323">What year will you complete your degree?*</label>
+  <select id="question_69105323"><option value="">Choose</option><option>2025</option><option>2026</option><option>2027</option><option>2028</option></select>
+  <label for="question_69105925">In what month do you anticipate graduating?*</label>
+  <select id="question_69105925"><option value="">Choose</option><option>April</option><option>May</option><option>June</option></select>
+  <label for="q_course">What year did you complete the course?</label><input id="q_course" type="text">
+</form></body></html>`;
+
+/*
+ * "Do you live in <country>?" in the three shapes the sweep met it, each
+ * measured live and left blank: Discord's Greenhouse react-select, JumpCloud's
+ * Lever radios (question in `.application-label`, as Lever draws a card
+ * question) and Prometheum's JazzHR `<select>`. Then the ones that must stay
+ * alone: no country named, another country, and a preference.
+ */
+const LIVES_IN = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="application-form">
+  <label id="question_38318893002-label" for="question_38318893002">Are you currently located in the US?*</label>
+  <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+    <div class="select__input-container" data-value=""><input id="question_38318893002" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="question_38318893002-label" autocomplete="off"></div></div></div></div>
+  <ul><li class="application-question custom-question">
+    <div class="application-label"><div class="text">Do you currently live in the United States of America?<span class="required">✱</span></div></div>
+    <div class="application-field"><ul>
+      <li><label><input type="radio" name="cards[6a21][field0]" value="Yes"><span class="application-answer-alternative">Yes</span></label></li>
+      <li><label><input type="radio" name="cards[6a21][field0]" value="No"><span class="application-answer-alternative">No</span></label></li>
+    </ul></div></li></ul>
+  <label for="resumator-questionnaire-2998549">Do you currently reside in the United States or Canada?*</label>
+  <select id="resumator-questionnaire-2998549" name="resumator-questionnaire[2998549]"><option value="">-- No answer --</option><option>Yes</option><option>No</option></select>
+  <label for="q_bay">Are you currently located in the Bay Area?</label>
+  <select id="q_bay"><option value="">Select</option><option>Yes</option><option>No</option></select>
+  <label for="q_ca">Do you currently live in Canada?</label>
+  <select id="q_ca"><option value="">Select</option><option>Yes</option><option>No</option></select>
+  <label for="q_move">Are you currently based in or willing to relocate to the United States?</label>
+  <select id="q_move"><option value="">Select</option><option>Yes</option><option>No</option></select>
+</form>
+<script>
+  const input = document.getElementById('question_38318893002');
+  const control = input.closest('.select__control');
+  control.addEventListener('mousedown', () => {
+    if (document.getElementById('lives-listbox')) return;
+    const list = document.createElement('div');
+    list.id = 'lives-listbox';
+    list.setAttribute('role', 'listbox');
+    for (const text of ['Yes', 'No']) {
+      const o = document.createElement('div');
+      o.setAttribute('role', 'option');
+      o.textContent = text;
+      o.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        control.querySelector('.select__placeholder')?.remove();
+        const shown = document.createElement('div');
+        shown.className = 'select__single-value';
+        shown.textContent = text;
+        control.querySelector('.select__value-container').prepend(shown);
+        list.remove();
+      });
+      list.append(o);
+    }
+    control.parentElement.append(list);
+    input.setAttribute('aria-expanded', 'true');
+    input.setAttribute('aria-controls', list.id);
+  });
+</script>
+</body></html>`;
+
+/*
+ * Teamtailor's telephone box (measured live on owlco.na.teamtailor.com): an
+ * intl-tel-input that rewrites what is typed with the selected country's code
+ * in front, "+1 555-010-0199".
+ */
+const ADDS_ITS_CODE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Owl.co</title></head><body>
+<form>
+  <label for="candidate_phone">Phone*Required</label>
+  <div><button type="button" aria-label="Change country, selected United States (+1)" aria-haspopup="dialog">US</button>
+  <input type="tel" id="candidate_phone" name="candidate[phone]" placeholder="+1 201-555-0123"></div>
+</form>
+<script>
+  const box = document.getElementById('candidate_phone');
+  box.addEventListener('input', () => {
+    const d = box.value.replace(/\\D/g, '').replace(/^1(?=\\d{10}$)/, '');
+    if (d.length === 10) box.value = '+1 ' + d.slice(0, 3) + '-' + d.slice(3, 6) + '-' + d.slice(6);
+  });
+</script>
+</body></html>`;
+
+const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -5423,6 +5812,307 @@ async function main() {
       'while a description outside the work history is still a question',
       JSON.stringify(begun.questions) === '["Project description"]',
       JSON.stringify(begun.questions),
+    );
+
+    /* ---------------- Found filling live forms with a fake profile ---------------- */
+    const SWEEP = {
+      first_name: 'Morgan', last_name: 'Testwell', full_name: 'Morgan Testwell', email: 'morgan.testwell@example.com', phone: '(555) 010-0199',
+      school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science',
+      address_city: 'Boston', address_state: 'MA', address_country: 'United States',
+      work_authorization: 'Authorized to work in the US', requires_sponsorship: 'No',
+    };
+    const named = await page.goto(`${base}/name-of-a-thing`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm(fields);
+        return Object.fromEntries(['first_name', 'question_69008301', 'q_school', 'q_company', 'q_full', 'q_yours'].map((id) => [id, document.getElementById(id).value]));
+      }, { b: base, fields: SWEEP }),
+    );
+    group('The full name of something, which is not the applicant\'s name');
+    check(
+      'Datadog\'s "full name of your major" is given the subject, not the applicant\'s name',
+      named.question_69008301 === 'Computer Science',
+      JSON.stringify(named),
+    );
+    check(
+      'the full name of a university is the school, and the legal name of a company is left alone',
+      named.q_school === 'Northeastern University' && named.q_company === '',
+      JSON.stringify(named),
+    );
+    check(
+      '"Full Legal Name" and "Your name" are still the applicant\'s',
+      named.q_full === 'Morgan Testwell' && named.q_yours === 'Morgan Testwell' && named.first_name === 'Morgan',
+      JSON.stringify(named),
+    );
+
+    const countryNamed = await page.goto(`${base}/country-named`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 800 });
+        return {
+          es: document.querySelector('#q_es')?.closest('.select__control')?.querySelector('.select__single-value')?.textContent ?? '',
+          br: document.getElementById('q_br').value,
+          us: document.getElementById('q_us').value,
+          authorised: document.getElementById('question_69008308').value,
+          ukS: document.getElementById('q_uk_s').value,
+          skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, fields: SWEEP }),
+    );
+    group('A yes or a no about a country the profile says nothing about');
+    check(
+      'Affirm\'s "sponsorship … in Spain?" is not answered from a US declaration, and says why',
+      countryNamed.es === '' && countryNamed.skipped.includes('requires_sponsorship: your answer is about another country'),
+      JSON.stringify(countryNamed),
+    );
+    check(
+      '"authorised" with an s is the right-to-work question, answered like "authorized", and not reported as a country',
+      countryNamed.authorised === 'Yes' && countryNamed.ukS === '' && !countryNamed.skipped.some((s) => s.startsWith('address_country')),
+      JSON.stringify(countryNamed),
+    );
+    check(
+      'nor is "authorized to work in Brazil?", while the US question beside them still is',
+      countryNamed.br === '' && countryNamed.us === 'Yes',
+      JSON.stringify(countryNamed),
+    );
+
+    const code = (fields) => page.goto(`${base}/employers-code`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        return { phone: document.getElementById('input-candidate.phone-5').value, filled: report.filled.map((f) => f.key) };
+      }, { b: base, fields }));
+    const usCode = await code(SWEEP);
+    const ukCode = await code({ ...SWEEP, phone: '020 7946 0000', address_country: 'United Kingdom' });
+    const noCode = await code({ ...SWEEP, address_country: undefined });
+    group('A telephone box the form began with its own country\'s code');
+    check(
+      'a US profile\'s number goes in behind +1, not behind the Dutch employer\'s +31',
+      usCode.phone === '+1 (555) 010-0199' && usCode.filled.includes('phone'),
+      JSON.stringify(usCode),
+    );
+    check('and a UK profile\'s behind +44', ukCode.phone === '+44 020 7946 0000', JSON.stringify(ukCode));
+    check('with no country in the profile, the form\'s code is kept, as before', noCode.phone === '+31 (555) 010-0199', JSON.stringify(noCode));
+
+    const twice = await page.goto(`${base}/asked-twice`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 800 });
+        const shown = (id) => document.getElementById(id).closest('.select__control').querySelector('.select__single-value')?.textContent ?? '';
+        return {
+          text: document.getElementById('question_text_country').value,
+          ...Object.fromEntries(['country', 'question_residence', 'question_sp1', 'question_sp2', 'school--0', 'school--1'].map((id) => [id, shown(id)])),
+          handPicked: report.skipped.filter((s) => /by hand/.test(s.reason)).map((s) => s.description),
+          wrapped: shown('question_wrapped'),
+          sponsorships: report.filled.filter((f) => f.key === 'requires_sponsorship').length,
+        };
+      }, { b: base, fields: SWEEP }),
+    );
+    group('The same answer, asked twice on one form');
+    check(
+      'the country of residence is chosen under the phone\'s country picker, and the picker still is',
+      twice.country === 'United States' && twice.question_residence === 'United States',
+      JSON.stringify(twice),
+    );
+    check(
+      'a text box that took the country first does not stop either picker',
+      twice.text === 'United States' && twice.country === 'United States',
+      JSON.stringify(twice),
+    );
+    check(
+      'a second sponsorship question is answered as the first was',
+      twice.question_sp1 === 'No' && twice.question_sp2 === 'No',
+      JSON.stringify(twice),
+    );
+    check(
+      'a second School is still not given the first school, and nothing chosen is left reported as still to pick',
+      twice['school--0'] === 'Northeastern University' && twice['school--1'] === '' && twice.handPicked.length === 0,
+      JSON.stringify(twice),
+    );
+    check(
+      'a combobox around its own list box is one question, answered and counted once',
+      twice.wrapped === 'No' && twice.sponsorships === 3,
+      JSON.stringify(twice),
+    );
+
+    const RECENT_JOBS = [
+      { company: 'Older Co', title: 'Tutor', start: { year: 2023, month: 1 }, end: { year: 2024, month: 5 }, current: false, description: '' },
+      { company: 'Example Co', title: 'Software Engineering Intern', start: { year: 2025, month: 6 }, end: { year: 2025, month: 8 }, current: false, description: '' },
+    ];
+    const recentJob = (history, extra = {}) => page.goto(`${base}/most-recent-job`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields, history }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm(fields, { history });
+        return [...document.querySelectorAll('input')].map((el) => el.value);
+      }, { b: base, fields: { ...SWEEP, ...extra }, history }));
+    const ended = await recentJob(RECENT_JOBS);
+    const still = await recentJob(RECENT_JOBS, { current_company: 'Now Inc', current_title: 'Engineer' });
+    const tied = await recentJob([RECENT_JOBS[1], { ...RECENT_JOBS[1], company: 'Same Month LLC' }]);
+    group('A question asking for the most recent job');
+    check(
+      'Vanta\'s "Current/Most Recent" company and title, Samsara\'s "Most Recent Employer" and Reddit\'s "current (or most recent) company" get the job that ended last',
+      JSON.stringify(ended.slice(0, 4)) === '["Example Co","Software Engineering Intern","Example Co","Example Co"]',
+      JSON.stringify(ended),
+    );
+    check(
+      'while "Current company" still says nothing about a job that has ended, and a reason for leaving is not a company',
+      ended[4] === '' && ended[5] === '',
+      JSON.stringify(ended),
+    );
+    check(
+      'a job still going is the most recent one',
+      JSON.stringify(still.slice(0, 5)) === '["Now Inc","Engineer","Now Inc","Now Inc","Now Inc"]',
+      JSON.stringify(still),
+    );
+    check('two jobs that ended the same month give nothing', tied.slice(0, 4).every((v) => v === ''), JSON.stringify(tied));
+
+    const EXAMPLE_JOB = [{ company: 'Example Co', title: 'Software Engineering Intern', start: { year: 2025, month: 6 }, end: { year: 2025, month: 8 }, current: false, description: '• Built example things' }];
+    const employment = (history) => page.goto(`${base}/greenhouse-employment`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields, history }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(fields, m.fillForm(fields, { history }), { patience: 800, history });
+        const v = (id) => document.getElementById(id).value;
+        const shown = (id) => document.getElementById(id).closest('.select__control').querySelector('.select__single-value')?.textContent ?? '';
+        return {
+          company: v('company-name-0'), title: v('title-0'),
+          start: `${shown('start-date-month-0')} ${v('start-date-year-0')}`, end: `${shown('end-date-month-0')} ${v('end-date-year-0')}`,
+          current: document.getElementById('current-role-0_1').checked,
+          education: `${shown('start-month--0')} ${v('start-year--0')}`,
+          filled: report.filled.map((f) => f.key),
+        };
+      }, { b: base, fields: SWEEP, history }));
+    const job = await employment(EXAMPLE_JOB);
+    const noJob = await employment([]);
+    const stillThere = await employment([{ ...EXAMPLE_JOB[0], current: true, end: undefined }]);
+    // A second job on the resume, which a block wrongly taken for employment would be given.
+    const twoJobs = await employment([...EXAMPLE_JOB, { company: 'Older Co', title: 'Tutor', start: { year: 2023, month: 1 }, end: { year: 2024, month: 5 }, current: false, description: '' }]);
+    group('Greenhouse: an Employment block under a <p>, from the resume being sent');
+    check(
+      'the company and the title go in',
+      job.company === 'Example Co' && job.title === 'Software Engineering Intern',
+      JSON.stringify(job),
+    );
+    check(
+      'and the start and the end, the month chosen from its list and the year typed',
+      job.start === 'June 2025' && job.end === 'August 2025' && job.current === false &&
+        // Each once: a month list is chosen from, never typed into as well.
+        ['job_start_month', 'job_end_month', 'job_start_year', 'job_end_year'].every((k) => job.filled.filter((f) => f === k).length === 1),
+      JSON.stringify(job),
+    );
+    check(
+      'a job still going ticks "Current role" and leaves the end for the form',
+      stillThere.current === true && stillThere.end === ' ' && stillThere.start === 'June 2025',
+      JSON.stringify(stillThere),
+    );
+    check(
+      'the Education block\'s "Start date" in the same words is never given the job\'s, and nothing is filled without a resume',
+      job.education === ' ' && twoJobs.education === ' ' && twoJobs.company === 'Example Co' && noJob.company === '' && noJob.start === ' ',
+      JSON.stringify({ job: job.education, twoJobs, noJob }),
+    );
+
+    const sponsorStatements = await page.goto(`${base}/sponsorship-statements`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm({ work_authorization: 'Authorized to work in the US', requires_sponsorship: 'No', address_country: 'United States' });
+        return ['s1', 's2', 's3'].map((id) => document.getElementById(id).value);
+      }, { b: base }));
+    group('A right-to-work list written as statements');
+    check(
+      '"No, I need sponsorship now." is not taken for "no sponsorship needed", and a list with nothing true in it is left alone',
+      sponsorStatements[0] === '',
+      JSON.stringify(sponsorStatements),
+    );
+    check(
+      'while the statement that does deny the need is still chosen, however it is put',
+      sponsorStatements[1] === 'I am authorized to work for any employer and do not require sponsorship.' &&
+        sponsorStatements[2] === 'No sponsorship needed; I am authorized to work for any employer.',
+      JSON.stringify(sponsorStatements),
+    );
+
+    const rippling = await page.goto(`${base}/rippling-questions`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const labels = ['field-55', 'field-61', 'field-91'].map((id) => m.labelFor(document.getElementById(id)));
+        const questions = m.findQuestions().map((q) => q.question);
+        await m.fillComboboxes(fields, m.fillForm(fields), { patience: 800 });
+        return { labels, questions, auth: document.querySelector('#field-55 p').textContent, sponsor: document.querySelector('#field-61 p').textContent, first: document.getElementById('field-8').value };
+      }, { b: base, fields: SWEEP }),
+    );
+    group('Rippling: a question in the block above its field');
+    check(
+      'a widget labelled only "Select", and a bare textarea, are read by the question above them',
+      /^Do you have the unrestricted right to work/.test(rippling.labels[0]) && /^Will you now or in the future require sponsorship/.test(rippling.labels[1]) &&
+        /^Describe your experience with or interest in SaaS/.test(rippling.labels[2]),
+      JSON.stringify(rippling.labels),
+    );
+    check(
+      'so the right-to-work and sponsorship lists are answered, and the textarea is offered as a question',
+      rippling.auth === 'Yes' && rippling.sponsor === 'No' && rippling.first === 'Morgan' &&
+        rippling.questions.some((q) => /SaaS platforms/.test(q)),
+      JSON.stringify(rippling),
+    );
+
+    const completeDegree = await page.goto(`${base}/complete-your-degree`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        return {
+          year: document.getElementById('question_69105323').value, month: document.getElementById('question_69105925').value,
+          course: document.getElementById('q_course').value, skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, fields: { ...SWEEP, graduation_year: '2027', graduation_month: 'May', graduation_date: 'May 2027' } }),
+    );
+    group('"What year will you complete your degree?"');
+    check(
+      'Okta\'s question is the graduation year, not the degree, and the course beside it is nobody\'s graduation',
+      completeDegree.year === '2027' && completeDegree.month === 'May' && completeDegree.course === '' && completeDegree.skipped.length === 0,
+      JSON.stringify(completeDegree),
+    );
+
+    const livesIn = (fields) => page.goto(`${base}/lives-in`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 800 });
+        const v = (id) => document.getElementById(id).value;
+        return {
+          greenhouse: document.querySelector('#question_38318893002').closest('.select__control').querySelector('.select__single-value')?.textContent ?? '',
+          lever: document.querySelector('input[name="cards[6a21][field0]"]:checked')?.value ?? '',
+          jazz: v('resumator-questionnaire-2998549'), bay: v('q_bay'), canada: v('q_ca'), move: v('q_move'),
+          skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, fields }));
+    const inUS = await livesIn(SWEEP);
+    const nowhere = await livesIn({ ...SWEEP, address_country: undefined });
+    group('"Do you live in <country>?", from the profile\'s own country');
+    check(
+      'Greenhouse\'s, Lever\'s and JazzHR\'s shapes are each answered "Yes" for a profile in the United States',
+      inUS.greenhouse === 'Yes' && inUS.lever === 'Yes' && inUS.jazz === 'Yes',
+      JSON.stringify(inUS),
+    );
+    check(
+      'a question naming no country, or offering relocation, is not touched; one naming another country is handed back',
+      inUS.bay === '' && inUS.move === '' && inUS.canada === '' &&
+        inUS.skipped.filter((s) => s.startsWith('lives_in_country')).join() === 'lives_in_country: your answer is about another country',
+      JSON.stringify(inUS),
+    );
+    check(
+      'and with no country in the profile none of them is answered',
+      nowhere.greenhouse === '' && nowhere.lever === '' && nowhere.jazz === '' && nowhere.canada === '',
+      JSON.stringify(nowhere),
+    );
+
+    const addsCode = await page.goto(`${base}/adds-its-code`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        return { phone: document.getElementById('candidate_phone').value, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields: SWEEP }),
+    );
+    group('A telephone box that puts its own dialling code in front');
+    check(
+      'Teamtailor\'s "+1 555-010-0199" is the number that was given, and is reported filled, not refused',
+      addsCode.phone === '+1 555-010-0199' && addsCode.filled.includes('phone') && !addsCode.skipped.some((s) => s.startsWith('phone')),
+      JSON.stringify(addsCode),
     );
   } finally {
     await browser.close();
