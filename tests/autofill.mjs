@@ -5185,6 +5185,10 @@ async function main() {
       { ...NEWEST, school: 'Wentworth Harbour College' },
       [{ ...MASTERS, school: 'Wentworth Harbour College' }, BACHELORS],
     );
+    // A profile whose school the resume being sent does not list.
+    const oneMismatched = await educations({ ...ONE, school: 'University of Virginia' }, [BACHELORS]);
+    // And no resume at all behind the fill: no schools sent.
+    const noSchools = await educations(ONE, []);
     group('Greenhouse: more than one education, from the resume being sent');
     check(
       'a second education gets a block of its own, added with the section\'s "Add another" and filled from it',
@@ -5231,6 +5235,21 @@ async function main() {
         oneNoMajor.blocks[0]?.['end-year'] === '2027',
       JSON.stringify({ oneOnly, oneNoMajor }),
     );
+    /*
+     * Reported after the dates change went out: School, Degree and Discipline
+     * filled and all four dates empty. Two ways that happens, both of which
+     * were silent: the report now says which.
+     */
+    check(
+      'a school the resume does not list leaves the dates, and says so',
+      oneMismatched.skipped.some((x) => /does not list “University of Virginia”/.test(x)),
+      JSON.stringify(oneMismatched.skipped),
+    );
+    check(
+      'and so does a fill with no schools from the resume at all',
+      noSchools.skipped.some((x) => /lists no schools/.test(x)),
+      JSON.stringify(noSchools.skipped),
+    );
     check(
       'a date already entered for the one education is not written over',
       oneDated.blocks[0]?.['start-month'] === 'January' && oneDated.blocks[0]?.['start-year'] === '2022' &&
@@ -5259,7 +5278,9 @@ async function main() {
     );
     check(
       'a first block from a school the resume does not list adds nothing, rather than risk the same school twice',
-      notOnTheResume.blocks.length === 1 && notOnTheResume.pressed.education === 0 && notOnTheResume.same,
+      // Adds nothing, and says why rather than nothing: see "and says so" below.
+      notOnTheResume.blocks.length === 1 && notOnTheResume.pressed.education === 0 && notOnTheResume.added.length === 0 &&
+        notOnTheResume.skipped.some((x) => /does not list “Aalto University”/.test(x)),
       JSON.stringify(notOnTheResume),
     );
     check(

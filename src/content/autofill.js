@@ -4164,13 +4164,28 @@ const EDUCATION_DATE = /^(education_start|graduation)_(month|year|date)$/;
 
 export async function fillEducation(education, fields, report, { patience = 4000 } = {}) {
   const schools = Array.isArray(education) ? education.filter((e) => clean(e?.school)) : [];
-  if (schools.length === 0) return report;
-  const onlyOne = schools.length === 1;
   let section = educationSection();
   if (!section) return report;
+  /*
+   * Said, where there is an Education section and it is being left.
+   *
+   * Every way out of here was silent, so a form whose dates stayed empty and
+   * whose "Add another" was never pressed looked exactly like one this had
+   * never reached — measured on a Greenhouse board filled from a profile and
+   * no resume: School, Degree and Discipline in, four dates and the second
+   * school out, and a report with nothing about education in it at all.
+   */
+  const leaving = (reason) => ({
+    ...report,
+    skipped: [...report.skipped, { key: 'education_start_date', reason, description: 'Education' }],
+  });
+  if (schools.length === 0) return leaving('the resume sent lists no schools, so the dates and any others were left');
+  const onlyOne = schools.length === 1;
 
   const owner = fields?.school ? schools.findIndex((e) => sameSchool(e.school, fields.school)) : -1;
-  if (fields?.school && owner < 0) return report;
+  if (fields?.school && owner < 0) {
+    return leaving(`the resume sent does not list “${clean(fields.school).slice(0, 60)}”, the school the form was given`);
+  }
   // What the first pass looked at, in the first block. Not asked twice.
   const tried = new Set([...report.filled, ...report.skipped].map((x) => x.key));
 
