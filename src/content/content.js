@@ -663,6 +663,27 @@
    * just there. It is a placeholder either way, but it is a true one, and it
    * is the one that tells you which application this is.
    */
+  /*
+   * The names an application is filed under, the same on every path.
+   *
+   * The store settles them when it builds the resume — the page's employer,
+   * or its own tidied reading of the address ("careers.activision.com" is
+   * Activision) — and writes them on the copy as `generatedFor`; the keeper
+   * opens the workspace under those and a send is recorded under them. Staging,
+   * building and "Write these in ResumeM-M" used the page's own reading with
+   * the hostname behind it, so on a Phenom apply page, titled "Apply" and
+   * naming nobody, the tracker got a row reading "careers.activision.com /
+   * Unknown role" beside the one the workspace had opened. One application
+   * is one pair of names, whichever button filed it.
+   */
+  const filedAs = () => {
+    const settled = analysis?.spec?.generatedFor;
+    return {
+      company: settled?.company || analysis?.job?.company || whoIsHiring(),
+      role: settled?.role || analysis?.job?.title || 'Unknown role',
+    };
+  };
+
   const whoIsHiring = () => {
     try {
       return new URL(location.href).hostname.replace(/^www\./, '');
@@ -1089,8 +1110,7 @@
       case 'openWorkspace': {
         const { wantsCoverLetter } = await imports.autofill();
         const result = await send('openWorkspace', {
-          company: analysis.job.company ?? whoIsHiring(),
-          role: analysis.job.title ?? 'Unknown role',
+          ...filedAs(),
           url: location.href,
           source: new URL(location.href).hostname,
           jobDescription: analysis.job.description ?? '',
@@ -1153,8 +1173,7 @@
         return send('stage', {
           spec: payload.spec,
           resumeId: payload.spec.id,
-          company: analysis.job.company ?? whoIsHiring(),
-          role: analysis.job.title ?? 'Unknown role',
+          ...filedAs(),
           url: location.href,
           source: new URL(location.href).hostname,
           status: 'applying',
@@ -1171,8 +1190,7 @@
         return send('bundle', {
           spec: payload.spec,
           resumeId: payload.spec.id,
-          company: analysis.job.company ?? whoIsHiring(),
-          role: analysis.job.title ?? 'Unknown role',
+          ...filedAs(),
           url: location.href,
           source: new URL(location.href).hostname,
           /*

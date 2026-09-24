@@ -887,6 +887,21 @@ const RECEIPT_EMBED_THANKS = {
   html: page('Application form', 'Calloway Maritime', '<h1>Thank you for applying.</h1>'),
 };
 
+/**
+ * Phenom's apply step as Activision serves it — titled "Apply", naming
+ * neither the employer nor the job, on the company's own careers host. Served
+ * at `careers.corvane.test`, which the suite maps to this machine, because
+ * what is under test is the name read off that host.
+ */
+export const NAMELESS_APPLY = {
+  name: 'nameless-apply-step',
+  path: '/apply',
+  query: '?jobSeqNo=CRVUSR027559EXTERNAL&step=1&stepname=personalInformation',
+  company: 'Corvane',
+  html: `<!doctype html><html><head><title>Apply</title></head><body>
+    <form onsubmit="event.preventDefault();">${FIELDS}<button type="button">Next</button></form></body></html>`,
+};
+
 export const RECEIPT_DOCUMENTS = [RECEIPT_THANKS, RECEIPT_ELSEWHERE_THANKS, RECEIPT_EMBED_FRAME, RECEIPT_EMBED_THANKS];
 
 export const FRAME_DOCUMENTS = [EMBEDDED_APPLY_FRAME, EMBEDDED_SUBSCRIBE_FRAME];
