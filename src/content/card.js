@@ -222,6 +222,9 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .faint { color: var(--faint); font-size: 11px; }
 .count { text-align: right; margin-top: 2px; }
 .count.over { color: var(--bad); }
+/* A limit the question states in words: said, not refused, so amber. */
+.wordcount { text-align: right; margin-top: 2px; }
+.wordcount.over { color: var(--warn); }
 
 .job { margin-bottom: 12px; }
 .job .role { font-weight: 500; font-size: 16px; line-height: 1.3; }
@@ -632,6 +635,42 @@ export function removeCard() {
  */
 
 /** "412 / 500", and a warning once past it. Nothing where the box has no limit. */
+/**
+ * A word limit the question states for itself, or nothing.
+ *
+ * "(150 words or less)", "no more than 200 words", "250 words max", "a
+ * 200-word limit", "maximum of 300 words". Forms rarely enforce these — the
+ * box takes whatever is put in it — so it is the person who has to keep to
+ * it, and the count is how they can.
+ */
+export function statedWordLimit(question) {
+  const said = String(question ?? '');
+  const hit =
+    /\b(\d{2,4})\s*-?\s*words?\s*(?:or\s+(?:less|fewer)|max(?:imum)?\b|limit\b|at\s+most\b)/i.exec(said) ??
+    /\b(?:no\s+more\s+than|not\s+(?:to\s+)?exceed(?:ing)?|up\s+to|max(?:imum)?(?:\s+of)?|at\s+most|within|under|limit(?:ed)?\s+(?:of|to))\s+(\d{2,4})\s*words?\b/i.exec(said);
+  return hit ? Number(hit[1]) : null;
+}
+
+const wordsIn = (text) => (String(text ?? '').trim().match(/\S+/g) ?? []).length;
+
+/*
+ * The words in an answer, and against the question's own limit where it
+ * states one. Every answer gets it: most boxes carry no limit a script can
+ * read, and "keep it short" is only something you can do while you can see
+ * how long it is.
+ */
+function countWords(counter, text, limit) {
+  if (!counter) return;
+  const n = wordsIn(text);
+  const over = Boolean(limit) && n > limit;
+  counter.textContent = limit
+    ? over
+      ? `${n} / ${limit} words — ${n - limit} over what the question asks for`
+      : `${n} / ${limit} words`
+    : `${n} ${n === 1 ? 'word' : 'words'}`;
+  counter.classList.toggle('over', over);
+}
+
 function countAgainst(counter, text, limit) {
   if (!counter || !limit) return;
   const length = String(text ?? '').length;
@@ -5445,6 +5484,9 @@ export function createCard({
        */
       const counter = q.limit ? h('div', { className: 'count faint' }) : null;
       countAgainst(counter, value, q.limit);
+      const wordLimit = statedWordLimit(q.question);
+      const words = h('div', { className: 'wordcount faint' });
+      countWords(words, value, wordLimit);
 
       const box = h('div', { className: 'q' }, [
         h('div', { className: 'qt' }, [document.createTextNode(q.question), badge]),
@@ -5473,8 +5515,10 @@ export function createCard({
           oninput: (e) => {
             state.answers[q.question] = e.target.value;
             countAgainst(counter, e.target.value, q.limit);
+            countWords(words, e.target.value, wordLimit);
           },
         }),
+        words,
         counter,
         h('div', { className: 'row gap' }, [
           h('button', {

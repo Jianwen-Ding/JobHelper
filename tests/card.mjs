@@ -3837,6 +3837,51 @@ async function main() {
   check('and offers nothing to press', returned.buttons.length === 0, JSON.stringify(returned.buttons));
   check('and drops the warning colour', returned.back === true, String(returned.back));
 
+  console.log('\nCounting the words of an answer');
+
+  /*
+   * Reported: "there should be a word count in the question side". The card
+   * counted characters only, and only where the box carried a `maxlength` —
+   * and the limits people are held to are the ones the question states in
+   * words, which no box enforces: SpaceX asks for "150 words or less".
+   */
+  const wordCounts = await inPage((createCard) => {
+    const handle = createCard({
+      analysis: { isJobPosting: true, job: { title: 'Engineer', company: 'SpaceX' }, spec: { id: 'job-spacex' }, rationale: [] },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      isForm: true,
+      onAction: async () => ({}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    handle.setQuestions([
+      {
+        question: 'Please provide a short description (150 words or less) of any hands-on technical project in which you participated.',
+        fieldId: 'jh-q-1',
+        answer: 'I built a rocket avionics board.',
+        confident: false,
+      },
+      { question: 'What technical skills do you hope to use in this position?', fieldId: 'jh-q-2', answer: '', confident: false },
+      { question: 'Tell us about yourself (no more than 200 words).', fieldId: 'jh-q-3', answer: '', confident: false },
+    ]);
+    const counts = () => [...root.querySelectorAll('.q .wordcount')].map((c) => ({ text: c.textContent, over: c.classList.contains('over') }));
+    const before = counts();
+    const box = root.querySelector('textarea[data-field^="answer:Please provide"]');
+    box.value = Array.from({ length: 151 }, (_, i) => `word${i}`).join(' ');
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    return { before, after: counts() };
+  });
+  check('an answer is counted against the limit its question states', wordCounts.before[0]?.text === '6 / 150 words', JSON.stringify(wordCounts.before[0]));
+  check('and a question with no limit still shows how long the answer is', wordCounts.before[1]?.text === '0 words', JSON.stringify(wordCounts.before[1]));
+  check('"no more than 200 words" is a limit too', wordCounts.before[2]?.text === '0 / 200 words', JSON.stringify(wordCounts.before[2]));
+  check(
+    'going over is said, as it is typed',
+    /^151 \/ 150 words — 1 over/.test(wordCounts.after[0]?.text ?? '') && wordCounts.after[0]?.over === true,
+    JSON.stringify(wordCounts.after[0]),
+  );
+
   console.log('\nThe card on a later page of an application');
 
   /*
