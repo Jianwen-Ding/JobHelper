@@ -2292,7 +2292,21 @@ const COUNTRY_NAMED = `<!doctype html><html><head><meta charset="utf-8"><title>A
 </script>
 </body></html>`;
 
-const PAGES = { '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
+/*
+ * Recruitee's telephone box, as it arrives on a Dutch company's board
+ * (measured live on jobs.channable.com and personio.recruitee.com): a country
+ * button beside a `type=tel` box that already holds the employer's own
+ * dialling code, "+31" or "+49". The applicant lives somewhere else.
+ */
+const EMPLOYERS_CODE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Channable</title></head><body>
+<form><fieldset><legend>My information</legend>
+  <label for="input-candidate.name-3">Full name *</label><input type="text" id="input-candidate.name-3" name="candidate.name" required>
+  <label for="input-candidate.phone-5">Phone number *</label>
+  <div><button type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Select country calling code: Netherlands">Netherlands</button>
+  <input type="tel" name="candidate.phone" id="input-candidate.phone-5" placeholder="Your phone number" value="+31" required></div>
+</fieldset></form></body></html>`;
+
+const PAGES = { '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -5481,6 +5495,24 @@ async function main() {
       countryNamed.br === '' && countryNamed.us === 'Yes',
       JSON.stringify(countryNamed),
     );
+
+    const code = (fields) => page.goto(`${base}/employers-code`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        return { phone: document.getElementById('input-candidate.phone-5').value, filled: report.filled.map((f) => f.key) };
+      }, { b: base, fields }));
+    const usCode = await code(SWEEP);
+    const ukCode = await code({ ...SWEEP, phone: '020 7946 0000', address_country: 'United Kingdom' });
+    const noCode = await code({ ...SWEEP, address_country: undefined });
+    group('A telephone box the form began with its own country\'s code');
+    check(
+      'a US profile\'s number goes in behind +1, not behind the Dutch employer\'s +31',
+      usCode.phone === '+1 (555) 010-0199' && usCode.filled.includes('phone'),
+      JSON.stringify(usCode),
+    );
+    check('and a UK profile\'s behind +44', ukCode.phone === '+44 020 7946 0000', JSON.stringify(ukCode));
+    check('with no country in the profile, the form\'s code is kept, as before', noCode.phone === '+31 (555) 010-0199', JSON.stringify(noCode));
   } finally {
     await browser.close();
     server.close();

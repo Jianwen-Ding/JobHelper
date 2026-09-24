@@ -1932,6 +1932,24 @@ const COUNTRIES = [
   ['tr', null, /\bt(?:ü|u)rk(?:ey|iye)\b/i],
 ];
 
+/*
+ * The dialling code of each country above, for a telephone box a form has
+ * already started with its own. See the phone note in `fillForm`.
+ */
+const DIALLING_CODES = {
+  us: '+1', ca: '+1', uk: '+44', ie: '+353', in: '+91', sg: '+65', de: '+49', fr: '+33', nl: '+31', mx: '+52',
+  jp: '+81', il: '+972', au: '+61', nz: '+64', es: '+34', pt: '+351', it: '+39', pl: '+48', ch: '+41', se: '+46',
+  no: '+47', dk: '+45', fi: '+358', be: '+32', at: '+43', cz: '+420', ro: '+40', gr: '+30', br: '+55', ar: '+54',
+  cl: '+56', co: '+57', cn: '+86', hk: '+852', tw: '+886', kr: '+82', ph: '+63', my: '+60', id: '+62', vn: '+84',
+  th: '+66', ae: '+971', za: '+27', ng: '+234', tr: '+90',
+};
+
+/** The dialling code of the one country `text` names, or `undefined`. */
+function diallingCodeFor(text) {
+  const named = [...countriesIn(text)];
+  return named.length === 1 ? DIALLING_CODES[named[0]] : undefined;
+}
+
 function countriesIn(text) {
   const said = String(text ?? '');
   const out = new Set();
@@ -2153,8 +2171,21 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     }
     // The dialling code the form put there stays, in front of a number that
     // does not carry one of its own.
+    /*
+     * Unless it is some other country's. The code a form starts its box with
+     * is the employer's guess, and it is usually the employer's own country:
+     * Recruitee boards open the box on "+49" for a German company and "+31"
+     * for a Dutch one. Measured live on personio.recruitee.com and
+     * jobs.channable.com with a fake profile living in the United States:
+     * "(555) 010-0199" went in as "+49 5550 100199" and "+31 5550100199" — a
+     * German and a Dutch number nobody answers, reported as filled. Where the
+     * profile names its country and that country's code is known, the number
+     * goes in behind that code instead; with no country to go on, the form's
+     * guess is kept, as it always was.
+     */
     if (key === 'phone' && ONLY_A_DIALLING_CODE.test(input.value) && !/^\s*\+/.test(String(value))) {
-      value = `${input.value.trim()} ${String(value).trim()}`;
+      const code = diallingCodeFor(fields.address_country) ?? input.value.trim();
+      value = `${code} ${String(value).trim()}`;
     }
 
     /*
