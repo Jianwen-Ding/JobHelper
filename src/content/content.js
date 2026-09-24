@@ -2437,23 +2437,6 @@
           );
           return true;
 
-        /*
-         * The worker asking for this page's work now, because a send has just
-         * been reported and nothing was flushed with it — the form was in an
-         * iframe, whose script runs no keeper. Only the top frame answers:
-         * it is where the card and the keeper are.
-         */
-        case 'jh-flush-work':
-          if (window !== window.top) return false;
-          /*
-           * Answered once the worker has taken the save, not the moment it is
-           * sent: the two travel separately, and an answer that overtook its
-           * own save left the worker nothing to wait for — the draft still
-           * opened after the send on "embedded-apply", 228ms late.
-           */
-          answer(Promise.resolve(saveWorkNow?.()).then(() => true));
-          return true;
-
         default:
           return false;
       }
@@ -2543,6 +2526,28 @@
         data: named?.company && named?.role ? { company: named.company, role: named.role } : null,
       });
       return false;
+    }
+    /*
+     * The worker asking for this page's work now, because a frame on it has
+     * just reported a send and nothing was flushed with it — a frame's script
+     * runs no keeper. The card and the keeper are here.
+     *
+     * Answered once the worker has taken the save, not the moment it is sent:
+     * the two travel separately, and an answer that overtook its own save left
+     * the worker nothing to wait for.
+     *
+     * In this listener, the top document's. It was written into the frames'
+     * listener behind a check that only the top frame answers — never so in
+     * that listener — so nobody answered, and every send from an embedded
+     * form was filed without waiting for its draft: "embedded-apply" in
+     * tests/sending.mjs, the draft opened 298ms to 1.4s after the send
+     * whenever Submit beat the keeper's tick.
+     */
+    if (message?.type === 'jh-flush-work') {
+      Promise.resolve(saveWorkNow?.())
+        .then(() => sendResponse({ ok: true, data: true }))
+        .catch((err) => sendResponse({ ok: false, error: err.message }));
+      return true;
     }
     if (message?.type === 'autofill') {
       runAutofill()

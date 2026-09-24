@@ -23,7 +23,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { serveFixtures, findChromium, pointExtensionAt, requireOpenSave, cleanStore } from './fixtures.mjs';
-import { SENDS, DOES_NOT_SEND, FRAME_DOCUMENTS } from './ats-web.mjs';
+import { SENDS, DOES_NOT_SEND, FRAME_DOCUMENTS, EMBEDDED_APPLY } from './ats-web.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
@@ -309,6 +309,60 @@ async function main() {
           after.draft?.status ?? '(none)',
         );
         check(`${fixture.name}: nothing thrown`, errors.length === 0, errors.join(' | '));
+      }
+    }
+
+    /*
+     * A send from inside a frame asks the top document for its work, and is
+     * answered once that work has been saved.
+     *
+     * The frame's script runs no keeper — the card and the keeper are in the
+     * top document — so a form submitted inside an iframe flushes nothing, and
+     * the worker asks the top frame for a save before it files the send. The
+     * answer to that question was written into the frames' own listener,
+     * behind a check that only the top frame answers, which in that listener
+     * is never so: nobody answered, and the send was filed without waiting.
+     * "embedded-apply" above saw it only when Submit beat the keeper's
+     * two-second tick — the draft 1.4 seconds after the send — so it failed
+     * now and then rather than every time. Asked directly here, it fails
+     * every time it is broken.
+     */
+    group('A send from inside a frame asks the top document for its work');
+    {
+      const page = await context.newPage();
+      try {
+        // At an address of its own. The walk above closed its tab on this
+        // posting, and a closed tab's work waits at its address for the next
+        // tab opened there — so the same address arrives with the resume
+        // already built and no "Build resume" to press.
+        await page.goto(`${fixtures.urlFor(EMBEDDED_APPLY)}?asked=1`, { waitUntil: 'domcontentloaded' });
+        await settled(page);
+        await cardOf(page).getByRole('button', { name: 'Build resume' }).click();
+        await cardOf(page).locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
+
+        const asked = await (context.serviceWorkers()[0] ?? worker).evaluate(async (url) => {
+          const tab = (await chrome.tabs.query({})).find((t) => t.url === url);
+          if (!tab) return { reply: { threw: `no tab at ${url}` }, began: 0, savedAt: 0 };
+          const key = `trail:${tab.id}`;
+          const began = Date.now();
+          let reply;
+          try {
+            reply = await chrome.tabs.sendMessage(tab.id, { type: 'jh-flush-work' }, { frameId: 0 });
+          } catch (err) {
+            reply = { threw: String(err?.message ?? err) };
+          }
+          const savedAt = (await chrome.storage.session.get(key))[key]?.at ?? 0;
+          return { reply: reply ?? null, began, savedAt };
+        }, page.url());
+
+        check('the top document answers the worker', asked.reply?.ok === true, JSON.stringify(asked.reply));
+        check(
+          'and only once the work it was asked for has been saved',
+          asked.savedAt >= asked.began,
+          asked.savedAt ? `saved ${asked.savedAt - asked.began}ms after the ask` : '(never saved)',
+        );
+      } finally {
+        await page.close().catch(() => undefined);
       }
     }
 
