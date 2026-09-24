@@ -557,7 +557,7 @@
    * document is looked at on the tick; when it has moved on, the whole
    * reading runs again, frames included, with the bank matched afresh.
    */
-  function watchQuestions(findQuestions, current) {
+  function watchQuestions(findQuestions, current, onChanged) {
     const asked = () =>
       findQuestions()
         .map((q) => q.question.replace(/\d+/g, '#').toLowerCase())
@@ -571,6 +571,7 @@
     const tick = setInterval(() => {
       if (!changed || !cardHandle || dismissed || !current()) return;
       changed = false;
+      onChanged?.();
       const now = asked();
       if (now === readAs) return;
       readAs = now;
@@ -1941,11 +1942,37 @@
     imports
       .autofill()
       .then(({ watchChoices, looksLikeApplicationForm, findQuestions }) => {
-        if (!current() || !looksLikeApplicationForm()) return;
-        // And its questions, for a form that moves on in place. One watcher,
-        // for the reason given below for the choices.
+        if (!current()) return;
+        /*
+         * The choices are watched only once this page is a form, and that
+         * can be later than now. See below.
+         */
+        const watchTheForm = () => {
+          if (stopChoices || !looksLikeApplicationForm()) return;
+          stopChoices = watchChoices((said) => {
+            if (!said.keep) return;
+            send('rememberChoice', { question: said.question, answer: said.answer }).catch(() => undefined);
+          });
+        };
+        /*
+         * And its questions, for a form that moves on in place — watched on
+         * any page the card is up on, not only one that already looked like
+         * a form when it was read.
+         *
+         * Workday reads as a route change and draws its first step seconds
+         * later, so the page was read as "Loading…", did not look like a
+         * form, and no watcher was started; every step after that is swapped
+         * in where the last one was with the address unchanged, so nothing
+         * read the page again. "Why are you interested in working for
+         * CrowdStrike?" was on the page and never on the card. The watcher
+         * only reads while a card is up, so this costs nothing anywhere else,
+         * and it is what notices the form arriving — which is when the
+         * choices start to be watched too.
+         *
+         * One watcher, for the reason given below for the choices.
+         */
         stopQuestions?.();
-        stopQuestions = watchQuestions(findQuestions, current);
+        stopQuestions = watchQuestions(findQuestions, current, watchTheForm);
         /*
          * One watcher, whatever number of passes found the form.
          *
@@ -1958,10 +1985,8 @@
          * whole-document scan once per listener.
          */
         stopChoices?.();
-        stopChoices = watchChoices((said) => {
-          if (!said.keep) return;
-          send('rememberChoice', { question: said.question, answer: said.answer }).catch(() => undefined);
-        });
+        stopChoices = null;
+        watchTheForm();
       })
       .catch(() => undefined);
 

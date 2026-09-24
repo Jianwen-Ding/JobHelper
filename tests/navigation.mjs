@@ -39,6 +39,7 @@ import {
   NIMBUS_ROLE,
   NIMBUS_QUIET_FORM,
   ORACLE_CE,
+  WORKDAY_STEPS,
   SOLO_ROLE,
   SOLO_OTHER,
   OWN_SITE,
@@ -330,6 +331,31 @@ async function main() {
         );
       }
       check('oracle: the form really did replace the description', (await page.locator('#primary-email-0').count()) === 1);
+      await page.close();
+    }
+
+    /* ---- Workday's steps: drawn late, then swapped in place ---- */
+    group('Questions on a step drawn after the card was up');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(WORKDAY_STEPS), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      await page.click('#apply');
+      // The first step arrives five seconds after the route changes.
+      await page.locator('#wd-next').waitFor({ timeout: 30_000 });
+      await page.locator(`${HOST} .card .role`).waitFor({ timeout: 25_000 }).catch(() => undefined);
+      await page.click('#wd-next');
+      const card = cardOf(page);
+      const listed = await card
+        .locator('.q', { hasText: 'Why are you interested in working for Orion?' })
+        .waitFor({ timeout: 15_000 })
+        .then(() => true)
+        .catch(() => false);
+      check(
+        'workday: a question on a later step is on the card',
+        listed,
+        JSON.stringify(await card.locator('.q .qt').allTextContents().catch(() => [])),
+      );
       await page.close();
     }
 
