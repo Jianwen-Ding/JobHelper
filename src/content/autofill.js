@@ -3369,9 +3369,32 @@ const PICK_BY_HAND = 'this one has to be picked by hand';
  * element — shared by the report below and by `fillComboboxes`, so the two
  * cannot disagree about which widget is which question.
  */
+/*
+ * One widget per question, not one per key.
+ *
+ * Every key used to be claimed by the first widget that asked it, and by any
+ * box `fillForm` had already typed it into, so a second question wanting the
+ * same answer was never named, never driven and never reported. Measured live
+ * on Greenhouse boards with a fake profile: GitLab's required "What is your
+ * current country of residence?", Chime's required "Country" and Brex's
+ * required "What country are you based in?" were all left on "Select..."
+ * because the phone's country picker, above them, had taken
+ * `address_country`; Affirm's required phone country was left empty because a
+ * text box lower down had; and Anthropic's required "Will you now or will you
+ * in the future require employment visa sponsorship…" was left blank because
+ * "Do you require visa sponsorship?" had taken `requires_sponsorship`. Each
+ * is the same answer to a question asked twice.
+ *
+ * The education keys are still claimed once. A second School or Degree is
+ * another school, and `fillEducation` fills those one block at a time from
+ * the resume; given the first answer again they would all say the newest one.
+ * And a widget inside another — a combobox `<div>` around its own text box —
+ * is the same question once.
+ */
 function widgetChoices(fields, filled) {
-  const already = new Set(filled.map((f) => f.key));
+  const already = new Set(filled.map((f) => f.key).filter((key) => EDUCATION_KEYS.test(key)));
   const found = [];
+  const seen = [];
 
   for (const widget of deepQueryAll(
     '[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"]',
@@ -3421,6 +3444,8 @@ function widgetChoices(fields, filled) {
     const dated = educationDateKey(widget, description);
     const key = dated || addressPartByLabel(clean(labelFor(widget)), FIELD_PATTERNS.find(([, re]) => re.test(description))?.[0]);
     if (!key || !fields[key] || already.has(key)) continue;
+    if (seen.some((other) => other.contains(widget) || widget.contains(other))) continue;
+    seen.push(widget);
     /*
      * One already showing an answer is answered, and claims its question.
      *
@@ -3433,7 +3458,7 @@ function widgetChoices(fields, filled) {
      * tool's to reopen.
      */
     if (widgetShowsAnAnswer(widget)) {
-      already.add(key);
+      if (EDUCATION_KEYS.test(key)) already.add(key);
       continue;
     }
     if (anotherLevelOfStudy(widget, key, fields)) continue;
@@ -3441,7 +3466,7 @@ function widgetChoices(fields, filled) {
     // list picks "Yes" by its text too. See `aboutAnotherCountry`.
     const elsewhere = aboutAnotherCountry(key, fields[key], description, fields.address_country);
     found.push({ key, description: description.slice(0, 60), asked: description, el: widget, elsewhere });
-    already.add(key);
+    if (EDUCATION_KEYS.test(key)) already.add(key);
   }
   return found;
 }
@@ -3895,20 +3920,24 @@ export async function fillComboboxes(fields, report, { patience = 4000 } = {}) {
   }
 
   const done = [];
-  for (const { key, el: widget, both, elsewhere, asked } of widgetChoices(fields, report.filled)) {
+  // Which question each choice answered: a key can now be asked twice.
+  const chose = new Set();
+  for (const { key, el: widget, both, elsewhere, asked, description } of widgetChoices(fields, report.filled)) {
     if (both || elsewhere || !pending.has(key)) continue;
     const value = String(fields[key]);
     const how = await chooseInWidget(widget, key, value, { patience, fields, asked });
     // Looked for in a list that opened, and not in it. See `NOT_LISTED`.
     if (how === 'unlisted') unlisted.add(key);
-    if (how === 'chose') done.push({ key, value, widget: true });
+    if (how === 'chose') {
+      done.push({ key, value, widget: true });
+      chose.add(`${key}\u0000${description}`);
+    }
   }
 
-  const chose = new Set(done.map((d) => d.key));
   return {
     ...report,
     filled: [...report.filled, ...done, ...fillNotListed(fields, unlisted)],
-    skipped: report.skipped.filter((s) => !(s.reason === PICK_BY_HAND && chose.has(s.key))),
+    skipped: report.skipped.filter((s) => !(s.reason === PICK_BY_HAND && chose.has(`${s.key}\u0000${s.description}`))),
   };
 }
 

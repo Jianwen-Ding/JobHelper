@@ -2306,7 +2306,78 @@ const EMPLOYERS_CODE = `<!doctype html><html><head><meta charset="utf-8"><title>
   <input type="tel" name="candidate.phone" id="input-candidate.phone-5" placeholder="Your phone number" value="+31" required></div>
 </fieldset></form></body></html>`;
 
-const PAGES = { '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
+/*
+ * The same answer asked twice on one Greenhouse board, in the react-select
+ * shape of GREENHOUSE_EDUCATION. Each pair was measured live with a fake
+ * profile, and the second of it left on "Select...": GitLab's and Chime's
+ * country of residence under the phone's country picker, Anthropic's second
+ * sponsorship question under its first, and — Affirm's shape — the phone's
+ * country picker under nothing at all once a text box had taken the country.
+ * The second School is Greenhouse's second education block, which is
+ * `fillEducation`'s to fill from the resume and must not be given the first.
+ */
+const ASKED_TWICE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — GitLab</title></head><body>
+<form id="application-form">
+  <label for="question_text_country">What country do you live in?</label><input id="question_text_country" type="text">
+  <fieldset><legend>Phone</legend>
+  ${['country:Country*', 'question_residence:What is your current country of residence?*', 'question_sp1:Do you require visa sponsorship?*',
+    'question_sp2:Will you now or will you in the future require employment visa sponsorship to work in the country in which the job you are applying for is located?*']
+    .map((pair) => { const [id, label] = pair.split(':'); return `<label id="${id}-label" for="${id}">${label}</label>
+  <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+    <div class="select__input-container" data-value=""><input id="${id}" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="${id}-label" autocomplete="off"></div></div></div></div>`; }).join('\n  ')}
+  </fieldset>
+  <!-- One question in the ARIA 1.1 shape: a combobox <div> around its own list box. -->
+  <label id="question_wrapped-label">Will you need us to sponsor a work visa?*</label>
+  <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+    <div id="question_wrapped_outer" role="combobox" aria-haspopup="listbox" aria-labelledby="question_wrapped-label">
+    <input id="question_wrapped" class="select__input" aria-autocomplete="list" aria-expanded="false" aria-labelledby="question_wrapped-label" autocomplete="off"></div></div></div></div>
+  ${[0, 1].map((n) => `<div class="education--form"><label id="school--${n}-label" for="school--${n}">School</label>
+  <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+    <div class="select__input-container" data-value=""><input id="school--${n}" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="school--${n}-label" autocomplete="off"></div></div></div></div></div>`).join('\n  ')}
+</form>
+<script>
+  function select(id, fixed) {
+    const input = document.getElementById(id);
+    const control = input.closest('.select__control');
+    let list = null;
+    const close = () => { list?.remove(); list = null; input.setAttribute('aria-expanded', 'false'); };
+    const render = (items) => {
+      list?.remove();
+      list = document.createElement('div');
+      list.id = 'react-select-' + id + '-listbox';
+      list.setAttribute('role', 'listbox');
+      for (const text of items) {
+        const o = document.createElement('div');
+        o.setAttribute('role', 'option');
+        o.textContent = text;
+        o.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          control.querySelector('.select__placeholder')?.remove();
+          let shown = control.querySelector('.select__single-value');
+          if (!shown) { shown = document.createElement('div'); shown.className = 'select__single-value'; control.querySelector('.select__value-container').prepend(shown); }
+          shown.textContent = text;
+          input.value = '';
+          close();
+        });
+        list.append(o);
+      }
+      control.parentElement.append(list);
+      input.setAttribute('aria-controls', list.id);
+    };
+    control.addEventListener('mousedown', () => { if (list) return; input.setAttribute('aria-expanded', 'true'); render(fixed); });
+    input.addEventListener('input', () => { if (list) render(fixed.filter((t) => t.toLowerCase().includes(input.value.toLowerCase()))); });
+  }
+  select('country', ['Canada', 'United States']);
+  select('question_residence', ['Canada', 'United States']);
+  select('question_sp1', ['Yes', 'No']);
+  select('question_sp2', ['Yes', 'No']);
+  select('question_wrapped', ['Yes', 'No']);
+  select('school--0', ['Acadia University', 'Northeastern University']);
+  select('school--1', ['Acadia University', 'Northeastern University']);
+</script>
+</body></html>`;
+
+const PAGES = { '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -5513,6 +5584,47 @@ async function main() {
     );
     check('and a UK profile\'s behind +44', ukCode.phone === '+44 020 7946 0000', JSON.stringify(ukCode));
     check('with no country in the profile, the form\'s code is kept, as before', noCode.phone === '+31 (555) 010-0199', JSON.stringify(noCode));
+
+    const twice = await page.goto(`${base}/asked-twice`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 800 });
+        const shown = (id) => document.getElementById(id).closest('.select__control').querySelector('.select__single-value')?.textContent ?? '';
+        return {
+          text: document.getElementById('question_text_country').value,
+          ...Object.fromEntries(['country', 'question_residence', 'question_sp1', 'question_sp2', 'school--0', 'school--1'].map((id) => [id, shown(id)])),
+          handPicked: report.skipped.filter((s) => /by hand/.test(s.reason)).map((s) => s.description),
+          wrapped: shown('question_wrapped'),
+          sponsorships: report.filled.filter((f) => f.key === 'requires_sponsorship').length,
+        };
+      }, { b: base, fields: SWEEP }),
+    );
+    group('The same answer, asked twice on one form');
+    check(
+      'the country of residence is chosen under the phone\'s country picker, and the picker still is',
+      twice.country === 'United States' && twice.question_residence === 'United States',
+      JSON.stringify(twice),
+    );
+    check(
+      'a text box that took the country first does not stop either picker',
+      twice.text === 'United States' && twice.country === 'United States',
+      JSON.stringify(twice),
+    );
+    check(
+      'a second sponsorship question is answered as the first was',
+      twice.question_sp1 === 'No' && twice.question_sp2 === 'No',
+      JSON.stringify(twice),
+    );
+    check(
+      'a second School is still not given the first school, and nothing chosen is left reported as still to pick',
+      twice['school--0'] === 'Northeastern University' && twice['school--1'] === '' && twice.handPicked.length === 0,
+      JSON.stringify(twice),
+    );
+    check(
+      'a combobox around its own list box is one question, answered and counted once',
+      twice.wrapped === 'No' && twice.sponsorships === 3,
+      JSON.stringify(twice),
+    );
   } finally {
     await browser.close();
     server.close();
