@@ -1990,6 +1990,16 @@ export function createCard({
     // Both, because it writes both — see `writeEverything`.
     writeApplication: 'drafting',
     autofill: 'page',
+    /*
+     * And attaching, which writes into the same form.
+     *
+     * It was missing, so it fell to the default — the resume lane — and the
+     * labels asked about `attach`, which nothing dispatches. Measured in
+     * tests/card.mjs with the attach held open: the button went on reading
+     * "Attach files", it and Autofill stayed pressable, and "Have AI Tailor"
+     * was greyed out by a file being put in a box.
+     */
+    attachFiles: 'page',
     bundle: 'submit',
     trackStatus: 'submit',
     // Its own lane: staging runs after every build and must block nothing.
@@ -4497,7 +4507,7 @@ export function createCard({
        */
       h('button', {
         className: 'tiny',
-        textContent: busyLabel('attach', 'Attach files', 'Attaching…'),
+        textContent: busyLabel('attachFiles', 'Attach files', 'Attaching…'),
         title: 'Put the resume, letter and transcript into this form’s upload boxes',
         disabled: busyIn('page'),
         onclick: () =>
@@ -6073,7 +6083,7 @@ export function createCard({
          */
         h('button', {
           className: 'tiny',
-          textContent: busyLabel('attach', 'Attach files', 'Attaching…'),
+          textContent: busyLabel('attachFiles', 'Attach files', 'Attaching…'),
           title: 'Put the resume, letter and transcript into this form’s upload boxes',
           disabled: busyIn('page'),
           onclick: () =>

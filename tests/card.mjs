@@ -4859,6 +4859,66 @@ async function main() {
   }, { stored: ['newgrad', 'job-ferrous'] });
   check('and once it is in the store, the copy itself', openedCopy.at(-1) === '/#resumes/job-ferrous', JSON.stringify(openedCopy));
 
+  console.log('\nAttach files, while it is attaching');
+
+  /*
+   * Attaching is the files fetched from the store through the worker, then
+   * offered to every frame on the page — seconds on a portal with embeds —
+   * and while it runs the button should say so and should not start a second
+   * one. Held open here, so the card can be read mid-flight.
+   */
+  const attaching = await inPage(async (createCard) => {
+    let finish;
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary', sections: [] },
+        tailor: 'none',
+        diff: [],
+        rationale: [],
+        skillChanges: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      isForm: true,
+      onAction: (action) => {
+        if (action === 'attachFiles') return new Promise((r) => (finish = () => r({ placed: [{ name: 'Resume.pdf' }], unplaced: [] })));
+        if (action === 'aiStatus') return Promise.resolve({ state: 'on', active: true, serverEnabled: true });
+        return Promise.resolve({});
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const button = (re) => [...root.querySelectorAll('button')].find((b) => re.test(b.textContent));
+    const read = () => ({
+      attach: button(/^Attach|^Attaching/)?.textContent,
+      attachDisabled: button(/^Attach|^Attaching/)?.disabled,
+      autofillDisabled: button(/^Autofill this form/)?.disabled,
+      aiDisabled: button(/AI Tailor/)?.disabled,
+    });
+    button(/^Attach files/)?.click();
+    await new Promise((r) => setTimeout(r, 30));
+    const during = read();
+    finish?.();
+    await new Promise((r) => setTimeout(r, 30));
+    return { during, after: read() };
+  });
+  check('it says it is attaching', attaching.during.attach === 'Attaching…', JSON.stringify(attaching.during));
+  check(
+    'and cannot be pressed again, nor Autofill, which fills the same form',
+    attaching.during.attachDisabled === true && attaching.during.autofillDisabled === true,
+    JSON.stringify(attaching.during),
+  );
+  check(
+    'but the resume is not held up by it',
+    attaching.during.aiDisabled === false,
+    JSON.stringify(attaching.during),
+  );
+  check('and says Attach files again once it is done', attaching.after.attach === 'Attach files' && !attaching.after.attachDisabled, JSON.stringify(attaching.after));
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);
