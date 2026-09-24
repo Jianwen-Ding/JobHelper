@@ -424,6 +424,38 @@
   /** Stops the one watcher of choices made on this page's form; see `show`. */
   let stopChoices = null;
 
+  /**
+   * And the one of what is typed into its short boxes, with what it has
+   * heard: the answers to keep, by question, until the application is sent or
+   * the form is left — see `keepTyped`. `typedProfile` is the profile as the
+   * last Autofill had it, which is what says a box is the profile's rather
+   * than the person's.
+   */
+  let typedWatch = null;
+  const typedToKeep = new Map();
+  let typedProfile = null;
+
+  /** Who this page is applying to, for the rules that refuse naming them. */
+  const companyHere = () => analysis?.spec?.generatedFor?.company || analysis?.job?.company || '';
+
+  /**
+   * Put what was typed on this form into the bank, now.
+   *
+   * Called when the application is sent and when the form is left — its
+   * `pagehide`, and a route change on a board that never unloads — and not
+   * as each box is typed in, so the answer kept is the one the person ended
+   * on. One message for all of them: `pagehide` is the moment a page is
+   * least able to wait, and the worker saves them one after another from
+   * there.
+   */
+  const keepTyped = () => {
+    typedWatch?.take();
+    if (typedToKeep.size === 0) return;
+    const answers = [...typedToKeep].map(([question, { answer, itemId }]) => ({ question, answer, itemId }));
+    typedToKeep.clear();
+    send('rememberTyped', { answers }).catch(() => undefined);
+  };
+
   /** Stops the watcher that re-reads the form's questions; see `watchQuestions`. */
   let stopQuestions = null;
 
@@ -600,6 +632,8 @@
    */
   async function runAutofill() {
     const data = await send('autofillData');
+    // What is the profile's to fill, for what is typed afterwards. See `typedBox`.
+    typedProfile = data.fields ?? null;
     // The jobs on the resume being sent, for a form's work-history blocks.
     const history = Array.isArray(data.history) ? data.history : [];
     // And its schools, for an Education section that adds a block per school.
@@ -629,8 +663,10 @@
    * the behaviour this had before the bank existed.
    */
   async function fillThisDocument(fields, history = [], education = []) {
-    const { fillForm, fillComboboxes, fillEducation, choiceQuestions } = await imports.autofill();
-    const questions = choiceQuestions();
+    const { fillForm, fillComboboxes, fillEducation, choiceQuestions, typedQuestions } = await imports.autofill();
+    const company = companyHere();
+    // And the short boxes typed into last time. See `typedQuestions`.
+    const questions = [...choiceQuestions(), ...typedQuestions(fields, company)];
     const remembered = questions.length
       ? await send('rememberedAnswers', { questions })
           .then((r) => r?.answers ?? [])
@@ -638,7 +674,7 @@
       : [];
     // And then the widgets `fillForm` could only name. See `fillComboboxes`:
     // exact options only, and seen to have taken, or put back as they were.
-    const report = await fillComboboxes(fields, fillForm(fields, { remembered, history }));
+    const report = await fillComboboxes(fields, fillForm(fields, { remembered, history, company }));
     // Last, the resume's other schools, one "Add another" at a time. See
     // `fillEducation`: a resume with one gets only its dates, in the first block.
     return fillEducation(education, fields, report);
@@ -1978,7 +2014,7 @@
      */
     imports
       .autofill()
-      .then(({ watchChoices, looksLikeApplicationForm, findQuestions }) => {
+      .then(({ watchChoices, watchTyped, looksLikeApplicationForm, findQuestions }) => {
         if (!current()) return;
         /*
          * The choices are watched only once this page is a form, and that
@@ -1990,6 +2026,19 @@
             if (!said.keep) return;
             send('rememberChoice', { question: said.question, answer: said.answer }).catch(() => undefined);
           });
+          /*
+           * And what is typed, held until the form is sent or left. An
+           * emptied box, or one whose answer is refused, takes its question
+           * off the list.
+           */
+          typedWatch?.stop();
+          typedWatch = watchTyped(
+            (said) => {
+              if (said.keep) typedToKeep.set(said.question, { answer: said.answer, itemId: said.itemId });
+              else typedToKeep.delete(said.question);
+            },
+            { profile: () => typedProfile, company: companyHere },
+          );
         };
         /*
          * And its questions, for a form that moves on in place — watched on
@@ -2148,6 +2197,8 @@
         })
         .catch(() => undefined);
     const took = (how) => {
+      // What was typed on it is kept whatever becomes of the record. See `keepTyped`.
+      keepTyped();
       /*
        * Only on the page where an application is actually sent.
        *
@@ -2294,6 +2345,9 @@
     // is least likely to have just run.
     const onHide = () => save();
     window.addEventListener('pagehide', onHide);
+    // And what was typed on the form, which is kept when the form is left and
+    // not when the tab is merely hidden. See `keepTyped`.
+    window.addEventListener('pagehide', keepTyped);
     // Coming back from the builder is the worker's news to break, not this
     // listener's — see the `jh-came-back` message.
     const onVisibility = () => {
@@ -2323,6 +2377,7 @@
 
     teardown.push(() => {
       window.removeEventListener('pagehide', onHide);
+      window.removeEventListener('pagehide', keepTyped);
       window.removeEventListener('pageshow', onShow);
       document.removeEventListener('visibilitychange', onVisibility);
     });
@@ -2805,6 +2860,8 @@
      * answer went with it.
      */
     saveWorkNow?.();
+    // And what was typed on the form being left, while it is still this page's. See `keepTyped`.
+    keepTyped();
 
     // Saved, and now shut again until the next page's card has been offered
     // what that save just put away. Without this a route change kept the
@@ -2858,6 +2915,8 @@
     // next page is watched only if its own pass finds a form on it.
     stopChoices?.();
     stopChoices = null;
+    typedWatch?.stop();
+    typedWatch = null;
     stopQuestions?.();
     stopQuestions = null;
 
@@ -2953,6 +3012,7 @@
     imports.ask().then(({ removeAsk }) => removeAsk()).catch(() => undefined);
     cardHandle = null;
     stopChoices?.();
+    typedWatch?.stop();
     stopQuestions?.();
   });
 
