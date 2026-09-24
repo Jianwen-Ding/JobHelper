@@ -2053,6 +2053,7 @@ export function createCard({
     if (!quiet) {
       state.error = null;
       state.errorFix = null;
+      state.passFailed = false;
     }
     draw();
     try {
@@ -2075,6 +2076,8 @@ export function createCard({
       state.error = err.message;
       // Some failures have a way out. Keep it, so the card can offer it.
       state.errorFix = err.jobhelper ?? null;
+      // This button's failure, not the page's. See `drawError`.
+      state.passFailed = false;
       return null;
     } finally {
       running.delete(action);
@@ -5436,10 +5439,30 @@ export function createCard({
           textContent: fix.fix === 'open-save' ? 'Open a save in ResumeM-M' : 'Open ResumeM-M',
           onclick: () => onAction('openTab', { url: fix.serverUrl }),
         }),
+        /*
+         * Again, the thing that failed.
+         *
+         * The commonest way to meet this strip is the page's own read failing
+         * because ResumeM-M was not running — and that read is a whole pass:
+         * the proposal, then the trail, the work carried from the page
+         * before, the form's questions, the resume list, and the gate that
+         * lets the keeper save. This pressed `rebuild` instead, which asks
+         * for the proposal and nothing else, and asked for it as
+         * `builtWith` — `'none'` on a card nothing has been built on, so not
+         * even the keyword list. Measured on a posting opened with the store
+         * down, then started, then Try again: no changes offered where the
+         * same page opened normally offers six, neither of the form's two
+         * questions on the card, and an answer typed into it never held by
+         * the keeper, so it went with the next navigation.
+         *
+         * So a failed pass is tried again as a pass. A failure of one of the
+         * card's own buttons keeps what it did before.
+         */
         h('button', {
           className: 'tiny',
           textContent: busyLabel('retry', 'Try again', 'Trying…'),
-          onclick: () => act('rebuild', { tailor: state.builtWith ?? 'match' }),
+          onclick: () =>
+            state.passFailed ? act('retry', {}) : act('rebuild', { tailor: state.builtWith ?? 'match' }),
         }),
       ]),
     );
@@ -6684,6 +6707,9 @@ export function createCard({
       // The first pass failing is the commonest way to meet this, and the
       // commonest reason is that ResumeM-M is not running.
       state.errorFix = fix;
+      // Only the page's pass says something with a way out through here, so
+      // that is what "Try again" should run. See `drawError`.
+      state.passFailed = Boolean(fix);
       draw();
     },
 

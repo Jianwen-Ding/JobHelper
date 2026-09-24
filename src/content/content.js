@@ -1267,6 +1267,14 @@
       case 'aiStatus':
         return send('aiStatus', {});
 
+      /*
+       * The card's "Try again" after this page's own read failed: the whole
+       * pass again, onto the card already up. Forced, because it is a button
+       * somebody pressed on a card they are looking at. See `drawError`.
+       */
+      case 'retry':
+        return show({ force: true });
+
       /** Send the user to ResumeM-M, when that is what the card is offering. */
       case 'openTab':
         return send('openTab', { url: payload.url });
