@@ -873,6 +873,38 @@ function fromLabelledBy(element) {
  */
 const ANOTHER_FIELD = 'input:not([type=hidden]), textarea, select';
 
+/**
+ * A label's words, the way a screen reader says them.
+ *
+ * LinkedIn's Easy Apply writes every question twice inside its label — once
+ * for the eye, marked `aria-hidden`, and once for a screen reader, clipped out
+ * of sight — in two spans with nothing between them. `textContent` ran them
+ * together into "SchoolSchool", which no pattern here reads as a school, so
+ * a Greenhouse form inside Easy Apply was filled with nothing at all:
+ * reported as "Filled 0 fields" over School, Degree and Discipline.
+ *
+ * So the copy marked `aria-hidden` is left out when the label says anything
+ * else, as assistive technology leaves it out, and an element boundary is a
+ * word boundary. A label that is nothing but hidden text keeps it, rather than
+ * becoming no label at all.
+ */
+function labelWords(el) {
+  if (!el) return '';
+  const parts = [];
+  const walk = (node) => {
+    for (const child of node.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) parts.push(child.nodeValue);
+      else if (child.nodeType === Node.ELEMENT_NODE && child.getAttribute('aria-hidden') !== 'true') {
+        parts.push(' ');
+        walk(child);
+        parts.push(' ');
+      }
+    }
+  };
+  walk(el);
+  return clean(parts.join('')) || clean(el.textContent);
+}
+
 function labelFor(input) {
   /*
    * Each of these answers only when it has something to say.
@@ -891,11 +923,11 @@ function labelFor(input) {
    */
   if (input.id) {
     const label = rootOf(input).querySelector(`label[for="${CSS.escape(input.id)}"]`);
-    const said = clean(label?.textContent);
+    const said = labelWords(label);
     if (said) return said;
   }
 
-  const wrapping = clean(input.closest('label')?.textContent);
+  const wrapping = labelWords(input.closest('label'));
   if (wrapping) return wrapping;
 
   const described = fromLabelledBy(input);

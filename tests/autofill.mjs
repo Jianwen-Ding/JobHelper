@@ -2227,7 +2227,28 @@ const JOBS = [
   },
 ];
 
-const PAGES = { '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
+/**
+ * LinkedIn's Easy Apply, a Greenhouse form inside it, as its markup draws a
+ * question: a label holding the words twice — once for the eye, marked
+ * `aria-hidden`, and once for a screen reader, clipped out of sight — with
+ * nothing between them, and native selects that open on "Select an option".
+ * Reported: School, Degree and Discipline all left, "Filled 0 fields".
+ */
+const LINKEDIN_EASY_APPLY = `<!doctype html><html><head><meta charset="utf-8"><title>Apply | LinkedIn</title>
+<style>.visually-hidden{position:absolute!important;clip:rect(1px,1px,1px,1px);width:1px;height:1px;overflow:hidden}</style></head><body>
+<div class="jobs-easy-apply-modal" role="dialog"><form>
+${[
+  ['School', ['University of Virginia', 'Northeastern University', 'Virginia Tech']],
+  ['Degree', ["Associate's Degree", "Bachelor's Degree", "Master's Degree"]],
+  ['Discipline', ['Computer Science', 'Economics', 'Mathematics']],
+].map(([asked, options], i) => `<div class="fb-dash-form-element" data-test-text-entity-list-form-component>
+  <label for="text-entity-list-form-component-formElement-urn-li-jobs-applyformcommon-easyApplyFormElement-4141-${i}-multipleChoice" class="fb-dash-form-element__label"><span aria-hidden="true"><!---->${asked}<!----></span><span class="visually-hidden"><!---->${asked}<!----></span></label>
+  <select id="text-entity-list-form-component-formElement-urn-li-jobs-applyformcommon-easyApplyFormElement-4141-${i}-multipleChoice" required aria-required="true" data-test-text-entity-list-form-select>
+    <option value="Select an option">Select an option</option>${options.map((o) => `<option value="${o}">${o}</option>`).join('')}
+  </select></div>`).join('')}
+</form></div></body></html>`;
+
+const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -5116,6 +5137,27 @@ async function main() {
       ignoredPress.school === '' && !ignoredPress.filled.includes('school(widget)') && ignoredPress.byHand.includes('school'),
       JSON.stringify(ignoredPress),
     );
+
+    /* ---------------- LinkedIn Easy Apply: labels said twice ---------------- */
+    {
+      const onLinkedIn = await page.goto(`${base}/linkedin-easy-apply`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async (b) => {
+          const m = await import(`${b}/autofill.js`);
+          const fields = { school: 'University of Virginia', degree: 'Bachelor of Science', major: 'Computer Science' };
+          const report = await m.fillComboboxes(fields, m.fillForm(fields));
+          return {
+            chosen: [...document.querySelectorAll('select')].map((s) => s.value),
+            filled: report.filled.map((x) => x.key),
+          };
+        }, base),
+      );
+      group('LinkedIn Easy Apply: a label that says its words twice');
+      check(
+        'School, Degree and Discipline are all chosen',
+        JSON.stringify(onLinkedIn.chosen) === JSON.stringify(['University of Virginia', "Bachelor's Degree", 'Computer Science']),
+        JSON.stringify(onLinkedIn),
+      );
+    }
 
     /* ---------------- Greenhouse: more than one education ---------------- */
     /*
