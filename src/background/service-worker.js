@@ -2279,6 +2279,11 @@ const handlers = {
   },
 
   /** Compile a proposed spec so the user can look at it before committing. */
+  /** Whether the resume the card holds is still what the store would give it. */
+  async fresh({ spec }) {
+    return serverFetch('/api/extension/fresh', { method: 'POST', body: JSON.stringify({ spec }) });
+  },
+
   async render({ spec }) {
     const result = await serverFetch('/api/render', {
       method: 'POST',

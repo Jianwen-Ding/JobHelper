@@ -1019,6 +1019,9 @@
       case 'listResumes':
         return send('listResumes');
 
+      case 'fresh':
+        return send('fresh', { spec: payload.spec });
+
       case 'attachFiles': {
         const got = await send('attachments', { application: payload.application ?? null });
         const files = got?.files ?? [];
@@ -2287,6 +2290,11 @@
     // listener's — see the `jh-came-back` message.
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') onHide();
+      /*
+       * And back in view: whatever was changed in ResumeM-M meanwhile may
+       * not be what the card is holding. See `checkFresh` in the card.
+       */
+      else cardHandle?.checkFresh?.().catch?.(() => undefined);
     };
     document.addEventListener('visibilitychange', onVisibility);
 

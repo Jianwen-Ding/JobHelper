@@ -3353,6 +3353,45 @@ export function createCard({
    * retried: the thing that replaced it clears the preview and the next
    * compile is a button press away.
    */
+  /**
+   * The resume this copy was made from has changed in ResumeM-M since.
+   *
+   * A copy is its own resume and does not follow its base, deliberately —
+   * so what was switched on or reworded there does not reach it, and the
+   * card says so and offers the one thing that would bring it across:
+   * building the copy again from the base as it is now, the way it was built
+   * before. Offered, never done: it replaces whatever was chosen on the card.
+   */
+  function drawBaseChanged() {
+    const base = state.baseChanged;
+    if (!base) return null;
+    const mode = state.builtWith === 'ai' ? 'ai' : state.builtWith === 'match' ? 'match' : 'none';
+    return h('div', { className: 'hint stale' }, [
+      h('span', { textContent: `“${base.label}” changed in ResumeM-M after this copy was made. ` }),
+      h('button', {
+        className: 'link',
+        textContent: 'Build it again from there',
+        title: 'Make this posting’s copy again from the resume as it is now, the same way as before',
+        disabled: busyIn('compile') || Boolean(state.rebuilding),
+        onclick: async () => {
+          state.baseChanged = null;
+          state.baseSeen = base.id;
+          await rebuildAs(mode);
+          await compile();
+        },
+      }),
+    ]);
+  }
+
+  /** Remember the store's copy as it stands. See `checkFresh`. */
+  function noteStored(of) {
+    Promise.resolve(onAction('fresh', { spec: of }))
+      .then((got) => {
+        if (got && state.spec === of) state.storedPrint = got.storedPrint ?? null;
+      })
+      .catch(() => undefined);
+  }
+
   async function compile() {
     const of = state.spec;
     /*
@@ -3377,6 +3416,16 @@ export function createCard({
         return;
       }
       state.render = r;
+      // What this compile printed, to be told later whether the store would
+      // print something else. See `checkFresh`.
+      state.printed = r.printed ?? null;
+      /*
+       * And the store's copy as it stands, so that an edit made to it in
+       * ResumeM-M from here on reads as news on coming back — the card's own
+       * ticks differ from the store's copy too, and are not. Not awaited:
+       * nothing here needs the answer.
+       */
+      noteStored(of);
       /*
        * And the folder follows the preview, once there is a folder.
        *
@@ -3438,6 +3487,8 @@ export function createCard({
           // drawn from have to be asked for again. See `askWhatIsStaged`.
           askedWhatIsStaged = null;
           carried = null;
+          // Staging files the copy, so the store's copy is this one now.
+          noteStored(state.spec);
         }
       },
       // Nobody pressed this, so it does not get to clear what the card is
@@ -4828,6 +4879,7 @@ export function createCard({
          * nobody should press a button on.
          */
         state.builtWith ? h('div', { className: 'hint', textContent: builtSummary() }) : null,
+        drawBaseChanged(),
         drawChanges(),
         drawSuggestions(),
         drawFit(),
@@ -6429,6 +6481,65 @@ export function createCard({
       state.spec = stored;
       state.render = null;
       await compile();
+    },
+
+    /**
+     * Whether what the card holds is still what the store would give it.
+     *
+     * Asked when the tab comes back into view. The card builds a resume and
+     * keeps it — the copy, and the PDF compiled from it — while everything
+     * that PDF prints lives in the store. Changed there, in a tab of its own,
+     * and the card went on showing and attaching the version from before;
+     * only a trip through its own "Edit in ResumeM-M" button was noticed
+     * (see `cameBack`).
+     *
+     * Three things can have moved, and each is answered differently:
+     *
+     *   The copy itself, edited in the builder — taken, as `cameBack` takes
+     *   it, but only when the store's copy is new since last asked: a copy
+     *   the card has been ticking boxes on differs from the store's too, and
+     *   that difference is the card's own work, not news.
+     *
+     *   What it prints — an entry or a bullet it uses, reworded — which
+     *   needs no choice: the same copy compiled again prints the new words,
+     *   so it is compiled again, and said.
+     *
+     *   The resume it was made from, which a copy does not follow. Said,
+     *   with a way to build again from it; see `drawBaseChanged`.
+     */
+    async checkFresh() {
+      const of = state.spec;
+      if (!of?.id || !state.render || busyIn('compile') || state.rebuilding) return;
+      const now = Date.now();
+      if (now - (state.freshAt ?? 0) < 3000) return;
+      state.freshAt = now;
+      const reply = await Promise.resolve(onAction('fresh', { spec: of })).catch(() => null);
+      if (!reply || state.spec !== of) return;
+
+      const seen = state.storedPrint;
+      state.storedPrint = reply.storedPrint ?? null;
+      // A copy first filed after the last compile is the card's own staging,
+      // so `seen` being empty is not taken as news either.
+      const editedThere =
+        reply.stored && seen && reply.storedPrint !== seen && JSON.stringify(reply.stored) !== JSON.stringify(of);
+
+      if (reply.base?.changed && state.baseSeen !== reply.base.id) {
+        state.baseChanged = { id: reply.base.id, label: reply.base.label };
+      }
+
+      if (editedThere) {
+        state.spec = reply.stored;
+        state.render = null;
+        state.note = 'Updated from ResumeM-M: this copy was edited there.';
+        await compile();
+        return;
+      }
+      if (reply.printed && state.printed && reply.printed !== state.printed) {
+        state.note = 'Updated from ResumeM-M: what the resume says changed there.';
+        await compile();
+        return;
+      }
+      draw();
     },
 
     /** The pages this application spans, as the trail grows. */
