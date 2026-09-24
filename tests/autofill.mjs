@@ -1668,26 +1668,31 @@ const PREFIXED = `<!doctype html><form>
  *
  * Reported: "didn't correctly fill in university history". All three were
  * left on "Select...".
+ *
+ * Each box sits in a `select__input-container`, as the live board's does —
+ * measured there — and without it this page passed while the board did not:
+ * that empty wrapper says "select", was taken for the control, and every
+ * choice made on the board was reported as still to pick.
  */
 const GREENHOUSE_EDUCATION = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — SpaceX</title></head><body>
 <form id="application-form">
   <label id="country-label" for="country">Country<span>*</span></label>
   <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
-    <input id="country" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="country-label" autocomplete="off"></div></div></div>
+    <div class="select__input-container" data-value=""><input id="country" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="country-label" autocomplete="off"></div></div></div></div>
   <div class="education--form">
     <label id="school--0-label" for="school--0">School<span>*</span></label>
     <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
-      <input id="school--0" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="school--0-label" autocomplete="off"></div></div></div>
+      <div class="select__input-container" data-value=""><input id="school--0" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="school--0-label" autocomplete="off"></div></div></div></div>
     <label id="degree--0-label" for="degree--0">Degree<span>*</span></label>
     <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
-      <input id="degree--0" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="degree--0-label" autocomplete="off"></div></div></div>
+      <div class="select__input-container" data-value=""><input id="degree--0" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="degree--0-label" autocomplete="off"></div></div></div></div>
     <label id="discipline--0-label" for="discipline--0">Discipline<span>*</span></label>
     <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
-      <input id="discipline--0" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="discipline--0-label" autocomplete="off"></div></div></div>
+      <div class="select__input-container" data-value=""><input id="discipline--0" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="discipline--0-label" autocomplete="off"></div></div></div></div>
   </div>
 </form>
 <script>
-  function select(id, { search = null, fixed = null, delay = 0 }) {
+  function select(id, { search = null, fixed = null, delay = 0, shows = (text) => text }) {
     const input = document.getElementById(id);
     const control = input.closest('.select__control');
     let open = false;
@@ -1713,7 +1718,8 @@ const GREENHOUSE_EDUCATION = `<!doctype html><html><head><meta charset="utf-8"><
             shown.className = 'select__single-value';
             control.querySelector('.select__value-container').prepend(shown);
           }
-          shown.textContent = text;
+          shown.textContent = shows(text);
+          control.dataset.chosen = text;
           input.value = '';
           close();
         });
@@ -1742,7 +1748,8 @@ const GREENHOUSE_EDUCATION = `<!doctype html><html><head><meta charset="utf-8"><
   select('degree--0', { fixed: ['High School', "Associate's Degree", "Bachelor's Degree", "Master's Degree", 'Doctor of Philosophy (Ph.D.)'] });
   select('discipline--0', { fixed: ['Computer Engineering', 'Computer Science', 'Mechanical Engineering'] });
   // The country beside the phone, which Greenhouse lists with each dialling code.
-  select('country', { fixed: ['United States +1', 'Afghanistan +93', 'American Samoa +1', 'United States Minor Outlying Islands +1'] });
+  // Drawn, once chosen, as the dialling code alone — "+1" — as the live board draws it.
+  select('country', { fixed: ['United States +1', 'Afghanistan +93', 'American Samoa +1', 'United States Minor Outlying Islands +1'], shows: (t) => t.replace(/^.*\\s(\\+\\d+)$/, '$1') });
 </script>
 </body></html>`;
 
@@ -4310,7 +4317,8 @@ async function main() {
           school: shown('school--0'),
           degree: shown('degree--0'),
           discipline: shown('discipline--0'),
-          country: shown('country'),
+          country: document.getElementById('country').closest('.select__control').dataset.chosen ?? '',
+          countryShows: shown('country'),
           filled: report.filled.map((x) => x.key),
           byHand: report.skipped.filter((x) => /by hand/.test(x.reason)).map((x) => x.key),
         };
@@ -4320,7 +4328,7 @@ async function main() {
     check('the school, from a list that searches only once it is open', education.school === 'University of Texas at Austin', education.school);
     check('the degree, by its level, from a fixed list', education.degree === "Bachelor's Degree", education.degree);
     check('the discipline', education.discipline === 'Computer Science', education.discipline);
-    check('the country, from a list that writes each one\'s dialling code after it', education.country === 'United States +1', education.country);
+    check('the country, from a list that writes each one\'s dialling code after it', education.country === 'United States +1' && education.countryShows === '+1', `${education.country} (shows ${education.countryShows})`);
     check(
       'all three counted as chosen',
       ['school', 'degree', 'major'].every((k) => education.filled.includes(k)) && education.byHand.length === 0,
@@ -4335,7 +4343,7 @@ async function main() {
           'beforeend',
           `<label id="gpa--0-label" for="gpa--0">GPA</label>
           <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
-            <input id="gpa--0" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="gpa--0-label" autocomplete="off"></div></div></div>`,
+            <div class="select__input-container" data-value=""><input id="gpa--0" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="gpa--0-label" autocomplete="off"></div></div></div></div>`,
         );
         select('gpa--0', { fixed: ['Below 2.50', '2.50 - 2.99', '3.00 - 3.49', '3.50 - 3.74', '3.75 - 4.00'] });
         const fields = { gpa: '3.8' };
@@ -4347,6 +4355,49 @@ async function main() {
       }, { b: base }),
     );
     check('a GPA widget takes the band that holds the grade', gpaWidget.shown === '3.75 - 4.00' && gpaWidget.filled.includes('gpa'), JSON.stringify(gpaWidget));
+
+    /*
+     * Greenhouse's "Location (City)": a search of places once something is
+     * typed, answered — measured on the live SpaceX board, typing "Boston" —
+     * with every Boston there is, none of them spelled "Boston". It was left
+     * for the person.
+     */
+    const SUGGESTED = [
+      'Boston, Massachusetts, United States', 'Boston District, England, United Kingdom', 'Boston, England, United Kingdom',
+      'East Boston, Massachusetts, United States', 'Bostonia, California, United States', 'Boston, Davao Oriental, Philippines',
+      'Boston, New York, United States', 'South Boston, Virginia, United States',
+    ];
+    const place = (fields) =>
+      page.goto(`${base}/greenhouse-education`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, fields, places }) => {
+          const m = await import(`${b}/autofill.js`);
+          document.querySelector('.education--form').insertAdjacentHTML(
+            'beforebegin',
+            `<label id="candidate-location-label" for="candidate-location">Location (City)<span>*</span></label>
+            <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+              <div class="select__input-container" data-value=""><input id="candidate-location" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="candidate-location-label" autocomplete="off"></div></div></div></div>`,
+          );
+          const town = (term) => term.split(',')[0].trim();
+          select('candidate-location', { search: (term) => (town(term) ? places.filter((p) => p.toLowerCase().includes(town(term))) : []), delay: 500 });
+          const report = await m.fillComboboxes(fields, m.fillForm(fields));
+          return {
+            shown: document.getElementById('candidate-location').closest('.select__control').querySelector('.select__single-value')?.textContent ?? '',
+            filled: report.filled.map((x) => x.key),
+            skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`),
+          };
+        }, { b: base, fields, places: SUGGESTED }),
+      );
+    const byCode = await place({ address_city: 'Boston', address_state: 'MA', address_country: 'United States' });
+    const byName = await place({ address_city: 'Boston', address_state: 'New York', address_country: 'United States' });
+    const noState = await place({ address_city: 'Boston', address_country: 'United States' });
+    group('Greenhouse: Location (City), a search of places');
+    check(
+      'the place whose city, state and country are the profile\'s',
+      byCode.shown === 'Boston, Massachusetts, United States' && byCode.filled.includes('address_city'),
+      JSON.stringify(byCode),
+    );
+    check('a state held by its name picks the Boston in that state', byName.shown === 'Boston, New York, United States', JSON.stringify(byName));
+    check('and a city with no state to tell it from its namesakes is left for the person', noState.shown === '', JSON.stringify(noState));
 
     /* ---------------- Workday's My Experience: a work history ---------------- */
     /*

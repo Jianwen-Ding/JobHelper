@@ -1598,6 +1598,33 @@ function gpaBand(option) {
   return null;
 }
 
+/*
+ * A place, from a search of places, by the city, state and country the
+ * profile holds.
+ *
+ * Greenhouse's "Location (City)" searches places as it is typed into and
+ * answers "Boston, Massachusetts, United States", "Boston, New York, United
+ * States", "Boston, England, United Kingdom" — none of them the stored
+ * "Boston", so it was left for the person. The one whose city is this city,
+ * whose state is this state by its code or its name, and whose country, where
+ * it names one, is this country — and only when exactly one is. A city with no
+ * state to tell it from its namesakes is still the person's to choose.
+ */
+function placeOption(options, fields, textOf = (o) => o.textContent) {
+  const city = clean(fields?.address_city).toLowerCase();
+  const state = placeKey('address_state', fields?.address_state ?? '');
+  const country = placeKey('address_country', fields?.address_country ?? '');
+  if (!city || !state) return null;
+  const hits = options.filter((option) => {
+    const parts = clean(textOf(option)).split(/\s*,\s*/);
+    if (parts.length < 2 || parts[0].toLowerCase() !== city) return false;
+    if (placeKey('address_state', parts[1]) !== state) return false;
+    return parts.length < 3 || !country || placeKey('address_country', parts[parts.length - 1]) === country;
+  });
+  return hits.length === 1 ? hits[0] : null;
+}
+const PLACE_KEYS = new Set(['address_city', 'city_state', 'location']);
+
 /** The option whose band holds this grade most tightly, or null. */
 function gpaOption(options, value, textOf = (o) => o.textContent) {
   const said = clean(value);
@@ -3093,13 +3120,13 @@ const SETTLED_MS = 800;
  * once the list has settled without it, or when nothing has appeared by
  * `quiet`, or at `patience`.
  */
-async function waitForOption(widget, key, value, openBefore, { patience, quiet = patience }) {
+async function waitForOption(widget, key, value, openBefore, { patience, quiet = patience, fields }) {
   const began = Date.now();
   let seen = null;
   let since = began;
   for (;;) {
     const options = optionsOf(widget, openBefore);
-    const hit = exactOption(options, key, value);
+    const hit = exactOption(options, key, value, fields);
     if (hit) return hit;
     const now = Date.now();
     const said = options.map((o) => o.textContent).join('\n');
@@ -3158,7 +3185,13 @@ function optionsOf(widget, openBefore = null) {
     .filter(Boolean)
     .flatMap((el) => `${el.getAttribute('aria-controls') ?? ''} ${el.getAttribute('aria-owns') ?? ''}`.split(/\s+/))
     .filter(Boolean);
-  const named = ids.map((id) => widget.getRootNode().getElementById?.(id) ?? document.getElementById(id)).filter(Boolean);
+  /*
+   * Each list once. A react-select's typing box is the widget itself, so the
+   * one `aria-controls` was read twice and every option listed twice — which
+   * "the first that matches" never noticed, and "the only one that matches"
+   * did: Boston, Massachusetts was two Bostons and neither was chosen.
+   */
+  const named = [...new Set(ids.map((id) => widget.getRootNode().getElementById?.(id) ?? document.getElementById(id)).filter(Boolean))];
   const showing = visibleListboxes().filter((l) => l !== widget);
   /*
    * And, where the widget names none, the one its own press opened.
@@ -3178,10 +3211,11 @@ function optionsOf(widget, openBefore = null) {
 }
 
 /** The option that is plainly this answer, or nothing. Never the nearest. */
-function exactOption(options, key, value) {
+function exactOption(options, key, value, fields = {}) {
   return (
     options.find((o) => sameOption(o.textContent, value)) ??
     (key === 'gpa' ? gpaOption(options, value) : null) ??
+    (PLACE_KEYS.has(key) ? placeOption(options, fields) : null) ??
     options.find((o) => sameAnswerSpelledOtherwise(key, o.textContent, value)) ??
     null
   );
@@ -3205,7 +3239,7 @@ function press(el) {
  * chosen, or the control now showing it with the typing gone, or the value it
  * submits carrying something where it carried nothing.
  */
-function tookIt(widget, box, option, value, hiddenBefore, chosen = option.textContent) {
+function tookIt(widget, box, option, value, hiddenBefore, chosen = option.textContent, shownBefore = '') {
   const hidden = hiddenPartner(widget);
   if (hidden && hidden.value && hidden.value !== hiddenBefore) return true;
   if (option.isConnected && option.getAttribute('aria-selected') === 'true') return true;
@@ -3236,7 +3270,13 @@ function tookIt(widget, box, option, value, hiddenBefore, chosen = option.textCo
    */
   const text = clean(control.textContent).toLowerCase();
   const shows = [value, chosen].some((said) => clean(said) && text.includes(clean(said).toLowerCase()));
-  return shows && (!box || !box.value);
+  /*
+   * Or a part of the option it did not show before. Greenhouse's country
+   * beside the phone, chosen as "United States +1", draws "+1" and nothing
+   * else, so a choice that had plainly taken was reported as still to pick.
+   */
+  const part = text.length >= 2 && text !== shownBefore && clean(chosen).toLowerCase().includes(text);
+  return (shows || part) && (!box || !box.value);
 }
 
 /*
@@ -3275,12 +3315,27 @@ function controlOf(widget) {
    * taken read as ignored, and each one was taken back out and reported as
    * still to pick. A few levels only, so that a page-wide wrapper whose class
    * happens to say "select" cannot lend its text to a click that did nothing.
+   *
+   * The one that says it is the control, before the nearest that says
+   * "select": on the live board the box sits in a `select__input-container`,
+   * which says "select" and holds nothing but the box. That empty wrapper was
+   * the control, so every choice made in Greenhouse's react-select — the
+   * country, the school, the degree, the location — was read as ignored and
+   * reported as still to pick, and an answer already chosen was never seen,
+   * so a second fill could choose over it. A wrapper with no text holding
+   * only the box is passed over for the same reason where nothing says
+   * "control".
    */
-  let at = widget.parentElement;
-  for (let up = 0; at && up < 4; up++, at = at.parentElement) {
-    if (at.matches?.('[class*="control"], [class*="select"], [class*="combobox"]')) return at;
-  }
-  return widget;
+  const around = [];
+  for (let at = widget.parentElement, up = 0; at && up < 4; up++, at = at.parentElement) around.push(at);
+  const selectish = around.filter((at) => at.matches?.('[class*="select"], [class*="combobox"]'));
+  const onlyTheBox = (at) => at.children.length <= 1 && !clean(at.textContent);
+  return (
+    around.find((at) => at.matches?.('[class*="control"]')) ??
+    selectish.find((at) => !onlyTheBox(at)) ??
+    selectish[0] ??
+    widget
+  );
 }
 
 /**
@@ -3347,6 +3402,7 @@ export async function fillComboboxes(fields, report, { patience = 4000 } = {}) {
     const value = String(fields[key]);
     const box = typingBoxOf(widget);
     const hiddenBefore = hiddenPartner(widget)?.value ?? '';
+    const shownBefore = clean(controlOf(widget).textContent).toLowerCase();
 
     /*
      * Never a control that would send the form.
@@ -3378,14 +3434,14 @@ export async function fillComboboxes(fields, report, { patience = 4000 } = {}) {
        * is a search — every school there is — gets asked.
        */
       press(box);
-      option = await waitForOption(widget, key, value, openBefore, { patience: 2000, quiet: 400 });
+      option = await waitForOption(widget, key, value, openBefore, { patience: 2000, quiet: 400, fields });
       if (!option) {
         setValue(box, value);
-        option = await waitForOption(widget, key, value, openBefore, { patience });
+        option = await waitForOption(widget, key, value, openBefore, { patience, fields });
       }
     } else {
       press(widget);
-      option = await waitForOption(widget, key, value, openBefore, { patience });
+      option = await waitForOption(widget, key, value, openBefore, { patience, fields });
     }
     if (!option) {
       undoWidget(widget, box);
@@ -3395,7 +3451,7 @@ export async function fillComboboxes(fields, report, { patience = 4000 } = {}) {
     const chosen = option.textContent;
     press(option);
     await pause(60);
-    if (!tookIt(widget, box, option, value, hiddenBefore, chosen)) {
+    if (!tookIt(widget, box, option, value, hiddenBefore, chosen, shownBefore)) {
       undoWidget(widget, box);
       continue;
     }
