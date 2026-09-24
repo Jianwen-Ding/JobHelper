@@ -2800,7 +2800,15 @@ function fillJob(block, job, overwrite, filled, skipped) {
     if (input.value && !overwrite) return;
     const written = slot === 'start' || slot === 'end' ? graduationFor(input, value) : String(value);
     setValue(input, written);
-    if (input.value === written) filled.push({ key, value: written.slice(0, 80) });
+    /*
+     * The same month without its leading zero is the month. Workday's month
+     * box rewrites "06" as "6" the moment it takes it, and measured live on
+     * NVIDIA's and Intel's My Experience the From and To showed "06/2025" and
+     * "08/2025" while the report said the months had not been taken — telling
+     * the person to type what was already there.
+     */
+    const took = input.value === written || (/\.month$/.test(slot) && /^\d+$/.test(input.value) && Number(input.value) === Number(written));
+    if (took) filled.push({ key, value: written.slice(0, 80) });
     else skipped.push({ key, reason: 'the field would not take it', description: clean(labelFor(input)).slice(0, 60) });
   };
   put('title', 'job_title', job.title);

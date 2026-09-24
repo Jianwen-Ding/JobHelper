@@ -5907,6 +5907,11 @@ async function main() {
       liveDates.title === 'Software Engineering Intern' && liveDates.from === '6/2025' && liveDates.to === '8/2025',
       JSON.stringify(liveDates),
     );
+    check(
+      'and a month the box rewrites from "06" to "6" is reported filled, not refused',
+      liveDates.filled.includes('job_start_month') && liveDates.filled.includes('job_end_month') && !liveDates.skipped.some((s) => /month/.test(s)),
+      JSON.stringify({ filled: liveDates.filled, skipped: liveDates.skipped }),
+    );
 
     /* ---------------- Found filling live forms with a fake profile ---------------- */
     const SWEEP = {
