@@ -2244,7 +2244,55 @@ const NAME_OF_A_THING = `<!doctype html><html><head><meta charset="utf-8"><title
   <label for="q_yours">Your name</label><input id="q_yours" type="text">
 </form></body></html>`;
 
-const PAGES = { '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
+/*
+ * A yes/no about a country the old list did not know, as Affirm's Greenhouse
+ * board asks it (measured live, job-boards.greenhouse.io/affirm): the
+ * sponsorship question as a react-select whose options are Yes and No, beside
+ * the same question about the US on another board. The Spanish one was
+ * answered "No" from a profile that only said it needs none in the US.
+ */
+const COUNTRY_NAMED = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Affirm</title></head><body>
+<form id="application-form">
+  <label id="q_es-label" for="q_es">Do you now or in the future require sponsorship for employment visa status in Spain?*</label>
+  <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+    <div class="select__input-container" data-value=""><input id="q_es" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="q_es-label" autocomplete="off"></div></div></div></div>
+  <label for="q_br">Are you authorized to work in Brazil?</label>
+  <select id="q_br"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <label for="q_us">Are you legally authorized to work in the United States?</label>
+  <select id="q_us"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+</form>
+<script>
+  // The react-select shape of GREENHOUSE_EDUCATION, with a fixed Yes/No list.
+  const input = document.getElementById('q_es');
+  const control = input.closest('.select__control');
+  control.addEventListener('mousedown', () => {
+    if (document.getElementById('q_es-listbox')) return;
+    const list = document.createElement('div');
+    list.id = 'q_es-listbox';
+    list.setAttribute('role', 'listbox');
+    for (const text of ['Yes', 'No']) {
+      const o = document.createElement('div');
+      o.setAttribute('role', 'option');
+      o.textContent = text;
+      o.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        control.querySelector('.select__placeholder')?.remove();
+        const shown = document.createElement('div');
+        shown.className = 'select__single-value';
+        shown.textContent = text;
+        control.querySelector('.select__value-container').prepend(shown);
+        list.remove();
+      });
+      list.append(o);
+    }
+    control.parentElement.append(list);
+    input.setAttribute('aria-expanded', 'true');
+    input.setAttribute('aria-controls', list.id);
+  });
+</script>
+</body></html>`;
+
+const PAGES = { '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -5408,6 +5456,30 @@ async function main() {
       '"Full Legal Name" and "Your name" are still the applicant\'s',
       named.q_full === 'Morgan Testwell' && named.q_yours === 'Morgan Testwell' && named.first_name === 'Morgan',
       JSON.stringify(named),
+    );
+
+    const countryNamed = await page.goto(`${base}/country-named`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 800 });
+        return {
+          es: document.querySelector('#q_es')?.closest('.select__control')?.querySelector('.select__single-value')?.textContent ?? '',
+          br: document.getElementById('q_br').value,
+          us: document.getElementById('q_us').value,
+          skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, fields: SWEEP }),
+    );
+    group('A yes or a no about a country the profile says nothing about');
+    check(
+      'Affirm\'s "sponsorship … in Spain?" is not answered from a US declaration, and says why',
+      countryNamed.es === '' && countryNamed.skipped.includes('requires_sponsorship: your answer is about another country'),
+      JSON.stringify(countryNamed),
+    );
+    check(
+      'nor is "authorized to work in Brazil?", while the US question beside them still is',
+      countryNamed.br === '' && countryNamed.us === 'Yes',
+      JSON.stringify(countryNamed),
     );
   } finally {
     await browser.close();

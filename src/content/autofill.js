@@ -1887,6 +1887,49 @@ const COUNTRIES = [
   ['mx', null, /\bmexico\b/i],
   ['jp', null, /\bjapan\b/i],
   ['il', null, /\bisrael\b/i],
+  /*
+   * And the rest of the places the global boards hire in. A country missing
+   * from this list is a country no question can name, so a question about it
+   * reads as one naming none — the profile's own — and is answered for it.
+   * Measured live on Affirm's Greenhouse board: "Do you now or in the future
+   * require sponsorship for employment visa status in Spain?" was answered
+   * "No" from a profile that only ever said it needs none in the US.
+   *
+   * Names only, never short forms, and only names nothing else is called:
+   * Georgia is also a state and Jordan a person, so neither is here, and a
+   * question naming them is read as it always was.
+   */
+  ['es', null, /\bspain\b/i],
+  ['pt', null, /\bportugal\b/i],
+  ['it', null, /\bital(?:y|ian)\b/i],
+  ['pl', null, /\bpoland\b/i],
+  ['ch', null, /\bswitzerland\b/i],
+  ['se', null, /\bsweden\b/i],
+  ['no', null, /\bnorway\b/i],
+  ['dk', null, /\bdenmark\b/i],
+  ['fi', null, /\bfinland\b/i],
+  ['be', null, /\bbelgium\b/i],
+  ['at', null, /\baustria\b/i],
+  ['cz', null, /\bczech(?:ia|\s+republic)\b/i],
+  ['ro', null, /\bromania\b/i],
+  ['gr', null, /\bgreece\b/i],
+  ['br', null, /\bbrazil\b/i],
+  ['ar', null, /\bargentina\b/i],
+  ['cl', null, /\bchile\b/i],
+  ['co', null, /\bcolombia\b/i],
+  ['cn', null, /\bchina\b/i],
+  ['hk', null, /\bhong\s+kong\b/i],
+  ['tw', null, /\btaiwan\b/i],
+  ['kr', null, /\b(?:south\s+)?korea\b/i],
+  ['ph', null, /\bphilippines\b/i],
+  ['my', null, /\bmalaysia\b/i],
+  ['id', null, /\bindonesia\b/i],
+  ['vn', null, /\bvietnam\b/i],
+  ['th', null, /\bthailand\b/i],
+  ['ae', null, /\bunited\s+arab\s+emirates\b|\bu\.?a\.?e\.?\b|\bdubai\b/i],
+  ['za', null, /\bsouth\s+africa\b/i],
+  ['ng', null, /\bnigeria\b/i],
+  ['tr', null, /\bt(?:ü|u)rk(?:ey|iye)\b/i],
 ];
 
 function countriesIn(text) {
