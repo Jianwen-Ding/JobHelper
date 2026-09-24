@@ -1628,7 +1628,19 @@ const TERMS = `<!doctype html><form>
   <select id="t4"><option value="">Select...</option><option>2027-04</option><option>2027-05</option></select>
 </form>`;
 
-const PAGES = { '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
+/*
+ * Link boxes that arrive holding the start of an address. Read as already
+ * answered, they were left at "https://" — which submits as a LinkedIn
+ * profile of nothing.
+ */
+const PREFIXED = `<!doctype html><form>
+  <label for="p1">LinkedIn profile</label><input id="p1" value="https://">
+  <label for="p2">LinkedIn URL</label><input id="p2" value="https://www.linkedin.com/in/">
+  <label for="p3">GitHub</label><input id="p3" value="https://github.com/">
+  <label for="p4">Website</label><input id="p4" value="https://someone-else.dev">
+</form>`;
+
+const PAGES = { '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -2175,6 +2187,19 @@ async function main() {
         return Object.fromEntries([...document.querySelectorAll('select')].map((el) => [el.id, el.value]));
       }, { b: base, profile: { ...PROFILE, graduation_year: '2027', graduation_month: 'May', graduation_date: 'May 2027' } }),
     );
+    const prefixed = await page.goto(`${base}/prefixed`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm(profile);
+        return Object.fromEntries([...document.querySelectorAll('input')].map((el) => [el.id, el.value]));
+      }, { b: base, profile: { ...PROFILE, website: 'jianwen.dev' } }),
+    );
+    group('A link box holding only the start of an address');
+    check('"https://" is not an answer: the profile goes in', /linkedin\.com\/in\/x/.test(prefixed.p1), prefixed.p1);
+    check('nor is the site\'s own prefix', /linkedin\.com\/in\/x/.test(prefixed.p2), prefixed.p2);
+    check('nor GitHub\'s', /github\.com\/x/.test(prefixed.p3), prefixed.p3);
+    check('while an address somebody typed is left alone', prefixed.p4 === 'https://someone-else.dev', prefixed.p4);
+
     group('A graduation date chosen from a list');
     check('May 2027 is "Spring 2027" on a list of terms', terms.t1 === 'Spring 2027', terms.t1);
     check('and "05/2027" on a list of numbers', terms.t2 === '05/2027', terms.t2);

@@ -1169,6 +1169,16 @@ function browserWouldRefuse(input) {
  */
 const LINKS = new Set(['linkedin', 'github', 'website']);
 
+/*
+ * A link box that arrives holding the start of an address — "https://",
+ * "https://www.linkedin.com/in/" — has not been answered; the form put that
+ * there as a hint. Read as answered, it was left alone and sent as a profile
+ * of nothing. A scheme, a host, and at most the site's own path prefix.
+ */
+function onlyTheStartOfAnAddress(value) {
+  return /^\s*(https?:\/\/)?(www\.)?((linkedin\.com(\/in)?|github\.com)\/?)?\s*$/i.test(value) && /\S/.test(value);
+}
+
 function otherWaysToWrite(key, value) {
   const said = String(value).trim();
 
@@ -1869,7 +1879,10 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
     if (asksYesOrNo(input, key)) continue;
     let value = fields[key];
 
-    const answered = input instanceof HTMLSelectElement ? selectIsAnswered(input) : Boolean(input.value);
+    const answered =
+      input instanceof HTMLSelectElement
+        ? selectIsAnswered(input)
+        : Boolean(input.value) && !(LINKS.has(key) && onlyTheStartOfAnAddress(input.value));
     if (answered && !overwrite) {
       skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
       continue;
