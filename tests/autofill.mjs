@@ -2525,7 +2525,21 @@ const RIPPLING_QUESTIONS = `<!doctype html><html><head><meta charset="utf-8"><ti
 </script>
 </body></html>`;
 
-const PAGES = { '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
+/*
+ * Okta's graduation year, as its Greenhouse board asks it (measured live on
+ * boards.greenhouse.io/okta): a list of years under a question that never
+ * says "graduate".
+ */
+const COMPLETE_YOUR_DEGREE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Okta</title></head><body>
+<form>
+  <label for="question_69105323">What year will you complete your degree?*</label>
+  <select id="question_69105323"><option value="">Choose</option><option>2025</option><option>2026</option><option>2027</option><option>2028</option></select>
+  <label for="question_69105925">In what month do you anticipate graduating?*</label>
+  <select id="question_69105925"><option value="">Choose</option><option>April</option><option>May</option><option>June</option></select>
+  <label for="q_course">What year did you complete the course?</label><input id="q_course" type="text">
+</form></body></html>`;
+
+const PAGES = { '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -5896,6 +5910,23 @@ async function main() {
       rippling.auth === 'Yes' && rippling.sponsor === 'No' && rippling.first === 'Morgan' &&
         rippling.questions.some((q) => /SaaS platforms/.test(q)),
       JSON.stringify(rippling),
+    );
+
+    const completeDegree = await page.goto(`${base}/complete-your-degree`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        return {
+          year: document.getElementById('question_69105323').value, month: document.getElementById('question_69105925').value,
+          course: document.getElementById('q_course').value, skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, fields: { ...SWEEP, graduation_year: '2027', graduation_month: 'May', graduation_date: 'May 2027' } }),
+    );
+    group('"What year will you complete your degree?"');
+    check(
+      'Okta\'s question is the graduation year, not the degree, and the course beside it is nobody\'s graduation',
+      completeDegree.year === '2027' && completeDegree.month === 'May' && completeDegree.course === '' && completeDegree.skipped.length === 0,
+      JSON.stringify(completeDegree),
     );
   } finally {
     await browser.close();

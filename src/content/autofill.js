@@ -83,7 +83,14 @@ const FIELD_PATTERNS = [
    */
   ['graduation_month', /(\bgrad\b|\bgraduat\w*|\bcompletion\b).{0,40}\bmonth\b|\bmonth\b.{0,40}\bgraduat/i],
   // "Class of" and "Graduating class" are asking for the year, as "Class year" is.
-  ['graduation_year', /(\bgrad\b|\bgraduat\w*|\bcompletion\b).{0,40}\byear\b|\byear\b.{0,40}\bgraduat|\bclass\s*year\b|\bclass\s+of\b|\bgraduating\s+class\b/i],
+  /*
+   * And "What year will you complete your degree?", which is Okta's Greenhouse
+   * board's: it says neither "graduate" nor "completion", fell through to
+   * `degree`, and — measured live — was reported as a degree with no
+   * matching option in a list of years. Only with the degree named after the
+   * verb: "the year you completed the course" is not a graduation.
+   */
+  ['graduation_year', /(\bgrad\b|\bgraduat\w*|\bcompletion\b).{0,40}\byear\b|\byear\b.{0,40}\bgraduat|\byear\b.{0,40}\bcomplete\b.{0,20}\b(degree|studies|bachelor\w*|master\w*|program(me)?)\b|\bclass\s*year\b|\bclass\s+of\b|\bgraduating\s+class\b/i],
   /*
    * And the date by the words that name the degree's end without saying
    * "graduation": "Expected degree completion" was the example above and no
