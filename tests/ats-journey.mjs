@@ -205,7 +205,11 @@ async function main() {
         check('and nothing threw on the way', errors.length === 0, errors.join('; '));
         timings.push([system.name, Date.now() - started]);
       } catch (err) {
-        check(`${system.name}: the walk completed`, false, String(err).split('\n')[0].slice(0, 120));
+        // And what the card was saying when it stopped, since a timeout alone
+        // names only the thing that did not appear.
+        const said = await page.locator(`${HOST} .card`).innerText({ timeout: 2_000 }).catch(() => '(no card)');
+        check(`${system.name}: the walk completed`, false,
+          `${String(err).split('\n')[0].slice(0, 120)} — card: ${said.replace(/\s+/g, ' ').slice(-500)}${errors.length ? ` — page errors: ${errors.join('; ')}` : ''}`);
         timings.push([system.name, Date.now() - started]);
       }
       await page.close();
