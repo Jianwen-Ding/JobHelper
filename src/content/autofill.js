@@ -160,6 +160,25 @@ const FIELD_PATTERNS = [
   ],
   ['requires_sponsorship', /\b(sponsor\w*|visa[\s_-]?status)\b/i],
   /*
+   * Whether the applicant lives in a country the question names — a yes or a
+   * no that the profile's own country answers. Asked on three systems in the
+   * sweep and answered on none, because no pattern read it: Discord's
+   * Greenhouse board ("Are you currently located in the US?"), JumpCloud's
+   * Lever form ("Do you currently live in the United States of America?")
+   * and Prometheum's JazzHR form ("Do you currently reside in the United
+   * States or Canada?"), each required, each measured live left blank and
+   * unreported. Only with a country named, and only "Yes" for the profile's
+   * own — see `aboutAnotherCountry` — so "Are you located in the Bay Area?"
+   * is not read at all and a question about another country is handed back.
+   * Below the right to work and sponsorship, which claim a question that
+   * mentions residence too; above the address, which would otherwise read
+   * "United States" in it as a country to fill in.
+   */
+  [
+    'lives_in_country',
+    /\b(?:do|are)\s+you\s+(?:currently\s+|presently\s+|now\s+)?(?:live|living|reside|residing|located|based)\s+(?:in|within)\s+(?:the\s+)?(?:US|USA|U\.S\.(?:A\.)?|United\s+States|America|Canada|UK|U\.K\.|United\s+Kingdom)(?![\w.])/i,
+  ],
+  /*
    * Both in one box, above the city, which claimed it: "City, State" and
    * "City/State" were given "Boston" on a profile that also holds "MA". See
    * `withCityAndState` for where the value comes from.
@@ -2032,6 +2051,12 @@ function countriesIn(text) {
  * nothing to compare, and the answer stands as it always did.
  */
 function aboutAnotherCountry(key, value, asked, home) {
+  // Where somebody lives is only ever the profile's own country. See `lives_in_country`.
+  if (key === 'lives_in_country') {
+    const here = countriesIn(home);
+    const named = countriesIn(asked);
+    return here.size > 0 && named.size > 0 && ![...named].some((code) => here.has(code));
+  }
   if (!YES_NO_KEYS.has(key)) return false;
   let declared = countriesIn(value);
   if (declared.size === 0) declared = countriesIn(home);
@@ -2195,6 +2220,15 @@ function mostRecentJob(history) {
   return ranked[0].job;
 }
 
+/*
+ * "Yes" to "Do you live in <country>?", wherever the profile has a country.
+ * The question decides whether it is asked of this country: see
+ * `aboutAnotherCountry`.
+ */
+function withResidence(fields) {
+  return fields.address_country && !fields.lives_in_country ? { ...fields, lives_in_country: 'Yes' } : fields;
+}
+
 function withCityAndState(fields) {
   if (fields.city_state || !fields.address_city) return fields;
   const both = fields.address_state ? `${fields.address_city}, ${fields.address_state}` : fields.address_city;
@@ -2202,7 +2236,7 @@ function withCityAndState(fields) {
 }
 
 export function fillForm(fields, { overwrite = false, remembered = [], history = [] } = {}) {
-  fields = withCityAndState(fields);
+  fields = withResidence(withCityAndState(fields));
   // For a question asking about the most recent job. See `mostRecentJob`.
   const recent = mostRecentJob(history);
   const lately = {
@@ -3199,6 +3233,7 @@ function optionLabelFor(radio) {
 /** The answers a form offers as options rather than asking you to type. */
 const CHOOSABLE = new Set([
   'work_authorization',
+  'lives_in_country',
   'requires_sponsorship',
   'address_country',
   'address_state',
@@ -4097,7 +4132,7 @@ export async function fillComboboxes(fields, report, { patience = 4000, history 
   if (months.length) report = { ...report, filled: [...report.filled, ...months] };
   // The same fields `fillForm` read, or a widget it named `city_state` has
   // no value here.
-  fields = withCityAndState(fields);
+  fields = withResidence(withCityAndState(fields));
   await pickListedPlaces(fields);
   const pending = new Set(report.skipped.filter((s) => s.reason === PICK_BY_HAND).map((s) => s.key));
   // The lists that were looked in and did not have the answer. See `NOT_LISTED`.

@@ -2539,7 +2539,64 @@ const COMPLETE_YOUR_DEGREE = `<!doctype html><html><head><meta charset="utf-8"><
   <label for="q_course">What year did you complete the course?</label><input id="q_course" type="text">
 </form></body></html>`;
 
-const PAGES = { '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
+/*
+ * "Do you live in <country>?" in the three shapes the sweep met it, each
+ * measured live and left blank: Discord's Greenhouse react-select, JumpCloud's
+ * Lever radios (question in `.application-label`, as Lever draws a card
+ * question) and Prometheum's JazzHR `<select>`. Then the ones that must stay
+ * alone: no country named, another country, and a preference.
+ */
+const LIVES_IN = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="application-form">
+  <label id="question_38318893002-label" for="question_38318893002">Are you currently located in the US?*</label>
+  <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+    <div class="select__input-container" data-value=""><input id="question_38318893002" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="question_38318893002-label" autocomplete="off"></div></div></div></div>
+  <ul><li class="application-question custom-question">
+    <div class="application-label"><div class="text">Do you currently live in the United States of America?<span class="required">✱</span></div></div>
+    <div class="application-field"><ul>
+      <li><label><input type="radio" name="cards[6a21][field0]" value="Yes"><span class="application-answer-alternative">Yes</span></label></li>
+      <li><label><input type="radio" name="cards[6a21][field0]" value="No"><span class="application-answer-alternative">No</span></label></li>
+    </ul></div></li></ul>
+  <label for="resumator-questionnaire-2998549">Do you currently reside in the United States or Canada?*</label>
+  <select id="resumator-questionnaire-2998549" name="resumator-questionnaire[2998549]"><option value="">-- No answer --</option><option>Yes</option><option>No</option></select>
+  <label for="q_bay">Are you currently located in the Bay Area?</label>
+  <select id="q_bay"><option value="">Select</option><option>Yes</option><option>No</option></select>
+  <label for="q_ca">Do you currently live in Canada?</label>
+  <select id="q_ca"><option value="">Select</option><option>Yes</option><option>No</option></select>
+  <label for="q_move">Are you currently based in or willing to relocate to the United States?</label>
+  <select id="q_move"><option value="">Select</option><option>Yes</option><option>No</option></select>
+</form>
+<script>
+  const input = document.getElementById('question_38318893002');
+  const control = input.closest('.select__control');
+  control.addEventListener('mousedown', () => {
+    if (document.getElementById('lives-listbox')) return;
+    const list = document.createElement('div');
+    list.id = 'lives-listbox';
+    list.setAttribute('role', 'listbox');
+    for (const text of ['Yes', 'No']) {
+      const o = document.createElement('div');
+      o.setAttribute('role', 'option');
+      o.textContent = text;
+      o.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        control.querySelector('.select__placeholder')?.remove();
+        const shown = document.createElement('div');
+        shown.className = 'select__single-value';
+        shown.textContent = text;
+        control.querySelector('.select__value-container').prepend(shown);
+        list.remove();
+      });
+      list.append(o);
+    }
+    control.parentElement.append(list);
+    input.setAttribute('aria-expanded', 'true');
+    input.setAttribute('aria-controls', list.id);
+  });
+</script>
+</body></html>`;
+
+const PAGES = { '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -5927,6 +5984,38 @@ async function main() {
       'Okta\'s question is the graduation year, not the degree, and the course beside it is nobody\'s graduation',
       completeDegree.year === '2027' && completeDegree.month === 'May' && completeDegree.course === '' && completeDegree.skipped.length === 0,
       JSON.stringify(completeDegree),
+    );
+
+    const livesIn = (fields) => page.goto(`${base}/lives-in`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 800 });
+        const v = (id) => document.getElementById(id).value;
+        return {
+          greenhouse: document.querySelector('#question_38318893002').closest('.select__control').querySelector('.select__single-value')?.textContent ?? '',
+          lever: document.querySelector('input[name="cards[6a21][field0]"]:checked')?.value ?? '',
+          jazz: v('resumator-questionnaire-2998549'), bay: v('q_bay'), canada: v('q_ca'), move: v('q_move'),
+          skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, fields }));
+    const inUS = await livesIn(SWEEP);
+    const nowhere = await livesIn({ ...SWEEP, address_country: undefined });
+    group('"Do you live in <country>?", from the profile\'s own country');
+    check(
+      'Greenhouse\'s, Lever\'s and JazzHR\'s shapes are each answered "Yes" for a profile in the United States',
+      inUS.greenhouse === 'Yes' && inUS.lever === 'Yes' && inUS.jazz === 'Yes',
+      JSON.stringify(inUS),
+    );
+    check(
+      'a question naming no country, or offering relocation, is not touched; one naming another country is handed back',
+      inUS.bay === '' && inUS.move === '' && inUS.canada === '' &&
+        inUS.skipped.filter((s) => s.startsWith('lives_in_country')).join() === 'lives_in_country: your answer is about another country',
+      JSON.stringify(inUS),
+    );
+    check(
+      'and with no country in the profile none of them is answered',
+      nowhere.greenhouse === '' && nowhere.lever === '' && nowhere.jazz === '' && nowhere.canada === '',
+      JSON.stringify(nowhere),
     );
   } finally {
     await browser.close();
