@@ -2463,7 +2463,23 @@ const GREENHOUSE_EMPLOYMENT = `<!doctype html><html><head><meta charset="utf-8">
 </script>
 </body></html>`;
 
-const PAGES = { '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
+/*
+ * A right-to-work list written as statements, as Datadog's Greenhouse board
+ * writes it (measured live, job-boards.greenhouse.io/embed/job_app?for=
+ * datadog). "No, I need sponsorship now." was chosen for a profile that needs
+ * none: its opening "No" was read as denying the need.
+ */
+const SPONSORSHIP_STATEMENTS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Datadog</title></head><body>
+<form>
+  <label for="s1">Work authorization status</label>
+  <select id="s1"><option value="">Select...</option><option>Yes, no restriction.</option><option>Yes, but I will need sponsorship in the future.</option><option>No, I need sponsorship now.</option></select>
+  <label for="s2">Work authorization</label>
+  <select id="s2"><option value="">Select...</option><option>No, I need sponsorship now.</option><option>I am authorized to work for any employer and do not require sponsorship.</option></select>
+  <label for="s3">Work authorization</label>
+  <select id="s3"><option value="">Select...</option><option>I will need sponsorship.</option><option>No sponsorship needed; I am authorized to work for any employer.</option></select>
+</form></body></html>`;
+
+const PAGES = { '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -5785,6 +5801,25 @@ async function main() {
       'the Education block\'s "Start date" in the same words is never given the job\'s, and nothing is filled without a resume',
       job.education === ' ' && twoJobs.education === ' ' && twoJobs.company === 'Example Co' && noJob.company === '' && noJob.start === ' ',
       JSON.stringify({ job: job.education, twoJobs, noJob }),
+    );
+
+    const sponsorStatements = await page.goto(`${base}/sponsorship-statements`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm({ work_authorization: 'Authorized to work in the US', requires_sponsorship: 'No', address_country: 'United States' });
+        return ['s1', 's2', 's3'].map((id) => document.getElementById(id).value);
+      }, { b: base }));
+    group('A right-to-work list written as statements');
+    check(
+      '"No, I need sponsorship now." is not taken for "no sponsorship needed", and a list with nothing true in it is left alone',
+      sponsorStatements[0] === '',
+      JSON.stringify(sponsorStatements),
+    );
+    check(
+      'while the statement that does deny the need is still chosen, however it is put',
+      sponsorStatements[1] === 'I am authorized to work for any employer and do not require sponsorship.' &&
+        sponsorStatements[2] === 'No sponsorship needed; I am authorized to work for any employer.',
+      JSON.stringify(sponsorStatements),
     );
   } finally {
     await browser.close();

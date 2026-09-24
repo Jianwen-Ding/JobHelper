@@ -2048,10 +2048,23 @@ function yesNoOption(key, value, options, asked = '') {
  * narrower is offered. "Present employer only" and "unknown" are never
  * chosen, and nothing is where the profile does not say about sponsorship.
  */
+/*
+ * Whether a statement about sponsorship denies needing it — in the words
+ * around the need, not anywhere in the sentence. Any "no" at all counted, so
+ * the answer "No, I need sponsorship now." read as a statement that no
+ * sponsorship is needed: measured live on Datadog's Greenhouse board, whose
+ * list is "Yes, no restriction." / "Yes, but I will need sponsorship in the
+ * future." / "No, I need sponsorship now.", a profile needing none was given
+ * the last. A "No," that answers the question is followed by a comma, and a
+ * denial of the need sits in the same clause as it.
+ */
+const DENIES_THE_NEED =
+  /\b(?:not|never|without|don'?t|doesn'?t|won'?t)\b[^.,;]{0,24}\b(?:require|need)|\b(?:require|need)s?\s+no\b|\bno\s+(?:visa\s+)?sponsor/;
+
 function statementKind(text) {
   const said = clean(text).toLowerCase();
   if (/\bnot\s+(?:legally\s+)?authori[sz]ed\b/.test(said)) return 'not-authorized';
-  if (/\b(?:require|need)s?\b[^.]*\bsponsor/.test(said)) return /\b(?:not|no|without|never)\b/.test(said) ? 'any-employer' : 'needs-sponsorship';
+  if (/\b(?:require|need)s?\b[^.]*\bsponsor/.test(said)) return DENIES_THE_NEED.test(said) ? 'any-employer' : 'needs-sponsorship';
   if (!/\bauthori[sz]ed\b/.test(said)) return null;
   if (/\bonly\b|\bunknown\b|\bpresent employer\b|\bcurrent employer\b/.test(said)) return 'restricted';
   return /\bany employer\b|\bwithout restriction\b/.test(said) ? 'any-employer' : 'authorized';
