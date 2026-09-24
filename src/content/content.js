@@ -94,6 +94,23 @@
               reject(new Orphaned());
               return;
             }
+            /*
+             * The worker stopped with this request still in it — Chrome
+             * stops it when it likes: an update, memory pressure, a crash —
+             * and the reply went with it. Measured with an AI pass held open
+             * and the worker stopped: the card put Chrome's own sentence up
+             * as it came, "A listener indicated an asynchronous response by
+             * returning true, but the message channel closed before a
+             * response was received", which says nothing anybody can use.
+             */
+            if (/message (channel|port) closed/i.test(said)) {
+              reject(
+                new Error(
+                  'The browser stopped JobHelper’s background worker before this finished, so its answer was lost. Try it again.',
+                ),
+              );
+              return;
+            }
             reject(new Error(said));
           } else if (!response?.ok) {
             const failed = new Error(response?.error ?? 'No response from JobHelper');
@@ -399,6 +416,12 @@
   let dismissed = false;
   let analysis = null;
 
+  /** Stops the one watcher of choices made on this page's form; see `show`. */
+  let stopChoices = null;
+
+  /** Stops the watcher that re-reads the form's questions; see `watchQuestions`. */
+  let stopQuestions = null;
+
   /**
    * Which pass owns the card.
    *
@@ -510,6 +533,57 @@
   }
 
   /**
+   * Read the questions again when the form moves on without the url moving.
+   *
+   * They were read once, when the card went up, and again only on a url
+   * change. A form that draws its next step where the last one was — a React
+   * step component, the url untouched — left the card listing step one's
+   * question, its answer box and its Insert button, while the page asked
+   * something else; and step two's own questions were never offered at all.
+   * Measured in tests/worker.mjs: after Next, the card still listed "Why do
+   * you want to work at Helios?" over a page asking "Describe a time you
+   * failed." and a second question step one did not have.
+   *
+   * The observer only sets a flag, as the rescore watcher's does, and the
+   * reading happens on a slow tick — and only for a form, only while its card
+   * is up. What is compared is the questions as the page asks them, counters
+   * folded out the way `insertAnswer` folds them, so a "(473 characters
+   * remaining)" ticking as somebody types is not a new step. Only this
+   * document is looked at on the tick; when it has moved on, the whole
+   * reading runs again, frames included, with the bank matched afresh.
+   */
+  function watchQuestions(findQuestions, current) {
+    const asked = () =>
+      findQuestions()
+        .map((q) => q.question.replace(/\d+/g, '#').toLowerCase())
+        .join('\n');
+    let readAs = asked();
+    let changed = false;
+    const observer = new MutationObserver(() => {
+      changed = true;
+    });
+    observer.observe(document, { childList: true, subtree: true, characterData: true });
+    const tick = setInterval(() => {
+      if (!changed || !cardHandle || dismissed || !current()) return;
+      changed = false;
+      const now = asked();
+      if (now === readAs) return;
+      readAs = now;
+      gatherQuestions()
+        .then(({ questions, wantsLetter }) => {
+          if (!current()) return;
+          cardHandle?.setQuestions(questions);
+          cardHandle?.setNeedsCoverLetter(wantsLetter);
+        })
+        .catch(() => undefined);
+    }, 1500);
+    return () => {
+      observer.disconnect();
+      clearInterval(tick);
+    };
+  }
+
+  /**
    * Fill this document, then every sub-frame, and report the lot as one.
    *
    * The form is frequently not in the page the card is sitting on: iCIMS
@@ -544,14 +618,16 @@
    * the behaviour this had before the bank existed.
    */
   async function fillThisDocument(fields) {
-    const { fillForm, choiceQuestions } = await imports.autofill();
+    const { fillForm, fillComboboxes, choiceQuestions } = await imports.autofill();
     const questions = choiceQuestions();
     const remembered = questions.length
       ? await send('rememberedAnswers', { questions })
           .then((r) => r?.answers ?? [])
           .catch(() => [])
       : [];
-    return fillForm(fields, { remembered });
+    // And then the widgets `fillForm` could only name. See `fillComboboxes`:
+    // exact options only, and seen to have taken, or put back as they were.
+    return fillComboboxes(fields, fillForm(fields, { remembered }));
   }
 
   /**
@@ -610,6 +686,21 @@
   const startProposal = () => ({ build: ++rebuildSeq, on: pass });
   const stillWanted = (token) => token.build === rebuildSeq && token.on === pass;
 
+  /*
+   * Overtaken by another press on this page, rather than by the page moving on.
+   *
+   * The two used to go the same way — to `landLate`, which was written for the
+   * second and lands a reply on the card whenever the posting is the same one.
+   * On the same page it always is, so the newest press did not win: press
+   * Have AI Tailor, choose another resume to start from while it reads, and
+   * the new base's proposal went up and was then covered by the AI's answer
+   * for the base just turned away from — lit, and announced as "The AI
+   * finished tailoring this posting". Measured in tests/worker.mjs. The card
+   * drops the same reply by its own number (see `rebuildAs`); this is the
+   * half that reached the screen anyway.
+   */
+  const overtakenHere = (token) => token.on === pass && token.build !== rebuildSeq;
+
   /**
    * A proposal that finished after the card had moved on.
    *
@@ -634,11 +725,38 @@
   /** Older than this and nobody is still waiting for it. */
   const LATE_PROPOSAL_MS = 10 * 60 * 1000;
 
+  /*
+   * The trail's employer key, held once the trail module has loaded — see
+   * `plainlyAnotherRole` below, which is loaded the same way for the same
+   * reason: `sameJob` is asked synchronously.
+   *
+   * The company used to be compared exactly, and one posting writes its
+   * employer two ways: the JSON-LD carries "Acme, Inc.", the title says
+   * "Acme". Measured by lifting `sameJob` out of this file: an AI result for
+   * "Acme, Inc." against a card reading "Acme" came back false, so three
+   * minutes of a model's work on this very posting was announced as "not
+   * this posting, so it was not used" and dropped. The key is `employerKey`,
+   * which leaves a trailing legal form out and nothing else; until the module
+   * has loaded the comparison is the exact one it always was.
+   */
+  let employerKey = null;
+
+  /*
+   * And the title by the trail's `titleKey`, held the same way. Compared
+   * exactly, "Platform engineer" from one reading and "Platform Engineer"
+   * from another were two postings, and the finished run was dropped as "not
+   * this posting". Only case, spacing and punctuation are let go; a title that
+   * differs by a word — "Senior Platform Engineer" — is still another job.
+   */
+  let titleKey = null;
+
   /** Two analyses about the same opening, by what they say it is. */
   const sameJob = (a, b) =>
     Boolean(a?.job && b?.job) &&
-    (a.job.company ?? '') === (b.job.company ?? '') &&
-    (a.job.title ?? '') === (b.job.title ?? '');
+    (employerKey
+      ? employerKey(a.job.company) === employerKey(b.job.company)
+      : (a.job.company ?? '') === (b.job.company ?? '')) &&
+    (titleKey ? titleKey(a.job.title) === titleKey(b.job.title) : (a.job.title ?? '') === (b.job.title ?? ''));
 
   /** Whether a model actually chose something, as the card reads it. */
   const wasDecided = (a) => a?.tailor === 'ai' && a?.aiUsed;
@@ -924,10 +1042,11 @@
             frameId: Number(inFrame[1]),
             fieldId: inFrame[2],
             text: payload.text,
+            question: payload.question,
           });
         }
         const { insertAnswer } = await imports.autofill();
-        return insertAnswer(payload.fieldId, payload.text);
+        return insertAnswer(payload.fieldId, payload.text, payload.question);
       }
 
       /*
@@ -984,6 +1103,7 @@
             question: q.question,
             required: q.required,
             answer: q.answer || undefined,
+            limit: q.limit || undefined,
           })),
         });
         await send('openTab', { url: result.absoluteUrl });
@@ -1076,8 +1196,9 @@
         const next = await send('analyze', { ...(await applicationPayload()), ...tailoring(payload) });
         // See `startProposal`. Picking two bases in quick succession is
         // ordinary, and so is walking to the next posting while one is still
-        // being worked out. See `landLate` for where a superseded one goes.
-        if (!stillWanted(mine)) return landLate(next);
+        // being worked out. See `landLate` for where a superseded one goes,
+        // and `overtakenHere` for the one that goes nowhere.
+        if (!stillWanted(mine)) return overtakenHere(mine) ? null : landLate(next);
         analysis = next;
         cardHandle?.update(analysis);
         return analysis;
@@ -1102,7 +1223,7 @@
          */
         const mine = startProposal();
         const next = await send('analyze', { ...(await applicationPayload()), ...tailoring(payload) });
-        if (!stillWanted(mine)) return landLate(next);
+        if (!stillWanted(mine)) return overtakenHere(mine) ? null : landLate(next);
         analysis = next;
         cardHandle?.update(analysis);
         return analysis;
@@ -1195,11 +1316,11 @@
    * the difference between a page that stutters and one that does not.
    */
   async function pagePayload() {
-    const { trimForStorage } = await imports.trail();
+    const { trimForStorage, pageHtml } = await imports.trail();
     return {
       url: location.href,
       title: document.title,
-      html: trimForStorage(document.documentElement.outerHTML, 2_000_000),
+      html: trimForStorage(pageHtml(document), 2_000_000),
     };
   }
 
@@ -1548,7 +1669,11 @@
       // chip asking it is over — including the one this very call may have
       // left behind on a page that has since declared itself.
       removeAsk();
-      if (cardHandle) return cardHandle;
+      if (cardHandle) {
+        // The page may have thrown it out; see `putBack` in card.js.
+        cardHandle.putBack?.();
+        return cardHandle;
+      }
       cardHandle = createCard({
         analysis: null,
         resumes: [],
@@ -1643,6 +1768,25 @@
        */
       if (current() && cardHandle) cardHandle.setStatus(err.message, err.jobhelper ?? null);
       else quietly(err);
+      /*
+       * And not asked again on the next tick, unless the page has gained.
+       *
+       * Only a verdict used to settle the page, so a read that failed left it
+       * open — and the rescore tick below fires on any DOM change, which a
+       * busy page makes constantly. Measured on a board's results page of
+       * 22,500 elements whose timestamps and adverts tick, with the store
+       * answering 500: the whole page was copied, scrubbed, serialised and
+       * posted twelve times in twelve seconds — 1.9 seconds of the page's main
+       * thread spent re-reading what had not changed, heading for sixty
+       * multi-megabyte posts over the minute the tick runs. With ResumeM-M
+       * simply not open, which is the ordinary state of most browsing, every
+       * page above the threshold did the same.
+       *
+       * Held the way a "not a posting" verdict is held: a page that has grown
+       * something since is still worth a second look, and the toolbar button
+       * still asks at once.
+       */
+      if (current()) ruledOut = { url: location.href, score: judgedScore };
       return;
     }
     if (!current()) return;
@@ -1717,10 +1861,15 @@
       // that is a click, not an accident, and "before this tab closed" would
       // read as the extension having lost track of a tab that never went
       // anywhere.
+      // And whose it was, where the worker could not check it against this
+      // page — see `takeWork`. A page it cannot name is exactly the page you
+      // cannot tell a wrong rescue from a right one on.
       cardHandle?.setStatus(
         carried.recovered === 'job'
           ? 'Brought back what you had written for this job.'
-          : 'Recovered what you had written before this tab closed.',
+          : carried.recoveredFor
+            ? `Recovered what you had written for ${carried.recoveredFor} before this tab closed.`
+            : 'Recovered what you had written before this tab closed.',
       );
     }
     /*
@@ -1785,9 +1934,25 @@
      */
     imports
       .autofill()
-      .then(({ watchChoices, looksLikeApplicationForm }) => {
+      .then(({ watchChoices, looksLikeApplicationForm, findQuestions }) => {
         if (!current() || !looksLikeApplicationForm()) return;
-        watchChoices((said) => {
+        // And its questions, for a form that moves on in place. One watcher,
+        // for the reason given below for the choices.
+        stopQuestions?.();
+        stopQuestions = watchQuestions(findQuestions, current);
+        /*
+         * One watcher, whatever number of passes found the form.
+         *
+         * The function that stops watching was thrown away, and a pass runs on
+         * every url change of a single-page form, every press of the toolbar
+         * button and every return from the back / forward cache — each adding
+         * a pair of document listeners for the life of the page. Measured in
+         * tests/worker.mjs: a form taken through three `pushState` steps sent
+         * one choice to the store four times, and each radio click ran a
+         * whole-document scan once per listener.
+         */
+        stopChoices?.();
+        stopChoices = watchChoices((said) => {
           if (!said.keep) return;
           send('rememberChoice', { question: said.question, answer: said.answer }).catch(() => undefined);
         });
@@ -1939,6 +2104,32 @@
        * pressing Submit again did nothing either. This file's header calls a
        * wrong "yes" the worst failure available; that was one.
        */
+
+      /*
+       * Flushed here, not left to the keeper.
+       *
+       * `holdASpace` — the thing that opens the Workspace draft — only runs
+       * off `saveWork`, which this page's keeper otherwise sends on a plain
+       * two-second interval. A short form is read, filled and sent well
+       * inside that window, so `applicationSent` could reach the store,
+       * mark the tracker row `applied`, and return — before the interval
+       * had ticked even once. No draft existed yet for `/api/extension/sent`
+       * to find and close, and none was ever going to arrive: the next tick
+       * would have opened one, but nobody presses Submit twice to give it
+       * the chance.
+       *
+       * Measured against tests/sending.mjs with the call below removed: four
+       * of the twenty-four sending fixtures had their draft opened a whole
+       * keeper tick after the application was filed as sent, and under the
+       * parallel runner one came back `applied` with no draft at all.
+       *
+       * Fired, not awaited: this is the same fire-and-forget write
+       * `saveWork` already makes off every keeper tick, and waiting for it
+       * here would hold up telling the person their application went out
+       * for a write this route does not need the answer to.
+       */
+      saveWorkNow?.();
+
       return send('applicationSent', {
         company: named.company,
         role: named.role,
@@ -2008,7 +2199,9 @@
 
       // The page is sent with it: a card left open on another posting must not
       // be able to write its work over this application's.
-      send('saveWork', { work, page: pageIdentity() }).catch(() => undefined);
+      // Handed back, so a caller that must know the save has landed can wait
+      // for it. See `jh-flush-work`.
+      return send('saveWork', { work, page: pageIdentity() }).catch(() => undefined);
     };
     saveWorkNow = save;
     every(2000, save);
@@ -2189,12 +2382,12 @@
         case 'jh-frame-html':
           answer(
             Promise.all([imports.autofill(), imports.trail()]).then(
-              ([{ looksLikeApplicationForm }, { trimForStorage }]) =>
+              ([{ looksLikeApplicationForm }, { trimForStorage, pageHtml }]) =>
                 looksLikeApplicationForm()
                   ? {
                       url: location.href,
                       title: document.title,
-                      html: trimForStorage(document.documentElement.outerHTML, 400_000),
+                      html: trimForStorage(pageHtml(document), 400_000),
                     }
                   : { html: '' },
             ),
@@ -2205,8 +2398,27 @@
           answer(
             imports
               .autofill()
-              .then(({ insertAnswer }) => insertAnswer(message.payload?.fieldId, message.payload?.text)),
+              .then(({ insertAnswer }) =>
+                insertAnswer(message.payload?.fieldId, message.payload?.text, message.payload?.question),
+              ),
           );
+          return true;
+
+        /*
+         * The worker asking for this page's work now, because a send has just
+         * been reported and nothing was flushed with it — the form was in an
+         * iframe, whose script runs no keeper. Only the top frame answers:
+         * it is where the card and the keeper are.
+         */
+        case 'jh-flush-work':
+          if (window !== window.top) return false;
+          /*
+           * Answered once the worker has taken the save, not the moment it is
+           * sent: the two travel separately, and an answer that overtook its
+           * own save left the worker nothing to wait for — the draft still
+           * opened after the send on "embedded-apply", 228ms late.
+           */
+          answer(Promise.resolve(saveWorkNow?.()).then(() => true));
           return true;
 
         default:
@@ -2315,7 +2527,9 @@
      */
     if (message?.type === 'jh-came-back') {
       try {
-        cardHandle?.cameBack?.();
+        // Asynchronous now — it fetches the copy as the builder left it — so
+        // a failure there is caught the same way a throw here is.
+        Promise.resolve(cardHandle?.cameBack?.()).catch(() => undefined);
       } catch {
         // An orphaned card. Not worth an error on the page.
       }
@@ -2353,7 +2567,18 @@
   const watcher = new MutationObserver(() => {
     pageChanged = true;
   });
-  watcher.observe(document.documentElement, { childList: true, subtree: true });
+  /*
+   * The document, not its root element. Attached to `documentElement`, the
+   * observer followed that element and nothing else: a page that builds its
+   * finished document off to one side and swaps it in with
+   * `document.replaceChild(next, document.documentElement)` left it watching
+   * the detached old root, so the shell was scored once and the posting that
+   * replaced it never — no card, under a title naming the role and a JSON-LD
+   * JobPosting (tests/worker.mjs). And a page with no root element at all by
+   * document idle threw here, at the top of the script, into the page's
+   * console, stopping everything below this line.
+   */
+  watcher.observe(document, { childList: true, subtree: true });
   teardown.push(() => watcher.disconnect());
 
   /**
@@ -2408,6 +2633,8 @@
     .trail()
     .then((m) => {
       plainlyAnotherRole = m.plainlyAnotherRole;
+      employerKey = m.employerKey;
+      titleKey = m.titleKey;
     })
     .catch(quietly);
 
@@ -2501,6 +2728,13 @@
     // posting you have just left may already have spent.
     restartSending?.();
 
+    // And the choices watcher, which was for the form you have just left: the
+    // next page is watched only if its own pass finds a form on it.
+    stopChoices?.();
+    stopChoices = null;
+    stopQuestions?.();
+    stopQuestions = null;
+
     // Before the await, not after: the pass still running belongs to the url
     // that just went away, and it must stop being able to write to the card
     // from this instant rather than from whenever the import resolves.
@@ -2523,6 +2757,14 @@
       readAs = null;
       return startOver();
     }
+
+    /*
+     * A card the page took off, put back — before anything below reads
+     * `cardHandle` as "the card is up". See `putBack` in card.js: a page that
+     * re-renders its root throws the host out with it, and the handle kept
+     * every route back closed for the life of the page.
+     */
+    if (cardHandle && !dismissed) cardHandle.putBack?.();
 
     // The board that swaps the job and changes nothing else. See `readAs`.
     if (
@@ -2584,6 +2826,8 @@
     // Same reasoning: a chip whose Yes throws is worse than no chip.
     imports.ask().then(({ removeAsk }) => removeAsk()).catch(() => undefined);
     cardHandle = null;
+    stopChoices?.();
+    stopQuestions?.();
   });
 
   // A missing server must not spam every page the user opens.

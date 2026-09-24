@@ -150,7 +150,8 @@ export const HELIOS_FORM = {
       <label for="rs">Resume</label><input id="rs" name="resume" type="file">
       <label for="cl">Cover Letter</label><textarea id="cl" name="cover_letter"></textarea>
       <label for="q1">Why do you want to work here?</label>
-      <textarea id="q1" name="why_here"></textarea>
+      <!-- A limit, as most real boxes carry: see the journey's hand-off. -->
+      <textarea id="q1" name="why_here" maxlength="1500"></textarea>
       <label for="q2">Will you now or in the future require sponsorship?</label>
       <input id="q2" name="sponsorship">
       <button type="button">Submit Application</button>

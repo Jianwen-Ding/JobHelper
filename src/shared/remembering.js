@@ -2,9 +2,10 @@
  * What may be remembered from one application and offered on the next.
  *
  * Applying is the same twenty questions over and over — work authorisation,
- * sponsorship, how you heard about us, whether you have worked here before,
- * which state you live in — and answering them again every time is most of
- * what makes a form tedious. So the answers are kept.
+ * sponsorship, how you heard about us, which state you live in — and
+ * answering them again every time is most of what makes a form tedious. So
+ * the answers are kept. Not "whether you have worked here before", which
+ * this list once named: see `DEPENDS_ON_EMPLOYER`.
  *
  * Only the ones that were *chosen*, never the ones that were typed. That is a
  * scope decision and it does most of the safety work on its own: a chosen
@@ -51,7 +52,7 @@ const NEVER_REMEMBER = [
   /\bbirth\s*(date|day)\b/i,
   /\bdob\b/i,
   /\bage\b/i,
-  /\bdriver'?s?\s*licen[cs]e\b/i,
+  /\bdriv(er'?s?|ing)\s*licen[cs]e\b/i,
   /\bpassport\b/i,
   /\bvisa\s*number\b/i,
   /\bbank\b/i,
@@ -66,12 +67,51 @@ const NEVER_REMEMBER = [
   // The stem, because a form asks "have you been convicted" and a list
   // written as "conviction" does not match it.
   /\bconvict/i,
-  /\bdisabilit(y|ies)\b/i,
+  /*
+   * The stem, like `convict` above: "Do you have a disability?" matched and
+   * "Are you disabled?" — the same question, asked the other common way — did
+   * not, so its answer was banked and offered to the next employer.
+   */
+  /\bdisab(led|ility|ilities)\b/i,
   /\bveteran\b/i,
   /\bethnicit(y|ies)\b/i,
   /\brace\b/i,
+  /*
+   * The equal-opportunity block asks about ethnicity without using the word.
+   *
+   * Greenhouse's own is "Are you Hispanic/Latino?", verbatim, as its own
+   * question beside "Race" — and it matched nothing here, so the answer went
+   * into the bank and was offered back on the next form. That is the exact
+   * thing this list exists to stop, on the commonest form there is. The rest
+   * are the same question as other systems and other countries put it: the
+   * Australian forms ask about Aboriginal and Torres Strait Islander identity,
+   * the Canadian ones about Indigenous identity and First Nations, and plenty
+   * ask whether you are a person of colour or about national origin.
+   */
+  /\bhispanic\b/i,
+  /\blatin[oaxe]s?\b/i,
+  /\bpe(rson|ople)\s*of\s*colou?r\b/i,
+  /\bindigenous\b/i,
+  /\baboriginal\b/i,
+  /\btorres\s*strait\b/i,
+  /\bfirst\s*nations?\b/i,
+  /\bnational\s*origin\b/i,
+  /\bcaste\b/i,
   /\bgender\b/i,
+  /*
+   * And the same for sex and identity. "Sex" was refused before only because
+   * it is shorter than the length check below — the wrong reason, and one
+   * that did not survive being asked as "What is your sex?".
+   *
+   * `trans` not followed by a hyphen, so "trans-Atlantic travel" is left
+   * alone. Word boundaries keep `sex` out of Essex and Middlesex.
+   */
+  /\bsex\b/i,
+  /\btrans(gender)?\b(?![-\u2010-\u2015])/i,
+  /\bnon-?binary\b/i,
+  /\blgbt/i,
   /\bsexual\s*orientation\b/i,
+  /\bneurodiver/i,
   /\breligion\b/i,
   /\bmarital\b/i,
   /\bpregnan/i,
@@ -102,6 +142,42 @@ const SENSITIVE_SHAPE = [
   /^\d{1,2}\s+\w{3,9}\s+\d{4}$/,
   /^\w{3,9}\s+\d{1,2},?\s+\d{4}$/,
 ];
+
+/**
+ * Questions asked in the same words by every employer, whose answer is about
+ * that employer.
+ *
+ * "Have you previously been employed by this company?" reads identically on
+ * Acme's form and on Helios's, so the store matches it word for word and calls
+ * the match confident — and the answer given to Acme is not the answer to
+ * Helios. Measured end to end: "Yes" chosen on Acme's form went into the bank,
+ * and Autofill on Helios's form put it into the same question there, telling
+ * Helios the applicant had worked for them. The bank is keyed on the question
+ * and nothing else, so there is nothing on the way out that could tell the two
+ * apart; they are refused on the way in and on the way out instead.
+ *
+ * Past tense on purpose. "Are you legally authorized to work for any employer"
+ * is the most repeated question there is and says "work for"; what is refused
+ * is having *worked* for, been *employed* by, *applied* to, being a current or
+ * former employee of, having family at, or being referred by someone at —
+ * the employer, however it is named. "Have you worked with Kubernetes" is
+ * about the person and is kept.
+ */
+const DEPENDS_ON_EMPLOYER = [
+  /\b(worked|interned)\s+(for|at|here)\b/i,
+  /\bemployed\s+(by|with|at|here)\b/i,
+  /\b(current|former|previous|past|ex)[\s-]+(or\s+(current|former|previous|past)\s+)?(employee|intern|contractor)s?\b/i,
+  /\b(relatives?|family\s+members?|related\s+to\s+(any|some)(one|body)|know\s+(any|some)(one|body))\b/i,
+  /\b(ever|previously|already|before)\s+(applied|interviewed)\b/i,
+  /\b(applied|interviewed)\b.*\b(before|previously|in\s+the\s+past)\b/i,
+  /\b(were\s+you\s+referred|referred\s+by)\b/i,
+];
+
+/** Whether this question's answer depends on who is asking it. */
+export function dependsOnEmployer(question) {
+  const text = String(question ?? '');
+  return DEPENDS_ON_EMPLOYER.some((re) => re.test(text));
+}
 
 /** Whether this question is one whose answer is never kept. */
 export function neverRemember(question) {
@@ -141,6 +217,7 @@ export function worthRemembering({ question, answer } = {}) {
    */
   if (neverRemember(asked)) return { keep: false, why: 'this one is personal, so it is not kept' };
   if (looksPrivate(said)) return { keep: false, why: 'the answer looks personal, so it is not kept' };
+  if (dependsOnEmployer(asked)) return { keep: false, why: 'the answer depends on the employer, so it is not kept' };
 
   /*
    * A question nobody could match again is not worth a row in the bank. The

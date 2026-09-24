@@ -7,7 +7,7 @@
 export const DEFAULTS = {
   /** Where ResumeM-M is listening. Loopback only — the server has no auth. */
   serverUrl: 'http://127.0.0.1:4600',
-  /** Resume the tailored version inherits from. */
+  /** Resume each tailored version is copied from. */
   baseResumeId: 'newgrad',
   /**
    * Send the posting to the configured AI CLI as well as the local tag match.
@@ -83,7 +83,20 @@ export function normaliseServerUrl(value) {
     // caller of this fetches it or opens it in a tab.
     return DEFAULTS.serverUrl;
   }
-  return full.replace(/\/+$/, '');
+  /*
+   * Without a fragment or a query, which nothing can be appended after.
+   *
+   * The address people have to hand is the editor's, from its address bar —
+   * `http://127.0.0.1:4600/#resumes/newgrad` — and every request is this plus
+   * `/api/…`, which put the path inside the fragment: measured, the request
+   * for the resume list was built as
+   * `http://127.0.0.1:4600/#resumes/newgrad/api/resumes`. A fragment is never
+   * sent, so that is a request for the editor's own page, which answers with
+   * HTML — and `serverFetch` reports "ResumeM-M sent something that is not
+   * JSON (200)" about a server that is running. A query does the same with a
+   * `?`. A path is still kept, for the reason above.
+   */
+  return full.replace(/[?#].*$/, '').replace(/\/+$/, '');
 }
 
 export async function getSettings() {

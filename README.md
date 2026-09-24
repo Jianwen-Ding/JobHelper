@@ -79,7 +79,7 @@ From the toolbar popup:
 | Setting | Default | Notes |
 | --- | --- | --- |
 | Server | `http://127.0.0.1:4600` | Where ResumeM-M is listening |
-| Start resumes from | `newgrad` | Tailored resumes inherit from this, so later edits still reach them |
+| Start resumes from | `newgrad` | Each tailored resume starts as a copy of this; later edits to it do not reach copies already made |
 | Offer automatically | on | Off makes the card appear only when you ask |
 | Also ask the AI CLI | **off** | Tag matching is instant, free, and usually right |
 | Mute this site | — | Per-host, for a careers page you browse but do not apply on |

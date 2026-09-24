@@ -129,6 +129,27 @@ export function wordsOf(text) {
 }
 
 /**
+ * An element's words as somebody reading it sees them.
+ *
+ * `textContent` joins text across element boundaries with nothing between,
+ * and a framework renders no whitespace between elements — so a label and
+ * the button after it read "cover letterattach", in which `\bcover
+ * letter\b` finds nothing. Measured on two upload controls rendered that
+ * way, labelled Resume and Cover Letter and named nothing else: both files
+ * "no box here asks for it". Text from different nodes is kept apart here,
+ * and a script's or stylesheet's is left out.
+ */
+function textOf(el) {
+  if (!el) return '';
+  const parts = [];
+  const walk = (el.ownerDocument ?? document).createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+    if (!/^(SCRIPT|STYLE|NOSCRIPT)$/.test(n.parentElement?.tagName ?? '')) parts.push(n.nodeValue);
+  }
+  return parts.join(' ');
+}
+
+/**
  * What a box says about itself, without borrowing from its neighbours.
  *
  * Its own label, its name and id, whatever accessibility text it carries.
@@ -156,6 +177,9 @@ function namedBy(input) {
     .join(' ');
   return wordsOf(said).replace(/\s+/g, ' ').trim();
 }
+
+/** Somewhere to type or choose, which a heading never holds. See `aroundIt`. */
+const FIELDS = 'input:not([type="hidden"]), select, textarea';
 
 /**
  * And the text around it, for the many controls that carry no label at all.
@@ -210,7 +234,20 @@ function aroundIt(input) {
       let room = 200;
       for (let before = node.previousElementSibling; before && room > 0; before = before.previousElementSibling) {
         if (before.querySelector?.('input[type="file"]') || before.matches?.('input[type="file"]')) break;
-        const text = clean(before.textContent);
+        /*
+         * A heading, not the page. Dropzone.js appends each zone's input to
+         * the end of `<body>`, so what came "before" the first one was the
+         * whole form — every heading on it — and a script's source. That
+         * input said resume and cover letter both and took the resume, and
+         * the input that belonged to the Cover Letter zone was it. Measured
+         * against the real Dropzone 5 with that zone first: the resume held
+         * by Cover Letter, reported "Attached". Code is not words, and
+         * something holding fields of its own is a part of the form, which
+         * a heading never is.
+         */
+        if (before.matches?.('script, style, template, noscript')) continue;
+        if (before.matches?.(FIELDS) || before.querySelector?.(FIELDS)) break;
+        const text = clean(textOf(before));
         if (!text) continue;
         said.unshift(text);
         room -= text.length;
@@ -218,7 +255,7 @@ function aroundIt(input) {
       if (said.length > 0) return said.join(' ');
       break;
     }
-    const text = clean(holder.textContent);
+    const text = clean(textOf(holder));
     if (text && text.length < 400) best = text;
   }
   return best;
@@ -281,6 +318,14 @@ function willTake(input, file) {
       if (want === '*/*') return true;
       if (want.startsWith('.')) return name.endsWith(want);
       if (want.endsWith('/*')) return type.startsWith(want.slice(0, -1));
+      /*
+       * "pdf,doc,docx": an extension without its dot. Not what the
+       * specification allows, and the browser's own dialog ignores such a
+       * token — so read as a MIME type it refused a PDF from a box that
+       * would have taken one, with "this form only takes pdf,doc,docx
+       * there". Read as what it plainly means instead.
+       */
+      if (!want.includes('/')) return name.endsWith(`.${want}`);
       return type === want;
     });
 }
@@ -399,9 +444,45 @@ function putIn(box, file, { alongside = false, ours } = {}) {
     return false;
   }
   if (box.files?.length !== had.length + 1) return false;
+  // Where the widget would say it has the file, noted before it gets a vote.
+  const home =
+    box.closest?.('label, [class*="upload" i], [class*="drop" i], [class*="file" i], [class*="attach" i]') ??
+    box.parentElement;
   box.dispatchEvent(new Event('input', { bubbles: true }));
   box.dispatchEvent(new Event('change', { bubbles: true }));
-  return true;
+  /*
+   * And what is still true once the page has had its say.
+   *
+   * A `change` handler runs synchronously inside that dispatch, and two
+   * ordinary things it does both undo what was just checked above: reject
+   * the file by clearing the box — the client-side "too large" or
+   * "wrong kind" check every upload widget has — or replace the input
+   * outright to reset itself, which is how a form built to show a removable
+   * chip instead of the native control works. Either way `box` is left
+   * looking exactly as it did the instant before `dispatchEvent`, and
+   * without this the caller had already decided "placed" on evidence from
+   * before the page got a vote. Measured on a page that clears the input on
+   * `change`: reported as attached, the box empty.
+   */
+  if (box.isConnected && [...(box.files ?? [])].some((f) => f.name === file.name)) return true;
+  /*
+   * Unless the widget took it for itself. Plenty of upload components read
+   * the file on `change`, keep it in their own state, and clear the input
+   * straight after so the same file can be chosen again — and then show it
+   * as a chip with its name. An empty input there means kept, not refused;
+   * the name appearing where the box was is the widget saying so.
+   *
+   * Unless it is saying no. A widget that refuses a file clears the box too,
+   * and names the file while it explains: "Jianwen-Ding-Resume.pdf is larger
+   * than the 1 MB limit", or Dropzone's preview drawn with the name and
+   * marked `dz-error`. Read as a chip, that was "Attached" over an empty box
+   * and a red message. A name inside something marked as an error or an
+   * alert is a refusal.
+   */
+  if (!home?.isConnected) return false;
+  const refusing = home.querySelectorAll('[role="alert"], [class*="error" i], [class*="invalid" i]');
+  if ([...refusing].some((el) => (el.textContent ?? '').includes(file.name))) return false;
+  return (home.textContent ?? '').includes(file.name);
 }
 
 /**
@@ -484,6 +565,28 @@ function dropZones(root = document) {
 }
 
 /**
+ * What a drop area is for: its own words, and the heading over it.
+ *
+ * Read off the zone's text alone, which on Workday is "Drag and drop files
+ * here, Select files" — the "Resume/CV" is a heading outside it. So no zone
+ * ever named a kind, and on a page with no input yet every file went to the
+ * first zone in the document. Measured with a Cover Letter section above a
+ * Resume/CV one: the resume and the letter both dropped on Cover Letter, and
+ * both reported attached. The walk up stops where it would reach another
+ * zone, as `aroundIt` stops at another box.
+ */
+function zoneSays(zone, zones) {
+  const clean = (text) => wordsOf(text).replace(/\s+/g, ' ').trim();
+  let said = clean(`${zone.getAttribute('aria-label') ?? ''} ${textOf(zone)}`);
+  for (let holder = zone.parentElement, up = 0; holder && up < 4; holder = holder.parentElement, up++) {
+    if (zones.some((z) => z !== zone && holder.contains(z))) break;
+    const text = clean(textOf(holder));
+    if (text && text.length < 400) said = text;
+  }
+  return said;
+}
+
+/**
  * Attach what the card has to whatever this page asks for.
  *
  * Reports rather than throws, and reports per file: a form with a resume box
@@ -560,10 +663,21 @@ export async function attachFiles(files) {
 
     const kind = kindOf(spec.name);
     const box = boxFor(kind, boxes, taken, file);
-    if (box && placeIn(box, file)) {
-      taken.add(box);
-      placed.push({ name: spec.name, where: saysWhat(box).slice(0, 60) });
-      continue;
+    /*
+     * A box was found for this file, which the reason at the bottom of this
+     * loop needs to know even when `placeIn` fails: without it, a box that
+     * took the file and then rejected it — see `putIn` — read no differently
+     * from a form with no such box at all, and said so: "no box here asks
+     * for it", about a box sitting right there under a label that named it.
+     */
+    let rejectedBy = null;
+    if (box) {
+      if (placeIn(box, file)) {
+        taken.add(box);
+        placed.push({ name: spec.name, where: saysWhat(box).slice(0, 60) });
+        continue;
+      }
+      rejectedBy = box;
     }
 
     /*
@@ -623,8 +737,15 @@ export async function attachFiles(files) {
      * the zone says it wants this kind, or there is no box on the page at
      * all: a zone beside a resume box is the resume's, and dropping a
      * transcript on it is the same wrong-document failure by another route.
+     * With no box, still only a zone that names no other kind — see
+     * `zoneSays`.
      */
-    const zone = dropZones().find((z) => boxes.length === 0 || WANTS[kind]?.test(wordsOf(z.textContent)));
+    // Not the one around a box that has just refused this file: it has had
+    // its say, and a drop there came back as "not sure" about a known no.
+    const zones = dropZones().filter((z) => !(rejectedBy && z.contains(rejectedBy)));
+    const zone =
+      zones.find((z) => WANTS[kind]?.test(zoneSays(z, zones))) ??
+      (boxes.length === 0 ? zones.find((z) => kindOf(zoneSays(z, zones)) === 'other') : undefined);
     if (zone) {
       /*
        * Said as what it is. A drop cannot be read back the way `input.files`
@@ -653,11 +774,13 @@ export async function attachFiles(files) {
     );
     unplaced.push({
       name: spec.name,
-      why: refusedType
-        ? `this form only takes ${refusedType.getAttribute('accept')} there`
-        : boxes.length === 0
-          ? 'this page has no upload box the extension can reach'
-          : 'no box here asks for it',
+      why: rejectedBy
+        ? 'this form took it and then would not keep it'
+        : refusedType
+          ? `this form only takes ${refusedType.getAttribute('accept')} there`
+          : boxes.length === 0 && zones.length === 0
+            ? 'this page has no upload box the extension can reach'
+            : 'no box here asks for it',
     });
   }
 

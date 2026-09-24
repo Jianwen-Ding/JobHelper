@@ -12,8 +12,8 @@
  * whole feature simply absent. Nothing on screen says so.
  *
  * So this presses the button, against the real store and the real matcher,
- * with real rows in the bank. Two of the four choice questions on the form
- * must come back answered and two must not, and which two is the point:
+ * with real rows in the bank. Two of the five choice questions on the form
+ * must come back answered and three must not, and which is the point:
  * `matchAnswer` only calls a match `confident` when the two questions are
  * near-identical, and only a confident match is ever typed into a form. A
  * question worded differently enough to be a different question is left for
@@ -47,7 +47,7 @@ const check = (what, ok, detail = '') => {
  *
  * The four choice questions are the point:
  *
- * - `prev` is the same question with the required marker this form puts on
+ * - `arr` is the same question with the required marker this form puts on
  *   it, which is the ordinary case: the boards word these from a shared
  *   stock and differ in punctuation.
  * - `heard` is asked as radio buttons where the bank's row was saved from a
@@ -57,9 +57,12 @@ const check = (what, ok, detail = '') => {
  *   empty. That row is put there deliberately: an old bank predates the rule
  *   that keeps such things out, and the Workspace lets answers be typed in by
  *   hand, so the reuse side cannot assume it was handed a clean bank.
- * - `reworded` asks what `prev` asks, in words that share nothing with it.
+ * - `reworded` asks what `arr` asks, in words that share nothing with it.
  *   It must come out empty, and a change that makes it fill is a change that
  *   has lowered the bar on writing into somebody's application.
+ * - `prev` is word for word what the bank holds, and must come out empty
+ *   too: the "Yes" in the bank was chosen on another employer's form, and
+ *   this one is Vantage's. See `DEPENDS_ON_EMPLOYER`.
  */
 const POSTING = {
   name: 'reusing',
@@ -88,13 +91,18 @@ const POSTING = {
     <label for="fn">First Name</label><input id="fn" name="first_name">
     <label for="em">Email</label><input id="em" name="email" type="email">
 
-    <label for="prev">Have you previously been employed by this company? *</label>
-    <select id="prev" name="prev_employment">
-      <option value="">Select...</option><option>Yes</option><option>No</option>
+    <label for="arr">Which working arrangement do you prefer? *</label>
+    <select id="arr" name="arrangement">
+      <option value="">Select...</option><option>Remote</option><option>Hybrid</option><option>On-site</option>
     </select>
 
-    <label for="reworded">Have you ever worked for Vantage Systems before?</label>
-    <select id="reworded" name="worked_here">
+    <label for="reworded">What kind of setup suits you best?</label>
+    <select id="reworded" name="setup">
+      <option value="">Select...</option><option>Remote</option><option>Hybrid</option><option>On-site</option>
+    </select>
+
+    <label for="prev">Have you previously been employed by this company?</label>
+    <select id="prev" name="prev_employment">
       <option value="">Select...</option><option>Yes</option><option>No</option>
     </select>
 
@@ -158,9 +166,19 @@ async function main() {
   });
 
   try {
+    /*
+     * From an empty bank, so these rows are the only ones the matcher sees.
+     * The shared test store holds variants labelled "Yes" and "No", and the
+     * store treats every label as an employer's name: a banked "Yes" then
+     * reads as naming another employer and is never confident, so `prev`
+     * below came out empty with or without the rule it is here to check.
+     */
+    await putBank([]);
     for (const [question, answer] of [
       // As the last form worded it: this one adds a required marker.
-      ['Have you previously been employed by this company?', 'No'],
+      ['Which working arrangement do you prefer?', 'Hybrid'],
+      // True of the employer it was chosen for, and this is not that one.
+      ['Have you previously been employed by this company?', 'Yes'],
       ['How did you hear about this position?', 'LinkedIn'],
       // The one the reuse side has to refuse on its own account.
       ['Month of birth', 'April'],
@@ -185,10 +203,11 @@ async function main() {
     // The profile fields land first and locally; the bank is a round trip
     // behind them, so waiting on the box this is about rather than on a clock.
     await page
-      .waitForFunction(() => document.getElementById('prev')?.value !== '', null, { timeout: 20_000 })
+      .waitForFunction(() => document.getElementById('arr')?.value !== '', null, { timeout: 20_000 })
       .catch(() => undefined);
 
     const got = await page.evaluate(() => ({
+      arr: document.getElementById('arr').value,
       prev: document.getElementById('prev').value,
       reworded: document.getElementById('reworded').value,
       dobm: document.getElementById('dobm').value,
@@ -199,8 +218,8 @@ async function main() {
     check('the profile still fills what it always filled', got.email.includes('@'), got.email || '(empty)');
     check(
       'the same question on the next form is answered from the bank',
-      got.prev === 'No',
-      `"${got.prev}"`,
+      got.arr === 'Hybrid',
+      `"${got.arr}"`,
     );
     check(
       'and one asked with radio buttons where the bank saw a dropdown',
@@ -222,6 +241,11 @@ async function main() {
      * silent: a form that goes out saying something about somebody that they
      * did not choose to say on it.
      */
+    check(
+      'another employer’s answer to whether you have worked here is not put on this form',
+      got.prev === '',
+      `"${got.prev}"`,
+    );
     check(
       'a personal question is refused even with a row in the bank for it',
       got.dobm === '',

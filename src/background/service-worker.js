@@ -8,6 +8,7 @@
 import { getSettings } from '../shared/config.js';
 import {
   EXPECTATION_MS,
+  employerKey,
   judgeApplication,
   keepPages,
   plainlyAnotherRole,
@@ -158,6 +159,23 @@ function stopReason() {
   const err = new Error('Stopped.');
   err.jobhelper = { stopped: true };
   return err;
+}
+
+/**
+ * Which resume a letter, an answer or a re-tailor is written from.
+ *
+ * The card's resume is a proposal the store is not given until the folder is
+ * built, so its own id names nothing there. This used to send the resume it
+ * inherited from instead — `spec.extends ?? spec.id` — and resumes stopped
+ * inheriting: `extends` is always missing now, the proposal's id went, and
+ * every letter asked for from the card came back "No resume named …".
+ *
+ * The proposal itself goes, which the server writes from; `copiedFrom` goes as
+ * the id, so a server that predates taking the proposal still finds a resume
+ * that exists.
+ */
+function writingFrom(spec) {
+  return { resumeId: spec?.copiedFrom ?? spec?.id, spec };
 }
 
 /**
@@ -368,7 +386,14 @@ const parkedAt = (record) => {
   return record?.work ? [{ work: record.work, save: record.save, at: record.at }] : [];
 };
 
-const companyOf = (job) => (job?.company ?? '').trim().toLowerCase();
+/*
+ * By the same key the trail joins pages on — see `employerKey`. Compared
+ * exactly, a park named after the form's "Helios" was another employer's to
+ * the posting's "Helios, Inc.", and coming back to the job refused its own
+ * letter: measured, `takeWork` answered `{work: null}` with the park still
+ * sitting at the address.
+ */
+const companyOf = (job) => employerKey(job?.company);
 
 /**
  * Two applications that are plainly not each other.
@@ -393,13 +418,53 @@ const sameJob = (job, other) =>
  * Put an application's writing aside under an address, without displacing
  * another job's writing parked at the same one.
  */
-/** Take one entry out of an address's parked work, leaving the rest. */
-async function dropPark(key, held, gone) {
-  const left = held.filter((p) => p !== gone);
-  await (left.length > 0
-    ? session().set({ [key]: { parked: left, at: Date.now() } })
-    : session().remove(key)
-  ).catch(() => undefined);
+/**
+ * Take what `isGone` names out of an address's parked work, leaving the rest.
+ *
+ * Through the same chain as `parkWork`, and over the list as it is when the
+ * turn comes rather than as it was when somebody last looked. `dropPark` was
+ * handed the list `takeWork` had read several turns earlier, across a real
+ * `await writeTrail`, and wrote it back minus the entry claimed. Measured in
+ * tests/worker.mjs, with another tab parking at the same address a couple of
+ * milliseconds either side of a claim: its letter was written and then
+ * erased, and at the neighbouring delays the claim was written over instead,
+ * leaving the letter just claimed parked for another tab to claim again.
+ */
+function unpark(key, isGone) {
+  return changeStored(key, async (stored) => {
+    const held = parkedAt(stored);
+    const left = held.filter((p) => !isGone(p));
+    if (left.length === held.length) return null;
+    if (left.length > 0) return { parked: left, at: Date.now() };
+    await session().remove(key).catch(() => undefined);
+    return null;
+  });
+}
+
+/** One entry, as it was read; see `unpark`. */
+function dropPark(key, gone) {
+  const same = JSON.stringify(gone);
+  return unpark(key, (p) => JSON.stringify(p) === same);
+}
+
+/**
+ * The same entry, at every address it was parked under.
+ *
+ * `remember` and `clearTrail` park one entry under every page of the
+ * application, so that coming back to any of them finds it — which makes each
+ * of those a copy, and claiming one of them took only that one. Measured in
+ * tests/worker.mjs: a letter claimed on the posting was handed again to
+ * another tab opening the form, as "recovered from a tab that closed", while
+ * the tab that claimed it was open and holding it. The copies are one object
+ * written several times, so they are the entries that read back identical.
+ */
+async function dropParkEverywhere(gone) {
+  const same = JSON.stringify(gone);
+  const all = await session().get(null).catch(() => ({}));
+  for (const [key, record] of Object.entries(all)) {
+    if (!key.startsWith('jh-orphan:')) continue;
+    if (parkedAt(record).some((p) => JSON.stringify(p) === same)) await dropPark(key, gone);
+  }
 }
 
 async function parkWork(url, entry) {
@@ -470,8 +535,21 @@ const branchKey = (tabId) => `jh-branched:${tabId}`;
  * nothing. Measured, not assumed: `set` ok, `get(null)` one key, `get(key)`
  * null.
  */
-const heldKey = (save, company, role) =>
-  `jh-held:${[save, company, role].map(encodeURIComponent).join('|')}`;
+const heldKey = (save, company, role, applied) =>
+  /*
+   * And whether the form had been acted on when it was held.
+   *
+   * Without that last part this key is what stops the second push. The first
+   * one opens the row while the resume is being built, which is before
+   * anything has been put in the employer's boxes — so the row is `interested`
+   * and the key is set, and the push that would carry `actedOnForm: true` and
+   * move it to `applying` never goes. The row stays "Not applied" through an
+   * application that was filled in and sent.
+   *
+   * Two keys, so each of the two states is pushed once. It cannot oscillate:
+   * `actedOnForm` is only ever set on the card, never cleared.
+   */
+  `jh-held:${[save, company, role, applied ? 'applied' : 'held'].map(encodeURIComponent).join('|')}`;
 
 /*
  * Whether a trail is still current is a question about when, not about how
@@ -513,6 +591,14 @@ async function writeTrail(tabId, trail) {
  * Saying, anywhere you go, that an application is open                 *
  * ------------------------------------------------------------------ */
 
+/** Named for the tab, so a later write moves it rather than adding another. See `markTab`. */
+const expiryAlarm = (tabId) => `jh-trail-expires:${tabId}`;
+
+chrome.alarms?.onAlarm?.addListener(({ name }) => {
+  const tabId = /^jh-trail-expires:(\d+)$/.exec(name)?.[1];
+  if (tabId !== undefined) markTab(Number(tabId)).catch(() => undefined);
+});
+
 /**
  * Mark the tab that is holding an application.
  *
@@ -536,10 +622,25 @@ async function markTab(tabId, trail) {
     const held = trail ?? (await readTrail(tabId));
     const pages = held.pages ?? [];
     if (pages.length === 0) {
+      chrome.alarms?.clear(expiryAlarm(tabId)).catch(() => undefined);
       await chrome.action.setBadgeText({ tabId, text: '' });
       await chrome.action.setTitle({ tabId, title: 'JobHelper' });
       return;
     }
+    /*
+     * And drawn again the moment it stops being true.
+     *
+     * The trail is current for `TRAIL_STALE_MS` from its last write, and this
+     * was only ever redrawn by a write or a navigation. A tab left on the
+     * company's About page for an afternoon went on saying "your writing is
+     * being held" hours after `readTrail` had started answering with nothing
+     * — the letter out of reach of every page and every button, and the
+     * tooltip promising the opposite. An alarm, because the worker is not
+     * awake two hours later to notice and a timer would die with it.
+     */
+    chrome.alarms
+      ?.create(expiryAlarm(tabId), { when: (held.at ?? Date.now()) + TRAIL_STALE_MS + 1 })
+      .catch(() => undefined);
 
     // The company if it is known, and the last page's title if it is not: on a
     // form that never names the employer, "the application you are on" is
@@ -566,7 +667,12 @@ async function markTab(tabId, trail) {
      */
     const wrote = Boolean(held.work?.letter?.trim()) || Object.keys(held.work?.answersByQuestion ?? {}).length > 0;
     if (wrote) parts.push('your writing is being held');
-    else if (held.work?.spec) parts.push('a tailored resume is ready');
+    /*
+     * Not "tailored", which the popup stopped saying for the reason it gives
+     * in `showOpenApplication`: any proposal at all has a spec, and a proposal
+     * is the resume exactly as it is kept until somebody ticks something.
+     */
+    else if (held.work?.spec) parts.push('the resume for it is ready');
 
     await chrome.action.setBadgeText({ tabId, text: String(n) });
     await chrome.action.setBadgeBackgroundColor?.({ tabId, color: '#1a73e8' });
@@ -904,7 +1010,7 @@ async function askFrames(tabId, message) {
  * the write are two awaits — so it stays, in memory, for the in-flight case
  * only.
  */
-const holding = new Set();
+const holding = new Map();
 /**
  * Something the person made, as against something the card worked out.
  *
@@ -969,12 +1075,37 @@ async function holdASpace(trail, tabId) {
   const role = work.spec?.generatedFor?.role;
   if (!company || !role) return;
 
-  const key = heldKey(save, company, role);
-  if (holding.has(key)) return;
-  holding.add(key);
+  const key = heldKey(save, company, role, work.actedOnForm);
+  // The write already in flight, handed to whoever else asks — a send waiting
+  // on its save has to wait on this, not on a call that returned at once.
+  if (holding.has(key)) return holding.get(key);
+  const run = holdTheSpace(key, save, company, role, trail, work);
+  holding.set(key, run);
+  return run;
+}
+
+/**
+ * This worker, as against the one before it.
+ *
+ * `holdTheSpace` marks a space as held before its POST goes and unmarks it if
+ * the POST fails — and a worker stopped mid-POST runs neither half. Measured:
+ * the POST never answered, no row was opened, and after the restart every
+ * later save found the mark and sent nothing, so the application had no draft
+ * in the editor until its form was filled in. A mark still pending from a
+ * worker that no longer exists is an attempt that died, and is made again;
+ * if that one had in fact landed, the second is a merge of the same spec.
+ */
+const THIS_WORKER = `${Date.now()}-${Math.random()}`;
+
+/** The write `holdASpace` guards: one per key at a time. */
+async function holdTheSpace(key, save, company, role, trail, work) {
   try {
-    if ((await session().get(key).catch(() => ({})))[key]) return;
-    await session().set({ [key]: { at: Date.now() } }).catch(() => undefined);
+    const held = (await session().get(key).catch(() => ({})))[key];
+    if (held && !(held.pending && held.pending !== THIS_WORKER)) return;
+    await session().set({ [key]: { at: Date.now(), pending: THIS_WORKER } }).catch(() => undefined);
+    // Settled either way the store answers, so no later worker takes it for
+    // an attempt that died.
+    const settled = () => session().set({ [key]: { at: Date.now() } }).catch(() => undefined);
     try {
       await serverFetch('/api/workspace', {
         method: 'POST',
@@ -991,6 +1122,28 @@ async function holdASpace(trail, tabId) {
            * somebody's tracker.
            */
           auto: true,
+          /*
+           * And whether it has been applied to yet, which is a different
+           * question from whether there is anything to hold.
+           *
+           * A place to write is wanted as soon as there is a resume: the
+           * letter is drafted before the form is opened, and gating the
+           * workspace on the form having been filled puts the writing surface
+           * behind the thing it is for. But a row that says `applying` is a
+           * claim about what somebody is doing, and a built resume is not that
+           * claim — a resume is built on anything job-shaped you open, and
+           * `prepareSoon` stages the folder off a timer with nobody pressing
+           * anything. So the tracker filled up with "Indeed — Now Hiring: 300
+           * Software Intern Jobs", a `preview.redd.it` image url, and one row
+           * each for "NVIDIA Corporation" and "2100 NVIDIA USA", every one of
+           * them sitting at `applying` for ever.
+           *
+           * Putting text in the employer's boxes or a file in its upload
+           * control is the thing no amount of browsing does by accident. The
+           * store opens the row at `interested` until it hears this, and
+           * advances it when it does.
+           */
+          actedOnForm: Boolean(work.actedOnForm),
           company,
           role,
           url: trail.pages?.[0]?.url,
@@ -1000,6 +1153,7 @@ async function holdASpace(trail, tabId) {
           coverLetterRequired: Boolean(work.letter?.trim()) || undefined,
         }),
       });
+      await settled();
     } catch (err) {
       /*
        * A refusal stands. The store has looked at this company and role and
@@ -1008,7 +1162,7 @@ async function holdASpace(trail, tabId) {
        * and this pair is not asked about again. Dropping it would put the
        * write on every keeper tick for as long as the tab is open.
        */
-      if (err?.kind === 'not-a-job') return;
+      if (err?.kind === 'not-a-job') return settled();
       // Anything else, and the store may simply not be running, which is not
       // this save's problem: the work is already held in the browser either
       // way. Letting the key go means the next application tries again
@@ -1041,6 +1195,17 @@ function nameOfTrail(trail) {
   const last = [...(trail?.pages ?? [])].reverse().find((p) => p?.role || p?.company);
   if (!last) return null;
   return { role: last.role ?? null, company: last.company ?? null };
+}
+
+/**
+ * The same name in a sentence, the way the card's heading and the toolbar
+ * already say it: "Platform Engineer at Helios".
+ */
+function sayJob(job) {
+  const role = job?.role?.trim();
+  const company = job?.company?.trim();
+  if (role && company) return `${role} at ${company}`;
+  return role || company || null;
 }
 
 async function remember(tab, page) {
@@ -1207,6 +1372,66 @@ async function remember(tab, page) {
   return { ...summarise(stored), startedFresh: !joins };
 }
 
+
+/**
+ * Saves still being written, by tab, until the draft each may open has been
+ * asked for. A send waits on its tab's; see `applicationSent`.
+ */
+const savesInFlight = new Map();
+
+/**
+ * How long a send waits for that save before being recorded regardless.
+ *
+ * Ten seconds, not three. The save's draft request commits the tailored
+ * resume before it opens the draft, and a commit on a busy machine is slow:
+ * measured with the wait cut to 300ms, the draft landed 47–182ms after the
+ * send on an idle machine, and at three seconds under the parallel runner it
+ * still landed after it now and then ("embedded-apply", 228–399ms late).
+ * Nothing waits on this but the record of the send — the form has gone.
+ */
+const SEND_WAITS_FOR_SAVE_MS = 10_000;
+
+/**
+ * What `saveWork` does, returning the draft-opening write it started so the
+ * handler can say when it has settled.
+ */
+async function keepWork({ work, page }, tab) {
+  const trail = await readTrail(tab?.id);
+  // Only the application this tab is actually on. Without this a card left
+  // open on another posting would keep writing its work over this one's.
+  if (page && trail.pages.length > 0 && !sameApplication(trail, page)) return { reply: { ok: false } };
+  // And nothing at all into a tab that was told to start fresh, until it
+  // has read a page of its own. See `clearTrail`: the card's keeper is
+  // still running when that button is pressed.
+  if (trail.cleared && trail.pages.length === 0) return { reply: { ok: false } };
+  // And never nothing over something: a card that failed to analyse its page
+  // has an empty state, and saving it threw away the resume built on the
+  // page before.
+  if (!worthKeeping(work) && worthKeeping(trail.work)) return { reply: { ok: false } };
+
+  // Stamped, because `at` is what says the trail is still current — work
+  // written without it reads back as a trail from another sitting.
+  const next = { ...trail, work, at: Date.now() };
+  const written = await writeTrail(tab?.id, next);
+  /*
+   * The toolbar says "your writing is being held" the moment it is — and
+   * only then.
+   *
+   * `writeTrail` returns null when session storage refuses the write, which
+   * this file budgets for, and the badge was drawn from the in-memory
+   * `next` regardless. Measured with the quota filled: `saveWork` answered
+   * `{ok: false}`, the letter was in no storage anywhere, and the tooltip
+   * read "1 page read, your writing is being held". The only caller
+   * discards the reply, so that tooltip was the whole of what the user had
+   * to go on — and the note on `markTab` says the purpose of this line is
+   * to be believed when it says nothing was lost.
+   */
+  await markTab(tab?.id, written === null ? trail : next);
+  // Handed back rather than awaited here: the keeper does not wait on it,
+  // and a send does, through `savesInFlight`.
+  return { reply: { ok: written !== null }, holding: holdASpace(next, tab?.id) };
+}
+
 const handlers = {
   /** "There is a content script in this frame." Sent once, on load. */
   async frameReady(_payload, tab, sender) {
@@ -1301,10 +1526,10 @@ const handlers = {
   },
 
   /** Put an answer into a field that lives in one particular frame. */
-  async insertInFrame({ frameId, fieldId, text }, tab) {
+  async insertInFrame({ frameId, fieldId, text, question }, tab) {
     if (tab?.id === undefined) return false;
     const reply = await chrome.tabs
-      .sendMessage(tab.id, { type: 'jh-frame-insert', payload: { fieldId, text } }, { frameId })
+      .sendMessage(tab.id, { type: 'jh-frame-insert', payload: { fieldId, text, question } }, { frameId })
       .catch(() => null);
     return Boolean(reply?.ok && reply.data);
   },
@@ -1329,40 +1554,30 @@ const handlers = {
    * moment the form appeared to put them in, which made the tool feel like it
    * had forgotten what you were doing — because it had.
    */
-  async saveWork({ work, page }, tab) {
-    const trail = await readTrail(tab?.id);
-    // Only the application this tab is actually on. Without this a card left
-    // open on another posting would keep writing its work over this one's.
-    if (page && trail.pages.length > 0 && !sameApplication(trail, page)) return { ok: false };
-    // And nothing at all into a tab that was told to start fresh, until it
-    // has read a page of its own. See `clearTrail`: the card's keeper is
-    // still running when that button is pressed.
-    if (trail.cleared && trail.pages.length === 0) return { ok: false };
-    // And never nothing over something: a card that failed to analyse its page
-    // has an empty state, and saving it threw away the resume built on the
-    // page before.
-    if (!worthKeeping(work) && worthKeeping(trail.work)) return { ok: false };
-
-    // Stamped, because `at` is what says the trail is still current — work
-    // written without it reads back as a trail from another sitting.
-    const next = { ...trail, work, at: Date.now() };
-    const written = await writeTrail(tab?.id, next);
+  async saveWork(payload, tab) {
     /*
-     * The toolbar says "your writing is being held" the moment it is — and
-     * only then.
-     *
-     * `writeTrail` returns null when session storage refuses the write, which
-     * this file budgets for, and the badge was drawn from the in-memory
-     * `next` regardless. Measured with the quota filled: `saveWork` answered
-     * `{ok: false}`, the letter was in no storage anywhere, and the tooltip
-     * read "1 page read, your writing is being held". The only caller
-     * discards the reply, so that tooltip was the whole of what the user had
-     * to go on — and the note on `markTab` says the purpose of this line is
-     * to be believed when it says nothing was lost.
+     * Registered before the first await, so a send that follows on the heels
+     * of this save — the content script flushes the work and reports the send
+     * in the same breath — finds it here and waits for it. See
+     * `applicationSent`.
      */
-    await markTab(tab?.id, written === null ? trail : next);
-    void holdASpace(next, tab?.id);
-    return { ok: written !== null };
+    const tabId = tab?.id;
+    let release;
+    const settled = new Promise((r) => (release = r));
+    savesInFlight.set(tabId, settled);
+    const free = () => {
+      release();
+      if (savesInFlight.get(tabId) === settled) savesInFlight.delete(tabId);
+    };
+    try {
+      const { reply, holding } = await keepWork(payload, tab);
+      if (holding) holding.catch(() => undefined).finally(free);
+      else free();
+      return reply;
+    } catch (err) {
+      free();
+      throw err;
+    }
   },
 
   /** The work from the pages before this one, if this page continues them. */
@@ -1389,7 +1604,8 @@ const handlers = {
      * Nothing else here knows: what the content script sends is an address
      * and a title.
      */
-    const rescued = pickParked(held, nameOfTrail(trail), tab?.id);
+    const looking = nameOfTrail(trail);
+    const rescued = pickParked(held, looking, tab?.id);
     if (rescued) {
       const fresh = Date.now() - (rescued.at ?? 0) < TRAIL_STALE_MS;
       // Claimed or expired, this one goes either way. Leaving the stale ones
@@ -1425,7 +1641,9 @@ const handlers = {
             at: Date.now(),
           });
         }
-        await dropPark(key, held, rescued);
+        await dropPark(key, rescued);
+        // And its copies under the application's other pages.
+        await dropParkEverywhere(rescued);
         /*
          * And which of the two rescues this was, because they want different
          * sentences. A tab that closed and came back is a surprise worth
@@ -1433,12 +1651,37 @@ const handlers = {
          * in the tab you never left, is not a closed tab and saying so reads
          * as the extension having lost track.
          */
-        return { work: rescued.work, recovered: rescued.tab !== undefined && rescued.tab === tab?.id ? 'job' : true };
+        const mine = rescued.tab !== undefined && rescued.tab === tab?.id;
+        /*
+         * And, where nothing checked it against this page, which job it was.
+         *
+         * `pickParked` refuses a park that names a plainly different job —
+         * but only when it has a job to compare it to. A page the analysis
+         * could not name gives it none, and rather than refuse every rescue
+         * there it hands back the newest thing parked at the address, which
+         * is the branch the whole Ctrl+Shift+T case runs down: a reopened tab
+         * has a new id, so its own park is not recognisable as its own.
+         *
+         * That is the right call — the alternative loses the letter the
+         * rescue exists for — but on a board that keeps every posting at one
+         * address the newest park may be another job's, and "Recovered what
+         * you had written before this tab closed" gave nothing to notice it
+         * by. Saying whose it was costs a clause and turns a silent wrong
+         * hand-off into one the reader can see.
+         *
+         * Only in that branch. Everywhere else the park was matched against
+         * the job on screen, and the card's own heading already names it.
+         */
+        return {
+          work: rescued.work,
+          recovered: mine ? 'job' : true,
+          recoveredFor: mine || looking ? undefined : sayJob(rescued.job) ?? undefined,
+        };
       }
       // Claimed or expired, this one goes either way. Leaving the stale ones
       // behind is how the space fills up; see `sweepOrphans`. The others stay
       // for the job they belong to.
-      await dropPark(key, held, rescued);
+      await dropPark(key, rescued);
     }
     return { work: trail.work ?? null };
   },
@@ -1606,6 +1849,25 @@ const handlers = {
     await writeTrail(id, merged);
     await markTab(id, merged);
     await session().remove(key).catch(() => undefined);
+    /*
+     * And the copies the branch parked, now that the writing is back here.
+     *
+     * Branching parks what it leaves under every page of the old application
+     * — see `remember` — so that a tab closed on the new job can still reach
+     * the old one's letter. The merge put the writing back into this tab and
+     * left those parks where they were. Measured in tests/worker.mjs: a second
+     * tab opening the posting was handed the same letter as "recovered from a
+     * tab that closed", while the tab it came from was open and holding it —
+     * one application being written in two places, and sent from either.
+     *
+     * Only this tab's parks for this job. Another tab's, or another job's at
+     * the same address, are still somebody's only copy.
+     */
+    const leftJob = nameOfTrail(held.trail);
+    const ours = (p) => p.tab === id && (leftJob ? sameJob(p.job, leftJob) : !p.job);
+    for (const url of new Set((held.trail.pages ?? []).map((p) => p?.url).filter(Boolean))) {
+      await unpark(orphanKey(url), ours);
+    }
     /*
      * With the writing, which `summarise` deliberately strips.
      *
@@ -2005,11 +2267,11 @@ const handlers = {
    * — which is why the resume's id travels with it. A preview compile: the
    * copy that gets attached is built again when the folder is.
    */
-  async renderLetter({ body, company, role, resumeId }) {
+  async renderLetter({ body, company, role, resumeId, spec }) {
     const result = await serverFetch('/api/render/letter', {
       method: 'POST',
       timeoutMs: SLOW_TIMEOUT_MS,
-      body: JSON.stringify({ body, company, role, resumeId }),
+      body: JSON.stringify({ body, company, role, ...(spec ? writingFrom(spec) : { resumeId }) }),
     });
     const { serverUrl } = await getSettings();
     return { ...result, absolutePdfUrl: `${serverUrl.replace(/\/$/, '')}${result.pdfUrl}` };
@@ -2042,7 +2304,7 @@ const handlers = {
       method: 'POST',
       timeoutMs: SLOW_TIMEOUT_MS,
       body: JSON.stringify({
-        resumeId: spec.extends ?? spec.id,
+        ...writingFrom(spec),
         job: {
           jobTitle: job?.title,
           company: job?.company,
@@ -2131,8 +2393,24 @@ const handlers = {
     return { base64: btoa(binary) };
   },
 
-  async autofillData() {
-    return serverFetch('/api/autofill');
+  /**
+   * What the form can be filled from — as the resume being sent says it.
+   *
+   * The resume's `choices` go along because some answers differ per resume,
+   * and the graduation date is the one that matters: somebody applying to
+   * internships and new-grad roles keeps two, and the form asked with no
+   * resume named was answered from the default — May, on every internship
+   * form, under a resume that says December. The store reads the choices and
+   * answers the way the attached document does.
+   */
+  async autofillData(_payload, tab) {
+    const trail = await readTrail(tab?.id);
+    const choices = trail?.work?.spec?.choices;
+    const query =
+      choices && typeof choices === 'object' && Object.keys(choices).length > 0
+        ? `?choices=${encodeURIComponent(JSON.stringify(choices))}`
+        : '';
+    return serverFetch(`/api/autofill${query}`);
   },
 
   /**
@@ -2231,7 +2509,7 @@ const handlers = {
   },
 
   /** Answer one question, reusing a stored answer unless asked to redraft. */
-  async answerQuestion({ question, force, job }, tab) {
+  async answerQuestion({ question, force, job, limit }, tab) {
     return stoppably(tab, 'answerQuestion', (signal) =>
       serverFetch('/api/ai/answer', {
         method: 'POST',
@@ -2240,6 +2518,8 @@ const handlers = {
         body: JSON.stringify({
           question,
           force,
+          // The box's own `maxlength`, so the draft is written to fit it.
+          limit,
           // Mapped into the server's shape, as `coverLetter` does below.
           job: job
             ? {
@@ -2299,10 +2579,9 @@ const handlers = {
         signal,
         timeoutMs: SLOW_TIMEOUT_MS,
         body: JSON.stringify({
-          // The base, as `coverLetter` does: a tailored spec exists only in
-          // the card until the folder is built, so the store has never seen
-          // it.
-          resumeId: spec.extends ?? spec.id,
+          // A tailored spec exists only in the card until the folder is
+          // built, so the store has never seen it: see `writingFrom`.
+          ...writingFrom(spec),
           job: {
             jobTitle: job.title,
             company: job.company,
@@ -2327,7 +2606,7 @@ const handlers = {
         signal,
         timeoutMs: SLOW_TIMEOUT_MS,
         body: JSON.stringify({
-          resumeId: spec.extends ?? spec.id,
+          ...writingFrom(spec),
           job: {
             jobTitle: job.title,
             company: job.company,
@@ -2384,8 +2663,8 @@ const handlers = {
     const absolute = /^[a-z]+:/i.test(url) ? url : `${(await getSettings()).serverUrl.replace(/\/$/, '')}${url}`;
     const opened = await chrome.tabs.create({ url: absolute });
     // Noted, so that coming back to the tab that sent you here means
-    // something. See `awaitingReturn`.
-    if (typeof tab?.id === 'number') awaitingReturn.add(tab.id);
+    // something. See `awayKey`.
+    if (typeof tab?.id === 'number') await session().set({ [awayKey(tab.id)]: { at: Date.now() } }).catch(() => undefined);
     return { id: opened.id };
   },
 
@@ -2432,6 +2711,34 @@ const handlers = {
    * the only side that knows how an application is named.
    */
   async applicationSent({ company, role, url, note }, tab) {
+    /*
+     * After the save the content script flushed on its way here, and the
+     * draft that save opens.
+     *
+     * The two leave the page together, and they raced: the send could be
+     * filed before the draft existed, and the draft then opened a moment
+     * later. Measured in tests/sending.mjs, the draft landed anywhere from
+     * before the send to 1.5 seconds after it under the parallel runner —
+     * which is why the check there failed now and then. Waiting here makes
+     * the order the one it was always meant to be. Bounded, because a store
+     * slow to open a draft is still no reason to hold up recording the send.
+     */
+    /*
+     * And where no save came with it, the top frame is asked for one. A form
+     * inside an iframe reports its send from that frame's script, which runs
+     * no keeper and so flushes nothing — the card and its keeper are in the
+     * top frame — and a send that beat the keeper's next tick was filed with
+     * no draft yet, the draft following it by up to a tick (measured in
+     * tests/sending.mjs: "embedded-apply", 348ms after).
+     */
+    let saving = savesInFlight.get(tab?.id);
+    if (!saving && tab?.id !== undefined) {
+      // Its `saveWork` is sent before this answer, so by the time the answer
+      // is back the save is registered and can be waited on like any other.
+      await chrome.tabs.sendMessage(tab.id, { type: 'jh-flush-work' }, { frameId: 0 }).catch(() => undefined);
+      saving = savesInFlight.get(tab.id);
+    }
+    if (saving) await Promise.race([saving, new Promise((r) => setTimeout(r, SEND_WAITS_FOR_SAVE_MS))]);
     try {
       return await serverFetch('/api/extension/sent', {
         method: 'POST',
@@ -2536,14 +2843,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
  *
  * Held here rather than worked out in the page from `visibilitychange`: this
  * side knows the trip was made, and it catches the return made by closing the
- * builder tab, which is how people actually come back. Plain memory is right
- * for it — if the worker has been asleep long enough to forget, the trip is
- * old enough not to be worth mentioning.
+ * builder tab, which is how people actually come back.
+ *
+ * In session storage, not in a Set. The Set was kept on the reasoning that a
+ * worker asleep long enough to forget it means a trip too old to mention —
+ * but Chrome stops the worker after half a minute without an event, and the
+ * tab left behind has its timers throttled to about one a minute after five,
+ * so the card's keeper stops keeping it awake. Adding a phrasing takes longer
+ * than that. Measured with the worker stopped while the builder was open: back
+ * on the posting, nothing said the match was out of date. The age limit is
+ * the trail's own, which is what "too old to mention" always meant.
  */
-const awaitingReturn = new Set();
+const awayKey = (tabId) => `jh-away:${tabId}`;
 
-chrome.tabs?.onActivated?.addListener(({ tabId }) => {
-  if (!awaitingReturn.delete(tabId)) return;
+chrome.tabs?.onActivated?.addListener(async ({ tabId }) => {
+  const key = awayKey(tabId);
+  const away = (await session().get(key).catch(() => ({})))[key];
+  if (!away) return;
+  await session().remove(key).catch(() => undefined);
+  if (Date.now() - (away.at ?? 0) > TRAIL_STALE_MS) return;
   chrome.tabs.sendMessage(tabId, { type: 'jh-came-back' }).catch(() => undefined);
 });
 
@@ -2670,7 +2988,7 @@ chrome.tabs?.onRemoved?.addListener(async (tabId) => {
   }
   // The branch stash goes with the tab it belonged to. It holds a whole
   // trail, first page's markup and all, and nothing else ever removed it.
-  session().remove([trailKey(tabId), framesKey(tabId), branchKey(tabId)]).catch(() => undefined);
+  session().remove([trailKey(tabId), framesKey(tabId), branchKey(tabId), awayKey(tabId)]).catch(() => undefined);
 });
 
 /*

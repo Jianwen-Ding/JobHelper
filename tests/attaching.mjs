@@ -199,6 +199,59 @@ const ALL_IN_ONE = page(
   `<label for="all">Attach your resume, cover letter and transcript</label><input id="all" type="file" multiple>`,
 );
 
+/**
+ * A box whose own `change` handler takes the file straight back.
+ *
+ * The ordinary shape of client-side validation: too large, wrong kind, and
+ * the widget clears the input in the same handler that read it. `putIn`
+ * checked `box.files` once, before dispatching the event that runs this
+ * handler, and reported the file placed on the strength of a fact that was
+ * about to stop being true.
+ */
+const RECLAIMS = page(`
+  <label for="rs">Resume</label><input id="rs" type="file">
+  <script>document.getElementById('rs').addEventListener('change', (e) => { e.target.value = ''; });</script>
+`);
+
+/**
+ * A widget that keeps the file for itself: reads it on `change`, clears the
+ * input so the same file can be chosen again, and shows it as a chip. The
+ * input ends up empty exactly as it does in `RECLAIMS`, and the file was
+ * accepted — so an empty input alone cannot be the test.
+ */
+const KEEPS_AS_CHIP = page(`
+  <div class="dropzone"><label for="rs">Resume</label><input id="rs" type="file"><div class="chips"></div></div>
+  <script>
+    document.getElementById('rs').addEventListener('change', (e) => {
+      const name = e.target.files[0]?.name;
+      e.target.value = '';
+      if (name) {
+        const chip = document.createElement('span');
+        chip.className = 'chip'; chip.textContent = name;
+        document.querySelector('.chips').append(chip);
+      }
+    });
+  </script>
+`);
+
+/**
+ * A box that resets itself by becoming a different element, which is how a
+ * widget built to show a removable chip instead of the native control
+ * usually works. The old node — the one `putIn` is still holding — keeps
+ * `.files` set even once it is out of the document, so the same check that
+ * catches `RECLAIMS` needs `isConnected` as well, not `files` alone.
+ */
+const REMOUNTS = page(`
+  <label for="rs">Resume</label><input id="rs" type="file">
+  <script>
+    document.getElementById('rs').addEventListener('change', (e) => {
+      const fresh = document.createElement('input');
+      fresh.type = 'file'; fresh.id = 'rs';
+      e.target.replaceWith(fresh);
+    });
+  </script>
+`);
+
 /** A form built as a web component, which is how a modern one is built. */
 const SHADOW = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head>
 <body><div id="host"></div><script>
@@ -206,12 +259,151 @@ const SHADOW = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</t
   root.innerHTML = '<label for="rs">Resume</label><input id="rs" type="file">';
 </script></body></html>`;
 
+/**
+ * Workday's drop area twice over: a Cover Letter section above a Resume/CV
+ * one, each a heading and a zone with no input until something is dropped,
+ * and the heading outside the zone, as `WORKDAY` has it. Each input the page
+ * makes is named for the zone that made it, so the readback says which one
+ * took what.
+ */
+const TWO_ZONES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head>
+<body><div data-automation-id="applicationPage">
+  <div data-automation-id="coverLetterSection">
+    <h4>Cover Letter</h4>
+    <div id="cl" data-automation-id="file-upload-drop-zone">
+      <div class="inner"><p>Drag and drop files here</p><button type="button">Select files</button></div>
+    </div>
+  </div>
+  <div data-automation-id="resumeSection">
+    <h4>Resume/CV</h4>
+    <div id="cv" data-automation-id="file-upload-drop-zone">
+      <div class="inner"><p>Drag and drop files here</p><button type="button">Select files</button></div>
+    </div>
+  </div>
+  <script>
+    let n = 0;
+    for (const zone of document.querySelectorAll('[data-automation-id="file-upload-drop-zone"]')) {
+      zone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const made = document.createElement('input');
+        made.type = 'file'; made.id = zone.id + '-' + ++n; made.style.display = 'none';
+        made.files = e.dataTransfer.files;
+        zone.append(made);
+      });
+    }
+  </script>
+</div></body></html>`;
+
+/**
+ * `accept` written without the dots, which the specification does not allow
+ * and plenty of forms do: the browser ignores a token it cannot read, and the
+ * person who wrote "pdf,doc,docx" plainly meant a PDF was fine.
+ */
+const ACCEPT_UNDOTTED = page(`<label for="rs">Resume</label><input id="rs" type="file" accept="pdf,doc,docx">`);
+const ACCEPT_UNDOTTED_DOC = page(`<label for="rs">Resume</label><input id="rs" type="file" accept="doc,docx">`);
+
+/**
+ * Two widgets that clear the box and name the file in doing so — to refuse
+ * it. The first says why in an alert beside the box; the second is Dropzone's
+ * own preview, drawn with the name and marked `dz-error`. The name appearing
+ * near the box is what `KEEPS_AS_CHIP` is read by, and here it means no.
+ */
+const REFUSES_BY_NAME = page(`
+  <div class="file-upload"><label for="rs">Resume</label><input id="rs" type="file"><div class="messages"></div></div>
+  <script>
+    document.getElementById('rs').addEventListener('change', (e) => {
+      const f = e.target.files[0];
+      e.target.value = '';
+      if (f) document.querySelector('.messages').innerHTML =
+        '<p class="error" role="alert">' + f.name + ' is larger than the 1 MB limit.</p>';
+    });
+  </script>
+`);
+const REFUSES_IN_PREVIEW = page(`
+  <div class="dropzone"><label for="rs">Resume</label><input id="rs" type="file"><div class="previews"></div></div>
+  <script>
+    document.getElementById('rs').addEventListener('change', (e) => {
+      const f = e.target.files[0];
+      e.target.value = '';
+      if (f) document.querySelector('.previews').innerHTML =
+        '<div class="dz-preview dz-file-preview dz-error"><div class="dz-filename"><span data-dz-name>' + f.name +
+        '</span></div><div class="dz-error-message"><span data-dz-errormessage>You can not upload files of this type.</span></div></div>';
+    });
+  </script>
+`);
+
+/**
+ * Dropzone.js as it sets itself up by default: each zone makes a hidden file
+ * input and appends it to the end of `<body>`, far from the zone, takes a
+ * file from it or from a drop, draws a preview, and replaces the input. The
+ * Cover Letter zone is first on the page, so it made the first input. What
+ * each zone holds is `window.held`.
+ */
+const DROPZONE_JS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title>
+<script>
+  window.held = {};
+  document.addEventListener('DOMContentLoaded', () => {
+    for (const zone of document.querySelectorAll('.dropzone')) {
+      window.held[zone.id] = [];
+      const add = (f) => {
+        window.held[zone.id].push(f.name);
+        const shown = document.createElement('div');
+        shown.className = 'dz-preview dz-file-preview';
+        shown.innerHTML = '<div class="dz-filename"><span data-dz-name></span></div>';
+        shown.querySelector('span').textContent = f.name;
+        zone.append(shown);
+      };
+      const setup = () => {
+        const input = document.createElement('input');
+        input.type = 'file'; input.multiple = true; input.className = 'dz-hidden-input';
+        input.style.cssText = 'visibility:hidden;position:absolute;top:0;left:0;height:0;width:0';
+        document.body.append(input);
+        input.addEventListener('change', () => {
+          for (const f of input.files) add(f);
+          input.remove();
+          setup();
+        });
+      };
+      setup();
+      zone.addEventListener('dragover', (e) => e.preventDefault());
+      zone.addEventListener('drop', (e) => { e.preventDefault(); for (const f of e.dataTransfer.files) add(f); });
+    }
+  });
+</script></head>
+<body><form>
+  <label for="fn">First Name</label><input id="fn" name="first_name">
+  <div class="field"><h4>Cover Letter</h4> <div id="cover" class="dropzone dz-clickable"><div class="dz-message"><span>Drop files here to upload</span></div></div></div>
+  <div class="field"><h4>Resume/CV</h4> <div id="resume" class="dropzone dz-clickable"><div class="dz-message"><span>Drop files here to upload</span></div></div></div>
+</form></body></html>`;
+
+/**
+ * Two upload controls as a framework renders them: no whitespace anywhere
+ * between the elements, so the label's text runs straight into the button's
+ * in `textContent` — "Cover LetterAttach". Nothing else names either box.
+ */
+const RUN_TOGETHER = page(
+  '<div class="upload"><div class="label">Resume</div><div class="wrap"><button type="button">Attach</button>' +
+    '<input id="u1" type="file" class="visually-hidden"></div></div>' +
+    '<div class="upload"><div class="label">Cover Letter</div><div class="wrap"><button type="button">Attach</button>' +
+    '<input id="u2" type="file" class="visually-hidden"></div></div>',
+);
+
 const PAGES = {
+  '/run-together': RUN_TOGETHER,
+  '/dropzone-js': DROPZONE_JS,
+  '/refuses-by-name': REFUSES_BY_NAME,
+  '/refuses-in-preview': REFUSES_IN_PREVIEW,
+  '/two-zones': TWO_ZONES,
+  '/accept-undotted': ACCEPT_UNDOTTED,
+  '/accept-undotted-doc': ACCEPT_UNDOTTED_DOC,
   '/resume-only-labelled': RESUME_ONLY_LABELLED,
   '/photo-and-zone': PHOTO_AND_ZONE,
   '/decoy': DECOY,
   '/doc-only': DOC_ONLY,
   '/all-in-one': ALL_IN_ONE,
+  '/reclaims': RECLAIMS,
+  '/keeps-as-chip': KEEPS_AS_CHIP,
+  '/remounts': REMOUNTS,
   '/shadow': SHADOW,
   '/menu': MENU,
   '/dropzone': DROPZONE,
@@ -515,6 +707,44 @@ async function main() {
       check('and it is reported as certain', report.placed[0]?.sure === true, JSON.stringify(report.placed[0]));
     }
 
+    /*
+     * Two drop areas and no input anywhere, which is Workday with a cover
+     * letter section as well as a resume one. With no box on the page every
+     * file went to the first area in the document, whatever was written over
+     * it — measured: the resume and the letter both dropped on Cover Letter,
+     * the page holding both there, and "Attached …-Resume.pdf and
+     * …-Cover-Letter.pdf" in green.
+     */
+    group('Two drop areas, each under its own heading');
+    {
+      const { report, inBoxes } = await run('/two-zones', [
+        filed('Jianwen-Ding-Resume.pdf'),
+        filed('Jianwen-Ding-Cover-Letter.pdf'),
+      ]);
+      const into = (zone) =>
+        Object.entries(inBoxes).filter(([id]) => id.startsWith(`${zone}-`)).flatMap(([, names]) => names);
+      check('the resume goes to the area under Resume/CV', JSON.stringify(into('cv')) === '["Jianwen-Ding-Resume.pdf"]', JSON.stringify(inBoxes));
+      check('and the letter to the one under Cover Letter', JSON.stringify(into('cl')) === '["Jianwen-Ding-Cover-Letter.pdf"]', JSON.stringify(inBoxes));
+      check('both said as attached, because both can be read back', report.placed.every((p) => p.sure === true), JSON.stringify(report.placed));
+    }
+
+    /*
+     * And one area, under Resume/CV, with a transcript to place as well. The
+     * area has said whose it is; dropping the transcript on it is the
+     * wrong-document failure `boxFor` refuses, arriving through the drop.
+     */
+    group('One drop area, and it says Resume/CV');
+    {
+      const { report } = await run('/workday', [filed('Jianwen-Ding-Resume.pdf'), filed('Transcript.pdf')]);
+      check('the resume is dropped on it', report.placed.some((p) => p.name === 'Jianwen-Ding-Resume.pdf'), JSON.stringify(report.placed));
+      check(
+        'and the transcript is not, and is said to have nowhere to go',
+        !report.placed.some((p) => p.name === 'Transcript.pdf') &&
+          report.unplaced.some((u) => u.name === 'Transcript.pdf' && u.why === 'no box here asks for it'),
+        JSON.stringify(report),
+      );
+    }
+
     /* ---------------------------------------------------------------- *
      * The six ways a file ended up in the wrong place, or nowhere        *
      * ---------------------------------------------------------------- */
@@ -577,6 +807,20 @@ async function main() {
         /\.doc/.test(report.unplaced[0]?.why ?? ''),
         report.unplaced[0]?.why ?? '',
       );
+    }
+
+    /*
+     * `accept="pdf,doc,docx"`. Each token was read as a MIME type, none is
+     * one, and the PDF was refused with "this form only takes pdf,doc,docx
+     * there" — a sentence that contradicts itself, over a box that would
+     * have taken the file from the dialog.
+     */
+    group('A box that says what it takes without the dots');
+    {
+      const { report, inBoxes } = await run('/accept-undotted', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('a PDF goes into a box that says "pdf"', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(report));
+      const doc = await run('/accept-undotted-doc', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('and still not into one that says only "doc,docx"', (doc.inBoxes.rs ?? []).length === 0, JSON.stringify(doc.report));
     }
 
     /*
@@ -663,6 +907,113 @@ async function main() {
       const { report, inBoxes } = await run('/shadow', [filed('Jianwen-Ding-Resume.pdf')]);
       check('a box inside a shadow root is still a box', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
       check('and it is reported as placed', report.placed.length === 1, JSON.stringify(report));
+    }
+
+    /*
+     * A box that takes the file back the instant it is given one — a
+     * `change` handler that clears it, the ordinary shape of client-side
+     * validation. `putIn` read `box.files` once, before dispatching the very
+     * event that runs this handler, so the file was reported placed on
+     * evidence about to stop being true. Measured before the fix: `placed:
+     * [{name: "Jianwen-Ding-Resume.pdf", ...}]`, `#rs` empty.
+     */
+    group('A box that clears itself the moment it hears about the file');
+    {
+      const { report, inBoxes } = await run('/reclaims', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('nothing is left in the box', (inBoxes.rs ?? []).length === 0, JSON.stringify(inBoxes));
+      check('and it is not claimed as attached', report.placed.length === 0, JSON.stringify(report.placed));
+      check(
+        'and named for what happened, not as though no box exists',
+        report.unplaced[0]?.why === 'this form took it and then would not keep it',
+        report.unplaced[0]?.why ?? '',
+      );
+    }
+
+    /*
+     * The same failure by the other route: the box resets itself by becoming
+     * a different element, which is how a widget that shows a removable
+     * chip instead of the native control is usually built. The detached old
+     * node keeps `.files` set, so the fix needs `isConnected` as well as a
+     * re-read of `files` — either alone misses this one.
+     */
+    group('A widget that clears the input and keeps the file as a chip');
+    {
+      const { report } = await run('/keeps-as-chip', [filed('Jianwen-Ding-Resume.pdf')]);
+      // Through the box, and sure of it — not rescued by the drop-area
+      // fallback, which can only guess (`sure: false`).
+      check(
+        'is reported as attached, through the box, because it was',
+        report.placed.length === 1 && report.placed[0].sure !== false,
+        JSON.stringify(report.placed),
+      );
+    }
+
+    /*
+     * A widget that takes the file back and says so with its name in the
+     * sentence: "Jianwen-Ding-Resume.pdf is larger than the 1 MB limit", or
+     * Dropzone's preview drawn in its error state. The name near the box was
+     * read as the chip `KEEPS_AS_CHIP` shows, and the card said "Attached"
+     * over an empty box and a red message.
+     */
+    /*
+     * Markup with no whitespace between its elements, which is what React and
+     * every other framework render. `textContent` joins a label to the button
+     * after it — "cover letterattach" — and `\bcover letter\b` cannot see
+     * the words in that. Measured: the cover letter "no box here asks for
+     * it" beside a box labelled Cover Letter, and with a plain "Resume"
+     * label the resume too.
+     */
+    group('Labels and buttons with no space between them');
+    {
+      const { report, inBoxes } = await run('/run-together', [
+        filed('Jianwen-Ding-Resume.pdf'),
+        filed('Jianwen-Ding-Cover-Letter.pdf'),
+      ]);
+      check('the resume goes in the box under Resume', inBoxes.u1?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(report));
+      check('and the letter in the one under Cover Letter', inBoxes.u2?.[0] === 'Jianwen-Ding-Cover-Letter.pdf', JSON.stringify(report));
+    }
+
+    /*
+     * Dropzone.js's inputs are at the end of the page, so nothing near one
+     * says whose it is — and the look back from the first one took the text
+     * of the whole form before it, and of the script, as if it were the
+     * heading. So the first input "said" resume and cover letter both and
+     * took the resume. Against the real Dropzone 5, with the Cover Letter
+     * zone first: the resume held by the Cover Letter zone, reported as
+     * "Attached".
+     */
+    group('Dropzone.js, with its inputs at the end of the page');
+    {
+      await run('/dropzone-js', [filed('Jianwen-Ding-Resume.pdf'), filed('Jianwen-Ding-Cover-Letter.pdf')]);
+      const held = await p.evaluate(() => window.held);
+      check('the resume is not given to the Cover Letter zone', !held.cover.includes('Jianwen-Ding-Resume.pdf'), JSON.stringify(held));
+      check(
+        'each zone ends up with its own document',
+        JSON.stringify(held.resume) === '["Jianwen-Ding-Resume.pdf"]' && JSON.stringify(held.cover) === '["Jianwen-Ding-Cover-Letter.pdf"]',
+        JSON.stringify(held),
+      );
+    }
+
+    group('A widget that names the file it is refusing');
+    for (const where of ['/refuses-by-name', '/refuses-in-preview']) {
+      const { report, inBoxes } = await run(where, [filed('Jianwen-Ding-Resume.pdf')]);
+      check(
+        `${where}: not reported as attached`,
+        report.placed.length === 0 && (inBoxes.rs ?? []).length === 0,
+        JSON.stringify(report),
+      );
+      check(
+        `${where}: and said to have been taken back`,
+        report.unplaced[0]?.why === 'this form took it and then would not keep it',
+        JSON.stringify(report.unplaced),
+      );
+    }
+
+    group('A box that replaces itself the moment it hears about the file');
+    {
+      const { report, inBoxes } = await run('/remounts', [filed('Jianwen-Ding-Resume.pdf')]);
+      check('the fresh box is empty', (inBoxes.rs ?? []).length === 0, JSON.stringify(inBoxes));
+      check('and it is not claimed as attached', report.placed.length === 0, JSON.stringify(report.placed));
     }
 
     /*

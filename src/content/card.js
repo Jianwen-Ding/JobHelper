@@ -220,6 +220,8 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 }
 .hint.warn button.link:hover { background: transparent; text-decoration-thickness: 2px; }
 .faint { color: var(--faint); font-size: 11px; }
+.count { text-align: right; margin-top: 2px; }
+.count.over { color: var(--bad); }
 
 .job { margin-bottom: 12px; }
 .job .role { font-weight: 500; font-size: 16px; line-height: 1.3; }
@@ -628,6 +630,18 @@ export function removeCard() {
  *   and checks it before building another, so a card that leaves without
  *   saying so is a card that can never be put back. See `putUpCard`.
  */
+
+/** "412 / 500", and a warning once past it. Nothing where the box has no limit. */
+function countAgainst(counter, text, limit) {
+  if (!counter || !limit) return;
+  const length = String(text ?? '').length;
+  const over = length > limit;
+  counter.textContent = over
+    ? `${length} / ${limit} — ${length - limit} over the box's limit; the form will refuse it`
+    : `${length} / ${limit}`;
+  counter.classList.toggle('over', over);
+}
+
 export function createCard({
   analysis,
   resumes = [],
@@ -729,10 +743,21 @@ export function createCard({
     priorLetters: [],
     questions,
     answers: {},
+    /** Questions whose last "Insert into form" put nothing in, by question. */
+    insertMissed: {},
     feedback: '',
     autofillReport: null,
     /** What the last press of Attach put into the form, and what it could not. */
     attachReport: null,
+    /**
+     * Whether anything has actually been done to the employer's form.
+     *
+     * Carried between pages, because the autofill on step one and the attach
+     * on step three are the same application, and the report itself is not
+     * carried — see `takeWork`. Only ever set, never cleared: an application
+     * you have begun does not stop having been begun.
+     */
+    actedOnForm: false,
     workspaceOpened: false,
     /** Whether an AI is in play at all. Filled in below; never assumed. */
     ai: null,
@@ -830,11 +855,44 @@ export function createCard({
    * landing on an application form already showing the "saved" panel would
    * hide the form it is standing in front of.
    */
+  /**
+   * Whether this application has been acted on, as against merely prepared.
+   *
+   * Reading a posting and building a resume for it is something you do to a
+   * dozen jobs in an evening, most of which you never apply to. Putting text
+   * into the employer's boxes or a file into its upload control is not: it is
+   * done on one form, deliberately, and there is no version of it that happens
+   * by browsing. That is the line the tracker needs — see `startedApplying` in
+   * the service worker, and the row-per-page-you-glanced-at it replaces.
+   *
+   * Derived rather than set at the four buttons, so a path that grows a fifth
+   * way to fill or attach is covered by having a report at all. A press that
+   * filled nothing or placed nothing does not count: pressing Autofill on a
+   * page with no fields is finding out there are none.
+   */
+  function actedOnForm() {
+    return Boolean(
+      state.actedOnForm ||
+        (state.autofillReport?.filled ?? []).length > 0 ||
+        (state.attachReport?.placed ?? []).length > 0,
+    );
+  }
+
   function takeWork() {
     return {
       spec: state.spec,
       builtWith: state.builtWith,
+      /*
+       * What the AI chose and why, for the page that cannot work it out.
+       *
+       * The next page reads the posting again, but only by keyword — it has
+       * no AI proposal of its own to draw the rows and the summary from. The
+       * match needs nothing carried; its own reading on that page is newer.
+       * See `restoreWork`.
+       */
+      proposal: state.builtWith === 'ai' ? proposalOf(analysis ?? {}) : null,
       render: state.render,
+      actedOnForm: actedOnForm(),
       /*
        * And where the files went.
        *
@@ -866,7 +924,7 @@ export function createCard({
        */
       answersByQuestion: Object.fromEntries(
         (state.questions ?? [])
-          .map((q) => [q.question, state.answers[q.question] ?? q.answer])
+          .map((q) => [q.question, answerShown(q)])
           .filter(([, a]) => a?.trim()),
       ),
     };
@@ -939,17 +997,51 @@ export function createCard({
       state.spec = work.spec;
       if (work.builtWith) state.builtWith = work.builtWith;
       state.showing = slot;
+      /*
+       * And the AI's rows with the AI's resume.
+       *
+       * This page's own reading is the keyword match, so an AI decision
+       * carried here was filed under the match's proposal — its rows, its
+       * `tailor: 'match'`, its `aiUsed: false` — and `analysis` was never
+       * given even that. Measured, walking on from a page the AI had
+       * tailored: the AI's button lit and the AI's resume compiled, under
+       * "The AI returned nothing usable, so nothing was tailored" and a
+       * keyword row headed "Chosen by the AI", counted "0 of 1 change". The
+       * proposal now travels with the work — see `takeWork` — and is what
+       * the card reads from, exactly as it would have after `showOffer`.
+       */
+      const carriedProposal = slot === 'ai' ? (work.proposal ?? null) : null;
       state.offers[slot] = {
         // This page's own reading of the posting where there is one: it is
         // the newer answer about the same job, and the rows come from it.
-        analysis: filed?.analysis ?? proposalOf(analysis ?? {}),
+        analysis: filed?.analysis ?? carriedProposal ?? proposalOf(analysis ?? {}),
         spec: work.spec,
         full: filed?.full ?? work.spec,
         none: filed?.none ?? withAllOff(work.spec, analysis?.rationale, analysis?.skillChanges),
       };
+      if (analysis) {
+        for (const k of PROPOSAL_KEYS) delete analysis[k];
+        Object.assign(analysis, state.offers[slot].analysis);
+      }
     }
-    if (work.render) state.render = work.render;
+    /*
+     * The preview only with the resume it is a preview of.
+     *
+     * The spec above is held back when a proposal somebody asked for is
+     * already on screen; the compiled preview built from it was not, so it
+     * landed on top of that proposal. Measured, with an AI run started on
+     * the posting landing on the form before the carried work: the preview
+     * and "Open full size" were the page-before's build (`v_base`), "Mark as
+     * applied" was enabled because a render existed, and pressing it filed
+     * the AI's `v_ai`, which nothing had compiled. Without it the card says
+     * "Not compiled yet" over the AI's proposal, which is true.
+     */
+    if (work.render && (!work.spec || state.spec === work.spec)) state.render = work.render;
     if (work.staged) state.staged = work.staged;
+    // One way only: the reports do not survive the page, so if this were
+    // assigned rather than or-ed, walking from the form you filled to the next
+    // step would say the application had never been touched.
+    state.actedOnForm = state.actedOnForm || Boolean(work.actedOnForm);
     // Set, never cleared: a page that carried nothing about this leaves the
     // reducing exactly as this page works it out for itself.
     if (work.showEverything) state.showEverything = true;
@@ -2891,13 +2983,16 @@ export function createCard({
       if (section.kind !== 'skills') return section;
       const items = { ...(section.items ?? {}) };
       /*
-       * The key comes out rather than being written back as the base's own
-       * list. Absent means inherited, and what is inherited here *is* the
-       * base's list — `from` is read off the flattened base — so the printed
-       * document is the same either way. Pinning it is how a resume stops
-       * seeing a skill added to its base next month.
+       * Back to the base's own list. Resumes no longer inherit, so a group
+       * with no list prints every skill it holds — taking the key out of a
+       * group the base had trimmed put back every skill the base had turned
+       * off. Only a group the base named nothing for (`from` null) goes back
+       * to having no entry, because that is what the base holds.
        */
-      for (const sc of skillChanges ?? []) delete items[sc.groupId];
+      for (const sc of skillChanges ?? []) {
+        if (sc.from) items[sc.groupId] = [...sc.from];
+        else delete items[sc.groupId];
+      }
       return { ...section, items };
     });
     return { ...spec, choices, ...(spec.sections ? { sections } : {}) };
@@ -2992,6 +3087,18 @@ export function createCard({
     if (state.showing !== which) parkShown();
     state.showing = which;
     state.spec = offer.spec;
+    /*
+     * Replaced, not merged over.
+     *
+     * The server leaves out what did not happen — `aiFailed`, `aiFailedKind`
+     * and `aiRaw` are `undefined` on a run that had nothing to report, and
+     * JSON drops them — so a proposal carries only the keys it has. Merging
+     * one over the last left the last one's there. Measured: an AI run that
+     * could not start, then the match worked out again from another base, and
+     * the card went on saying "The AI could not be started, so nothing was
+     * tailored" over a keyword list no AI had been asked about.
+     */
+    for (const k of PROPOSAL_KEYS) delete analysis[k];
     Object.assign(analysis, offer.analysis);
     state.builtWith = which === 'ai' ? 'ai' : 'none';
     state.render = null;
@@ -3073,7 +3180,8 @@ export function createCard({
    * set of items, recorded under `sections[skills].items`. Putting one back
    * means putting that list back, and `null` means the base asked for nothing
    * — which is not "no answer" but a real one, the group printing all of its
-   * items, and the way to say it is to leave the key out.
+   * items, and the way to say it is to leave the key out. A base that named
+   * a list gets that list written back, never the key removed.
    */
   async function setSkills(change, on, part) {
     /*
@@ -3083,20 +3191,36 @@ export function createCard({
      * Where both halves end up on, the answer is `change.to` verbatim rather
      * than the same set rebuilt — the match chose an order as well as a set,
      * and a rebuilt list is a permutation of it. Where both end up off, the
-     * key is left out rather than written back as the base's own list:
-     * absent means inherited, and pinning what was inherited is how a resume
-     * stops seeing things added to its base later.
+     * answer is the base's own list — see `withAllOff`: no list prints the
+     * whole group, which is only what the base holds when `from` is null.
      */
     const wanted = () => {
-      if (!change.from || !part) return on ? change.to : null;
+      if (!change.from || !part) return on ? change.to : change.from;
       const added = addedBy(change);
       const dropped = droppedBy(change) ?? [];
       const addOn = part === 'added' ? on : skillsOn(change, 'added');
       const dropOn = part === 'dropped' ? on : skillsOn(change, 'dropped');
       if (addOn && dropOn) return change.to;
-      if (!addOn && !dropOn) return null;
+      if (!addOn && !dropOn) return change.from;
       const kept = change.from.filter((id) => !(dropOn && dropped.includes(id)));
-      return addOn ? [...kept, ...added] : kept;
+      return inPlace(addOn ? [...kept, ...added] : kept);
+    };
+
+    /*
+     * Each item where the proposal puts it, and one the proposal dropped just
+     * after its neighbour in the base's list. The list prints in its own
+     * order, and additions were appended: base Python, Go, PHP with the AI
+     * adding Rust between Python and Go printed "Python, Go, PHP, Rust" once
+     * only the addition was ticked — an order neither list had.
+     */
+    const inPlace = (ids) => {
+      const at = new Map((change.to ?? []).map((id, i) => [id, i]));
+      let last = -1;
+      for (const id of change.from) {
+        if (at.has(id)) last = at.get(id);
+        else at.set(id, last + 0.5);
+      }
+      return [...ids].sort((a, b) => (at.get(a) ?? Infinity) - (at.get(b) ?? Infinity));
     };
 
     const want = wanted();
@@ -3173,6 +3297,24 @@ export function createCard({
         return;
       }
       state.render = r;
+      /*
+       * And the folder follows the preview, once there is a folder.
+       *
+       * Only "Build resume" staged after compiling. Every other compile is a
+       * box being ticked — a wording swapped in, a skills group narrowed,
+       * "Undo all" — and those recompiled the preview and left the folder
+       * holding the build from before. Measured: build, then tick one wording
+       * and one skills group; the preview showed `v_kafka` and a two-item
+       * Languages line, while the one `stage` ever sent still held `v_base`
+       * and all four languages — and that is the file "Attach files" and the
+       * drag chips hand the form.
+       *
+       * Gated on `state.staged`, so a card nobody has built on does not start
+       * filing an application as `applying` because a box was ticked while
+       * browsing. `prepareSoon` skips it when nothing that reaches a file has
+       * changed, which is the Build button's own stage landing first.
+       */
+      if (state.staged) prepareSoon();
     });
   }
 
@@ -3241,10 +3383,19 @@ export function createCard({
    */
   let lastPrepared = null;
   let preparing = null;
+  /*
+   * The skills lists are part of the file.
+   *
+   * This read `choices` and not `sections`, and a narrowed skills group is
+   * written to `sections[skills].items` — so ticking a skills suggestion after
+   * a wording one looked like nothing had changed and the folder kept a
+   * Languages line the preview no longer printed.
+   */
   const whatWouldBeStaged = () =>
     JSON.stringify([
       state.spec?.id ?? null,
       state.spec?.choices ?? null,
+      state.spec?.sections ?? null,
       state.letter ?? '',
       collectedAnswers(),
       state.naming ?? null,
@@ -3988,7 +4139,7 @@ export function createCard({
       if (q.yours) continue;
       const borrowed = Boolean(q.namesAnother) && !state.answers[q.question];
       const before = state.answers[q.question] ?? (borrowed ? '' : q.answer ?? '');
-      slots.push({ id: `q${slots.length + 1}`, question: q.question, answer: before, before });
+      slots.push({ id: `q${slots.length + 1}`, question: q.question, answer: before, before, limit: q.limit });
     }
 
     const mine = state.letter ?? '';
@@ -4000,7 +4151,7 @@ export function createCard({
       {
         spec: state.spec,
         letter: { required: wantsLetter, body: mine },
-        questions: slots.map(({ id, question, answer }) => ({ id, question, answer })),
+        questions: slots.map(({ id, question, answer, limit }) => ({ id, question, answer, limit })),
       },
       async (r) => {
         if (!r) return;
@@ -4016,7 +4167,7 @@ export function createCard({
           if (wantsLetter) await draftLetter();
           for (const slot of slots) {
             const before = state.answers[slot.question] ?? slot.before;
-            await act(`answer:${slot.question}`, { question: slot.question, force: true }, (one) => {
+            await act(`answer:${slot.question}`, { question: slot.question, force: true, limit: slot.limit }, (one) => {
               if (one?.executed && one.output) applyAnswer(slot.question, before, one.output);
             });
           }
@@ -4044,7 +4195,21 @@ export function createCard({
    */
   function applyAnswer(question, before, text) {
     if (!text?.trim()) return false;
-    if ((state.answers[question] ?? '') !== before) {
+    /*
+     * Nothing in `state.answers` is nobody having written anything.
+     *
+     * Only typing, a carried answer or an earlier draft puts a question in
+     * `state.answers`; until then its box shows the bank's answer, and that is
+     * what both callers hand in as `before`. This compared `before` against
+     * `state.answers[question] ?? ''`, so on every question the bank knew the
+     * two differed before anyone touched a key. Measured: "Rewrite for this
+     * role" on a stored answer left it as it was and said "You were writing
+     * while that ran, so what you wrote was kept", and "Write all 2 answers"
+     * threw both drafts away with "— 2 answers" — on the questions a rewrite
+     * is for, the ones answered for another company.
+     */
+    const now = state.answers[question];
+    if (now !== undefined && now !== before) {
       state.kept = [...new Set([...(state.kept ?? []), question])];
       const n = state.kept.length;
       state.answerNote =
@@ -4323,10 +4488,29 @@ export function createCard({
      */
     baseSelect.onchange = () => switchBaseTo(baseSelect.value);
 
+    /*
+     * The button below has to hear about every keystroke here, without a
+     * `draw()`: a redraw destroys this box and takes the caret with it — see
+     * `syncLetterControls` below, which exists for the same reason on the
+     * letter box.
+     */
+    let applyFeedback = null;
     const feedback = h('textarea', {
       value: state.feedback,
       placeholder: 'Anything to change? e.g. “lead with the distributed systems work”.',
-      oninput: (e) => (state.feedback = e.target.value),
+      /*
+       * Named, like the letter and the answer boxes, so a repaint mid-sentence
+       * can find this box again. Without it this was the one text box `draw`
+       * could not restore focus to — the AI status arriving, the resume list
+       * answering, all rebuilt the box out from under whatever was being
+       * typed, and the next keystroke went nowhere until it was noticed and
+       * clicked back into.
+       */
+      dataset: { field: 'feedback' },
+      oninput: (e) => {
+        state.feedback = e.target.value;
+        if (applyFeedback) applyFeedback.disabled = busyIn('resume') || !state.feedback.trim();
+      },
     });
 
     const body = h('div', { className: 'body' }, [drawJob()]);
@@ -4446,11 +4630,24 @@ export function createCard({
             textContent: 'Edit in ResumeM-M',
             title: 'Open this resume in the builder to add a bullet or another phrasing',
             disabled: !state.spec?.id,
-            onclick: () => {
+            onclick: async () => {
               // Remembered so that coming back here means something. See
               // `cameBack`.
               state.wentToEditor = true;
-              onAction('openTab', { url: `/#resumes/${encodeURIComponent(state.spec.id)}` });
+              /*
+               * The copy if the store has it, and the resume it was made from
+               * if not. The copy is only written when it is built or filed,
+               * and before then this opened an id with nothing behind it:
+               * the builder said the resume had been removed and stayed on
+               * whatever was open — often the base, where edits meant for
+               * this posting then went.
+               */
+              const id = state.spec.id;
+              const list = await Promise.resolve(onAction('listResumes', {})).catch(() => null);
+              const held = new Set((Array.isArray(list) ? list : list?.resumes ?? []).map((r) => r?.id));
+              const from = state.spec.copiedFrom;
+              const target = held.has(id) || !from || !held.has(from) ? id : from;
+              onAction('openTab', { url: `/#resumes/${encodeURIComponent(target)}` });
             },
           }),
         ]),
@@ -4546,10 +4743,18 @@ export function createCard({
         ]),
         h('div', { className: 'row gap' }, [feedback]),
         h('div', { className: 'row' }, [
-          h('button', {
+          (applyFeedback = h('button', {
             className: 'tiny',
             textContent: busyLabel('refine', 'Apply feedback', 'Thinking…'),
-            disabled: busyIn('resume'),
+            /*
+             * Empty was live. Every other box on the card that only does
+             * something with text in it — Save to store, Copy, See it typeset
+             * — disables on `!text.trim()` as well as while busy; this one
+             * disabled on busy alone; and clicking it empty ran the "there is
+             * nothing here" branch below silently, which read as a button
+             * that does nothing at all.
+             */
+            disabled: busyIn('resume') || !state.feedback.trim(),
             onclick: async () => {
               if (!state.feedback.trim()) return;
               /*
@@ -4589,7 +4794,7 @@ export function createCard({
                 draw();
               }
             },
-          }),
+          })),
         ]),
       ]),
     );
@@ -4766,14 +4971,14 @@ export function createCard({
                   title: 'Compile it the way it will be sent',
                   onclick: () =>
                     /*
-                     * The base, not the proposal: a tailored spec only exists
-                     * in this card until the folder is prepared, so asking the
-                     * store to set a letter to match it would be asking about
-                     * a resume it has never seen. What the letter borrows is
-                     * the margins and the name at the top, and those come from
-                     * the base either way.
+                     * The proposal itself: it only exists in this card until
+                     * the folder is prepared, so the store cannot look it up
+                     * by id. This sent `extends` for that reason, which
+                     * resumes no longer carry — the proposal's id went, found
+                     * nothing, and the letter came out in the save's default
+                     * margins and name rather than the resume's.
                      */
-                    act('renderLetter', { body: state.letter, resumeId: state.spec?.extends ?? state.spec?.id }, (r) => {
+                    act('renderLetter', { body: state.letter, spec: state.spec }, (r) => {
                       state.letterRender = r;
                     }),
                 })),
@@ -5124,10 +5329,27 @@ export function createCard({
    * Answers file and from the permanent record of what was sent, while every
    * box on screen was full.
    */
+  /**
+   * What a question's box holds, which is what is sent for it.
+   *
+   * The box itself has worked this out since answers naming another employer
+   * stopped being filled in — see `borrowed` in `drawQuestionsStep` — and
+   * everything that sends an answer went on reading `q.answer` straight off
+   * the bank. Measured, on a Globex form whose bank answer opens "Acme is why
+   * I applied": the box empty behind "Start from what you told Acme", and
+   * that sentence in the `stage` and `bundle` payloads, filed as what was
+   * sent to Globex, and in `takeWork`, which carried it to the next page as
+   * an answer typed for this application — where it went straight into the
+   * box, past the offer, because a carried answer is not borrowed.
+   */
+  function answerShown(q) {
+    return state.answers[q.question] ?? (q.namesAnother ? '' : (q.answer ?? ''));
+  }
+
   function collectedAnswers() {
     const out = new Map();
     for (const q of state.questions ?? []) {
-      const answer = state.answers[q.question] ?? q.answer ?? '';
+      const answer = answerShown(q);
       if (answer.trim()) out.set(q.question, answer);
     }
     // Questions typed in by hand are in `state.answers` and on no page.
@@ -5180,7 +5402,7 @@ export function createCard({
                 // here and left behind is an answer written twice.
                 questions: (state.questions ?? []).map((q) => ({
                   ...q,
-                  answer: state.answers[q.question] ?? q.answer ?? '',
+                  answer: answerShown(q),
                 })),
                 coverLetter: state.letter ?? '',
               },
@@ -5216,6 +5438,14 @@ export function createCard({
             ? h('span', { className: 'badge weak', textContent: 'close match' })
             : h('span', { className: 'badge none', textContent: 'new question' });
 
+      /*
+       * The box's own limit, where the form states one. An answer over it is
+       * put in whole — a script is not held to `maxlength` — and refused when
+       * the form is sent, so it is counted here while it can still be cut.
+       */
+      const counter = q.limit ? h('div', { className: 'count faint' }) : null;
+      countAgainst(counter, value, q.limit);
+
       const box = h('div', { className: 'q' }, [
         h('div', { className: 'qt' }, [document.createTextNode(q.question), badge]),
         borrowed
@@ -5240,15 +5470,42 @@ export function createCard({
           // back in the same box even if another question arrived above it.
           dataset: { field: `answer:${q.question}` },
           placeholder: q.answer ? '' : 'No stored answer yet — write one and it is saved for next time.',
-          oninput: (e) => (state.answers[q.question] = e.target.value),
+          oninput: (e) => {
+            state.answers[q.question] = e.target.value;
+            countAgainst(counter, e.target.value, q.limit);
+          },
         }),
+        counter,
         h('div', { className: 'row gap' }, [
           h('button', {
             className: 'tiny',
             textContent: 'Insert into form',
             disabled: !q.fieldId,
-            onclick: () => onAction('insertAnswer', { fieldId: q.fieldId, text: state.answers[q.question] ?? value }),
+            // With the question it answers: the box must still be asking it. See
+            // `insertAnswer` in autofill.js.
+            onclick: async () => {
+              const put = await Promise.resolve(
+                onAction('insertAnswer', { fieldId: q.fieldId, question: q.question, text: state.answers[q.question] ?? value }),
+              ).catch(() => false);
+              /*
+               * Said, not swallowed. A box that has gone, or now asks step
+               * two's question, is refused — and a button that does nothing
+               * when pressed reads as a button that is broken.
+               */
+              const missed = !put;
+              if (Boolean(state.insertMissed[q.question]) !== missed) {
+                if (missed) state.insertMissed[q.question] = true;
+                else delete state.insertMissed[q.question];
+                draw();
+              }
+            },
           }),
+          state.insertMissed[q.question]
+            ? h('span', {
+                className: 'faint',
+                textContent: 'Nothing was put in: that box on the page is gone or asks something else now.',
+              })
+            : null,
           /*
            * Some questions are not the model's to answer.
            *
@@ -5273,7 +5530,7 @@ export function createCard({
                 // What is in the box now, so the reply can tell its own work
                 // from anything written during the minutes it takes.
                 const typedBefore = state.answers[q.question] ?? value;
-                return act(`answer:${q.question}`, { question: q.question, force: true }, (r) => {
+                return act(`answer:${q.question}`, { question: q.question, force: true, limit: q.limit }, (r) => {
                   /*
                    * `executed` first, not `output` first.
                    *
@@ -5355,7 +5612,7 @@ export function createCard({
     const missing = [];
     if (state.letterNeeded && !state.letter?.trim()) missing.push('a cover letter');
     const unanswered = (state.questions ?? []).filter(
-      (q) => q.required !== false && !(state.answers[q.question] ?? q.answer ?? '').trim(),
+      (q) => q.required !== false && !answerShown(q).trim(),
     ).length;
     if (unanswered > 0) missing.push(`${unanswered} ${unanswered === 1 ? 'answer' : 'answers'}`);
 
@@ -5605,6 +5862,14 @@ export function createCard({
     const active = root.activeElement;
     const focused = active && active !== card ? active.dataset?.field : null;
     const caret = focused ? { start: active.selectionStart, end: active.selectionEnd } : null;
+    /*
+     * And how far the box itself is scrolled. The letter box is a fixed height
+     * and a letter is longer than it, so the paragraph being written is at the
+     * bottom of a scrolled box — and the box a repaint builds starts at the
+     * top. Measured: caret put back at the end, `scrollTop` 462 before and 0
+     * after, the line being written out of sight until the next keystroke.
+     */
+    const boxScrolled = focused ? active.scrollTop : 0;
 
     /*
      * Where you were reading.
@@ -5682,6 +5947,7 @@ export function createCard({
       // Not a text box any more, or the text is shorter than the old caret.
       // Focus is the part that matters; the position is a courtesy.
     }
+    again.scrollTop = boxScrolled;
   }
 
   /**
@@ -5910,11 +6176,28 @@ export function createCard({
      * point of "Edit in ResumeM-M" is to go and add the phrasing this posting
      * wants, and the proposal on screen was made before it existed.
      */
-    cameBack() {
+    async cameBack() {
       if (!state.wentToEditor || state.editedElsewhere) return;
       state.wentToEditor = false;
       state.editedElsewhere = true;
       draw();
+      /*
+       * And the copy as it was left there. "Edit in ResumeM-M" opens this
+       * very resume, and whatever was switched on or off in the builder was
+       * lost on the way back: the card still held the copy as it had it, and
+       * filing, the letter and the AI all send that whole — so "Mark as
+       * applied" wrote the card's old skills back over the ones just chosen.
+       * Only where the store has it and it has changed; a copy never filed
+       * is not in the store, and the card's is the only one there is.
+       */
+      const id = state.spec?.id;
+      if (!id) return;
+      const list = await Promise.resolve(onAction('listResumes', {})).catch(() => null);
+      const stored = (Array.isArray(list) ? list : list?.resumes ?? []).find((r) => r?.id === id);
+      if (!stored || state.spec?.id !== id || JSON.stringify(stored) === JSON.stringify(state.spec)) return;
+      state.spec = stored;
+      state.render = null;
+      await compile();
     },
 
     /** The pages this application spans, as the trail grows. */
@@ -5951,23 +6234,18 @@ export function createCard({
      */
     async retailor(mode) {
       if (mode !== 'ai' && mode !== 'match') return null;
-      state.rebuilding = mode;
-      try {
-        return await act('rebuild', { tailor: mode }, (result) => {
-          /*
-           * What came back, not what was asked for — see `rebuildAs`. And
-           * nothing at all when nothing came back: this wrote `'none'` on a
-           * run that had failed or been superseded, which is a claim about
-           * the proposal on screen made by a run that never produced one.
-           * With both readings kept it was visible — the AI's version on
-           * screen, its button lit, and the summary under it saying the
-           * resume was exactly as it is kept.
-           */
-          if (result?.spec) showOffer(slotOf(result));
-        });
-      } finally {
-        state.rebuilding = null;
-      }
+      /*
+       * Through `rebuildAs`, and so with a number like every other rebuild.
+       *
+       * This was a copy of it without the token. The build buttons stay live
+       * while it runs — it is the AI, and minutes — so pressing Keyword match
+       * meanwhile and getting the match back first was undone when this reply
+       * arrived: measured in tests/card.mjs, the AI's proposal went back on
+       * screen over the one just asked for, and arriving first instead, it
+       * cleared the running match's label. What `rebuildAs` shows on arrival
+       * is what came back, not what was asked for, which is what this did.
+       */
+      return rebuildAs(mode);
     },
     /**
      * The form asks for a cover letter after all.
@@ -5983,7 +6261,18 @@ export function createCard({
       draw();
     },
     setQuestions(qs) {
-      state.questions = qs;
+      /*
+       * Every question the page shows, and the ones typed in by hand, which
+       * the page does not. This is called again when a form moves to its next
+       * step in place — see `watchQuestions` in content.js — and replacing the
+       * list outright there took a hand-typed question off it with the step
+       * it was typed on. Their answers were never at risk: `state.answers` is
+       * keyed by the question and is not touched here.
+       */
+      const byHand = (state.questions ?? []).filter(
+        (q) => !q.fieldId && !(qs ?? []).some((n) => n.question === q.question),
+      );
+      state.questions = [...(qs ?? []), ...byHand];
       // Questions arrive after the card is built, so anything carried over
       // from the last page can only be matched to them now.
       applyCarriedAnswers();
@@ -6020,6 +6309,29 @@ export function createCard({
       // commonest reason is that ResumeM-M is not running.
       state.errorFix = fix;
       draw();
+    },
+
+    /*
+     * Put the card back if the page took it off.
+     *
+     * The host is a child of `<html>`, and a page that re-renders its whole
+     * root — a framework whose hydration gives up and client-renders the
+     * document, anything calling `replaceChildren` on it — takes the host
+     * with it. Everything the card holds is still here, in this closure; it
+     * is only the element that has gone. So it is the same element that goes
+     * back, letter and answers and all, rather than a fresh card built from
+     * nothing. Leaving it off was measured in tests/worker.mjs: the content
+     * script still held this handle, so nothing ever built another, and the
+     * toolbar button returned the detached card and showed nothing.
+     *
+     * Only for a card the page removed. The × and Done go through
+     * `closeCard`, whose `onClose` drops the handle, so nothing calls this on
+     * a card somebody put away.
+     */
+    putBack() {
+      if (host.isConnected || document.getElementById(HOST_ID) || !document.documentElement) return false;
+      document.documentElement.append(host);
+      return true;
     },
   };
 }

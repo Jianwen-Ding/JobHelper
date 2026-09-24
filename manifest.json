@@ -5,6 +5,7 @@
   "description": "Spots job postings, offers a resume tailored from your ResumeM-M store, and fills the form from what you already wrote down.",
   "permissions": [
     "storage",
+    "alarms",
     "activeTab",
     "scripting",
     "tabs"

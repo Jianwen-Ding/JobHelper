@@ -10,11 +10,29 @@
  * The privacy rule lives on its own, away from everything that reads a form,
  * because it is the part that has to be reviewable without reading this file.
  */
-import { neverRemember, worthRemembering } from '../shared/remembering.js';
+import { dependsOnEmployer, neverRemember, worthRemembering } from '../shared/remembering.js';
 
 /** Map a stored profile key to the label/name patterns that mean it. */
 const FIELD_PATTERNS = [
-  ['first_name', /\b(first[\s_-]?name|given[\s_-]?name|fname)\b/i],
+  /*
+   * Both halves in one box, above either half, because the first pattern to
+   * match claims the field: "First and Last Name" says "Last Name" whole and
+   * was given the surname alone, and "First Name and Last Name" the first
+   * name alone — half a name, in a box asking for all of it.
+   */
+  ['full_name', /\bfirst[\s_-]*(name[\s_-]*)?(and|&|\+)[\s_-]*last[\s_-]*name\b/i],
+  /*
+   * And one half of it, said in brackets after the name it is part of — above
+   * `legal name`, which claimed the box whole. "Legal name (First)" and "Legal
+   * name (Last)" were each given "Jianwen Ding", and "Legal name (Middle)" the
+   * whole name too, a middle name the profile does not hold. Only a bracket
+   * holding the one word: "Full legal name (first, middle, last)" asks for
+   * all of it. `middle_name` is never in a profile, so that box stays blank.
+   */
+  ['first_name', /\bname[\s_-]*\([\s_-]*(first|given)([\s_-]*name)?[\s_-]*\)/i],
+  ['last_name', /\bname[\s_-]*\([\s_-]*(last|family|surname)([\s_-]*name)?[\s_-]*\)/i],
+  ['middle_name', /\bname[\s_-]*\([\s_-]*middle([\s_-]*name)?[\s_-]*\)/i],
+  ['first_name', /\b(first[\s_-]?name|given[\s_-]?name|forename|fname)\b/i],
   ['last_name', /\b(last[\s_-]?name|family[\s_-]?name|surname|lname)\b/i],
   ['full_name', /\b(full[\s_-]?name|your[\s_-]?name|candidate[\s_-]?name|legal[\s_-]?name)\b/i],
   ['email', /\b(e-?mail)\b/i],
@@ -29,21 +47,65 @@ const FIELD_PATTERNS = [
   ['linkedin', /\b(linked-?in)\b/i],
   ['github', /\b(git-?hub)\b/i],
   ['website', /\b(website|portfolio|personal[\s_-]?site|homepage)\b/i],
-  ['school', /\b(school|university|college|institution)\b/i],
-  ['degree', /\b(degree)\b/i],
-  ['major', /\b(major|discipline|field[\s_-]?of[\s_-]?study)\b/i],
-  ['gpa', /\bgpa\b/i],
-  ['address_city', /\b(city|town)\b/i],
   /*
-   * Country before state, because the first pattern to match wins and
-   * "Country/Region" — which is what SuccessFactors, Workday and most of the
-   * enterprise systems call the field — matches `region`. It was being filled
-   * with a state, finding no such option, and reporting that the country had
-   * no matching option while leaving a required field empty.
+   * The job somebody holds now. Only with "current", "present" or "most
+   * recent" in front: a bare "Company" is a row of a job-history section,
+   * which asks about every job in turn and is not this question. Lever's is
+   * `name="org"` with "Current company" as its only label, and it read as
+   * nothing at all.
    */
-  ['address_country', /\b(country)\b/i],
-  ['address_state', /\b(state|province|region)\b/i],
-  ['location', /\b(location|where.*based)\b/i],
+  ['current_company', /\b(current|present|most[\s_-]*recent)[\s_-]*(company|employer|organi[sz]ation|org)\b/i],
+  ['current_title', /\b(current|present|most[\s_-]*recent)[\s_-]*(job[\s_-]*)?(title|role|position)\b/i],
+  /*
+   * When the degree ends. Above school and degree on purpose: the first
+   * pattern to match claims the field, and "Graduation date from your
+   * university" or "Expected degree completion" would otherwise be taken as
+   * the school's name or the degree's.
+   *
+   * Month and year before the date, because "Expected graduation year" is
+   * asking for the year alone. Nothing here fires on a bare "graduate" — "Are
+   * you a recent graduate?" is a yes/no question, and a date is not its answer.
+   */
+  ['graduation_month', /(\bgrad\b|\bgraduat\w*|\bcompletion\b).{0,40}\bmonth\b|\bmonth\b.{0,40}\bgraduat/i],
+  // "Class of" and "Graduating class" are asking for the year, as "Class year" is.
+  ['graduation_year', /(\bgrad\b|\bgraduat\w*|\bcompletion\b).{0,40}\byear\b|\byear\b.{0,40}\bgraduat|\bclass\s*year\b|\bclass\s+of\b|\bgraduating\s+class\b/i],
+  /*
+   * And the date by the words that name the degree's end without saying
+   * "graduation": "Expected degree completion" was the example above and no
+   * pattern here knew it, so it fell through to `degree` and was given the
+   * degree's name. A completion date of anything else — a project, a course —
+   * is left alone.
+   */
+  [
+    'graduation_date',
+    /\bgrad(uation)?\s*date\b|\bdate\s*of\s*graduation\b|\b(expected|anticipated)\s*grad(uation)?\b|\bwhen\s+(do|will)\s+you\s+(expect\s+to\s+)?graduate\b|\bdegree\s+(completion|conferral|end)\b|\b(end|completion)\s*date\b.{0,20}\bgrad(uat\w*)?\b/i,
+  ],
+  /*
+   * The grade and the subject above the school, for the reason graduation is:
+   * "College GPA" and "University major" name the institution, and with
+   * `school` first they were filled with its name.
+   */
+  ['gpa', /\bgpa\b/i],
+  /*
+   * What the degree is in, however it is put: "Field of degree", "Degree
+   * field" and "Subject of degree" fell through to `degree` and were given
+   * "Bachelor of Science" in a box asking for the subject.
+   */
+  [
+    'major',
+    /\b(major|discipline|field[\s_-]?of[\s_-]?study|(course|area)[\s_-]?of[\s_-]?study|(field|subject)[\s_-]+of[\s_-]+(your[\s_-]+)?degree|degree[\s_-]+(field|subject))\b/i,
+  ],
+  ['school', /\b(school|university|college|institution|institute)\b/i],
+  ['degree', /\b(degree)\b/i],
+  /*
+   * The two declarations above every address field. "Are you authorized to
+   * work in this country?" is the commonest wording of the right-to-work
+   * question, and with `address_country` first it claimed the question: the
+   * yes/no pair was offered "United States", matched neither button, and the
+   * required question was left blank. No address label says "authorized to
+   * work" or "sponsor", so nothing moves the other way. "Eligible to work" is
+   * the same question and matched nothing.
+   */
   /*
    * `\w*` where a stem was truncated. These two read as if they matched
    * anything starting with the stem, and matched nothing at all: a trailing
@@ -58,12 +120,49 @@ const FIELD_PATTERNS = [
    * none of the three above — the required question came out blank and, having
    * matched no key at all, was not reported either. The conjunction with
    * sponsorship is still refused; see `asksBothAtOnce`.
+   *
+   * And "for employment" where the same question says "to work": "Are you
+   * currently eligible for employment in the US?" matched nothing, so the
+   * required question was neither answered nor reported.
    */
   [
     'work_authorization',
-    /\b(work[\s_-]?authoriz\w*|legally[\s_-]?authorized|authoriz\w+[\s_-]+to[\s_-]+work|right[\s_-]?to[\s_-]?work)\b/i,
+    /\b(work[\s_-]?authoriz\w*|legally[\s_-]?authorized|(authoriz|eligib)\w*[\s_-]+(to[\s_-]+work|for[\s_-]+employment)|right[\s_-]?to[\s_-]?work)\b/i,
   ],
   ['requires_sponsorship', /\b(sponsor\w*|visa[\s_-]?status)\b/i],
+  /*
+   * Both in one box, above the city, which claimed it: "City, State" and
+   * "City/State" were given "Boston" on a profile that also holds "MA". See
+   * `withCityAndState` for where the value comes from.
+   */
+  ['city_state', /\b(city|town)[\s_-]*(,|\/|&|and)[\s_-]*(state|province)\b/i],
+  ['address_city', /\b(city|town)\b/i],
+  /*
+   * Country before state, because the first pattern to match wins and
+   * "Country/Region" — which is what SuccessFactors, Workday and most of the
+   * enterprise systems call the field — matches `region`. It was being filled
+   * with a state, finding no such option, and reporting that the country had
+   * no matching option while leaving a required field empty.
+   */
+  ['address_country', /\b(country)\b/i],
+  /*
+   * "State" the noun, not the verb: "Please state your reason for applying"
+   * is a free-text question, and it was typed over with the applicant's state.
+   */
+  [
+    'address_state',
+    /(?<!\bplease[\s_-]+)\b(state|province|region)\b(?![\s_-]+(?:your|why|how|what|whether|if|the|any|briefly|clearly|below)\b)/i,
+  ],
+  /*
+   * "Where are you located?", "Where do you live?" and "Where do you
+   * currently reside?" are how custom questions ask for this, and only
+   * "Where are you based?" matched. Asked of the applicant as they are now:
+   * "Where would you like to be located?" is a preference, and stays blank.
+   */
+  [
+    'location',
+    /\b(location|where.*based)\b|\bwhere\s+(?:are|do)\s+you\s+(?:currently\s+)?(?:located|live|living|reside|residing)\b/i,
+  ],
 ];
 
 const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
@@ -97,8 +196,18 @@ const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
  * signature line of a form they had not chosen to complete.
  */
 const NOT_ABOUT_YOU = [
-  // Somebody else's name, telephone number or address.
-  /\b(references?|referee|emergency|next[\s_-]?of[\s_-]?kin|guardian|spouse|supervisor|manager'?s?|recommender)\b/i,
+  /*
+   * Somebody else's name, telephone number or address.
+   *
+   * The people a form asks about were a short list, and the rest of them got
+   * the applicant: "Referrer's email", "Recruiter email" and "Professor's
+   * email" were filled with the applicant's own address, "LinkedIn URL of your
+   * referrer" with their own profile, and "Parent's phone number" — which the
+   * internship forms ask of students — with their own number. The employee
+   * who referred you is the commonest of these, and "referral" was already
+   * here for how you heard about the job; the person is not.
+   */
+  /\b(references?|referee|emergency|next[\s_-]?of[\s_-]?kin|guardian|spouse|supervisor|manager'?s?|recommender|referr(?:er|ers|ing|ed)|recruiters?|parents?|professors?|advis[oe]rs?)\b/i,
   /*
    * A previous employer's address, which the employment-history sections of
    * Taleo and BrassRing ask for field by field. "Employer City" matched
@@ -110,9 +219,150 @@ const NOT_ABOUT_YOU = [
    * a stated fact about where somebody else's office was. Exactly the case
    * above, on the word those three happen to use.
    */
-  /\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+(name|address|location|city|town|state|province|country|phone|telephone|email|zip|postal)\b/i,
+  /*
+   * Its website too: "Company website" is on the same line of the same
+   * section, and `website` gave it the applicant's own site.
+   */
+  /*
+   * Its name as well, except where the question opens by saying it is the
+   * current one. "Current Company Name" is how Greenhouse's custom questions
+   * and plenty of hand-built forms ask `current_company`, and "company name"
+   * inside it made it a past employer's: left blank, where "Current company"
+   * two lines up on another form was filled. Measured: "Current Company
+   * Name", "Current employer's name", "Most recent employer name" and
+   * "Present company name" all came out empty.
+   *
+   * Only at the very start, not merely with "current" in front. "Not your
+   * current company name, the one before it" has "current" directly in front
+   * too, and asks for somebody else's; a legend such as "Employment history"
+   * comes first in what this is tested against, so a row under one stays a
+   * past job's; and a name attribute like `companyName` is another "company
+   * name" further on, which still excludes. Every doubt leaves it blank. The
+   * rest of the list — the employer's address, location, phone — is
+   * somebody else's however current they are.
+   */
+  /\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+(address|location|city|town|state|province|country|phone|telephone|email|zip|postal|web[\s_-]?site|url)\b|(?<!^[\W_]*(?:current|present|most[\s_-]*recent)[\s_-]+)\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+name\b/i,
+  /*
+   * And the school's, which the education sections of the older systems ask
+   * for the same way. `school` sits above every address pattern, so "School
+   * city", "School state", "University country" and "What city is your
+   * university located in?" were each given the university's *name* — in a
+   * box asking where it is.
+   */
+  /\b(school|university|college|institution)['’]?s?[\s_-]+(address|location|city|town|state|province|country|zip|postal)\b|\b(school|university|college|institution)\b[\s\S]{0,24}\blocated\b/i,
+  /*
+   * Permission to contact an employer, which is a yes or a no and not the
+   * employer's name — "Can we contact your current employer?" took
+   * `current_company` — and the employer's own contact, which "Employer
+   * contact email" gave the applicant's address.
+   */
+  /\bcontact\b[\s\S]{0,30}\bemployers?\b|\bemployers?\b[\s\S]{0,20}\bcontact\b/i,
+  /*
+   * How long, not who. "Years at current company" matched `current_company`
+   * and was given the employer's name in a box asking for a number.
+   */
+  /\b(years?|months?|how[\s_-]long|tenure|duration)\b[\s\S]{0,24}\b(current|present|most[\s_-]recent)\b/i,
+  /*
+   * And how many, of anything. No profile field is a count, and a count
+   * question names what it is counting: "How many years of mobile development
+   * experience do you have?" matched `phone` on the word "mobile" and was
+   * given the applicant's telephone number, and "How many years of college
+   * have you completed?" was given the university's name. Plural "years of"
+   * only — "Year of graduation" is a date and is asked for.
+   */
+  /\bhow[\s_-]+many\b|\byears[\s_-]+of\b/i,
+  /*
+   * A name the applicant used to have, which is exactly the one the profile
+   * does not hold. Background-check sections ask for it field by field:
+   * "Previous last name(s)", "Maiden last name" and "Prior surname" were each
+   * given the applicant's current surname, and "Former legal name" the whole
+   * current name — an answer that says nobody's name ever changed, on the
+   * part of the form used to run the check.
+   */
+  /\b(previous\w*|former\w*|prior|maiden|alias\w*|other|different)\b[\s\S]{0,20}\b(name|surname)s?\b|\b(name|surname)s?\b[\s\S]{0,24}\b(previous\w*|former\w*)\b/i,
+  // How to say a name, which is not the name: "Pronunciation of your name".
+  /\b(pronunc\w*|phonetic\w*)\b/i,
+  /*
+   * The password to a link, which is not the link. Design roles ask for a
+   * "Portfolio password" beside the portfolio URL, and as a plain text box —
+   * `isFillable` only refuses `type=password` — so `website` matched it and
+   * the URL was typed in as the password, where the reviewer would try it.
+   */
+  /\b(password|passcode|pass[\s_-]?phrase)\b/i,
+  /*
+   * A username, which is a part of the link and not the link. "GitHub
+   * username", "GitHub handle" and "Username on LinkedIn" matched `github`
+   * and `linkedin` and were given the whole profile URL, in a box that will
+   * be read as a handle — `https://github.com/...` as somebody's username.
+   * Left blank rather than cut out of the URL: a stored link is not always
+   * just the profile.
+   */
+  /\b(git-?hub|git-?lab|linked-?in)\b[\s\S]{0,20}\b(user[\s_-]?names?|handles?|user[\s_-]?ids?)\b|\b(user[\s_-]?names?|handles?)\b[\s\S]{0,20}\b(git-?hub|git-?lab|linked-?in)\b/i,
+  /*
+   * "Major" the adjective. "Major accomplishment", "Major project" and "Your
+   * major achievements" matched `major` and were given the applicant's field
+   * of study — "Computer Science" as their greatest achievement. Only in
+   * front of the nouns a question puts it before; "Major", "Intended major"
+   * and "Major / field of study" are the subject and are still filled.
+   * "Nearest major city" and "Closest major metropolitan area" were given it
+   * too, as a place.
+   */
+  /\bmajor[\s_-]+(accomplish\w*|achievements?|projects?|challenges?|contributions?|responsibilit\w*|obstacles?|setbacks?|failures?|mistakes?|decisions?|milestones?|initiatives?|cit(?:y|ies)|metro\w*|airports?)\b/i,
+  /*
+   * "Degree" the measure. "Degree of proficiency in Spanish" and "To what
+   * degree are you familiar with SQL?" matched `degree` and were given
+   * "Bachelor of Science" as a level of fluency. "What degree are you
+   * pursuing?" asks for the qualification in nearly the same words, so only
+   * "degree of" before a word for how much, and "to what degree", are read
+   * this way.
+   */
+  /\bdegree[\s_-]+of[\s_-]+(proficiency|fluency|familiarity|experience|expertise|comfort|confidence|knowledge|skill|understanding|competenc\w*)\b|\bto[\s_-]+(what|which|some|a|any|the)[\s_-]+degree\b/i,
+  /*
+   * A question about a field, which is not the field. Workday asks "Phone
+   * Device Type" beside the number, and "Phone Type", "Type of phone" and
+   * "Email type" were given the number and the address; "GPA Scale" was given
+   * the grade as its own scale, and "Degree Status" the degree's name.
+   */
+  /\b(phone|telephone|e-?mail|address)[\s_-]+(device[\s_-]+)?types?\b|\btypes?[\s_-]+of[\s_-]+(phone|telephone|e-?mail|address)\b|\b(gpa|grading)[\s_-]+scale\b|\bdegree[\s_-]+status\b/i,
+  /*
+   * A second subject, degree or school, which the profile does not hold: it
+   * holds one of each. "Second Major", "Double major", "Additional degree",
+   * "Major 2" and "School 2" were each given the first again — a second major
+   * in the subject already named — and "Previous school" and "Transfer
+   * university" the school the applicant is at now, as the one they left.
+   * "School 1" is still filled, and so is "School (if other)", which is
+   * where the applicant's own school goes when the list does not have it.
+   */
+  /\b(second|secondary|double|dual|additional|another|2nd|third|3rd)[\s_-]+(majors?|degrees?|concentrations?|schools?|universit\w*|colleges?|institutions?)\b|\b(major|degree|school|university|college|institution)[\s_-]*#?[\s_-]*[2-9]\b|\b(previous\w*|former\w*|prior|past|transfer\w*)[\s_-]+(schools?|universit\w*|colleges?|institutions?|majors?|degrees?)\b/i,
+  /*
+   * The state that issued a licence, which is not where the applicant lives.
+   * Nursing, teaching, pharmacy and driving roles ask for it, and "State of
+   * licensure", "License state", "Driver's license issuing state" and
+   * "Issuing state" were each given the home state — a statement about a
+   * credential the applicant may hold somewhere else, or not at all.
+   */
+  /\blicen[cs]\w*\b[\s\S]{0,24}\b(state|province|country|jurisdiction)\b|\b(state|province|country|jurisdiction)\b[\s\S]{0,12}\blicen[cs]\w*|\bissu(ing|ed)\b[\s\S]{0,12}\b(state|province|country)\b|\b(state|province|country)\b[\s\S]{0,12}\bof[\s_-]+issu\w*/i,
+  /*
+   * When to ring, which is not the number to ring. "Best phone interview
+   * time", "Best time to reach you by phone" and "Phone screen availability"
+   * matched `phone` and were given the telephone number as a time. The
+   * interview itself is excluded only where no "number" is asked for, because
+   * "Phone number for the phone interview" is the telephone box.
+   */
+  /\b(best|convenient|preferred|ideal)[\s_-]+times?\b|^(?![\s\S]*\bnumber\b)[\s\S]*\bphone[\s_-]+(interview|screen\w*)\b/i,
+  /*
+   * A signature, which is the applicant's to give. A name typed into one
+   * signs whatever sits above it — that everything on the form is true, an
+   * at-will acknowledgement, a release for a background check — and
+   * "Type your full name to sign", "E-signature (type your name)", "Full
+   * legal name (signature)" and "Full Name" under an "Applicant Signature"
+   * legend were each signed with the applicant's name before they had read
+   * it. Checkboxes are never ticked for the same reason. "Sign in" and
+   * "sign up" are not signing.
+   */
+  /\b(e-?)?signatures?\b|\be-?sign(ed|ing)?\b|\bsign(ed|ing)?\b(?![\s_-]+(?:in|up|on|out)\b)/i,
   // Where you heard about the job, which is not a profile of yours.
-  /\b(did[\s_-]you[\s_-]hear|hear[\s_-]about[\s_-](us|this)|referral)\b/i,
+  /\b(did[\s_-]you[\s_-](?:first[\s_-])?hear|hear[\s_-](?:about|of)[\s_-](us|this)|referral)\b/i,
   // Citizenship, birth and residence are different questions with the same
   // answers.
   /\b(citizen\w*|nationality|passport)\b/i,
@@ -125,13 +375,35 @@ const NOT_ABOUT_YOU = [
    * "where I am" into "where I want to be" without being asked.
    */
   /\b(prefer\w*|desired|requested)\b[\s\S]{0,24}\b(location|city|town|country|office|site)\b/i,
-  /\b(location|city|town|country|office|site)\b[\s\S]{0,24}\b(prefer\w*|desired|requested)\b/i,
+  // "Which location are you applying for?" is the same question again.
+  /*
+   * But not a place named by the job, "the country to which you are
+   * applying", which is how the global employers ask the right to work: it
+   * matched this rule and was excluded, and an exclusion says nothing, so a
+   * required question was left blank with the card silent about it. "The
+   * country where this job is located" was always answered.
+   */
+  /\b(location|city|town|country|office|site)\b(?!\s+(?:(?:to|in|for)\s+which\s+)?you(?:\s+are|'re)\s+applying)[\s\S]{0,24}\b(prefer\w*|desired|requested|applying)\b/i,
+  /*
+   * Where the job is, which is the employer's to say. "Job location",
+   * "Office location", "Work location", "Location of the role" and
+   * "Location type" — remote, hybrid or on site — were each given the city
+   * the applicant lives in, as though that answered which office they are
+   * applying to. "Current location" and a plain "Location" are still theirs.
+   */
+  /\b(job|office|role|position|work)[\s_-]+locations?\b|\blocations?[\s_-]+(?:of|for)[\s_-]+(?:the|this)[\s_-]+(?:role|job|position|opening)\b|\blocation[\s_-]+type\b/i,
   // Relocation is about somewhere you are not. "Which city would you relocate
   // to?" was answered with the city the applicant already lives in.
   /\brelocat\w*/i,
   /\b(salary|compensation|wage|pay[\s_-]?rate|hourly[\s_-]?rate|bonus)\b/i,
   /\b(gender|race|ethnicit\w*|hispanic|latin[ox]|veteran|disabilit\w*|sexual[\s_-]orientation|pronouns)\b/i,
   /\b(eeoc?|self[\s_-]?identification|equal[\s_-]employment)\b/i,
+  /*
+   * School before the degree. The profile's education is the newest one, and
+   * a "High School" box was being told the applicant went to high school at
+   * their university — with "High school GPA" given the university's grade.
+   */
+  /\b(high|secondary)[\s_-]?school\b/i,
   /*
    * A consent question, which is not a fact about the applicant at all — it
    * is a decision about what the employer may send them.
@@ -175,7 +447,12 @@ const NOT_ABOUT_YOU = [
  * where a label stops being its subject is how the first version of this
  * went wrong.
  */
-const DIALLING_CODE = /\b(country|area|dial(?:l?ing)?)[\s_-]?code\b/i;
+/*
+ * And the extension box beside it, which took the whole telephone number the
+ * same way. Read with the parentheses out for the same reason: "Phone (ext.
+ * optional)" is the telephone box.
+ */
+const DIALLING_CODE = /\b(country|area|dial(?:l?ing)?)[\s_-]?(?:phone[\s_-]?)?code\b|\bext(?:ension)?\b/i;
 
 /*
  * A label that is only "Country", whatever the field is named underneath.
@@ -246,9 +523,41 @@ function surroundingWords(input) {
  * that puts the first in the legend and the second on the label has written
  * the same question as one that puts both on the label.
  */
-const isNotAboutYou = (description, label, around = '') => {
+/*
+ * A place or a telephone asked inside a past job, or inside the education
+ * section, is that job's or that school's.
+ *
+ * The employer and school rules above want the owner and the place in one
+ * phrase — "Employer city", "School state" — and a form that asks a section
+ * at a time says the owner once, on the group: a fieldset whose legend is
+ * "Work Experience 1", a group labelled "Employment History" or "Education",
+ * and inside it plain "Location", "City", "State", "Country" and "Phone".
+ * Measured: every one of those was given the applicant's own home and
+ * number, a statement about where somebody else's office or campus is, once
+ * per row of the history. "School" under "Education" and "City" under
+ * "Contact Information" are still filled.
+ *
+ * The section is read from the group's name alone, never from the field's
+ * own words, so "Email (your education address is fine)" on an ordinary box
+ * is still the applicant's.
+ */
+const HISTORY_GROUP = /\b(work|employment|professional|job|career)[\s_-]+(experience|history)\b|\beducation\w*\b/i;
+const A_PLACE_OR_LINE = /\b(location|city|town|state|province|region|country|address|zip|postal|phone|telephone|mobile|e-?mail)\b/i;
+
+/*
+ * `section` is a heading the markup bounds — see `boundedSection` — and it is
+ * read by the history rule alone. A heading is weaker evidence than a legend
+ * or a labelled group, so it is not joined to `around` for the rest of the
+ * list; and the history rule leaves a box blank, which is the safe way for a
+ * guess about sections to be wrong.
+ */
+const isNotAboutYou = (description, label, around = '', section = '') => {
   const about = around ? `${around} ${description}` : description;
-  return asksForADiallingCode(description, label) || NOT_ABOUT_YOU.some((re) => re.test(about));
+  return (
+    asksForADiallingCode(description, label) ||
+    NOT_ABOUT_YOU.some((re) => re.test(about)) ||
+    ((HISTORY_GROUP.test(around) || HISTORY_GROUP.test(section)) && A_PLACE_OR_LINE.test(description))
+  );
 };
 
 /*
@@ -267,8 +576,20 @@ const isNotAboutYou = (description, label, around = '') => {
  */
 const AUTHORIZATION = FIELD_PATTERNS.find(([key]) => key === 'work_authorization')[1];
 const SPONSORSHIP = FIELD_PATTERNS.find(([key]) => key === 'requires_sponsorship')[1];
+/*
+ * And the same pair with its first half in words `AUTHORIZATION` does not
+ * know. "Are you able to work in the U.S. without sponsorship?" and "Can you
+ * work in the United States without visa sponsorship?" matched only the
+ * sponsorship pattern, so they were answered as "do you need sponsorship?" —
+ * which is the opposite question. Measured: a profile needing none had "No"
+ * written into both, telling the employer the applicant cannot work there
+ * unsponsored; a profile needing it would have had "Yes", a false declaration
+ * of the right to work. "Without" in front of the sponsorship is what makes it
+ * the question about working, however the working is put.
+ */
+const WITHOUT_SPONSORSHIP = /\bwithout\b[\s\S]{0,30}\bsponsor\w*/i;
 const asksBothAtOnce = (description) =>
-  AUTHORIZATION.test(description) && SPONSORSHIP.test(description);
+  (AUTHORIZATION.test(description) || WITHOUT_SPONSORSHIP.test(description)) && SPONSORSHIP.test(description);
 
 /**
  * Handing it back, wherever it turns up.
@@ -287,11 +608,12 @@ const asksBothAtOnce = (description) =>
  * properly, which is what this restores. A question about the applicant's own
  * right to work is theirs however it is phrased.
  */
+const TWO_AT_ONCE = 'this one asks two things at once';
 const handBack = (description, skipped) => {
   if (!asksBothAtOnce(description)) return false;
   skipped.push({
     key: 'work_authorization',
-    reason: 'this one asks two things at once',
+    reason: TWO_AT_ONCE,
     description: description.slice(0, 60),
   });
   return true;
@@ -318,6 +640,92 @@ const BARE_NAME = /^(full\s+)?name$/i;
  * text all along; the label handed to `BARE_NAME` never went through it.
  */
 const withoutMarkers = (label) => clean(label).replace(/^[*:\s]+/, '').replace(/[*:\s]+$/, '');
+
+/**
+ * A box that asks for writing, not for a fact from the profile.
+ *
+ * The patterns read single words, and an essay prompt is free to use any of
+ * them: "Tell us about a project you shipped at your current company" matched
+ * `current_company`, "What did you study in school and why?" matched `school`,
+ * and "Do you have experience with state management libraries?" matched
+ * `address_state` — each box was typed over with a profile value, as though
+ * the employer's name were an answer to the question. These are the card's
+ * questions, not autofill's.
+ *
+ * Read off the field's own label, never the name or id. A multi-line box is
+ * writing unless its label is a short noun phrase ("LinkedIn profile"); a
+ * single-line one only when the label opens the way a prompt does, so "Which
+ * university did you graduate from?" is still the school.
+ */
+const ESSAY_PROMPT =
+  /^(?:please\s+)?(?:describe|tell\s+us|explain|elaborate|why\b|walk\s+us\s+through|give\s+(?:us\s+)?an?\s+example|share\s+(?:a\s+time|an?\s+example|your\s+(?:experience|thoughts))|what\s+(?:excites|interests|motivates|makes|would\s+you|did\s+you)|how\s+(?:does|do|would|did|will)\s+your?\b)|\bexperience\s+(?:with|using|in)\b/i;
+
+function asksForWriting(input) {
+  const label = withoutMarkers(labelFor(input));
+  if (!label) return false;
+  if (input instanceof HTMLTextAreaElement) return /\?$/.test(label) || label.split(/\s+/).length > 5;
+  return ESSAY_PROMPT.test(label);
+}
+
+/*
+ * A one-line box whose label asks for a yes or a no.
+ *
+ * The patterns read the profile word a question mentions, not what it asks,
+ * and a yes-or-no question is free to mention any of them. Measured: "Do you
+ * have a bachelor's degree?" was given "Master of Science", "Did you graduate
+ * from a US university?" the university's name, "Do you have a GPA of 3.0 or
+ * above?" the grade, "Can we text you at this phone number?" the number, and
+ * "Will you be located in New York City by the start date?" the city the
+ * applicant lives in — the last of which reads as a no to a question they may
+ * have meant to answer yes.
+ *
+ * Only a label that opens the way such a question does, and never where it
+ * goes on to ask for the thing — "Do you have a phone number? If so, please
+ * share it" still gets it. Nor for a link: "Do you have a LinkedIn profile?"
+ * answered with the profile is a yes that shows its working. A dropdown is
+ * left to its options, which say for themselves whether the answer is a
+ * value or a yes; the two declarations whose answer *is* a yes or a no keep
+ * their own handling.
+ */
+const YES_NO_OPENING = /^(?:are|is|was|were|do|does|did|have|has|had|will|would|can|could|may|should)\s+(?:you|we|your)\b/i;
+const ASKS_FOR_IT_TOO = /\bif\s+(?:so|yes)\b|\bplease\s+(?:provide|share|list|enter|include|give|add|specify)\b|\bwhat\s+is\b|\bwhich\b/i;
+
+function asksYesOrNo(input, key) {
+  if (input instanceof HTMLSelectElement || YES_NO_KEYS.has(key) || LINKS.has(key)) return false;
+  const label = withoutMarkers(labelFor(input));
+  return YES_NO_OPENING.test(label) && !ASKS_FOR_IT_TOO.test(label);
+}
+
+/**
+ * "First" and "Last" under a legend that says "Name".
+ *
+ * A form that groups the name in a fieldset labels its halves with one word
+ * each, and neither the patterns above nor `BARE_NAME` reads "First" as a
+ * name: both boxes were left empty, and unreported. Only under a legend that
+ * is the name and nothing else — "First" under "Interview availability" is
+ * some other question.
+ */
+function nameHalf(input) {
+  if (!/^(?:(?:your|full|legal)\s+)?name$/i.test(withoutMarkers(surroundingWords(input)))) return null;
+  const label = withoutMarkers(labelFor(input));
+  if (/^(first|given)$/i.test(label)) return 'first_name';
+  if (/^(last|family)$/i.test(label)) return 'last_name';
+  return null;
+}
+
+/**
+ * The whole date, where a box asks for the month and the year at once.
+ *
+ * "From (Month/Year)" matched `month` first and was given "September" — into
+ * a box whose placeholder said MM/YYYY — and reported as filled. A dropdown
+ * keeps the key it matched: its options are one or the other.
+ */
+function wholeDateKey(input, key, description) {
+  if (input instanceof HTMLSelectElement) return key;
+  if (!/^(graduation|education_start)_(month|year)$/.test(key)) return key;
+  if (!(/\bmonth\b/i.test(description) && /\byear\b/i.test(description))) return key;
+  return key.replace(/_(month|year)$/, '_date');
+}
 
 /**
  * Every document this page is really made of.
@@ -761,6 +1169,19 @@ function browserWouldRefuse(input) {
  */
 const LINKS = new Set(['linkedin', 'github', 'website']);
 
+/*
+ * A link box that arrives holding the start of an address — "https://",
+ * "https://www.linkedin.com/in/" — has not been answered; the form put that
+ * there as a hint. Read as answered, it was left alone and sent as a profile
+ * of nothing. A scheme, a host, and at most the site's own path prefix.
+ */
+/** A phone box holding the country's code and nothing else — "+1", "+44". */
+const ONLY_A_DIALLING_CODE = /^\s*\+\d{1,4}\s*$/;
+
+function onlyTheStartOfAnAddress(value) {
+  return /^\s*(https?:\/\/)?(www\.)?((linkedin\.com(\/in)?|github\.com)\/?)?\s*$/i.test(value) && /\S/.test(value);
+}
+
 function otherWaysToWrite(key, value) {
   const said = String(value).trim();
 
@@ -787,8 +1208,356 @@ function otherWaysToWrite(key, value) {
   return out;
 }
 
+/**
+ * Which section of the form a field sits in, as its heading says.
+ *
+ * The fieldset's legend where there is one, since that is the section saying
+ * so outright. Otherwise the last heading before the field — and only
+ * headings inside the same form, because the page's own title is not a
+ * section: a posting for "Software Engineer, Education Technology" would
+ * otherwise make every date on its job-history step an education date.
+ *
+ * A legend only for the fieldset it heads. The walk below took the legend of
+ * any fieldset that came earlier as the heading of everything after it, so
+ * once an "Education" fieldset had closed, "Available start date" beneath it
+ * was given the degree's start and "Notice period end date" its graduation —
+ * an availability the applicant never stated, and one already past.
+ */
+const HEADING = 'h1, h2, h3, h4, h5, h6, legend, [role="heading"]';
+
+/*
+ * Where a heading's section ends, when the markup says.
+ *
+ * A heading with no fieldset has no edge of its own, and "the last heading
+ * before the field" held it open to the end of the form. Measured, on a form
+ * built as one wrapper per section: an `<h3>Education</h3>` block, then a
+ * block holding only "Available start date" — which was given the degree's
+ * start, "September 2022" — and a Work Experience block whose plain
+ * "Location" and "City" were given the applicant's own home.
+ *
+ * The edge is the heading's wrapper: its parent, or the nearest ancestor that
+ * holds a control, so a heading wrapped on its own in a header `div` is
+ * measured by the section around it. Only a wrapper smaller than the form,
+ * and not one holding another heading of the same rank or higher — that is a
+ * page, not a section. A flat form, where every heading is a sibling of every
+ * field, has no edge to read, and there nothing changes: the last heading
+ * before the field is still the answer, because the form's own `Employment
+ * history` heading is followed by unrelated questions on the same level and
+ * there is no telling where it stopped.
+ */
+const A_CONTROL =
+  'input:not([type=hidden]):not([type=button]):not([type=submit]):not([type=reset]):not([type=image]), select, textarea';
+const rankOf = (heading) =>
+  /^h[1-6]$/.test(heading.localName) ? Number(heading.localName[1]) : Number(heading.getAttribute('aria-level')) || 2;
+
+function sectionBoxOf(heading) {
+  let box = heading.parentElement;
+  while (box && !box.querySelector(A_CONTROL)) box = box.parentElement;
+  if (!box || box.localName === 'form' || box.localName === 'body' || box.localName === 'html') return null;
+  const rank = rankOf(heading);
+  for (const other of box.querySelectorAll(HEADING)) {
+    if (other === heading || other.localName === 'legend') continue;
+    if (rankOf(other) <= rank) return null;
+  }
+  return box;
+}
+
+/**
+ * The heading a field sits under, and whether the markup bounds it.
+ *
+ * Headings whose wrapper has already closed are passed over; see
+ * `sectionBoxOf`. `bounded` is whether the one found has a wrapper holding the
+ * field, which is the only case where it is evidence about the field rather
+ * than about the form.
+ */
+function headingOver(input) {
+  const scope = input.closest?.('form') ?? null;
+  if (!scope) return null;
+  let found = null;
+  for (const heading of scope.querySelectorAll(HEADING)) {
+    if (!(heading.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING)) break;
+    if (heading.localName === 'legend') {
+      if (heading.parentElement?.contains(input)) found = { heading, bounded: false };
+      continue;
+    }
+    const box = sectionBoxOf(heading);
+    if (box && !box.contains(input)) continue;
+    found = { heading, bounded: Boolean(box) };
+  }
+  return found;
+}
+
+function sectionOf(input) {
+  const legend = input.closest?.('fieldset')?.querySelector(':scope > legend');
+  if (legend) return clean(legend.textContent);
+  return clean(headingOver(input)?.heading.textContent ?? '');
+}
+
+/**
+ * The section heading over a field, only where its wrapper says the field is
+ * in it. See `sectionBoxOf`, and `isNotAboutYou`, which is what reads it.
+ */
+function boundedSection(input) {
+  const over = headingOver(input);
+  return over?.bounded ? clean(over.heading.textContent).slice(0, 200) : '';
+}
+
+const EDUCATION_SECTION = /\b(education|academic\w*|schools?|degrees?)\b/i;
+
+/**
+ * "Start date" and "End date", when they are the degree's.
+ *
+ * The Education block of a Greenhouse form asks for both ends of the degree in
+ * words that say nothing about education — "Start date month", "End date year"
+ * — and a job-history block asks the same words about every job. Read on their
+ * own they are unanswerable; read with the section's heading they are the
+ * start of the degree and its graduation. Anywhere that is not plainly an
+ * education section they are left alone, exactly as before.
+ */
+function educationDateKey(input, description) {
+  if (!/\b(date|month|year)\b/i.test(description)) return null;
+  /*
+   * Workday says neither: its education block asks for the "First Year
+   * Attended" and the "Last Year Attended (Actual or Expected)", and both were
+   * left empty. First and last only beside "attended", so "First name" and a
+   * "Last updated" note are not dates of a degree.
+   */
+  const which = /\b(start\w*|from|began|begin\w*)\b|\bfirst\b.{0,20}\battend/i.test(description)
+    ? 'start'
+    : /\b(end\w*|to|until|finish\w*|complet\w*)\b|\blast\b.{0,20}\battend/i.test(description)
+      ? 'end'
+      : null;
+  if (!which) return null;
+  if (!EDUCATION_SECTION.test(sectionOf(input))) return null;
+  const part = /\bmonth\b/i.test(description) ? 'month' : /\byear\b/i.test(description) ? 'year' : 'date';
+  return which === 'start' ? `education_start_${part}` : `graduation_${part}`;
+}
+
+/*
+ * A school, a degree, a major, a grade or a date asked about one level of
+ * study, when the profile's education is at another.
+ *
+ * The profile holds one education, the newest, and the forms that ask for
+ * more than one say which they mean: "Undergraduate School", "Undergraduate
+ * GPA", "Bachelor's Major", "Graduate School", "PhD Institution". Measured
+ * against a profile holding a Master of Science: every one of those was given
+ * the master's — its university as the undergraduate school, its grade as the
+ * undergraduate GPA, "Master of Science" as the undergraduate degree — and
+ * against a bachelor's, "Graduate GPA" was given the bachelor's grade. A
+ * statement about a degree the applicant may not hold, on the part of the form
+ * an employer checks against a transcript.
+ *
+ * So a field that names a level is filled only when the profile's degree is at
+ * that level; with no level to compare, it is left blank, and a field that
+ * names none is unaffected. Read from the label and its group, with asides in
+ * parentheses taken out — "Degree (e.g. Bachelor's)" names an example, not a
+ * level — and never from a placeholder, which is where the examples go.
+ * "Graduate" only as an adjective in front of what it qualifies, so
+ * "Graduation date" and "Expected graduate year" are not a level.
+ */
+const EDUCATION_KEYS = /^(school|degree|major|gpa|graduation_\w+|education_start_\w+)$/;
+const ASKS_A_LEVEL = [
+  ['associate', /\bassociate'?s?[\s_-]+degree\b/i],
+  ['bachelor', /\bundergrad\w*|\bbachelor'?s?\b/i],
+  ['master', /\bmaster'?s?\b|\bmasters\b/i],
+  ['doctorate', /\bph\.?\s?d\b|\bdoctora(?:te|l)\b/i],
+  ['graduate', /\b(?:post[\s_-]?)?graduate[\s_-]+(?:school|gpa|degree|program\w*|studies|study|institution|university|college|major|education)\b/i],
+];
+
+function anotherLevelOfStudy(input, key, fields) {
+  if (!EDUCATION_KEYS.test(key)) return false;
+  const said = `${surroundingWords(input)} ${labelFor(input)}`.replace(/\([^)]*\)/g, ' ').replace(/[’]/g, "'");
+  const asked = ASKS_A_LEVEL.filter(([, re]) => re.test(said)).map(([level]) => level);
+  if (asked.length === 0) return false;
+  const held = degreeLevel(fields.degree ?? '');
+  if (!held) return true;
+  return !asked.some((level) => level === held || (level === 'graduate' && (held === 'master' || held === 'doctorate')));
+}
+
 /** Two option labels are the same answer if they read the same. */
 const sameOption = (a, b) => clean(a).toLowerCase() === clean(b).toLowerCase();
+
+const MONTH_NAMES = [
+  'january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december',
+];
+
+/**
+ * Which month an option means, however it is spelled: "December", "Dec",
+ * "Dec.", "Sept", "12", "01", "12 - December". Null for anything else.
+ *
+ * A month dropdown is the one list where the same answer has four common
+ * spellings and every form picks a different one, so matching the store's
+ * "December" as text found nothing on a form listing "Dec" and the box was
+ * left empty. Three letters at least, so "Ma" is not taken for March or May.
+ */
+export function monthOf(text) {
+  const said = clean(text).toLowerCase();
+  if (!said) return null;
+  const number = /^0?(\d{1,2})(?!\d)/.exec(said);
+  if (number) {
+    const n = Number(number[1]);
+    return n >= 1 && n <= 12 ? n : null;
+  }
+  const word = /^[a-z]+/.exec(said)?.[0] ?? '';
+  if (word.length < 3) return null;
+  const at = MONTH_NAMES.findIndex((m) => m.startsWith(word));
+  return at === -1 ? null : at + 1;
+}
+
+/*
+ * The same place, spelled the ways lists spell it.
+ *
+ * A store holds "MA" and "United States"; a State list says "Massachusetts" and
+ * a Country list says "United States of America", which is Workday's spelling
+ * and plenty of others'. Exact matching found neither, so the two most-asked
+ * dropdowns on a US application were left for the person on most forms.
+ *
+ * A table rather than anything fuzzier, because these are facts with a closed
+ * list of answers: the fifty states, DC and Puerto Rico, Canada's provinces and
+ * territories, and the handful of countries whose long official names are what
+ * the lists use. Nothing outside the table is treated as the same.
+ */
+const REGIONS = {
+  AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado',
+  CT: 'Connecticut', DE: 'Delaware', DC: 'District of Columbia', FL: 'Florida', GA: 'Georgia',
+  HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky',
+  LA: 'Louisiana', ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota',
+  MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire',
+  NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota',
+  OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', PR: 'Puerto Rico', RI: 'Rhode Island',
+  SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont',
+  VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming',
+  AB: 'Alberta', BC: 'British Columbia', MB: 'Manitoba', NB: 'New Brunswick', NL: 'Newfoundland and Labrador',
+  NS: 'Nova Scotia', NT: 'Northwest Territories', NU: 'Nunavut', ON: 'Ontario', PE: 'Prince Edward Island',
+  QC: 'Quebec', SK: 'Saskatchewan', YT: 'Yukon',
+};
+const REGION_BY_NAME = Object.fromEntries(Object.entries(REGIONS).map(([code, name]) => [name.toLowerCase(), code]));
+
+const COUNTRY_SPELLINGS = [
+  ['united states', 'united states of america', 'usa', 'u.s.a.', 'us', 'u.s.'],
+  ['united kingdom', 'united kingdom of great britain and northern ireland', 'uk', 'u.k.', 'great britain'],
+  ['south korea', 'korea, republic of', 'republic of korea'],
+];
+
+/** One spelling for everything the table says is the same place. */
+function placeKey(key, text) {
+  const said = clean(text).toLowerCase().replace(/\s*\([^)]*\)\s*$/, '');
+  if (key === 'address_state') {
+    const code = said.toUpperCase();
+    if (REGIONS[code]) return code;
+    return REGION_BY_NAME[said] ?? null;
+  }
+  if (key === 'address_country') {
+    const group = COUNTRY_SPELLINGS.findIndex((names) => names.includes(said));
+    return group === -1 ? null : `country:${group}`;
+  }
+  return null;
+}
+
+/**
+ * The level a degree is at, from however it is written — or nothing.
+ *
+ * An MBA is left out on purpose: it is a master's, and a list offering both
+ * "Master's Degree" and "MBA" means the person should say which.
+ */
+const DEGREE_LEVELS = [
+  ['associate', /\bassociate\b|\bassociate'?s\b/i],
+  ['bachelor', /\bbachelor|\bundergraduate\b|\bb\.?\s?(?:s|a|sc|eng|e)\.?(?=\s|,|$)/i],
+  ['master', /\bmaster|\bm\.?\s?(?:s|a|sc|eng)\.?(?=\s|,|$)/i],
+  ['doctorate', /\bph\.?\s?d\b|\bdoctor of philosophy\b|\bdoctora(?:te|l)\b/i],
+];
+function degreeLevel(text) {
+  const said = clean(text);
+  if (/business administration|\bm\.?\s?b\.?\s?a\b/i.test(said)) return null;
+  return DEGREE_LEVELS.find(([, re]) => re.test(said))?.[0] ?? null;
+}
+
+/**
+ * An option that names a level and nothing else: "Bachelor's Degree",
+ * "Masters", "Doctorate", "Undergraduate degree". Only these take a degree by
+ * its level — "Bachelor of Arts" is a degree of its own, and a Bachelor of
+ * Science is not it.
+ */
+const LEVEL_ONLY =
+  /^(?:associate|bachelor|master|doctorate|doctoral|ph\.?\s?d\.?|undergraduate)(?:'?s)?(?:\s+degree)?$/i;
+
+/**
+ * Whether an option is this answer under a different spelling — for the
+ * fields where a spelling table exists, and only those. Consulted after an
+ * exact match has failed, never instead of one.
+ */
+function sameAnswerSpelledOtherwise(key, option, value) {
+  /*
+   * A degree against a list of levels, which is what Greenhouse asks with:
+   * "Associate's Degree", "Bachelor's Degree", "Master's Degree". The store
+   * words the degree as the diploma does, so nothing matched and the box was
+   * left empty on every Greenhouse form.
+   */
+  if (key === 'degree') {
+    const level = degreeLevel(value);
+    return Boolean(level) && LEVEL_ONLY.test(clean(option).replace(/[’]/g, "'")) && degreeLevel(option) === level;
+  }
+  if (key === 'graduation_month' || key === 'education_start_month') {
+    const month = monthOf(value);
+    return Boolean(month) && month === monthOf(option);
+  }
+  /*
+   * A graduation date against a list of them, spelled another way. Campus
+   * recruiting forms ask by term — "Spring 2027" — and others by number —
+   * "05/2027" — and "May 2027" matched neither, so the box was left empty.
+   * The terms are the academic ones: a May graduation is Spring, August is
+   * Summer, December is Fall. Winter only for January and February, where no
+   * other term claims the month.
+   */
+  if (key === 'graduation_date') {
+    const hit = /^([a-z]+)\s+(\d{4})$/i.exec(String(value).trim());
+    const month = hit ? monthOf(hit[1]) : null;
+    if (!month) return false;
+    const year = hit[2];
+    const said = clean(option);
+    const monthFirst = /^(\d{1,2})\s*[/.\-]\s*(\d{4})$/.exec(said);
+    const yearFirst = /^(\d{4})\s*[/.\-]\s*(\d{1,2})$/.exec(said);
+    if (monthFirst) return Number(monthFirst[1]) === month && monthFirst[2] === year;
+    if (yearFirst) return Number(yearFirst[2]) === month && yearFirst[1] === year;
+    const named = /^([a-z]+)\.?,?\s+(\d{4})$/i.exec(said);
+    if (!named || named[2] !== year) return false;
+    if (monthOf(named[1])) return monthOf(named[1]) === month;
+    const term = named[1].toLowerCase();
+    const TERM_MONTHS = { spring: [3, 4, 5], summer: [6, 7, 8], fall: [9, 10, 11, 12], autumn: [9, 10, 11, 12], winter: [1, 2] };
+    return (TERM_MONTHS[term] ?? []).includes(month);
+  }
+  const wanted = placeKey(key, value);
+  return Boolean(wanted) && wanted === placeKey(key, option);
+}
+
+/**
+ * "December 2026" written the way this particular box wants it.
+ *
+ * A `type=month` input takes "2026-12" and nothing else — assigning the
+ * readable form leaves it empty and raises nothing. A box whose placeholder
+ * says MM/YYYY will usually be checked against that shape when the form is
+ * sent. Anything else gets the readable form, which a person would type.
+ * Never a day: `type=date` wants one, and a guessed day is a guess.
+ */
+export function graduationFor(input, value) {
+  const hit = /^([a-z]+)\s+(\d{4})$/i.exec(String(value).trim());
+  const month = hit ? monthOf(hit[1]) : null;
+  if (!month) return value;
+  const year = hit[2];
+  const mm = String(month).padStart(2, '0');
+  if (input.type === 'month') return `${year}-${mm}`;
+  /*
+   * The label too, which is where most forms that want a shape say so:
+   * "Graduation date (MM/YYYY)" over a bare box was given "December 2026" and
+   * reported as filled — the one shape its own label said it would not take.
+   */
+  const hint = `${input.placeholder ?? ''} ${input.getAttribute?.('aria-label') ?? ''} ${labelFor(input)}`.toLowerCase();
+  if (/yyyy\s*-\s*mm/.test(hint)) return `${year}-${mm}`;
+  if (/mm\s*\/\s*yyyy/.test(hint)) return `${mm}/${year}`;
+  if (/mm\s*\/\s*yy\b/.test(hint)) return `${mm}/${year.slice(2)}`;
+  return value;
+}
 
 /**
  * Reading a yes/no answer out of a profile that holds a sentence.
@@ -948,11 +1717,82 @@ function yesNoFrom(value, key) {
 }
 
 /**
- * The option that answers a yes/no question, where the labels are yes and no
- * and the profile's answer is a phrase. `undefined` unless all of that holds.
+ * The countries a declaration or a question names.
+ *
+ * A declaration is a sentence and it says where it is true: "Authorized to
+ * work in the US". A global employer asks the same question of the country
+ * the job is in, and the sentence says nothing about that one. Measured: "Are
+ * you authorized to work in the UK?" and "…in Canada?" were answered "Yes"
+ * from "Authorized to work in the US", and "Will you require sponsorship to
+ * work in the United Kingdom?" "No" from "I do not require sponsorship in the
+ * US" — declarations about countries the applicant never made one about, and
+ * for most people false ones.
+ *
+ * The short forms in capitals only, because "us" is a pronoun: "Are you
+ * authorized to work for us?" names nobody. A question naming no country —
+ * "this country", "the country where this job is located" — is still read as
+ * the profile's own, which is what it always was.
  */
-function yesNoOption(key, value, options) {
+const COUNTRIES = [
+  // [code, the short forms (as capitals), the names (in any case)]
+  ['us', /\b(?:US|USA|U\.S\.(?:A\.)?)(?!\w)/, /\bunited\s+states\b|\bamerica\b/i],
+  ['uk', /\b(?:UK|U\.K\.)(?!\w)/, /\bunited\s+kingdom\b|\b(?:great\s+)?britain\b|\bengland\b|\bscotland\b|\bwales\b/i],
+  ['eu', /\b(?:EU|EEA|E\.U\.)(?!\w)/, /\beuropean\s+(?:union|economic\s+area)\b|\beurope\b/i],
+  ['ca', null, /\bcanad\w*/i],
+  ['au', null, /\baustralia\w*/i],
+  ['nz', null, /\bnew\s+zealand\b/i],
+  ['ie', null, /\bireland\b/i],
+  ['in', null, /\bindia\b/i],
+  ['sg', null, /\bsingapore\b/i],
+  ['de', null, /\bgermany\b/i],
+  ['fr', null, /\bfrance\b/i],
+  ['nl', null, /\bnetherlands\b/i],
+  ['mx', null, /\bmexico\b/i],
+  ['jp', null, /\bjapan\b/i],
+  ['il', null, /\bisrael\b/i],
+];
+
+function countriesIn(text) {
+  const said = String(text ?? '');
+  const out = new Set();
+  for (const [code, short, name] of COUNTRIES) {
+    if (short?.test(said) || name.test(said)) out.add(code);
+  }
+  return out;
+}
+
+/**
+ * Whether a yes/no declaration names one country and the question another.
+ *
+ * `home` is the profile's own country, and it speaks for a declaration that
+ * names none. "Yes" is what people type into a box labelled "Work
+ * authorization", and it matched the Yes option by its text before any
+ * country was looked at: a profile living in the United States ticked "Yes"
+ * to "Are you authorized to work in the UK?" and "…in Canada?", and "No" to
+ * needing UK sponsorship. With no country anywhere in the profile there is
+ * nothing to compare, and the answer stands as it always did.
+ */
+function aboutAnotherCountry(key, value, asked, home) {
+  if (!YES_NO_KEYS.has(key)) return false;
+  let declared = countriesIn(value);
+  if (declared.size === 0) declared = countriesIn(home);
+  const wanted = countriesIn(asked);
+  if (declared.size === 0 || wanted.size === 0) return false;
+  for (const code of wanted) if (declared.has(code)) return false;
+  return true;
+}
+
+const ANOTHER_COUNTRY = 'your answer is about another country';
+
+/**
+ * The option that answers a yes/no question, where the labels are yes and no
+ * and the profile's answer is a phrase. `undefined` unless all of that holds,
+ * and unless the phrase and the question are about the same country — see
+ * `aboutAnotherCountry`.
+ */
+function yesNoOption(key, value, options, asked = '') {
   if (!YES_NO_KEYS.has(key)) return undefined;
+  if (aboutAnotherCountry(key, value, asked)) return undefined;
 
   const labelled = options.map((o) => ({ o, said: clean(o.label).toLowerCase() }));
   const yes = labelled.find((x) => x.said === 'yes');
@@ -970,7 +1810,22 @@ function yesNoOption(key, value, options) {
  * Fill what we can. Returns a report of what was filled and what was skipped,
  * so the user can see the difference between "done" and "done silently wrong".
  */
+/**
+ * The value for a box asking for the city and the state together.
+ *
+ * The store sends the two apart, as `address_city` and `address_state`, and
+ * nothing else says them together in the shape the box asks for — `location`
+ * is whatever was typed, "Boston, MA, USA" as often as "Boston, MA". Where
+ * there is no state to add, the city alone is what the box was given before.
+ */
+function withCityAndState(fields) {
+  if (fields.city_state || !fields.address_city) return fields;
+  const both = fields.address_state ? `${fields.address_city}, ${fields.address_state}` : fields.address_city;
+  return { ...fields, city_state: both };
+}
+
 export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
+  fields = withCityAndState(fields);
   const filled = [];
   const skipped = [];
 
@@ -986,7 +1841,8 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
     // Before the exclusions, which say nothing, and before the match, which
     // this question does not need. See `handBack`.
     if (handBack(description, skipped)) continue;
-    if (isNotAboutYou(description, clean(labelFor(input)), surroundingWords(input))) continue;
+    if (isNotAboutYou(description, clean(labelFor(input)), surroundingWords(input), boundedSection(input))) continue;
+    if (asksForWriting(input)) continue;
 
     /*
      * The first pattern that matches, and then whether the profile has it —
@@ -1005,20 +1861,51 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
      * happens to hold. Nothing here fills a field it has no value for; it
      * simply no longer goes looking for a different question to answer.
      */
-    const named = FIELD_PATTERNS.find(([, re]) => re.test(description));
+    // The degree's dates first: see `educationDateKey`. They read as nothing
+    // at all to the patterns, so this can only claim what was going unclaimed.
+    const dated = educationDateKey(input, description);
+    const named = dated ? [dated] : FIELD_PATTERNS.find(([, re]) => re.test(description));
     let match = named && fields[named[0]] ? named : undefined;
 
     if (!match && fields.full_name && BARE_NAME.test(withoutMarkers(labelFor(input)))) {
       match = ['full_name'];
     }
+    if (!match) {
+      const half = nameHalf(input);
+      if (half && fields[half]) match = [half];
+    }
     if (!match) continue;
 
-    const [key] = match;
-    const value = fields[key];
+    const key = wholeDateKey(input, match[0], description);
+    if (!fields[key]) continue;
+    if (anotherLevelOfStudy(input, key, fields)) continue;
+    if (asksYesOrNo(input, key)) continue;
+    let value = fields[key];
 
-    const answered = input instanceof HTMLSelectElement ? selectIsAnswered(input) : Boolean(input.value);
+    const answered =
+      input instanceof HTMLSelectElement
+        ? selectIsAnswered(input)
+        : Boolean(input.value) &&
+          !(LINKS.has(key) && onlyTheStartOfAnAddress(input.value)) &&
+          !(key === 'phone' && ONLY_A_DIALLING_CODE.test(input.value));
     if (answered && !overwrite) {
       skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
+      continue;
+    }
+    // The dialling code the form put there stays, in front of a number that
+    // does not carry one of its own.
+    if (key === 'phone' && ONLY_A_DIALLING_CODE.test(input.value) && !/^\s*\+/.test(String(value))) {
+      value = `${input.value.trim()} ${String(value).trim()}`;
+    }
+
+    /*
+     * Before any option is matched, because "Yes" matches "Yes" by its text
+     * whichever country is asked about — and before a box is typed into,
+     * which took the same "Yes" to "Are you authorized to work in the United
+     * Kingdom?". See `aboutAnotherCountry`.
+     */
+    if (aboutAnotherCountry(key, value, description, fields.address_country)) {
+      skipped.push({ key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) });
       continue;
     }
 
@@ -1046,6 +1933,15 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
       const option =
         choosable.find((o) => sameOption(o.textContent, value) || sameOption(o.value, value)) ??
         /*
+         * The same answer spelled the list's way: a month as "Dec" or "12", a
+         * state as its name or its code, a country by its long name. Only for
+         * those fields — "12" is a perfectly good option in plenty of other
+         * lists — and only after the exact match has failed.
+         */
+        choosable.find(
+          (o) => sameAnswerSpelledOtherwise(key, o.textContent, value) || sameAnswerSpelledOtherwise(key, o.value, value),
+        ) ??
+        /*
          * And, failing that, a yes/no pair against a phrase. See
          * `yesNoOption`, which wants a pair and nothing else — so the prompt
          * has to come off first.
@@ -1064,6 +1960,7 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
           key,
           value,
           choosable.filter((o) => !looksLikePlaceholder(o, input)).map((o) => ({ label: o.textContent, el: o })),
+          description,
         )?.el;
       if (option) {
         nativeSet(input, 'value', option.value);
@@ -1086,12 +1983,26 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
         input.dispatchEvent(new Event('change', { bubbles: true }));
         filled.push({ key, value });
       } else {
-        skipped.push({ key, reason: 'no matching option', description: description.slice(0, 60) });
+        const reason = aboutAnotherCountry(key, value, description) ? ANOTHER_COUNTRY : 'no matching option';
+        skipped.push({ key, reason, description: description.slice(0, 60) });
       }
       continue;
     }
 
     const before = input.value;
+    /*
+     * A month picker holds a month *and* a year, so whichever graduation key
+     * claimed it — a label saying "date", a name saying `graduation_month` —
+     * the only thing it can take is the whole date. Given the month alone it
+     * stays empty and says it would not take it.
+     */
+    if (key.startsWith('graduation_') && input.type === 'month' && fields.graduation_date) {
+      value = graduationFor(input, fields.graduation_date);
+    } else if (key.startsWith('education_start_') && input.type === 'month' && fields.education_start_date) {
+      value = graduationFor(input, fields.education_start_date);
+    } else if (key === 'graduation_date' || key === 'education_start_date') {
+      value = graduationFor(input, value);
+    }
     setValue(input, value);
     /*
      * Check it went in. Assigning a value a typed input will not accept — a
@@ -1235,7 +2146,7 @@ function answerChoiceButtons(fields, overwrite, already) {
     // The same three gates, in the same order, as `fillForm` and
     // `answerRadioGroups`. See `handBack`.
     if (handBack(description, skipped)) continue;
-    if (isNotAboutYou(description, clean(question), surroundingWords(group))) continue;
+    if (isNotAboutYou(description, clean(question), surroundingWords(group), boundedSection(group))) continue;
 
     // Only the keys that are a choice between options, as in
     // `answerRadioGroups` — see `CHOOSABLE` there.
@@ -1252,13 +2163,19 @@ function answerChoiceButtons(fields, overwrite, already) {
       continue;
     }
 
+    // Before any option is matched, as in `fillForm`.
+    if (aboutAnotherCountry(key, value, description, fields.address_country)) {
+      skipped.push({ key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) });
+      continue;
+    }
     const labelOf = (el) => clean(el.getAttribute('aria-label') || el.textContent);
     const wanted =
       options.find((el) => sameOption(labelOf(el), value)) ??
       // And a yes/no pair against a phrase, on the same terms as a radio's.
-      yesNoOption(key, value, options.map((el) => ({ label: labelOf(el), el })))?.el;
+      yesNoOption(key, value, options.map((el) => ({ label: labelOf(el), el })), description)?.el;
     if (!wanted) {
-      skipped.push({ key, reason: 'no matching option', description: description.slice(0, 60) });
+      const reason = aboutAnotherCountry(key, value, description) ? ANOTHER_COUNTRY : 'no matching option';
+      skipped.push({ key, reason, description: description.slice(0, 60) });
       continue;
     }
 
@@ -1532,7 +2449,7 @@ function answerRadioGroups(fields, overwrite) {
     // "legally authorized to work without sponsorship" as a pair of buttons.
     if (handBack(description, skipped)) continue;
     // The group's own words, on the same terms as `fillForm`.
-    if (isNotAboutYou(description, clean(groupLabelFor(radios)), surroundingWords(radios[0]))) continue;
+    if (isNotAboutYou(description, clean(groupLabelFor(radios)), surroundingWords(radios[0]), boundedSection(radios[0]))) continue;
 
     /*
      * Only the keys that are a choice between options. A name, an email address
@@ -1556,6 +2473,11 @@ function answerRadioGroups(fields, overwrite) {
       continue;
     }
 
+    // Before any option is matched, as in `fillForm`.
+    if (aboutAnotherCountry(key, value, description, fields.address_country)) {
+      skipped.push({ key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) });
+      continue;
+    }
     const wanted =
       radios.find(
         (radio) => sameOption(optionLabelFor(radio), value) || sameOption(radio.value, value),
@@ -1565,9 +2487,11 @@ function answerRadioGroups(fields, overwrite) {
         key,
         value,
         radios.map((radio) => ({ label: optionLabelFor(radio), el: radio })),
+        description,
       )?.el;
     if (!wanted) {
-      skipped.push({ key, reason: 'no matching option', description: description.slice(0, 60) });
+      const reason = aboutAnotherCountry(key, value, description) ? ANOTHER_COUNTRY : 'no matching option';
+      skipped.push({ key, reason, description: description.slice(0, 60) });
       continue;
     }
 
@@ -1671,8 +2595,10 @@ export function choiceQuestions() {
   for (const choice of rememberableChoices()) {
     if (choice.answered()) continue;
     // Never ask the bank about these, so that nothing puts one in it and
-    // nothing takes one out. See `NEVER_REMEMBER`.
-    if (neverRemember(choice.question)) continue;
+    // nothing takes one out. See `NEVER_REMEMBER`, and `DEPENDS_ON_EMPLOYER`
+    // for the second: a bank row from before that gate is another
+    // employer's answer.
+    if (neverRemember(choice.question) || dependsOnEmployer(choice.question)) continue;
     out.add(choice.question);
   }
   return [...out];
@@ -1697,7 +2623,10 @@ export function choiceQuestions() {
  * - Nothing personal, even if the bank holds it. `worthRemembering` keeps
  *   these out on the way in, but the bank is older than that gate and the
  *   Workspace lets answers be typed in by hand. A date of birth sitting in
- *   the bank must not be typed into a form by a machine.
+ *   the bank must not be typed into a form by a machine. Nor anything whose
+ *   answer belongs to one employer — see `DEPENDS_ON_EMPLOYER` — for the
+ *   same reason: the bank already holds "Yes, I have worked here" from
+ *   before that gate, and it was Acme's.
  * - Only an option that plainly matches. No yes/no coercion, no nearest
  *   option: the question match is already one inference, and stacking a
  *   second one on it is how a form comes to say "No" where its owner meant
@@ -1718,7 +2647,7 @@ function answerFromMemory(remembered) {
 
   for (const choice of rememberableChoices()) {
     if (choice.answered()) continue;
-    if (neverRemember(choice.question)) continue;
+    if (neverRemember(choice.question) || dependsOnEmployer(choice.question)) continue;
     const answer = bank.get(choice.question);
     if (!answer) continue;
 
@@ -1792,7 +2721,14 @@ function chooseInAria(options, answer) {
  * three. Naming them costs nothing and is the difference between "done" and
  * "done silently wrong".
  */
-function unfillableChoices(fields, filled) {
+const PICK_BY_HAND = 'this one has to be picked by hand';
+
+/**
+ * The widgets on the page that ask something the profile answers, with the
+ * element — shared by the report below and by `fillComboboxes`, so the two
+ * cannot disagree about which widget is which question.
+ */
+function widgetChoices(fields, filled) {
   const already = new Set(filled.map((f) => f.key));
   const found = [];
 
@@ -1804,18 +2740,281 @@ function unfillableChoices(fields, filled) {
 
     const description = describeField(widget);
     if (!description) continue;
-    if (isNotAboutYou(description, clean(labelFor(widget)), surroundingWords(widget))) continue;
+    /*
+     * Handed back here too, as `handBack` hands it back everywhere else.
+     *
+     * Workday asks every yes/no as one of these, and this was the one path
+     * that never asked. Measured against a profile that is authorized and
+     * needs sponsorship: "Are you legally authorized to work in the United
+     * States without sponsorship?" was answered "Yes" from the authorization
+     * alone, "Are you able to work in the U.S. without sponsorship?" "Yes"
+     * from the sponsorship alone — both declaring a right to work unsponsored
+     * that the applicant does not have — and the plain question below them
+     * was left blank, because the first had claimed its key. So it claims
+     * nothing, is never driven, and is reported for what it is.
+     */
+    if (asksBothAtOnce(description)) {
+      found.push({ key: 'work_authorization', description: description.slice(0, 60), el: widget, both: true });
+      continue;
+    }
+    if (isNotAboutYou(description, clean(labelFor(widget)), surroundingWords(widget), boundedSection(widget))) continue;
 
-    const match = FIELD_PATTERNS.find(([key, re]) => re.test(description) && fields[key] && !already.has(key));
-    if (!match) continue;
-    found.push({
-      key: match[0],
-      reason: 'this one has to be picked by hand',
-      description: description.slice(0, 60),
-    });
-    already.add(match[0]);
+    /*
+     * The first pattern that matches, and only then whether the profile has
+     * it — the rule `fillForm` follows, for the reason it gives there.
+     *
+     * This still searched for the first pattern that matched *and* had a
+     * value *and* was not already claimed, so it walked past country on a
+     * profile with no country and named a "Country/Region" widget as the
+     * state, `region` being a state word. Measured on a form with a
+     * Country/Region widget above a State widget and a profile holding only
+     * the state: the report said the state was to be picked by hand at the
+     * Country/Region widget, and — the state now being claimed — said nothing
+     * about the State widget at all. `fillComboboxes` then typed the state
+     * into the country box.
+     *
+     * What a widget asks does not depend on what the profile holds or what
+     * has been claimed already; a widget whose question the profile cannot
+     * answer, or that has been answered elsewhere, is simply not named.
+     */
+    const dated = educationDateKey(widget, description);
+    const key = dated || FIELD_PATTERNS.find(([, re]) => re.test(description))?.[0];
+    if (!key || !fields[key] || already.has(key)) continue;
+    if (anotherLevelOfStudy(widget, key, fields)) continue;
+    // Named, so it is reported for what it is and never driven: Workday's
+    // list picks "Yes" by its text too. See `aboutAnotherCountry`.
+    const elsewhere = aboutAnotherCountry(key, fields[key], description, fields.address_country);
+    found.push({ key, description: description.slice(0, 60), el: widget, elsewhere });
+    already.add(key);
   }
   return found;
+}
+
+function unfillableChoices(fields, filled) {
+  return widgetChoices(fields, filled).map(({ key, description, both, elsewhere }) => ({
+    key,
+    reason: both ? TWO_AT_ONCE : elsewhere ? ANOTHER_COUNTRY : PICK_BY_HAND,
+    description,
+  }));
+}
+
+/* ---------------------------------------------------------------------- *
+ * Driving the widgets, where that can be done without guessing             *
+ * ---------------------------------------------------------------------- */
+
+const pause = (ms) => new Promise((done) => setTimeout(done, ms));
+
+/** Poll until `find` answers something, or give up. */
+async function waitFor(find, patience) {
+  const until = Date.now() + patience;
+  for (;;) {
+    const got = find();
+    if (got) return got;
+    if (Date.now() >= until) return null;
+    await pause(50);
+  }
+}
+
+/** The text box a widget types into, if it has one. */
+function typingBoxOf(widget) {
+  if (widget instanceof HTMLInputElement) return widget;
+  return widget.querySelector?.('input:not([type=hidden])') ?? null;
+}
+
+/**
+ * The options this widget opened — and only this widget's.
+ *
+ * The listbox it names through `aria-controls` or `aria-owns`, which is how an
+ * accessible widget says which popup is its own. Failing that, the listbox
+ * that is visible, but only if exactly one is: two open listboxes and no
+ * pointer to either is a page where choosing is a guess about which one
+ * answers this question, and guessing is what this does not do.
+ */
+function optionsOf(widget) {
+  const box = typingBoxOf(widget);
+  const ids = [widget, box]
+    .filter(Boolean)
+    .flatMap((el) => `${el.getAttribute('aria-controls') ?? ''} ${el.getAttribute('aria-owns') ?? ''}`.split(/\s+/))
+    .filter(Boolean);
+  const named = ids.map((id) => widget.getRootNode().getElementById?.(id) ?? document.getElementById(id)).filter(Boolean);
+  const lists = named.length
+    ? named
+    : deepQueryAll('[role="listbox"]').filter(
+        /*
+         * `visibility: hidden` keeps a box, so a closed menu that an exit
+         * transition leaves mounted counted as open — and as a second listbox
+         * it refused every unlinked widget on the page.
+         */
+        (l) => l !== widget && l.getClientRects().length > 0 && getComputedStyle(l).visibility !== 'hidden',
+      );
+  if (!named.length && lists.length !== 1) return [];
+  return lists.flatMap((l) => [...l.querySelectorAll('[role="option"]')]).filter((o) => !isDisabled(o) && o.getAttribute('aria-disabled') !== 'true');
+}
+
+/** The option that is plainly this answer, or nothing. Never the nearest. */
+function exactOption(options, key, value) {
+  return (
+    options.find((o) => sameOption(o.textContent, value)) ??
+    options.find((o) => sameAnswerSpelledOtherwise(key, o.textContent, value)) ??
+    null
+  );
+}
+
+/** A click as a person makes one — some widgets choose on mousedown, some on click. */
+function press(el) {
+  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+    const Ctor = type.startsWith('pointer') && typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+    el.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, view: window }));
+  }
+}
+
+/**
+ * Whether the widget really took the answer, read back the way a person would.
+ *
+ * A widget can render options and then ignore the click — a newer release
+ * that chooses on a keypress, a listener the synthetic event did not reach —
+ * and a form that looks answered and submits nothing is the failure this
+ * whole file is written against. So it has to be seen: the option marked
+ * chosen, or the control now showing it with the typing gone, or the value it
+ * submits carrying something where it carried nothing.
+ */
+function tookIt(widget, box, option, value, hiddenBefore) {
+  const hidden = hiddenPartner(widget);
+  if (hidden && hidden.value && hidden.value !== hiddenBefore) return true;
+  if (option.isConnected && option.getAttribute('aria-selected') === 'true') return true;
+  /*
+   * An autocomplete that writes the choice into its own box — MUI, Downshift,
+   * Ant Design — with no hidden input and the option gone once the menu
+   * closes. The box holding the option's text is not evidence on its own,
+   * because it was typed there; the widget saying its menu is now closed, with
+   * exactly that text left in the box, is. An ignored click leaves the menu
+   * open, and a widget that drops the choice clears the box as it closes.
+   */
+  const expanded = box?.getAttribute('aria-expanded') ?? widget.getAttribute('aria-expanded');
+  if (box && expanded === 'false' && sameOption(box.value, option.textContent)) return true;
+  /*
+   * Not "the box holds the option's text": the box holds it because it was
+   * typed there, whether or not the click did anything. And the control's text
+   * is read with any open listbox cut out of it, or an ignored click would
+   * pass because the option is still showing in the menu underneath — which
+   * is what a React widget that re-renders its options on click, choosing
+   * nothing, looks like: the clicked node is gone and the menu is still open.
+   */
+  const control = controlOf(widget).cloneNode(true);
+  for (const list of control.querySelectorAll('[role="listbox"]')) list.remove();
+  const shows = clean(control.textContent).toLowerCase().includes(clean(value).toLowerCase());
+  return shows && (!box || !box.value);
+}
+
+/**
+ * The element a widget draws its current answer in.
+ *
+ * The widget itself where no wrapper says it is the control — not its parent.
+ * A button sitting straight in a form has the form as its parent, and the
+ * answer "shown" anywhere in the form's text passed for a choice that took:
+ * an ignored click beside a paragraph naming the city was reported as filled.
+ */
+function controlOf(widget) {
+  return widget.closest?.('[class*="control"], [class*="select"], [class*="combobox"]') ?? widget;
+}
+
+/**
+ * The hidden input carrying what the widget submits, where it sits beside it
+ * — beside it, not anywhere below the parent, which for a widget straight in a
+ * form was the first hidden input of some other field.
+ */
+function hiddenPartner(widget) {
+  const around = controlOf(widget).parentElement ?? controlOf(widget);
+  return around.querySelector?.(':scope > input[type="hidden"]') ?? null;
+}
+
+/** Whether pressing this would send its form. */
+function wouldSubmit(el) {
+  if (el instanceof HTMLButtonElement) return el.type === 'submit' && Boolean(el.form);
+  if (el instanceof HTMLInputElement) return ['submit', 'image'].includes(el.type) && Boolean(el.form);
+  return false;
+}
+
+/** Put the widget back as it was: nothing typed, nothing open. */
+function undoWidget(widget, box) {
+  if (box) setValue(box, '');
+  (box ?? widget).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  (box ?? widget).blur?.();
+}
+
+/**
+ * Choose in the widgets `fillForm` could only report.
+ *
+ * Workday's dropdowns and the react-select boxes half the other systems use
+ * are a control that opens a listbox, with nothing to assign a value to — so
+ * the country, the state and the school on those forms were all left for the
+ * person to pick, every time. They can be driven, the way a person drives
+ * them: type or click to open, choose the option, see that it took.
+ *
+ * Only on these terms, because a form that looks answered and is not is worse
+ * than one that says it is not:
+ *
+ *   - Exactly the answer, never the nearest. "United States" does not choose
+ *     "United States Minor Outlying Islands", and no option means no choice.
+ *   - Only this widget's own options. See `optionsOf`.
+ *   - Seen to have taken. See `tookIt`. Otherwise everything typed is taken
+ *     back out and the widget is reported exactly as it was before.
+ *
+ * Async, and after `fillForm`, because a widget opens and fills in on its own
+ * time — a school list fetched as you type can take a second to arrive.
+ */
+export async function fillComboboxes(fields, report, { patience = 1500 } = {}) {
+  // The same fields `fillForm` read, or a widget it named `city_state` has
+  // no value here.
+  fields = withCityAndState(fields);
+  const pending = new Set(report.skipped.filter((s) => s.reason === PICK_BY_HAND).map((s) => s.key));
+  if (pending.size === 0) return report;
+
+  const done = [];
+  for (const { key, el: widget, both, elsewhere } of widgetChoices(fields, report.filled)) {
+    if (both || elsewhere || !pending.has(key)) continue;
+    const value = String(fields[key]);
+    const box = typingBoxOf(widget);
+    const hiddenBefore = hiddenPartner(widget)?.value ?? '';
+
+    /*
+     * Never a control that would send the form.
+     *
+     * A `<button>` with no `type` inside a form *is* a submit button — that is
+     * the default, and a Workday-style dropdown written without `type="button"`
+     * is one. Pressing it to open its list submitted the application instead:
+     * the page navigated away mid-fill, half the form empty, and nothing came
+     * back to say so. A widget that has to be pressed to open, and would send
+     * the form if pressed, is left for the person, exactly as before.
+     */
+    if (!box && wouldSubmit(widget)) continue;
+
+    widget.focus?.();
+    if (box) {
+      setValue(box, value);
+    } else {
+      press(widget);
+    }
+    const option = await waitFor(() => exactOption(optionsOf(widget), key, value), patience);
+    if (!option) {
+      undoWidget(widget, box);
+      continue;
+    }
+    press(option);
+    await pause(60);
+    if (!tookIt(widget, box, option, value, hiddenBefore)) {
+      undoWidget(widget, box);
+      continue;
+    }
+    done.push({ key, value, widget: true });
+  }
+
+  const chose = new Set(done.map((d) => d.key));
+  return {
+    ...report,
+    filled: [...report.filled, ...done],
+    skipped: report.skipped.filter((s) => !(s.reason === PICK_BY_HAND && chose.has(s.key))),
+  };
 }
 
 /**
@@ -2038,6 +3237,25 @@ const FIELD_KEY = 'data-jobhelper-field';
 let fieldCounter = 0;
 
 /**
+ * The same marks, kept here as well as on the element.
+ *
+ * CKEditor 5 draws its editing root's attributes from its own model, so a
+ * mark put on the element is taken off the next time it renders — and
+ * focusing it is a render. Measured against the real editor: click in the
+ * box, press Insert, and it was refused with "that box on the page is gone or
+ * asks something else now", the box in plain view and asking the same thing.
+ * Held weakly, so a form that throws its boxes away does not keep them.
+ */
+const markedAs = new Map();
+
+function markedField(fieldId) {
+  const onPage = deepQueryAll(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`)[0];
+  if (onPage) return onPage;
+  const kept = markedAs.get(fieldId)?.deref();
+  return kept?.isConnected ? kept : undefined;
+}
+
+/**
  * Find the free-text questions on the page — the boxes that want a paragraph,
  * not a phone number. Returned rather than filled: a long-form answer is
  * something to read before it goes out under your name.
@@ -2055,12 +3273,29 @@ export function findQuestions() {
     if (field.getClientRects().length === 0) continue;
 
     /*
+     * Nor an editor's own workings, put where nobody can reach them.
+     *
+     * Quill 1 keeps a second contenteditable beside every editor, 100000px
+     * off the left of the page, to catch pastes in. It has no label, so the
+     * positional fallback read the editor beside it as its question — which
+     * is whatever the person has typed so far. Measured against the real
+     * Quill 1.3.7 with the extension loaded: type "I like the team here."
+     * into the page's editor and the card listed "I like the team here." as
+     * a question of its own, redrawn as the question watcher saw the page
+     * change. A box entirely left of or above the page cannot be typed in.
+     */
+    if (!(field instanceof HTMLTextAreaElement)) {
+      const at = field.getBoundingClientRect();
+      if (at.right + window.scrollX <= 0 || at.bottom + window.scrollY <= 0) continue;
+    }
+
+    /*
      * The cover letter box is not an essay question. It is long-form, it is
      * labelled, and it passes every test below — so it was being offered as a
      * question to draft an answer to, on the same card that already has a
      * cover letter step for it. One box, asked for twice.
      */
-    if (/cover\s*letter/i.test(describeField(field))) continue;
+    if (/cover\s*letter/i.test(describeField(takenOver(field) ?? field))) continue;
 
     /*
      * The placeholder, where there is no label at all.
@@ -2072,7 +3307,7 @@ export function findQuestions() {
      * placeholder rather than `describeField`, because a field's name and id
      * are not a question anyone wrote.
      */
-    const question = cleanQuestion(questionFor(field) || field.getAttribute?.('placeholder') || '');
+    const question = questionOf(field);
     // Anything this short is a label like "Notes" rather than a question worth
     // drafting an answer to — unless it ends in a question mark, which settles
     // it. "Why us?" is seven characters and is exactly the sort of thing this
@@ -2085,10 +3320,17 @@ export function findQuestions() {
       id = `jh-${++fieldCounter}`;
       field.setAttribute(FIELD_KEY, id);
     }
+    markedAs.set(id, new WeakRef(field));
     found.push({
       fieldId: id,
       question,
       currentValue: field.value ?? field.textContent ?? '',
+      /*
+       * The box's own limit. A script assigning a value is not held to
+       * `maxlength`, so an answer over it went in whole and the form refused
+       * it on submit. -1 is what a box without one reports.
+       */
+      ...(field.maxLength > 0 ? { limit: field.maxLength } : {}),
       ...(yoursToAnswer(question) ? { yours: yoursToAnswer(question) } : {}),
     });
   }
@@ -2174,8 +3416,11 @@ export function wantsCoverLetter() {
  * field and nothing else fillable, which is the rule `labelFor` already uses.
  */
 export function isRequired(fieldId) {
-  const field = deepQueryAll(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`)[0];
-  if (!field) return false;
+  const found = deepQueryAll(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`)[0];
+  if (!found) return false;
+  // Asked by the textarea an editor was put on, so required by its label too.
+  // See `takenOver`.
+  const field = takenOver(found) ?? found;
   if (field.required || field.getAttribute('aria-required') === 'true') return true;
 
   const marked = (text) => /\*|\brequired\b/i.test(text ?? '');
@@ -2195,18 +3440,123 @@ export function isRequired(fieldId) {
   return false;
 }
 
-/** Put text into a field the card previously identified. */
-export function insertAnswer(fieldId, text) {
-  const field = deepQueryAll(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`)[0];
+/** What a question box asks, as `findQuestions` reads it. */
+function questionOf(field) {
+  const asked = takenOver(field) ?? field;
+  return cleanQuestion(questionFor(asked) || asked.getAttribute?.('placeholder') || '');
+}
+
+/**
+ * The textarea a rich-text editor has been put on, where it has one.
+ *
+ * CKEditor, Summernote and their kind are started on a `<textarea>`: they
+ * hide it, keep it as what the form sends, and draw their own box straight
+ * after it. The page's label still names the textarea, and the box has a
+ * label of the editor's — CKEditor 5 calls every one it draws "Editor editing
+ * area: main. Press Alt+0 for help.", and that was the question the card
+ * offered, measured against the real editor under a label reading "Why do you
+ * want to work here?". A draft was asked for against that sentence, and an
+ * answer saved for next time was filed under words every CKEditor form uses.
+ *
+ * Only a hidden textarea immediately before the box or one of the few
+ * elements around it, and never past one that holds another place to write:
+ * the label of a different question is exactly what must not be borrowed.
+ */
+function takenOver(field) {
+  if (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) return null;
+  let node = field;
+  for (let i = 0; i < 3 && node; i++, node = node.parentElement) {
+    const before = node.previousElementSibling;
+    if (before instanceof HTMLTextAreaElement && before.getClientRects().length === 0) return before;
+    const around = node.parentElement;
+    const others = [...(around?.querySelectorAll('textarea, [contenteditable="true"]') ?? [])].filter(
+      (f) => f !== field && !f.contains(field) && !field.contains(f),
+    );
+    if (!around || others.length > 0) return null;
+  }
+  return null;
+}
+
+/*
+ * The same question, however its counter reads. A label that says "(500
+ * characters remaining)" says 473 once something is typed into the box, and
+ * that is not a different question; a different sentence is.
+ */
+const askedAs = (question) => cleanQuestion(question).replace(/\d+/g, '#').toLowerCase();
+
+/**
+ * Put text into a field the card previously identified.
+ *
+ * `question` is what the card showed above the answer, and the field has to
+ * still be asking it. Questions are found once, when the card goes up, and
+ * the box is marked with an id; a form that moves to its next step by
+ * re-rendering in place keeps the same element for step two's box, our mark
+ * still on it, with the url unchanged and so nothing reading the questions
+ * again. Measured in tests/autofill.mjs: Insert under "Why do you want to
+ * work at Acme?" wrote that answer into step two's "Describe a time you
+ * failed." and returned true. Where it no longer matches, nothing is written.
+ */
+export async function insertAnswer(fieldId, text, question) {
+  const field = markedField(fieldId);
   if (!field) return false;
+  if (question != null && askedAs(questionOf(field)) !== askedAs(question)) return false;
   if (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) {
     setValue(field, text);
-  } else {
-    field.textContent = text;
-    field.dispatchEvent(new Event('input', { bubbles: true }));
+  } else if (!(await pasteInto(field, text))) {
+    return false;
   }
   field.scrollIntoView({ behavior: 'smooth', block: 'center' });
   return true;
+}
+
+/**
+ * Put text into a rich-text editor the way the editor takes it: as a paste.
+ *
+ * A contenteditable box on an application form is almost never a bare
+ * `<div>`. It is Draft.js, Quill, ProseMirror, CKEditor or TinyMCE, and what
+ * the form submits is the editor's own document, not the element's text.
+ * Setting `textContent` wrote the words into the element and nowhere else.
+ * Measured against the real editors: Draft.js kept an empty EditorState and
+ * submitted nothing, CKEditor 5 put its own empty paragraph straight back,
+ * and Quill and ProseMirror kept the words but ran the paragraphs into one —
+ * while Insert returned true and the card said nothing was wrong.
+ *
+ * Every one of them handles a paste, because that is how people put an answer
+ * written elsewhere into them. So the box's contents are selected, the
+ * selection is left a turn to reach the editor — Draft.js, ProseMirror and
+ * CKEditor learn it from `selectionchange`, and pasted straight away they put
+ * the answer after what was there instead of in place of it — and a paste
+ * carrying the text is delivered. An editor that does not take pastes itself
+ * (a plain box, Quill 1, TinyMCE) gets the browser's own `insertText`, which
+ * those read off the DOM and which splits paragraphs as typing would.
+ *
+ * Then it is read back, because a paste is an event and an event nobody
+ * handled looks like one that worked. True only when the words are in the box.
+ */
+async function pasteInto(field, text) {
+  const doc = field.ownerDocument;
+  const settle = (ms) => new Promise((r) => setTimeout(r, ms));
+  field.focus({ preventScroll: true });
+  const all = doc.createRange();
+  all.selectNodeContents(field);
+  const selection = doc.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(all);
+  await settle(0);
+
+  const carrier = new DataTransfer();
+  carrier.setData('text/plain', text);
+  const paste = new ClipboardEvent('paste', { clipboardData: carrier, bubbles: true, cancelable: true });
+  field.dispatchEvent(paste);
+  if (!paste.defaultPrevented) doc.execCommand('insertText', false, text);
+
+  // Some take a paste on a timer of their own; Quill 1 does.
+  const flat = (s) => String(s ?? '').replace(/\s+/g, '');
+  for (let i = 0; i < 6; i++) {
+    if (flat(field.textContent).includes(flat(text))) return true;
+    await settle(40);
+  }
+  return false;
 }
 
 /**

@@ -59,7 +59,9 @@ function fakeStore() {
   const server = http.createServer(async (req, res) => {
     const url = req.url.split('?')[0];
     const raw = await readBody(req);
-    state.hits.push({ url, method: req.method, project: req.headers['x-rmm-project'] ?? null, body: raw });
+    // The query as well: `/api/autofill` carries the resume's choices in it.
+    const query = new URLSearchParams(req.url.split('?')[1] ?? '');
+    state.hits.push({ url, query, method: req.method, project: req.headers['x-rmm-project'] ?? null, body: raw });
 
     const mode = state.routes[url] ?? 'ok';
     if (mode === 'silent') {
@@ -74,6 +76,12 @@ function fakeStore() {
     if (mode === 'not-a-job') {
       res.writeHead(400, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ kind: 'not-a-job', error: 'does not read like a job, so no space was opened for it.' }));
+      return;
+    }
+    // A store that is up and failing, which reads to the card as one that is down.
+    if (mode === 'broken') {
+      res.writeHead(500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'broken on purpose' }));
       return;
     }
     if (mode === 'stall-body') {
@@ -107,13 +115,27 @@ function fakeStore() {
       } catch {
         /* the body is only used for the company name */
       }
-      return send({
-        isJobPosting: true,
-        kind: 'posting',
-        save: state.save,
-        job: { company: page.company ?? 'Helios', title: state.role, description: 'A job.', keywords: [] },
-        spec: { id: 'job-fake', extends: 'newgrad' },
-      });
+      const reply = () =>
+        send({
+          isJobPosting: true,
+          kind: 'posting',
+          save: state.save,
+          // `company` set on the state is a page the analysis could not name.
+          job: { company: state.company ?? page.company ?? 'Helios', title: state.role, description: 'A job.', keywords: [] },
+          // Built from the base that was asked for, and said to be, as the
+          // store does — so a proposal can be told apart by where it came from.
+          spec: { id: 'job-fake', tier: 'temporary', copiedFrom: page.baseResumeId ?? 'newgrad' },
+          baseResumeId: page.baseResumeId ?? 'newgrad',
+          // An AI pass comes back as a decision; see `isDecision` in card.js.
+          ...(page.tailor === 'ai' ? { tailor: 'ai', aiUsed: true } : {}),
+        });
+      // An AI pass held open until the test lets it answer, which is the
+      // minutes a real one takes.
+      if (page.tailor === 'ai' && state.heldAi) {
+        state.heldAi.push(reply);
+        return;
+      }
+      return reply();
     }
     /*
      * The answer bank's matcher, whose grading is the whole point of the
@@ -141,7 +163,14 @@ function fakeStore() {
     }
     if (url === '/api/applications/bundle') return send({ ok: true, id: 'app-1', folder: '/tmp/x' });
     if (url === '/api/workspace') return send({ ok: true, id: 'ws-1', url: '/workspace/ws-1' });
-    if (url === '/api/resumes') return send({ resumes: [{ id: 'newgrad', label: 'New grad' }] });
+    // A bare list, which is what ResumeM-M's `/api/resumes` answers and what
+    // the card's picker reads.
+    if (url === '/api/resumes') {
+      return send([
+        { id: 'newgrad', label: 'New grad', base: true },
+        { id: 'intern', label: 'Summer intern', base: true },
+      ]);
+    }
     return send({ error: `no route ${url}` }, 404);
   });
 
@@ -372,6 +401,152 @@ async function main() {
     }
 
     /*
+     * A rescue nothing could check against the page says whose it was.
+     *
+     * `pickParked` refuses a park naming a plainly different job, but only
+     * when the page gives it a job to compare with. On a page the analysis
+     * cannot name it hands back the newest park at the address, which on a
+     * board keeping every posting at one url may be another job's letter —
+     * and the card said only "Recovered what you had written before this tab
+     * closed", with nothing to notice a wrong hand-off by.
+     *
+     * The park is written as a closed tab leaves one: named, from a tab that
+     * no longer exists.
+     */
+    group('Drafting one answer tells the store the box’s limit');
+    {
+      store.save = 'work';
+      await ask(driver, 'answerQuestion', { question: 'Why us?', force: true, limit: 280 });
+      const hit = store.sentTo('/api/ai/answer').slice(-1)[0];
+      const body = JSON.parse(hit?.body || '{}');
+      check('the limit goes with the question', body.limit === 280 && body.question === 'Why us?', hit?.body ?? '(not sent)');
+    }
+
+    /*
+     * The card's resume is a proposal the store has not been given, so its id
+     * names nothing there. These asked with `spec.extends ?? spec.id`, and a
+     * proposal carries no `extends` since resumes stopped inheriting: the
+     * proposal's own id went, and the store answered "No resume named …".
+     */
+    group('Writing from the card sends the proposal, and a resume the store has');
+    {
+      store.save = 'work';
+      const spec = { id: 'job-fake', label: 'Helios', tier: 'temporary', copiedFrom: 'newgrad', sections: [] };
+      const job = { title: 'Engineer', company: 'Helios', description: 'A job.' };
+      await ask(driver, 'coverLetter', { spec, job });
+      await ask(driver, 'writeApplication', { spec, job, letter: { required: true, body: '' }, questions: [] });
+      await ask(driver, 'refine', { spec, job, feedback: 'More Kafka.' });
+      await ask(driver, 'renderLetter', { body: 'Dear Helios,', spec });
+      for (const route of ['/api/ai/cover-letter', '/api/extension/write', '/api/ai/tailor', '/api/render/letter']) {
+        const body = JSON.parse(store.sentTo(route).slice(-1)[0]?.body || '{}');
+        check(
+          `${route} names the resume it was copied from, and carries the copy`,
+          body.resumeId === 'newgrad' && body.spec?.id === 'job-fake',
+          JSON.stringify({ resumeId: body.resumeId, spec: body.spec?.id }),
+        );
+      }
+    }
+
+    group('A rescue onto a page nobody could name says which job it was for');
+    {
+      const BOARD = 'http://board.example/unnamed';
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      await driver.evaluate(
+        ([key]) =>
+          chrome.storage.session.set({
+            [key]: {
+              parked: [{ work: { letter: 'FOR-SOMEONE' }, save: 'work', job: { role: 'Platform Engineer', company: 'Helios' }, tab: 987654, at: Date.now() }],
+              at: Date.now(),
+            },
+          }),
+        [`jh-orphan:${BOARD}`],
+      );
+      store.role = '';
+      store.company = '';
+      await ask(driver, 'analyze', { url: BOARD, title: 'Board', html: '<p>unnamed</p>' });
+      const got = await ask(driver, 'takeWork', { page: { url: BOARD, title: 'Board' } });
+      store.company = undefined;
+      check('the letter is still rescued', got.reply?.data?.work?.letter === 'FOR-SOMEONE', JSON.stringify(got.reply?.data?.work));
+      check(
+        'and named as the job it was written for',
+        got.reply?.data?.recoveredFor === 'Platform Engineer at Helios',
+        JSON.stringify(got.reply?.data?.recoveredFor),
+      );
+
+      // Where the page is named and matched, its heading already says it.
+      await ask(driver, 'clearTrail', {});
+      await driver.evaluate(
+        ([key]) =>
+          chrome.storage.session.set({
+            [key]: {
+              parked: [{ work: { letter: 'FOR-HELIOS' }, save: 'work', job: { role: 'Platform Engineer', company: 'Helios' }, tab: 987654, at: Date.now() }],
+              at: Date.now(),
+            },
+          }),
+        [`jh-orphan:${BOARD}`],
+      );
+      store.role = 'Platform Engineer';
+      await ask(driver, 'analyze', { url: BOARD, title: 'Board', html: '<p>named</p>' });
+      const matched = await ask(driver, 'takeWork', { page: { url: BOARD, title: 'Board' } });
+      check(
+        'not where the page itself was matched to it',
+        matched.reply?.data?.work?.letter === 'FOR-HELIOS' && matched.reply?.data?.recoveredFor === undefined,
+        JSON.stringify(matched.reply?.data),
+      );
+    }
+
+    /*
+     * One employer written two ways is still one job to put writing back into.
+     *
+     * A park is named after the application's last page, and a posting's
+     * JSON-LD carries the legal name where the form says the short one. The
+     * names were compared exactly, so coming back to the posting as "Helios,
+     * Inc." read the park named "Helios" as another employer's and refused
+     * it: the letter stayed parked and the card came up empty on the job it
+     * was written for.
+     */
+    group('Coming back to a job whose employer is written another way');
+    {
+      const WHERE = 'http://careers.helios.example/jobs/platform-engineer';
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      await driver.evaluate(
+        ([key]) =>
+          chrome.storage.session.set({
+            [key]: {
+              parked: [{ work: { letter: 'FOR-HELIOS-AGAIN' }, save: 'work', job: { role: 'Platform Engineer', company: 'Helios' }, tab: 987654, at: Date.now() }],
+              at: Date.now(),
+            },
+          }),
+        [`jh-orphan:${WHERE}`],
+      );
+      store.role = 'Platform Engineer';
+      // What the analysis reads off the posting, whatever the page sent.
+      store.company = 'Helios, Inc.';
+      await ask(driver, 'analyze', { url: WHERE, title: 'Platform Engineer', html: '<p>posting</p>', company: 'Helios, Inc.' });
+      const got = await ask(driver, 'takeWork', { page: { url: WHERE, title: 'Platform Engineer' } });
+      check('its letter comes back', got.reply?.data?.work?.letter === 'FOR-HELIOS-AGAIN', JSON.stringify(got.reply?.data));
+
+      // And another employer's is still refused, however it is written.
+      await ask(driver, 'clearTrail', {});
+      await driver.evaluate(
+        ([key]) =>
+          chrome.storage.session.set({
+            [key]: {
+              parked: [{ work: { letter: 'FOR-ALTAIR' }, save: 'work', job: { role: 'Platform Engineer', company: 'Altair' }, tab: 987654, at: Date.now() }],
+              at: Date.now(),
+            },
+          }),
+        [`jh-orphan:${WHERE}`],
+      );
+      await ask(driver, 'analyze', { url: WHERE, title: 'Platform Engineer', html: '<p>posting</p>', company: 'Helios, Inc.' });
+      const other = await ask(driver, 'takeWork', { page: { url: WHERE, title: 'Platform Engineer' } });
+      store.company = undefined;
+      check('while another employer’s is not', other.reply?.data?.work?.letter !== 'FOR-ALTAIR', JSON.stringify(other.reply?.data));
+    }
+
+    /*
      * A rescue is not a rescue until the writing is somewhere other than a
      * message.
      *
@@ -432,6 +607,105 @@ async function main() {
      * a few milliseconds wide and one guess at it proves nothing. The other
      * letter has to survive every one of them.
      */
+    group('Claiming a park does not erase one that arrives meanwhile');
+    {
+      const WHERE = 'http://board.example/claimed';
+      const other = await context.newPage();
+      await other.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+      const lost = [];
+      const twice = [];
+      let claims = 0;
+      try {
+        // Negative: the other tab's park starts first, and its path is the
+        // longer of the two — a full sweep before the chain.
+        for (let delay = -16; delay <= 8; delay++) {
+          store.save = 'work';
+          store.role = 'Platform Engineer';
+          await ask(driver, 'clearTrail', {});
+          await ask(other, 'clearTrail', {});
+          await driver.evaluate((key) => chrome.storage.session.remove(key), `jh-orphan:${WHERE}`);
+          // This tab's own letter, parked, waiting to be claimed.
+          await ask(driver, 'analyze', { url: WHERE, title: 'Board', html: '<p>one</p>', company: 'Helios' });
+          await ask(driver, 'saveWork', { work: { letter: 'MINE' } });
+          await ask(driver, 'clearTrail', {});
+          await ask(driver, 'analyze', { url: WHERE, title: 'Board', html: '<p>one</p>', company: 'Helios' });
+
+          // Another tab, on another job at the same address, with a letter of
+          // its own that it is about to park there. The company is set on the
+          // store because that is what the analysis reads, whatever was sent.
+          store.company = 'Altair';
+          await ask(other, 'analyze', { url: WHERE, title: 'Board', html: '<p>two</p>', company: 'Altair' });
+          store.company = undefined;
+          await ask(other, 'saveWork', { work: { letter: `THEIRS-${delay}` } });
+
+          const later = (ms, fn) => new Promise((r) => setTimeout(r, Math.max(0, ms))).then(fn);
+          const [claimed] = await Promise.all([
+            later(-delay, () => ask(driver, 'takeWork', { page: { url: WHERE, title: 'Board' } })),
+            later(delay, () => ask(other, 'clearTrail', {})),
+          ]);
+          const left = await driver.evaluate(async (key) => {
+            const held = (await chrome.storage.session.get(key))[key];
+            return (held?.parked ?? []).map((p) => p.work?.letter);
+          }, `jh-orphan:${WHERE}`);
+          if (claimed.reply?.data?.work?.letter === 'MINE') claims++;
+          if (!left.includes(`THEIRS-${delay}`)) lost.push({ delay, left });
+          if (left.includes('MINE')) twice.push({ delay, left });
+        }
+      } finally {
+        await other.close();
+      }
+      check('every claim really was made', claims === 25, `${claims} of 25`);
+      check('the other tab’s letter survives the claim, at every delay', lost.length === 0, JSON.stringify(lost));
+      /*
+       * And the other half of the same stale write: a claim that lands after
+       * the park has re-read the list is written back over, and the letter
+       * just claimed is parked again, for another tab to claim a second time.
+       */
+      check('and the letter claimed is not left there to be claimed again', twice.length === 0, JSON.stringify(twice));
+    }
+
+    /*
+     * A claim takes every copy of what it claims, not only the one it found.
+     *
+     * Forgetting an application parks its writing under every page of it, so
+     * coming back to whichever page finds it. Claiming it took the copy at the
+     * page it was claimed from and left the others: open the form in another
+     * tab afterwards and it was handed the same letter as "recovered from a
+     * tab that closed", while the tab that had claimed it was open and
+     * holding it — one application, written in two places.
+     */
+    group('Claiming parked writing takes its copies at the other pages too');
+    {
+      const POSTING = 'http://careers.helios.example/jobs/sre';
+      const FORM = 'http://careers.helios.example/jobs/sre/apply';
+      store.save = 'work';
+      store.role = 'Platform Engineer';
+      await ask(driver, 'clearTrail', {});
+      await ask(driver, 'analyze', { url: POSTING, title: 'SRE', html: '<p>posting</p>' });
+      await ask(driver, 'analyze', { url: FORM, title: 'SRE', html: '<p>form</p>' });
+      await ask(driver, 'saveWork', { work: { letter: 'ONE-APPLICATION' } });
+      await ask(driver, 'clearTrail', {});
+      const parkedAtForm = await driver.evaluate(async (key) => Boolean((await chrome.storage.session.get(key))[key]), `jh-orphan:${FORM}`);
+
+      await ask(driver, 'analyze', { url: POSTING, title: 'SRE', html: '<p>posting</p>' });
+      const claimed = await ask(driver, 'takeWork', { page: { url: POSTING, title: 'SRE' } });
+
+      const other = await context.newPage();
+      await other.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+      await ask(other, 'analyze', { url: FORM, title: 'SRE', html: '<p>form</p>' });
+      const again = await ask(other, 'takeWork', { page: { url: FORM, title: 'SRE' } });
+      await ask(other, 'clearTrail', {});
+      await other.close();
+
+      check('it was parked at both pages', parkedAtForm === true, String(parkedAtForm));
+      check('and claimed at the posting', claimed.reply?.data?.work?.letter === 'ONE-APPLICATION', JSON.stringify(claimed.reply?.data));
+      check(
+        'so another tab on the form is not handed it again',
+        again.reply?.data?.work?.letter !== 'ONE-APPLICATION',
+        JSON.stringify(again.reply?.data),
+      );
+    }
+
     /*
      * "Same job — put it back" has to put it back where it can be seen.
      *
@@ -451,6 +725,17 @@ async function main() {
       store.role = 'Platform Engineer';
       await ask(driver, 'analyze', { url: 'http://board.example/two?q=a', title: 'A', html: '<p>one</p>', company: 'Helios' });
       await ask(driver, 'saveWork', { work: { letter: 'PUT-THIS-BACK' } });
+      // Another tab's writing for another job, parked at the same address.
+      await driver.evaluate(
+        ([key]) =>
+          chrome.storage.session.set({
+            [key]: {
+              parked: [{ work: { letter: 'SOMEONE-ELSES' }, save: 'work', job: { role: 'Designer', company: 'Altair' }, tab: 424242, at: Date.now() }],
+              at: Date.now(),
+            },
+          }),
+        ['jh-orphan:http://board.example/two?q=a'],
+      );
 
       store.role = 'Data Scientist';
       await ask(driver, 'analyze', { url: 'http://board.example/two?q=b', title: 'B', html: '<p>two</p>', company: 'Helios' });
@@ -458,6 +743,38 @@ async function main() {
       check('the merge answers with the writing itself', back.reply?.data?.work?.letter === 'PUT-THIS-BACK', JSON.stringify(back.reply?.data?.work));
       check('and with the pages joined', (back.reply?.data?.pages ?? []).length === 2, `${back.reply?.data?.pages?.length} pages`);
       store.role = 'Platform Engineer';
+
+      /*
+       * And the copy the branch parked goes with it.
+       *
+       * Branching parks what it leaves under every page of the old
+       * application, so a closed tab's rescue can find it — and the merge put
+       * the writing back into this tab without taking those parks away. A
+       * second tab opening the posting then rescued the same letter as
+       * "recovered from a tab that closed", while the tab it came from was
+       * still open and still holding it: one application, being written in
+       * two places, each able to send.
+       */
+      const stillParked = await driver.evaluate(async (key) => {
+        const held = (await chrome.storage.session.get(key))[key];
+        return (held?.parked ?? []).map((p) => p.work?.letter);
+      }, 'jh-orphan:http://board.example/two?q=a');
+      check(
+        'while another tab’s writing parked at the same address stays',
+        JSON.stringify(stillParked) === JSON.stringify(['SOMEONE-ELSES']),
+        JSON.stringify(stillParked),
+      );
+      const elsewhere = await context.newPage();
+      await elsewhere.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+      await ask(elsewhere, 'analyze', { url: 'http://board.example/two?q=a', title: 'A', html: '<p>one</p>', company: 'Helios' });
+      const twice = await ask(elsewhere, 'takeWork', { page: { url: 'http://board.example/two?q=a', title: 'A' } });
+      await ask(elsewhere, 'clearTrail', {});
+      await elsewhere.close();
+      check(
+        'another tab on the same posting is not handed a second copy',
+        twice.reply?.data?.work?.letter !== 'PUT-THIS-BACK',
+        JSON.stringify(twice.reply?.data),
+      );
     }
 
     /*
@@ -691,45 +1008,98 @@ async function main() {
      *
      * `worthKeeping` is true of a spec alone, and the opening read of every
      * posting produces one — so the keeper, saving every couple of seconds,
-     * filed a tracker row for every job anybody looked at. Click down a board
-     * and a dozen drafts are waiting for jobs you read one line of. A row
-     * says an application is under way, so it takes something somebody did:
-     * a resume compiled, files staged, a letter started, an answer written.
+     * filed a tracker row for every job anybody looked at. A space says work
+     * has been done, so it takes something somebody did: a resume compiled,
+     * files staged, a letter started, an answer written.
+     *
+     * What it does *not* take is the form having been filled in. A place to
+     * write is wanted before the form is ever opened, so the space opens
+     * early and carries `actedOnForm` to say which of the two it is — see
+     * `holdASpace`, and the status the store gives it.
      */
     group('A posting that was only read opens nothing');
     {
       const spaces = () => store.sentTo('/api/workspace').length;
+      const lastBody = () => JSON.parse(store.sentTo('/api/workspace').slice(-1)[0]?.body || '{}');
+      // Its own company and role: `heldKey` is per save, company and role, so
+      // borrowing another group's would reserve the key it is about to test.
+      const solace = { id: 'job-read', generatedFor: { company: 'Solace', role: 'Reader' } };
       store.save = 'work';
       await ask(driver, 'clearTrail', {});
       await ask(driver, 'analyze', { url: 'http://g.example/jobs/read-only', title: 'Helios', html: '<p>read</p>', company: 'Helios' });
 
       const before = spaces();
-      // What the card holds after an opening read and nothing else: the
-      // proposal it worked out, and no letter, no answers, nothing compiled.
-      await ask(driver, 'saveWork', {
-        // Its own company and role: `heldKey` is per save, company and role,
-        // so borrowing another group's would reserve the key it is about to
-        // test and suppress its push.
-        work: { spec: { id: 'job-read', generatedFor: { company: 'Solace', role: 'Reader' } } },
-      });
+      await ask(driver, 'saveWork', { work: { spec: solace } });
       await new Promise((r) => setTimeout(r, 600));
       check('reading a posting files no draft', spaces() === before, `${spaces() - before} opened`);
 
       // And the moment something is built, it does.
+      await ask(driver, 'saveWork', { work: { spec: solace, render: { pages: 1 } } });
+      for (let i = 0; i < 60 && spaces() === before; i++) await new Promise((r) => setTimeout(r, 50));
+      check('and building one does', spaces() === before + 1, `${spaces() - before} opened`);
+
+      /*
+       * Carrying the fact that nothing has been put in the form yet. Without
+       * this the store has only "a workspace was opened" to go on, which it
+       * read as `applying` — and a built resume is not an application.
+       */
+      check('and says the form has not been touched', lastBody().actedOnForm === false, JSON.stringify(lastBody().actedOnForm));
+
+      /*
+       * And a second push once it has, which `heldKey` used to swallow: the
+       * first hold was keyed on the pair alone, so the row stayed "Not
+       * applied" through an application that was filled in and sent.
+       */
+      await ask(driver, 'saveWork', {
+        work: { spec: solace, render: { pages: 1 }, actedOnForm: true },
+      });
+      for (let i = 0; i < 60 && spaces() === before + 1; i++) await new Promise((r) => setTimeout(r, 50));
+      check('filling the form says so, once', spaces() === before + 2, `${spaces() - before} opened`);
+      check('and that push carries it', lastBody().actedOnForm === true, JSON.stringify(lastBody().actedOnForm));
+
+      // And not again on every keeper tick after that.
+      await ask(driver, 'saveWork', {
+        work: { spec: solace, render: { pages: 1 }, actedOnForm: true },
+      });
+      await new Promise((r) => setTimeout(r, 600));
+      check('and says it only the once', spaces() === before + 2, `${spaces() - before} opened`);
+    }
+
+    /*
+     * Which resume the form is being filled for.
+     *
+     * Somebody applying to internships and new-grad roles keeps two graduation
+     * dates and picks between them per posting. `autofillData` asked the store
+     * with no resume named, so the store answered from the default — May, on
+     * every internship form, under a resume that says December. The tailored
+     * resume's choices are on the trail; they go with the request.
+     */
+    group('Autofill is answered for the resume being sent');
+    {
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      await ask(driver, 'analyze', { url: 'http://g.example/jobs/intern', title: 'Helios', html: '<p>intern</p>', company: 'Helios' });
+
+      const asked = () => store.sentTo('/api/autofill').slice(-1)[0]?.query;
+
+      await ask(driver, 'autofillData', {});
+      check('with nothing built, it asks without naming a resume', asked()?.has('choices') === false, asked()?.toString());
+
       await ask(driver, 'saveWork', {
         work: {
-          spec: { id: 'job-read', generatedFor: { company: 'Solace', role: 'Reader' } },
+          spec: { id: 'job-intern', choices: { 'edu_neu.dates': 'v_dec2026' }, generatedFor: { company: 'Helios', role: 'Intern' } },
           render: { pages: 1 },
         },
       });
-      for (let i = 0; i < 60 && spaces() === before; i++) await new Promise((r) => setTimeout(r, 50));
-      check('and building one does', spaces() === before + 1, `${spaces() - before} opened`);
+      await ask(driver, 'autofillData', {});
+      const sent = JSON.parse(asked()?.get('choices') ?? '{}');
+      check('once a resume is built, its choices go with the request', sent['edu_neu.dates'] === 'v_dec2026', JSON.stringify(sent));
     }
 
     group('Holding a space in the editor');
     {
       /*
-       * With a compiled resume on it, because that is what opens a row at
+       * With a compiled resume on it, because that is what opens a space at
        * all: a spec alone is the card's opening read of a posting, and
        * reading a posting no longer files anything. See `madeSomething`.
        */
@@ -977,6 +1347,796 @@ async function main() {
         JSON.stringify(wedged.reply ?? null),
       );
       store.routes['/api/answers/match'] = 'ok';
+    }
+
+    /*
+     * An AI pass overtaken by another press on the same page stays overtaken.
+     *
+     * Every build the card starts takes a number in the content script, and a
+     * reply whose number is stale is handed to `landLate` — which was written
+     * for a pass the page had moved on from, and lands it on the card if the
+     * posting is the same one. On the same page it always is. So pressing Have
+     * AI Tailor, then choosing another resume to start from while it read,
+     * showed the new base's proposal and then — when the model answered — put
+     * the AI's proposal from the *old* base over it, with "The AI finished
+     * tailoring this posting" and its button lit. That is what would have
+     * been built and sent: a resume from the base just turned away from.
+     *
+     * Through a real page and the real content script, because that is where
+     * the number and `landLate` live; the store is the fake one above.
+     */
+    group('An AI pass overtaken on the same page does not land');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1><p>Helios is hiring a Platform Engineer. Responsibilities: build the
+          platform. Requirements: Kubernetes, Go. Apply now to join our team.</p>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/jobs/platform-engineer`;
+      await driver.evaluate(() => chrome.storage.sync.set({ useAi: true, baseResumeId: 'newgrad' }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+
+      const job = await context.newPage();
+      let seen = {};
+      try {
+        await job.goto(where);
+        await job.waitForTimeout(500);
+        await driver.evaluate(async (url) => {
+          const [tab] = await chrome.tabs.query({ url });
+          await chrome.tabs.sendMessage(tab.id, { type: 'show-card' });
+        }, where);
+        const card = job.locator('#jobhelper-card-host');
+        const ai = card.locator('button.mode', { hasText: 'Have AI Tailor' });
+        await ai.waitFor({ timeout: 15_000 });
+        await job.waitForFunction(
+          () => {
+            const root = document.querySelector('#jobhelper-card-host')?.shadowRoot;
+            const b = [...(root?.querySelectorAll('button.mode') ?? [])].find((x) => /Have AI Tailor/.test(x.textContent));
+            return b && !b.disabled && root.querySelector('select option[value="intern"]');
+          },
+          null,
+          { timeout: 15_000 },
+        );
+
+        store.heldAi = [];
+        await ai.click();
+        for (let i = 0; i < 100 && store.heldAi.length === 0; i++) await job.waitForTimeout(50);
+        const asked = store.heldAi.length;
+
+        // Another base, while the model reads.
+        const before = store.sentTo('/api/extension/analyze').length;
+        await card.locator('select').selectOption('intern');
+        for (let i = 0; i < 100 && store.sentTo('/api/extension/analyze').length === before; i++) await job.waitForTimeout(50);
+        await job.waitForTimeout(700);
+
+        // And now the model answers, for the base that was turned away from.
+        for (const reply of store.heldAi) reply();
+        store.heldAi = null;
+        await job.waitForTimeout(1200);
+
+        seen = await job.evaluate(() => {
+          const root = document.querySelector('#jobhelper-card-host')?.shadowRoot;
+          return {
+            lit: root?.querySelector('.mode.on')?.textContent?.trim() ?? null,
+            said: [...(root?.querySelectorAll('.ok-note') ?? [])].map((n) => n.textContent).join(' | '),
+          };
+        });
+        seen.asked = asked;
+      } finally {
+        store.heldAi = null;
+        await job.close();
+        site.close();
+        await driver.evaluate(() => chrome.storage.sync.set({ useAi: false, baseResumeId: 'newgrad' }));
+      }
+
+      check('the AI really was reading when the base changed', seen.asked === 1, JSON.stringify(seen));
+      check(
+        'its answer for the old base is not put over the new one',
+        typeof seen.lit === 'string' && !/AI/.test(seen.lit),
+        JSON.stringify(seen),
+      );
+      check('nor announced as this posting’s', !/AI finished tailoring this posting/.test(seen.said ?? ''), JSON.stringify(seen));
+    }
+
+    /*
+     * A page that failed to be read is not read again every second.
+     *
+     * The rescore tick in content.js runs on any DOM change for the first
+     * minute, and only a verdict used to settle a page — so a read that
+     * failed was retried on the next tick, and the next. On a results page
+     * whose timestamps tick, with the store failing, the whole page was
+     * copied and posted once a second: measured at twelve posts in twelve
+     * seconds, 1.9 seconds of main thread, on a page of 22,500 elements.
+     *
+     * The page is one the card does not put itself up on early — a results
+     * list names no role — so nothing on screen says anything is happening.
+     */
+    group('A page whose read failed is not re-read on every change');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Engineering jobs in Boston | Board</title>
+          <h1>Search results</h1><div class="count">24 jobs found</div>
+          <ul>${'<li>Engineer, full-time. Responsibilities and requirements inside. <time>1 day ago</time></li>'.repeat(24)}</ul>
+          <script>let n = 0; setInterval(() => { document.querySelector('time').textContent = (++n) + ' seconds ago'; }, 100);</script>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/jobs/search?q=engineer`;
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      store.routes['/api/extension/analyze'] = 'broken';
+
+      const page = await context.newPage();
+      let reads = 0;
+      try {
+        const before = store.sentTo('/api/extension/analyze').length;
+        await page.goto(where);
+        await page.waitForTimeout(5000);
+        reads = store.sentTo('/api/extension/analyze').length - before;
+      } finally {
+        delete store.routes['/api/extension/analyze'];
+        await page.close();
+        site.close();
+        await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: false }));
+      }
+
+      check('the page was read', reads >= 1, `${reads} reads`);
+      check('once, rather than on every tick of the page', reads === 1, `${reads} reads in five seconds`);
+    }
+
+    /*
+     * A page that swaps its whole root element once the posting has loaded.
+     *
+     * The rescore tick only looks again when its MutationObserver has seen
+     * the page change, and the observer was attached to
+     * `document.documentElement` — the element, not the document. A page that
+     * builds the finished document off to one side and puts it in with
+     * `document.replaceChild(next, document.documentElement)` leaves the
+     * observer watching the old root, detached, where nothing ever changes
+     * again. The shell was scored, found wanting, and the posting that
+     * replaced it was never looked at: no card, on a page whose title names
+     * the role and whose JSON-LD says JobPosting.
+     */
+    group('A page that replaces its root element is still watched');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Loading</title><p>Loading…</p>
+          <script>
+            setTimeout(() => {
+              const next = document.createElement('html');
+              next.innerHTML = '<head><title>Platform Engineer at Helios</title>' +
+                '<script type="application/ld+json">{"@type":"JobPosting","title":"Platform Engineer"}<\\/script></head>' +
+                '<body><h1>Platform Engineer</h1><p>Helios is hiring. Responsibilities: build the platform. ' +
+                'Requirements: Go. Apply now to join our team.</p></body>';
+              document.replaceChild(next, document.documentElement);
+            }, 1500);
+          </script>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/p/8f2a1b`;
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+
+      const page = await context.newPage();
+      let seen = {};
+      try {
+        await page.goto(where);
+        await page.waitForTimeout(6000);
+        seen = await page.evaluate(() => ({
+          title: document.title,
+          card: Boolean(document.querySelector('#jobhelper-card-host')),
+        }));
+      } finally {
+        await page.close();
+        site.close();
+        await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: false }));
+      }
+
+      check('the page did replace its root', seen.title === 'Platform Engineer at Helios', JSON.stringify(seen));
+      check('and the posting it became gets its card', seen.card === true, JSON.stringify(seen));
+    }
+
+    /*
+     * A page that throws the card out, and the card that should come back.
+     *
+     * The card's host is a child of `<html>`, and a page that re-renders its
+     * whole root — a framework whose hydration gives up and client-renders
+     * the document, anything calling `replaceChildren` on it — takes the host
+     * with it. The content script still held the handle, so every route back
+     * short-circuited on a card that was no longer in the document: the tick
+     * saw a card and stayed quiet, and the toolbar button's `putUpCard`
+     * returned the detached handle and put up nothing. The letter and the
+     * answers were still in it, on no screen at all.
+     */
+    group('A card the page throws out comes back, as it was');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1><p>Helios is hiring a Platform Engineer. Responsibilities: build the
+          platform. Requirements: Kubernetes, Go. Apply now to join our team.</p>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/jobs/platform-engineer`;
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+
+      const page = await context.newPage();
+      let seen = {};
+      try {
+        await page.goto(where);
+        await page.locator('#jobhelper-card-host .card').waitFor({ timeout: 15_000 });
+        // Marked in the page's world, so the one that comes back can be told
+        // from a fresh card built to replace it.
+        seen.thrownOut = await page.evaluate(() => {
+          const host = document.querySelector('#jobhelper-card-host');
+          host.__before = true;
+          document.documentElement.replaceChildren(document.head, document.body);
+          return !host.isConnected;
+        });
+        await page.waitForTimeout(2500);
+        seen.after = await page.evaluate(() => {
+          const host = document.querySelector('#jobhelper-card-host');
+          return { back: Boolean(host), same: host?.__before === true };
+        });
+      } finally {
+        await page.close();
+        site.close();
+        await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: false }));
+      }
+
+      check('the page really did throw the card out', seen.thrownOut === true, JSON.stringify(seen));
+      check('and it is back on the page', seen.after?.back === true, JSON.stringify(seen));
+      check('the same card, with whatever was in it', seen.after?.same === true, JSON.stringify(seen));
+    }
+
+    /*
+     * A choice made once is remembered once.
+     *
+     * Every pass that finds an application form starts watching it for the
+     * choices made on it — and threw away the function that stops watching.
+     * A pass runs on every url change of a single-page form, on every press
+     * of the toolbar button, on a return from the back / forward cache; each
+     * one added another pair of document listeners. So a form walked through
+     * three steps by `pushState` sent each answer to the store four times,
+     * and every click on a radio ran a whole-document scan once per listener.
+     */
+    group('A choice made once is sent to the bank once');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Apply for Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1>
+          <form>
+            <label for="fn">First name</label><input id="fn" name="first_name">
+            <label for="ln">Last name</label><input id="ln" name="last_name">
+            <label for="em">Email</label><input id="em" type="email" name="email">
+            <label for="cv">Resume</label><input id="cv" type="file">
+            <label for="heard">How did you hear about this job?</label>
+            <select id="heard"><option value="">Select…</option><option>LinkedIn</option><option>A friend</option></select>
+            <button type="button">Next</button>
+          </form>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/jobs/platform-engineer/apply`;
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+
+      const page = await context.newPage();
+      let sent = null;
+      try {
+        await page.goto(where);
+        await page.locator('#jobhelper-card-host .card').waitFor({ timeout: 15_000 });
+        await page.waitForTimeout(1500);
+        // Three steps of a single-page form, each its own address.
+        for (const step of [2, 3, 4]) {
+          await page.evaluate((n) => history.pushState({}, '', `?step=${n}`), step);
+          await page.waitForTimeout(2500);
+        }
+        const before = store.sentTo('/api/answers/save').length;
+        await page.selectOption('#heard', 'LinkedIn');
+        await page.waitForTimeout(1000);
+        sent = store
+          .sentTo('/api/answers/save')
+          .slice(before)
+          .map((h) => JSON.parse(h.body || '{}').answer);
+      } finally {
+        await page.close();
+        site.close();
+        await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: false }));
+      }
+
+      check('the choice is remembered', (sent ?? []).includes('LinkedIn'), JSON.stringify(sent));
+      check('once, however many times the page was looked at', sent?.length === 1, JSON.stringify(sent));
+    }
+
+    /*
+     * A form that moves to its next step in place, and the card's list of
+     * its questions.
+     *
+     * Questions were read once, when the card went up, and again only on a
+     * url change. A form that draws step two where step one was — a React
+     * step component, the url untouched — left the card listing step one's
+     * question under "Application questions", with its answer box and its
+     * Insert button, while the page asked something else. Insert has since
+     * refused a box that asks another question, and says so; the list itself
+     * went on naming the question that was gone, and step two's new one was
+     * never offered at all.
+     */
+    group('A form that moves to its next step in place');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Apply for Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1>
+          <form id="f">
+            <label for="fn">First name</label><input id="fn" name="first_name">
+            <label for="ln">Last name</label><input id="ln" name="last_name">
+            <label for="em">Email</label><input id="em" type="email" name="email">
+            <label for="cv">Resume</label><input id="cv" type="file">
+            <label id="q-label" for="q-box">Why do you want to work at Helios?</label>
+            <textarea id="q-box" name="step1_why"></textarea>
+            <button type="button" id="next">Next</button>
+          </form>
+          <script>
+            // Step two, drawn into step one's place: the same box under a new
+            // label, and a second box that step one did not have.
+            document.getElementById('next').addEventListener('click', () => {
+              document.getElementById('q-label').textContent = 'Describe a time you failed.';
+              document.getElementById('q-box').name = 'step2_failure';
+              document.getElementById('next').insertAdjacentHTML('beforebegin',
+                '<label for="q-two">What would you build first on our platform?</label>' +
+                '<textarea id="q-two" name="step2_build"></textarea>');
+            });
+          </script>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/jobs/platform-engineer/apply`;
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+
+      const page = await context.newPage();
+      const listed = () =>
+        page
+          .locator('#jobhelper-card-host .card .q .qt')
+          .evaluateAll((els) => els.map((el) => el.firstChild?.textContent ?? ''))
+          .catch(() => []);
+      let before = [];
+      let after = [];
+      try {
+        await page.goto(where);
+        await page.locator('#jobhelper-card-host .card').waitFor({ timeout: 15_000 });
+        await page.locator('#jobhelper-card-host .card .q').first().waitFor({ timeout: 15_000 });
+        // A question the page never showed, typed in by hand. It is on no
+        // step, so no step's reading may take it off the list.
+        page.once('dialog', (d) => d.accept('What is your notice period?'));
+        await page.locator('#jobhelper-card-host .card').getByRole('button', { name: '+ Question' }).click();
+        await page.waitForTimeout(500);
+        before = await listed();
+        await page.click('#next');
+        await page.waitForTimeout(4000);
+        after = await listed();
+      } finally {
+        await page.close();
+        site.close();
+        await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: false }));
+      }
+
+      check('step one’s question is listed first', before.includes('Why do you want to work at Helios?'), JSON.stringify(before));
+      check(
+        'after the step changes in place, the card lists step two’s questions',
+        after.includes('Describe a time you failed.') && after.includes('What would you build first on our platform?'),
+        JSON.stringify(after),
+      );
+      check('and not the question that has gone', !after.includes('Why do you want to work at Helios?'), JSON.stringify(after));
+      check('while a question typed in by hand stays', after.includes('What is your notice period?'), JSON.stringify(after));
+    }
+
+    /*
+     * "Back to it", from the page it would take you back to.
+     *
+     * The panel is there whenever the tab holds an application, which
+     * includes the application's own form — and the button navigates the tab
+     * to the trail's last page, which is then the page on screen. Measured:
+     * pressed there, the form reloaded and what had been typed into the
+     * employer's boxes was gone.
+     */
+    group('The popup on the page it would send you back to');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Apply for Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1>
+          <form>
+            <label for="fn">First name</label><input id="fn" name="first_name">
+            <label for="ln">Last name</label><input id="ln" name="last_name">
+            <label for="em">Email</label><input id="em" type="email" name="email">
+            <label for="cv">Resume</label><input id="cv" type="file">
+            <label for="why">Why do you want to work at Helios?</label><textarea id="why" name="why"></textarea>
+          </form>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+
+      const page = await context.newPage();
+      const popup = await context.newPage();
+      let offered = null;
+      let panel = false;
+      let typed = null;
+      try {
+        await page.goto(`http://127.0.0.1:${site.address().port}/jobs/platform-engineer/apply`);
+        await page.locator('#jobhelper-card-host .card').waitFor({ timeout: 15_000 });
+        await page.waitForTimeout(1500);
+        await page.fill('#why', 'Typed into the form by hand.');
+
+        // A real popup reports on the page beneath it; opened as a tab, it
+        // has to be booted again with the page in front.
+        await popup.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+        await page.bringToFront();
+        await popup.evaluate(() => location.reload());
+        await popup.locator('#openApplication').waitFor({ state: 'visible', timeout: 10_000 }).catch(() => undefined);
+        panel = !(await popup.locator('#openApplication').isHidden());
+        offered = await popup.locator('#backToApplication').isVisible();
+        if (offered) {
+          await popup.locator('#backToApplication').click().catch(() => undefined);
+          await page.waitForTimeout(2000);
+        }
+        typed = await page.inputValue('#why').catch(() => null);
+      } finally {
+        await popup.close().catch(() => undefined);
+        await page.close();
+        site.close();
+        await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: false }));
+      }
+      check('the panel says which application this is', panel);
+      check('without offering to go back to the page already on screen', offered === false, `offered: ${offered}`);
+      check('and what was typed into the form is still there', typed === 'Typed into the form by hand.', JSON.stringify(typed));
+    }
+
+    /*
+     * "Turn off", beside "AI on".
+     *
+     * It flipped ResumeM-M's own switch — the one the editor's AI answers to
+     * as well — and left this extension's ticked, so the panel then read
+     * "Switched off in ResumeM-M" in amber with a "Turn it on" button, as
+     * though something were wrong, directly after being asked to turn it off.
+     */
+    group('Turning the AI off from the popup');
+    {
+      await driver.evaluate(() => chrome.storage.sync.set({ useAi: true }));
+      const configBefore = store.sentTo('/api/config').length;
+      const popup = await context.newPage();
+      let before = null;
+      let after = null;
+      try {
+        await popup.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+        const read = () =>
+          popup.evaluate(() => ({
+            state: document.getElementById('aiState').textContent,
+            fix: document.getElementById('aiFix').hidden ? null : document.getElementById('aiFix').textContent,
+            ticked: document.getElementById('useAi').checked,
+          }));
+        await popup.waitForFunction(() => document.getElementById('aiState').textContent === 'AI on', null, { timeout: 10_000 }).catch(() => undefined);
+        before = await read();
+        await popup.locator('#aiFix').click();
+        await popup.waitForTimeout(1500);
+        after = await read();
+      } finally {
+        await popup.close().catch(() => undefined);
+      }
+      const useAi = (await driver.evaluate(() => chrome.storage.sync.get('useAi'))).useAi;
+      check('the popup starts at "AI on", offering to turn it off', before?.state === 'AI on' && before?.fix === 'Turn off', JSON.stringify(before));
+      check('turning it off leaves ResumeM-M’s own switch alone', store.sentTo('/api/config').length === configBefore, `${store.sentTo('/api/config').length - configBefore} PUTs`);
+      check('and turns off this extension’s instead', useAi === false && after?.ticked === false, JSON.stringify({ useAi, after }));
+      check('so the panel says it is off, not that something needs fixing', after?.state === 'AI off', JSON.stringify(after));
+    }
+
+    /*
+     * The worker stopped while the AI is reading.
+     *
+     * Chrome stops an extension's worker when it likes — an update, memory
+     * pressure, a crash — and a reply the card is waiting on goes with it.
+     * Nothing hangs: the channel closes and the card's request fails. But
+     * what it failed with was Chrome's own sentence, put on the card as it
+     * was: "A listener indicated an asynchronous response by returning true,
+     * but the message channel closed before a response was received".
+     */
+    group('The worker is stopped while the AI is reading');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1><p>Helios is hiring a Platform Engineer. Responsibilities: build the
+          platform. Requirements: Kubernetes, Go. Apply now to join our team.</p>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/jobs/platform-engineer`;
+      await driver.evaluate(() => chrome.storage.sync.set({ useAi: true, baseResumeId: 'newgrad' }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+
+      const job = await context.newPage();
+      let seen = {};
+      try {
+        await job.goto(where);
+        await job.waitForTimeout(500);
+        await driver.evaluate(async (url) => {
+          const [tab] = await chrome.tabs.query({ url });
+          await chrome.tabs.sendMessage(tab.id, { type: 'show-card' });
+        }, where);
+        const card = job.locator('#jobhelper-card-host');
+        const ai = card.locator('button.mode', { hasText: 'Have AI Tailor' });
+        await ai.waitFor({ timeout: 15_000 });
+        await job.waitForFunction(
+          () => {
+            const root = document.querySelector('#jobhelper-card-host')?.shadowRoot;
+            const b = [...(root?.querySelectorAll('button.mode') ?? [])].find((x) => /Have AI Tailor/.test(x.textContent));
+            return b && !b.disabled;
+          },
+          null,
+          { timeout: 15_000 },
+        );
+
+        store.heldAi = [];
+        await ai.click();
+        for (let i = 0; i < 100 && store.heldAi.length === 0; i++) await job.waitForTimeout(50);
+        seen.asked = store.heldAi.length;
+
+        // Marked, so the stop is proved rather than assumed.
+        await context.serviceWorkers()[0].evaluate(() => {
+          self.__sameWorker = true;
+        });
+        const cdp = await context.newCDPSession(job);
+        await cdp.send('ServiceWorker.enable').catch(() => undefined);
+        await cdp.send('ServiceWorker.stopAllWorkers').catch(() => undefined);
+        await job.waitForTimeout(2500);
+        // Anything through the worker brings it back.
+        await driver.evaluate(() => chrome.runtime.sendMessage({ type: 'getSettings' })).catch(() => undefined);
+        seen.stopped = !(await (context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker')))
+          .evaluate(() => Boolean(self.__sameWorker))
+          .catch(() => false));
+        seen.said = await job.evaluate(() => document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelector('.card')?.innerText ?? '');
+      } finally {
+        store.heldAi = null;
+        await job.close();
+        site.close();
+        await driver.evaluate(() => chrome.storage.sync.set({ useAi: false, baseResumeId: 'newgrad' }));
+      }
+
+      check('the AI really was reading, and the worker really was stopped', seen.asked === 1 && seen.stopped === true, JSON.stringify({ asked: seen.asked, stopped: seen.stopped }));
+      check('the card does not show Chrome’s own words for it', !/listener indicated|message channel closed/i.test(seen.said), seen.said.split('\n').slice(-1)[0]);
+      check('it says what happened and that it can be run again', /stopped[^.]*before[^.]*finished[\s\S]*again/i.test(seen.said), seen.said.split('\n').slice(-1)[0]);
+    }
+
+    /*
+     * The worker stopped while it was opening a space.
+     *
+     * The mark that says "this application has its space" is written before
+     * the POST goes, so two keeper ticks cannot both send, and taken away
+     * again if the POST fails. A worker that is stopped mid-POST runs neither
+     * half of that: measured, the POST never answered, no row was opened, and
+     * after the restart three more saves sent nothing — the mark said held.
+     */
+    group('The worker is stopped while it is opening a space');
+    {
+      const orion = {
+        spec: { id: 'job-orion', generatedFor: { company: 'Orion', role: 'Site Reliability Engineer' } },
+        render: { pages: 1 },
+      };
+      const spaces = () => store.sentTo('/api/workspace').length;
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      await ask(driver, 'analyze', { url: 'http://orion.example/jobs/1', title: 'Orion', html: '<p>orion</p>', company: 'Orion' });
+
+      const before = spaces();
+      store.routes['/api/workspace'] = 'silent';
+      ask(driver, 'saveWork', { work: orion }).catch(() => undefined);
+      for (let i = 0; i < 100 && spaces() === before; i++) await new Promise((r) => setTimeout(r, 50));
+      const asked = spaces() - before;
+
+      await (context.serviceWorkers()[0] ?? worker).evaluate(() => {
+        globalThis.__jhStillTheSameWorker = true;
+      });
+      const cdp = await context.newCDPSession(driver);
+      await cdp.send('ServiceWorker.enable').catch(() => undefined);
+      await cdp.send('ServiceWorker.stopAllWorkers').catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 1000));
+      delete store.routes['/api/workspace'];
+
+      const woken = await ask(driver, 'saveWork', { work: orion });
+      for (let i = 0; i < 60 && spaces() < before + 2; i++) await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 400));
+      const fresh = await (context.serviceWorkers()[0] ?? worker)
+        .evaluate(() => globalThis.__jhStillTheSameWorker !== true)
+        .catch(() => false);
+      const afterRetry = spaces();
+      await ask(driver, 'saveWork', { work: orion });
+      await new Promise((r) => setTimeout(r, 600));
+
+      check('the POST went, and the worker was stopped under it', asked === 1 && fresh && woken.reply?.ok === true, JSON.stringify({ asked, fresh }));
+      check('the space is asked for again once the worker is back', afterRetry === before + 2, `${afterRetry - before - 1} pushes after the restart`);
+      check('and once only', spaces() === before + 2, `${spaces() - before} pushes in all`);
+    }
+
+    /*
+     * The popup on a page no extension can run on.
+     *
+     * A new tab, chrome://anything, the extensions page: content scripts are
+     * never allowed there, and Autofill and "Open on this page" both said
+     * "JobHelper is not running on this page. Reload the tab and try again."
+     * — advice that cannot work, however many times it is followed. No web
+     * page is open here, so the popup falls back to its own tab, which is
+     * exactly such a page.
+     */
+    group('The popup on a page no extension can run on');
+    {
+      const popup = await context.newPage();
+      const said = {};
+      try {
+        await popup.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+        await popup.waitForTimeout(1500);
+        for (const [name, button] of [['autofill', '#autofill'], ['show', '#show']]) {
+          await popup.locator(button).click();
+          await popup.waitForTimeout(800);
+          said[name] = (await popup.locator('#status').textContent().catch(() => '')) ?? '';
+        }
+      } finally {
+        await popup.close().catch(() => undefined);
+      }
+      check('Autofill does not tell you to reload the tab', !/reload/i.test(said.autofill) && /does not run/i.test(said.autofill), said.autofill);
+      check('nor does "Open on this page"', !/reload/i.test(said.show) && /does not run/i.test(said.show), said.show);
+    }
+
+    /*
+     * Out to the editor for longer than the worker stays awake.
+     *
+     * "Edit in ResumeM-M" notes the tab, and coming back to it tells the card
+     * the store may have changed under its proposal. The note was a Set in
+     * the worker's memory, on the reasoning that a worker asleep long enough
+     * to forget it means a trip too old to mention — but Chrome stops the
+     * worker after half a minute without an event, and a tab left behind has
+     * its timers throttled to about one a minute after five, so the card's
+     * keeper stops keeping it awake. Adding a phrasing takes longer than
+     * that. Measured with the worker stopped while the editor was open: back
+     * on the posting, nothing said the match was out of date.
+     */
+    group('Back from the editor after the worker has been stopped');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1><p>Helios is hiring a Platform Engineer. Responsibilities: build the
+          platform. Requirements: Kubernetes, Go. Apply now to join our team.</p>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/jobs/platform-engineer`;
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+
+      const job = await context.newPage();
+      let editor = null;
+      let said = '';
+      let stopped = false;
+      try {
+        await job.goto(where);
+        await job.waitForTimeout(500);
+        await driver.evaluate(async (url) => {
+          const [tab] = await chrome.tabs.query({ url });
+          await chrome.tabs.sendMessage(tab.id, { type: 'show-card' });
+        }, where);
+        const card = job.locator('#jobhelper-card-host');
+        const edit = card.getByRole('button', { name: 'Edit in ResumeM-M' });
+        await edit.waitFor({ timeout: 15_000 });
+        await job.waitForTimeout(1000);
+
+        const opened = context.waitForEvent('page');
+        await edit.click();
+        editor = await opened;
+        await editor.waitForLoadState('domcontentloaded').catch(() => undefined);
+
+        await (context.serviceWorkers()[0] ?? worker).evaluate(() => {
+          globalThis.__jhStillTheSameWorker = true;
+        });
+        const cdp = await context.newCDPSession(editor);
+        await cdp.send('ServiceWorker.enable').catch(() => undefined);
+        await cdp.send('ServiceWorker.stopAllWorkers').catch(() => undefined);
+        await editor.waitForTimeout(1000);
+
+        await job.bringToFront();
+        await job
+          .waitForFunction(
+            () => /been editing the store/i.test(document.querySelector('#jobhelper-card-host')?.shadowRoot?.textContent ?? ''),
+            undefined,
+            { timeout: 5_000, polling: 100 },
+          )
+          .catch(() => undefined);
+        said = await job.evaluate(() => document.querySelector('#jobhelper-card-host')?.shadowRoot?.textContent ?? '');
+        stopped = await (context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker')))
+          .evaluate(() => globalThis.__jhStillTheSameWorker !== true)
+          .catch(() => false);
+      } finally {
+        await editor?.close().catch(() => undefined);
+        await job.close();
+        site.close();
+      }
+      check('the worker really was stopped while the editor was open', stopped);
+      check('and on coming back the card still says the match may be out of date', /been editing the store/i.test(said), said.slice(-160));
+    }
+
+    /*
+     * What the toolbar says is waiting.
+     *
+     * The popup stopped saying "tailored" because any proposal at all counts
+     * as holding a resume, and a proposal is now the resume exactly as it is
+     * kept until somebody ticks something — see `showOpenApplication`. The
+     * toolbar's tooltip is drawn from the same fact and went on saying it:
+     * "1 page read, a tailored resume is ready", over a resume nothing had
+     * touched.
+     */
+    group('The toolbar does not call an untouched resume tailored');
+    {
+      store.save = 'work';
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+      await ask(driver, 'clearTrail', {});
+      await ask(driver, 'analyze', { url: 'http://tooltip.example/jobs/1', title: 'Helios', html: '<p>one</p>', company: 'Helios' });
+      await ask(driver, 'saveWork', { work: { spec: { id: 'job-fake', tier: 'temporary', copiedFrom: 'newgrad' } } });
+      const title = await driver.evaluate(async () => {
+        const tab = await chrome.tabs.getCurrent();
+        return chrome.action.getTitle({ tabId: tab.id });
+      });
+      check('the tooltip says the application is held', /1 page read/.test(title), title);
+      check('without claiming the resume was tailored', !/tailored/i.test(title), title);
+    }
+
+    /*
+     * And what it says once the trail has gone stale with nothing happening.
+     *
+     * A trail is current for two hours from its last write, and after that
+     * `readTrail` answers with nothing: the letter cannot be carried to
+     * another page or put back. The badge was only ever redrawn by a write or
+     * a navigation, so a tab left on the company's About page over lunch went
+     * on saying "your writing is being held" about writing nothing could
+     * reach. The two hours are made to have passed by writing the letter with
+     * the worker's clock set back to three seconds short of them.
+     */
+    group('The toolbar stops saying the writing is held when it is not');
+    {
+      await ask(driver, 'clearTrail', {});
+      await ask(driver, 'analyze', { url: 'http://expiry.example/jobs/1', title: 'Helios', html: '<p>one</p>', company: 'Helios' });
+      const sw = context.serviceWorkers()[0] ?? worker;
+      await sw.evaluate(() => {
+        globalThis.__jhRealNow = Date.now;
+        Date.now = () => globalThis.__jhRealNow() - (2 * 60 * 60 * 1000 - 3000);
+      });
+      try {
+        await ask(driver, 'saveWork', { work: { letter: 'Dear Helios, I would like to build your platform.' } });
+      } finally {
+        await sw.evaluate(() => {
+          if (globalThis.__jhRealNow) Date.now = globalThis.__jhRealNow;
+        }).catch(() => undefined);
+      }
+      const titleNow = () =>
+        driver.evaluate(async () => chrome.action.getTitle({ tabId: (await chrome.tabs.getCurrent()).id }));
+      const before = await titleNow();
+      check('while the trail is current it says the writing is held', /writing is being held/.test(before), before);
+      let after = before;
+      for (let i = 0; i < 40 && /writing is being held/.test(after); i++) {
+        await driver.waitForTimeout(250);
+        after = await titleNow();
+      }
+      const held = await ask(driver, 'getTrail', {});
+      check('the trail really is out of reach by now', (held.reply?.data?.pages ?? []).length === 0, JSON.stringify(held.reply?.data));
+      check('and the tooltip no longer says the writing is held', !/writing is being held/.test(after), after);
     }
   } finally {
     await context.close();

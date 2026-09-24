@@ -435,6 +435,61 @@ export function plainlyAnotherRole(a, b) {
   return true;
 }
 
+/*
+ * The employer's name without the part that says what kind of company it is.
+ *
+ * The company veto compared names exactly, lowercased, and the same employer
+ * is written more than one way within one application: a posting's JSON-LD
+ * carries the legal name — "Acme, Inc." — and the form it hands you to says
+ * "Acme" in its title. Measured against this module: a careers-site posting
+ * as "Acme, Inc." and its Greenhouse form as "Acme", arrived at by the Apply
+ * click, by the referrer, or one step down the same path, all came back
+ * `different` — the confident split, with no chip. The letter is parked and
+ * the form's card starts empty, one click into the application.
+ *
+ * Only the legal form comes off, and only at the end. "Acme Labs" and "Acme"
+ * stay two names, because those can be two companies; "Acme, Inc." and
+ * "Acme" cannot. A name that is nothing but a legal form is left as it was.
+ */
+const LEGAL_FORM =
+  /[\s,]+(inc|incorporated|llc|l\.l\.c|ltd|limited|corp|corporation|co|plc|gmbh|ag|sa|nv|bv|pty|oy|ab|lp|llp)\.?$/;
+
+export function employerKey(name) {
+  let n = String(name ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  for (;;) {
+    const next = n.replace(LEGAL_FORM, '').trim();
+    if (next === n || !next) return n;
+    n = next;
+  }
+}
+
+/*
+ * A job title as a key: the same words in the same order, and nothing else.
+ *
+ * The late-result check compared titles exactly, and one posting writes its
+ * title several ways — the JSON-LD's "Platform Engineer", the heading's
+ * "Platform engineer", "Sr. Engineer" beside "Sr Engineer", a non-breaking
+ * space or whatever dash its author typed. Measured by lifting `sameJob` out
+ * of content.js: each of those against the card's reading came back false,
+ * and a finished AI run on this very posting was announced as "not this
+ * posting" and dropped. A title with a word added — "Platform Engineer –
+ * Remote" — is still a different string here, and stays one.
+ *
+ * Case, spacing and punctuation come off; words do not. Every letter and
+ * digit is kept in order, so "Senior Platform Engineer", "Platform Engineer
+ * II" and "Platform Engineer Intern" all stay different jobs from "Platform
+ * Engineer", and so do "Frontend" and "Front end", because running two words
+ * together is not punctuation. `+` and `#` are kept too: they are the
+ * difference between C++, C# and C, and a title is where that matters.
+ */
+export function titleKey(title) {
+  return String(title ?? '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}+#]+/gu, ' ')
+    .trim();
+}
+
 /**
  * Same application, a different one, or not clear enough to say.
  *
@@ -483,7 +538,7 @@ export function judgeApplication(trail, page, now = Date.now()) {
     if (p?.url && namesAnotherJob(page.url, p.url)) return 'different';
   }
 
-  const co = (c) => (c ?? '').trim().toLowerCase();
+  const co = employerKey;
   const mine = co(page.company);
   const known = trail.pages.map((p) => co(p.company)).filter(Boolean);
   const otherEmployer = Boolean(mine) && known.length > 0 && !known.includes(mine);
@@ -647,6 +702,289 @@ export function summarise(trail) {
  * JSON-LD survives: it is inside a <script> tag and it is the single most
  * reliable source of what a posting says.
  */
+/**
+ * The page's markup, with what is inside its shadow roots.
+ *
+ * `outerHTML` stops at a shadow root, so a posting or an application form
+ * drawn inside a web component — which autofill reaches and fills — was sent
+ * to the server as the empty host element around it, and the letter and the
+ * answers were written without the questions. Each root's markup is added
+ * inside the body, marked with the element it belongs to, nested roots
+ * included. Closed roots too where the extension API can open them. A page
+ * with none is returned exactly as `outerHTML` has it.
+ */
+/*
+ * Except ours. The card and the "is this a job?" chip are open shadow roots on
+ * the page like any other, and the card is up before the page is first read
+ * and at every rebuild after — so each page went to the server with the whole
+ * card written into it: the resume's changes line by line, every button, the
+ * questions it had already found, and a feedback box labelled "Anything to
+ * change?" as though the posting had asked it. `allRoots` in autofill.js
+ * skips the card for the same reason. By id, as there, because the hosts are
+ * found by id everywhere else.
+ */
+const OUR_HOSTS = new Set(['jobhelper-card-host', 'jobhelper-ask-host']);
+
+/*
+ * And never the applicant's answers, which are written into the page as
+ * surely as the questions are.
+ *
+ * `trimForStorage` scrubbed those out of the markup with regular expressions,
+ * and there was one place an answer lives that no expression over markup can
+ * reach: a rich-text editor. Workday, Greenhouse's newer boards and any form
+ * built on Quill, ProseMirror or Draft take the long answers in a
+ * `contenteditable` element, and what is typed there is ordinary paragraphs —
+ * nothing marks it as typed except the attribute on an ancestor, and a regex
+ * cannot find where that ancestor ends. Measured in Chromium against this
+ * module: a draft essay in `<div contenteditable="true">` went to the server,
+ * and on to the AI, word for word.
+ *
+ * So the page is copied and the copy is scrubbed while it is still a tree,
+ * where "everything inside the editor" is one assignment: editors emptied,
+ * textareas emptied, typed values and the marks on chosen options dropped. The
+ * copy goes into a document of its own with no window behind it, so nothing
+ * in it loads an image, runs a custom element's constructor or is seen by the
+ * page's own observers — the live page is only ever read. Measured on a page
+ * of 26,000 elements and 2.7MB, this took the capture from 17ms to 41ms,
+ * nearly all of it the copy itself; the capture runs when the browser is
+ * idle.
+ *
+ * The regex scrub in `trimForStorage` stays, as the second layer and for
+ * markup that did not come from here.
+ */
+const EDITABLE = new Set(['', 'true', 'plaintext-only']);
+const ANSWERS = 'input, textarea, option, [contenteditable], [aria-checked], [aria-selected], [aria-pressed]';
+
+/*
+ * And the answer a select widget draws once something is picked in it.
+ *
+ * Dropping `selected` and `aria-selected` is the whole story for a native
+ * <select>, and the self-identification step rarely has one any more. Its
+ * gender, race, veteran and disability questions are drawn by a widget, and
+ * the widget writes the pick out as plain text beside the question — which
+ * nothing above touches. Measured in Chromium against this module, with each
+ * library's own markup after an option was clicked: react-select's
+ * `select__single-value` and its "option Female, selected." live region, MUI's
+ * `MuiSelect-select`, Headless UI's and Workday's listbox button, Radix's
+ * trigger, select2's `select2-selection__rendered` and Choices.js's chosen
+ * item all went to the server, and on to the AI, with the answer in them.
+ *
+ * So each of those places is emptied, with the attributes that repeat the
+ * pick: select2's `title`, Choices.js's `data-value`, the "Remove Asian" label
+ * on a chip's close button, which goes with the chip. The classes are the
+ * libraries' own, not a guess at what a chip looks like — react-select's
+ * `__single-value` and `__multi-value` under any class prefix, and its
+ * emotion `-singleValue` and `-multiValue` names when it has none; MUI's
+ * chips only inside a Select or as an Autocomplete tag. A posting's own
+ * "Location: Remote" chip is a `MuiChip-root` too, and is left alone. The
+ * question stays, because it is a label outside the widget; so does any list
+ * of options that is not the pick, like Choices.js's dropdown. On a page of
+ * 20,800 elements and 2.7MB the extra pass cost about 3ms where nothing
+ * matched, and about 12ms with 2,600 widgets to empty.
+ */
+const SHOWN_CHOICE = [
+  '[class*="__single-value"]',
+  '[class*="-singleValue"]',
+  '[class*="__multi-value"]',
+  '[class*="-multiValue"]',
+  '[id="aria-selection"]',
+  '[id="aria-focused"]',
+  '.MuiSelect-select',
+  '.MuiAutocomplete-tag',
+  'button[aria-haspopup="listbox"]',
+  'button[role="combobox"]',
+  '.select2-selection__rendered',
+  '.choices__list--single',
+  '.choices__list--multiple',
+].join(', ');
+const REPEATS_CHOICE = ['title', 'aria-label', 'data-value', 'value'];
+
+/*
+ * And which option in a list is the pick.
+ *
+ * `aria-selected` was never the only mark. Each library puts state of its own
+ * on the chosen option, and in the list the options are the question, so the
+ * pick is plain to anyone comparing one option with the next. Choices.js keeps
+ * its dropdown in the page whether it is open or not, with `is-selected` and
+ * `is-highlighted` on the answer and the search box's `aria-activedescendant`
+ * naming it by id; react-select (`__option--is-selected`), MUI
+ * (`Mui-selected`), Headless UI (`data-headlessui-state="… selected"`,
+ * `data-selected`), Radix (`data-state="checked"`) and select2
+ * (`select2-results__option--selected`) mark it while the menu is open, which
+ * is when the page is read if the applicant is in the middle of choosing.
+ * Measured in Chromium by reopening each menu after a pick. The focus and
+ * highlight marks go too, because a menu reopens with them on the pick, and
+ * so does an emotion `css-…` class: react-select styles the pick differently,
+ * so its generated class name is a different hash from its neighbours'. Only
+ * on `role="option"`, so nothing but a list's options is touched.
+ */
+const OPTION_STATE_ATTRS = ['data-state', 'data-selected', 'data-headlessui-state', 'data-active', 'data-focus', 'data-highlighted'];
+const OPTION_STATE_CLASS = /selected|highlighted|focused|focusvisible|^css-/i;
+
+/*
+ * And the answers a review step writes out as text.
+ *
+ * Workday's last step, Taleo's "Review and Submit" and iCIMS's summary show
+ * every answer as ordinary text beside its question — no input, no widget,
+ * nothing the scrubs above look at. Measured in Chromium through the extension
+ * and then through ResumeM-M's own `mergeJobPages`: the description the server
+ * built for such a page, and handed to the AI, read "Social Security Number
+ * 123-45-6789 … Date of Birth 04/02/1999 … Gender Female … Disability Status
+ * Yes, I have a disability".
+ *
+ * So a short piece of text that names one of these questions, and is the whole
+ * of its element, has the next thing beside it emptied: the `<div>` after a
+ * label, the `<dd>` after a `<dt>`, the cell after a header cell or after
+ * another cell, the text after a `<strong>`. A label with its answer after a
+ * colon in the same text keeps the label. The questions are the identifiers
+ * and the equal-opportunity ones, the same families `remembering.js` refuses
+ * to keep; written out here rather than imported because this module is loaded
+ * on its own in places an import cannot follow.
+ *
+ * Only the answer, only where it is short, and never a control: a form's own
+ * "Gender" label with its `<select>` after it keeps its options, which are the
+ * question. A heading is not a label, so a posting's "Equal Opportunity and
+ * Disability Accommodation" keeps the paragraph under it; and the posting's
+ * sentence about race, gender and disability is far too long to be one. On
+ * the heavy posting in tests/fixtures.mjs (7,800 elements, 590kB) this pass
+ * took the capture from about 10ms to about 14ms.
+ */
+const STATED_PERSONAL =
+  /\b(ssn|social\s*security|national\s*insurance|tax\s*(id|identification)|(date|day|month|year)\s*of\s*birth|birth\s*(date|day)|dob|age|passport|driver'?s?\s*licen[cs]e|visa\s*number|(account|card|routing)\s*number|iban|sort\s*code|gender|sex|transgender|non-?binary|sexual\s*orientation|lgbt\w*|race|ethnicit(y|ies)|hispanic|latin[oaxe]s?|national\s*origin|indigenous|aboriginal|veteran|disab(led|ility|ilities)|criminal|convict\w*|felon(y|ies)|religion|marital|pregnan\w*)\b/i;
+const CONTROL =
+  'input, select, textarea, button, [contenteditable], [role="radio"], [role="checkbox"], [role="option"], [role="combobox"], [role="listbox"], [role="radiogroup"]';
+
+function scrubStatedAnswers(root) {
+  const labels = [];
+  const walker = (root.ownerDocument ?? root).createTreeWalker(root, 4 /* NodeFilter.SHOW_TEXT */);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const said = node.data.trim();
+    if (said && said.length <= 200) labels.push(node);
+  }
+  for (const node of labels) {
+    const said = node.data.trim();
+    const inline = /^([^:]{1,80}):\s*\S/.exec(said);
+    if (inline && STATED_PERSONAL.test(inline[1])) {
+      node.data = `${inline[1]}:`;
+      continue;
+    }
+    if (said.length > 80 || !STATED_PERSONAL.test(said)) continue;
+    let label = node.parentElement;
+    if (!label || label.textContent.trim() !== said) continue;
+    // Up through the wrappers that hold nothing else, to what sits beside it.
+    while (label.parentElement && label.parentElement !== root && label.parentElement.textContent.trim() === said) {
+      label = label.parentElement;
+    }
+    if (label.closest('h1, h2, h3, h4, h5, h6') || label.closest(CONTROL)) continue;
+    let next = label.nextSibling;
+    while (next && next.nodeType === 3 && !next.data.trim()) next = next.nextSibling;
+    if (!next || (next.textContent ?? '').trim().length > 200) continue;
+    if (next.nodeType === 3) next.data = ' ';
+    else if (next.nodeType === 1 && !next.matches(CONTROL) && !next.querySelector(CONTROL)) next.textContent = '';
+  }
+}
+
+function scrubCopy(root) {
+  scrubStatedAnswers(root);
+  for (const el of root.querySelectorAll(SHOWN_CHOICE)) {
+    el.textContent = '';
+    for (const name of REPEATS_CHOICE) el.removeAttribute(name);
+  }
+  for (const el of root.querySelectorAll('[role="option"], [aria-activedescendant]')) {
+    el.removeAttribute('aria-activedescendant');
+    if (el.getAttribute('role') !== 'option') continue;
+    for (const name of OPTION_STATE_ATTRS) el.removeAttribute(name);
+    for (const token of [...el.classList]) if (OPTION_STATE_CLASS.test(token)) el.classList.remove(token);
+  }
+  for (const el of root.querySelectorAll(ANSWERS)) {
+    if (el.localName === 'input') {
+      if (!NAMES_ITSELF.test(el.type)) el.removeAttribute('value');
+      el.removeAttribute('checked');
+    } else if (el.localName === 'textarea') {
+      el.textContent = '';
+    } else if (el.localName === 'option') {
+      el.removeAttribute('selected');
+    }
+    if (EDITABLE.has(el.getAttribute('contenteditable')?.trim().toLowerCase())) el.textContent = '';
+    el.removeAttribute('aria-checked');
+    el.removeAttribute('aria-selected');
+    el.removeAttribute('aria-pressed');
+  }
+  return root;
+}
+
+export function pageHtml(doc = document) {
+  const inert = doc.implementation.createHTMLDocument('');
+  const copyOf = (node) => scrubCopy(inert.importNode(node, true));
+  const extra = [];
+  const seen = new Set();
+  const rootOf = (el) => {
+    if (OUR_HOSTS.has(el.id)) return null;
+    if (el.shadowRoot) return el.shadowRoot;
+    try {
+      return globalThis.chrome?.dom?.openOrClosedShadowRoot?.(el) ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const walk = (root) => {
+    for (const el of root.querySelectorAll('*')) {
+      const shadow = rootOf(el);
+      if (!shadow || seen.has(shadow)) continue;
+      seen.add(shadow);
+      const box = inert.createElement('div');
+      box.setAttribute('data-shadow-host', el.localName);
+      for (const child of shadow.childNodes) box.append(inert.importNode(child, true));
+      extra.push(scrubCopy(box).outerHTML);
+      walk(shadow);
+    }
+  };
+  walk(doc);
+  const html = copyOf(doc.documentElement).outerHTML;
+  if (extra.length === 0) return html;
+  const at = html.lastIndexOf('</body>');
+  return at < 0 ? html + extra.join('') : html.slice(0, at) + extra.join('') + html.slice(at);
+}
+
+/*
+ * The inside of a tag, where a quoted attribute may hold a `>` of its own.
+ * Each alternative starts with a different character, so there is nothing to
+ * backtrack over.
+ */
+const TAG_BODY = String.raw`(?:[^>"']|"[^"]*"|'[^']*')*`;
+
+/* One attribute: its name, and its value in any of the three spellings. */
+const ATTRIBUTE = /\s+([^\s"'>/=]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s"'=<>`]+))?/g;
+
+/* Inputs whose value is the option's own name rather than what was typed. */
+const NAMES_ITSELF = /^(?:radio|checkbox|submit|button|reset|image)$/i;
+
+const unquote = (raw = '') => raw.replace(/^(["'])([\s\S]*)\1$/, '$2').trim();
+
+/*
+ * An `<input>` or `<option>` tag without the applicant's answer in it. The
+ * first `type` wins, as it does for the browser.
+ */
+function scrubTag(tag) {
+  const input = /^<input\b/i.test(tag);
+  let type = '';
+  if (input) {
+    for (const [, name, raw] of tag.matchAll(ATTRIBUTE)) {
+      if (name.toLowerCase() === 'type') {
+        type = unquote(raw);
+        break;
+      }
+    }
+  }
+  const keepValue = NAMES_ITSELF.test(type);
+  return tag.replace(ATTRIBUTE, (whole, name) => {
+    const n = name.toLowerCase();
+    if (n === 'checked' || n === 'selected') return '';
+    if (input && n === 'value' && !keepValue) return '';
+    return whole;
+  });
+}
+
 export function trimForStorage(html, limit = 400_000) {
   const text = String(html ?? '')
     // Keep ld+json, drop every other script.
@@ -655,6 +993,40 @@ export function trimForStorage(html, limit = 400_000) {
     .replace(/<svg\b[^>]*>[\s\S]*?<\/svg>/gi, '')
     .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, '')
     .replace(/<!--[\s\S]*?-->/g, '')
+    /*
+     * What the applicant typed, and which of the options they chose.
+     *
+     * React keeps an input's `value` attribute in step with what is typed, so
+     * a form captured after filling carried the SSN, the date of birth and
+     * the address in its markup, to the server and on to the AI. Radio,
+     * checkbox and button values are the options' own names and stay; a
+     * textarea keeps its tag and loses its text.
+     *
+     * The chosen option is their answer as surely as a typed one. The options
+     * stay — they are the question — but the mark on the chosen one goes: a
+     * server-rendered step carries `checked` and `selected` on what was
+     * answered. On the voluntary self-identification step that is the
+     * applicant's gender, race, disability and veteran status, sent to the
+     * server and on to the AI beside a question they were entitled to
+     * decline.
+     *
+     * `pageHtml` now builds its markup from a scrubbed copy of the page, so
+     * for the page itself this is the second layer; it stays for any caller
+     * that hands over markup it did not get from there. And it reads the tag
+     * attribute by attribute, because the version before read it with
+     * `[^>]*` and `\btype=`, and both lied. A `>` inside a quoted attribute —
+     * `data-x="a>b"`, or a typed `1 > 2` — ended the "tag" early, so the
+     * `value` after it was never looked at and went out whole. And `\b`
+     * matches after a hyphen, so `data-type="checkbox"` on a text box read as
+     * a checkbox and kept what was typed in it. Measured against this module:
+     * `<input type="text" data-x="a>b" value="SECRET">`,
+     * `<input data-type="checkbox" value="SECRET">` and
+     * `<input type=text value="1 > 2 SECRET">` all came out with the secret.
+     */
+    .replace(new RegExp(`<(?:input|option)\\b${TAG_BODY}>`, 'gi'), scrubTag)
+    .replace(new RegExp(`(<textarea\\b${TAG_BODY}>)[\\s\\S]*?(<\\/textarea>)`, 'gi'), '$1$2')
+    // Every ARIA group carries `aria-checked="true"` on its pick.
+    .replace(/\saria-(?:checked|selected|pressed)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/\n{3,}/g, '\n\n');
 

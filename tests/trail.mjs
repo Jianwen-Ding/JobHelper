@@ -294,6 +294,130 @@ describe('is this the same application', () => {
   });
 });
 
+/**
+ * One employer, written two ways.
+ *
+ * A posting's JSON-LD carries the legal name and the form it hands you to
+ * says the short one. The veto compared them exactly, so "Acme, Inc." and
+ * "Acme" were two employers and the form was split off confidently, with no
+ * chip — by every route that would otherwise have joined it.
+ */
+describe('the same employer with and without its legal form', () => {
+  const posting = at('https://careers.acme.com/jobs/platform-engineer', 'Acme, Inc.');
+
+  it('joins the form it hands you to, by the referrer', () => {
+    const page = { url: 'https://boards.greenhouse.io/acme/jobs/1', referrerHost: 'careers.acme.com', company: 'Acme' };
+    assert.equal(judgeApplication(trailOf(posting), page), 'same');
+  });
+
+  it('and by the Apply click', () => {
+    const trail = {
+      ...trailOf(posting),
+      expecting: { to: 'https://boards.greenhouse.io/acme/jobs/1', at: Date.now() },
+    };
+    assert.equal(judgeApplication(trail, { url: 'https://boards.greenhouse.io/acme/jobs/1', company: 'Acme' }), 'same');
+  });
+
+  it('and one step down the same path, however the suffix is written', () => {
+    for (const company of ['Acme', 'ACME Corp', 'Acme Inc', 'Acme, Inc']) {
+      const page = { url: 'https://careers.acme.com/jobs/platform-engineer/apply', company };
+      assert.equal(judgeApplication(trailOf(posting), page), 'same', company);
+    }
+  });
+
+  it('but still refuses a name that differs by more than its legal form', () => {
+    for (const company of ['Acme Labs', 'Acme Health', 'Northwind, Inc.']) {
+      const page = { url: 'https://careers.acme.com/jobs/platform-engineer/apply', company };
+      assert.equal(judgeApplication(trailOf(posting), page), 'different', company);
+    }
+  });
+});
+
+/**
+ * And the same employer again, when an AI pass finishes late.
+ *
+ * `landLate` in content.js keeps a proposal that outlived the pass that asked
+ * for it, and lands it only if the card is showing the same posting — which
+ * `sameJob` decided by comparing the company exactly. So a three-minute AI
+ * run for "Acme, Inc." finishing on a card that reads the same posting as
+ * "Acme" was said to be for another posting and thrown away. It is compared
+ * by the trail's `employerKey` now, the same key the trail joins pages on.
+ *
+ * `sameJob` lives inside the content script's closure, so it is lifted out of
+ * the source the way tests/reporting.mjs lifts `describeAttach`.
+ */
+describe('a late AI result, against the posting on screen', async () => {
+  const fsMod = await import('node:fs');
+  const trailModule = await import('../src/shared/trail.js');
+  const { employerKey } = trailModule;
+  // Absent before the key existed; the lifted `sameJob` then falls back to
+  // comparing exactly, which is what the title tests below are measuring.
+  const titleKey = trailModule.titleKey ?? null;
+  const source = fsMod.readFileSync(new URL('../src/content/content.js', import.meta.url), 'utf8');
+  const from = source.indexOf('  const sameJob =');
+  const to = source.indexOf(';\n', from);
+  const sameJob = new Function('employerKey', 'titleKey', `${source.slice(from, to + 1)}\nreturn sameJob;`)(
+    employerKey,
+    titleKey,
+  );
+  const job = (company, title = 'Platform Engineer') => ({ job: { company, title } });
+
+  it('is lifted from the content script', () => {
+    assert.notEqual(from, -1, 'content.js no longer has a sameJob');
+  });
+
+  it('lands on the same employer written with its legal form', () => {
+    assert.equal(sameJob(job('Acme, Inc.'), job('Acme')), true);
+    assert.equal(sameJob(job('ACME Corp'), job('Acme')), true);
+  });
+
+  it('but not on another employer, nor another role', () => {
+    assert.equal(sameJob(job('Acme Labs'), job('Acme')), false);
+    assert.equal(sameJob(job('Northwind, Inc.'), job('Acme, Inc.')), false);
+    assert.equal(sameJob(job('Acme, Inc.', 'Data Scientist'), job('Acme')), false);
+  });
+
+  /*
+   * The title was compared exactly, and one posting writes its title more
+   * than one way: the JSON-LD says "Platform Engineer", the heading the
+   * server read says "Platform engineer", the page title "Platform Engineer –
+   * Remote" with the dash of whoever typed it. Each of those threw a finished
+   * AI run away as "not this posting".
+   */
+  it('lands on the same title written with other case, spacing or punctuation', () => {
+    const pairs = [
+      ['Platform engineer', 'Platform Engineer'],
+      ['Platform  Engineer ', 'Platform Engineer'],
+      ['Platform Engineer', 'Platform Engineer'],
+      ['Sr. Platform Engineer', 'Sr Platform Engineer'],
+      ['Platform Engineer, Payments', 'Platform Engineer - Payments'],
+      ['Platform Engineer (Remote)', 'Platform Engineer – Remote'],
+      ['Front-end Engineer', 'Front end Engineer'],
+    ];
+    for (const [a, b] of pairs) {
+      assert.equal(sameJob(job('Acme', a), job('Acme', b)), true, `${a} / ${b}`);
+      assert.equal(sameJob(job('Acme', b), job('Acme', a)), true, `${b} / ${a}`);
+    }
+  });
+
+  it('but not on a title that differs by a word, or by what the punctuation said', () => {
+    const pairs = [
+      ['Platform Engineer', 'Senior Platform Engineer'],
+      ['Platform Engineer', 'Platform Engineer II'],
+      ['Platform Engineer II', 'Platform Engineer III'],
+      ['Platform Engineer', 'Platform Engineer Intern'],
+      ['C++ Engineer', 'C Engineer'],
+      ['C# Developer', 'C Developer'],
+      ['Frontend Engineer', 'Front end Engineer'],
+      ['Platform Engineer', 'Plat form Engineer'],
+    ];
+    for (const [a, b] of pairs) {
+      assert.equal(sameJob(job('Acme', a), job('Acme', b)), false, `${a} / ${b}`);
+      assert.equal(sameJob(job('Acme', b), job('Acme', a)), false, `${b} / ${a}`);
+    }
+  });
+});
+
 describe('what the card is told', () => {
   it('keeps the page text and the work to itself', () => {
     const trail = {
@@ -343,6 +467,85 @@ describe('what is worth keeping of a page', () => {
 
   it('is unbothered by nothing at all', () => {
     assert.equal(trimForStorage(undefined), '');
+  });
+
+  /*
+   * What the applicant typed never leaves with the page.
+   *
+   * React keeps an input's `value` attribute in step with what is typed, so a
+   * form page captured after it was filled carried the social security
+   * number, the date of birth and the address in its markup, to the server
+   * and on to the AI. The questions are what the AI needs; the answers are
+   * the applicant's. Radio and checkbox values are the options' own names —
+   * part of the question — and stay.
+   */
+  it('drops typed values and textarea contents, keeping the questions and the options', () => {
+    const page =
+      '<label for="ssn">Social Security Number</label><input id="ssn" type="text" value="123-45-6789">' +
+      "<label>Date of birth</label><input type=date value='1999-02-03'>" +
+      '<label>Address</label><input value=12MainSt name="addr">' +
+      '<label>Why us?</label><textarea name="why">My private draft answer</textarea>' +
+      '<label><input type="radio" name="auth" value="Yes" checked> Yes</label>' +
+      '<label><input type="checkbox" name="remote" value="Open to remote"> Open to remote</label>';
+    const kept = trimForStorage(page);
+    for (const secret of ['123-45-6789', '1999-02-03', '12MainSt', 'My private draft answer']) {
+      assert.ok(!kept.includes(secret), `"${secret}" was sent`);
+    }
+    for (const question of ['Social Security Number', 'Date of birth', 'Address', 'Why us?', 'value="Yes"', 'value="Open to remote"']) {
+      assert.ok(kept.includes(question), `"${question}" was lost`);
+    }
+  });
+
+  /*
+   * Nor which option they chose. A server-rendered step marks the answer with
+   * `checked` or `selected`, and an ARIA group with `aria-checked`; on the
+   * self-identification step those are the applicant's gender, disability
+   * and veteran status. Every option is still there, so the question is.
+   */
+  it('drops the mark on a chosen option, keeping every option', () => {
+    const page =
+      '<fieldset><legend>Gender</legend>' +
+      '<label><input type="radio" name="g" value="Female" checked> Female</label>' +
+      '<label><input type=radio name=g value=Male> Male</label></fieldset>' +
+      '<label>Disability</label><select name="d"><option value="">Select</option>' +
+      '<option value="1" selected="selected">Yes, I have a disability</option><option value="0">No</option></select>' +
+      '<label><input type="checkbox" name="remote" checked="" value="Open to remote"> Open to remote</label>' +
+      '<div role="radiogroup" aria-label="Veteran status">' +
+      '<div role="radio" aria-checked="true">I am a protected veteran</div>' +
+      '<div role="radio" aria-checked="false">I am not a protected veteran</div></div>' +
+      '<button aria-pressed="true">Hispanic or Latino</button>';
+    const kept = trimForStorage(page);
+    for (const mark of [/\schecked\b/, /\sselected\b/, /aria-checked/, /aria-pressed/]) {
+      assert.ok(!mark.test(kept), `${mark} survived: ${kept}`);
+    }
+    for (const option of ['value="Female"', 'value=Male', 'Yes, I have a disability', 'value="Open to remote"', 'I am a protected veteran', 'I am not a protected veteran', 'Hispanic or Latino', 'Veteran status']) {
+      assert.ok(kept.includes(option), `"${option}" was lost`);
+    }
+  });
+
+  /*
+   * However the tag is written. The scrub read a tag as `<input[^>]*>` and
+   * its type as `\btype=`: a `>` inside a quoted attribute ended the tag
+   * before the value, and `\b` matches after the hyphen in `data-type`, so a
+   * text box labelled for some script as a checkbox kept what was typed.
+   */
+  it('drops the typed value however the tag around it is written', () => {
+    const page =
+      '<input type="text" data-x="a>b" value="SECRET-A">' +
+      '<input data-type="checkbox" value="SECRET-B">' +
+      '<input type=text value="1 > 2 SECRET-C">' +
+      "<input title='say \"type=radio\"' value='SECRET-D'>" +
+      '<input type="checkbox" data-x="a>b" name="remote" value="Open to remote" checked>' +
+      '<select><option data-x="a>b" value="1" selected>Yes, I have a disability</option></select>' +
+      '<textarea placeholder="a>b">SECRET-E</textarea>';
+    const kept = trimForStorage(page);
+    for (const secret of ['SECRET-A', 'SECRET-B', 'SECRET-C', 'SECRET-D', 'SECRET-E']) {
+      assert.ok(!kept.includes(secret), `"${secret}" was sent: ${kept}`);
+    }
+    assert.ok(!/\schecked\b|\sselected\b/.test(kept), `the chosen option was marked: ${kept}`);
+    for (const option of ['value="Open to remote"', 'Yes, I have a disability', 'placeholder="a>b"']) {
+      assert.ok(kept.includes(option), `"${option}" was lost`);
+    }
   });
 });
 
@@ -962,5 +1165,434 @@ describe('evidence about where you went, and not about which job', () => {
         'same',
       );
     });
+  });
+});
+
+/*
+ * The page as sent, with what is inside its shadow roots.
+ *
+ * `document.documentElement.outerHTML` does not serialise a shadow root, so a
+ * posting or an application form rendered inside a web component — which
+ * autofill reaches and fills — never reached the server as text, and the AI
+ * wrote the letter and the answers without it.
+ */
+describe('the page as sent includes its shadow roots', () => {
+  it('carries the text of an open shadow root, and of one nested inside it', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><title>Apply</title></head><body><h1>Acme careers</h1>
+        <apply-form id="host"></apply-form>
+        <script>
+          const outer = document.getElementById('host').attachShadow({ mode: 'open' });
+          outer.innerHTML = '<h2>Platform Engineer</h2><label>Why do you want to work at Acme?</label><textarea></textarea><inner-part id="in"></inner-part>';
+          outer.getElementById('in').attachShadow({ mode: 'open' }).innerHTML = '<p>Salary: $150,000 to $180,000</p>';
+        </script></body></html>`);
+      const out = await page.evaluate(async (js) => {
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        const empty = document.implementation.createHTMLDocument('x');
+        return { html: mod.pageHtml(document), bare: mod.pageHtml(empty), plainOuter: empty.documentElement.outerHTML };
+      }, source);
+      assert.ok(out.html.includes('Why do you want to work at Acme?'), 'the shadow root\'s question is sent');
+      assert.ok(out.html.includes('Salary: $150,000 to $180,000'), 'and the nested one\'s salary');
+      assert.ok(out.html.includes('<h1>Acme careers</h1>'), 'and the page itself');
+      assert.ok(out.html.indexOf('Why do you want') < out.html.lastIndexOf('</body>'), 'inside the body');
+      assert.equal(out.bare, out.plainOuter, 'a page with no shadow roots is sent exactly as it was');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  /*
+   * Except our own. The card and the "is this a job?" chip are shadow roots
+   * on the page like any other, and the card is up before the page is read
+   * and still up at every rebuild — so the page went to the server with the
+   * card inside it: the letter being written, the resume's own lines, and a
+   * feedback box labelled like a question, as though the posting had said
+   * them. `allRoots` in autofill.js has skipped the card for the same reason
+   * since it learned to walk shadow roots.
+   */
+  it('does not carry the card or the chip, only the page', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><title>Apply</title></head><body><h1>Platform Engineer</h1>
+        <apply-form id="form"></apply-form>
+        <div id="jobhelper-card-host"></div>
+        <div id="jobhelper-ask-host"></div></body></html>`);
+      // Attached from out here rather than by a script in the page, whose own
+      // source would otherwise carry the very words being looked for.
+      const html = await page.evaluate(async (js) => {
+        document.getElementById('form').attachShadow({ mode: 'open' }).innerHTML =
+          '<label>Why do you want to work at Acme?</label><textarea></textarea>';
+        document.getElementById('jobhelper-card-host').attachShadow({ mode: 'open' }).innerHTML =
+          '<p>Dear Hiring Manager, I led the migration of our billing system.</p><label>Anything to change?</label><textarea></textarea>';
+        document.getElementById('jobhelper-ask-host').attachShadow({ mode: 'open' }).innerHTML =
+          '<p>Is this a job you are applying for?</p>';
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        return mod.pageHtml(document);
+      }, source);
+      assert.ok(html.includes('Why do you want to work at Acme?'), 'the page\'s own shadow root is still sent');
+      for (const ours of ['Dear Hiring Manager', 'Anything to change?', 'Is this a job you are applying for?']) {
+        assert.ok(!html.includes(ours), `"${ours}" was sent as part of the page`);
+      }
+    } finally {
+      await browser.close();
+    }
+  });
+
+  /*
+   * Nor the applicant's answers, from anywhere in the tree. A rich-text
+   * editor holds a draft essay as plain paragraphs under a `contenteditable`
+   * ancestor, which no expression over markup can find the end of, so the
+   * draft went to the server word for word. `pageHtml` now scrubs a copy of
+   * the page while it is still a tree — and the copy must be inert: the page's
+   * own custom elements are not constructed again, and its images are not
+   * fetched again, because of it.
+   */
+  it('does not carry what the applicant wrote or chose, and copies the page without side effects', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      const fetched = [];
+      await page.route('https://img.example/**', (route) => {
+        fetched.push(route.request().url());
+        return route.fulfill({ status: 200, contentType: 'image/gif', body: '' });
+      });
+      await page.setContent(`<!doctype html><html><head><title>Apply</title></head><body><h1>Platform Engineer</h1>
+        <img src="https://img.example/logo.gif" alt="Acme">
+        <label>Why Acme?</label><div class="ql-editor" contenteditable="true"><p>Draft one</p></div>
+        <label>Anything else?</label><div contenteditable><p>Draft two</p></div>
+        <label>Notes</label><div contenteditable="false"><p>Kept: the posting's own text</p></div>
+        <label>Name</label><input id="name" type="text" data-type="radio">
+        <label><input id="yes" type="radio" name="auth" value="Yes"> Yes</label>
+        <select id="d"><option value="0">No</option><option value="1">Yes, I have a disability</option></select>
+        <apply-form id="form"></apply-form>
+        <x-widget></x-widget></body></html>`);
+      const out = await page.evaluate(async (js) => {
+        window.constructed = 0;
+        customElements.define('x-widget', class extends HTMLElement {
+          constructor() {
+            super();
+            window.constructed += 1;
+          }
+        });
+        const name = document.getElementById('name');
+        name.setAttribute('value', 'SECRET-NAME');
+        document.getElementById('yes').setAttribute('checked', '');
+        document.getElementById('d').options[1].setAttribute('selected', '');
+        document.getElementById('form').attachShadow({ mode: 'open' }).innerHTML =
+          '<label>Tell us about a project</label><div contenteditable="plaintext-only">Draft three</div>' +
+          '<textarea>Draft four</textarea>';
+        const before = window.constructed;
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        const html = mod.pageHtml(document);
+        await new Promise((r) => setTimeout(r, 200));
+        return { html, constructedAgain: window.constructed - before };
+      }, source);
+      for (const answer of ['Draft one', 'Draft two', 'Draft three', 'Draft four', 'SECRET-NAME']) {
+        assert.ok(!out.html.includes(answer), `"${answer}" was sent as part of the page`);
+      }
+      assert.ok(!/\schecked\b|\sselected\b/.test(out.html), 'the chosen option was marked');
+      for (const question of ['Why Acme?', 'Anything else?', 'Tell us about a project', "Kept: the posting's own text", 'value="Yes"', 'Yes, I have a disability', 'contenteditable="true"']) {
+        assert.ok(out.html.includes(question), `"${question}" was lost`);
+      }
+      assert.equal(out.constructedAgain, 0, 'copying the page ran its custom elements');
+      assert.equal(fetched.length, 1, `copying the page fetched its images again: ${fetched.join(', ')}`);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+/*
+ * What a select widget shows once something has been picked in it.
+ *
+ * Dropping `selected` and `aria-selected` covers a native <select>, and most
+ * application forms no longer have one: the self-identification questions are
+ * drawn by a widget, and the widget writes the answer out as ordinary text
+ * beside the question. The markup below is what each library put in the page
+ * after an option was clicked in Chromium — react-select 5.10 (with
+ * Greenhouse's `select` class prefix, and without one), MUI 5.18 Select and
+ * Autocomplete, Headless UI 2.2 Listbox, Radix Select 2.3, select2 4.1 and
+ * Choices.js 11.2 — with inline styles and icons taken out. Workday's button
+ * is the shape tests/autofill.mjs models, which draws its choice on itself.
+ */
+const CHOSEN_IN_WIDGETS = `
+  <h1>Voluntary Self-Identification</h1>
+  <p>Female founders network, veterans and people with a disability are encouraged to apply.</p>
+  <div class="posting-tags"><div class="MuiChip-root MuiChip-filled"><span class="MuiChip-label">Location: Remote</span></div>
+    <span class="chip">Hybrid</span></div>
+
+  <label id="rs-g-l" for="rs-g">Gender</label>
+  <div class="css-b62m3t-container">
+    <span id="react-select-2-live-region" class="css-7pg0cj-a11yText"><span id="aria-selection">option ANSWER-RS-LIVE, selected.</span><span id="aria-focused"></span><span id="aria-results"></span><span id="aria-guidance">Select is focused ,type to refine list, press Down to open the menu, </span></span>
+    <span aria-live="polite" aria-atomic="false" aria-relevant="additions text" role="log" class="css-7pg0cj-a11yText"></span>
+    <div class="select__control css-t3ipsp-control"><div class="select__value-container select__value-container--has-value css-hlgwow">
+      <div class="select__single-value css-1dimb5e-singleValue">ANSWER-RS-SINGLE</div>
+      <div class="select__input-container css-19bb58m" data-value=""><input class="select__input" id="rs-g" type="text" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="rs-g-l" role="combobox" value=""></div>
+    </div></div>
+    <input name="gender" type="hidden" value="f">
+  </div>
+
+  <label id="rs-r-l">Race</label>
+  <div class="css-b62m3t-container"><div class="css-13cymwt-control"><div class="css-1dyz3mf">
+    <div class="css-1p3m7a8-multiValue"><div class="css-9jq23d">ANSWER-RS-CHIP</div><div role="button" class="css-v7duua" aria-label="Remove ANSWER-RS-REMOVE"></div></div>
+    <div class="css-19bb58m" data-value=""><input id="rs-r" type="text" aria-labelledby="rs-r-l" role="combobox" value=""></div>
+  </div></div></div>
+
+  <div class="MuiFormControl-root"><label class="MuiFormLabel-root MuiInputLabel-root" id="mui-v-label">Veteran status</label>
+    <div class="MuiInputBase-root MuiOutlinedInput-root">
+      <div tabindex="0" role="combobox" aria-controls=":r0:" aria-expanded="false" aria-haspopup="listbox" aria-labelledby="mui-v-label mui-v" id="mui-v" class="MuiSelect-select MuiSelect-outlined MuiInputBase-input">ANSWER-MUI-SELECT</div>
+      <input aria-invalid="false" aria-hidden="true" tabindex="-1" class="MuiSelect-nativeInput" value="pv">
+    </div></div>
+
+  <div class="MuiFormControl-root"><label class="MuiFormLabel-root MuiInputLabel-root" id="mui-e-label">Ethnicity</label>
+    <div class="MuiInputBase-root MuiOutlinedInput-root">
+      <div tabindex="0" role="combobox" aria-haspopup="listbox" aria-labelledby="mui-e-label mui-e" id="mui-e" class="MuiSelect-select MuiSelect-multiple MuiInputBase-input">
+        <div><div class="MuiChip-root MuiChip-filled"><span class="MuiChip-label">ANSWER-MUI-MULTI</span></div></div></div>
+    </div></div>
+
+  <div class="MuiAutocomplete-root"><div class="MuiFormControl-root"><label class="MuiFormLabel-root" for="mui-ac" id="mui-ac-label">Languages spoken at home</label>
+    <div class="MuiInputBase-root MuiAutocomplete-inputRoot">
+      <div class="MuiButtonBase-root MuiChip-root MuiChip-deletable MuiAutocomplete-tag MuiAutocomplete-tagSizeMedium" tabindex="-1" role="button" data-tag-index="0"><span class="MuiChip-label">ANSWER-MUI-TAG</span></div>
+      <input aria-invalid="false" autocomplete="off" id="mui-ac" type="text" class="MuiAutocomplete-input" role="combobox" value="">
+    </div></div></div>
+
+  <div data-headlessui-state=""><label id="headlessui-label-:r5:" data-headlessui-state="">Disability status</label>
+    <button id="hl-btn" type="button" aria-haspopup="listbox" aria-expanded="false" data-headlessui-state="" aria-labelledby="headlessui-label-:r5: hl-btn">ANSWER-HEADLESS</button></div>
+
+  <div><label id="rx-l">Are you Hispanic or Latino?</label>
+    <button type="button" role="combobox" aria-expanded="false" aria-autocomplete="none" dir="ltr" data-state="closed" id="rx-t" aria-labelledby="rx-l"><span>ANSWER-RADIX</span><span aria-hidden="true">▼</span></button></div>
+
+  <div><label id="wd-l">Please select your gender</label>
+    <button type="button" id="wd-g" aria-haspopup="listbox" aria-labelledby="wd-l">ANSWER-WORKDAY</button></div>
+
+  <label for="s2">Protected veteran status</label>
+  <span class="select2 select2-container select2-container--default" dir="ltr"><span class="selection">
+    <span class="select2-selection select2-selection--single" role="combobox" aria-haspopup="true" aria-expanded="false" tabindex="0" aria-labelledby="select2-s2-container">
+      <span class="select2-selection__rendered" id="select2-s2-container" role="textbox" aria-readonly="true" title="ANSWER-S2-TITLE">ANSWER-S2-SINGLE</span>
+      <span class="select2-selection__arrow" role="presentation"><b role="presentation"></b></span>
+    </span></span></span>
+
+  <label for="s2m">Race (select all that apply)</label>
+  <span class="select2 select2-container select2-container--default" dir="ltr"><span class="selection">
+    <span class="select2-selection select2-selection--multiple" role="combobox" aria-haspopup="true" aria-expanded="false" tabindex="-1">
+      <ul class="select2-selection__rendered" id="select2-s2m-container">
+        <li class="select2-selection__choice" title="ANSWER-S2M-TITLE"><button type="button" class="select2-selection__choice__remove" tabindex="-1" title="Remove item" aria-label="Remove item" aria-describedby="select2-s2m-container-choice-0jdg-ANSWERS2MID"><span aria-hidden="true">×</span></button><span class="select2-selection__choice__display" id="select2-s2m-container-choice-0jdg-ANSWERS2MID">ANSWER-S2M-CHIP</span></li>
+      </ul>
+      <span class="select2-search select2-search--inline"><textarea class="select2-search__field" aria-label="Search"></textarea></span>
+    </span></span></span>
+
+  <label for="ch">Pronouns</label>
+  <div class="choices" data-type="select-one" tabindex="0" role="combobox" aria-haspopup="true" aria-expanded="false">
+    <div class="choices__inner">
+      <div class="choices__list choices__list--single" role="listbox">
+        <div class="choices__item choices__item--selectable" data-item="" data-id="2" data-value="ANSWER-CH-VALUE" role="option">ANSWER-CH-SINGLE</div>
+      </div>
+    </div>
+    <div class="choices__list choices__list--dropdown" aria-expanded="false"><div class="choices__list" role="listbox">
+      <div id="choices--ch-item-choice-1" class="choices__item choices__item--choice choices__item--selectable" role="option" data-value="He/him">He/him</div>
+      <div id="choices--ch-item-choice-3" class="choices__item choices__item--choice choices__item--selectable" role="option" data-value="They/them">They/them</div>
+    </div></div>
+  </div>
+
+  <label for="chm">Sexual orientation</label>
+  <div class="choices" data-type="select-multiple" role="combobox" aria-haspopup="true" aria-expanded="false">
+    <div class="choices__inner">
+      <div class="choices__list choices__list--multiple" role="listbox">
+        <div class="choices__item choices__item--selectable" data-item="" data-id="1" data-value="ANSWER-CHM-VALUE" role="option" data-deletable="">ANSWER-CHM-CHIP<button type="button" class="choices__button" aria-label="Remove item: ANSWER-CHM-REMOVE" data-button="">Remove item</button></div>
+      </div>
+      <input type="search" class="choices__input choices__input--cloned" aria-label="Sexual orientation">
+    </div>
+  </div>
+  <button type="button" aria-haspopup="menu">Share this job</button>`;
+
+describe('the page as sent does not say which option a widget shows as chosen', () => {
+  it('empties what react-select, MUI, Headless UI, Radix, Workday, select2 and Choices.js draw as the answer', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><title>Apply</title></head><body>${CHOSEN_IN_WIDGETS}</body></html>`);
+      const html = await page.evaluate(async (js) => {
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        return mod.trimForStorage(mod.pageHtml(document));
+      }, source);
+      const leaked = html.match(/ANSWER-?[A-Z0-9-]*/g) ?? [];
+      assert.deepEqual(leaked, [], `the chosen answers were sent: ${leaked.join(', ')}`);
+      for (const kept of [
+        'Voluntary Self-Identification', 'Female founders network', 'Location: Remote', 'Hybrid',
+        'Gender', 'Race', 'Veteran status', 'Ethnicity', 'Languages spoken at home', 'Disability status',
+        'Are you Hispanic or Latino?', 'Please select your gender', 'Protected veteran status',
+        'Race (select all that apply)', 'Pronouns', 'Sexual orientation', 'He/him', 'They/them',
+        'Share this job', 'type to refine list',
+      ]) {
+        assert.ok(html.includes(kept), `"${kept}" was lost`);
+      }
+    } finally {
+      await browser.close();
+    }
+  });
+
+  /*
+   * Nor which option in a list is the chosen one. The options are the
+   * question and stay; what goes is the state each library puts on the pick.
+   * Choices.js keeps its dropdown in the page closed or open, with
+   * `is-selected` on the answer and the search box's `aria-activedescendant`
+   * naming it; the others mark it while the menu is open, which is when the
+   * page is read if the applicant is mid-choice. Each list below is what the
+   * library rendered in Chromium on reopening a menu after a pick.
+   */
+  it('drops the marks each library puts on the chosen option in a list', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><title>Apply</title></head><body>
+        <label for="ch">Gender</label>
+        <div class="choices" data-type="select-one" tabindex="0" role="combobox" aria-haspopup="true" aria-expanded="false">
+          <div class="choices__list choices__list--dropdown" aria-expanded="false">
+            <input type="search" class="choices__input choices__input--cloned" aria-label="Select" aria-activedescendant="choices--ch-item-choice-2">
+            <div class="choices__list" role="listbox">
+              <div id="choices--ch-item-choice-2" class="choices__item choices__item--choice is-selected choices__item--selectable is-highlighted" role="option" data-choice="" data-id="2" data-value="Female" data-select-text="Press to select" data-choice-selectable="" aria-selected="true">Female</div>
+              <div id="choices--ch-item-choice-3" class="choices__item choices__item--choice choices__item--selectable" role="option" data-choice="" data-id="3" data-value="Male" data-select-text="Press to select" data-choice-selectable="" aria-selected="false">Male</div>
+            </div>
+          </div>
+        </div>
+        <div role="listbox">
+          <div class="select__option select__option--is-focused select__option--is-selected css-tr4s17-option" aria-disabled="false" id="react-select-2-option-0" tabindex="-1" role="option" aria-selected="true">Asian</div>
+          <div class="select__option css-10wo9uf-option" aria-disabled="false" id="react-select-2-option-1" tabindex="-1" role="option" aria-selected="false">White</div>
+        </div>
+        <ul role="listbox">
+          <li class="MuiButtonBase-root MuiMenuItem-root MuiMenuItem-gutters Mui-selected Mui-focusVisible MuiMenuItem-root MuiMenuItem-gutters Mui-selected css-1km1ehz" tabindex="0" role="option" aria-selected="true" data-value="pv">I am a protected veteran</li>
+          <li class="MuiButtonBase-root MuiMenuItem-root MuiMenuItem-gutters MuiMenuItem-root MuiMenuItem-gutters css-1km1ehz" tabindex="-1" role="option" aria-selected="false" data-value="nv">I am not a protected veteran</li>
+        </ul>
+        <div role="listbox">
+          <div id="headlessui-listbox-option-:rh:" role="option" tabindex="-1" aria-selected="true" data-headlessui-state="active focus selected" data-selected="" data-active="" data-focus="">Yes, I have a disability</div>
+          <div id="headlessui-listbox-option-:ri:" role="option" tabindex="-1" aria-selected="false" data-headlessui-state="">No, I do not</div>
+        </div>
+        <div role="listbox">
+          <div role="option" aria-labelledby="radix-:rn:" aria-selected="false" data-state="unchecked" tabindex="-1" data-radix-collection-item=""><span id="radix-:rn:">Yes, Hispanic or Latino</span></div>
+          <div role="option" aria-labelledby="radix-:ro:" aria-selected="true" data-state="checked" tabindex="-1" data-radix-collection-item="" data-highlighted=""><span id="radix-:ro:">No, not Hispanic or Latino</span></div>
+        </div>
+        <ul role="listbox">
+          <li class="select2-results__option select2-results__option--selectable select2-results__option--selected select2-results__option--highlighted" id="select2-s2-result-jni4-pv" role="option" aria-selected="true">Male</li>
+          <li class="select2-results__option select2-results__option--selectable" id="select2-s2-result-8wyp-nv" role="option" aria-selected="false">Female</li>
+        </ul></body></html>`);
+      const out = await page.evaluate(async (js) => {
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        const html = mod.trimForStorage(mod.pageHtml(document));
+        const sent = new DOMParser().parseFromString(html, 'text/html');
+        // Everything an option says about itself except which one it is.
+        const shape = (o) =>
+          [...o.attributes]
+            .filter((a) => !['id', 'data-id', 'data-value', 'aria-labelledby', 'tabindex'].includes(a.name))
+            .map((a) => `${a.name}=${a.value}`)
+            .sort()
+            .join(' ');
+        return {
+          html,
+          lists: [...sent.querySelectorAll('[role="listbox"]')].map((list) =>
+            [...list.querySelectorAll('[role="option"]')].map((o) => ({ text: o.textContent.trim(), shape: shape(o) })),
+          ),
+        };
+      }, source);
+      assert.ok(!/aria-activedescendant/.test(out.html), 'the search box still names the chosen option');
+      assert.equal(out.lists.length, 6);
+      for (const [first, second] of out.lists) {
+        assert.ok(first.text && second.text, 'the options themselves are kept');
+        assert.equal(first.shape, second.shape, `"${first.text}" is still marked apart from "${second.text}"`);
+      }
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+/*
+ * A review step, which writes every answer out as text beside its question.
+ *
+ * Workday's last step, Taleo's "Review and Submit", iCIMS's summary: no
+ * inputs, no widgets, nothing any scrub above looks at — the answers are
+ * ordinary text in a `<div>`, a `<dd>` or a table cell. Measured in Chromium
+ * through the extension against a fake store, and then through ResumeM-M's
+ * own `mergeJobPages`: the description the server built for this page, and
+ * handed to the AI, read "Social Security Number 123-45-6789 … Date of Birth
+ * 04/02/1999 … Gender Female … Ethnicity Asian … Disability Status Yes, I have
+ * a disability".
+ *
+ * The labels are the shapes these systems draw a label and its answer in:
+ * a label and a box beside it, a label wrapped a level deep, a definition
+ * list, a table row with a header cell and one without, and a label with its
+ * answer after a colon in the same text.
+ */
+const REVIEW_STEP = `
+  <h2>Review</h2>
+  <p>Helios is an equal opportunity employer. We consider applicants without regard to race, gender, disability or veteran status.</p>
+  <h3>My Information</h3>
+  <div><label>Legal Name</label><div>Jianwen Ding</div></div>
+  <div><label>Social Security Number</label><div>ANSWER-SSN</div></div>
+  <div><div class="lbl"><span>Date of Birth</span></div><div class="val">ANSWER-DOB</div></div>
+  <h3>Application Questions</h3>
+  <div><label>Are you legally authorized to work in the United States?</label><div>Kept: Yes</div></div>
+  <div><label>Have you ever been convicted of a felony?</label><div>ANSWER-CONVICTED</div></div>
+  <h3>Voluntary Disclosures</h3>
+  <dl><dt>Gender</dt><dd>ANSWER-GENDER</dd><dt>Location preference</dt><dd>Kept: Boston</dd></dl>
+  <table>
+    <tr><th>Ethnicity</th><td>ANSWER-ETHNICITY</td></tr>
+    <tr><td>Veteran Status</td><td>ANSWER-VETERAN</td></tr>
+  </table>
+  <p><strong>Are you Hispanic or Latino?</strong> ANSWER-HISPANIC</p>
+  <p>Disability Status: ANSWER-DISABILITY</p>
+  <h3>Equal Opportunity and Disability Accommodation</h3>
+  <p>Kept: we provide accommodations on request.</p>
+  <label for="g">Gender</label><select id="g"><option>Kept: Female</option><option>Kept: Male</option></select>`;
+
+describe('the page as sent does not carry answers a review step writes out', () => {
+  it('empties the answer beside a personal question, and leaves the rest of the page', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><title>Review</title></head><body>${REVIEW_STEP}</body></html>`);
+      const html = await page.evaluate(async (js) => {
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        return mod.trimForStorage(mod.pageHtml(document));
+      }, source);
+      const leaked = html.match(/ANSWER-[A-Z]+/g) ?? [];
+      assert.deepEqual(leaked, [], `the review step's answers were sent: ${leaked.join(', ')}`);
+      for (const kept of [
+        'Social Security Number', 'Date of Birth', 'Gender', 'Ethnicity', 'Veteran Status',
+        'Are you Hispanic or Latino?', 'Disability Status:', 'Have you ever been convicted of a felony?',
+        'without regard to race, gender, disability or veteran status', 'Jianwen Ding',
+        'Kept: Yes', 'Kept: Boston', 'Kept: we provide accommodations on request.', 'Kept: Female', 'Kept: Male',
+      ]) {
+        assert.ok(html.includes(kept), `"${kept}" was lost`);
+      }
+    } finally {
+      await browser.close();
+    }
   });
 });

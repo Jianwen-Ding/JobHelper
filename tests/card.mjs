@@ -98,6 +98,48 @@ async function main() {
   check('with what was typed still in it', typing.value === 'Half a sent', String(typing.value));
   check('and the caret where it was, not at the end', typing.caret === 4, String(typing.caret));
 
+  /*
+   * And the box scrolled where it was. The letter box is a fixed height and
+   * a letter is longer than it, so writing the last paragraph means the box
+   * is scrolled to its end. The caret came back after a repaint and the
+   * scroll did not: the box showed the letter's first lines, and the line
+   * being written was out of sight until the next keystroke dragged it back.
+   */
+  const letterScroll = await inPage((createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: true,
+      onAction: async () => ({}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const box = root.querySelector('textarea[data-field="letter"]');
+    if (!box) return { error: 'no letter box' };
+    box.focus();
+    box.value = Array.from({ length: 30 }, (_, i) => `Paragraph ${i} of a letter long enough to scroll its box.`).join('\n');
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    box.setSelectionRange(box.value.length, box.value.length);
+    box.scrollTop = box.scrollHeight;
+    const was = box.scrollTop;
+
+    handle.setQuestions([{ question: 'Tell us about a project you led.', answer: '', confident: false }]);
+
+    const now = root.querySelector('textarea[data-field="letter"]');
+    return { was, now: now.scrollTop, replaced: now !== box };
+  });
+  check(
+    'a long letter stays scrolled to where it is being written',
+    letterScroll.replaced === true && letterScroll.was > 0 && letterScroll.now === letterScroll.was,
+    JSON.stringify(letterScroll),
+  );
+
   console.log('\nSaying how long the AI has been thinking');
 
   /*
@@ -663,6 +705,71 @@ async function main() {
     'a posting with no suggestions at all says so, and reports no failure',
     /exactly as you keep it/i.test(plainMatch) && !/could not be started|nothing usable/i.test(plainMatch),
     plainMatch.slice(0, 140),
+  );
+
+  /*
+   * And a failure is about the run that failed, not the one after it.
+   *
+   * The server leaves out what did not happen — `aiFailed` and `aiRaw` are
+   * undefined on a run with nothing to report, and JSON drops them — and the
+   * card merged each proposal over the last. So an AI run that could not
+   * start, followed by the match worked out again from another base, kept
+   * the failure: "The AI could not be started, so nothing was tailored" over
+   * a keyword list no AI had been asked about.
+   */
+  const failureAfterwards = await inPage(async (createCard) => {
+    const base = (more) => ({
+      isJobPosting: true,
+      job: { title: 'Platform Engineer', company: 'Acme' },
+      spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+      baseLabel: 'New grad resume',
+      rationale: [],
+      diff: [],
+      tailor: 'match',
+      aiUsed: false,
+      ...more,
+    });
+    const handle = createCard({
+      analysis: base({}),
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action) => (action === 'aiStatus' ? { active: true, state: 'on' } : {}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const hints = () => [...root.querySelectorAll('.hint')].map((n) => n.textContent).join(' | ');
+    await new Promise((r) => setTimeout(r, 50));
+    const out = {};
+    for (const [what, failed] of [
+      ['started', { aiFailed: 'spawn /usr/local/bin/claude ENOENT', aiFailedKind: 'not-installed' }],
+      ['usable', { aiRaw: 'Sure! Here are some ideas.' }],
+    ]) {
+      handle.update(base(failed), { show: true });
+      const during = hints();
+      handle.update(base({ spec: { id: 'job-acme', label: 'Acme', extends: 'other' }, baseLabel: 'Other resume' }), {
+        show: true,
+      });
+      out[what] = { during, after: hints() };
+    }
+    return out;
+  });
+  check(
+    'a model that would not start is said on the run that failed',
+    /could not be started/i.test(failureAfterwards.started.during),
+    failureAfterwards.started.during.slice(0, 140),
+  );
+  check(
+    'and not on the keyword match worked out after it',
+    /exactly as you keep it/i.test(failureAfterwards.started.after) &&
+      !/could not be started/i.test(failureAfterwards.started.after),
+    failureAfterwards.started.after.slice(0, 140),
+  );
+  check(
+    'nor is a model that answered with prose',
+    /nothing usable/i.test(failureAfterwards.usable.during) &&
+      !/nothing usable/i.test(failureAfterwards.usable.after),
+    JSON.stringify(failureAfterwards.usable).slice(0, 240),
   );
 
   /*
@@ -1362,6 +1469,12 @@ async function main() {
     const specAt = (n) => sent.filter((c) => c.action === 'render').at(n)?.payload?.spec;
     const itemsOf = (spec) => (spec?.sections ?? []).find((x) => x.kind === 'skills')?.items;
 
+    // The opening state, before any skills box is touched: the wording box
+    // on and off again, so there is a compiled spec to read.
+    await flip(0);
+    const opening = itemsOf(specAt(-1)) ?? null;
+    await flip(0);
+
     // On: the group whose base list was explicit.
     const clicked = await flip(1);
     const afterFirst = { rows: rows(), stillNames: /dropped Ruby/.test(text()), ticks: ticks(), clicked };
@@ -1378,6 +1491,7 @@ async function main() {
       offered,
       before,
       startTicks,
+      opening,
       afterFirst,
       after: rows(),
       // Narrowed, with both suggestions switched on.
@@ -1386,7 +1500,6 @@ async function main() {
       // And back to what the base asked for, with both switched off.
       items: itemsOf(off) ?? null,
       hasTools: itemsOf(off) ? Object.prototype.hasOwnProperty.call(itemsOf(off), 'sk_tools') : null,
-      hasLang: itemsOf(off) ? Object.prototype.hasOwnProperty.call(itemsOf(off), 'sk_lang') : null,
       choices: off?.choices ?? null,
       backTicks: ticks(),
     };
@@ -1423,22 +1536,28 @@ async function main() {
    * and compiling the narrowed group anyway would be worse than no button.
    */
   /*
-   * Off, both groups go back to having no entry at all.
+   * Off, each group goes back to exactly what the base holds.
    *
-   * Absent means inherited, and what is inherited is the base's own list —
-   * so the printed document is the base's, which is what "off" means. The
-   * card used to write the base's list back explicitly for a group the base
-   * had named, which prints the same today and pins it: a skill added to the
-   * base next month would never reach this resume. Writing an empty list
-   * would be different again, and wrong — that prints nothing.
+   * Resumes no longer inherit: a group with no list prints every skill in it.
+   * The card used to take the key out for a group the base had trimmed, on
+   * the reading that "absent means inherited" — which put every skill the
+   * base had turned off back on the page, starting with the opening state
+   * where every suggestion is off. Only a group the base named nothing for
+   * goes back to having no entry, because that is what the base holds.
    */
   check(
-    'the group the base named goes back to having no entry of its own',
-    skillUndo.hasLang === false,
+    'with nothing ticked, a trimmed group prints the base\'s list, not the whole group',
+    JSON.stringify(skillUndo.opening?.sk_lang) === JSON.stringify(['s_py', 's_go', 's_rb', 's_php'])
+      && !Object.prototype.hasOwnProperty.call(skillUndo.opening ?? {}, 'sk_tools'),
+    JSON.stringify(skillUndo.opening),
+  );
+  check(
+    'unticked again, the group the base named gets that list back',
+    JSON.stringify(skillUndo.items?.sk_lang) === JSON.stringify(['s_py', 's_go', 's_rb', 's_php']),
     JSON.stringify(skillUndo.items),
   );
   check(
-    'and so does the group it named nothing for',
+    'and the group it named nothing for has no entry of its own',
     skillUndo.hasTools === false,
     JSON.stringify(skillUndo.items),
   );
@@ -1620,6 +1739,155 @@ async function main() {
   check('counting them, because one run can collide with several', /2 answers/.test(clash.said ?? ''), String(clash.said));
 
   /*
+   * And an answer the bank put in the box is not somebody writing.
+   *
+   * The box shows the stored answer until somebody types, and that stored
+   * answer is what the run is handed as "before". The check compared it
+   * against `state.answers[question] ?? ''` — empty until a key is pressed —
+   * so every question the bank knew looked written-over. "Rewrite for this
+   * role" on a stored answer changed nothing and said "You were writing while
+   * that ran", and "Write all" threw away every draft for such questions.
+   *
+   * Two questions the bank knows, one run: the one nobody touches takes the
+   * draft, and the one typed into while it ran keeps what was typed.
+   */
+  const bankRewrite = await inPage(async (createCard) => {
+    let release;
+    const held = new Promise((r) => (release = r));
+    let ids = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [
+        { question: 'Why us?', answer: 'Because of the mission.', confident: true },
+        { question: 'Tell us about a project.', answer: 'I built a scheduler.', confident: false },
+      ],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'answer:Why us?') return { executed: true, output: 'Rewritten for Acme.' };
+        if (action === 'writeApplication') {
+          ids = payload.questions.map((q) => q.id);
+          return held;
+        }
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const box = (q) => root.querySelector(`textarea[data-field="answer:${q}"]`);
+    const said = () => root.textContent.match(/You were writing while that ran[^.]*\./)?.[0] ?? null;
+    await new Promise((r) => setTimeout(r, 120));
+
+    [...root.querySelectorAll('button')].find((b) => /Rewrite for this role/.test(b.textContent))?.click();
+    await new Promise((r) => setTimeout(r, 120));
+    const one = { box: box('Why us?')?.value ?? null, said: said() };
+
+    // The next run over both, with the second typed into while it is out.
+    [...root.querySelectorAll('button')].find((b) => /Write all 2 answers/.test(b.textContent))?.click();
+    await new Promise((r) => setTimeout(r, 120));
+    const typed = box('Tell us about a project.');
+    typed.value = 'Mine, typed while it ran.';
+    typed.dispatchEvent(new Event('input', { bubbles: true }));
+    release({ oneRun: true, answers: { [ids[0]]: 'All at once for Acme.', [ids[1]]: 'The run wrote this.' } });
+    await new Promise((r) => setTimeout(r, 200));
+    return {
+      one,
+      all: { why: box('Why us?')?.value ?? null, project: box('Tell us about a project.')?.value ?? null, said: said() },
+    };
+  });
+  check(
+    'rewriting a stored answer puts the rewrite in its box',
+    bankRewrite.one.box === 'Rewritten for Acme.' && bankRewrite.one.said === null,
+    JSON.stringify(bankRewrite.one),
+  );
+  check(
+    'and one run over stored answers fills the ones nobody touched',
+    bankRewrite.all.why === 'All at once for Acme.',
+    JSON.stringify(bankRewrite.all),
+  );
+  check(
+    'while one typed into as it ran still keeps what was typed, and says so',
+    bankRewrite.all.project === 'Mine, typed while it ran.' && /kept\.$/.test(bankRewrite.all.said ?? ''),
+    JSON.stringify(bankRewrite.all),
+  );
+
+  /*
+   * An answer that names another employer is offered, not filled in — and
+   * what is not in the box is not sent.
+   *
+   * The box worked that out; everything that sends an answer read the bank's
+   * text directly. So on a Globex form the box stood empty behind "Start from
+   * what you told Acme" while "Acme is why I applied" went into the folder
+   * and the filed record of what was sent, and was carried to the next page
+   * as an answer written for this application, where it was filled in.
+   */
+  const borrowedAnswer = await inPage(async (createCard) => {
+    const sent = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Globex' },
+        spec: { id: 'job-globex', label: 'Globex' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [
+        { question: 'Why do you want to work here?', answer: 'Acme is why I applied.', confident: true, namesAnother: 'Acme' },
+      ],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        return action === 'render' ? { pages: 1, fits: true } : action === 'stage' ? { currentDir: '/tmp/x' } : {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => new RegExp(t).test(b.textContent));
+    await new Promise((r) => setTimeout(r, 50));
+    const box = root.querySelector('textarea[data-field^="answer:"]')?.value ?? null;
+    byText('Build resume')?.click();
+    await new Promise((r) => setTimeout(r, 100));
+    const before = {
+      box,
+      staged: sent.find((c) => c.action === 'stage')?.payload?.answers ?? null,
+      carried: handle.takeWork().answersByQuestion,
+    };
+    // Taken, on purpose: now it is in the box, and it goes.
+    byText('Start from what you told Acme')?.click();
+    await new Promise((r) => setTimeout(r, 50));
+    byText('Mark as applied')?.click();
+    await new Promise((r) => setTimeout(r, 100));
+    return { before, taken: sent.find((c) => c.action === 'bundle')?.payload?.answers ?? null };
+  });
+  check(
+    'an answer offered from another employer is not in its box',
+    borrowedAnswer.before.box === '',
+    JSON.stringify(borrowedAnswer.before),
+  );
+  check(
+    'nor in the folder',
+    JSON.stringify(borrowedAnswer.before.staged) === '[]',
+    JSON.stringify(borrowedAnswer.before),
+  );
+  check(
+    'nor carried to the next page as though it were written for this one',
+    JSON.stringify(borrowedAnswer.before.carried) === '{}',
+    JSON.stringify(borrowedAnswer.before),
+  );
+  check(
+    'and once taken, it is sent',
+    borrowedAnswer.taken?.[0]?.answer === 'Acme is why I applied.',
+    JSON.stringify(borrowedAnswer.taken),
+  );
+
+  /*
    * Two rebuilds really can be in flight now, so the bar has to belong to the
    * one still running. A set held one entry per name, so the fast one's
    * removal took the bar down while a model was still reading.
@@ -1678,6 +1946,107 @@ async function main() {
     JSON.stringify(overlap),
   );
   check('and comes down when it finishes', overlap.barAfter === false, JSON.stringify(overlap));
+
+  /*
+   * The AI asked for again on the next page is a rebuild like any other.
+   *
+   * `retailor` is what the content script calls when an application whose
+   * resume the AI tailored arrives at its next page, and it is minutes long.
+   * The build buttons stay live meanwhile, and each of them takes a number so
+   * the newest press wins — but `retailor` took none. So pressing Keyword
+   * match while it read, and getting the match back first, was undone when
+   * the older AI reply arrived: it put the AI's proposal back on screen over
+   * the one just asked for. And arriving first, it cleared the label of the
+   * match still running.
+   *
+   * The content script hands the newest reply to `update` and returns the
+   * superseded one without it; this harness does the same.
+   */
+  console.log('\nThe AI asked for again does not land on top of a newer press');
+
+  const reRace = async (order) =>
+    inPage(async (createCard, staleFirst) => {
+      const job = { title: 'Platform Engineer', company: 'Acme' };
+      const reading = (choice, more) => ({
+        isJobPosting: true,
+        job,
+        spec: { id: 'job-acme', label: 'Acme', choices: { b_pipeline: choice } },
+        diff: [],
+        rationale: [],
+        ...more,
+      });
+      let releaseAi;
+      let releaseMatch;
+      let handle;
+      handle = createCard({
+        analysis: reading('v_base', { tailor: 'match', aiUsed: false }),
+        resumes: [{ id: 'base', label: 'New grad', base: true }],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async (action, payload) => {
+          if (action === 'aiStatus') return { active: true, state: 'on' };
+          if (action === 'render') return { pages: 1, fits: true };
+          if (action !== 'rebuild') return {};
+          if (payload.tailor === 'ai') {
+            return new Promise((r) => (releaseAi = () => r(reading('v_ai_again', { tailor: 'ai', aiUsed: true }))));
+          }
+          return new Promise((r) => {
+            releaseMatch = () => {
+              const next = reading('v_kafka', { tailor: 'match', aiUsed: false });
+              handle.update(next);
+              r(next);
+            };
+          });
+        },
+      });
+      // What the page before handed over: the AI's proposal, on screen.
+      handle.update(reading('v_ai', { tailor: 'ai', aiUsed: true }), { show: true });
+      await new Promise((r) => setTimeout(r, 120));
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      const named = (re) => [...root.querySelectorAll('button.mode')].find((b) => re.test(b.textContent));
+
+      handle.retailor('ai');
+      await new Promise((r) => setTimeout(r, 50));
+      named(/Keyword match/)?.click();
+      await new Promise((r) => setTimeout(r, 50));
+      const both = Boolean(releaseAi && releaseMatch);
+
+      let labelWhileMatching = null;
+      if (staleFirst) {
+        releaseAi();
+        await new Promise((r) => setTimeout(r, 80));
+        // Any repaint: the list arriving is one that happens on its own.
+        handle.setResumes([{ id: 'base', label: 'New grad', base: true }]);
+        labelWhileMatching = named(/Keyword match|Matching on keywords/)?.textContent?.trim() ?? null;
+        releaseMatch();
+      } else {
+        releaseMatch();
+        await new Promise((r) => setTimeout(r, 80));
+        releaseAi();
+      }
+      await new Promise((r) => setTimeout(r, 150));
+      return {
+        both,
+        labelWhileMatching,
+        lit: root.querySelector('.mode.on')?.textContent?.trim() ?? null,
+      };
+    }, order === 'stale-first');
+
+  const staleLast = await reRace('stale-last');
+  check('both really were in flight', staleLast.both === true, JSON.stringify(staleLast));
+  check(
+    'the match pressed while the AI read stays on screen when the AI answers after it',
+    // The match arrives with every box off, so it is "Use Original" that is lit.
+    typeof staleLast.lit === 'string' && !/AI/.test(staleLast.lit),
+    JSON.stringify(staleLast),
+  );
+  const staleFirst = await reRace('stale-first');
+  check(
+    'and the AI answering first does not say the match has finished',
+    staleFirst.labelWhileMatching === 'Matching on keywords…',
+    JSON.stringify(staleFirst),
+  );
 
   /*
    * Feedback answered about a resume that is no longer the one on screen.
@@ -1780,6 +2149,117 @@ async function main() {
     /different one now/.test(lateFeedback.said),
     JSON.stringify(lateFeedback),
   );
+
+  console.log('\nApply feedback with nothing written in the box');
+
+  /*
+   * Every other box that only does something with text in it — Save to
+   * store, Copy, See it typeset — disables while it is empty as well as
+   * while busy. This one used to disable on busy alone, so an empty box left
+   * the button live: pressing it ran the early-return branch and nothing on
+   * screen said why nothing had happened.
+   */
+  const emptyFeedback = await inPage((createCard) => {
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
+    // Falls back to the first textarea so a version without the field name
+    // still reports a clean failure below rather than throwing here.
+    const box = root.querySelector('textarea[data-field="feedback"]') ?? root.querySelector('textarea');
+    const button = byText('Apply feedback');
+    const empty = button?.disabled;
+
+    box.value = '  ';
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    const whitespaceOnly = button?.disabled;
+
+    box.value = 'lead with the distributed systems work';
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    const withText = button?.disabled;
+
+    return {
+      found: root.querySelector('textarea[data-field="feedback"]') != null && Boolean(button),
+      empty,
+      whitespaceOnly,
+      withText,
+    };
+  });
+
+  check('the feedback box and its button are both there', emptyFeedback.found === true, JSON.stringify(emptyFeedback));
+  check('empty, the button cannot be pressed', emptyFeedback.empty === true, JSON.stringify(emptyFeedback));
+  check(
+    'nor can it with only whitespace typed in',
+    emptyFeedback.whitespaceOnly === true,
+    JSON.stringify(emptyFeedback),
+  );
+  check('with real text, it is live again', emptyFeedback.withText === false, JSON.stringify(emptyFeedback));
+
+  console.log('\nWriting feedback while the card repaints');
+
+  /*
+   * The letter box and the answer boxes are named so `draw` can find them
+   * again after rebuilding the subtree — this is the one text box on the
+   * card that was not, so an AI status arriving mid-sentence here threw
+   * focus away for good instead of putting it back.
+   */
+  const feedbackTyping = await inPage((createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+
+    // Falls back to the first textarea so a version without the field name
+    // still reports a clean failure below rather than throwing here.
+    const box = root.querySelector('textarea[data-field="feedback"]') ?? root.querySelector('textarea');
+    box.focus();
+    box.value = 'lead with the platform work';
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    box.setSelectionRange(4, 4);
+
+    // A real repaint, touching nothing about the feedback box itself.
+    handle.setResumes([{ id: 'base', label: 'New grad', base: true }]);
+
+    const active = root.activeElement;
+    return {
+      replaced: !box.isConnected,
+      tag: active?.tagName ?? null,
+      field: active?.dataset?.field ?? null,
+      value: active?.value ?? null,
+      caret: active?.selectionStart ?? null,
+    };
+  });
+
+  check('the box really is rebuilt, so this is the case that mattered', feedbackTyping.replaced === true);
+  check('the caret is still in a text box', feedbackTyping.tag === 'TEXTAREA', JSON.stringify(feedbackTyping));
+  check('and in the feedback box specifically', feedbackTyping.field === 'feedback', String(feedbackTyping.field));
+  check(
+    'with what was typed still in it',
+    feedbackTyping.value === 'lead with the platform work',
+    String(feedbackTyping.value),
+  );
+  check('and the caret where it was, not at the end', feedbackTyping.caret === 4, String(feedbackTyping.caret));
 
   /*
    * Coming back from the builder having written something new.
@@ -2236,6 +2716,85 @@ async function main() {
   );
   check('with a way to paste it into the dialog', folderShown.canCopy === true);
   check('all of it before anything is filed', folderShown.filed === false);
+
+  /*
+   * And a box ticked after building reaches the folder, not only the preview.
+   *
+   * Only "Build resume" staged. Ticking a suggestion afterwards recompiled the
+   * preview and left the folder with the build from before — which is the
+   * file "Attach files" and the drag chips hand the form. The skills half had
+   * a second way to miss: the check for "anything to prepare" read `choices`
+   * and never `sections`, so a skills box ticked after a wording one looked
+   * like no change at all.
+   */
+  const tickedAfterBuilding = await inPage(async (createCard) => {
+    const sent = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: {
+          id: 'job-acme',
+          label: 'Acme',
+          choices: { b_pipeline: 'v_kafka' },
+          sections: [{ kind: 'skills', groups: ['sk_lang'], items: { sk_lang: ['s_py', 's_go'] } }],
+        },
+        baseLabel: 'New grad resume',
+        tailor: 'match',
+        diff: [
+          { kind: 'changed', where: 'Acme Co.', from: 'Built a pipeline', to: 'Built a Kafka pipeline' },
+          { kind: 'removed', where: 'Languages', text: 'Languages: dropped Ruby, PHP — keeping Python, Go' },
+        ],
+        rationale: [
+          { key: 'b_pipeline', from: 'v_base', to: 'v_kafka', toText: 'Built a Kafka pipeline', because: ['kafka'] },
+        ],
+        skillChanges: [
+          { groupId: 'sk_lang', groupName: 'Languages', from: ['s_py', 's_go', 's_rb', 's_php'], to: ['s_py', 's_go'] },
+        ],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload: JSON.parse(JSON.stringify(payload ?? {})) });
+        if (action === 'render') return { pages: 1, fits: true };
+        if (action === 'stage') return { currentDir: '/tmp/x', application: { id: 'app-1' } };
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const last = (action) => sent.filter((c) => c.action === action).at(-1)?.payload?.spec ?? null;
+    const shape = (spec) => JSON.stringify([spec?.choices ?? null, spec?.sections ?? null]);
+
+    byText('Build resume').click();
+    await wait(100);
+    root.querySelector('.fold-changes')?.click();
+    // Past `prepareSoon`'s debounce each time.
+    [...root.querySelectorAll('.pick input')][0]?.click();
+    await wait(1600);
+    const afterWording = { staged: shape(last('stage')), shown: shape(last('render')) };
+    [...root.querySelectorAll('.pick input')][1]?.click();
+    await wait(1600);
+    return {
+      afterWording,
+      afterSkills: { staged: shape(last('stage')), shown: shape(last('render')) },
+      stages: sent.filter((c) => c.action === 'stage').length,
+    };
+  });
+
+  check(
+    'a wording ticked after building reaches the folder',
+    tickedAfterBuilding.afterWording.staged === tickedAfterBuilding.afterWording.shown,
+    JSON.stringify(tickedAfterBuilding.afterWording),
+  );
+  check(
+    'and so does a skills group ticked after it',
+    tickedAfterBuilding.afterSkills.staged === tickedAfterBuilding.afterSkills.shown,
+    JSON.stringify(tickedAfterBuilding.afterSkills),
+  );
 
   console.log('\nA way out of a run that is taking too long');
 
@@ -2977,7 +3536,12 @@ async function main() {
     await settle();
     const cutOnly = { ticks: ticks(), items: itemsNow() };
 
-    return { boxes, start, added, both, cutOnly };
+    // And the cut off too: nothing ticked, which has to be the base's group.
+    picks()[1].click();
+    await settle();
+    const neither = { ticks: ticks(), items: itemsNow() };
+
+    return { boxes, start, added, both, cutOnly, neither };
   });
 
   check('each row gets its own box', halves.boxes === 2, String(halves.boxes));
@@ -3014,6 +3578,18 @@ async function main() {
     JSON.stringify(halves.cutOnly.ticks) === JSON.stringify([false, true])
       && JSON.stringify(halves.cutOnly.items) === JSON.stringify([]),
     JSON.stringify(halves.cutOnly),
+  );
+  /*
+   * Both off is the base's own list, written back. Taking the key out instead
+   * — "absent means inherited" — prints every skill in the group now that
+   * nothing inherits, so unticking a suggestion added skills the base had
+   * turned off.
+   */
+  check(
+    'and with both off again the group is exactly the base\'s, not the whole group',
+    JSON.stringify(halves.neither.ticks) === JSON.stringify([false, false])
+      && JSON.stringify(halves.neither.items) === JSON.stringify(['f_unity', 'f_sdl']),
+    JSON.stringify(halves.neither),
   );
 
   console.log('\nA proposal whose diff came back empty');
@@ -3609,6 +4185,458 @@ async function main() {
     carriedOff.told === false,
     String(carriedOff.told),
   );
+
+  console.log('\nAn answer box with a limit');
+
+  /*
+   * A script assigning a value is not held to `maxlength`, so an answer longer
+   * than the box went into the form whole and was refused on submit. The
+   * card counts against the box's limit while it can still be cut, and tells
+   * every drafting run what the limit is.
+   */
+  const limits = await inPage(async (createCard) => {
+    const sent = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme', description: 'Kafka and Go.' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [
+        { question: 'Why us?', answer: 'Short one.', confident: true, fieldId: 'jh-1', limit: 40 },
+        { question: 'Tell us about a project.', answer: '', confident: false, fieldId: 'jh-2' },
+      ],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    await new Promise((r) => setTimeout(r, 120));
+    const counters = () => [...root.querySelectorAll('.q .count')];
+    const before = counters().map((c) => ({ text: c.textContent, over: c.classList.contains('over') }));
+
+    const box = root.querySelector('textarea[data-field="answer:Why us?"]');
+    box.value = 'x'.repeat(52);
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    const after = counters().map((c) => ({ text: c.textContent, over: c.classList.contains('over') }));
+
+    const draft = [...root.querySelectorAll('.q')][0].querySelector('button.ai, button[class*="ai"]') ??
+      [...[...root.querySelectorAll('.q')][0].querySelectorAll('button')].find((b) => /Draft|Rewrite/.test(b.textContent));
+    draft?.click();
+    await new Promise((r) => setTimeout(r, 150));
+    const both = [...root.querySelectorAll('button')].find((b) => /Write .*2 answers/.test(b.textContent));
+    both?.click();
+    await new Promise((r) => setTimeout(r, 150));
+    return {
+      before,
+      after,
+      one: sent.find((c) => c.action === 'answer:Why us?')?.payload ?? null,
+      all: sent.find((c) => c.action === 'writeApplication')?.payload?.questions ?? null,
+    };
+  });
+  check('a box with a limit is counted against it', limits.before.length === 1 && limits.before[0].text === '10 / 40' && !limits.before[0].over, JSON.stringify(limits.before));
+  check(
+    'and says so, in red, once an answer runs past it',
+    limits.after.length === 1 && limits.after[0].over && /12 over/.test(limits.after[0].text),
+    JSON.stringify(limits.after),
+  );
+  check('drafting one answer tells the run the limit', limits.one?.limit === 40, JSON.stringify(limits.one));
+  check(
+    'and so does writing them all at once, only for the box that has one',
+    limits.all?.[0]?.limit === 40 && limits.all?.[1]?.limit === undefined,
+    JSON.stringify(limits.all),
+  );
+
+  console.log('\nAn AI-tailored resume carried to the next page');
+
+  /*
+   * The next page reads the posting again, but only by keyword, so the AI's
+   * resume arrived there with the match's rows and the match's verdict filed
+   * under the AI's button. Measured: the AI button lit and the AI's resume on
+   * screen, under "The AI returned nothing usable, so nothing was tailored"
+   * and a keyword row headed "Chosen by the AI", counted "0 of 1 change".
+   *
+   * Driven as the content script drives it: one card's `takeWork`, handed to
+   * the next card's `restoreWork` after that page's own reading has landed.
+   */
+  const carriedAi = await inPage(async (createCard) => {
+    const job = { title: 'Platform Engineer', company: 'Acme' };
+    const onAction = async (action) =>
+      action === 'aiStatus' ? { active: true, state: 'on' } : action === 'render' ? { pages: 1, fits: true } : {};
+    const first = createCard({
+      analysis: {
+        isJobPosting: true,
+        job,
+        spec: { id: 'job-acme', label: 'Acme', choices: { b_pipeline: 'v_streams' } },
+        baseLabel: 'New grad resume',
+        tailor: 'ai',
+        aiUsed: true,
+        rejected: [],
+        diff: [{ kind: 'changed', where: 'Acme Co.', from: 'Built a pipeline', to: 'Built a streaming pipeline' }],
+        rationale: [
+          { key: 'b_pipeline', from: 'v_base', to: 'v_streams', toText: 'Built a streaming pipeline', because: ['streaming'] },
+        ],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction,
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const work = JSON.parse(JSON.stringify(first.takeWork()));
+
+    // The form: its own opening read is the keyword match, over the same base.
+    const next = createCard({
+      analysis: null,
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction,
+    });
+    next.update({
+      isJobPosting: true,
+      job,
+      spec: { id: 'job-acme', label: 'Acme', choices: { b_pipeline: 'v_kafka' } },
+      baseLabel: 'New grad resume',
+      tailor: 'match',
+      aiUsed: false,
+      rejected: [],
+      diff: [{ kind: 'changed', where: 'Acme Co.', from: 'Built a pipeline', to: 'Built a Kafka pipeline' }],
+      rationale: [{ key: 'b_pipeline', from: 'v_base', to: 'v_kafka', toText: 'Built a Kafka pipeline', because: ['kafka'] }],
+    });
+    next.restoreWork(work);
+    await new Promise((r) => setTimeout(r, 50));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    root.querySelector('.fold-changes')?.click();
+    return {
+      hints: [...root.querySelectorAll('.hint')].map((n) => n.textContent).join(' | '),
+      rows: root.querySelector('.changes')?.textContent ?? '',
+      ticks: [...root.querySelectorAll('.pick input')].map((b) => b.checked),
+      count: root.querySelector('.diff-head .count')?.textContent ?? null,
+    };
+  });
+  check(
+    'the AI resume carried to the next page is not called untailored',
+    !/nothing usable|nothing was tailored/.test(carriedAi.hints),
+    carriedAi.hints.slice(0, 200),
+  );
+  check(
+    'and its rows are the AI’s, not the keyword match’s',
+    /streaming pipeline/.test(carriedAi.rows) && !/Kafka/.test(carriedAi.rows),
+    carriedAi.rows.slice(0, 200),
+  );
+  check(
+    'ticked, because they are what is in it',
+    JSON.stringify(carriedAi.ticks) === '[true]' && carriedAi.count === '1 change',
+    `${JSON.stringify(carriedAi.ticks)} ${carriedAi.count}`,
+  );
+
+  /*
+   * And the preview carried with a resume that was not restored.
+   *
+   * A proposal somebody asked for — the AI run started on the posting,
+   * landing on the form a moment before the carried work — keeps the screen,
+   * and the carried spec is held back. Its compiled preview was not: the card
+   * showed the page-before's build and enabled "Mark as applied" on the
+   * strength of it, and pressing that filed the AI's spec, which nothing had
+   * compiled.
+   */
+  const previewOfAnother = await inPage(async (createCard) => {
+    const sent = [];
+    const job = { title: 'Platform Engineer', company: 'Acme' };
+    const handle = createCard({
+      analysis: null,
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        return action === 'aiStatus' ? { active: true, state: 'on' } : action === 'render' ? { pages: 1, fits: true } : {};
+      },
+    });
+    const reading = (choice, more) => ({
+      isJobPosting: true,
+      job,
+      spec: { id: 'job-acme', label: 'Acme', choices: { b_pipeline: choice } },
+      diff: [],
+      rationale: [],
+      ...more,
+    });
+    handle.update(reading('v_kafka', { tailor: 'match', aiUsed: false }));
+    handle.update(reading('v_ai', { tailor: 'ai', aiUsed: true }), { show: true });
+    handle.restoreWork({
+      spec: { id: 'job-acme', label: 'Acme', choices: { b_pipeline: 'v_base' } },
+      builtWith: 'none',
+      render: { absolutePdfUrl: 'http://127.0.0.1:1/out/page-before.pdf', pages: 1, fits: true },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const mark = [...root.querySelectorAll('button')].find((b) => /Mark as applied/.test(b.textContent));
+    const open = [...root.querySelectorAll('a')].find((a) => /Open full size/.test(a.textContent));
+    const enabled = Boolean(mark && !mark.disabled);
+    mark?.click();
+    await new Promise((r) => setTimeout(r, 50));
+    return {
+      enabled,
+      preview: open?.href ?? null,
+      filed: sent.find((c) => c.action === 'bundle')?.payload?.spec?.choices ?? null,
+    };
+  });
+  check(
+    'a preview of the carried resume is not put over the proposal that kept the screen',
+    previewOfAnother.preview === null,
+    JSON.stringify(previewOfAnother),
+  );
+  check(
+    'so nothing is filed that was never compiled',
+    previewOfAnother.enabled === false && previewOfAnother.filed === null,
+    JSON.stringify(previewOfAnother),
+  );
+
+  console.log('\nAn Insert that puts nothing in says so');
+
+  /*
+   * The form refuses a box that has gone, or that now asks step two's
+   * question (`insertAnswer` in autofill.js). A button that then does nothing
+   * reads as broken; the card says what happened, and stops saying it once an
+   * Insert lands.
+   */
+  const refused = await inPage(async (createCard) => {
+    let lands = false;
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [{ question: 'Why us?', answer: 'Rockets.', confident: true, fieldId: 'jh-7' }],
+      needsCoverLetter: false,
+      onAction: async (action) => (action === 'insertAnswer' ? lands : {}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const press = async () => {
+      [...root.querySelectorAll('button')].find((b) => b.textContent === 'Insert into form').click();
+      await new Promise((r) => setTimeout(r, 50));
+      return /Nothing was put in/.test(root.textContent);
+    };
+    const before = /Nothing was put in/.test(root.textContent);
+    const afterMiss = await press();
+    lands = true;
+    const afterHit = await press();
+    return { before, afterMiss, afterHit };
+  });
+  check('nothing is said before Insert is pressed', refused.before === false, JSON.stringify(refused));
+  check('a refused Insert says nothing was put in', refused.afterMiss === true, JSON.stringify(refused));
+  check('and one that lands clears it', refused.afterHit === false, JSON.stringify(refused));
+
+  console.log('\nA skill added alone goes where the proposal puts it');
+
+  /*
+   * The list a group saves prints in its own order. Ticking only the adding
+   * half appended the addition to the base's list, so Rust, which the
+   * proposal puts between Python and Go, printed last.
+   */
+  const placed = await inPage(async (createCard) => {
+    const sent = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Backend Engineer', company: 'Ferrous' },
+        spec: {
+          id: 'job-ferrous',
+          label: 'Ferrous',
+          sections: [{ kind: 'skills', entries: [], items: { sk_lang: ['s_py', 's_rust', 's_go'] } }],
+        },
+        baseLabel: 'New grad resume',
+        tailor: 'ai',
+        aiUsed: true,
+        diff: [
+          { kind: 'added', where: 'Languages', text: 'Languages: added Rust' },
+          { kind: 'removed', where: 'Languages', text: 'Languages: dropped PHP — keeping Python, Rust, Go' },
+        ],
+        rationale: [],
+        skillChanges: [
+          { groupId: 'sk_lang', groupName: 'Languages', from: ['s_py', 's_go', 's_php'], to: ['s_py', 's_rust', 's_go'] },
+        ],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        return action === 'render' ? { pages: 1, fits: true } : {};
+      },
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    root.querySelector('.fold-changes')?.click();
+    const picks = () => [...root.querySelectorAll('.pick')];
+    const settle = () => new Promise((r) => setTimeout(r, 60));
+    const itemsNow = () => {
+      const spec = sent.filter((c) => c.action === 'render').at(-1)?.payload?.spec;
+      return (spec?.sections ?? []).find((x) => x.kind === 'skills')?.items?.sk_lang ?? null;
+    };
+    // Everything off first, whatever the card started with.
+    for (const [i, box] of [...root.querySelectorAll('.pick input')].entries()) {
+      if (box.checked) {
+        picks()[i].click();
+        await settle();
+      }
+    }
+    const adding = picks().findIndex((p) => /added Rust/.test(p.closest('.change')?.textContent ?? p.textContent));
+    picks()[adding < 0 ? 0 : adding].click();
+    await settle();
+    return { items: itemsNow(), boxes: picks().length };
+  });
+  check(
+    'the addition alone lands in its place, the kept skills around it',
+    JSON.stringify(placed.items) === JSON.stringify(['s_py', 's_rust', 's_go', 's_php']),
+    JSON.stringify(placed),
+  );
+
+  console.log('\nComing back from the builder with the copy edited there');
+
+  /*
+   * "Edit in ResumeM-M" opens the tailored copy itself. What was changed on
+   * it there was then thrown away: the card still held the copy as it was,
+   * and filing sends that whole — so "Mark as applied" wrote the card's old
+   * skills back over the ones just chosen in the builder.
+   */
+  const edited = await inPage(async (createCard) => {
+    const sent = [];
+    const stored = {
+      id: 'job-ferrous',
+      label: 'Ferrous',
+      tier: 'temporary',
+      sections: [{ kind: 'skills', entries: [], groups: ['sk_lang'], items: { sk_lang: ['s_py', 's_go', 's_rust'] } }],
+    };
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Backend Engineer', company: 'Ferrous' },
+        spec: {
+          id: 'job-ferrous',
+          label: 'Ferrous',
+          tier: 'temporary',
+          sections: [{ kind: 'skills', entries: [], groups: ['sk_lang'], items: { sk_lang: ['s_py', 's_go'] } }],
+        },
+        baseLabel: 'New grad resume',
+        tailor: 'none',
+        diff: [],
+        rationale: [],
+        skillChanges: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        if (action === 'render') return { pages: 1, fits: true };
+        if (action === 'listResumes') return [stored];
+        return {};
+      },
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const to = [...root.querySelectorAll('button')].find((b) => /Edit in ResumeM-M/.test(b.textContent));
+    if (!to) return { error: 'no Edit in ResumeM-M button' };
+    to.click();
+    await handle.cameBack();
+    await new Promise((r) => setTimeout(r, 120));
+    const spec = sent.filter((c) => c.action === 'render').at(-1)?.payload?.spec;
+    return { items: (spec?.sections ?? []).find((x) => x.kind === 'skills')?.items?.sk_lang ?? null };
+  });
+  check(
+    'the card takes up the copy as it was left in the builder',
+    JSON.stringify(edited.items) === JSON.stringify(['s_py', 's_go', 's_rust']),
+    JSON.stringify(edited),
+  );
+
+  console.log('\nOpening the builder before the copy is in the store');
+
+  /*
+   * The tailored copy is only written to the store when it is built or
+   * filed. "Edit in ResumeM-M" opened it by id regardless, so before then the
+   * builder was sent to a resume that did not exist, said it had been
+   * removed, and stayed on whatever was open — often the base.
+   */
+  const opened = await inPage(async (createCard, given) => {
+    const urls = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Backend Engineer', company: 'Ferrous' },
+        spec: { id: 'job-ferrous', label: 'Ferrous', tier: 'temporary', copiedFrom: 'newgrad', sections: [] },
+        baseLabel: 'New grad resume',
+        tailor: 'none',
+        diff: [],
+        rationale: [],
+        skillChanges: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        if (action === 'openTab') urls.push(payload.url);
+        if (action === 'render') return { pages: 1, fits: true };
+        if (action === 'listResumes') return given.stored.map((id) => ({ id }));
+        return {};
+      },
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    [...root.querySelectorAll('button')].find((b) => /Edit in ResumeM-M/.test(b.textContent))?.click();
+    await new Promise((r) => setTimeout(r, 120));
+    return urls;
+  }, { stored: ['newgrad'] });
+  check('before it is built, the builder opens the resume it was made from', opened.at(-1) === '/#resumes/newgrad', JSON.stringify(opened));
+
+  const openedCopy = await inPage(async (createCard, given) => {
+    const urls = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Backend Engineer', company: 'Ferrous' },
+        spec: { id: 'job-ferrous', label: 'Ferrous', tier: 'temporary', copiedFrom: 'newgrad', sections: [] },
+        baseLabel: 'New grad resume',
+        tailor: 'none',
+        diff: [],
+        rationale: [],
+        skillChanges: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        if (action === 'openTab') urls.push(payload.url);
+        if (action === 'render') return { pages: 1, fits: true };
+        if (action === 'listResumes') return given.stored.map((id) => ({ id }));
+        return {};
+      },
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    [...root.querySelectorAll('button')].find((b) => /Edit in ResumeM-M/.test(b.textContent))?.click();
+    await new Promise((r) => setTimeout(r, 120));
+    return urls;
+  }, { stored: ['newgrad', 'job-ferrous'] });
+  check('and once it is in the store, the copy itself', openedCopy.at(-1) === '/#resumes/job-ferrous', JSON.stringify(openedCopy));
 
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);

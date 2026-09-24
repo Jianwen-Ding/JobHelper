@@ -159,6 +159,19 @@ async function tellContentScript(type) {
   if (!tab?.id) return;
 
   /*
+   * A page no extension may run on, before either of the two below.
+   *
+   * A new tab, a chrome:// page, the extensions page: the message has
+   * nowhere to go, and the catch below said "Reload the tab and try again"
+   * — which cannot work there, however many times it is followed. Only
+   * where there is an address to read, so a tab this cannot see still gets
+   * the old answer.
+   */
+  if (tab.url && !/^(https?|file):/i.test(tab.url)) {
+    throw new Error('JobHelper does not run on browser pages like this one. Open the job posting or the application form, then try again.');
+  }
+
+  /*
    * Two different failures, and only one of them is "not running here".
    *
    * `sendMessage` rejects when there is no content script to receive it — a
@@ -241,6 +254,16 @@ async function showOpenApplication() {
   // Back to the last page of it, which is where you were when you wandered
   // off. Same tab, because the application is the tab.
   const last = pages[pages.length - 1];
+  /*
+   * Not offered from the page it would go back to.
+   *
+   * The panel shows on the application's own pages too, and the last of them
+   * is usually the form. Pressed there, "going back" is a reload: measured,
+   * the form came back empty, everything typed into the employer's boxes
+   * gone, from a button promising the opposite.
+   */
+  const bare = (url) => String(url ?? '').split('#')[0];
+  $('backToApplication').hidden = !last?.url || bare(last.url) === bare(tab.url);
   $('backToApplication').onclick = acts(async () => {
     if (!last?.url) return;
     await chrome.tabs.update(tab.id, { url: last.url });
@@ -340,7 +363,22 @@ async function showAiState() {
     }
     fix.disabled = true;
     try {
-      await send('setAiEnabled', { enabled: status.state !== 'on' });
+      /*
+       * Off is this extension's own switch, not ResumeM-M's.
+       *
+       * It flipped the server's, which the editor's AI answers to as well,
+       * and left the box here ticked — so the panel then read "Switched off in
+       * ResumeM-M" in amber with a "Turn it on" button, as though something
+       * had gone wrong, straight after being asked to turn it off. Unticking
+       * the box is what the box beside this button already does.
+       */
+      if (status.state === 'on') {
+        $('useAi').checked = false;
+        await send('setSettings', { patch: { useAi: false } });
+        await showAiState();
+        return;
+      }
+      await send('setAiEnabled', { enabled: true });
       // Turning the server's on is only half of it if this side is still off.
       if (status.state === 'server-off' && !$('useAi').checked) {
         $('useAi').checked = true;
