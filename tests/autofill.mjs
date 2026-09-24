@@ -1883,6 +1883,160 @@ const GREENHOUSE_STRIPE = `<!doctype html><html><head><meta charset="utf-8"><tit
 </script>
 </body></html>`;
 
+/*
+ * Greenhouse's Education section with its "Add another", as the new boards
+ * draw it — measured on SpaceX, Stripe's embed, Twitch and Robinhood
+ * (job-boards.greenhouse.io): one `education--container`, an `education--form`
+ * per school headed by a `<p>Education</p>` (not a heading element), and
+ * after the last one `<button type="button" class="add-another-button">`.
+ * A block is School, Degree and Discipline as react-select widgets, a Start
+ * date month widget and a Start date year `type=number` box, and the same two
+ * for the end — Twitch's full set; ids `school--0`, `start-month--0`,
+ * `start-year--0`, `end-year--0` and so on. Pressing the button appends a
+ * block whose ids end `--1`, and so on.
+ *
+ * The widgets behave as `GREENHOUSE_STRIPE`'s do: nothing until the menu is
+ * opened, a list that says "Loading..." until it arrives, a choice on
+ * mousedown drawn as a `select__single-value`, and what was typed emptied on
+ * blur. The delays are shorter than the board's, which only makes this page
+ * quicker to fill.
+ *
+ * Above it, a work history with an "Add another" of its own, first on the
+ * page — the button nothing here may press. `?levels` labels each block by
+ * the level it asks about, the first "Undergraduate" and every one added
+ * "Graduate"; `?chosen` arrives with a second block already showing a school
+ * (Acadia University, or the one named), and `&degree=` a degree in it too.
+ */
+const GREENHOUSE_MORE_EDUCATION = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Twitch</title></head><body>
+<form id="application-form">
+  <label for="first_name">First Name</label><input id="first_name" type="text">
+  <div class="employment--container">
+    <div class="employment--form"><hr><div class="employment--header"><p class="body body--medium">Employment</p></div>
+      <label for="company-name--0">Company name</label><input id="company-name--0" type="text">
+      <label for="title--0">Title</label><input id="title--0" type="text">
+    </div>
+    <button class="add-another-button" type="button" id="employment-add">Add another</button>
+  </div>
+  <div class="education--container" id="education"><button class="add-another-button" type="button" id="education-add">Add another</button></div>
+</form>
+<script>
+  window.__pressed = { education: 0, employment: 0 };
+  function select(id, { fetch, delay = 0 }) {
+    const input = document.getElementById(id);
+    const control = input.closest('.select__control');
+    const shell = control.parentElement;
+    let open = false;
+    let list = null;
+    let asked = 0;
+    const listbox = () => {
+      if (!list) {
+        list = document.createElement('div');
+        list.id = 'react-select-' + id + '-listbox';
+        list.setAttribute('role', 'listbox');
+        shell.append(list);
+        input.setAttribute('aria-controls', list.id);
+      }
+      list.replaceChildren();
+      return list;
+    };
+    const spinner = (on) => {
+      control.querySelector('.select__loading-indicator')?.remove();
+      if (on) control.querySelector('.select__indicators').insertAdjacentHTML('afterbegin', '<div class="select__loading-indicator" aria-hidden="true">…</div>');
+    };
+    const close = () => { list?.remove(); list = null; open = false; spinner(false); input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-controls'); };
+    const choose = (text) => {
+      control.querySelector('.select__placeholder')?.remove();
+      let shown = control.querySelector('.select__single-value');
+      if (!shown) {
+        shown = document.createElement('div');
+        shown.className = 'select__single-value';
+        control.querySelector('.select__value-container').prepend(shown);
+      }
+      shown.textContent = text;
+      input.value = '';
+      close();
+    };
+    const render = (items) => {
+      spinner(false);
+      const l = listbox();
+      if (!items.length) l.insertAdjacentHTML('beforeend', '<div class="select__menu-notice select__menu-notice--no-options">No options</div>');
+      for (const text of items) {
+        const o = document.createElement('div');
+        o.setAttribute('role', 'option');
+        o.className = 'select__option';
+        o.textContent = text;
+        o.addEventListener('mousedown', (e) => { e.preventDefault(); choose(text); });
+        l.append(o);
+      }
+    };
+    const load = (term) => {
+      const mine = ++asked;
+      spinner(true);
+      listbox().insertAdjacentHTML('beforeend', '<div class="select__menu-notice select__menu-notice--loading">Loading...</div>');
+      setTimeout(() => { if (open && mine === asked) render(fetch(term)); }, delay);
+    };
+    control.addEventListener('mousedown', () => {
+      if (open) return;
+      open = true;
+      input.setAttribute('aria-expanded', 'true');
+      load('');
+    });
+    input.addEventListener('input', () => { if (open) load(input.value.toLowerCase()); });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+    input.addEventListener('blur', () => { input.value = ''; close(); });
+    return choose;
+  }
+  const search = (all, first) => (term) => (term ? all.filter((s) => s.toLowerCase().includes(term)) : all.slice(0, first));
+  const SCHOOLS = ['Aalto University', 'Acadia University', 'Boston College', 'Boston Latin School', 'Boston University', 'Northeastern Illinois University', 'Northeastern University'];
+  const DEGREES = ["Associate's Degree", "Bachelor's Degree", 'Doctor of Philosophy (Ph.D.)', 'High School', "Master's Degree", 'Other'];
+  const DISCIPLINES = ['Computer Engineering', 'Computer Science', 'Mechanical Engineering'];
+  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const query = new URLSearchParams(location.search);
+  const widget = (id, label) => \`
+    <div class="select"><div class="select__container"><label id="\${id}-label" for="\${id}" class="label select__label">\${label}</label>
+      <div class="select-shell"><div><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+        <div class="select__input-container" data-value=""><input class="select__input" id="\${id}" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="\${id}-label" autocomplete="off"></div></div>
+        <div class="select__indicators"><button type="button" class="icon-button icon-button--sm" aria-label="Toggle flyout" tabindex="-1">v</button></div></div></div>
+        <input required tabindex="-1" aria-hidden="true" class="requiredInput" value=""></div></div></div>\`;
+  const year = (id, label) => \`
+    <div class="text-input-wrapper"><div class="input-wrapper"><label id="\${id}-label" for="\${id}" class="label">\${label}</label>
+      <input id="\${id}" class="input input__single-line" aria-label="\${label}" type="number"></div></div>\`;
+  function addBlock() {
+    const n = document.querySelectorAll('.education--form').length;
+    const level = query.has('levels') ? (n === 0 ? 'Undergraduate ' : 'Graduate ') : '';
+    const block = document.createElement('div');
+    block.className = 'education--form';
+    block.innerHTML = '<hr><div class="education--header"><p class="body body--medium">Education</p></div>' +
+      widget('school--' + n, level + 'School') + widget('degree--' + n, level + 'Degree') + widget('discipline--' + n, level ? level + 'Major' : 'Discipline') +
+      '<div class="education--date-container">' + widget('start-month--' + n, 'Start date month') + year('start-year--' + n, 'Start date year') + '</div>' +
+      '<div class="education--date-container">' + widget('end-month--' + n, 'End date month') + year('end-year--' + n, 'End date year') + '</div>';
+    document.getElementById('education-add').before(block);
+    const school = select('school--' + n, { fetch: search(SCHOOLS, 3), delay: 250 });
+    const degree = select('degree--' + n, { fetch: search(DEGREES, 10), delay: 300 });
+    select('discipline--' + n, { fetch: search(DISCIPLINES, 3), delay: 150 });
+    select('start-month--' + n, { fetch: search(MONTHS, 12) });
+    select('end-month--' + n, { fetch: search(MONTHS, 12) });
+    return { school, degree };
+  }
+  // The board adds the block a moment after the press, as React renders it.
+  document.getElementById('education-add').addEventListener('click', () => { __pressed.education++; setTimeout(addBlock, 120); });
+  document.getElementById('employment-add').addEventListener('click', () => {
+    __pressed.employment++;
+    const n = document.querySelectorAll('.employment--form').length;
+    const form = document.querySelector('.employment--form').cloneNode(true);
+    form.querySelectorAll('[id]').forEach((el) => { el.id = el.id.replace(/--\\d+$/, '--' + n); });
+    form.querySelectorAll('[for]').forEach((el) => el.setAttribute('for', el.getAttribute('for').replace(/--\\d+$/, '--' + n)));
+    document.getElementById('employment-add').before(form);
+  });
+  addBlock();
+  if (query.has('chosen')) {
+    const begun = addBlock();
+    begun.school(query.get('chosen') || 'Acadia University');
+    if (query.get('degree')) begun.degree(query.get('degree'));
+  }
+</script>
+</body></html>`;
+
 const WORKDAY_MY_INFO = `<!doctype html><html><head><meta charset="utf-8"><title>My Information</title></head><body>
 <div data-automation-id="applyFlowMyInfoPage">
 <div data-automation-id="formField-country"><label for="country--country">Country<abbr>*</abbr></label>
@@ -1994,7 +2148,7 @@ const JOBS = [
   },
 ];
 
-const PAGES = { '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
+const PAGES = { '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -4711,6 +4865,119 @@ async function main() {
       'a press that shuts the menu without choosing, the typed school still in the box, is not counted as a choice',
       ignoredPress.school === '' && !ignoredPress.filled.includes('school(widget)') && ignoredPress.byHand.includes('school'),
       JSON.stringify(ignoredPress),
+    );
+
+    /* ---------------- Greenhouse: more than one education ---------------- */
+    /*
+     * Reported: "ideally it should be able to add new entries here if I have
+     * more than one education then autofill the two things separately". Filled
+     * the way content.js fills a document — `fillForm`, then `fillComboboxes`,
+     * then `fillEducation` with the resume's schools — and read back after the
+     * last box has lost focus, from what each widget draws.
+     */
+    const educations = (fields, education, query = '') =>
+      page.goto(`${base}/greenhouse-more-education${query}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, fields, education }) => {
+          const m = await import(`${b}/autofill.js`);
+          const first = await m.fillComboboxes(fields, m.fillForm(fields));
+          const report = await m.fillEducation(education, fields, first);
+          document.activeElement?.blur?.();
+          await new Promise((r) => setTimeout(r, 300));
+          const shown = (el) => {
+            const control = el.closest('.select__control');
+            return control ? control.querySelector('.select__single-value')?.textContent ?? '' : el.value;
+          };
+          const blocks = [...document.querySelectorAll('.education--form')].map((form) =>
+            Object.fromEntries([...form.querySelectorAll('input[id]')].map((el) => [el.id.replace(/--\d+$/, ''), shown(el)])),
+          );
+          return {
+            blocks,
+            pressed: window.__pressed,
+            jobs: document.querySelectorAll('.employment--form').length,
+            same: JSON.stringify(first) === JSON.stringify(report),
+            filled: report.filled.map((x) => x.key + (x.education ? `#${x.education}` : '')),
+            skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`),
+          };
+        }, { b: base, fields, education }),
+      );
+    const NEWEST = {
+      first_name: 'Morgan', school: 'Boston University', degree: 'Master of Science', major: 'Computer Science',
+      education_start_month: 'September', education_start_year: '2027', education_start_date: 'September 2027',
+      graduation_month: 'May', graduation_year: '2028', graduation_date: 'May 2028',
+    };
+    const MASTERS = { school: 'Boston University', degree: 'Master of Science', major: 'Computer Science', start: { year: 2027, month: 9 }, end: { year: 2028, month: 5 } };
+    const BACHELORS = { school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science', start: { year: 2023, month: 9 }, end: { year: 2027, month: 5 } };
+    const two = await educations(NEWEST, [MASTERS, BACHELORS]);
+    const oneOnly = await educations(NEWEST, [MASTERS]);
+    const bachelorFirst = await educations(
+      { first_name: 'Morgan', school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science' },
+      [BACHELORS, { school: 'Boston Latin School', degree: 'High School Diploma', end: { year: 2023, month: 6 } }],
+      '?levels',
+    );
+    const alreadyChosen = await educations(NEWEST, [MASTERS, BACHELORS], '?chosen');
+    const notOnTheResume = await educations({ ...NEWEST, school: 'Aalto University' }, [MASTERS, BACHELORS]);
+    const begunSchool = await educations(NEWEST, [MASTERS, BACHELORS], `?chosen=${encodeURIComponent('Northeastern University')}&degree=Other`);
+    const unlistedFirst = await educations(
+      { ...NEWEST, school: 'Wentworth Harbour College' },
+      [{ ...MASTERS, school: 'Wentworth Harbour College' }, BACHELORS],
+    );
+    group('Greenhouse: more than one education, from the resume being sent');
+    check(
+      'a second education gets a block of its own, added with the section\'s "Add another" and filled from it',
+      two.blocks[1]?.school === 'Northeastern University' && two.blocks[1]?.degree === "Bachelor's Degree" && two.blocks[1]?.discipline === 'Computer Science',
+      JSON.stringify(two.blocks[1] ?? two),
+    );
+    check(
+      'with its own start and end, month and year',
+      two.blocks[1]?.['start-month'] === 'September' && two.blocks[1]?.['start-year'] === '2023' &&
+        two.blocks[1]?.['end-month'] === 'May' && two.blocks[1]?.['end-year'] === '2027',
+      JSON.stringify(two.blocks[1] ?? two),
+    );
+    check(
+      'the first block is still the newest education, and gets its dates too',
+      two.blocks[0]?.school === 'Boston University' && two.blocks[0]?.degree === "Master's Degree" &&
+        two.blocks[0]?.['start-year'] === '2027' && two.blocks[0]?.['end-month'] === 'May' && two.blocks[0]?.['end-year'] === '2028',
+      JSON.stringify(two.blocks[0] ?? two),
+    );
+    check(
+      'only as many blocks as there are educations, and the work history\'s "Add another" is never pressed',
+      two.blocks.length === 2 && two.pressed.education === 1 && two.pressed.employment === 0 && two.jobs === 1,
+      JSON.stringify({ blocks: two.blocks.length, pressed: two.pressed, jobs: two.jobs }),
+    );
+    check(
+      'one education changes nothing: no block is added and the report is the one it was',
+      oneOnly.blocks.length === 1 && oneOnly.pressed.education === 0 && oneOnly.same && oneOnly.blocks[0]?.['start-year'] === '',
+      JSON.stringify(oneOnly),
+    );
+    check(
+      'a block asking about graduate school is not given a high school',
+      bachelorFirst.blocks[0]?.school === 'Northeastern University' &&
+        bachelorFirst.blocks.slice(1).every((block) => block.school === '' && block.degree === '' && block['end-year'] === '') &&
+        bachelorFirst.skipped.some((s) => /level/.test(s)) && bachelorFirst.pressed.education <= 1,
+      JSON.stringify(bachelorFirst),
+    );
+    check(
+      'a block already showing a school the resume does not list is left as it was, and no third block is added',
+      alreadyChosen.blocks.length === 2 && alreadyChosen.blocks[1]?.school === 'Acadia University' && alreadyChosen.blocks[1]?.degree === '' &&
+        alreadyChosen.pressed.education === 0 && alreadyChosen.skipped.some((s) => /not on the resume/.test(s)),
+      JSON.stringify(alreadyChosen),
+    );
+    check(
+      'a first block from a school the resume does not list adds nothing, rather than risk the same school twice',
+      notOnTheResume.blocks.length === 1 && notOnTheResume.pressed.education === 0 && notOnTheResume.same,
+      JSON.stringify(notOnTheResume),
+    );
+    check(
+      'a block somebody began is finished from its own school, keeping the degree they chose',
+      begunSchool.blocks.length === 2 && begunSchool.pressed.education === 0 && begunSchool.blocks[1]?.school === 'Northeastern University' &&
+        begunSchool.blocks[1]?.degree === 'Other' && begunSchool.blocks[1]?.discipline === 'Computer Science' && begunSchool.blocks[1]?.['end-year'] === '2027',
+      JSON.stringify(begunSchool.blocks[1] ?? begunSchool),
+    );
+    check(
+      'a school the first fill could not find in the list is not looked for again, and the next school still gets its block',
+      unlistedFirst.skipped.filter((s) => s.startsWith('school:')).length === 1 && unlistedFirst.blocks[0]?.['end-year'] === '2028' &&
+        unlistedFirst.blocks[1]?.school === 'Northeastern University',
+      JSON.stringify(unlistedFirst),
     );
 
     /* ---------------- Workday's My Experience: a work history ---------------- */

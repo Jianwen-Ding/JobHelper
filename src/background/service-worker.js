@@ -1541,9 +1541,9 @@ const handlers = {
   },
 
   /** Fill the form in every sub-frame from the same profile. */
-  async fillFrames({ fields, history = [] }, tab) {
+  async fillFrames({ fields, history = [], education = [] }, tab) {
     if (tab?.id === undefined) return { frames: [] };
-    const replies = await askFrames(tab.id, { type: 'jh-frame-fill', payload: { fields, history } });
+    const replies = await askFrames(tab.id, { type: 'jh-frame-fill', payload: { fields, history, education } });
     return { frames: replies.map(({ frameId, data }) => ({ frameId, ...data })) };
   },
 
