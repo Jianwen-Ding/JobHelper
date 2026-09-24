@@ -1911,7 +1911,19 @@ function yesNoOption(key, value, options, asked = '') {
   if (!YES_NO_KEYS.has(key)) return undefined;
   if (aboutAnotherCountry(key, value, asked)) return undefined;
 
-  const labelled = options.map((o) => ({ o, said: clean(o.label).toLowerCase() }));
+  /*
+   * An option that *is* Yes or No, or one that says so first and explains
+   * after. Stripe's Greenhouse board offers "Are you currently eligible to
+   * work in the United States?" as "Yes, I am currently eligible to work in
+   * the location where this role is based." and "No, I am not currently
+   * eligible…", and the sponsorship question the same way — measured on its
+   * embed, both lists hold exactly those two and nothing else. Read as whole
+   * labels they were neither yes nor no, and both were left for the person.
+   * The leading word is the answer, for the reason `yesNoFrom` gives; it has
+   * to be followed by punctuation, so "No preference" is not a No.
+   */
+  const leading = (said) => /^(yes|no)(?:$|\s*[,.;:!—–-])/.exec(said)?.[1];
+  const labelled = options.map((o) => ({ o, said: leading(clean(o.label).toLowerCase()) }));
   const yes = labelled.find((x) => x.said === 'yes');
   const no = labelled.find((x) => x.said === 'no');
   // A yes/no *pair* and nothing else. "Yes / No / Prefer not to say" is a
@@ -1970,6 +1982,33 @@ function authorizationStatement(options, fields, textOf = (o) => o.textContent) 
  * is whatever was typed, "Boston, MA, USA" as often as "Boston, MA". Where
  * there is no state to add, the city alone is what the box was given before.
  */
+/*
+ * A text box asking for what a list beside it did not have.
+ *
+ * Stripe's Greenhouse board puts one under its School dropdown: "We are
+ * always aiming to keep our school list inclusive of all institutions. If you
+ * did not see your University listed in the previous question, please let us
+ * know your school name here." It says "school" and "university", so it was
+ * filled with the profile's school like any school box — and, filled first,
+ * it claimed `school`, so the School dropdown itself, the required one, was
+ * never driven and was left on "Select...". Measured on the embed: the
+ * school went into `question_68843617` and nowhere else.
+ *
+ * Such a box is only right to fill once the list has been looked in and the
+ * answer was not there, which is what it says. So `fillForm` passes it over,
+ * and `fillComboboxes` writes in it only for a list whose answer never
+ * appeared. See `fillNotListed`.
+ */
+const NOT_LISTED = new RegExp(
+  [
+    String.raw`\b(?:did|do|does|could|can)(?:\s*n't|\s+not)\s+(?:see|find)\b[^.?!]{0,60}?\b(?:listed|in\s+the\s+(?:list|dropdown|menu|options))`,
+    String.raw`(?:\bnot|n't)\s+(?:been\s+|be\s+)?(?:listed|found\s+in\s+the\s+(?:list|dropdown)|in\s+the\s+(?:list|dropdown|options)|on\s+the\s+list)\b`,
+    String.raw`\bif\s+(?:your|my)\s+(?:school|university|college|institution|degree|major|discipline)\s+(?:is|was)(?:\s*n't|\s+not)\b`,
+    String.raw`\bunlisted\b`,
+  ].join('|'),
+  'i',
+);
+
 function withCityAndState(fields) {
   if (fields.city_state || !fields.address_city) return fields;
   const both = fields.address_state ? `${fields.address_city}, ${fields.address_state}` : fields.address_city;
@@ -2031,6 +2070,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
 
     const key = wholeDateKey(input, match[0], description);
     if (!fields[key]) continue;
+    // A box for the answer a list above it did not have. See `NOT_LISTED`.
+    if (!(input instanceof HTMLSelectElement) && NOT_LISTED.test(description)) continue;
     if (anotherLevelOfStudy(input, key, fields)) continue;
     if (asksYesOrNo(input, key)) continue;
     let value = fields[key];
@@ -3141,7 +3182,7 @@ function widgetChoices(fields, filled) {
     // Named, so it is reported for what it is and never driven: Workday's
     // list picks "Yes" by its text too. See `aboutAnotherCountry`.
     const elsewhere = aboutAnotherCountry(key, fields[key], description, fields.address_country);
-    found.push({ key, description: description.slice(0, 60), el: widget, elsewhere });
+    found.push({ key, description: description.slice(0, 60), asked: description, el: widget, elsewhere });
     already.add(key);
   }
   return found;
@@ -3175,15 +3216,36 @@ const SETTLED_MS = 800;
  * once the list has settled without it, or when nothing has appeared by
  * `quiet`, or at `patience`.
  */
-async function waitForOption(widget, key, value, openBefore, { patience, quiet = patience, fields }) {
+async function waitForOption(widget, key, value, openBefore, { patience, quiet = patience, fields, asked = '' }) {
   const began = Date.now();
   let seen = null;
   let since = began;
+  let hushed = began;
   for (;;) {
     const options = optionsOf(widget, openBefore);
-    const hit = exactOption(options, key, value, fields);
+    const hit = exactOption(options, key, value, fields, asked);
     if (hit) return hit;
     const now = Date.now();
+    /*
+     * A list the widget says it is still fetching has not arrived yet, and
+     * "nothing has appeared by `quiet`" is not true of it.
+     *
+     * Greenhouse's Degree is a fixed list of ten, but it is fetched from the
+     * board's API the first time the menu opens, and the menu says
+     * "Loading..." until it comes. Measured on Stripe's embed: 450 to 900ms
+     * for the degrees, about 500 for the schools, about 350 for the
+     * disciplines — against a `quiet` of 400. So the degree was given up on
+     * while it loaded and the profile's wording typed in instead, and the
+     * board's search for "Bachelor of Science" answers nothing at all (its
+     * entry is "Bachelor's Degree"): the box sat showing the typed words for
+     * the whole of the patience — which is what "filled for a second" was —
+     * and was then taken back to "Select...". Whether it worked depended on
+     * how quickly the board answered that day.
+     */
+    if (stillLoading(widget, openBefore)) {
+      hushed = now;
+      since = now;
+    }
     const said = options.map((o) => o.textContent).join('\n');
     if (said !== seen) {
       seen = said;
@@ -3191,10 +3253,31 @@ async function waitForOption(widget, key, value, openBefore, { patience, quiet =
     } else if (options.length && now - since >= SETTLED_MS) {
       return null;
     }
-    if (!options.length && now - began >= quiet) return null;
+    if (!options.length && now - hushed >= quiet) return null;
     if (now - began >= patience) return null;
     await pause(50);
   }
+}
+
+/**
+ * Whether the widget says it is still fetching its options: react-select's
+ * spinner in the control, or its "Loading..." notice in the menu, or a list
+ * marked busy.
+ */
+function stillLoading(widget, openBefore) {
+  const control = controlOf(widget);
+  if (control.querySelector?.('[class*="loading-indicator"], [class*="loadingIndicator"]')) return true;
+  const box = typingBoxOf(widget);
+  if ([widget, box].some((el) => el?.getAttribute('aria-busy') === 'true')) return true;
+  const ids = [widget, box]
+    .filter(Boolean)
+    .flatMap((el) => `${el.getAttribute('aria-controls') ?? ''} ${el.getAttribute('aria-owns') ?? ''}`.split(/\s+/))
+    .filter(Boolean);
+  const lists = ids.map((id) => widget.getRootNode().getElementById?.(id) ?? document.getElementById(id)).filter(Boolean);
+  // A list it names, or failing that the one menu its press opened.
+  const fresh = lists.length ? lists : visibleListboxes().filter((l) => l !== widget && !openBefore?.has(l));
+  return (lists.length || fresh.length === 1) &&
+    fresh.some((l) => l.getAttribute('aria-busy') === 'true' || l.querySelector('[class*="notice--loading"], [class*="loadingMessage"], [aria-busy="true"]'));
 }
 
 async function waitFor(find, patience) {
@@ -3266,12 +3349,29 @@ function optionsOf(widget, openBefore = null) {
 }
 
 /** The option that is plainly this answer, or nothing. Never the nearest. */
-function exactOption(options, key, value, fields = {}) {
+function exactOption(options, key, value, fields = {}, asked = '') {
   return (
     options.find((o) => sameOption(o.textContent, value)) ??
     (key === 'gpa' ? gpaOption(options, value) : null) ??
     (PLACE_KEYS.has(key) ? placeOption(options, fields) : null) ??
     (key === 'work_authorization' ? authorizationStatement(options, fields) : null) ??
+    /*
+     * A yes/no pair against the profile's phrase, on the terms a `<select>`
+     * and a radio group already had — see `yesNoOption`. Without it the widget
+     * path had nothing for these two keys but an option spelled exactly like
+     * the profile, and no list says "Authorized to work in the US": Stripe's
+     * eligibility and sponsorship questions, both react-select lists of a Yes
+     * and a No, were reported as ones to pick by hand. Any prompt drawn as an
+     * option comes off first, or the pair reads as three answers.
+     */
+    (YES_NO_KEYS.has(key)
+      ? yesNoOption(
+          key,
+          value,
+          options.filter((o) => !PLACEHOLDER.test(clean(o.textContent))).map((o) => ({ label: o.textContent, el: o })),
+          asked,
+        )?.el
+      : null) ??
     options.find((o) => sameAnswerSpelledOtherwise(key, o.textContent, value)) ??
     null
   );
@@ -3298,6 +3398,34 @@ function press(el) {
 function tookIt(widget, box, option, value, hiddenBefore, chosen = option.textContent, shownBefore = '') {
   const hidden = hiddenPartner(widget);
   if (hidden && hidden.value && hidden.value !== hiddenBefore) return true;
+  /*
+   * A widget that draws what it holds as a value of its own — react-select's
+   * `select__single-value` in place of its "Select..." placeholder, a chip
+   * for each in a multi-select — has taken a choice when that value is drawn
+   * and says it, and not otherwise.
+   *
+   * Everything below reads the box and the words around it, and in one of
+   * these the box holds whatever was typed into it, so every one of those
+   * readings can pass on a choice that never happened. Worst is the closed
+   * menu: typed "Northeastern University", an option pressed that the widget
+   * did not act on, and a menu shut by the same press, and "the menu is
+   * closed with exactly that text left in the box" read as an autocomplete
+   * that had written its choice in. It was counted as filled; react-select
+   * empties its box on blur, so the School went back to "Select..." the moment
+   * the fill moved on, with the card saying it was done. So here nothing
+   * short of the drawn value counts, and the box has to be empty, as a real
+   * choice leaves it.
+   */
+  const drawn = drawnValue(controlOf(widget));
+  if (drawn !== undefined) {
+    if (!drawn || (box && box.value)) return false;
+    const said = drawn.toLowerCase();
+    return (
+      [value, chosen].some((it) => clean(it) && said.includes(clean(it).toLowerCase())) ||
+      // Greenhouse's country beside the phone draws "+1" for "United States +1".
+      (said.length >= 2 && clean(chosen).toLowerCase().includes(said))
+    );
+  }
   if (option.isConnected && option.getAttribute('aria-selected') === 'true') return true;
   /*
    * An autocomplete that writes the choice into its own box — MUI, Downshift,
@@ -3333,6 +3461,20 @@ function tookIt(widget, box, option, value, hiddenBefore, chosen = option.textCo
    */
   const part = text.length >= 2 && text !== shownBefore && clean(chosen).toLowerCase().includes(text);
   return (shows || part) && (!box || !box.value);
+}
+
+/**
+ * What a widget that draws its own value is showing as chosen: the text of
+ * its single value or its chips, `''` where it draws none yet — only its
+ * placeholder, or nothing — and `undefined` for a widget that is not drawn
+ * this way at all, which `tookIt` then reads as it always has.
+ */
+const DRAWN_VALUE = '[class*="single-value"], [class*="singleValue"], [class*="multi-value__label"], [class*="multiValueLabel"]';
+const DRAWS_ITS_VALUE = `${DRAWN_VALUE}, [class*="value-container"], [class*="ValueContainer"], [class*="__placeholder"]`;
+
+function drawnValue(control) {
+  if (!control?.querySelector?.(DRAWS_ITS_VALUE)) return undefined;
+  return clean([...control.querySelectorAll(DRAWN_VALUE)].map((el) => el.textContent).join(' '));
 }
 
 /*
@@ -3485,10 +3627,15 @@ export async function fillComboboxes(fields, report, { patience = 4000 } = {}) {
   fields = withCityAndState(fields);
   await pickListedPlaces(fields);
   const pending = new Set(report.skipped.filter((s) => s.reason === PICK_BY_HAND).map((s) => s.key));
-  if (pending.size === 0) return report;
+  // The lists that were looked in and did not have the answer. See `NOT_LISTED`.
+  const unlisted = new Set(report.skipped.filter((s) => s.reason === 'no matching option').map((s) => s.key));
+  if (pending.size === 0) {
+    const also = fillNotListed(fields, unlisted);
+    return also.length ? { ...report, filled: [...report.filled, ...also] } : report;
+  }
 
   const done = [];
-  for (const { key, el: widget, both, elsewhere } of widgetChoices(fields, report.filled)) {
+  for (const { key, el: widget, both, elsewhere, asked } of widgetChoices(fields, report.filled)) {
     if (both || elsewhere || !pending.has(key)) continue;
     const value = String(fields[key]);
     const box = typingBoxOf(widget);
@@ -3523,18 +3670,26 @@ export async function fillComboboxes(fields, report, { patience = 4000 } = {}) {
        * way, "Bachelor's Degree". So the list is read as it opens, and only
        * where the answer is not in it is it typed, which is how a list that
        * is a search — every school there is — gets asked.
+       *
+       * The whole patience for that first look, not two seconds of it, for a
+       * list that says it is still loading: `quiet` only counts once it has
+       * stopped saying so (see `waitForOption`), so a list that is there and
+       * lacks the answer costs what it did, and one still on its way is
+       * waited for rather than typed over.
        */
       press(box);
-      option = await waitForOption(widget, key, value, openBefore, { patience: 2000, quiet: 400, fields });
+      option = await waitForOption(widget, key, value, openBefore, { patience, quiet: 400, fields, asked });
       if (!option) {
         setValue(box, value);
-        option = await waitForOption(widget, key, value, openBefore, { patience, fields });
+        option = await waitForOption(widget, key, value, openBefore, { patience, fields, asked });
       }
     } else {
       press(widget);
-      option = await waitForOption(widget, key, value, openBefore, { patience, fields });
+      option = await waitForOption(widget, key, value, openBefore, { patience, fields, asked });
     }
     if (!option) {
+      // Looked for in a list that opened, and not in it. See `NOT_LISTED`.
+      if (menuIsOpen(widget, box, openBefore)) unlisted.add(key);
       undoWidget(widget, box);
       continue;
     }
@@ -3552,9 +3707,38 @@ export async function fillComboboxes(fields, report, { patience = 4000 } = {}) {
   const chose = new Set(done.map((d) => d.key));
   return {
     ...report,
-    filled: [...report.filled, ...done],
+    filled: [...report.filled, ...done, ...fillNotListed(fields, unlisted)],
     skipped: report.skipped.filter((s) => !(s.reason === PICK_BY_HAND && chose.has(s.key))),
   };
+}
+
+/** Whether a widget's own menu is showing. */
+function menuIsOpen(widget, box, openBefore) {
+  if ((box ?? widget).getAttribute('aria-expanded') === 'true') return true;
+  return optionsOf(widget, openBefore).length > 0;
+}
+
+/**
+ * The boxes that ask for what their list did not have, filled for the lists
+ * that did not have it — the list looked in and the answer not there, or a
+ * `<select>` with no option for it. Only empty ones, and each only once it is
+ * seen to hold the answer. The list itself is left reported as it was: it is
+ * still unanswered, and the box beside it is not the list.
+ */
+function fillNotListed(fields, unlisted) {
+  if (unlisted.size === 0) return [];
+  const filled = [];
+  for (const input of deepQueryAll('input, textarea')) {
+    if (!isFillable(input) || input.value) continue;
+    const description = describeField(input);
+    if (!description || !NOT_LISTED.test(description)) continue;
+    const key = FIELD_PATTERNS.find(([, re]) => re.test(description))?.[0];
+    if (!key || !unlisted.has(key) || !fields[key]) continue;
+    const value = String(fields[key]);
+    setValue(input, value);
+    if (input.value === value) filled.push({ key, value, notListed: true, description: description.slice(0, 60) });
+  }
+  return filled;
 }
 
 /**
