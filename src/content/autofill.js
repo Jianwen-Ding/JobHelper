@@ -935,8 +935,17 @@ function labelFor(input) {
   const described = fromLabelledBy(input);
   if (described) return described;
 
+  /*
+   * Unless it only names the kind of control. Rippling's custom questions are
+   * each a widget whose `aria-label` is "Select" — the question itself is a
+   * `<p>` in the block above — so every one of them was described as
+   * "Select": measured live on two Rippling boards (ats.rippling.com/capacity
+   * and /closinglock), "Do you have the unrestricted right to work for any
+   * employer…?" and the rest came out as nothing anybody could match. Such a
+   * label is kept for last, below, and used only if nothing says more.
+   */
   const aria = clean(input.getAttribute('aria-label'));
-  if (aria) return aria;
+  if (aria && !CONTROL_WORD.test(aria)) return aria;
 
   /*
    * Positional fallback: the nearest preceding element that reads like a label.
@@ -970,14 +979,34 @@ function labelFor(input) {
    * holds a second field, it is the form rather than this field's own group,
    * and whatever label it holds belongs to something else.
    */
+  /*
+   * The same climb, for a question that is not marked as a label at all: the
+   * first thing in the group, holding words and no field of its own. That is
+   * Rippling's shape — `<div><div><p>question</p></div></div>` and then the
+   * field's own wrapper — and its textareas, which have no `aria-label` to
+   * fall back on, were not even offered as questions to answer.
+   */
+  /*
+   * Seven levels, because a widget is deep: Rippling's `role="combobox"` sits
+   * six wrappers below the block holding its question. Every level still has
+   * to hold this one field and no other, which is what bounds the climb.
+   */
   let group = input.parentElement;
-  for (let i = 0; i < 4 && group; i++, group = group.parentElement) {
-    if (group.querySelectorAll(ANOTHER_FIELD).length !== 1) break;
+  for (let i = 0; i < 7 && group; i++, group = group.parentElement) {
+    // One field, whether it is an input or a widget `<div>` (which the old
+    // test, "exactly one input", stopped at before it had begun).
+    if (group.querySelectorAll(`${ANOTHER_FIELD}, [role="combobox"]`).length > 1) break;
     const heading = group.querySelector('label,legend,th,.label,[class*="label"]');
     if (heading && !heading.contains(input)) return clean(heading.textContent);
+    const lead = group.firstElementChild;
+    const said = lead && !lead.contains(input) && !lead.querySelector(ANOTHER_FIELD) ? clean(lead.textContent) : '';
+    if (said && said.length < 300) return said;
   }
-  return '';
+  return aria;
 }
+
+/** An `aria-label` that names the control rather than the question. */
+const CONTROL_WORD = /^(select|search|choose|pick|select an option|select one|dropdown|combobox|text ?area|input)\.*$/i;
 
 /**
  * Everything a field's label might be hiding in. The explicit label leads, so

@@ -2484,7 +2484,48 @@ const SPONSORSHIP_STATEMENTS = `<!doctype html><html><head><meta charset="utf-8"
   <select id="s3"><option value="">Select...</option><option>I will need sponsorship.</option><option>No sponsorship needed; I am authorized to work for any employer.</option></select>
 </form></body></html>`;
 
-const PAGES = { '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
+/*
+ * Rippling's custom questions, in its markup (measured live on
+ * ats.rippling.com/capacity/jobs/…/apply): the question a `<p>` in a block of
+ * its own, then the field six wrappers down — a `role="combobox"` `<div>`
+ * whose only label is `aria-label="Select"`, or a bare `<textarea>`. Every one
+ * was described as "Select" or as nothing.
+ */
+const ripplingQuestion = (question, field) => `<div><div><div><p>${question}<div></div></p></div></div>
+  <div data-testid="field"><div><div data-testid="customQuestions.q"><div><div data-testid="select-controller"><div>${field}</div></div></div></div></div></div></div>`;
+const RIPPLING_QUESTIONS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Capacity</title></head><body>
+<form><h4>Application: Technical Delivery Junior Engineer</h4>
+  <div data-testid="field"><div><span id="field-8-label">First name</span><span>*</span></div>
+    <div><div data-testid="first_name"><input id="field-8" aria-labelledby="field-8-label" placeholder="First name" name="Pncq3PwexY"></div></div></div>
+  ${ripplingQuestion('Do you have the unrestricted right to work for any employer within the country where the job posting indicates the role is located and for which you are applying?',
+    '<div id="field-55" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-label="Select" aria-required="true" tabindex="0"><p>Select</p></div>')}
+  ${ripplingQuestion('Will you now or in the future require sponsorship to work in the country where the job is located?',
+    '<div id="field-61" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-label="Select" aria-required="true" tabindex="0"><p>Select</p></div>')}
+  ${ripplingQuestion('Describe your experience with or interest in SaaS platforms.', '<textarea maxlength="10000" required id="field-91" aria-multiline="true"></textarea>')}
+</form>
+<script>
+  for (const box of document.querySelectorAll('[role="combobox"]')) {
+    box.addEventListener('click', () => {
+      if (document.getElementById(box.id + '-list')) return;
+      const list = document.createElement('div');
+      list.id = box.id + '-list';
+      list.setAttribute('role', 'listbox');
+      for (const text of ['Yes', 'No']) {
+        const o = document.createElement('div');
+        o.setAttribute('role', 'option');
+        o.textContent = text;
+        o.addEventListener('click', () => { box.querySelector('p').textContent = text; list.remove(); box.setAttribute('aria-expanded', 'false'); });
+        list.append(o);
+      }
+      box.after(list);
+      box.setAttribute('aria-expanded', 'true');
+      box.setAttribute('aria-controls', list.id);
+    });
+  }
+</script>
+</body></html>`;
+
+const PAGES = { '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -5832,6 +5873,29 @@ async function main() {
       sponsorStatements[1] === 'I am authorized to work for any employer and do not require sponsorship.' &&
         sponsorStatements[2] === 'No sponsorship needed; I am authorized to work for any employer.',
       JSON.stringify(sponsorStatements),
+    );
+
+    const rippling = await page.goto(`${base}/rippling-questions`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const labels = ['field-55', 'field-61', 'field-91'].map((id) => m.labelFor(document.getElementById(id)));
+        const questions = m.findQuestions().map((q) => q.question);
+        await m.fillComboboxes(fields, m.fillForm(fields), { patience: 800 });
+        return { labels, questions, auth: document.querySelector('#field-55 p').textContent, sponsor: document.querySelector('#field-61 p').textContent, first: document.getElementById('field-8').value };
+      }, { b: base, fields: SWEEP }),
+    );
+    group('Rippling: a question in the block above its field');
+    check(
+      'a widget labelled only "Select", and a bare textarea, are read by the question above them',
+      /^Do you have the unrestricted right to work/.test(rippling.labels[0]) && /^Will you now or in the future require sponsorship/.test(rippling.labels[1]) &&
+        /^Describe your experience with or interest in SaaS/.test(rippling.labels[2]),
+      JSON.stringify(rippling.labels),
+    );
+    check(
+      'so the right-to-work and sponsorship lists are answered, and the textarea is offered as a question',
+      rippling.auth === 'Yes' && rippling.sponsor === 'No' && rippling.first === 'Morgan' &&
+        rippling.questions.some((q) => /SaaS platforms/.test(q)),
+      JSON.stringify(rippling),
     );
   } finally {
     await browser.close();
