@@ -167,6 +167,26 @@ const FIELD_PATTERNS = [
 
 const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 
+/*
+ * Which part of an address a field asks for, by its label where the label
+ * says.
+ *
+ * A field is read by its label together with its name and id, which is what
+ * lets a box with no label be read at all. Between the parts of an address
+ * that reads the wrong one: Workday names its state box
+ * `address--countryRegion`, so the box labelled "State" matched `country` —
+ * which sits above state for "Country/Region" — was taken for a country
+ * question already answered, and the state was never chosen. Only between
+ * these three, because elsewhere the name is exactly what settles a vague
+ * label: "Name" over `company_name` is not the applicant's name.
+ */
+const ADDRESS_PARTS = new Set(['address_country', 'address_state', 'address_city']);
+function addressPartByLabel(label, key) {
+  if (!ADDRESS_PARTS.has(key)) return key;
+  const said = FIELD_PATTERNS.find(([, re]) => re.test(label ?? ''))?.[0];
+  return said && ADDRESS_PARTS.has(said) ? said : key;
+}
+
 /**
  * Fields that carry one of the patterns above and are not about the applicant.
  *
@@ -1864,7 +1884,8 @@ export function fillForm(fields, { overwrite = false, remembered = [] } = {}) {
     // The degree's dates first: see `educationDateKey`. They read as nothing
     // at all to the patterns, so this can only claim what was going unclaimed.
     const dated = educationDateKey(input, description);
-    const named = dated ? [dated] : FIELD_PATTERNS.find(([, re]) => re.test(description));
+    const found = dated ? [dated] : FIELD_PATTERNS.find(([, re]) => re.test(description));
+    const named = found && !dated ? [addressPartByLabel(clean(labelFor(input)), found[0])] : found;
     let match = named && fields[named[0]] ? named : undefined;
 
     if (!match && fields.full_name && BARE_NAME.test(withoutMarkers(labelFor(input)))) {
@@ -2778,8 +2799,23 @@ function widgetChoices(fields, filled) {
      * answer, or that has been answered elsewhere, is simply not named.
      */
     const dated = educationDateKey(widget, description);
-    const key = dated || FIELD_PATTERNS.find(([, re]) => re.test(description))?.[0];
+    const key = dated || addressPartByLabel(clean(labelFor(widget)), FIELD_PATTERNS.find(([, re]) => re.test(description))?.[0]);
     if (!key || !fields[key] || already.has(key)) continue;
+    /*
+     * One already showing an answer is answered, and claims its question.
+     *
+     * A `<select>` with a real option chosen has always counted as filled;
+     * a widget never did. Workday's Country dropdown arrives saying "United
+     * States of America", and it was pressed open again, searched for an
+     * option spelled "United States", and — none spelled that way within the
+     * wait — reported as a country still to pick by hand, over a form that
+     * had one. A person's own choice, or the form's default, is not this
+     * tool's to reopen.
+     */
+    if (widgetShowsAnAnswer(widget)) {
+      already.add(key);
+      continue;
+    }
     if (anotherLevelOfStudy(widget, key, fields)) continue;
     // Named, so it is reported for what it is and never driven: Workday's
     // list picks "Yes" by its text too. See `aboutAnotherCountry`.
@@ -2830,23 +2866,39 @@ function typingBoxOf(widget) {
  * pointer to either is a page where choosing is a guess about which one
  * answers this question, and guessing is what this does not do.
  */
-function optionsOf(widget) {
+/** The listboxes showing on the page right now. */
+function visibleListboxes() {
+  return deepQueryAll('[role="listbox"]').filter(
+    /*
+     * `visibility: hidden` keeps a box, so a closed menu that an exit
+     * transition leaves mounted counted as open — and as a second listbox
+     * it refused every unlinked widget on the page.
+     */
+    (l) => l.getClientRects().length > 0 && getComputedStyle(l).visibility !== 'hidden',
+  );
+}
+
+function optionsOf(widget, openBefore = null) {
   const box = typingBoxOf(widget);
   const ids = [widget, box]
     .filter(Boolean)
     .flatMap((el) => `${el.getAttribute('aria-controls') ?? ''} ${el.getAttribute('aria-owns') ?? ''}`.split(/\s+/))
     .filter(Boolean);
   const named = ids.map((id) => widget.getRootNode().getElementById?.(id) ?? document.getElementById(id)).filter(Boolean);
-  const lists = named.length
-    ? named
-    : deepQueryAll('[role="listbox"]').filter(
-        /*
-         * `visibility: hidden` keeps a box, so a closed menu that an exit
-         * transition leaves mounted counted as open — and as a second listbox
-         * it refused every unlinked widget on the page.
-         */
-        (l) => l !== widget && l.getClientRects().length > 0 && getComputedStyle(l).visibility !== 'hidden',
-      );
+  const showing = visibleListboxes().filter((l) => l !== widget);
+  /*
+   * And, where the widget names none, the one its own press opened.
+   *
+   * "Exactly one listbox showing" was the whole test, and a listbox can be
+   * showing without being a menu. Workday draws what a multiselect already
+   * holds as one — the country phone code's "United States of America (+1)"
+   * is a `role="listbox"` that never closes — so on its My Information page
+   * there were always two, and every dropdown on it was refused: the State
+   * and the Phone Device Type left on "Select One". What was open before the
+   * press is not what the press opened.
+   */
+  const fresh = openBefore ? showing.filter((l) => !openBefore.has(l)) : [];
+  const lists = named.length ? named : fresh.length ? fresh : showing;
   if (!named.length && lists.length !== 1) return [];
   return lists.flatMap((l) => [...l.querySelectorAll('[role="option"]')]).filter((o) => !isDisabled(o) && o.getAttribute('aria-disabled') !== 'true');
 }
@@ -2878,7 +2930,7 @@ function press(el) {
  * chosen, or the control now showing it with the typing gone, or the value it
  * submits carrying something where it carried nothing.
  */
-function tookIt(widget, box, option, value, hiddenBefore) {
+function tookIt(widget, box, option, value, hiddenBefore, chosen = option.textContent) {
   const hidden = hiddenPartner(widget);
   if (hidden && hidden.value && hidden.value !== hiddenBefore) return true;
   if (option.isConnected && option.getAttribute('aria-selected') === 'true') return true;
@@ -2902,8 +2954,34 @@ function tookIt(widget, box, option, value, hiddenBefore) {
    */
   const control = controlOf(widget).cloneNode(true);
   for (const list of control.querySelectorAll('[role="listbox"]')) list.remove();
-  const shows = clean(control.textContent).toLowerCase().includes(clean(value).toLowerCase());
+  /*
+   * The value, or the option it was matched to. "VA" chooses "Virginia", and
+   * a dropdown showing "Virginia" does not contain the letters "VA" — so a
+   * state chosen correctly was read as ignored and reported as still to pick.
+   */
+  const text = clean(control.textContent).toLowerCase();
+  const shows = [value, chosen].some((said) => clean(said) && text.includes(clean(said).toLowerCase()));
   return shows && (!box || !box.value);
+}
+
+/*
+ * What a dropdown says while nothing is chosen.
+ */
+const NOTHING_CHOSEN = /^(?:select|choose|pick|search)\b|^please\s+(?:select|choose)\b|^-+|^none\s+selected$|^…$/i;
+
+/**
+ * Whether a widget already shows a choice: a pill or a single value drawn
+ * inside it — Workday's multiselect, react-select — or a dropdown button
+ * whose own text is an answer rather than "Select One".
+ */
+function widgetShowsAnAnswer(widget) {
+  const control = controlOf(widget);
+  if (control.querySelector?.('[data-automation-id="selectedItem"], [class*="single-value"], [class*="singleValue"]')) {
+    return true;
+  }
+  if (widget instanceof HTMLInputElement || widget.getAttribute('role') === 'listbox') return false;
+  const shown = clean(widget.textContent);
+  return Boolean(shown) && !NOTHING_CHOSEN.test(shown) && shown !== clean(labelFor(widget));
 }
 
 /**
@@ -2990,19 +3068,22 @@ export async function fillComboboxes(fields, report, { patience = 1500 } = {}) {
     if (!box && wouldSubmit(widget)) continue;
 
     widget.focus?.();
+    const openBefore = new Set(visibleListboxes());
     if (box) {
       setValue(box, value);
     } else {
       press(widget);
     }
-    const option = await waitFor(() => exactOption(optionsOf(widget), key, value), patience);
+    const option = await waitFor(() => exactOption(optionsOf(widget, openBefore), key, value), patience);
     if (!option) {
       undoWidget(widget, box);
       continue;
     }
+    // Read before the press: a menu that closes takes its options with it.
+    const chosen = option.textContent;
     press(option);
     await pause(60);
-    if (!tookIt(widget, box, option, value, hiddenBefore)) {
+    if (!tookIt(widget, box, option, value, hiddenBefore, chosen)) {
       undoWidget(widget, box);
       continue;
     }

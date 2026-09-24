@@ -1642,7 +1642,77 @@ const PREFIXED = `<!doctype html><form>
   <label for="p6">Mobile number</label><input id="p6" type="tel" value="+1 617 555 0199">
 </form>`;
 
-const PAGES = { '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD };
+/*
+ * Workday's "My Information" step, in its own markup: every choice a button
+ * that opens a listbox, the state's id `address--countryRegion` — Workday's
+ * own name for it — and the phone's country code a multiselect already
+ * holding "United States of America (+1)". Lists close on Escape, as
+ * Workday's do.
+ *
+ * Reported: autofill "stalled at the country of the phone number", with State
+ * and Phone Device Type still reading "Select One". Measured on this page, it
+ * pressed the Country dropdown that already said "United States of America",
+ * found no option spelled "United States" in time, reported the country as
+ * one to pick by hand, and never tried the State at all — the id's "country"
+ * made the box labelled State read as the country question.
+ */
+const WORKDAY_MY_INFO = `<!doctype html><html><head><meta charset="utf-8"><title>My Information</title></head><body>
+<div data-automation-id="applyFlowMyInfoPage">
+<div data-automation-id="formField-country"><label for="country--country">Country<abbr>*</abbr></label>
+  <button type="button" id="country--country" aria-haspopup="listbox" aria-label="Country United States of America Required">United States of America</button></div>
+<h3>Address</h3>
+<div data-automation-id="formField-addressLine1"><label for="address--addressLine1">Address Line 1<abbr>*</abbr></label><input id="address--addressLine1" type="text"></div>
+<div data-automation-id="formField-city"><label for="address--city">City<abbr>*</abbr></label><input id="address--city" type="text"></div>
+<div data-automation-id="formField-countryRegion"><label for="address--countryRegion">State<abbr>*</abbr></label>
+  <button type="button" id="address--countryRegion" aria-haspopup="listbox" aria-label="State Select One Required">Select One</button></div>
+<div data-automation-id="formField-postalCode"><label for="address--postalCode">Postal Code<abbr>*</abbr></label><input id="address--postalCode" type="text"></div>
+<h3>Phone</h3>
+<div data-automation-id="formField-phoneType"><label for="phoneNumber--phoneType">Phone Device Type<abbr>*</abbr></label>
+  <button type="button" id="phoneNumber--phoneType" aria-haspopup="listbox" aria-label="Phone Device Type Select One Required">Select One</button></div>
+<div data-automation-id="formField-countryPhoneCode"><label for="phoneNumber--countryPhoneCode">Country Phone Code<abbr>*</abbr></label>
+  <div data-automation-id="multiSelectContainer"><div data-automation-id="multiselectInputContainer">
+    <ul role="listbox" aria-label="items selected" data-automation-id="selectedItemList">
+      <li role="presentation"><div role="option" aria-selected="true" data-automation-id="selectedItem" title="United States of America (+1)"><p data-automation-id="promptOption">United States of America (+1)</p></div></li>
+    </ul>
+    <input id="phoneNumber--countryPhoneCode" data-uxi-widget-type="selectinput" type="text" placeholder="Search" role="combobox" aria-expanded="false" autocomplete="off">
+    <span data-automation-id="promptIcon" role="button" aria-label="select list">≡</span>
+  </div></div></div>
+<div data-automation-id="formField-phoneNumber"><label for="phoneNumber--phoneNumber">Phone Number<abbr>*</abbr></label><input id="phoneNumber--phoneNumber" type="text"></div>
+</div>
+<script>
+  window.__log = [];
+  const LISTS = {
+    'country--country': ['Canada', 'United States of America'],
+    'address--countryRegion': ['Texas', 'Virginia', 'Massachusetts'],
+    'phoneNumber--phoneType': ['Home', 'Mobile', 'Work'],
+  };
+  const close = () => document.querySelector('#popup')?.remove();
+  for (const id of Object.keys(LISTS)) {
+    const btn = document.getElementById(id);
+    btn.addEventListener('click', () => {
+      __log.push('pressed ' + id);
+      close();
+      const ul = document.createElement('ul');
+      ul.id = 'popup';
+      ul.setAttribute('role', 'listbox');
+      for (const text of LISTS[id]) {
+        const li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        li.textContent = text;
+        li.addEventListener('click', () => { btn.textContent = text; close(); });
+        ul.append(li);
+      }
+      document.body.append(ul);
+    });
+  }
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+  const code = document.getElementById('phoneNumber--countryPhoneCode');
+  code.addEventListener('input', () => __log.push('typed into the country phone code: ' + code.value));
+  code.addEventListener('focus', () => __log.push('focused the country phone code'));
+</script>
+</body></html>`;
+
+const PAGES = { '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -3990,6 +4060,48 @@ async function main() {
       edited.read?.put === true && holds(edited.read),
       JSON.stringify(edited.read),
     );
+
+    /* ---------------- Workday's My Information step ---------------- */
+    const myInfo = await page.goto(`${base}/workday-info`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { address_country: 'United States', address_state: 'VA', address_city: 'McLean', phone: '(703) 555-0100' };
+        const began = performance.now();
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        return {
+          ms: Math.round(performance.now() - began),
+          state: document.getElementById('address--countryRegion').textContent,
+          country: document.getElementById('country--country').textContent,
+          byHand: report.skipped.filter((x) => /by hand/.test(x.reason)).map((x) => x.key),
+          filled: report.filled.map((x) => x.key),
+          pills: [...document.querySelectorAll('[data-automation-id="selectedItem"]')].map((p) => p.title),
+          phone: document.getElementById('phoneNumber--phoneNumber').value,
+          log: window.__log,
+          open: Boolean(document.querySelector('#popup')),
+        };
+      }, { b: base }),
+    );
+    group('Workday: My Information');
+    check('the state is chosen, though Workday names its box countryRegion', myInfo.state === 'Virginia', myInfo.state);
+    check(
+      'and counted as chosen: "Virginia" is what "VA" looks like once it has taken',
+      myInfo.filled.includes('address_state') && !myInfo.byHand.includes('address_state'),
+      JSON.stringify({ filled: myInfo.filled, byHand: myInfo.byHand }),
+    );
+    check(
+      'a country already chosen is not pressed again',
+      !myInfo.log.includes('pressed country--country') && myInfo.country === 'United States of America',
+      JSON.stringify(myInfo.log),
+    );
+    check('nor reported as one to pick by hand', !myInfo.byHand.includes('address_country'), JSON.stringify(myInfo.byHand));
+    check(
+      'the country phone code is left as the form set it',
+      JSON.stringify(myInfo.pills) === '["United States of America (+1)"]' &&
+        !myInfo.log.some((l) => /country phone code/.test(l)),
+      JSON.stringify({ pills: myInfo.pills, log: myInfo.log }),
+    );
+    check('the number goes in its own box', myInfo.phone === '(703) 555-0100', myInfo.phone);
+    check('and nothing is left open, in well under the time a person would wait', !myInfo.open && myInfo.ms < 5000, `${myInfo.ms}ms`);
   } finally {
     await browser.close();
     server.close();
