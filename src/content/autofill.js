@@ -2030,6 +2030,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
   fields = withCityAndState(fields);
   const filled = [];
   const skipped = [];
+  // A new pass: what an earlier one pressed has been drawn, or was refused.
+  pressedNow = new WeakSet();
 
   const inputs = deepQueryAll('input, textarea, select');
   for (const input of inputs) {
@@ -2526,9 +2528,140 @@ function ariaChoiceGroups() {
     const description = clean([question, group.getAttribute('aria-label'), id].filter(Boolean).join(' '));
     if (!description) continue;
 
-    found.push({ group, options, question, description });
+    found.push({ group, options, question, description, chosen: isMarkedChosen, toggles: false });
+  }
+  return [...found, ...pressedButtonGroups()];
+}
+
+/*
+ * A question answered by pressing one of a few buttons, as Ashby asks every
+ * yes/no.
+ *
+ * Measured on live Ashby application forms (jobs.ashbyhq.com — Replit,
+ * OpenAI, Notion, Ramp and Ashby's own board, September 2026): each yes/no
+ * question is a `[data-field-path]` entry holding a `<label>` with the
+ * question — its `for` names no element — and then
+ *
+ *   <div class="… ashby-application-form-input-yesno">
+ *     <button aria-pressed="false" data-option="yes">Yes</button>
+ *     <button aria-pressed="false" data-option="no">No</button>
+ *     <input type="checkbox" tabindex="-1" name="<the field path>">
+ *   </div>
+ *
+ * No role anywhere — not on the buttons, not on the container — so
+ * `ariaChoiceGroups` above, which reads `role="radio"` and `role="option"`,
+ * saw nothing; nor is there a radio or a select for the other passes. Replit's
+ * form asks five of these, two of them "Are you legally authorized to work in
+ * the United States?" and "Will you now, or in the future, require
+ * sponsorship…", and against a profile saying "Authorized to work in the US"
+ * and "No" both were left unpressed and neither was mentioned in the report:
+ * `skipped: []`, the card saying the form was done. `choiceQuestions` did not
+ * list them either, so an answer given to one could never be remembered or
+ * offered back.
+ *
+ * What the page does, measured there with the same probe:
+ *
+ *   - `aria-pressed` is the answer. A click presses that button and lets go
+ *     of the other; clicking the pressed one again lets go of it, leaving
+ *     the question unanswered. So a button already pressed is never pressed
+ *     again here.
+ *   - It is written by React a microtask after the click, not during it.
+ *     Read back synchronously it still says "false", so this cannot be seen
+ *     to take inside `fillForm` — see `seePresses`, which reads it once the
+ *     page has had its turn.
+ *   - The checkbox is `display: none` and is `checked` for Yes and unchecked
+ *     for No — it cannot say No, so it is not a read-back — and clicking it
+ *     presses Yes. It belongs to the buttons and is never touched: `isFillable`
+ *     turns away every checkbox and every control with no box, and nothing
+ *     below goes near it.
+ *   - Neither button has a `type`, so each is a submit button — but there is
+ *     no `<form>`, so pressing one sends nothing. One that would send its
+ *     form (`wouldSubmit`) is not a choice and is never pressed.
+ *
+ * So a group is: between two and eight visible buttons, every one carrying
+ * `aria-pressed`, that are the only buttons in their container, with nothing
+ * else in there a person could type in or tick. That last is what keeps out
+ * a row of toggles beside a text box, and the toolbar roles keep out an
+ * editor's Bold and Italic, which are `aria-pressed` buttons too.
+ */
+const TOGGLE_BARS = '[role="toolbar"], [role="menubar"], [role="tablist"], [contenteditable=""], [contenteditable="true"]';
+const isPressed = (el) => el.getAttribute('aria-pressed') === 'true';
+
+function pressedButtonGroups() {
+  const visible = (el) => el.getClientRects().length > 0;
+  const found = [];
+  const seen = new Set();
+  for (const button of deepQueryAll('button[aria-pressed]')) {
+    const group = button.parentElement;
+    if (!group || seen.has(group)) continue;
+    seen.add(group);
+    if (isDisabled(group) || !visible(group) || group.closest(TOGGLE_BARS)) continue;
+    const buttons = [...group.querySelectorAll('button, [role="button"]')].filter(visible);
+    const options = buttons.filter(
+      (el) => el.localName === 'button' && el.parentElement === group && el.hasAttribute('aria-pressed') && !el.hasAttribute('role'),
+    );
+    if (options.length < 2 || options.length > 8 || options.length !== buttons.length) continue;
+    if (options.some((el) => isDisabled(el) || wouldSubmit(el) || clean(el.getAttribute('aria-label') || el.textContent).length > 80)) continue;
+    // The hidden checkbox Ashby keeps beside them has no box; anything that has one is another field.
+    if ([...group.querySelectorAll(ANOTHER_FIELD)].some(visible)) continue;
+
+    const question = choiceQuestionFor(group);
+    const description = clean([question, group.getAttribute('aria-label'), group.getAttribute('id')].filter(Boolean).join(' '));
+    if (!description) continue;
+    found.push({ group, options, question, description, chosen: isPressed, toggles: true });
   }
   return found;
+}
+
+/*
+ * Pressed, and not yet seen to have taken — see `pressedButtonGroups`.
+ *
+ * Each is a row in `skipped` saying to pick it by hand, which is what it is
+ * until the page says otherwise, and what `fillForm` reports if nothing ever
+ * reads it back. `seePresses` does, at the top of `fillComboboxes`, and moves
+ * the ones the page took into `filled`. Keyed by the row itself, so nothing
+ * that is not a plain value goes into the report — a frame's report crosses
+ * a message boundary.
+ */
+const UNSEEN = new WeakMap();
+// The groups pressed on this pass, which read as unanswered until the page
+// renders, and must not be pressed a second time by the memory pass: a
+// second press of the same button lets go of it.
+let pressedNow = new WeakSet();
+
+/** Whether this button, and no other in its group, is the one pressed. */
+const pressedAlone = (wanted, options) => isPressed(wanted) && options.every((el) => el === wanted || !isPressed(el));
+
+/**
+ * Press one button of a group and say what can be said now: `true` if the
+ * page already shows it pressed, alone; `false` if it cannot be pressed;
+ * otherwise the `{ wanted, options }` to read back once the page has run.
+ */
+function pressChoice(group, options, wanted) {
+  if (pressedAlone(wanted, options)) return true;
+  if (isPressed(wanted)) return false;
+  pressedNow.add(group);
+  wanted.click();
+  return pressedAlone(wanted, options) || { wanted, options };
+}
+
+/** Wait for what was pressed to show pressed, and count only what does. */
+async function seePresses(report, patience = 1000) {
+  const waiting = report.skipped.filter((s) => UNSEEN.has(s));
+  if (waiting.length === 0) return report;
+  const took = (s) => {
+    const { wanted, options } = UNSEEN.get(s);
+    return wanted.isConnected && pressedAlone(wanted, options);
+  };
+  await waitFor(() => waiting.every(took) || null, patience);
+  const seen = waiting.filter(took);
+  const answered = new Set(seen.map((s) => s.description));
+  return {
+    ...report,
+    filled: [...report.filled, ...seen.map((s) => UNSEEN.get(s).row)],
+    // And whatever else said this control was still waiting. See the same in `fillForm`.
+    skipped: report.skipped.filter((s) => !answered.has(s.description)),
+  };
 }
 
 function answerChoiceButtons(fields, overwrite, already) {
@@ -2536,7 +2669,7 @@ function answerChoiceButtons(fields, overwrite, already) {
   const skipped = [];
   const taken = new Set(already.map((f) => f.key));
 
-  for (const { group, options, question, description } of ariaChoiceGroups()) {
+  for (const { group, options, question, description, chosen, toggles } of ariaChoiceGroups()) {
     // The same three gates, in the same order, as `fillForm` and
     // `answerRadioGroups`. See `handBack`.
     if (handBack(description, skipped)) continue;
@@ -2550,7 +2683,6 @@ function answerChoiceButtons(fields, overwrite, already) {
 
     const [key] = match;
     const value = fields[key];
-    const chosen = (el) => el.getAttribute('aria-checked') === 'true' || el.getAttribute('aria-selected') === 'true';
 
     if (options.some(chosen) && !overwrite) {
       skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
@@ -2587,7 +2719,23 @@ function answerChoiceButtons(fields, overwrite, already) {
      * So: click, which is what a person does and what every framework is
      * listening for, and then believe the page. If it did not mark the option
      * chosen, it is reported as needing a hand rather than claimed.
+     *
+     * A group of pressed buttons is the same, except that its page answers
+     * a microtask late and a second press undoes the first — see
+     * `pressedButtonGroups`. So it is pressed once, and the reading back is
+     * `seePresses`'s, from a row that says "by hand" until then.
      */
+    if (toggles) {
+      const got = pressChoice(group, options, wanted);
+      taken.add(key);
+      if (got === true) filled.push({ key, value });
+      else {
+        const row = { key, reason: 'the page did not take it — pick this one by hand', description: description.slice(0, 60) };
+        if (got) UNSEEN.set(row, { ...got, row: { key, value } });
+        skipped.push(row);
+      }
+      continue;
+    }
     wanted.click();
     if (chosen(wanted)) {
       filled.push({ key, value });
@@ -2970,13 +3118,14 @@ function rememberableChoices() {
     );
   }
 
-  for (const { group, options, question, description } of ariaChoiceGroups()) {
+  for (const { group, options, question, description, chosen, toggles } of ariaChoiceGroups()) {
     add(
       question,
       description,
       group,
-      () => options.some(isMarkedChosen),
-      (answer) => chooseInAria(options, answer),
+      // Pressed on this pass and not drawn yet is answered. See `pressedNow`.
+      () => options.some(chosen) || (toggles && pressedNow.has(group)),
+      (answer) => (toggles ? pressInGroup(group, options, answer) : chooseInAria(options, answer)),
     );
   }
 
@@ -3047,8 +3196,13 @@ function answerFromMemory(remembered) {
 
     const took = choice.choose(answer);
     const row = { key: 'remembered', value: answer, description: choice.description.slice(0, 60) };
-    if (took) filled.push({ ...row, question: choice.question, remembered: true });
-    else skipped.push({ ...row, reason: 'the answer you gave before is not one of the options here' });
+    if (took === true) filled.push({ ...row, question: choice.question, remembered: true });
+    else if (took) {
+      // Pressed, and read back by `seePresses` once the page has drawn it.
+      const waiting = { ...row, reason: 'the page did not take it — pick this one by hand' };
+      UNSEEN.set(waiting, { ...took, row: { ...row, question: choice.question, remembered: true } });
+      skipped.push(waiting);
+    } else skipped.push({ ...row, reason: 'the answer you gave before is not one of the options here' });
   }
   return { filled, skipped };
 }
@@ -3098,6 +3252,16 @@ function chooseInAria(options, answer) {
   // and forging it puts a tick over a form that will submit blank. See
   // `answerChoiceButtons`.
   return isMarkedChosen(wanted);
+}
+
+/**
+ * Press the button of a group that says the answer, and nothing near it —
+ * the same plain match as the rest of the memory pass. What comes back is
+ * `pressChoice`'s: seen now, not possible, or to be read back later.
+ */
+function pressInGroup(group, options, answer) {
+  const wanted = options.find((el) => sameOption(clean(el.getAttribute('aria-label') || el.textContent), answer));
+  return wanted ? pressChoice(group, options, wanted) : false;
 }
 
 /**
@@ -3633,6 +3797,8 @@ async function pickListedPlaces(fields) {
 }
 
 export async function fillComboboxes(fields, report, { patience = 4000 } = {}) {
+  // What `fillForm` pressed, now that the page has had its turn to draw it.
+  report = await seePresses(report);
   // The same fields `fillForm` read, or a widget it named `city_state` has
   // no value here.
   fields = withCityAndState(fields);
@@ -4168,6 +4334,25 @@ export function watchChoices(tell) {
         answer: optionLabelFor(control),
       };
     }
+    /*
+     * A pressed button — Ashby's Yes and No, see `pressedButtonGroups` — is
+     * read the same way, from the same walk the reuse side makes, and
+     * *after* the page's own handler: this listener is on `document` in the
+     * capture phase, so it runs before the page's, and the page writes
+     * `aria-pressed` a microtask after that. Pressing the pressed one lets
+     * go of it, and that is not an answer to keep; so the button is asked
+     * again once the page has run, and only a pressed one is written down.
+     */
+    const button = control?.closest?.('button[aria-pressed]');
+    if (button) {
+      const group = pressedButtonGroups().find((g) => g.options.includes(button));
+      if (!group) return null;
+      return {
+        question: clean(group.question),
+        answer: clean(button.getAttribute('aria-label') || button.textContent),
+        once: () => isPressed(button),
+      };
+    }
     const option = control?.closest?.('[role="radio"], [role="option"]');
     if (option) {
       const group = option.closest('[role="radiogroup"], [role="listbox"], [role="group"]');
@@ -4191,14 +4376,22 @@ export function watchChoices(tell) {
       return;
     }
     if (!said?.question || !said?.answer) return;
+    const { once, ...answer } = said;
     /*
      * The refusal is here rather than at the far end, so nothing personal
      * leaves the page at all — not to the worker, not to the store, not into
      * a log on the way. See `worthRemembering`.
      */
-    const verdict = worthRemembering(said);
-    tell(verdict.keep ? { ...said, keep: true } : { ...said, keep: false, why: verdict.why });
+    const write = () => {
+      const verdict = worthRemembering(answer);
+      tell(verdict.keep ? { ...answer, keep: true } : { ...answer, keep: false, why: verdict.why });
+    };
+    if (!once) return write();
+    setTimeout(() => {
+      if (watching && once()) write();
+    }, 0);
   };
+  let watching = true;
 
   /*
    * `change` for the native controls, which is what a browser fires when a
@@ -4209,6 +4402,7 @@ export function watchChoices(tell) {
   document.addEventListener('change', look, true);
   document.addEventListener('click', look, true);
   return () => {
+    watching = false;
     document.removeEventListener('change', look, true);
     document.removeEventListener('click', look, true);
   };

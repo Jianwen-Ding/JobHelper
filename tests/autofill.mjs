@@ -625,6 +625,78 @@ const REMEMBERED = `<!doctype html><html><head><meta charset="utf-8"><title>Appl
 </script></body></html>`;
 
 /*
+ * Ashby's yes/no questions, as its application forms draw them — measured on
+ * live boards at jobs.ashbyhq.com (Replit, OpenAI, Notion, Ramp, Ashby's
+ * own). Each question is a `[data-field-path]` entry: a `<label>` whose `for`
+ * names no element, then a container holding a `Yes` and a `No` `<button>`
+ * with `aria-pressed` and `data-option`, no `type` and no role, and a
+ * `display: none` checkbox with `tabindex="-1"` named after the field.
+ *
+ * What the page does, as measured there: a click presses that button and lets
+ * go of the other, drawn a microtask after the click rather than during it;
+ * pressing the pressed one lets go of it; the checkbox is checked for Yes
+ * and unchecked for No; and clicking the checkbox presses Yes. There is no
+ * `<form>`, and Submit is a button of its own.
+ *
+ * Not measured on Ashby, and here to be left alone: a short list of choices
+ * drawn the same way (Remote, Hybrid, On-site), and an editor's toolbar of
+ * `aria-pressed` Bold and Italic above a text box. `?ignores` is a page that
+ * takes no notice of a press; `?answered` arrives with sponsorship already
+ * answered No; `?ticked` with the work-authorisation checkbox ticked and
+ * neither of its buttons pressed.
+ */
+const ashbyEntry = (path, question, options = ['Yes', 'No']) => `
+  <div class="_fieldEntry ashby-application-form-field-entry" data-field-path="${path}">
+    <label class="_heading _required" for="${path}">${question}</label>
+    <div class="_container ${options.length === 2 ? '_yesno ashby-application-form-input-yesno' : '_choices'}">${options
+      .map((o) => `<button class="_option" aria-pressed="false" data-option="${o.toLowerCase()}">${o}</button>`)
+      .join('')}${options.length === 2 ? `<input type="checkbox" class="_input" tabindex="-1" name="${path}">` : ''}</div>
+  </div>`;
+const ASHBY_YES_NO = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Ashby</title>
+<style>._input { display: none; }</style></head><body>
+<div class="ashby-application-form-container">
+  <div class="ashby-application-form-section-container">
+    <div class="_fieldEntry ashby-application-form-field-entry" data-field-path="_systemfield_name">
+      <label for="_systemfield_name">Name</label><input id="_systemfield_name" name="_systemfield_name" type="text"></div>
+    ${ashbyEntry('office', 'Are you able to work from our NYC office 3 days per week?')}
+    ${ashbyEntry('relocate', 'If not currently in the NYC area are you willing to relocate near our NYC Office?')}
+    ${ashbyEntry('age', 'Are you at least 18 years of age?')}
+    ${ashbyEntry('auth', 'Are you legally authorized to work in the United States?')}
+    ${ashbyEntry('spon', 'Will you now, or in the future, require sponsorship for employment visa status (e.g. H-1B visa status)?')}
+    ${ashbyEntry('arrangement', 'Which working arrangement do you prefer?', ['Remote', 'Hybrid', 'On-site'])}
+    <div class="_fieldEntry ashby-application-form-field-entry" data-field-path="more">
+      <label for="more">Anything else you would like us to know?</label>
+      <div class="editor"><div role="toolbar"><button aria-pressed="false" id="bold">Bold</button><button aria-pressed="false" id="italic">Italic</button></div>
+        <textarea id="more" name="more"></textarea></div></div>
+  </div>
+  <button class="ashby-application-form-submit-button" id="submit">Submit Application</button>
+</div>
+<script>
+  window.__touched = [];
+  window.__submitted = 0;
+  document.getElementById('submit').addEventListener('click', () => __submitted++);
+  const query = new URLSearchParams(location.search);
+  for (const group of document.querySelectorAll('._container')) {
+    const buttons = [...group.querySelectorAll('button')];
+    const box = group.querySelector('input[type=checkbox]');
+    // Drawn a microtask after the click, as React draws it; the pressed one again lets go.
+    const press = (hit) => queueMicrotask(() => {
+      const on = hit.getAttribute('aria-pressed') !== 'true';
+      for (const b of buttons) b.setAttribute('aria-pressed', String(on && b === hit));
+      if (box) box.checked = on && hit.dataset.option === 'yes';
+    });
+    for (const b of buttons) b.addEventListener('click', () => { if (!query.has('ignores')) press(b); });
+    if (box) {
+      for (const t of ['click', 'change', 'input']) box.addEventListener(t, () => __touched.push(box.name + ' ' + t));
+      box.addEventListener('click', () => press(buttons[0]));
+    }
+  }
+  for (const b of document.querySelectorAll('[role=toolbar] button')) b.addEventListener('click', () => b.setAttribute('aria-pressed', String(b.getAttribute('aria-pressed') !== 'true')));
+  if (query.has('answered')) document.querySelector('[data-field-path="spon"] [data-option="no"]').setAttribute('aria-pressed', 'true');
+  if (query.has('ticked')) document.querySelector('input[name="auth"]').checked = true;
+</script></body></html>`;
+
+/*
  * When the degree ends, in every shape it is asked in.
  *
  * The store answers "December" and "2026" and "December 2026", and forms want
@@ -2148,7 +2220,7 @@ const JOBS = [
   },
 ];
 
-const PAGES = { '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
+const PAGES = { '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -4485,6 +4557,177 @@ async function main() {
       'with no bank the form is exactly as it was',
       noBank.arr === '' && noBank.prev === '' && noBank.reloc === '' && noBank.filled === 0,
       `arr "${noBank.arr}", prev "${noBank.prev}", reloc "${noBank.reloc}", ${noBank.filled} filled`,
+    );
+
+    /* ---------------- Ashby: yes and no as two pressed buttons ---------------- */
+    /*
+     * Measured on Replit's live Ashby form before this was fixed: against a
+     * profile saying "Authorized to work in the US" and "No", the work
+     * authorisation and sponsorship questions were left unpressed and the
+     * report said nothing about either — `skipped: []` — and `choiceQuestions`
+     * did not list one of its five yes/no questions, so no answer given there
+     * could ever be remembered. Filled the way content.js fills a document:
+     * the bank asked first, then `fillForm`, then `fillComboboxes`.
+     */
+    const ASHBY_PROFILE = {
+      full_name: 'Morgan Testwell', email: 'morgan.testwell@example.com',
+      work_authorization: 'Authorized to work in the US', requires_sponsorship: 'No', address_country: 'United States',
+    };
+    const ASHBY_BANK = [
+      { question: 'If not currently in the NYC area are you willing to relocate near our NYC Office?', answer: 'No' },
+      { question: 'Which working arrangement do you prefer?', answer: 'Hybrid' },
+      // Not one of the two buttons, so nothing is pressed for it.
+      { question: 'Are you able to work from our NYC office 3 days per week?', answer: 'Sometimes' },
+      // Personal: never asked about, never answered, whatever the bank holds.
+      { question: 'Are you at least 18 years of age?', answer: 'Yes' },
+      // Already pressed from the profile by the time the bank's turn comes, and a second press lets go.
+      { question: 'Are you legally authorized to work in the United States?', answer: 'Yes' },
+    ];
+    const ashby = (query = '', bank = ASHBY_BANK) =>
+      page.goto(`${base}/ashby-yes-no${query}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(
+          async ({ b, profile, bank }) => {
+            const m = await import(`${b}/autofill.js`);
+            const asked = m.choiceQuestions();
+            const first = m.fillForm(profile, { remembered: bank.filter((row) => asked.includes(row.question)) });
+            const before = {
+              filled: first.filled.map((f) => f.key),
+              byHand: first.skipped.filter((s) => /by hand/.test(s.reason)).map((s) => s.key),
+            };
+            const report = await m.fillComboboxes(profile, first);
+            const pressed = (path) =>
+              [...document.querySelectorAll(`[data-field-path="${path}"] button`)]
+                .filter((el) => el.getAttribute('aria-pressed') === 'true')
+                .map((el) => el.textContent)
+                .join(',');
+            return {
+              asked,
+              before,
+              auth: pressed('auth'),
+              spon: pressed('spon'),
+              age: pressed('age'),
+              office: pressed('office'),
+              relocate: pressed('relocate'),
+              arrangement: pressed('arrangement'),
+              toolbar: pressed('more'),
+              authTicked: document.querySelector('input[name="auth"]').checked,
+              touched: window.__touched,
+              submitted: window.__submitted,
+              filled: report.filled.map((f) => (f.remembered ? `remembered: ${f.question}` : f.key)),
+              skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+            };
+          },
+          { b: base, profile: ASHBY_PROFILE, bank },
+        ),
+      );
+    const onAshby = await ashby();
+    const ignored = await ashby('?ignores');
+    const answeredAlready = await ashby('?answered');
+    const tickedOnly = await ashby('?ticked', []);
+    group('Ashby: yes and no as two pressed buttons');
+    check(
+      'work authorisation asked as a Yes and a No button is answered by pressing Yes',
+      onAshby.auth === 'Yes' && onAshby.filled.includes('work_authorization'),
+      JSON.stringify({ auth: onAshby.auth, filled: onAshby.filled }),
+    );
+    check(
+      'and sponsorship by pressing No',
+      onAshby.spon === 'No' && onAshby.filled.includes('requires_sponsorship'),
+      JSON.stringify({ spon: onAshby.spon, filled: onAshby.filled }),
+    );
+    check(
+      'neither is counted as answered until the page shows the button pressed',
+      !onAshby.before.filled.includes('work_authorization') && onAshby.before.byHand.includes('work_authorization') &&
+        !onAshby.before.filled.includes('requires_sponsorship') && onAshby.before.byHand.includes('requires_sponsorship') &&
+        !onAshby.skipped.some((s) => /^(work_authorization|requires_sponsorship):/.test(s)),
+      JSON.stringify({ before: onAshby.before, after: onAshby.skipped }),
+    );
+    check(
+      'a page that takes no notice of the press is left for the person, and never claimed',
+      ignored.auth === '' && ignored.spon === '' && !ignored.filled.includes('work_authorization') && !ignored.filled.includes('requires_sponsorship') &&
+        ignored.skipped.includes('work_authorization: the page did not take it — pick this one by hand') &&
+        ignored.skipped.includes('requires_sponsorship: the page did not take it — pick this one by hand'),
+      JSON.stringify({ filled: ignored.filled, skipped: ignored.skipped }),
+    );
+    check(
+      'the hidden checkbox beside each pair is never touched',
+      onAshby.touched.length === 0 && ignored.touched.length === 0 && tickedOnly.touched.length === 0,
+      JSON.stringify([onAshby.touched, ignored.touched, tickedOnly.touched]),
+    );
+    check(
+      'a ticked hidden checkbox under two unpressed buttons is not taken for an answer',
+      tickedOnly.auth === 'Yes' && tickedOnly.filled.includes('work_authorization') && !tickedOnly.skipped.includes('work_authorization: already filled'),
+      JSON.stringify({ auth: tickedOnly.auth, filled: tickedOnly.filled, skipped: tickedOnly.skipped }),
+    );
+    check(
+      'an answer already pressed is not pressed again, which would let go of it',
+      answeredAlready.spon === 'No' && answeredAlready.skipped.includes('requires_sponsorship: already filled'),
+      JSON.stringify({ spon: answeredAlready.spon, skipped: answeredAlready.skipped }),
+    );
+    check(
+      'the questions asked as buttons are the ones the bank is asked about, and not a personal one',
+      ['office', 'relocate', 'auth', 'spon', 'arrangement'].length === onAshby.asked.length &&
+        onAshby.asked.includes('If not currently in the NYC area are you willing to relocate near our NYC Office?') &&
+        onAshby.asked.includes('Which working arrangement do you prefer?') &&
+        onAshby.asked.includes('Are you legally authorized to work in the United States?') &&
+        !onAshby.asked.some((q) => /18 years/.test(q)),
+      onAshby.asked.join(' | '),
+    );
+    check(
+      'the answer given last time is pressed, on a yes/no and on a short list of choices',
+      onAshby.relocate === 'No' && onAshby.arrangement === 'Hybrid' &&
+        onAshby.filled.includes('remembered: If not currently in the NYC area are you willing to relocate near our NYC Office?') &&
+        onAshby.filled.includes('remembered: Which working arrangement do you prefer?'),
+      JSON.stringify({ relocate: onAshby.relocate, arrangement: onAshby.arrangement, filled: onAshby.filled }),
+    );
+    check(
+      'a question the profile has just pressed is not pressed again from the bank',
+      onAshby.auth === 'Yes' && !onAshby.filled.includes('remembered: Are you legally authorized to work in the United States?'),
+      JSON.stringify({ auth: onAshby.auth, filled: onAshby.filled }),
+    );
+    check(
+      'an answer from last time that is neither button is left, and said so',
+      onAshby.office === '' && onAshby.skipped.includes('remembered: the answer you gave before is not one of the options here'),
+      JSON.stringify({ office: onAshby.office, skipped: onAshby.skipped }),
+    );
+    check('a personal question asked as buttons is not answered from the bank', onAshby.age === '', `"${onAshby.age}"`);
+    check(
+      "an editor's toolbar of pressed buttons is not a question, and Submit is never pressed",
+      onAshby.toolbar === '' && !onAshby.asked.some((q) => /anything else/i.test(q)) && onAshby.submitted === 0,
+      JSON.stringify({ toolbar: onAshby.toolbar, submitted: onAshby.submitted }),
+    );
+
+    /*
+     * And the other half: a button the person presses is written down under
+     * the same question the next form looks it up by, once the page has
+     * shown it pressed — not when it lets go of one.
+     */
+    const ashbyWatched = await page.goto(`${base}/ashby-yes-no?answered`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const asked = m.choiceQuestions();
+        const said = [];
+        const stop = m.watchChoices((x) => said.push(x));
+        document.querySelector('[data-field-path="office"] [data-option="yes"]').click();
+        document.querySelector('[data-field-path="arrangement"] [data-option="remote"]').click();
+        // Sponsorship is already No; pressing No again lets go of it.
+        document.querySelector('[data-field-path="spon"] [data-option="no"]').click();
+        await new Promise((r) => setTimeout(r, 50));
+        stop();
+        return { asked, said: said.map((x) => ({ question: x.question, answer: x.answer, keep: x.keep })) };
+      }, { b: base }),
+    );
+    const office = ashbyWatched.said.find((x) => /NYC office/.test(x.question));
+    check(
+      'a button the person presses is kept for next time, under the question the next form looks up',
+      office?.answer === 'Yes' && office.keep === true && ashbyWatched.asked.includes(office.question) &&
+        ashbyWatched.said.some((x) => x.question === 'Which working arrangement do you prefer?' && x.answer === 'Remote'),
+      JSON.stringify(ashbyWatched.said),
+    );
+    check(
+      'letting go of a pressed answer is not written down as one',
+      !ashbyWatched.said.some((x) => /sponsorship/.test(x.question)),
+      JSON.stringify(ashbyWatched.said),
     );
 
     /*
