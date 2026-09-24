@@ -26,7 +26,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import { findChromium, pointExtensionAt, requireOpenSave, serveFixtures } from './fixtures.mjs';
+import { cleanStore, findChromium, pointExtensionAt, requireOpenSave, serveFixtures } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
@@ -435,6 +435,18 @@ async function walkTwoForms(context, fixtures) {
       !bankLater.some((a) => a.question === 'What is your expected salary?'),
     bankLater.filter((a) => /salary/i.test(a.question)).map((a) => `${a.question} = ${answerOf(a)}`).join(' | '),
   );
+  /*
+   * And what Autofill picked is not taken for a pick. The second form asks
+   * the arrangement without "for this position", Autofill answers it from the
+   * first form's row, and its own `change` used to file that answer again
+   * under this form's wording — a second row for one answer, labelled as
+   * chosen by somebody who never touched it.
+   */
+  check(
+    'a choice Autofill made is not saved again as one the person made',
+    !bankLater.some((a) => a.question === 'Which working arrangement do you prefer?'),
+    bankLater.filter((a) => /working arrangement/i.test(a.question)).map((a) => `${a.question} = ${answerOf(a)}`).join(' | '),
+  );
   check(
     'and the one the person said not to keep is not kept',
     !bankLater.some((a) => /time zone/i.test(a.question) || a.variants.some((v) => v.text === 'US Eastern')),
@@ -477,8 +489,17 @@ async function walkTwoForms(context, fixtures) {
   await again.close();
 }
 
+/*
+ * The employers these walks apply to, taken out of the tracker before and
+ * after. The two forms are sent, so each leaves an application marked as
+ * sent — and another suite looking for its own "Helios" in the same save
+ * found this one instead.
+ */
+const COMPANIES = ['Vantage Systems', 'Helios Systems', 'Orbital Labs'];
+
 async function main() {
   await requireOpenSave(SERVER);
+  await cleanStore(SERVER, COMPANIES).catch(() => undefined);
   const fixtures = await serveFixtures([
     POSTING,
     FIRST_FORM,
@@ -598,6 +619,7 @@ async function main() {
   } finally {
     await context.close();
     await putBank(before).catch(() => undefined);
+    await cleanStore(SERVER, COMPANIES).catch(() => undefined);
     fixtures.close();
     fs.rmSync(userDataDir, { recursive: true, force: true });
   }
