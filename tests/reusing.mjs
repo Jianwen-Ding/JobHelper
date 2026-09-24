@@ -236,6 +236,40 @@ const SECOND_FORM = typedPosting({
   ].join('\n'),
 });
 
+/*
+ * And a third employer, asking the same things in the wordings the store's
+ * matcher did not call the same question until it learned to: an inflection
+ * turned round ("Salary expectations"), another word for a link ("Portfolio
+ * URL"), a question put round a label ("Who is your current employer?"), and
+ * an age put the other way ("Are you at least 18?"). Measured before it did,
+ * each of these came back empty and was typed again.
+ *
+ * Beside them the questions they must not be taken for: the latest start
+ * date, the last name, what somebody is paid now — put "please" and as a
+ * question — and another age.
+ */
+const THIRD_FORM = typedPosting({
+  name: 'typed-third',
+  path: '/cobalt-typed/jobs/808',
+  company: 'Cobalt Freight',
+  title: 'Backend Engineer',
+  after: '/cobalt-typed/thanks',
+  questions: [
+    box('heard', 'How did you hear about this job?'),
+    box('start', 'What is your earliest start date?'),
+    box('salary', 'Salary expectations'),
+    box('employer', 'Who is your current employer?'),
+    box('portfolio', 'Portfolio URL', 'url'),
+    box('adult', 'Are you at least 18?'),
+    // Near the questions above, and different questions.
+    box('latest', 'Latest start date'),
+    box('lname', 'Preferred last name'),
+    box('now-paid', 'Please enter your current salary'),
+    box('prev-employer', 'Who is your previous employer?'),
+    box('drink', 'Are you at least 21?'),
+  ].join('\n'),
+});
+
 const THANKS = (path) => ({
   name: `${path}-thanks`,
   path,
@@ -268,6 +302,25 @@ const putBank = (answers) =>
     body: JSON.stringify(answers),
   });
 
+/*
+ * Empty the bank, and keep it empty until nothing more lands in it.
+ *
+ * A choice made on the page before is saved by the worker in its own time,
+ * and one that arrived just after a bare `putBank([])` put its row back into
+ * the bank the walk thought was empty. Measured: "How did you hear about this
+ * position?" = LinkedIn, from the posting above, was then confidently the
+ * first form's "How did you hear about us?", filled in, and overwritten by
+ * what was typed — so the row kept the posting's wording and three checks
+ * failed on some runs and not others.
+ */
+async function emptyBank() {
+  for (let i = 0; i < 10; i++) {
+    await putBank([]);
+    await new Promise((r) => setTimeout(r, 1500));
+    if ((await bankOf()).length === 0) return;
+  }
+}
+
 /** Ask until `get` answers something, or give up and answer null. */
 async function until(get, ms = 15_000) {
   const end = Date.now() + ms;
@@ -291,7 +344,7 @@ const answerOf = (item) => (item?.variants.find((v) => v.id === item.default) ??
  * employer's form, and Autofill again.
  */
 async function walkTwoForms(context, fixtures) {
-  await putBank([]);
+  await emptyBank();
 
   const first = await context.newPage();
   await first.goto(fixtures.urlFor(FIRST_FORM), { waitUntil: 'domcontentloaded' });
@@ -461,18 +514,41 @@ async function walkTwoForms(context, fixtures) {
   const gone = await until(async () => ((await bankOf()).some((a) => a.question === 'How did you hear about us?') ? null : true), 8_000);
   await editor.close();
 
+  /*
+   * The third employer's form, worded the ways the matcher once missed.
+   */
   const again = await context.newPage();
-  await again.goto(fixtures.urlFor(SECOND_FORM), { waitUntil: 'domcontentloaded' });
+  await again.goto(fixtures.urlFor(THIRD_FORM), { waitUntil: 'domcontentloaded' });
   await settled(again);
   await cardOf(again).getByRole('button', { name: 'Autofill this form' }).click();
   await again
     .waitForFunction(() => document.getElementById('start')?.value !== '', null, { timeout: 20_000 })
     .catch(() => undefined);
-  const later = await valuesOf(again, ['heard', 'start']);
+  const later = await valuesOf(again, ['heard', 'start', 'salary', 'employer', 'portfolio', 'adult', 'latest', 'lname', 'now-paid', 'prev-employer', 'drink']);
   check(
     'and one deleted in the editor is not offered again',
     gone === true && later.heard === '' && later.start === KEPT.start,
     `deleted: ${gone === true}, heard "${later.heard}", start "${later.start}"`,
+  );
+  const reworded = {
+    salary: '$160,000 base',
+    employer: KEPT.employer,
+    portfolio: KEPT.portfolio,
+    adult: KEPT.adult,
+  };
+  const missed = Object.entries(reworded)
+    .filter(([id, v]) => later[id] !== v)
+    .map(([id, v]) => `${id}: "${later[id]}" not "${v}"`);
+  check(
+    'a third form asking in other words — "Salary expectations", "Portfolio URL", "Who is your current employer?", "Are you at least 18?" — gets them back',
+    missed.length === 0,
+    missed.join(' | ') || Object.keys(reworded).join(', '),
+  );
+  const strayed = ['latest', 'lname', 'now-paid', 'prev-employer', 'drink'].filter((id) => later[id] !== '');
+  check(
+    'while the latest start date, the last name, the current salary, the previous employer and another age are left for the person',
+    strayed.length === 0,
+    strayed.map((id) => `${id}: "${later[id]}"`).join(' | ') || 'all empty',
   );
   await again.close();
 }
@@ -483,8 +559,10 @@ async function main() {
     POSTING,
     FIRST_FORM,
     SECOND_FORM,
+    THIRD_FORM,
     THANKS('/helios-typed/thanks'),
     THANKS('/orbital-typed/thanks'),
+    THANKS('/cobalt-typed/thanks'),
   ]);
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-reusing-'));
 
