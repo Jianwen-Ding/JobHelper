@@ -754,6 +754,8 @@ export function createCard({
       : withAllOff(analysis?.spec ?? null, analysis?.rationale, analysis?.skillChanges),
     /** The pages this application is being written from. See drawTrail. */
     trail: null,
+    /** Whether that list is open — kept, because a redraw rebuilds it. */
+    trailOpen: false,
     render: null,
     busy: null,
     error: null,
@@ -2512,7 +2514,17 @@ export function createCard({
       Object.keys(state.carriedOver ?? {}).length ? 'your answers' : null,
     ].filter(Boolean);
 
-    return h('details', { className: 'trail' }, [
+    /*
+     * Open where it was left open.
+     *
+     * It was rebuilt closed on every redraw, and the card redraws on its own —
+     * a render finishing, a progress tick, a question arriving — so the list
+     * snapped shut under somebody reading it, taking the button they were
+     * reaching for with it. Measured in tests/controls.mjs: under load a
+     * redraw landed between opening the list and pressing "Not this one",
+     * and the press waited thirty seconds for a button inside a closed list.
+     */
+    const list = h('details', { className: 'trail', open: state.trailOpen }, [
       h('summary', { textContent: `Writing from ${pages.length} pages of this application` }),
       brought.length
         ? h('div', { className: 'trail-kept', textContent: `Carried over: ${brought.join(', ')}.` })
@@ -2525,6 +2537,10 @@ export function createCard({
         onclick: () => act('clearTrail', {}, (trail) => (state.trail = trail)),
       }),
     ]);
+    list.addEventListener('toggle', () => {
+      state.trailOpen = list.open;
+    });
+    return list;
   }
 
   function stepHead(n, title, done = false) {
@@ -6059,6 +6075,13 @@ export function createCard({
    * it in the meantime.
    */
   function draw() {
+    /*
+     * The list of pages as it stands on screen, whatever its events have said
+     * so far: `toggle` arrives a task after the click, and a repaint in that
+     * gap built the list closed under the hand that had just opened it.
+     */
+    const shownTrail = card.querySelector('details.trail');
+    if (shownTrail) state.trailOpen = shownTrail.open;
     const active = root.activeElement;
     const focused = active && active !== card ? active.dataset?.field : null;
     const caret = focused ? { start: active.selectionStart, end: active.selectionEnd } : null;

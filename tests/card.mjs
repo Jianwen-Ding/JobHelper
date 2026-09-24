@@ -4413,6 +4413,61 @@ async function main() {
     changed.letterAfter === 'Dear Acme, the letter rewritten as asked.' && changed.letterBack === 'Dear Acme, my own letter.',
     JSON.stringify({ after: changed.letterAfter, back: changed.letterBack }),
   );
+
+  console.log('\nThe list of pages stays open through a repaint');
+
+  /*
+   * It was rebuilt closed on every redraw, and the card redraws on its own —
+   * so the list snapped shut under somebody reading it. Measured in
+   * tests/controls.mjs under load: a redraw landed between opening it and
+   * pressing "Not this one", and the press waited out its thirty seconds for
+   * a button inside a closed list. The repaint here comes before the
+   * `toggle` event has even been delivered, which is that exact window.
+   */
+  const trailOpen = await inPage(async (createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action) => (action === 'aiStatus' ? { active: true, state: 'on' } : {}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const pages = [
+      { url: 'https://acme.test/jobs/1', kind: 'posting', title: 'Platform Engineer' },
+      { url: 'https://acme.test/apply', kind: 'application', title: 'Apply' },
+    ];
+    handle.setTrail({ pages });
+    await new Promise((r) => setTimeout(r, 60));
+    const list = () => root.querySelector('details.trail');
+    if (!list()) return { error: 'no list of pages' };
+    list().querySelector('summary').click();
+    // Repainted in the same task as the click, before `toggle` is delivered.
+    handle.setTrail({ pages });
+    const rightAway = list()?.open;
+    const reachable = [...(list()?.querySelectorAll('button') ?? [])].some((b) => /Not this one/.test(b.textContent) && b.getClientRects().length > 0);
+    await new Promise((r) => setTimeout(r, 60));
+    handle.setTrail({ pages });
+    const later = list()?.open;
+    list().querySelector('summary').click();
+    await new Promise((r) => setTimeout(r, 60));
+    handle.setTrail({ pages });
+    const shut = list()?.open;
+    return { rightAway, reachable, later, shut };
+  });
+  check('the list of pages is there to open', !trailOpen.error, trailOpen.error ?? '');
+  check(
+    'and stays open through a repaint, even one before the browser has said it opened',
+    trailOpen.rightAway === true && trailOpen.reachable === true && trailOpen.later === true,
+    JSON.stringify(trailOpen),
+  );
+  check('while one closed stays closed', trailOpen.shut === false, JSON.stringify(trailOpen));
   check(
     'and so does writing them all at once, only for the box that has one',
     limits.all?.[0]?.limit === 40 && limits.all?.[1]?.limit === undefined,
