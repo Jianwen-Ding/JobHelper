@@ -3387,7 +3387,6 @@ export function createCard({
         disabled: busyIn('compile') || Boolean(state.rebuilding),
         onclick: async () => {
           state.baseChanged = null;
-          state.baseSeen = base.id;
           await rebuildAs(mode);
           await compile();
         },
@@ -6535,9 +6534,19 @@ export function createCard({
       const editedThere =
         reply.stored && seen && reply.storedPrint !== seen && JSON.stringify(reply.stored) !== JSON.stringify(of);
 
-      if (reply.base?.changed && state.baseSeen !== reply.base.id) {
-        state.baseChanged = { id: reply.base.id, label: reply.base.label };
-      }
+      /*
+       * Every time the store says so, not once per base.
+       *
+       * Once "Build it again from there" had been pressed, the base it named
+       * was written down as seen and never reported again — so the next edit
+       * to that same resume, made after the copy had been rebuilt from it,
+       * was silence. Measured in tests/freshness.mjs: rebuild, change the
+       * base again, come back, and no notice. There is nothing to remember
+       * here: the store answers against the copy's own clock, and a rebuilt
+       * copy is stamped when it is made, so it is not "changed" until the
+       * base is changed again.
+       */
+      if (reply.base?.changed) state.baseChanged = { id: reply.base.id, label: reply.base.label };
 
       if (editedThere) {
         state.spec = reply.stored;

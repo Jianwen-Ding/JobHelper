@@ -191,6 +191,21 @@ async function main() {
           listBefore > 0 && listAfter === listBefore,
           `${listBefore} before, ${listAfter} after`,
         );
+
+        /*
+         * And the next change to that resume is news too. Building again
+         * brings the copy up to date with the base as it was then; it is not
+         * a promise never to hear about the base again.
+         */
+        await page.waitForTimeout(2500);
+        const baseNow = (await api('/resumes')).resumes?.find?.((r) => r.id === base.id) ??
+          (await api('/resumes')).find?.((r) => r.id === base.id);
+        await put(`/resumes/${encodeURIComponent(base.id)}`, baseNow ?? base);
+        await backInView();
+        check(
+          'and a later change to it is said again',
+          await says(/changed in ResumeM-M after this copy was made/, 15_000),
+        );
       }
     }
   } finally {
