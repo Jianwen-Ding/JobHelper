@@ -270,6 +270,125 @@ const THIRD_FORM = typedPosting({
   ].join('\n'),
 });
 
+/*
+ * And the same thing with the form in a frame, which is how iCIMS serves the
+ * whole of its application, and how a careers page embeds a board served
+ * from another domain. Only the top document watched, so nothing typed or
+ * chosen in either frame was kept.
+ *
+ * One frame shares the page's origin, and the other comes from `localhost`
+ * under a page on 127.0.0.1, a different origin to the browser. Each frame
+ * asks some questions to keep, and some to refuse: what somebody is paid
+ * now, a date of birth, and a question naming the employer. Only the page
+ * around the frame knows the employer's name. The first frame's form
+ * navigates to a thank-you page. The second sends by script and never
+ * leaves the page, so nothing but the send itself tells the frame to keep.
+ */
+const framedPosting = ({ name, path, company, frameSrc }) => ({
+  name,
+  path,
+  company,
+  title: 'Backend Engineer',
+  html: `<!doctype html>
+<html><head><meta charset="utf-8"><title>Backend Engineer at ${company}</title>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"JobPosting",
+ "title":"Backend Engineer",
+ "hiringOrganization":{"@type":"Organization","name":"${company}"},
+ "jobLocation":{"@type":"Place","address":{"@type":"PostalAddress","addressLocality":"Boston","addressRegion":"MA"}},
+ "description":"<p>Build and run our payments services in Go and Postgres, on Kubernetes and AWS.</p><ul><li>Experience with distributed systems</li></ul>"}
+</script></head>
+<body>
+  <h1>Backend Engineer</h1>
+  <p>${company} · Boston, MA</p>
+  <h2>About the role</h2>
+  <p>Build and run our payments services in Go and Postgres, on Kubernetes and
+     AWS, with the CI/CD that ships them.</p>
+  <h2>Minimum qualifications</h2>
+  <ul><li>Experience with distributed systems</li><li>Experience with SQL and AWS</li></ul>
+  <h2>Apply for this job</h2>
+  <iframe id="form" title="Application form" src="${frameSrc}" style="width:100%;height:900px;border:0"></iframe>
+</body></html>`,
+});
+
+const framedForm = ({ name, path, after, company, questions, byScript = false }) => ({
+  name,
+  path,
+  html: `<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+  <form method="post" action="${after}">
+    <label for="fn">First Name</label><input id="fn" name="first_name">
+    <label for="em">Email</label><input id="em" name="email" type="email">
+    <label for="li">LinkedIn Profile</label><input id="li" name="linkedin">
+${questions}
+    <label for="office">Which ${company} office would suit you best?</label><input id="office" name="office" type="text">
+    <label for="now-paid">Current salary</label><input id="now-paid" name="now_paid" type="text">
+    <label for="dob">Date of birth</label><input id="dob" name="dob" type="text">
+    <p>${company} is an equal opportunity employer.</p>
+    <button type="submit">Submit application</button>
+  </form>${
+    byScript
+      ? `
+  <script>
+    // Sent the way a board built as one page sends it: no navigation, and
+    // the frame's own pagehide never fires.
+    document.querySelector('form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      setTimeout(() => {
+        document.body.innerHTML = '<h1>Thank you for applying</h1><p>Your application has been received.</p>';
+      }, 300);
+    });
+  </script>`
+      : ''
+  }
+</body></html>`,
+});
+
+const SAME_ORIGIN_FORM = framedForm({
+  name: 'lumen-frame',
+  path: '/lumen-framed/form',
+  after: '/lumen-framed/thanks',
+  company: 'Lumen Freight',
+  questions: [
+    box('start', 'Earliest start date'),
+    box('portfolio', 'Portfolio link', 'url'),
+    `    <label for="arr">Which working arrangement do you prefer?</label>
+    <select id="arr" name="arrangement">
+      <option value="">Select...</option><option>Remote</option><option>Hybrid</option><option>On-site</option>
+    </select>`,
+  ].join('\n'),
+});
+const SAME_ORIGIN_PAGE = framedPosting({
+  name: 'lumen-page',
+  path: '/lumen-framed/jobs/31',
+  company: 'Lumen Freight',
+  frameSrc: '/lumen-framed/form',
+});
+
+const CROSS_ORIGIN_FORM = framedForm({
+  name: 'nimbus-frame',
+  path: '/nimbus-embed/form',
+  after: '/nimbus-embed/thanks',
+  company: 'Nimbus Air',
+  byScript: true,
+  questions: [
+    box('heard', 'How did you hear about us?'),
+    box('pname', 'Preferred first name'),
+    box('employer', 'Current employer'),
+    `    <label for="reloc">Are you willing to relocate?</label>
+    <select id="reloc" name="relocate">
+      <option value="">Select...</option><option>Yes</option><option>No</option>
+    </select>`,
+  ].join('\n'),
+});
+const CROSS_ORIGIN_PAGE = framedPosting({
+  name: 'nimbus-page',
+  path: '/nimbus/careers/12',
+  company: 'Nimbus Air',
+  frameSrc: '{{ATS}}/nimbus-embed/form',
+});
+
 const THANKS = (path) => ({
   name: `${path}-thanks`,
   path,
@@ -553,8 +672,87 @@ async function walkTwoForms(context, fixtures) {
   await again.close();
 }
 
+/*
+ * Typed and chosen inside a frame, then sent from inside it. The frame goes to
+ * its thank-you page and the page around it never moves, so only the frame
+ * is in a position to keep anything.
+ */
+async function walkFramedForms(context, fixtures) {
+  console.log('\nTyped and chosen in a frame');
+  const oneWalk = async ({ what, page: posting, typed, chosen, refused, notKept }) => {
+    await emptyBank();
+    const page = await context.newPage();
+    await page.goto(fixtures.urlFor(posting), { waitUntil: 'domcontentloaded' });
+    await settled(page);
+    const frame = page.frameLocator('#form');
+    await frame.locator('#fn').waitFor({ timeout: 15_000 });
+    // Autofill first, the way a form is filled, which is also what tells the
+    // frame which boxes are the profile's and which are the person's.
+    await cardOf(page).getByRole('button', { name: 'Autofill this form' }).click().catch(() => undefined);
+    await frame.locator('#em').evaluate(async (el) => {
+      for (let i = 0; i < 80 && !el.value; i++) await new Promise((r) => setTimeout(r, 250));
+    });
+    for (const [id, value] of Object.entries({ ...typed, ...refused })) await frame.locator(`#${id}`).fill(value);
+    for (const [id, value] of Object.entries(chosen)) await frame.locator(`#${id}`).selectOption(value);
+    // Leave the last box, which is when a browser says it changed.
+    await frame.locator('#fn').click();
+
+    if (notKept) {
+      const offer = cardOf(page).getByRole('button', { name: new RegExp(`Don.t keep “${notKept.question}”`) });
+      await offer.waitFor({ timeout: 10_000 }).catch(() => undefined);
+      const listed = ((await cardOf(page).locator('.to-keep').innerText().catch(() => '')) ?? '').replace(/\s+/g, ' ');
+      check(`${what}: the card lists what the frame will keep, with a way to not keep each one`, (await offer.count()) === 1, listed || '(nothing about keeping)');
+      await offer.click().catch(() => undefined);
+    }
+
+    await frame.locator('button[type=submit]').click();
+    const wanted = Object.keys(typed).length - (notKept ? 1 : 0) + Object.keys(chosen).length;
+    const bank =
+      (await until(async () => {
+        const now = await bankOf();
+        return now.length >= wanted ? now : null;
+      })) ?? (await bankOf());
+    const rows = bank.map((a) => `${a.question} = ${answerOf(a)}`);
+    const expected = { ...typed, ...chosen };
+    if (notKept) delete expected[notKept.id];
+    const missing = Object.values(expected).filter((v) => !bank.some((a) => answerOf(a) === v));
+    check(`${what}: what was typed and chosen in it is kept`, missing.length === 0, rows.join(' | ') || 'nothing kept');
+    // A moment for anything late, so a refusal is not passed by arriving first.
+    await new Promise((r) => setTimeout(r, 1500));
+    const later = await bankOf();
+    const leaked = later.filter((a) =>
+      a.variants.some((v) => [...Object.values(refused), notKept?.value].includes(v.text)),
+    );
+    check(
+      `${what}: while the current salary, the date of birth, the question naming the employer${notKept ? ' and the one the card was told not to keep' : ''} are not`,
+      leaked.length === 0,
+      leaked.map((a) => `${a.question} = ${answerOf(a)}`).join(' | ') || `${later.length} rows, none of them those`,
+    );
+    await page.close();
+  };
+
+  const refused = { office: 'The Boston one', 'now-paid': '$128,000', dob: '04/02/1999' };
+  await oneWalk({
+    what: 'a frame on the same origin',
+    page: SAME_ORIGIN_PAGE,
+    typed: { start: 'Three weeks after an offer', portfolio: 'https://example.dev/framed' },
+    chosen: { arr: 'Remote' },
+    refused,
+  });
+  await oneWalk({
+    what: 'a frame from another origin',
+    page: CROSS_ORIGIN_PAGE,
+    typed: { heard: 'A talk at a meetup', pname: 'Jay-framed', employer: 'Northwind Framed' },
+    chosen: { reloc: 'No' },
+    refused,
+    notKept: { id: 'pname', question: 'Preferred first name', value: 'Jay-framed' },
+  });
+}
+
 async function main() {
   await requireOpenSave(SERVER);
+  // Another origin, for the embedded board: `localhost` is not 127.0.0.1 to a browser.
+  const ats = await serveFixtures([CROSS_ORIGIN_FORM, THANKS('/nimbus-embed/thanks')], { hostname: 'localhost' });
   const fixtures = await serveFixtures([
     POSTING,
     FIRST_FORM,
@@ -563,7 +761,11 @@ async function main() {
     THANKS('/helios-typed/thanks'),
     THANKS('/orbital-typed/thanks'),
     THANKS('/cobalt-typed/thanks'),
-  ]);
+    SAME_ORIGIN_PAGE,
+    SAME_ORIGIN_FORM,
+    THANKS('/lumen-framed/thanks'),
+    CROSS_ORIGIN_PAGE,
+  ], { vars: { ATS: ats.base } });
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-reusing-'));
 
   /*
@@ -673,10 +875,12 @@ async function main() {
     await page.close();
 
     await walkTwoForms(context, fixtures);
+    await walkFramedForms(context, fixtures);
   } finally {
     await context.close();
     await putBank(before).catch(() => undefined);
     fixtures.close();
+    ats.close();
     fs.rmSync(userDataDir, { recursive: true, force: true });
   }
 

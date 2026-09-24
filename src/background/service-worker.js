@@ -2636,6 +2636,45 @@ const handlers = {
     return { ok: true, kept };
   },
 
+  /*
+   * The three messages a form in a frame needs in order to keep what was
+   * typed in it the way the top page does. See `watchFrameForm` in
+   * content.js. The frame saves its own answers through `rememberTyped` and
+   * `rememberChoice`. These three only carry what the frame cannot know or
+   * cannot show: who the page is applying to, and the card's list of what
+   * will be kept, in both directions.
+   */
+
+  /** Who the top document says this tab is applying to. */
+  async companyHere(_payload, tab) {
+    if (tab?.id === undefined) return { company: '' };
+    const reply = await chrome.tabs
+      .sendMessage(tab.id, { type: 'jh-company-here' }, { frameId: 0 })
+      .catch(() => null);
+    return { company: reply?.ok ? (reply.data?.company ?? '') : '' };
+  },
+
+  /** A frame's list of what it will keep, handed to the card in the top document. */
+  async typedInFrame({ answers }, tab, sender) {
+    if (tab?.id === undefined || !sender?.frameId) return { ok: false };
+    await noteFrame(tab.id, sender.frameId);
+    await chrome.tabs
+      .sendMessage(
+        tab.id,
+        { type: 'jh-frame-typed', payload: { frameId: sender.frameId, answers: Array.isArray(answers) ? answers : [] } },
+        { frameId: 0 },
+      )
+      .catch(() => undefined);
+    return { ok: true };
+  },
+
+  /** "Don't keep" pressed on the card, for an answer typed in a frame. */
+  async dontKeepInFrames({ question }, tab) {
+    if (tab?.id === undefined || !question) return { ok: false };
+    await askFrames(tab.id, { type: 'jh-frame-dont-keep', payload: { question } });
+    return { ok: true };
+  },
+
   async saveAnswer({ question, answer, itemId, label }) {
     return serverFetch('/api/answers/save', {
       method: 'POST',
