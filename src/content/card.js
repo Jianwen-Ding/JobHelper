@@ -6536,6 +6536,19 @@ export function createCard({
       }
       if (reply.printed && state.printed && reply.printed !== state.printed) {
         state.note = 'Updated from ResumeM-M: what the resume says changed there.';
+        /*
+         * And the folder with it, which nothing else here would redo.
+         *
+         * The compile below re-stages through `prepareSoon`, and that is
+         * skipped when nothing that reaches a file has changed — judged from
+         * the card's own spec, letter and answers. Here none of those has:
+         * the words moved in the store, underneath the same spec. Measured,
+         * with the phone number changed in the profile: the preview printed
+         * the new one and said so, while the resume in the upload folder —
+         * the one Attach files and the drag chips hand the form — still
+         * carried the old one, byte for byte the file staged before.
+         */
+        lastPrepared = null;
         await compile();
         return;
       }

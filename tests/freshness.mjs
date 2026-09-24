@@ -15,6 +15,7 @@ import { chromium } from 'playwright-core';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { cleanStore, findChromium, serveFixtures, requireOpenSave, pointExtensionAt } from './fixtures.mjs';
 
@@ -57,6 +58,21 @@ async function theCopy(within = 30_000) {
     if (found || Date.now() > until) return found ?? null;
     await new Promise((r) => setTimeout(r, 300));
   }
+}
+
+/**
+ * A fingerprint of the resume in the upload folder for this suite's
+ * application — the file Attach files would put in the form — or null.
+ */
+async function folderResume() {
+  const apps = await api('/applications');
+  const app = (apps.applications ?? apps).find((a) => /quillon/i.test(a.company ?? ''));
+  if (!app) return null;
+  const list = await api(`/attachments?application=${encodeURIComponent(app.id)}`);
+  const resume = (list.attachments ?? []).find((a) => !a.standing && /resume/i.test(a.name));
+  if (!resume) return null;
+  const bytes = Buffer.from(await (await fetch(`${SERVER}${resume.url}`)).arrayBuffer());
+  return createHash('sha1').update(bytes).digest('hex');
 }
 
 async function main() {
@@ -109,9 +125,34 @@ async function main() {
     {
       const store = await api('/store');
       profile = store.profile;
+      // Settled first: the copy taken just above re-stages on its own, and a
+      // folder still changing from that is not this change reaching it.
+      let before = await folderResume();
+      for (let i = 0; i < 20; i++) {
+        await page.waitForTimeout(3000);
+        const now = await folderResume();
+        if (now === before) break;
+        before = now;
+      }
       await put('/profile', { ...profile, phone: '555-0199' });
       await backInView();
       check('the card compiles it again, and says why', await says(/what the resume says changed there/));
+      /*
+       * And the upload folder follows it. The preview is not what goes to
+       * the employer: Attach files and the drag chips hand over the resume
+       * staged in the folder, and that was left as it was — the old phone
+       * number, the very file staged before the change.
+       */
+      let after = before;
+      for (const until = Date.now() + 60_000; Date.now() < until && after === before; ) {
+        await page.waitForTimeout(1000);
+        after = await folderResume();
+      }
+      check(
+        'and the resume in the upload folder is built again with it',
+        Boolean(before) && Boolean(after) && after !== before,
+        `${before?.slice(0, 8) ?? '(none)'} → ${after?.slice(0, 8) ?? '(none)'}`,
+      );
     }
 
     group('The resume the copy was made from, changed in ResumeM-M');
