@@ -405,7 +405,7 @@ function fileFrom({ name, base64, type }) {
  * listens for one and a plain one for the other, and a form that never hears
  * either shows the box still empty however correct `files` is.
  */
-function putIn(box, file, { alongside = false, ours } = {}) {
+async function putIn(box, file, { alongside = false, ours } = {}) {
   const carrier = new DataTransfer();
   /*
    * What it is already holding, and whose it is.
@@ -480,9 +480,44 @@ function putIn(box, file, { alongside = false, ours } = {}) {
    * alert is a refusal.
    */
   if (!home?.isConnected) return false;
-  const refusing = home.querySelectorAll('[role="alert"], [class*="error" i], [class*="invalid" i]');
-  if ([...refusing].some((el) => (el.textContent ?? '').includes(file.name))) return false;
-  return (home.textContent ?? '').includes(file.name);
+  return (await shownIn(home, file.name)) === 'kept';
+}
+
+/**
+ * What a widget that took the file for itself goes on to say about it.
+ *
+ * Not always at once. Greenhouse's board takes the input away inside the
+ * `change` handler, draws a progress bar while it sends the file to its own
+ * storage, and only then writes the name — measured on Stripe's embed, 500ms
+ * after the event, with nothing but `role="progressbar"` in the box until
+ * then. Read synchronously that was an empty box and no name, reported as
+ * "the page would not let that box take a file" over a form that went on to
+ * show the file attached.
+ *
+ * So a moment's grace for any widget, and as long as an upload is visibly
+ * running for one that says it is uploading — bounded, because an upload can
+ * stall, and a stalled one has not been kept.
+ */
+const SHOWN_GRACE_MS = 1000;
+const UPLOAD_WAIT_MS = 20_000;
+const UPLOADING = '[role="progressbar"], progress, [aria-busy="true"], [class*="progress" i], [class*="uploading" i]';
+
+async function shownIn(home, name) {
+  const read = () => {
+    if (!home.isConnected) return 'gone';
+    const refusing = home.querySelectorAll('[role="alert"], [class*="error" i], [class*="invalid" i]');
+    if ([...refusing].some((el) => (el.textContent ?? '').includes(name))) return 'refused';
+    if ((home.textContent ?? '').includes(name)) return 'kept';
+    return home.querySelector(UPLOADING) ? 'uploading' : 'nothing';
+  };
+  const began = Date.now();
+  for (;;) {
+    const now = read();
+    if (now === 'kept' || now === 'refused' || now === 'gone') return now;
+    const waited = Date.now() - began;
+    if (waited >= (now === 'uploading' ? UPLOAD_WAIT_MS : SHOWN_GRACE_MS)) return now;
+    await new Promise((r) => setTimeout(r, 50));
+  }
 }
 
 /**
@@ -643,8 +678,8 @@ export async function attachFiles(files) {
    */
   const ours = new Set((files ?? []).map((f) => f?.name).filter(Boolean));
   const written = new Set();
-  const placeIn = (box, file) => {
-    const ok = putIn(box, file, { alongside: written.has(box), ours });
+  const placeIn = async (box, file) => {
+    const ok = await putIn(box, file, { alongside: written.has(box), ours });
     if (ok) written.add(box);
     return ok;
   };
@@ -672,7 +707,7 @@ export async function attachFiles(files) {
      */
     let rejectedBy = null;
     if (box) {
-      if (placeIn(box, file)) {
+      if (await placeIn(box, file)) {
         taken.add(box);
         placed.push({ name: spec.name, where: saysWhat(box).slice(0, 60) });
         continue;
@@ -700,7 +735,7 @@ export async function attachFiles(files) {
      */
     const free = boxes.filter((b) => !taken.has(b));
     const saysNothing = free.length === 1 && kindOf(saysWhat(free[0])) === 'other' && !NOT_A_DOCUMENT.test(namedBy(free[0]));
-    if (saysNothing && (files.length === 1 || boxes.length === 1) && willTake(free[0], file) && placeIn(free[0], file)) {
+    if (saysNothing && (files.length === 1 || boxes.length === 1) && willTake(free[0], file) && (await placeIn(free[0], file))) {
       taken.add(free[0]);
       placed.push({ name: spec.name, where: 'the only upload box on the page' });
       continue;
@@ -722,7 +757,7 @@ export async function attachFiles(files) {
         willTake(b, file) &&
         !NOT_A_DOCUMENT.test(namedBy(b)),
     );
-    if (several && placeIn(several, file)) {
+    if (several && (await placeIn(several, file))) {
       placed.push({ name: spec.name, where: saysWhat(several).slice(0, 60) });
       continue;
     }
@@ -863,7 +898,7 @@ export async function dropOnto(target, files) {
         unplaced.push({ name: spec.name, why: `this form only takes ${box.getAttribute('accept')} there` });
         continue;
       }
-      if (putIn(box, file, { alongside: written.has(box), ours })) {
+      if (await putIn(box, file, { alongside: written.has(box), ours })) {
         written.add(box);
         placed.push({ name: spec.name, where: saysWhat(box).slice(0, 60) || 'the box you dropped it on' });
         continue;
