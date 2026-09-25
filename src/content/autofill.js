@@ -1262,6 +1262,83 @@ function isWorkdayPrompt(element) {
   return element.getAttribute?.('data-uxi-widget-type') === 'selectinput';
 }
 
+/*
+ * A `<select>` Chosen (harvesthq's jQuery plugin) has hidden and drawn again.
+ *
+ * Chosen hides the select with `display: none` and draws a
+ * `.chosen-container` straight after it — `.chzn-container` before 1.0 —
+ * with a search box of its own inside. It has no ARIA roles, so nothing here
+ * read it as a list; and the select, having no box on the page, was not
+ * fillable either. Measured on a fixture drawn as Chosen draws itself: the
+ * profile's "United States" went into Chosen's search box, the report said
+ * the Country was filled, and the select still held nothing and showed
+ * "Select a country". The box's placeholder, "Select an Option", was
+ * offered to the bank as a question typed on the form. And a person's pick
+ * was never kept: Chosen announces it with jQuery's `trigger('change')`,
+ * which runs jQuery's handlers and fires no native event.
+ *
+ * So the select is filled as the select it is, its visibility read off the
+ * container; Chosen is told to redraw the way a page tells it, with
+ * `chosen:updated` (jQuery's `.on` hears a native event of that name); and
+ * the fill counts only once the container shows the choice. A pick inside
+ * the container is read back off the select. See `watchChosenPicks`.
+ *
+ * bootstrap-select and select2 keep their select on the page, shrunk to a
+ * pixel, and redraw on its native `change`, so they need none of this.
+ */
+const CHOSEN = '.chosen-container, .chzn-container';
+
+function chosenOf(select) {
+  if (!(select instanceof HTMLSelectElement)) return null;
+  const next = select.nextElementSibling;
+  if (next?.matches?.(CHOSEN)) return next;
+  if (!select.id) return null;
+  const root = select.getRootNode?.();
+  for (const suffix of ['_chosen', '_chzn']) {
+    const drawn = root?.getElementById?.(`${select.id}${suffix}`);
+    if (drawn?.matches?.(CHOSEN)) return drawn;
+  }
+  return null;
+}
+
+/** The select a Chosen container stands in for. */
+function selectOfChosen(container) {
+  const before = container.previousElementSibling;
+  if (before instanceof HTMLSelectElement && chosenOf(before) === container) return before;
+  const id = String(container.id ?? '').replace(/_(?:chosen|chzn)$/, '');
+  const select = id && id !== container.id ? container.getRootNode?.()?.getElementById?.(id) : null;
+  return select instanceof HTMLSelectElement && chosenOf(select) === container ? select : null;
+}
+
+/**
+ * Tell a widget standing in for this select that its value was changed, and
+ * say whether it now shows it. True for a select nothing stands in for.
+ */
+function redrawStandIn(select) {
+  const drawn = chosenOf(select);
+  if (!drawn) return true;
+  for (const type of ['chosen:updated', 'liszt:updated']) select.dispatchEvent(ours(new Event(type, { bubbles: true })));
+  const shown = drawn.cloneNode(true);
+  for (const drop of shown.querySelectorAll('.chosen-drop, .chzn-drop')) drop.remove();
+  const said = clean(select.selectedOptions?.[0]?.textContent).toLowerCase();
+  return Boolean(said) && clean(shown.textContent).toLowerCase().includes(said);
+}
+
+/**
+ * After a select has been written and announced: whether what stands in for
+ * it shows the choice. Where it does not, the select is put back as it was —
+ * one that submits one thing and shows another is worse than one left for
+ * the person — and false comes back.
+ */
+function standInTookIt(select, before) {
+  if (redrawStandIn(select)) return true;
+  nativeSet(select, 'value', before);
+  select.dispatchEvent(ours(new Event('input', { bubbles: true })));
+  select.dispatchEvent(ours(new Event('change', { bubbles: true })));
+  redrawStandIn(select);
+  return false;
+}
+
 /**
  * Would the browser refuse this control, whoever turned it off?
  *
@@ -1307,10 +1384,13 @@ function isFillable(input) {
    * worse than leaving it plainly blank. Reported instead, further down.
    */
   if (isWidgetChoice(input)) return false;
+  // Chosen's own search box, which is the list's and not a question. See `chosenOf`.
+  if (input.closest?.(CHOSEN)) return false;
   // `offsetParent` is null for anything positioned fixed, visible or not, and
   // forms inside a fixed modal are ordinary. Whether it occupies space on the
-  // page is the question actually being asked.
-  if (input.getClientRects().length === 0) return false;
+  // page is the question actually being asked. For a select Chosen has
+  // hidden, that is asked of what Chosen drew in its place.
+  if (input.getClientRects().length === 0 && !(chosenOf(input)?.getClientRects().length > 0)) return false;
   if (BOT_TRAP.test(labelFor(input))) return false;
   return true;
 }
@@ -2801,6 +2881,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
           ? authorizationStatement(choosable, fields)
           : null);
       if (option) {
+        const was = input.value;
         nativeSet(input, 'value', option.value);
         /*
          * Check it went in, exactly as the text path below does.
@@ -2819,6 +2900,11 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
         // what a script fires, and some widgets only listen for `input`.
         input.dispatchEvent(ours(new Event('input', { bubbles: true })));
         input.dispatchEvent(ours(new Event('change', { bubbles: true })));
+        // And drawn by whatever stands in for it. See `chosenOf`.
+        if (!standInTookIt(input, was)) {
+          skipped.push({ key, reason: PICK_BY_HAND, description: description.slice(0, 60) });
+          continue;
+        }
         filled.push({ key, value });
       } else {
         const reason = aboutAnotherCountry(key, value, description) ? ANOTHER_COUNTRY : 'no matching option';
@@ -4336,13 +4422,14 @@ function chooseInSelect(select, answer) {
   const choosable = [...select.options].filter((o) => !isDisabled(o));
   const option = choosable.find((o) => sameOption(o.textContent, answer) || sameOption(o.value, answer));
   if (!option) return false;
+  const was = select.value;
   nativeSet(select, 'value', option.value);
   // Two options can share a value, so the write can land on the placeholder.
   // The same read-back `fillForm` does, and for the same reason.
   if (select.selectedOptions[0] !== option) return false;
   select.dispatchEvent(ours(new Event('input', { bubbles: true })));
   select.dispatchEvent(ours(new Event('change', { bubbles: true })));
-  return true;
+  return standInTookIt(select, was);
 }
 
 /** Tick a radio in a group by its label or its value. */
@@ -5323,10 +5410,12 @@ async function fillEducationPart(control, key, value, f, patience) {
       (key === 'gpa' ? gpaOption(choosable, value) : null) ??
       choosable.find((o) => sameAnswerSpelledOtherwise(key, o.textContent, value) || sameAnswerSpelledOtherwise(key, o.value, value));
     if (!option) return { key, reason: 'no matching option', description: description.slice(0, 60) };
+    const was = control.value;
     nativeSet(control, 'value', option.value);
     if (control.selectedOptions[0] !== option) return { key, reason: 'the field would not take it', description: description.slice(0, 60) };
     control.dispatchEvent(ours(new Event('input', { bubbles: true })));
     control.dispatchEvent(ours(new Event('change', { bubbles: true })));
+    if (!standInTookIt(control, was)) return { key, reason: PICK_BY_HAND, description: description.slice(0, 60) };
     return { key, value };
   }
   // A box: the date written the way it wants it, as `fillForm` writes one.
@@ -5674,15 +5763,63 @@ export function watchChoices(tell) {
   document.addEventListener('change', look, true);
   document.addEventListener('click', look, true);
   // And a pick in a react-select, which fires neither usefully. See `watchWidgetPicks`.
-  const stopPicks = watchWidgetPicks((answer) => {
+  const told = (answer) => {
     const verdict = worthRemembering(answer);
     tell(verdict.keep ? { ...answer, keep: true } : { ...answer, keep: false, why: verdict.why });
-  }, () => watching);
+  };
+  const stopPicks = watchWidgetPicks(told, () => watching);
+  // And one in Chosen, which fires no native event at all. See `chosenOf`.
+  const stopChosen = watchChosenPicks(told, () => watching);
   return () => {
     watching = false;
     document.removeEventListener('change', look, true);
     document.removeEventListener('click', look, true);
     stopPicks();
+    stopChosen();
+  };
+}
+
+/**
+ * A person's pick in a Chosen list, read off the select it stands in for.
+ *
+ * Chosen picks on mouseup, or on the keyup of Enter, and tells only jQuery.
+ * So the select's value is noted when a press or a key goes down inside the
+ * container and read again once the page has handled the click or the key
+ * that follows; a value that moved is the pick. A native `change` in
+ * between — a build that fires one — is heard by `watchChoices` itself, and
+ * is not told twice.
+ */
+function watchChosenPicks(write, watching) {
+  const before = new WeakMap();
+  const selectAt = (event) => {
+    const target = event.composedPath?.()?.[0] ?? event.target;
+    const container = target?.closest?.(CHOSEN);
+    return container ? selectOfChosen(container) : null;
+  };
+  const note = (event) => {
+    const select = selectAt(event);
+    if (select) before.set(select, select.value);
+  };
+  const heard = (event) => {
+    const target = event.composedPath?.()?.[0] ?? event.target;
+    if (target instanceof HTMLSelectElement && chosenOf(target)) before.set(target, target.value);
+  };
+  const check = (event) => {
+    if (!event.isTrusted) return;
+    const select = selectAt(event);
+    if (!select || !before.has(select)) return;
+    setTimeout(() => {
+      if (!watching() || before.get(select) === select.value) return;
+      before.set(select, select.value);
+      const option = select.selectedOptions?.[0];
+      if (!option || looksLikePlaceholder(option, select)) return;
+      write({ question: clean(questionFor(select)), answer: clean(option.textContent) });
+    }, 0);
+  };
+  const events = [['mousedown', note], ['keydown', note], ['change', heard], ['click', check], ['keyup', check]];
+  for (const [type, fn] of events) document.addEventListener(type, fn, true);
+  return () => {
+    for (const [type, fn] of events) document.removeEventListener(type, fn, true);
   };
 }
 
