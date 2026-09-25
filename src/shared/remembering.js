@@ -124,6 +124,16 @@ const NEVER_REMEMBER = [
    */
   /\b(national|government|state|citizen|personal)[\s-]*(id|identity|identification)\b/i,
   /*
+   * Where somebody lives, in any of its parts. The store refuses a "home
+   * address", and short typed answers are now kept — so "Address Line 1",
+   * "Zip code" and "Apartment" went into the bank piece by piece, the whole
+   * address the rule exists to keep out of a file that is copied and shared.
+   */
+  /\b(home|mailing|residential|street|postal)\s*address\b/i,
+  /\baddress\s*(line|[12])\b/i,
+  /\b(zip|postal)\s*(code)?\b|\bpostcode\b/i,
+  /\b(apartment|apt)\b/i,
+  /*
    * What somebody is paid now, or was paid before.
    *
    * Asking for it is against the law in a growing list of places, and an

@@ -63,6 +63,12 @@ const REFUSE = [
   ['What is your religion?', 'None'],
   ['Marital status', 'Single'],
   ["Mother's maiden name", 'Smith'],
+  // A home address, and the same address a box at a time.
+  ['Street address', '12 Elm St'],
+  ['Address Line 1', '12 Elm St'],
+  ['Zip code', '02115'],
+  ['Postal Code', 'M5V 2T6'],
+  ['Apartment / Suite', 'Apt 4'],
   /*
    * The equal-opportunity questions that do not use the words above. Every one
    * of these was banked and offered back on the next form. The first is
