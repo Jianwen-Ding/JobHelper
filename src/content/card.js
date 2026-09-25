@@ -3349,6 +3349,28 @@ export function createCard({
   }
 
   async function useOriginal() {
+    /*
+     * With only the AI's reading in hand, the keyword list is fetched first.
+     *
+     * `withAllOff` undoes a list of changes — wordings and skills — and the AI
+     * also shows and hides entries and lines, which no such list records. So
+     * from the AI's copy alone this put the wordings back and left every entry
+     * the AI had hidden still hidden, under the one button that promises the
+     * resume exactly as it is kept. It happens in the ordinary course: picking
+     * another resume while on the AI's reading repeats the AI and drops the
+     * keyword list made from the resume left. The keyword list is the base's
+     * sections as kept, and costs no model.
+     *
+     * Only over the AI's copy: any other proposal on screen already carries
+     * the base's sections, and reverting its list is the whole job. Should
+     * the list not come back, the revert below still takes back what it can.
+     */
+    if (!state.offers.match && state.builtWith === 'ai') {
+      const mine = rebuildToken + 1;
+      await rebuildAs('match');
+      // A newer press overtook it: that press has the screen.
+      if (mine !== rebuildToken) return;
+    }
     // "As you keep it" is the match's list with nothing ticked, so it is that
     // proposal you are on — not a third state of its own.
     if (state.offers.match && state.showing !== 'match') showOffer('match');

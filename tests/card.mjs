@@ -5266,6 +5266,107 @@ async function main() {
   );
   check('and a real title is shown as it was', provisional['Platform Engineer | Markon'] === 'Platform Engineer | Markon', JSON.stringify(provisional));
 
+  /*
+   * "Use Original" with only the AI's reading in hand.
+   *
+   * It put back the wordings and the skills the proposal changed, by going to
+   * the keyword list's copy with every box off. The AI also shows and hides
+   * entries and lines, and a list of changes cannot undo those — so with no
+   * keyword list to go to, an entry the AI hid stayed hidden under the button
+   * that promises the resume exactly as it is kept.
+   *
+   * Reached in the ordinary way: the AI tailors, and then a different resume
+   * is picked. The switch repeats the AI for the new resume and drops the
+   * keyword list made from the old one.
+   */
+  console.log('\n"Use Original" after the AI hid an entry');
+
+  const originalAfterAi = await inPage(async (createCard) => {
+    const made = (base, tailor) => ({
+      isJobPosting: true,
+      job: { title: 'Platform Engineer', company: 'Acme' },
+      spec: {
+        id: 'job-acme',
+        label: 'Acme',
+        tier: 'temporary',
+        copiedFrom: base,
+        choices: { b_pipeline: tailor === 'ai' ? 'v_kafka' : 'v_base' },
+        sections: [{ kind: 'experience', entries: tailor === 'ai' ? ['exp_acme'] : ['exp_acme', 'exp_beta'] }],
+      },
+      baseResumeId: base,
+      baseLabel: base === 'base' ? 'New grad' : 'Summer intern',
+      rationale: tailor === 'ai' ? [{ key: 'b_pipeline', from: 'v_base', to: 'v_kafka', toText: 'Built a Kafka pipeline', because: ['kafka'] }] : [],
+      diff: tailor === 'ai' ? [{ kind: 'removed', where: 'Beta Corp' }] : [],
+      tailor,
+      aiUsed: tailor === 'ai',
+    });
+    const renders = [];
+    const asked = [];
+    let handle;
+    handle = createCard({
+      analysis: made('base', 'match'),
+      resumes: [
+        { id: 'base', label: 'New grad', tier: 'base' },
+        { id: 'intern', label: 'Summer intern', tier: 'base' },
+      ],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'render') {
+          renders.push(payload?.spec);
+          return { pages: 1, fits: true };
+        }
+        // As the content script does: the reply is handed to `update`, then returned.
+        if (action === 'rebuild' || action === 'setBase') {
+          asked.push(`${action}:${payload.tailor}`);
+          const result = made(payload.baseResumeId ?? 'base', payload.tailor);
+          handle.update(result);
+          return result;
+        }
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const press = (re) => [...root.querySelectorAll('button.mode')].find((b) => re.test(b.textContent))?.click();
+    await wait(100);
+    press(/Have AI Tailor/);
+    await wait(100);
+    const select = root.querySelector('select');
+    select.value = 'intern';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    await wait(150);
+    const before = renders.length;
+    press(/Use Original/);
+    await wait(300);
+    const sent = renders.slice(before).at(-1) ?? null;
+    return {
+      asked,
+      entries: sent?.sections?.[0]?.entries ?? null,
+      wording: sent?.choices?.b_pipeline ?? null,
+      from: sent?.copiedFrom ?? null,
+      lit: root.querySelector('.mode.on')?.textContent?.trim() ?? null,
+    };
+  });
+
+  check(
+    'the AI tailored and the switch repeated it, so only the AI’s reading was in hand',
+    originalAfterAi.asked[0] === 'rebuild:ai' && originalAfterAi.asked[1] === 'setBase:ai',
+    JSON.stringify(originalAfterAi),
+  );
+  check(
+    '"Use Original" puts back the entry the AI hid',
+    JSON.stringify(originalAfterAi.entries) === JSON.stringify(['exp_acme', 'exp_beta']),
+    JSON.stringify(originalAfterAi),
+  );
+  check(
+    'and the wording, from the resume just picked, with "Use Original" lit',
+    originalAfterAi.wording === 'v_base' && originalAfterAi.from === 'intern' && originalAfterAi.lit === 'Use Original',
+    JSON.stringify(originalAfterAi),
+  );
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);
