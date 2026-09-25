@@ -1275,7 +1275,15 @@ async function main() {
       const opened = context.waitForEvent('page');
       await card.getByRole('button', { name: 'Open the folder' }).click();
       const tab = await opened;
-      await tab.waitForLoadState('domcontentloaded');
+      /*
+       * The listing, not the load event. This tab is `chrome.tabs.create`'s,
+       * which Playwright can attach to part-way through loading: a gate run
+       * timed out on `waitForLoadState('domcontentloaded')` after thirty
+       * seconds with its own log reading "load" and "networkidle" fired. The
+       * DOM is polled, so it cannot be missed. Caught, so an empty folder is
+       * reported by the check below rather than as a timeout.
+       */
+      await tab.locator('li a').first().waitFor({ state: 'attached', timeout: 15_000 }).catch(() => undefined);
       const names = await tab.locator('li a').allTextContents();
       check('and "Open the folder" opens it', /\/current$/.test(tab.url()), tab.url());
       check(
