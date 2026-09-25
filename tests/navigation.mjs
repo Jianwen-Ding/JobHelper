@@ -27,6 +27,7 @@ import {
   ATS_FORM,
   CROWDED_PAGE,
   CYGNUS_BOARD,
+  DIV_BUTTON_ROLE,
   BLOG_WITH_FORM,
   EMBEDDED_BOARD,
   FRAMED_ROLE,
@@ -34,6 +35,8 @@ import {
   LETTER_SPA,
   LETTER_SPA_PLAIN,
   LEVER_ROLE,
+  META_OTHER_ROLE,
+  META_ROLE,
   NEW_TAB_ROLE,
   ONE_ADDRESS_BOARD,
   NIMBUS_ROLE,
@@ -61,7 +64,7 @@ import {
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
 /** What this suite files under; cleared before it starts as well as after. */
-const MINE = ['Vega', 'Lyra', 'Orion', 'Acme', 'Nova', 'Rigel', 'Altair', 'Cygnus', 'Vireo', 'Lyricus', 'Vela', 'Mensa Labs'];
+const MINE = ['Vega', 'Lyra', 'Orion', 'Acme', 'Nova', 'Rigel', 'Altair', 'Cygnus', 'Vireo', 'Lyricus', 'Vela', 'Mensa Labs', 'Meridian'];
 
 /*
  * What the running store can actually fill with.
@@ -334,6 +337,39 @@ async function main() {
       await page.close();
     }
 
+    /* ---- Meta Careers: the same job id, a different view before it ---- */
+    /*
+     * Reported against a live posting: "the trail just disconnects upon
+     * going to another page". `/profile/job_details/<id>/` to
+     * `/profile/create_application/<id>/` is neither an extension of one path
+     * by the other nor a sibling, and Apply is a `<div role="button">`, so no
+     * click was recorded either. The form came up as a fresh application
+     * with the posting behind it forgotten.
+     */
+    group('The form is another view of the same job id');
+    {
+      const page = await context.newPage();
+      await page.goto(`${fixtures.urlFor(META_ROLE)}/`, { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      await buildResume(page);
+
+      await Promise.all([page.waitForURL(/\/profile\/create_application\/\d+\/$/), page.click('#apply')]);
+      await page.waitForLoadState('domcontentloaded');
+      await page.locator('#mfn').waitFor({ timeout: 10_000 });
+      await settled(page);
+      await expectContinuity(page, 'meta', { role: 'Platform Engineer' });
+
+      // And another job on the same site, in the same tab, is not this one.
+      await page.goto(`${fixtures.urlFor(META_OTHER_ROLE)}/`, { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      const card = cardOf(page);
+      const role = (await card.locator('.role').textContent())?.trim() ?? '';
+      check('meta: the next job is read as itself', /data scientist/i.test(role), role);
+      const trail = (await card.locator('.trail-row').allTextContents()).join(' | ');
+      check('meta: and the job before it is not part of it', !/platform engineer/i.test(trail), trail || '(no trail)');
+      await page.close();
+    }
+
     /* ---- Workday's steps: drawn late, then swapped in place ---- */
     group('Questions on a step drawn after the card was up');
     {
@@ -390,6 +426,32 @@ async function main() {
       await tab.waitForLoadState('domcontentloaded');
       await settled(tab);
       await expectContinuity(tab, 'new tab', { role: 'Platform Engineer' });
+      await tab.close();
+      await page.close();
+    }
+
+    /* ---- The same, from an Apply drawn as a div ---- */
+    /*
+     * `watchForApplyClicks` looked for `a[href], button` and nothing else, so
+     * a `<div role="button">` Apply set no expectation. The new tab it opens
+     * inherits only on one — see `inheritIfNew` — and with no anchor on the
+     * posting `wasLinkedFrom` had nothing to read either. The form came up as
+     * a fresh application with the built resume left behind.
+     */
+    group('Apply drawn as a div role=button opens the form in a new tab');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(DIV_BUTTON_ROLE), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      await buildResume(page);
+
+      const opened = context.waitForEvent('page');
+      // On the span inside it, as a real press lands.
+      await page.click('#apply span');
+      const tab = await opened;
+      await tab.waitForLoadState('domcontentloaded');
+      await settled(tab);
+      await expectContinuity(tab, 'div role=button', { role: 'Platform Engineer' });
       await tab.close();
       await page.close();
     }

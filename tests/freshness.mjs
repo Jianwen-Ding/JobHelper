@@ -21,7 +21,7 @@ import { cleanStore, findChromium, serveFixtures, requireOpenSave, pointExtensio
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
-const COMPANY = 'Quillon Systems';
+const COMPANY = 'Tamsin Freshworks';
 const HOST = '#jobhelper-card-host';
 /** The variation this suite saves while the card is open, and takes away after. */
 const ADDED = 'freshness-added-variation';
@@ -36,7 +36,7 @@ const group = (name) => console.log(`\n${name}`);
 
 const POSTING = {
   name: 'freshness-posting',
-  path: '/careers/quillon/platform-engineer',
+  path: '/careers/tamsin/platform-engineer',
   company: COMPANY,
   html: `<!doctype html><html><head><meta charset="utf-8"><title>Platform Engineer — ${COMPANY}</title>
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"JobPosting","title":"Platform Engineer",
@@ -44,7 +44,7 @@ const POSTING = {
 "description":"<p>Build streaming infrastructure in Go and Python on Kubernetes. Distributed systems, Kafka, AWS. BS in Computer Science.</p>"}</script>
 </head><body><h1>Platform Engineer</h1><p>${COMPANY} is hiring a Platform Engineer to build streaming infrastructure in Go and
 Python on Kubernetes. Responsibilities include distributed systems and Kafka. Minimum qualifications: BS in Computer Science.</p>
-<a href="/careers/quillon/platform-engineer/apply">Apply</a></body></html>`,
+<a href="/careers/tamsin/platform-engineer/apply">Apply</a></body></html>`,
 };
 
 /** Two questions no other suite asks, so the bank holds nothing for either until this saves it. */
@@ -52,7 +52,7 @@ const ASKED = 'Describe a streaming pipeline you have kept running in production
 const TYPED = 'Which technical decision of yours would you now make differently?';
 const FORM = {
   name: 'freshness-form',
-  path: '/careers/quillon/stream-engineer',
+  path: '/careers/tamsin/stream-engineer',
   company: COMPANY,
   html: `<!doctype html><html><head><meta charset="utf-8"><title>Stream Engineer — ${COMPANY}</title>
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"JobPosting","title":"Stream Engineer",
@@ -70,7 +70,7 @@ const FORM = {
 /** A third posting, for a card of its own that the AI tailors. */
 const AI_POSTING = {
   name: 'freshness-ai-posting',
-  path: '/careers/quillon/streaming-engineer',
+  path: '/careers/tamsin/streaming-engineer',
   company: COMPANY,
   html: `<!doctype html><html><head><meta charset="utf-8"><title>Streaming Engineer — ${COMPANY}</title>
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"JobPosting","title":"Streaming Engineer",
@@ -96,7 +96,7 @@ async function theCopy(within = 30_000) {
   const until = Date.now() + within;
   for (;;) {
     const list = await api('/resumes');
-    const found = (list.resumes ?? list).find((r) => /quillon/i.test(`${r.id} ${r.label ?? ''}`));
+    const found = (list.resumes ?? list).find((r) => /tamsin/i.test(`${r.id} ${r.label ?? ''}`));
     if (found || Date.now() > until) return found ?? null;
     await new Promise((r) => setTimeout(r, 300));
   }
@@ -108,7 +108,7 @@ async function theCopy(within = 30_000) {
  */
 async function folderResume() {
   const apps = await api('/applications');
-  const app = (apps.applications ?? apps).find((a) => /quillon/i.test(a.company ?? ''));
+  const app = (apps.applications ?? apps).find((a) => /tamsin/i.test(a.company ?? ''));
   if (!app) return null;
   const list = await api(`/attachments?application=${encodeURIComponent(app.id)}`);
   const resume = (list.attachments ?? []).find((a) => !a.standing && /resume/i.test(a.name));

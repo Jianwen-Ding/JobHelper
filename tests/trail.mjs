@@ -870,6 +870,60 @@ describe('a page named "apply" is not a claim about its neighbours', () => {
 });
 
 /*
+ * Meta Careers, as measured on the live site.
+ *
+ * The posting is `/profile/job_details/<id>/`, and "Apply now" — a
+ * `<div role="button">`, not a link — navigates the tab to
+ * `/profile/create_application/<id>/`: the same host, the referrer set, and
+ * the job id at the end of both. The two paths differ in the middle, which is
+ * neither an extension of one by the other nor a sibling, so the trail called
+ * the form a different application and the card came up without the posting.
+ * `/jobs/<id>/` answers with a 301 to the posting, the account pages send you
+ * to `/login/?redirect=…` on the same host, and search results open postings
+ * at other ids in a new tab.
+ */
+describe('a job id at the end of the path, and the view of it before', () => {
+  const meta = (p) => `https://www.metacareers.com${p}`;
+  const job = meta('/profile/job_details/1609178343953401/');
+  const form = meta('/profile/create_application/1609178343953401/');
+
+  it('joins the posting to the form for the same job', () => {
+    assert.equal(relatedPath(job, form), true);
+    assert.equal(relatedPath(form, job), true);
+    assert.equal(judgeApplication(trailOf(at(job, 'Meta')), { url: form, referrerHost: 'metacareers.com' }), 'same');
+    assert.equal(carriesOn(trailOf(at(job, 'Meta')), { url: form }), true);
+  });
+
+  it('does not join another job, in either view', () => {
+    const other = '/2978982495789572/';
+    assert.equal(relatedPath(job, meta(`/profile/job_details${other}`)), false);
+    assert.equal(relatedPath(job, meta(`/profile/create_application${other}`)), false);
+    assert.equal(relatedPath(form, meta(`/profile/create_application${other}`)), false);
+    const trail = trailOf(at(job, 'Meta'), at(form, 'Meta'));
+    assert.equal(judgeApplication(trail, { url: meta(`/profile/job_details${other}`) }), 'different');
+  });
+
+  it('does not join the pages around it that are not this job', () => {
+    for (const p of ['/profile/info', '/profile/settings', '/jobsearch/', '/login/?redirect=x', '/jobs']) {
+      assert.equal(relatedPath(job, meta(p)), false, p);
+      assert.equal(relatedPath(form, meta(p)), false, p);
+    }
+  });
+
+  it('needs a step on one side, and the id after what changed', () => {
+    const rp = (a, b) => relatedPath(`https://x.example${a}`, `https://x.example${b}`);
+    // Two views of one record, neither of them a form.
+    assert.equal(rp('/jobs/view/1609178343953401', '/jobs/similar/1609178343953401'), false);
+    // The id before what changed names a company, not a job.
+    assert.equal(rp('/company/1609178343953401/reviews', '/company/1609178343953401/apply'), false);
+    // A short number is a year or a page, not a job.
+    assert.equal(rp('/blog/news/2024', '/blog/apply/2024'), false);
+    // And more than one segment changed is more than one view.
+    assert.equal(rp('/a/job_details/1609178343953401', '/b/create_application/1609178343953401'), false);
+  });
+});
+
+/*
  * An application is a description and then a form, and on the systems that
  * paginate — Workday, Taleo, a government portal — the form is four or five
  * steps on its own. Keeping only the newest pages therefore pushed out the
@@ -1689,6 +1743,164 @@ describe('the page as sent keeps what a posting requires', () => {
       assert.deepEqual(lost, [], `the posting's requirements were emptied: ${lost.join(' | ')}`);
       const leaked = html.match(/ANSWER-[A-Z0-9]+/g) ?? [];
       assert.deepEqual(leaked, [], `answers were sent: ${leaked.join(', ')}`);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+/*
+ * A posting's benefits, under labels that name a personal question.
+ *
+ * "Disability insurance: 100% employer-paid", a "Short-term disability" row,
+ * "Pregnancy and parental leave", a criminal background check "conducted
+ * after an offer": each label names one of the questions whose answers the
+ * scrub empties, and what the posting said about it was emptied with them —
+ * all seven of these lines went to the AI as the label alone. What they name
+ * is a thing the employer offers or does: insurance, leave, a check, a
+ * policy. Below them, a review step's answers under the bare questions, which
+ * must still go.
+ */
+const BENEFITS = `
+  <h1>Warehouse Lead — Northwind Logistics</h1>
+  <h2>Benefits</h2>
+  <ul><li>Disability insurance: KEPT-100% employer-paid</li>
+  <li><strong>Short-term disability</strong> KEPT-Company paid after 90 days</li>
+  <li><strong>Pregnancy and parental leave</strong> KEPT-16 weeks fully paid</li></ul>
+  <table><tr><th>Life &amp; disability coverage</th><td>KEPT-Basic life at 1x salary</td></tr></table>
+  <p><strong>Criminal background check</strong> KEPT-conducted after an offer</p>
+  <dl><dt>Gender pay equity</dt><dd>KEPT-We audit pay every year</dd><dt>Veteran hiring program</dt><dd>KEPT-Hire Heroes partner</dd></dl>
+  <h2>Review your application</h2>
+  <dl><dt>Disability Status</dt><dd>ANSWER-DISABILITY</dd><dt>Gender</dt><dd>ANSWER-GENDER</dd></dl>
+  <p>Criminal convictions: ANSWER-CONVICTIONS</p>
+  <div><label>Are you pregnant?</label><div>ANSWER-PREGNANT</div></div>`;
+
+describe('the page as sent keeps what a posting offers', () => {
+  it('keeps a benefit under a personal label, and still empties an answer under one', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><title>Warehouse Lead</title></head><body>${BENEFITS}</body></html>`);
+      const html = await page.evaluate(async (js) => {
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        return mod.trimForStorage(mod.pageHtml(document));
+      }, source);
+      const lost = [...BENEFITS.matchAll(/KEPT-[^<]+/g)].map((m) => m[0].trim()).filter((fact) => !html.includes(fact));
+      assert.deepEqual(lost, [], `the posting's benefits were emptied: ${lost.join(' | ')}`);
+      const leaked = html.match(/ANSWER-[A-Z]+/g) ?? [];
+      assert.deepEqual(leaked, [], `answers were sent: ${leaked.join(', ')}`);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+/*
+ * The applicant's address and contact details, as a review step writes them.
+ *
+ * The scrub knew the identifiers and the equal-opportunity questions, and a
+ * review step's "Address Line 1 / 12 Elm Street", "Postal Code 02115", "Email
+ * Address …" and "Phone Number …" went to the server, into the posting it
+ * keeps and on to the AI. An address has no shape the server could find it
+ * by afterwards, so it is emptied here, by its label. The office a posting
+ * names is not the applicant's, and stays.
+ */
+const CONTACT_REVIEW = `
+  <h1>Payroll Specialist — Acme</h1>
+  <p>Office address: KEPT-100 Main Street, Boston, MA 02110</p>
+  <p>Location: KEPT-Boston (hybrid)</p>
+  <h2>Review your application</h2>
+  <div><label>Legal Name</label><div>KEPT-Jane Doe</div></div>
+  <dl><dt>Address Line 1</dt><dd>ANSWER-ADDRESS</dd><dt>Address Line 2</dt><dd>ANSWER-APARTMENT</dd>
+  <dt>City</dt><dd>KEPT-Somerville</dd><dt>Postal Code</dt><dd>ANSWER-POSTCODE</dd>
+  <dt>Email Address</dt><dd>ANSWER-EMAIL</dd><dt>Phone Number</dt><dd>ANSWER-PHONE</dd></dl>
+  <table><tr><th>Home address</th><td>ANSWER-HOME</td></tr><tr><th>ZIP code</th><td>ANSWER-ZIP</td></tr></table>
+  <p>Mailing address: ANSWER-MAILING</p>
+  <p>Mobile number: ANSWER-MOBILE</p>`;
+
+describe('the page as sent does not carry the address and contact details a review step writes out', () => {
+  it('empties them by their labels, and keeps the office the posting names', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><title>Review</title></head><body>${CONTACT_REVIEW}</body></html>`);
+      const html = await page.evaluate(async (js) => {
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        return mod.trimForStorage(mod.pageHtml(document));
+      }, source);
+      const leaked = html.match(/ANSWER-[A-Z]+/g) ?? [];
+      assert.deepEqual(leaked, [], `the review step's contact details were sent: ${leaked.join(', ')}`);
+      const lost = [...CONTACT_REVIEW.matchAll(/KEPT-[^<]+/g)].map((m) => m[0].trim()).filter((fact) => !html.includes(fact));
+      assert.deepEqual(lost, [], `lost: ${lost.join(' | ')}`);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+/*
+ * Two more places a form shows the applicant's own answer as text.
+ *
+ * Ant Design's Select, which careers sites built on it use for every
+ * dropdown, draws the pick as `ant-select-selection-item` with the pick in
+ * its `title` as well, and marks it `ant-select-item-option-selected` in the
+ * dropdown it leaves in the page. And Google's address autocomplete appends
+ * a `pac-container` to the page listing addresses matching what was typed
+ * into the address box — the applicant's street, city and country — and
+ * leaves it there, hidden, once one is chosen. Both went to the server and on
+ * to the AI.
+ */
+const MORE_SHOWN_ANSWERS = `
+  <label for="g">Gender</label>
+  <div class="ant-select ant-select-single ant-select-show-arrow"><div class="ant-select-selector">
+    <span class="ant-select-selection-search"><input type="search" id="g" class="ant-select-selection-search-input" role="combobox" aria-haspopup="listbox" readonly value=""></span>
+    <span class="ant-select-selection-item" title="ANSWER-ANT-TITLE">ANSWER-ANT-SINGLE</span>
+  </div></div>
+  <label for="r">Race (select all that apply)</label>
+  <div class="ant-select ant-select-multiple"><div class="ant-select-selector"><div class="ant-select-selection-overflow">
+    <div class="ant-select-selection-overflow-item"><span class="ant-select-selection-item" title="ANSWER-ANT-MULTI-TITLE"><span class="ant-select-selection-item-content">ANSWER-ANT-MULTI</span><span class="ant-select-selection-item-remove" aria-hidden="true">×</span></span></div>
+    <div class="ant-select-selection-overflow-item ant-select-selection-overflow-item-suffix"><div class="ant-select-selection-search"><input type="search" id="r" class="ant-select-selection-search-input" role="combobox" aria-haspopup="listbox" value=""></div></div>
+  </div></div></div>
+  <div class="ant-select-dropdown ant-select-dropdown-hidden"><div class="rc-virtual-list"><div class="rc-virtual-list-holder-inner">
+    <div aria-selected="false" class="ant-select-item ant-select-item-option" title="Male"><div class="ant-select-item-option-content">Male</div></div>
+    <div aria-selected="true" class="ant-select-item ant-select-item-option ant-select-item-option-active ant-select-item-option-selected" title="Female"><div class="ant-select-item-option-content">Female</div></div>
+  </div></div></div>
+  <label for="addr">Home address</label><input id="addr" type="text" autocomplete="off">
+  <div class="pac-container pac-logo hdpi" style="display: none;">
+    <div class="pac-item"><span class="pac-icon pac-icon-marker"></span><span class="pac-item-query"><span class="pac-matched">ANSWER-PAC-STREET</span></span><span>ANSWER-PAC-CITY</span></div>
+  </div>
+  <p>Location: Remote</p>`;
+
+describe('the page as sent does not carry an answer Ant Design or an address autocomplete shows', () => {
+  it('empties the pick and the typed-address suggestions, and keeps the options and the question', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><title>Apply</title></head><body>${MORE_SHOWN_ANSWERS}</body></html>`);
+      const html = await page.evaluate(async (js) => {
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        return mod.trimForStorage(mod.pageHtml(document));
+      }, source);
+      const leaked = html.match(/ANSWER-[A-Z-]+/g) ?? [];
+      assert.deepEqual(leaked, [], `the applicant's answers were sent: ${leaked.join(', ')}`);
+      const options = [...html.matchAll(/<div[^>]*class="([^"]*ant-select-item-option[^"]*)"[^>]*title="(Male|Female)"/g)];
+      assert.equal(options.length, 2, 'the options themselves are kept');
+      assert.equal(options[0][1], options[1][1], 'the chosen option is still marked apart from the other');
+      for (const kept of ['Gender', 'Race (select all that apply)', 'Home address', 'Location: Remote']) {
+        assert.ok(html.includes(kept), `"${kept}" was lost`);
+      }
     } finally {
       await browser.close();
     }

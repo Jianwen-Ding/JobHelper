@@ -52,7 +52,9 @@ const NEVER_REMEMBER = [
   /\bbirth\s*(date|day)\b/i,
   /\bdob\b/i,
   /\bage\b/i,
-  /\bdriv(er'?s?|ing)\s*licen[cs]e\b/i,
+  // A curly apostrophe as well as a straight one: "Driver’s License" is how a
+  // form that went through a word processor writes it.
+  /\bdriv(er['’]?s?|ing)\s*licen[cs]e\b/i,
   /\bpassport\b/i,
   /\bvisa\s*number\b/i,
   /\bbank\b/i,
@@ -62,7 +64,7 @@ const NEVER_REMEMBER = [
   /\bsort\s*code\b/i,
   /\bpassword\b/i,
   /\bsecurity\s*question\b/i,
-  /\bmother'?s\s*maiden\b/i,
+  /\bmother['’]?s\s*maiden\b/i,
   /\bcriminal\b/i,
   // The stem, because a form asks "have you been convicted" and a list
   // written as "conviction" does not match it.
@@ -124,6 +126,26 @@ const NEVER_REMEMBER = [
    */
   /\b(national|government|state|citizen|personal)[\s-]*(id|identity|identification)\b/i,
   /*
+   * And every name ResumeM-M refuses or redacts that this list did not know,
+   * so the card never says "will be kept" about an answer the server then
+   * declines, or keeps one it would have taken out of anything else. A
+   * Canadian SIN spelled out, an NI "No." or "#", a US ITIN, a card asked
+   * about without the word "number", a government ID shortened or "issued",
+   * and the national numbers by their own names: India's Aadhaar,
+   * Singapore's NRIC and FIN, Brazil's CPF, Spain's DNI and NIE, Poland's
+   * PESEL, the Dutch BSN and the Swedish personnummer. The short ones in
+   * capitals, as the forms write them, because "nie" and "dni" are words.
+   */
+  /\bsocial\s*insurance\b/i,
+  /\bni\s*(no\b\.?|#)/i,
+  /\bitin\b/i,
+  /\b(credit|debit)\s*card\b/i,
+  /\bgov(ernmen|['’])?t\.?[\s-]*(issued[\s-]*)?(id|identity|identification)\b/i,
+  /\baadhaa?r\b/i,
+  /\bpesel\b/i,
+  /\bpersonnummer\b/i,
+  /\b(NRIC|FIN|CPF|DNI|NIE|BSN)\b/,
+  /*
    * Where somebody lives, in any of its parts. The store refuses a "home
    * address", and short typed answers are now kept — so "Address Line 1",
    * "Zip code" and "Apartment" went into the bank piece by piece, the whole
@@ -167,9 +189,43 @@ const SENSITIVE_SHAPE = [
   /^[\d\s-]{11,}$/,
   // A date in any of the ways people write one.
   /^\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}$/,
-  /^\d{1,2}\s+\w{3,9}\s+\d{4}$/,
-  /^\w{3,9}\s+\d{1,2},?\s+\d{4}$/,
+  // With the month cut short ("Apr. 2, 1999") and the day said as "2nd".
+  /^\d{1,2}(st|nd|rd|th)?(\s+of)?\s+\w{3,9}\.?,?\s+\d{4}$/i,
+  /^\w{3,9}\.?\s+\d{1,2}(st|nd|rd|th)?,?\s+\d{4}$/i,
+  /*
+   * And the shapes ResumeM-M refuses anywhere in an answer, not only as the
+   * whole of it — the server declines to save these, and redacts them from
+   * anything else, so keeping one here would be a promise the card cannot
+   * keep. An SSN's 3-2-4 with its separators, an IBAN, a UK National
+   * Insurance number, and a card-length run of digits.
+   */
+  /\b\d{3}(?:\s?[-–.]\s?| )\d{2}(?:\s?[-–.]\s?| )\d{4}\b/,
+  /\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){3,7}/,
+  /\b[A-CEGHJ-PR-TW-Z]{2} ?\d{2} ?\d{2} ?\d{2} ?[A-D]\b/i,
+  /\b(?:\d[ -]?){12,18}\d\b/,
 ];
+
+/*
+ * An identifier after its own label, which is how ResumeM-M's
+ * `redactIdentifiers` finds one inside a longer text: "SSN 123456789",
+ * "DOB: 04/02/1999", "Passport # X1234567", "Aadhaar 1234 5678 9012". The
+ * label names below are the ones it knows; a value needs five digits, as
+ * there, so "a driver's license and a car" is still words.
+ */
+const LABELLED_ID = new RegExp(
+  String.raw`\b(?:ssn|social\s+(?:security|insurance)|sin|national\s+(?:insurance|id(?:entity|entification)?)|ni\s+(?:no\.?|number)|driv(?:er['’]?s?|ing)\s+licen[cs]e|tax\s+(?:id|identification)|itin|gov(?:ernmen|['’])?t\.?[\s-]+(?:issued\s+)?id|aadhaa?r|nric|cpf|dni|nie|pesel|bsn|personnummer|personal\s+(?:identity|identification|id)|passport)` +
+    String.raw`(?:\s+(?:card|no\.?|number|code|#))*(?:\s*\([^)\n]{0,40}\))?(?:\s*\*)?\s*(?:is\s+)?[:\-#]?\s*([A-Z]{0,5}\d[A-Z0-9]*(?:[ .\-][A-Z]?\d[A-Z0-9]*)*)`,
+  'i',
+);
+const LABELLED_BIRTH =
+  /\b(?:date of birth|birth ?date|birthday|born(?: on)?|d\.?o\.?b\.?)(?:\s*\([^)\n]{0,40}\))?(?:\s*\*)?\s*[:,-]?\s*(?:\d{1,4}[/.\- ]\d{1,2}[/.\- ]\d{1,4}|[a-z]+\.? \d{1,2}(?:st|nd|rd|th)?,? \d{4}|\d{1,2}(?:st|nd|rd|th)?(?: of)? [a-z]+\.?,? \d{4})/i;
+
+function labelledIdentifier(text) {
+  if (LABELLED_BIRTH.test(text)) return true;
+  const m = text.match(LABELLED_ID);
+  // A passport number is shorter than the rest, and is taken at any length.
+  return Boolean(m && ((m[1].match(/\d/g) ?? []).length >= 5 || /passport/i.test(m[0])));
+}
 
 /**
  * Questions asked in the same words by every employer, whose answer is about
@@ -216,7 +272,7 @@ export function neverRemember(question) {
 /** Whether this answer looks like something private, whatever it was asked by. */
 export function looksPrivate(answer) {
   const text = String(answer ?? '').trim();
-  return SENSITIVE_SHAPE.some((re) => re.test(text));
+  return SENSITIVE_SHAPE.some((re) => re.test(text)) || labelledIdentifier(text);
 }
 
 /**

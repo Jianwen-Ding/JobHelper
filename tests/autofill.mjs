@@ -1103,6 +1103,19 @@ const SECTIONS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply 
   <label for="x-avail">Available start date</label><input id="x-avail">
   <label for="x-notice">Notice period end date</label><input id="x-notice">
 </form>
+<form id="mm">
+  <!--
+    Reported: a year box and a month box for each end of the degree, the month's
+    placeholder MM. The years went in and both months were left empty. One
+    month box is type=number; the other keeps digits only, as masked inputs do.
+  -->
+  <h3>Education</h3>
+  <label for="mm-sy">Start Date (Year)*:</label><input id="mm-sy">
+  <label for="mm-sm">Start Date (Month):</label><input id="mm-sm" placeholder="MM" maxlength="2" oninput="this.value = this.value.replace(/\\D/g, '').slice(0, 2)">
+  <label for="mm-ey">End Date (Year)*:</label><input id="mm-ey">
+  <label for="mm-em">End Date (Month):</label><input id="mm-em" type="number" placeholder="MM">
+  <p>+ Add another education</p>
+</form>
 <form id="workday">
   <!-- Workday's education block asks for the years attended, in words none of the others use. -->
   <h3>Education</h3>
@@ -3144,7 +3157,284 @@ const NAMES_ZOOX = page(`<ul><li class="application-question"><label><div class=
  * school's, so that box is left for the person.
  */
 const SCHOOL_EMAIL = page(`<div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="_systemfield_email" data-field-entry-id="301289ab-b6ac-4b2c-8c7b-f5e38f544af7__systemfield_email"><label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title" for="_systemfield_email">Personal Email Address</label><div><input placeholder="hello@example.com..." name="_systemfield_email" required="" id="_systemfield_email" type="email" class="_input_80epu_28 _input_1e3gg_32 ashby-application-form-input-text" value=""></div></div><div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="badb95ef-a9fe-4cad-866a-ce1ce98502e6" data-field-entry-id="301289ab-b6ac-4b2c-8c7b-f5e38f544af7_badb95ef-a9fe-4cad-866a-ce1ce98502e6"><label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title" for="badb95ef-a9fe-4cad-866a-ce1ce98502e6">School Email Address</label><div><input placeholder="Type here..." name="badb95ef-a9fe-4cad-866a-ce1ce98502e6" required="" id="badb95ef-a9fe-4cad-866a-ce1ce98502e6" type="text" class="_input_80epu_28 _input_1e3gg_32 ashby-application-form-input-text" value=""></div></div>`);
-const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+/*
+ * Three select libraries that draw a list of their own over, or instead of,
+ * a native one — drawn as they draw themselves and driven by the events they
+ * listen to, without the libraries.
+ */
+
+/*
+ * Chosen (harvesthq, 1.8): the `<select>` is hidden (`display: none`) and a
+ * `.chosen-container` drawn after it. Chosen listens for `chosen:updated` on
+ * the select to redraw — jQuery binds that with addEventListener, so a native
+ * event of that name reaches it — and not for `change`. A pick is made on
+ * mouseup in `.chosen-results` and announced with jQuery's
+ * `trigger('change')`, which runs jQuery's handlers only: no native `change`
+ * reaches an addEventListener listener.
+ */
+const CHOSEN = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Chosen</title>
+<style>
+  .chosen-container { position: relative; display: inline-block; width: 300px; font-size: 13px; }
+  .chosen-single { display: block; border: 1px solid #aaa; padding: 0 8px; height: 25px; line-height: 24px; cursor: pointer; }
+  .chosen-drop { position: absolute; top: 100%; z-index: 1010; width: 100%; background: #fff; border: 1px solid #aaa; clip: rect(0,0,0,0); clip-path: inset(100% 100%); }
+  .chosen-with-drop .chosen-drop { clip: auto; clip-path: none; }
+  .chosen-results li { list-style: none; padding: 5px 6px; }
+  .chosen-results li.highlighted { background: #3875d7; color: #fff; }
+</style></head><body>
+<form>
+  <div><label for="first">First name</label><input id="first" name="first_name"></div>
+  <div class="field"><label for="country">Country</label>
+    <select id="country" name="country" class="chosen-select" data-placeholder="Select a country" style="display: none;">
+      <option value=""></option><option value="CA">Canada</option><option value="US">United States</option><option value="MX">Mexico</option>
+    </select>
+  </div>
+  <div class="field"><label for="hear">How did you hear about this job?</label>
+    <select id="hear" name="hear" class="chosen-select" data-placeholder="Select an Option" style="display: none;">
+      <option value=""></option><option value="li">LinkedIn</option><option value="ref">Employee referral</option><option value="web">Company website</option>
+    </select>
+  </div>
+</form>
+<script>
+  window.jqueryChange = [];
+  for (const select of document.querySelectorAll('select.chosen-select')) {
+    const box = document.createElement('div');
+    box.className = 'chosen-container chosen-container-single';
+    box.id = select.id + '_chosen';
+    box.title = '';
+    box.innerHTML = '<a class="chosen-single chosen-default"><span></span><div><b></b></div></a>' +
+      '<div class="chosen-drop"><div class="chosen-search"><input class="chosen-search-input" type="text" autocomplete="off"></div><ul class="chosen-results"></ul></div>';
+    select.after(box);
+    const single = box.querySelector('.chosen-single');
+    const results = box.querySelector('.chosen-results');
+    const draw = () => {
+      const option = select.selectedOptions[0];
+      const chosen = option && option.value !== '';
+      single.querySelector('span').textContent = chosen ? option.textContent : select.dataset.placeholder;
+      single.classList.toggle('chosen-default', !chosen);
+    };
+    const close = () => box.classList.remove('chosen-with-drop', 'chosen-container-active');
+    const open = () => {
+      results.innerHTML = '';
+      [...select.options].forEach((option, i) => {
+        if (!option.textContent) return;
+        const li = document.createElement('li');
+        li.className = 'active-result' + (option.selected ? ' result-selected' : '');
+        li.dataset.optionArrayIndex = String(i);
+        li.textContent = option.textContent;
+        results.append(li);
+      });
+      box.classList.add('chosen-with-drop', 'chosen-container-active');
+    };
+    draw();
+    // What \`$(select).trigger('chosen:updated')\` reaches — unless this
+    // page is asked to be a Chosen that does not listen, as \`?deaf\`.
+    if (!location.search.includes('deaf')) select.addEventListener('chosen:updated', draw);
+    single.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      box.classList.contains('chosen-with-drop') ? close() : open();
+    });
+    results.addEventListener('mouseover', (e) => {
+      results.querySelectorAll('.highlighted').forEach((li) => li.classList.remove('highlighted'));
+      e.target.closest('li.active-result')?.classList.add('highlighted');
+    });
+    results.addEventListener('mouseup', (e) => {
+      const li = e.target.closest('li.active-result');
+      if (!li) return;
+      select.selectedIndex = Number(li.dataset.optionArrayIndex);
+      draw();
+      close();
+      // jQuery's trigger('change'): jQuery's own handlers, no native event.
+      window.jqueryChange.push(select.id);
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+    document.addEventListener('mousedown', (e) => { if (!box.contains(e.target)) close(); });
+  }
+</script></body></html>`;
+
+/*
+ * bootstrap-select (1.13, Bootstrap 4): the `<select>` kept inside
+ * `.bootstrap-select`, shrunk to half a pixel and made transparent, and a
+ * `button.dropdown-toggle` (`role="combobox"`, `aria-owns` its listbox)
+ * drawing its choice. It redraws on the select's `change`, and a pick fires a
+ * native one (its `triggerNative`). The menu's rows are built on first open.
+ */
+const BOOTSTRAP_SELECT = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — bootstrap-select</title>
+<style>
+  .bootstrap-select { position: relative; display: inline-block; width: 300px; }
+  .bootstrap-select > select { position: absolute !important; bottom: 0; left: 50%; display: block !important; width: 0.5px !important; height: 100% !important; padding: 0 !important; opacity: 0 !important; border: none; z-index: 0 !important; }
+  .bootstrap-select > .dropdown-toggle { position: relative; width: 100%; text-align: left; }
+  .bootstrap-select > .dropdown-menu { display: none; position: absolute; top: 100%; left: 0; min-width: 100%; background: #fff; border: 1px solid #ccc; z-index: 1000; }
+  .bootstrap-select.show > .dropdown-menu { display: block; }
+  .dropdown-menu.inner { position: static; display: block; margin: 0; padding: 0; border: 0; }
+  .dropdown-menu.inner li { list-style: none; }
+  .dropdown-item { display: block; padding: 4px 12px; }
+</style></head><body>
+<form>
+  <div class="form-group"><label for="first">First name</label><input id="first" name="first_name" class="form-control"></div>
+  <div class="form-group"><label for="country">Country</label>
+    <select id="country" name="country" class="selectpicker form-control" title="Choose one...">
+      <option>Canada</option><option>United States</option><option>Mexico</option>
+    </select>
+  </div>
+  <div class="form-group"><label for="arrangement">Which working arrangement do you prefer?</label>
+    <select id="arrangement" name="arrangement" class="selectpicker form-control" title="Choose one...">
+      <option>Remote</option><option>Hybrid</option><option>On-site</option>
+    </select>
+  </div>
+</form>
+<script>
+  let n = 0;
+  for (const select of document.querySelectorAll('select.selectpicker')) {
+    n++;
+    const title = select.getAttribute('title');
+    // The title option bootstrap-select puts first, so nothing is chosen yet.
+    const placeholder = document.createElement('option');
+    placeholder.className = 'bs-title-option';
+    placeholder.value = '';
+    select.prepend(placeholder);
+    select.selectedIndex = 0;
+    select.tabIndex = -98;
+    const wrap = document.createElement('div');
+    wrap.className = 'dropdown bootstrap-select form-control';
+    select.before(wrap);
+    wrap.append(select);
+    const listId = 'bs-select-' + n;
+    wrap.insertAdjacentHTML('beforeend',
+      '<button type="button" tabindex="-1" class="btn dropdown-toggle btn-light bs-placeholder" data-toggle="dropdown" role="combobox" aria-owns="' + listId + '" aria-haspopup="listbox" aria-expanded="false" data-id="' + select.id + '" title="' + title + '"><div class="filter-option"><div class="filter-option-inner"><div class="filter-option-inner-inner">' + title + '</div></div></div></button>' +
+      '<div class="dropdown-menu"><div class="inner show" role="listbox" id="' + listId + '" tabindex="-1"><ul class="dropdown-menu inner show" role="presentation"></ul></div></div>');
+    const button = wrap.querySelector('button');
+    const ul = wrap.querySelector('ul');
+    const render = () => {
+      const option = select.selectedOptions[0];
+      const chosen = option && !option.classList.contains('bs-title-option');
+      const text = chosen ? option.textContent : title;
+      button.querySelector('.filter-option-inner-inner').textContent = text;
+      button.title = text;
+      button.classList.toggle('bs-placeholder', !chosen);
+      ul.querySelectorAll('a[role=option]').forEach((a) => {
+        const on = Number(a.dataset.index) === select.selectedIndex;
+        a.classList.toggle('selected', on);
+        a.setAttribute('aria-selected', String(on));
+      });
+    };
+    const close = () => { wrap.classList.remove('show'); button.setAttribute('aria-expanded', 'false'); };
+    button.addEventListener('click', () => {
+      if (wrap.classList.contains('show')) return close();
+      if (!ul.children.length) {
+        [...select.options].forEach((option, i) => {
+          if (option.classList.contains('bs-title-option')) return;
+          ul.insertAdjacentHTML('beforeend', '<li><a role="option" class="dropdown-item" id="' + listId + '-' + i + '" tabindex="0" data-index="' + i + '" aria-selected="false"><span class="text"></span></a></li>');
+          ul.lastElementChild.querySelector('.text').textContent = option.textContent;
+        });
+        render();
+      }
+      wrap.classList.add('show');
+      button.setAttribute('aria-expanded', 'true');
+    });
+    ul.addEventListener('click', (e) => {
+      const a = e.target.closest('a[role=option]');
+      if (!a) return;
+      e.preventDefault();
+      select.selectedIndex = Number(a.dataset.index);
+      close();
+      // triggerNative(select, 'change')
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    select.addEventListener('change', render);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+    render();
+  }
+</script></body></html>`;
+
+/*
+ * Vuetify 2's v-select: no `<select>` at all. The activator is
+ * `.v-input__slot`, `role="button"` with `aria-haspopup="listbox"` and
+ * `aria-owns` its list; the label sits inside it, over a readonly text box;
+ * what is submitted is a hidden input beside that box. The menu is drawn on
+ * first open at the foot of the app as `.v-menu__content`, a
+ * `role="listbox"` of `role="option"` rows, chosen on click, and kept (hidden)
+ * once it closes.
+ */
+const VUETIFY = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Vuetify</title>
+<style>
+  .v-input__slot { position: relative; display: flex; min-height: 32px; border-bottom: 1px solid #999; cursor: pointer; width: 300px; }
+  .v-select__slot { position: relative; display: flex; align-items: center; width: 100%; }
+  .v-label { position: absolute; left: 0; top: -14px; font-size: 12px; color: #666; }
+  .v-select__selections { display: flex; flex: 1 1; align-items: center; }
+  .v-select__selections input { width: 8px; border: 0; background: transparent; }
+  .v-menu__content { position: absolute; background: #fff; box-shadow: 0 2px 4px #0004; z-index: 8; }
+  .v-list-item { padding: 6px 16px; cursor: pointer; }
+  .v-input { margin: 28px 0 8px; }
+</style></head><body>
+<div data-app class="v-application"><div class="v-application--wrap">
+<form>
+  <div class="v-input theme--light v-text-field"><div class="v-input__control"><div class="v-input__slot"><div class="v-text-field__slot">
+    <label for="input-3" class="v-label theme--light">First name</label><input id="input-3" name="first_name" type="text">
+  </div></div></div></div>
+  <div class="v-input theme--light v-text-field v-select" data-items="Canada|United States|Mexico" data-name="country" data-n="7" data-label="Country"></div>
+  <div class="v-input theme--light v-text-field v-select" data-items="Remote|Hybrid|On-site" data-name="arrangement" data-n="9" data-label="Which working arrangement do you prefer?"></div>
+</form>
+</div></div>
+<script>
+  const app = document.querySelector('.v-application');
+  for (const input of document.querySelectorAll('.v-select')) {
+    const { items, name, n, label } = input.dataset;
+    input.innerHTML =
+      '<div class="v-input__control"><div role="button" aria-haspopup="listbox" aria-expanded="false" aria-owns="list-' + n + '" class="v-input__slot">' +
+      '<div class="v-select__slot"><label for="input-' + n + '" class="v-label theme--light"></label>' +
+      '<div class="v-select__selections"><input id="input-' + n + '" readonly="readonly" type="text" aria-readonly="false" autocomplete="off"></div>' +
+      '<div class="v-input__append-inner"><div class="v-input__icon v-input__icon--append"><i aria-hidden="true" class="v-icon mdi mdi-menu-down"></i></div></div>' +
+      '<input type="hidden" name="' + name + '" value=""></div><div class="v-menu"></div></div></div>';
+    input.querySelector('label').textContent = label;
+    const slot = input.querySelector('.v-input__slot');
+    const hidden = input.querySelector('input[type=hidden]');
+    const selections = input.querySelector('.v-select__selections');
+    let menu = null;
+    const close = () => { if (menu) menu.style.display = 'none'; slot.setAttribute('aria-expanded', 'false'); input.classList.remove('v-select--is-menu-active'); };
+    const choose = (value) => {
+      hidden.value = value;
+      selections.querySelector('.v-select__selection')?.remove();
+      const shown = document.createElement('div');
+      shown.className = 'v-select__selection v-select__selection--comma';
+      shown.textContent = value;
+      selections.prepend(shown);
+      input.classList.add('v-input--is-label-active', 'v-input--is-dirty');
+      menu.querySelectorAll('[role=option]').forEach((o) => {
+        const on = o.textContent === value;
+        o.setAttribute('aria-selected', String(on));
+        o.classList.toggle('v-list-item--active', on);
+      });
+      close();
+    };
+    slot.addEventListener('click', (e) => {
+      if (slot.getAttribute('aria-expanded') === 'true') return close();
+      if (!menu) {
+        menu = document.createElement('div');
+        menu.className = 'v-menu__content theme--light menuable__content__active';
+        menu.innerHTML = '<div role="listbox" tabindex="-1" class="v-list v-select-list v-sheet theme--light" id="list-' + n + '"></div>';
+        items.split('|').forEach((text, i) => {
+          const row = document.createElement('div');
+          row.tabIndex = 0; row.id = 'list-item-' + n + '-' + i; row.setAttribute('role', 'option'); row.setAttribute('aria-selected', 'false');
+          row.className = 'v-list-item v-list-item--link theme--light';
+          row.innerHTML = '<div class="v-list-item__content"><div class="v-list-item__title"></div></div>';
+          row.querySelector('.v-list-item__title').textContent = text;
+          row.addEventListener('mousedown', (ev) => ev.preventDefault());
+          row.addEventListener('click', () => choose(text));
+          menu.firstElementChild.append(row);
+        });
+        app.append(menu);
+      }
+      const r = slot.getBoundingClientRect();
+      menu.style.top = (r.bottom + scrollY) + 'px'; menu.style.left = r.left + 'px'; menu.style.minWidth = r.width + 'px';
+      menu.style.display = 'block';
+      slot.setAttribute('aria-expanded', 'true');
+      input.classList.add('v-select--is-menu-active');
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+  }
+</script></body></html>`;
+
+const PAGES = { '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -4477,7 +4767,7 @@ async function main() {
         };
         m.fillForm(fields);
         const ids = ['e-sm', 'e-sy', 'e-em', 'e-ey', 'w-sm', 'w-sy', 'w-em', 'w-ey', 'f-from', 'f-to', 'j-sy', 'j-ey', 'wd-first', 'wd-last', 'wd-jfirst', 'x-from', 'x-avail', 'x-notice',
-          's-city', 's-esy', 's-avail', 's-wloc', 's-wcity', 's-after'];
+          's-city', 's-esy', 's-avail', 's-wloc', 's-wcity', 's-after', 'mm-sy', 'mm-sm', 'mm-ey', 'mm-em'];
         return Object.fromEntries(ids.map((id) => [id, document.getElementById(id).value]));
       }, { b: base }),
     );
@@ -4504,6 +4794,11 @@ async function main() {
       JSON.stringify([sections['x-avail'], sections['x-notice']]),
     );
     check('while "Start date" inside it still is', sections['x-from'] === 'September 2022', sections['x-from']);
+    check(
+      'a month box whose placeholder says MM takes the month as two digits',
+      sections['mm-sy'] === '2022' && sections['mm-sm'] === '09' && sections['mm-ey'] === '2026' && sections['mm-em'] === '05',
+      JSON.stringify([sections['mm-sy'], sections['mm-sm'], sections['mm-ey'], sections['mm-em']]),
+    );
     check(
       'Workday’s first and last year attended, under Education only',
       sections['wd-first'] === '2022' && sections['wd-last'] === '2026' && sections['wd-jfirst'] === '',
@@ -7172,6 +7467,112 @@ async function main() {
       'while the Country the employer set is left as it came, and the box for robots stays empty',
       bamboo.country === 'Jamaica' && bamboo.trap === '' && bamboo.first === 'Morgan' && bamboo.school === 'Northeastern University',
       JSON.stringify(bamboo),
+    );
+    /*
+     * Chosen, bootstrap-select and Vuetify's v-select, each asked the same
+     * three things: filled from the profile, filled from the bank, and a
+     * person's pick read back for the bank — each seen in what the widget
+     * draws, not only in what it submits.
+     */
+    const LISTS = {
+      Chosen: {
+        url: '/chosen', question: 'How did you hear about this job?', answer: 'Employee referral', country: 'country', asked: 'hear',
+        shown: (id) => document.querySelector(`#${id}_chosen .chosen-single span`).textContent,
+        submits: (id) => document.getElementById(id).value,
+        pick: async () => { await page.click('#hear_chosen .chosen-single'); await page.click('#hear_chosen li:has-text("Employee referral")'); },
+      },
+      'bootstrap-select': {
+        url: '/bootstrap-select', question: 'Which working arrangement do you prefer?', answer: 'Hybrid', country: 'country', asked: 'arrangement',
+        shown: (id) => document.querySelector(`button[data-id=${id}] .filter-option-inner-inner`).textContent,
+        submits: (id) => document.getElementById(id).value,
+        pick: async () => { await page.click('button[data-id=arrangement]'); await page.click('#bs-select-2 a:has-text("Hybrid")'); },
+      },
+      'Vuetify v-select': {
+        url: '/vuetify', question: 'Which working arrangement do you prefer?', answer: 'Hybrid', country: 'country', asked: 'arrangement',
+        shown: (id) => document.querySelector(`.v-select[data-name=${id}] .v-select__selection`)?.textContent ?? '',
+        submits: (id) => document.querySelector(`input[name=${id}]`).value,
+        pick: async () => { await page.click('.v-select[data-name=arrangement] .v-input__slot'); await page.click('#list-9 [role=option]:has-text("Hybrid")'); },
+      },
+    };
+    for (const [lib, L] of Object.entries(LISTS)) {
+      const read = { shown: String(L.shown), submits: String(L.submits) };
+      await page.goto(`${base}${L.url}`, { waitUntil: 'domcontentloaded' });
+      const fromProfile = await page.evaluate(async ({ b, profile, read, id }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(profile, m.fillForm(profile), { patience: 800 });
+        return {
+          shown: eval(read.shown)(id), submits: eval(read.submits)(id),
+          typedIn: [...document.querySelectorAll('input[type=text], input:not([type])')].filter((i) => i.value && !/first/i.test(`${i.id} ${i.name}`)).map((i) => i.value),
+          filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+          typed: m.typedQuestions(),
+        };
+      }, { b: base, profile: PROFILE, read, id: L.country });
+      await page.goto(`${base}${L.url}`, { waitUntil: 'domcontentloaded' });
+      const fromBank = await page.evaluate(async ({ b, profile, read, id, question, answer }) => {
+        const m = await import(`${b}/autofill.js`);
+        const asked = m.choiceQuestions();
+        const remembered = [{ question, answer }];
+        const report = await m.answerWidgetsFromMemory(remembered, m.fillForm(profile, { remembered }), { patience: 800 });
+        return { asked, shown: eval(read.shown)(id), submits: eval(read.submits)(id), filled: report.filled.map((f) => f.question ?? f.key) };
+      }, { b: base, profile: PROFILE, read, id: L.asked, question: L.question, answer: L.answer });
+      await page.goto(`${base}${L.url}`, { waitUntil: 'domcontentloaded' });
+      await page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        window.__said = [];
+        window.__stop = m.watchChoices((x) => window.__said.push(x));
+      }, { b: base });
+      await L.pick();
+      await page.waitForTimeout(500);
+      const picked = await page.evaluate(({ read, id }) => {
+        window.__stop();
+        return { shown: eval(read.shown)(id), said: window.__said.map((x) => ({ question: x.question, answer: x.answer, keep: x.keep })) };
+      }, { read, id: L.asked });
+
+      group(`${lib}: a list drawn over a select, or instead of one`);
+      check(
+        'the Country is chosen from the profile, drawn by the widget, and reported filled',
+        fromProfile.shown === 'United States' && /^(US|United States)$/.test(fromProfile.submits) && fromProfile.filled.includes('address_country') &&
+          !fromProfile.skipped.some((s) => s.startsWith('address_country')),
+        JSON.stringify(fromProfile),
+      );
+      check(
+        "and nothing is typed into the widget's own boxes, or offered as a question typed on the form",
+        fromProfile.typedIn.length === 0 && fromProfile.typed.length === 0,
+        JSON.stringify(fromProfile),
+      );
+      check(
+        'the question is asked of the bank, and the answer given before is chosen and drawn',
+        fromBank.asked.includes(L.question) && fromBank.shown === L.answer && fromBank.submits !== '' && fromBank.filled.includes(L.question),
+        JSON.stringify(fromBank),
+      );
+      check(
+        "and a person's pick is kept, once, under the question the next form looks up",
+        picked.shown === L.answer && picked.said.length === 1 && picked.said[0].question === L.question && picked.said[0].answer === L.answer && picked.said[0].keep,
+        JSON.stringify(picked),
+      );
+    }
+
+    /*
+     * A Chosen that does not redraw on `chosen:updated` is not claimed: the
+     * select would submit one thing under a box saying "Select a country".
+     */
+    const deaf = await page.goto(`${base}/chosen?deaf`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(profile);
+        return {
+          submits: document.getElementById('country').value,
+          shown: document.querySelector('#country_chosen .chosen-single span').textContent,
+          filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, profile: PROFILE }),
+    );
+    group('Chosen: one that does not redraw');
+    check(
+      'is put back as it was and left to be picked by hand, not reported filled',
+      deaf.submits === '' && deaf.shown === 'Select a country' && !deaf.filled.includes('address_country') &&
+        deaf.skipped.includes('address_country: this one has to be picked by hand'),
+      JSON.stringify(deaf),
     );
   } finally {
     await browser.close();

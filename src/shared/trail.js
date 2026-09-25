@@ -269,8 +269,43 @@ export function relatedPath(a, b) {
      */
     return (stepA || stepB) && namesTheSameJob(a, b);
   }
+
+  /*
+   * One view of a job swapped for another, with the job's id after it.
+   *
+   * Meta Careers keeps the posting at `/profile/job_details/<id>/` and its
+   * form at `/profile/create_application/<id>/`. The id is at the end of both
+   * and what changes is the segment before it, which is neither of the two
+   * shapes above — so pressing "Apply now" started a fresh application on the
+   * form, with the posting and whatever had been built on it left behind.
+   *
+   * The id is what makes this safe, and only where it follows the change: an
+   * id before it — `/company/<id>/reviews` beside `/company/<id>/apply` — is
+   * whose pages these are, not which job. A job-sized id, not a year or a
+   * page number. And one side has to be a step of a form, read word by word
+   * because these are written `create_application` and `jobApply`; two views
+   * that are neither — `/view/<id>` and `/similar/<id>` — stay apart.
+   */
+  if (sa.length === sb.length) {
+    const differ = sa.map((seg, i) => i).filter((i) => sa[i] !== sb[i]);
+    if (differ.length === 1) {
+      const at = differ[0];
+      const idAfter = sa.slice(at + 1).some((seg) => PATH_JOB_ID.test(seg));
+      if (idAfter && (namesAStep(sa[at]) || namesAStep(sb[at]))) return true;
+    }
+  }
   return false;
 }
+
+/** A path segment that is a job's id: five digits or more, and nothing but an id. */
+const PATH_JOB_ID = /^(?=(?:\D*\d){5})[a-z0-9_-]+$/i;
+
+/** A segment with a step of a form among its words: `create_application`, `jobApply`. */
+const namesAStep = (seg) =>
+  bare(seg)
+    .replace(/([a-z])([A-Z])/g, '$1_$2')
+    .split(/[-_.]+/)
+    .some((word) => STEP_WORDS.test(word));
 
 /** Did the user just click a link to this page, meaning "apply"? */
 export function wasExpected(trail, url, now = Date.now()) {
@@ -828,6 +863,14 @@ const SHOWN_CHOICE = [
   '.select2-selection__rendered',
   '.choices__list--single',
   '.choices__list--multiple',
+  /*
+   * Ant Design's pick, single or a chip, with the pick in its `title` too.
+   * And Google's address autocomplete, which appends a list of the addresses
+   * matching what was typed into the address box and leaves it in the page,
+   * hidden, once one is chosen: the applicant's street, city and country.
+   */
+  '.ant-select-selection-item',
+  '.pac-container',
 ].join(', ');
 const REPEATS_CHOICE = ['title', 'aria-label', 'data-value', 'value'];
 
@@ -848,10 +891,12 @@ const REPEATS_CHOICE = ['title', 'aria-label', 'data-value', 'value'];
  * highlight marks go too, because a menu reopens with them on the pick, and
  * so does an emotion `css-…` class: react-select styles the pick differently,
  * so its generated class name is a different hash from its neighbours'. Only
- * on `role="option"`, so nothing but a list's options is touched.
+ * on `role="option"`, so nothing but a list's options is touched — and on Ant
+ * Design's options, which have no role and are marked `-selected` and
+ * `-active` on the pick.
  */
 const OPTION_STATE_ATTRS = ['data-state', 'data-selected', 'data-headlessui-state', 'data-active', 'data-focus', 'data-highlighted'];
-const OPTION_STATE_CLASS = /selected|highlighted|focused|focusvisible|^css-/i;
+const OPTION_STATE_CLASS = /selected|highlighted|focused|focusvisible|^css-|^ant-select-item-option-active$/i;
 
 /*
  * And the answers a review step writes out as text.
@@ -871,7 +916,11 @@ const OPTION_STATE_CLASS = /selected|highlighted|focused|focusvisible|^css-/i;
  * colon in the same text keeps the label. The questions are the identifiers
  * and the equal-opportunity ones, the same families `remembering.js` refuses
  * to keep; written out here rather than imported because this module is loaded
- * on its own in places an import cannot follow.
+ * on its own in places an import cannot follow. And the applicant's address
+ * and contact details — "Address Line 1", "Postal Code", "Email Address",
+ * "Phone Number" — which went to the server and on to the AI the same way; an
+ * address has no shape the server could find it by afterwards. Not "Office
+ * address" or "Location", which are the posting's.
  *
  * Only the answer, only where it is short, and never a control: a form's own
  * "Gender" label with its `<select>` after it keeps its options, which are the
@@ -882,7 +931,7 @@ const OPTION_STATE_CLASS = /selected|highlighted|focused|focusvisible|^css-/i;
  * took the capture from about 10ms to about 14ms.
  */
 const STATED_PERSONAL =
-  /\b(ssn|social\s*security|national\s*insurance|tax\s*(id|identification)|(date|day|month|year)\s*of\s*birth|birth\s*(date|day)|dob|age|passport|driver'?s?\s*licen[cs]e|visa\s*number|(account|card|routing)\s*number|iban|sort\s*code|gender|sex|transgender|non-?binary|sexual\s*orientation|lgbt\w*|race|ethnicit(y|ies)|hispanic|latin[oaxe]s?|national\s*origin|indigenous|aboriginal|veteran|disab(led|ility|ilities)|criminal|convict\w*|felon(y|ies)|religion|marital|pregnan\w*)\b/i;
+  /\b(ssn|social\s*security|national\s*insurance|tax\s*(id|identification)|(date|day|month|year)\s*of\s*birth|birth\s*(date|day)|dob|age|passport|driver'?s?\s*licen[cs]e|visa\s*number|(account|card|routing)\s*number|iban|sort\s*code|gender|sex|transgender|non-?binary|sexual\s*orientation|lgbt\w*|race|ethnicit(y|ies)|hispanic|latin[oaxe]s?|national\s*origin|indigenous|aboriginal|veteran|disab(led|ility|ilities)|criminal|convict\w*|felon(y|ies)|religion|marital|pregnan\w*|(e-?mail|phone|mobile|cell|telephone)\s*(address|number|no\.?)|(home|mailing|residential|street|permanent|current)\s*address|address\s*line|zip\s*code|postal\s*code|postcode)\b/i;
 const CONTROL =
   'input, select, textarea, button, [contenteditable], [role="radio"], [role="checkbox"], [role="option"], [role="combobox"], [role="listbox"], [role="radiogroup"]';
 
@@ -909,6 +958,19 @@ const REQUIREMENT_LABEL = /\b(minimum|requirements?|at\s+least)\b/i;
 const REQUIREMENT_SAID =
   /\b(required|requirements?|must|minimum|at\s+least|mandatory|preferred|encouraged)\b|\b(?:1[6-9]|2[01])(?:\s*\+|\s+(?:years?\s+(?:of\s+age\s+|old\s+)?)?(?:or|and)\s+(?:older|over|above))/i;
 
+/*
+ * Or something the employer offers or does, which a posting's benefits and
+ * conditions name by the same words: "Disability insurance: 100%
+ * employer-paid", "Short-term disability", "Pregnancy and parental leave", a
+ * "Criminal background check" conducted after an offer, a "Gender pay equity"
+ * audit. Measured through this module on a warehouse posting, all seven such
+ * lines went to the AI as the label alone. A question is asked of the
+ * applicant — "Disability Status", "Criminal convictions", "Are you
+ * pregnant?" — and names none of these.
+ */
+const OFFERED_LABEL =
+  /\b(insurance|coverage|leave|benefits?|checks?|screening|pay|polic(y|ies)|programs?|programmes?|hiring|(short|long)[\s-]*term)\b/i;
+
 function scrubStatedAnswers(root) {
   const labels = [];
   const walker = (root.ownerDocument ?? root).createTreeWalker(root, 4 /* NodeFilter.SHOW_TEXT */);
@@ -921,11 +983,13 @@ function scrubStatedAnswers(root) {
     const inline = /^([^:]{1,80}):\s*\S/.exec(said);
     if (inline && STATED_PERSONAL.test(inline[1])) {
       const rest = said.slice(inline[0].length - 1);
-      if (!REQUIREMENT_LABEL.test(inline[1]) && !REQUIREMENT_SAID.test(rest)) node.data = `${inline[1]}:`;
+      if (!REQUIREMENT_LABEL.test(inline[1]) && !OFFERED_LABEL.test(inline[1]) && !REQUIREMENT_SAID.test(rest)) {
+        node.data = `${inline[1]}:`;
+      }
       continue;
     }
     if (said.length > 80 || !STATED_PERSONAL.test(said)) continue;
-    if (REQUIREMENT_LABEL.test(said)) continue;
+    if (REQUIREMENT_LABEL.test(said) || OFFERED_LABEL.test(said)) continue;
     let label = node.parentElement;
     if (!label || label.textContent.trim() !== said) continue;
     // Up through the wrappers that hold nothing else, to what sits beside it.
@@ -948,9 +1012,9 @@ function scrubCopy(root) {
     el.textContent = '';
     for (const name of REPEATS_CHOICE) el.removeAttribute(name);
   }
-  for (const el of root.querySelectorAll('[role="option"], [aria-activedescendant]')) {
+  for (const el of root.querySelectorAll('[role="option"], [aria-activedescendant], .ant-select-item-option')) {
     el.removeAttribute('aria-activedescendant');
-    if (el.getAttribute('role') !== 'option') continue;
+    if (el.getAttribute('role') !== 'option' && !el.classList.contains('ant-select-item-option')) continue;
     for (const name of OPTION_STATE_ATTRS) el.removeAttribute(name);
     for (const token of [...el.classList]) if (OPTION_STATE_CLASS.test(token)) el.classList.remove(token);
   }
