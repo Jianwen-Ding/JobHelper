@@ -1213,8 +1213,23 @@ function isFillable(input) {
   // forms inside a fixed modal are ordinary. Whether it occupies space on the
   // page is the question actually being asked.
   if (input.getClientRects().length === 0) return false;
+  if (BOT_TRAP.test(labelFor(input))) return false;
   return true;
 }
+
+/*
+ * A box put there to catch robots, which a person is asked to leave empty.
+ *
+ * Workday's Create Account and Sign In carry one on every tenant: a box named
+ * `website`, labelled "Enter website. This input is for robots only, do not
+ * enter if you're human.", cut down to a pixel with the same `clip` a
+ * screen-reader-only label uses — so it counts as on the page, and `website`
+ * matched it. Measured live on NVIDIA's and Intel's with a fake profile that
+ * has a website: the address went into the trap, and an account created that
+ * way is created by a robot as far as the site can tell. Only a label that
+ * says so in words: robots, not a human, a honeypot.
+ */
+const BOT_TRAP = /\bfor\s+(?:ro)?bots\b|\b(?:ro)?bots?\s+only\b|\bif\s+you(?:'|’|\s+a)?re\s+(?:a\s+)?human\b|\bhoney\s*pot\b/i;
 
 /**
  * Has this dropdown actually been answered?

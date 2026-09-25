@@ -2422,6 +2422,23 @@ const WORKDAY_PROMPTS = `<!doctype html><html><head><meta charset="utf-8"><title
   }
 </script>
 </body></html>`;
+/*
+ * Workday's Create Account and Sign In, as drawn live on every tenant visited
+ * (NVIDIA, Intel): beside the email and password boxes, a box named
+ * `website` whose label says it is for robots only — cut down to a pixel by
+ * the same `clip` a screen-reader-only label uses, so it counts as on the page.
+ */
+const WORKDAY_SIGN_IN = `<!doctype html><html><head><meta charset="utf-8"><title>Create Account</title>
+<style>.css-umjazw{position:absolute;width:1px;height:1px;margin:-22px -1px -1px;padding:0;border:0;overflow:clip;clip:rect(1px,1px,1px,1px);clip-path:polygon(0 0,0 0,0 0,0 0);white-space:nowrap}.css-i19yjz{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(1px,1px,1px,1px)}</style></head><body>
+<div data-automation-id="signInContent"><h3 id="authViewTitle">Create Account</h3>
+<form data-automation-id="signInFormo">
+  <div data-automation-id="formField-email"><label for="input-14"><span>Email Address<abbr aria-hidden="true">*</abbr></span></label><div><div><input type="text" data-automation-id="email" id="input-14" aria-required="true" autocomplete="email"></div></div></div>
+  <div data-automation-id="formField-password"><label for="input-15"><span>Password<abbr aria-hidden="true">*</abbr></span></label><div><div><input type="password" data-automation-id="password" id="input-15" aria-required="true" autocomplete="new-password"></div></div></div>
+  <div data-automation-id="formField-verifyPassword"><label for="input-16"><span>Verify New Password<abbr aria-hidden="true">*</abbr></span></label><div><div><input type="password" data-automation-id="verifyPassword" id="input-16" aria-required="true" autocomplete="new-password"></div></div></div>
+  <div><div style="position:relative"><label for="03c5ccaf-b610-4fb6-89b9-a72d4e191021" class="css-i19yjz">Enter website. This input is for robots only, do not enter if you're human.</label><input data-automation-id="beecatcher" id="03c5ccaf-b610-4fb6-89b9-a72d4e191021" name="website" type="text" class="css-umjazw"></div></div>
+  <div><label for="createAccountCheckbox">I agree</label><input type="checkbox" id="createAccountCheckbox" data-automation-id="createAccountCheckbox"></div>
+</form></div>
+</body></html>`;
 const JOBS = [
   {
     company: 'Vega Analytics',
@@ -2852,7 +2869,7 @@ const ADDS_ITS_CODE = `<!doctype html><html><head><meta charset="utf-8"><title>A
 </script>
 </body></html>`;
 
-const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS };
+const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -6151,6 +6168,24 @@ async function main() {
       'and one already holding a choice is not typed into again',
       prompts.boxes[2] === '' && !prompts.log.some((l) => l.startsWith('typed into education-23')),
       JSON.stringify(prompts.log),
+    );
+
+    const signIn = await page.goto(`${base}/workday-sign-in`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm({ email: 'morgan.testwell@example.com', website: 'https://example.com' });
+        return {
+          email: document.getElementById('input-14').value,
+          trap: document.getElementById('03c5ccaf-b610-4fb6-89b9-a72d4e191021').value,
+          filled: report.filled.map((f) => f.key),
+        };
+      }, { b: base }),
+    );
+    group('Workday: signing in');
+    check(
+      'the box "for robots only, do not enter if you\'re human" is left empty, and the email still filled',
+      signIn.trap === '' && signIn.email === 'morgan.testwell@example.com' && !signIn.filled.includes('website'),
+      JSON.stringify(signIn),
     );
 
     /* ---------------- Found filling live forms with a fake profile ---------------- */
