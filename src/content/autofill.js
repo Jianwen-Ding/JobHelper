@@ -124,7 +124,12 @@ const FIELD_PATTERNS = [
     /\b(major|discipline|field[\s_-]?of[\s_-]?study|(course|area)[\s_-]?of[\s_-]?study|(field|subject)[\s_-]+of[\s_-]+(your[\s_-]+)?degree|degree[\s_-]+(field|subject))\b/i,
   ],
   ['school', /\b(school|university|college|institution|institute)\b/i],
-  ['degree', /\b(degree)\b/i],
+  /*
+   * And the level it is at, asked without the word: BambooHR's "Highest
+   * Education Obtained" lists "College - Bachelor of Science" among its
+   * levels, and was left on "–Select–".
+   */
+  ['degree', /\b(degree)\b|\bhighest[\s_-]+(level[\s_-]+of[\s_-]+)?education\b|\beducation(al)?[\s_-]+level\b|\blevel[\s_-]+of[\s_-]+education\b/i],
   /*
    * The two declarations above every address field. "Are you authorized to
    * work in this country?" is the commonest wording of the right-to-work
@@ -1177,9 +1182,20 @@ function isWidgetChoice(element) {
     role === 'listbox' ||
     element.getAttribute?.('aria-haspopup') === 'listbox' ||
     ['list', 'both'].includes(element.getAttribute?.('aria-autocomplete')) ||
-    isWorkdayPrompt(element)
+    isWorkdayPrompt(element) ||
+    isFabricSelect(element)
   );
 }
+
+/*
+ * BambooHR's dropdown: Fabric's select, a button saying only that it opens a
+ * menu (`aria-haspopup="true"`), which names that menu in `data-menu-id` and
+ * draws it at the foot of the page as `role="menuitem"` rows. Every list on
+ * its application is one, and none was read as a list. The menu's name is
+ * required as well, because a button opening a menu is otherwise a toolbar.
+ */
+const FABRIC_SELECT = 'button[data-menu-id][aria-haspopup="true"]';
+const isFabricSelect = (element) => Boolean(element.matches?.(FABRIC_SELECT));
 
 /*
  * Workday's prompt: a search box that is a list, and says so in nothing a
@@ -1232,6 +1248,13 @@ function isFillable(input) {
    * control. "Filled 3 fields", three empty fields.
    */
   if (isDisabled(input) || input.readOnly) return false;
+  /*
+   * And a `<select>` marked `readonly`, which the browser ignores and the page
+   * does not: it is what a Fabric select keeps behind its button, holding only
+   * the choice already made, and was reported as a degree with no matching
+   * option beside the list that had one. See `isFabricSelect`.
+   */
+  if (input instanceof HTMLSelectElement && input.hasAttribute('readonly')) return false;
   if (input.type === 'hidden' || input.type === 'file' || input.type === 'password') return false;
   // Radios are answered as a group, below; checkboxes are consent and are
   // nobody's to tick but the applicant's.
@@ -1783,8 +1806,12 @@ function sameAnswerSpelledOtherwise(key, option, value) {
    * left empty on every Greenhouse form.
    */
   if (key === 'degree') {
+    // Or filed under where it is earned, as BambooHR lists them: "College -
+    // Bachelor of Science", "College - Associates". Read without the heading.
+    const said = clean(option).replace(/^(?:college|university)\s*[-–—:]\s+/i, '');
+    if (said !== clean(option) && sameOption(said, value)) return true;
     const level = degreeLevel(value);
-    return Boolean(level) && LEVEL_ONLY.test(clean(option).replace(/[’]/g, "'")) && degreeLevel(option) === level;
+    return Boolean(level) && LEVEL_ONLY.test(said.replace(/[’]/g, "'")) && degreeLevel(said) === level;
   }
   if (key === 'graduation_month' || key === 'education_start_month') {
     const month = monthOf(value);
@@ -4191,7 +4218,7 @@ function widgetChoices(fields, filled) {
   const seen = [];
 
   for (const widget of deepQueryAll(
-    '[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"], [data-uxi-widget-type="selectinput"]',
+    `[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"], [data-uxi-widget-type="selectinput"], ${FABRIC_SELECT}`,
   )) {
     if (!isWidgetChoice(widget)) continue;
     if (widget.getClientRects().length === 0) continue;
@@ -4406,6 +4433,8 @@ function optionsOf(widget, openBefore = null) {
    * "the first that matches" never noticed, and "the only one that matches"
    * did: Boston, Massachusetts was two Bostons and neither was chosen.
    */
+  // And the menu a Fabric select names its own way. See `isFabricSelect`.
+  if (isFabricSelect(widget)) ids.push(widget.getAttribute('data-menu-id'));
   const named = [...new Set(ids.map((id) => widget.getRootNode().getElementById?.(id) ?? document.getElementById(id)).filter(Boolean))];
   /*
    * Never a list another control says is its own.
@@ -4444,7 +4473,7 @@ function optionsOf(widget, openBefore = null) {
   const fresh = openBefore ? showing.filter((l) => !openBefore.has(l)) : [];
   const lists = named.length ? named : fresh.length ? fresh : showing;
   if (!named.length && lists.length !== 1) return [];
-  return lists.flatMap((l) => [...l.querySelectorAll('[role="option"]')]).filter((o) => !isDisabled(o) && o.getAttribute('aria-disabled') !== 'true');
+  return lists.flatMap((l) => [...l.querySelectorAll('[role="option"], [role="menuitem"]')]).filter((o) => !isDisabled(o) && o.getAttribute('aria-disabled') !== 'true');
 }
 
 /** The option that is plainly this answer, or nothing. Never the nearest. */
@@ -4476,11 +4505,16 @@ function exactOption(options, key, value, fields = {}, asked = '') {
   );
 }
 
-/** A click as a person makes one — some widgets choose on mousedown, some on click. */
+/**
+ * A click as a person makes one — some widgets choose on mousedown, some on
+ * click. Counted as one click, as a mouse's is: a click with a `detail` of 0
+ * is what Enter on a focused button sends, and BambooHR's Fabric select opens
+ * on the keys instead and ignores that click. Its lists never opened.
+ */
 function press(el) {
   for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
     const Ctor = type.startsWith('pointer') && typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
-    el.dispatchEvent(ours(new Ctor(type, { bubbles: true, cancelable: true, view: window })));
+    el.dispatchEvent(ours(new Ctor(type, { bubbles: true, cancelable: true, view: window, detail: 1 })));
   }
 }
 
@@ -4579,7 +4613,8 @@ function drawnValue(control) {
 /*
  * What a dropdown says while nothing is chosen.
  */
-const NOTHING_CHOSEN = /^(?:select|choose|pick|search)\b|^please\s+(?:select|choose)\b|^-+|^none\s+selected$|^…$/i;
+// Any kind of dash: BambooHR's says "–Select–", and iCIMS's "— Make a Selection —".
+const NOTHING_CHOSEN = /^(?:select|choose|pick|search)\b|^please\s+(?:select|choose)\b|^[-–—]+|^none\s+selected$|^…$/i;
 
 /**
  * Whether a widget already shows a choice: a pill or a single value drawn
