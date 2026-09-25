@@ -4793,9 +4793,26 @@ export function createCard({
     const here = (analysis?.job?.company ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     const sameEmployer = (r) => Boolean(here) && r.id.startsWith(`job-${here}-`);
 
-    const groups = GROUPS
-      .map(([tier, label]) => [label, resumes.filter((r) => tierOf(r) === tier)])
-      .filter(([, list]) => list.length > 0);
+    /*
+     * And above all of them, the one made for this application.
+     *
+     * "Temporary resumes created for a job application should always be on
+     * the very top … when looking at that very job application." It sat in
+     * "Built for a posting" among every other posting's, ranked by fit, and
+     * the resume written for the form in front of you could be fifth. The
+     * application's own resume as the store has it, and the copy this card is
+     * building for it — only where it really is a temporary one; a base
+     * picked to start from stays where bases go.
+     */
+    const forThis = new Set(
+      [analysis?.application?.resumeId, state.staged?.application?.resumeId, state.spec?.id].filter(Boolean),
+    );
+    const own = resumes.filter((r) => forThis.has(r.id) && tierOf(r) === 'temporary');
+
+    const groups = [
+      ['For this application', own],
+      ...GROUPS.map(([tier, label]) => [label, resumes.filter((r) => tierOf(r) === tier && !own.includes(r))]),
+    ].filter(([, list]) => list.length > 0);
 
     // One group is no grouping, and an empty one reads as a section that
     // failed to load.
@@ -4806,7 +4823,7 @@ export function createCard({
         baseSelect.append(group);
       }
     } else {
-      for (const r of byFit(resumes, sameEmployer)) baseSelect.append(option(r));
+      for (const r of [...own, ...byFit(resumes.filter((r) => !own.includes(r)), sameEmployer)]) baseSelect.append(option(r));
     }
 
     /*

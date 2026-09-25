@@ -3457,6 +3457,72 @@ async function main() {
     JSON.stringify(unranked),
   );
 
+  console.log('\nThe resume made for this application, at the very top');
+
+  /*
+   * Reported: "temporary resumes created for a job application should always
+   * be on the very top when looking for resume variation options when looking
+   * at that very job application". It sat in "Built for a posting" among every
+   * other posting's, ranked by fit, so the resume written for this form could
+   * be anywhere in the list.
+   */
+  const pickerFor = (application) =>
+    inPage(async (createCard, application) => {
+      createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Platform Engineer', company: 'Helios' },
+          spec: { id: 'job-helios', label: 'Helios', tier: 'temporary' },
+          baseResumeId: 'newgrad',
+          application,
+          rationale: [],
+          diff: [],
+          resumeFit: [
+            { id: 'platform', hits: 6, because: ['Go'], share: 0.6 },
+            { id: 'job-vega-old', hits: 5, because: ['Kafka'], share: 0.5 },
+            { id: 'job-helios-mine', hits: 0, because: [], share: 0 },
+          ],
+          recommended: ['platform'],
+        },
+        resumes: [
+          { id: 'newgrad', label: 'New grad', base: true },
+          { id: 'platform', label: 'Platform', base: true },
+          { id: 'job-vega-old', label: 'Platform Engineer — Vega', tier: 'temporary' },
+          { id: 'job-helios-mine', label: 'Platform Engineer — Helios', tier: 'temporary' },
+        ],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async () => ({}),
+      });
+      await new Promise((r) => setTimeout(r, 80));
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      return [...root.querySelectorAll('select optgroup')].map((g) => ({
+        label: g.label,
+        options: [...g.querySelectorAll('option')].map((o) => o.textContent.replace(/^★ /, '').replace(/ — uses .*$/, '')),
+      }));
+    }, application);
+
+  const mine = await pickerFor({ id: 'app-helios', resumeId: 'job-helios-mine' });
+  check(
+    "this application's own resume is first, in a group of its own, above the bases",
+    mine?.[0]?.label === 'For this application' && JSON.stringify(mine[0].options) === JSON.stringify(['Platform Engineer — Helios']),
+    JSON.stringify(mine),
+  );
+  check(
+    'even though it matches the posting worst, and only there',
+    !mine?.some((g) => g.label !== 'For this application' && g.options.includes('Platform Engineer — Helios')),
+    JSON.stringify(mine),
+  );
+  const aBase = await pickerFor({ id: 'app-helios', resumeId: 'platform' });
+  check(
+    'a base the application was built from stays with the bases',
+    !aBase?.some((g) => g.label === 'For this application') && aBase?.[0]?.label === 'Bases',
+    JSON.stringify(aBase),
+  );
+  const none = await pickerFor({ id: 'app-helios' });
+  check('and with nothing made for it yet, the list is as it was', none?.[0]?.label === 'Bases', JSON.stringify(none));
+
   console.log('\nAdding to a skills group and cutting from it are two decisions');
 
   /*
