@@ -1141,8 +1141,34 @@ function isWidgetChoice(element) {
     role === 'combobox' ||
     role === 'listbox' ||
     element.getAttribute?.('aria-haspopup') === 'listbox' ||
-    ['list', 'both'].includes(element.getAttribute?.('aria-autocomplete'))
+    ['list', 'both'].includes(element.getAttribute?.('aria-autocomplete')) ||
+    isWorkdayPrompt(element)
   );
+}
+
+/*
+ * Workday's prompt: a search box that is a list, and says so in nothing a
+ * screen reader reads.
+ *
+ * Its School or University, its Field of Study, "How Did You Hear About Us?"
+ * and the phone's country code are each an `<input placeholder="Search">`
+ * with no role and no `aria-autocomplete`, inside a `multiSelectContainer`,
+ * marked only `data-uxi-widget-type="selectinput"`. Nothing here read that as
+ * a list, so it was typed into as a text box. Measured live with a fake
+ * profile on Intel's and NVIDIA's My Experience: "Northeastern University" and
+ * "Computer Science" sat in the search boxes, the report counted both filled,
+ * and Save and Continue answered "The field School or University is required
+ * and must have a value", and the same for Field of Study — words in a search
+ * box are not a choice. Where a person had already picked Computer Science,
+ * on NVIDIA, the words were typed in again beside the pill.
+ *
+ * As a list it is driven the way every list is (see `chooseInWidget`), with
+ * the two things this one needs: the search runs on Enter, and the click has
+ * to land on the option's words (see `wordsOf`). What it holds is its pills
+ * (see `controlOf`), so one already chosen is left alone.
+ */
+function isWorkdayPrompt(element) {
+  return element.getAttribute?.('data-uxi-widget-type') === 'selectinput';
 }
 
 /**
@@ -3714,7 +3740,7 @@ function widgetChoices(fields, filled) {
   const seen = [];
 
   for (const widget of deepQueryAll(
-    '[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"]',
+    '[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"], [data-uxi-widget-type="selectinput"]',
   )) {
     if (!isWidgetChoice(widget)) continue;
     if (widget.getClientRects().length === 0) continue;
@@ -4091,8 +4117,8 @@ function tookIt(widget, box, option, value, hiddenBefore, chosen = option.textCo
  * placeholder, or nothing — and `undefined` for a widget that is not drawn
  * this way at all, which `tookIt` then reads as it always has.
  */
-const DRAWN_VALUE = '[class*="single-value"], [class*="singleValue"], [class*="multi-value__label"], [class*="multiValueLabel"]';
-const DRAWS_ITS_VALUE = `${DRAWN_VALUE}, [class*="value-container"], [class*="ValueContainer"], [class*="__placeholder"]`;
+const DRAWN_VALUE = '[class*="single-value"], [class*="singleValue"], [class*="multi-value__label"], [class*="multiValueLabel"], [data-automation-id="selectedItem"]';
+const DRAWS_ITS_VALUE = `${DRAWN_VALUE}, [class*="value-container"], [class*="ValueContainer"], [class*="__placeholder"], [data-automation-id="multiselectInputContainer"]`;
 
 function drawnValue(control) {
   if (!control?.querySelector?.(DRAWS_ITS_VALUE)) return undefined;
@@ -4128,6 +4154,10 @@ function widgetShowsAnAnswer(widget) {
  * an ignored click beside a paragraph naming the city was reported as filled.
  */
 function controlOf(widget) {
+  // A Workday prompt draws its choices as pills beside the search box, in the
+  // container around both. See `isWorkdayPrompt`.
+  const prompt = widget.closest?.('[data-automation-id="multiSelectContainer"]');
+  if (prompt) return prompt;
   /*
    * Its wrapper, not itself, and a near one. `closest` starts at the element
    * it is called on, and react-select's box is `class="select__input"` — so on
@@ -4337,6 +4367,14 @@ async function chooseInWidget(widget, key, value, { patience, fields, asked }) {
     option = await waitForOption(widget, key, value, openBefore, { patience, quiet: 400, fields, asked });
     if (!option) {
       setValue(box, value);
+      /*
+       * A Workday prompt searches when Enter is let go: its keydown notes the
+       * key held and its keyup runs the search. Typed into and left, its list
+       * said "No Items." for as long as it was watched.
+       */
+      if (isWorkdayPrompt(box)) {
+        for (const type of ['keydown', 'keyup']) box.dispatchEvent(new KeyboardEvent(type, { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+      }
       option = await waitForOption(widget, key, value, openBefore, { patience, fields, asked });
     }
   } else {
@@ -4350,13 +4388,36 @@ async function chooseInWidget(widget, key, value, { patience, fields, asked }) {
   }
   // Read before the press: a menu that closes takes its options with it.
   const chosen = option.textContent;
-  press(option);
+  press(wordsOf(option));
   await pause(60);
   if (!tookIt(widget, box, option, value, hiddenBefore, chosen, shownBefore)) {
     undoWidget(widget, box);
     return 'ignored';
   }
   return 'chose';
+}
+
+/*
+ * Where a person's click on an option lands: on its words, the innermost
+ * element saying all of them — from which the click rises through the option
+ * to every listener above it.
+ *
+ * Pressed on the option itself, a click never reaches a listener inside it,
+ * and Workday's is inside: its `role="option"` row wraps a `promptLeafNode`
+ * holding the only click handler, around a radio and the words. Measured live
+ * on Intel's School or University: "Northeastern University" found in the
+ * list and pressed was not chosen — no pill, the list still open — and the
+ * same press on its words chose it. An option that is nothing but its words
+ * is pressed as before.
+ */
+function wordsOf(option) {
+  const said = clean(option.textContent);
+  let at = option;
+  for (;;) {
+    const inner = [...at.children].find((child) => clean(child.textContent) === said);
+    if (!inner) return at;
+    at = inner;
+  }
 }
 
 /** Whether a widget's own menu is showing. */

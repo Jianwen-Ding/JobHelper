@@ -2345,6 +2345,83 @@ ${workdayQuestion('ceecc5b2f5401001aa31bc34396e0006', '10)* Are you currently au
 </div></div>
 ${WORKDAY_QUESTIONS_SCRIPT}
 </body></html>`;
+/*
+ * Workday's prompt, as its School or University and Field of Study are drawn
+ * live on Intel's and NVIDIA's My Experience: a search box with no role and
+ * no `aria-autocomplete`, marked only `data-uxi-widget-type="selectinput"`,
+ * inside a `multiSelectContainer` that draws each choice as a pill.
+ *
+ * And it behaves as it did live: typing searches nothing — the search runs
+ * when Enter is let go after being pressed; the options are `role="option"`
+ * rows whose only click handler is on a `promptLeafNode` inside them, around a
+ * radio and the words; the first row is marked `aria-selected` while nothing
+ * has been chosen; and a choice draws a pill and empties the box.
+ */
+const workdayPrompt = (id, label, picked = '') => `
+  <div data-automation-id="formField-${id.split('--')[1]}"><label for="${id}"><span>${label}<abbr aria-hidden="true">*</abbr></span></label>
+    <div><div><div tabindex="-1" data-automation-id="multiSelectContainer" data-uxi-widget-type="multiselect">
+      ${picked ? `<ul role="listbox" aria-label="items selected"><li role="presentation"><div role="option" aria-selected="true" data-automation-id="selectedItem" aria-label="${picked}, press delete to clear value.">${picked}</div></li></ul>` : ''}
+      <div data-automation-id="multiselectInputContainer"><div>
+        <input enterkeyhint="search" placeholder="Search" aria-required="true" autocomplete="off" data-uxi-widget-type="selectinput" id="${id}" data-automation-id="searchBox" value="">
+        <div data-automation-id="promptAriaInstruction" aria-hidden="true">${picked ? '1 item' : '0 items'} selected</div>
+      </div><span data-automation-id="promptIcon" aria-hidden="true">≡</span></div>
+    </div></div></div></div>`;
+const WORKDAY_PROMPTS = `<!doctype html><html><head><meta charset="utf-8"><title>My Experience</title></head><body>
+<div data-automation-id="applyFlowMyExpPage">
+<div role="group" aria-labelledby="Education-section"><h4 id="Education-section">Education</h4>
+  <p>In the 'School' or 'Field of Study' fields, start typing the official English name and press 'Enter' to see suggestions.</p>
+  <div role="group" aria-labelledby="Education-1-panel"><div><h5 id="Education-1-panel">Education 1</h5></div>
+    ${workdayPrompt('education-22--school', 'School or University')}
+    ${workdayPrompt('education-22--fieldOfStudy', 'Field of Study')}
+  </div>
+</div>
+<div role="group" aria-labelledby="Education-section-2"><h4 id="Education-section-2">Education</h4>
+  <div role="group" aria-labelledby="Education-2-panel"><div><h5 id="Education-2-panel">Education 2</h5></div>
+    ${workdayPrompt('education-23--fieldOfStudy', 'Field of Study', 'Computer Science')}
+  </div>
+</div>
+</div>
+<script>
+  window.__log = [];
+  const FOUND = {
+    'Northeastern University': ['Northeastern Illinois University', 'Northeastern Ohio Medical University', 'Northeastern State University', 'Northeastern University', 'University of Northeastern Philippines'],
+    'Computer Science': ['Computational Science & Engineering', 'Computer & Info Science', 'Computer Science', 'Computer Science & Engin.', 'Electrical Engineering and Computer Science'],
+  };
+  const close = () => document.querySelector('[data-automation-id="activeListContainer"]')?.remove();
+  const show = (box, words) => {
+    close();
+    const list = document.createElement('div');
+    list.setAttribute('role', 'listbox');
+    list.setAttribute('data-automation-id', 'activeListContainer');
+    words.forEach((text, i) => {
+      const row = document.createElement('div');
+      row.setAttribute('role', 'option');
+      row.setAttribute('data-automation-id', 'menuItem');
+      row.setAttribute('aria-selected', String(i === 0));
+      row.innerHTML = '<div data-automation-id="promptLeafNode"><div><input type="radio" data-automation-id="radioBtn"></div><div data-automation-id="promptOption"></div></div>';
+      row.querySelector('[data-automation-id="promptOption"]').textContent = text;
+      row.querySelector('[data-automation-id="promptLeafNode"]').addEventListener('click', () => {
+        if (text === 'No Items.') return;
+        const container = box.closest('[data-automation-id="multiSelectContainer"]');
+        container.insertAdjacentHTML('afterbegin', '<ul role="listbox" aria-label="items selected"><li role="presentation"><div role="option" aria-selected="true" data-automation-id="selectedItem"></div></li></ul>');
+        container.querySelector('[data-automation-id="selectedItem"]').textContent = text;
+        box.value = '';
+        __log.push(box.id + ' = ' + text);
+        close();
+      });
+      list.append(row);
+    });
+    document.body.append(list);
+  };
+  for (const box of document.querySelectorAll('[data-uxi-widget-type="selectinput"]')) {
+    let held = false;
+    box.addEventListener('mousedown', () => show(box, ['No Items.']));
+    box.addEventListener('keydown', (e) => { if (e.key === 'Enter') held = true; if (e.key === 'Escape') close(); });
+    box.addEventListener('keyup', (e) => { if (e.key === 'Enter' && held) { held = false; show(box, FOUND[box.value] ?? ['No Items.']); } });
+    box.addEventListener('input', () => __log.push('typed into ' + box.id + ': ' + box.value));
+  }
+</script>
+</body></html>`;
 const JOBS = [
   {
     company: 'Vega Analytics',
@@ -2775,7 +2852,7 @@ const ADDS_ITS_CODE = `<!doctype html><html><head><meta charset="utf-8"><title>A
 </script>
 </body></html>`;
 
-const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL };
+const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -6045,6 +6122,35 @@ async function main() {
       'a question looked in and shut is not answered by the next one\'s choice: nobody is declared a government employee',
       JSON.stringify(intel.answers) === '["Select One","Yes"]' && JSON.stringify(intel.log) === '["ceecc5b2f5401001aa31bc34396e0006 = Yes"]',
       JSON.stringify(intel),
+    );
+
+    const prompts = await page.goto(`${base}/workday-prompts`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { school: 'Northeastern University', major: 'Computer Science' };
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        const pills = (id) => [...document.getElementById(id).closest('[data-automation-id="multiSelectContainer"]').querySelectorAll('[data-automation-id="selectedItem"]')].map((p) => p.textContent);
+        return {
+          school: pills('education-22--school'),
+          field: pills('education-22--fieldOfStudy'),
+          boxes: ['education-22--school', 'education-22--fieldOfStudy', 'education-23--fieldOfStudy'].map((id) => document.getElementById(id).value),
+          filled: report.filled.map((f) => `${f.key}${f.widget ? ' (chosen)' : ''}`),
+          log: window.__log,
+        };
+      }, { b: base }),
+    );
+    group('Workday: a search box that is a list');
+    check(
+      'the School and the Field of Study are chosen from the search, as pills saying exactly the profile\'s words',
+      JSON.stringify(prompts.school) === '["Northeastern University"]' && JSON.stringify(prompts.field) === '["Computer Science"]' &&
+        prompts.boxes[0] === '' && prompts.boxes[1] === '' &&
+        prompts.filled.includes('school (chosen)') && prompts.filled.includes('major (chosen)'),
+      JSON.stringify(prompts),
+    );
+    check(
+      'and one already holding a choice is not typed into again',
+      prompts.boxes[2] === '' && !prompts.log.some((l) => l.startsWith('typed into education-23')),
+      JSON.stringify(prompts.log),
     );
 
     /* ---------------- Found filling live forms with a fake profile ---------------- */
