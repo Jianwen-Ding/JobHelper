@@ -5006,6 +5006,34 @@ async function main() {
   );
   check('with nothing to keep, nothing is said about it', keeping.gone, String(keeping.gone));
 
+  /*
+   * The role the card shows while the posting is still being read, which is
+   * the page's own title. A SmartRecruiters title
+   * written "Staff&amp;amp;nbsp;Software Engineer" arrives from the browser
+   * as "Staff&amp;nbsp;Software Engineer", decoded once and no further.
+   */
+  console.log('\nThe role shown while the posting is read');
+  const provisional = await inPage(async (createCard, titles) => {
+    const out = {};
+    for (const title of titles) {
+      document.title = title;
+      createCard({ analysis: null, resumes: [], settings: {}, questions: [], needsCoverLetter: false, onAction: async () => ({}) });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      out[title] = root.querySelector('.role.provisional')?.textContent ?? null;
+    }
+    return out;
+  }, [
+    'Login | Careers Markon', 'Sign In | Careers Markon', 'Log In', 'Create Account — Markon', 'Register | Markon',
+    'My Account | Markon', 'Apply | Markon', 'Application — Markon', 'Careers', 'Job Search | Markon', 'Home',
+    'Staff&amp;nbsp;Software Engineer | Smith &amp;amp; Nephew', 'Platform Engineer | Markon',
+  ]);
+  check(
+    'a title escaped twice is shown decoded, with no entity text left in it',
+    provisional['Staff&amp;nbsp;Software Engineer | Smith &amp;amp; Nephew'] === 'Staff Software Engineer | Smith & Nephew',
+    JSON.stringify(provisional),
+  );
+  check('and a real title is shown as it was', provisional['Platform Engineer | Markon'] === 'Platform Engineer | Markon', JSON.stringify(provisional));
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);

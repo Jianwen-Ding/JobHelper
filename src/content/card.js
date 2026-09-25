@@ -693,6 +693,30 @@ function countAgainst(counter, text, limit) {
   counter.classList.toggle('over', over);
 }
 
+const NAMED_ENTITIES = { nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", ndash: '–', mdash: '—' };
+
+/*
+ * The page's title as a person reads it. The browser decodes a `<title>` once,
+ * so SmartRecruiters' "Staff&amp;amp;nbsp;Software Engineer" arrives as
+ * "Staff&amp;nbsp;Software Engineer"; decoded here until nothing changes, and
+ * every kind of space made a plain one. The same as ResumeM-M's `readableName`.
+ */
+function readableTitle(text) {
+  let out = String(text ?? '');
+  for (let i = 0; i < 5; i++) {
+    const next = out.replace(/&(#\d{1,7}|#x[0-9a-f]{1,6}|[a-z]{2,8});/gi, (whole, name) => {
+      if (name[0] === '#') {
+        const code = /^#x/i.test(name) ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
+        return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
+      }
+      return Object.hasOwn(NAMED_ENTITIES, name.toLowerCase()) ? NAMED_ENTITIES[name.toLowerCase()] : whole;
+    });
+    if (next === out) break;
+    out = next;
+  }
+  return out.replace(/[\s\u00a0\u2000-\u200b\u202f\u205f\u3000]+/g, ' ').trim();
+}
+
 export function createCard({
   analysis,
   resumes = [],
@@ -6493,7 +6517,7 @@ export function createCard({
   function drawReadingView() {
     return h('div', { className: 'body' }, [
       h('div', { className: 'job' }, [
-        h('div', { className: 'role provisional', textContent: document.title.slice(0, 70) || 'This posting' }),
+        h('div', { className: 'role provisional', textContent: readableTitle(document.title).slice(0, 70) || 'This posting' }),
         h('div', { className: 'co', textContent: location.hostname }),
       ]),
       h('div', { className: 'progress' }),
