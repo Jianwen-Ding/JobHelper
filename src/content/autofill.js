@@ -30,10 +30,22 @@ const FIELD_PATTERNS = [
    * still the person's and the answer they gave last time fills it. See
    * `typedBox` and `NAME_FOR_THE_FORM`.
    */
+  /*
+   * Both halves of it in one box, above the first half alone, as `full_name`
+   * is below. Zoox's Lever form asks "What is your preferred first name and
+   * last name?", and "preferred first name" claimed it for the first name.
+   */
+  ['preferred_name', /\b(preferred|chosen)[\s_-]*first[\s_-]*(name[\s_-]*)?(and|&|\+)[\s_-]*last[\s_-]*name\b/i],
   ['preferred_first_name', /\b(preferred|nick|chosen)[\s_-]*(first|given)[\s_-]*name\b/i],
   ['preferred_last_name', /\b(preferred|chosen)[\s_-]*(last|family|sur)[\s_-]*name\b/i],
   ['preferred_middle_name', /\b(preferred|chosen)[\s_-]*middle[\s_-]*name\b/i],
-  ['preferred_name', /\b(preferred|nick|chosen)[\s_-]*(full[\s_-]*)?name\b|\bgo(?:es)?[\s_-]+by\b/i],
+  /*
+   * And "the name you'd prefer", which is how GitLab's Greenhouse board asks
+   * it: "What's the name you'd prefer us to use throughout the interview
+   * process?". Measured live, it matched nothing, so the box stayed empty and
+   * First and Last Name beside it were given the preferred name.
+   */
+  ['preferred_name', /\b(preferred|nick|chosen)[\s_-]*(full[\s_-]*)?name\b|\bgo(?:es)?[\s_-]+by\b|\bname[\s_-]+(?:that[\s_-]+)?you(?:['’]d|[\s_-]+would)?[\s_-]+prefer\b/i],
   /*
    * Both halves in one box, above either half, because the first pattern to
    * match claims the field: "First and Last Name" says "Last Name" whole and
@@ -311,8 +323,13 @@ const NOT_ABOUT_YOU = [
    * internship forms ask of students — with their own number. The employee
    * who referred you is the commonest of these, and "referral" was already
    * here for how you heard about the job; the person is not.
+   *
+   * But "referred to as" is what you are called, not who sent you. Asana's
+   * Greenhouse board explains its Preferred Full Name box as "The name that
+   * you would like to be referred to as". Measured live, the box was left
+   * empty as somebody else's name.
    */
-  /\b(references?|referee|emergency|next[\s_-]?of[\s_-]?kin|guardian|spouse|supervisor|manager'?s?|recommender|referr(?:er|ers|ing|ed)|recruiters?|parents?|professors?|advis[oe]rs?)\b/i,
+  /\b(references?|referee|emergency|next[\s_-]?of[\s_-]?kin|guardian|spouse|supervisor|manager'?s?|recommender|referr(?:er|ers|ing|ed(?![\s_-]+to[\s_-]+as\b))|recruiters?|parents?|professors?|advis[oe]rs?)\b/i,
   /*
    * A previous employer's address, which the employment-history sections of
    * Taleo and BrassRing ask for field by field. "Employer City" matched
@@ -406,6 +423,13 @@ const NOT_ABOUT_YOU = [
    * the URL was typed in as the password, where the reviewer would try it.
    */
   /\b(password|passcode|pass[\s_-]?phrase)\b/i,
+  /*
+   * An address at a school, which the profile's one address is not. Harvey's
+   * Ashby form for law students asks for a "Personal Email Address" and then
+   * a "School Email Address", and measured live, the second was given the
+   * personal address too.
+   */
+  /\b(school|university|college|student|\.edu)['’]?s?[\s_-]*e-?mail\b/i,
   /*
    * A username, which is a part of the link and not the link. "GitHub
    * username", "GitHub handle" and "Username on LinkedIn" matched `github`
@@ -2554,7 +2578,10 @@ function withCityAndState(fields) {
  * are that name.
  */
 const NAME_FOR_THE_FORM = { full_name: 'preferred_name', first_name: 'preferred_first_name', last_name: 'preferred_last_name' };
-const PREFERRED_NAME_BOX = /\b(preferred|nick|chosen)[\s_-]*((first|given|last|family|middle|full)[\s_-]*)?name\b|\bgo(?:es)?[\s_-]+by\b/i;
+// The preferred-name patterns themselves, so a box read as one is also what
+// tells the form it has one.
+const PREFERRED_NAME_BOXES = FIELD_PATTERNS.filter(([key]) => key.startsWith('preferred_')).map(([, re]) => re);
+const PREFERRED_NAME_BOX = { test: (label) => PREFERRED_NAME_BOXES.some((re) => re.test(label)) };
 const LEGAL = /\blegal\b|\bas\s+(it\s+)?appears\s+on\s+(your\s+)?(passport|government|official|id\b)/i;
 const asksForLegalName = (input) => LEGAL.test(`${clean(labelFor(input))} ${surroundingWords(input)} ${boundedSection(input)}`);
 
@@ -2588,7 +2615,9 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     // this question does not need. See `handBack`.
     if (handBack(description, skipped)) continue;
     if (isNotAboutYou(description, clean(labelFor(input)), surroundingWords(input), boundedSection(input))) continue;
-    if (asksForWriting(input)) continue;
+    // A name is not writing, even asked in a paragraph box as a question:
+    // Zoox's "What is your preferred first name and last name?" is a textarea.
+    if (asksForWriting(input) && !PREFERRED_NAME_BOX.test(clean(labelFor(input)))) continue;
 
     /*
      * The first pattern that matches, and then whether the profile has it —
