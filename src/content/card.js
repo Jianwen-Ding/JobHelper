@@ -4741,6 +4741,27 @@ export function createCard({
     }
 
     /*
+     * The resume this copy was made from, deleted in ResumeM-M.
+     *
+     * The list follows the store now, and a `<select>` with no option for
+     * the resume it names shows its first one instead. So the picker said the
+     * card had started from whichever resume sorted to the top, while the copy
+     * on screen was still made from the one that went. And that one then read
+     * as chosen already, so choosing it did nothing: no `change`, no switch.
+     * Named as gone, and not offered as something to switch to.
+     */
+    const from = analysis?.baseResumeId;
+    if (from && resumes.length > 0 && ![...baseSelect.options].some((o) => o.value === from)) {
+      const gone = h('option', {
+        value: from,
+        textContent: `${analysis.baseLabel ?? from} (deleted in ResumeM-M)`,
+        disabled: true,
+      });
+      baseSelect.prepend(gone);
+      gone.selected = true;
+    }
+
+    /*
      * A different base, worked out again for this posting.
      *
      * This asked for `state.builtWith`, which is now `'none'` unless the AI

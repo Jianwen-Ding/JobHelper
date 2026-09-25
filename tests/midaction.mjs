@@ -469,6 +469,39 @@ async function main() {
     check('nor is filing it as applied', !/Updated from ResumeM-M/.test(filed.said) && filed.renders === 1, JSON.stringify(filed));
   }
 
+  /* ------------------------------------------------------------------ */
+  console.log('\nThe resume in the picker, deleted in ResumeM-M');
+  {
+    await setUp();
+    const gone = await inPage(async () => {
+      jh.s.resumes = [{ id: 'kept', label: 'Systems resume', tier: 'base' }, { id: 'other', label: 'Data resume', tier: 'base' }];
+      await jh.handle.storeChanged();
+      await wait(50);
+      const select = jh.root.querySelector('select[title="Which resume to start from"]');
+      const shown = select.options[select.selectedIndex];
+      return {
+        shown: shown ? { value: shown.value, text: shown.textContent } : null,
+        offered: [...select.options].map((o) => o.value),
+      };
+    });
+    /*
+     * The first option is what a `<select>` shows when none is selected — so
+     * with the base gone from the list, the picker said the card had started
+     * from whichever resume sorted first. And since that one read as chosen
+     * already, choosing it did nothing: no `change`, no switch.
+     */
+    check(
+      'the picker does not claim the card started from a different resume',
+      gone.shown?.value === 'base' && /deleted/i.test(gone.shown?.text ?? ''),
+      JSON.stringify(gone),
+    );
+    check(
+      'and still offers every resume the store has, so any of them can be chosen',
+      ['kept', 'other'].every((id) => gone.offered.includes(id)),
+      JSON.stringify(gone),
+    );
+  }
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   process.exit(failed ? 1 : 0);
