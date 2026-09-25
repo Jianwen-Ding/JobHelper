@@ -10,7 +10,14 @@
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { looksPrivate, neverRemember, worthRemembering } from '../src/shared/remembering.js';
+import {
+  looksPrivate,
+  mayRememberTyped,
+  namesThem,
+  neverRemember,
+  worthRemembering,
+  worthRememberingTyped,
+} from '../src/shared/remembering.js';
 
 /* The questions applying actually repeats, which are the reason for any of this. */
 const KEEP = [
@@ -56,6 +63,12 @@ const REFUSE = [
   ['What is your religion?', 'None'],
   ['Marital status', 'Single'],
   ["Mother's maiden name", 'Smith'],
+  // A home address, and the same address a box at a time.
+  ['Street address', '12 Elm St'],
+  ['Address Line 1', '12 Elm St'],
+  ['Zip code', '02115'],
+  ['Postal Code', 'M5V 2T6'],
+  ['Apartment / Suite', 'Apt 4'],
   /*
    * The equal-opportunity questions that do not use the words above. Every one
    * of these was banked and offered back on the next form. The first is
@@ -94,6 +107,16 @@ const REFUSE = [
   ['Do you identify as First Nations, Métis or Inuit?', 'No'],
   // The UK wording of the licence question; only "driver's licence" was known.
   ['Do you hold a full UK driving licence?', 'Yes'],
+  /*
+   * A government number by the name most countries give it, and what
+   * somebody is paid now — both asked as dropdowns often enough, and neither
+   * matched anything here.
+   */
+  ['National ID number', 'AB1234567'],
+  ['Government ID type', 'Passport'],
+  ['Current salary range', '$120k–$140k'],
+  ['What was your salary in your last position?', '$120k–$140k'],
+  ['What are you currently earning?', '$120k–$140k'],
 ];
 
 test('and the ones that are nobody else’s business are refused', () => {
@@ -102,6 +125,15 @@ test('and the ones that are nobody else’s business are refused', () => {
     assert.equal(said.keep, false, `${question} was kept`);
     assert.match(said.why, /personal/);
   }
+});
+
+/*
+ * What somebody is paid, as against what they are asking for: a dropdown of
+ * bands is how plenty of forms ask either, and only the second is kept.
+ */
+test('salary history is refused however it is asked, and expectations are not', () => {
+  assert.equal(worthRemembering({ question: 'Current annual salary range', answer: '$120k–$140k' }).keep, false);
+  assert.equal(worthRemembering({ question: 'Desired salary range', answer: '$140k–$160k' }).keep, true);
 });
 
 /*
@@ -258,4 +290,108 @@ test('nothing is kept from an empty question or an empty answer', () => {
   assert.equal(worthRemembering({ question: 'Are you authorized to work?', answer: '' }).keep, false);
   assert.equal(worthRemembering({}).keep, false);
   assert.equal(worthRemembering().keep, false);
+});
+
+/* ---------------------------- What was typed ---------------------------- */
+
+/*
+ * The short boxes the walk in tests/reusing.mjs typed into on one form and
+ * found empty again on the next, before these were kept. Each is typed on
+ * every application and none is anybody's secret.
+ */
+const TYPED_KEEP = [
+  ['How did you hear about us?', 'A friend on the payments team'],
+  ['Earliest start date', 'Two weeks after an offer'],
+  ['Expected salary', '$150,000 base'],
+  ['What are your salary expectations?', '140-160k'],
+  ['Current employer', 'Northwind Analytics'],
+  ['Preferred first name', 'Jay'],
+  ['Portfolio link', 'https://example.dev/work'],
+  ['Are you 18 or older?', 'Yes'],
+  ['Willing to relocate?', 'Yes, within the US'],
+  ['What is your notice period?', 'Four weeks'],
+];
+
+test('the short answers typed on every application are kept', () => {
+  for (const [question, answer] of TYPED_KEEP) {
+    const said = worthRememberingTyped({ question, answer, company: 'Helios Systems' });
+    assert.equal(said.keep, true, `${question} was refused: ${said.why}`);
+  }
+});
+
+/*
+ * And what a box can hold that a dropdown cannot. Every one of these is a
+ * one-line box on a real form, and each is refused with the reason the card
+ * would give — the reason matters, because "too short" said about a date of
+ * birth invites somebody to relax the wrong rule.
+ */
+const TYPED_REFUSE = [
+  ['Social Security Number', '123-45-6789', /personal/],
+  ['National ID number', 'AB1234567', /personal/],
+  ['Government ID', 'X99812', /personal/],
+  ['Date of birth', 'April 2 1999', /personal/],
+  ['Password', 'hunter22', /personal/],
+  ['Gender (optional)', 'Decline to self-identify', /personal/],
+  ['Race / ethnicity', 'Decline to self-identify', /personal/],
+  ['Are you a protected veteran?', 'No', /personal/],
+  ['Do you have a disability?', 'No', /personal/],
+  // Salary history, not what somebody is asking for.
+  ['Current salary', '$128,000', /personal/],
+  ['What is your current base compensation?', '$128,000', /personal/],
+  ['Salary history', '$120k, $128k', /personal/],
+  ['What do you currently earn?', '$128,000', /personal/],
+  // Somebody else's details.
+  ['Reference name', 'Pat Example', /somebody else/],
+  ['Reference phone number', 'Pat', /somebody else/],
+  ["Your manager's name", 'Pat Example', /somebody else/],
+  ['Emergency contact', 'Sam Example', /somebody else/],
+  ['Who referred you?', 'Pat Example', /somebody else/],
+  // About this employer, named or not.
+  ['What makes Helios Systems the right next step for you?', 'Your payments work', /employer/],
+  ['Do you use Helios products today?', 'Yes, daily', /employer/],
+  ['Why do you want to join us?', 'The mission', /employer/],
+  ['What do you know about our company?', 'Payments', /employer/],
+  ['Have you worked for us before?', 'No', /employer/],
+  ['Anything else we should know?', 'I met your Helios team at a meetup', /employer/],
+  // Contact details and identifiers in the answer, whatever the question.
+  ['Anything else we should know?', 'Reach me at pat@example.com', /personal/],
+  ['Anything else we should know?', 'Call (555) 010-0100 after six', /personal/],
+  ['Anything else we should know?', '123456789', /personal/],
+  // And an essay, typed into a line.
+  ['Anything else we should know?', 'I have been following the payments work for some time now and would love to help.', /line/],
+];
+
+test('and what is personal, somebody else’s, about this employer or writing is refused, and says which', () => {
+  for (const [question, answer, why] of TYPED_REFUSE) {
+    const said = worthRememberingTyped({ question, answer, company: 'Helios Systems' });
+    assert.equal(said.keep, false, `${question} = ${answer} was kept`);
+    assert.match(said.why, why, `${question} = ${answer}: ${said.why}`);
+  }
+});
+
+test('a question is refused before the bank is asked about it', () => {
+  assert.equal(mayRememberTyped('Reference email', 'Helios').keep, false);
+  assert.equal(mayRememberTyped('How did you hear about Helios?', 'Helios').keep, false);
+  assert.equal(mayRememberTyped('How did you hear about us?', 'Helios').keep, true);
+});
+
+/*
+ * The employer's name as people write it, and not as a fragment of another
+ * word. "Block" the company is not "blocker" the problem.
+ */
+test('the employer is recognised by its name, and by its first word, as whole words', () => {
+  assert.equal(namesThem('Why Helios?', 'Helios Systems, Inc.'), true);
+  assert.equal(namesThem('Do you use Helios Systems today?', 'Helios Systems, Inc.'), true);
+  assert.equal(namesThem('What was your biggest blocker?', 'Block'), false);
+  assert.equal(namesThem('What drew you to The Trade Desk?', 'The Trade Desk'), true);
+  assert.equal(namesThem('What is the best thing you have built?', 'The Trade Desk'), false);
+  assert.equal(namesThem('Anything', ''), false);
+});
+
+/*
+ * A link is one word however long it is; a line of prose is not.
+ */
+test('a long link is still a line', () => {
+  const link = `https://www.behance.net/gallery/123456789/${'a-project-name-'.repeat(4)}`;
+  assert.equal(worthRememberingTyped({ question: 'Portfolio link', answer: link }).keep, true);
 });

@@ -1047,6 +1047,50 @@ async function main() {
       }
     }
 
+    /*
+     * The card's own way out of the same failure.
+     *
+     * A posting opened while ResumeM-M is not running gets a card saying so,
+     * with "Try again" beside "Open ResumeM-M". Starting the store and
+     * pressing it is the whole recovery, and it has to leave the card as it
+     * would have been had the store been there: the page's read is a whole
+     * pass, and a card given only a proposal has no trail behind it, nothing
+     * carried from the page before, and a keeper that never saves.
+     */
+    group('The page could not be read, and Try again');
+    {
+      await pointExtensionAt(context, worker, 'http://127.0.0.1:1');
+      const page = await context.newPage();
+      try {
+        await page.goto(fixtures.urlFor(HELIOS_ROLE), { waitUntil: 'domcontentloaded' });
+        const card = cardOf(page);
+        const retry = card.getByRole('button', { name: 'Try again' });
+        await retry.waitFor({ timeout: 30_000 });
+        check('the card says the store is not there, and offers Try again', true);
+
+        await pointExtensionAt(context, worker, SERVER);
+        await retry.click();
+        await card.getByRole('button', { name: 'Build resume' }).waitFor({ timeout: 60_000 });
+        await page.waitForTimeout(1500);
+        const count = ((await card.locator('.diff-head .count').first().textContent({ timeout: 5_000 }).catch(() => '')) ?? '').trim();
+        check(
+          'it offers the keyword suggestions an ordinary read does',
+          Number(count.match(/(\d+) changes?$/)?.[1] ?? 0) > 0,
+          count || '(no list of changes)',
+        );
+        // The keeper runs every two seconds; give it three turns.
+        let held = null;
+        for (let i = 0; i < 6 && !held; i++) {
+          await page.waitForTimeout(1000);
+          held = (await storedTrail(worker, page))?.work ?? null;
+        }
+        check('and what is on the card is kept, as on any other page', Boolean(held?.spec), held ? 'held' : 'nothing held');
+      } finally {
+        await page.close().catch(() => undefined);
+        await pointExtensionAt(context, worker, SERVER);
+      }
+    }
+
     group('A resume that will not fit on one page');
     {
       /*

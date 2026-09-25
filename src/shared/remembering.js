@@ -7,12 +7,13 @@
  * the answers are kept. Not "whether you have worked here before", which
  * this list once named: see `DEPENDS_ON_EMPLOYER`.
  *
- * Only the ones that were *chosen*, never the ones that were typed. That is a
- * scope decision and it does most of the safety work on its own: a chosen
- * answer is by construction one of a handful the form itself offered, and no
- * form offers your social security number in a dropdown. Free text is where
- * the dangerous things live — an SSN typed into a box, a date of birth, an
- * account number — and none of it comes through here.
+ * The ones that were *chosen*, first. That scope does most of the safety work
+ * on its own: a chosen answer is by construction one of a handful the form
+ * itself offered, and no form offers your social security number in a
+ * dropdown. Free text is where the dangerous things live — an SSN typed into
+ * a box, a date of birth, an account number — so what was typed is kept only
+ * from a one-line box, only a line long, and on the narrower terms of
+ * `worthRememberingTyped` at the end of this file.
  *
  * The two checks below are belt and braces over that. The first reads the
  * question, which catches the ordinary case of a sensitive field that happens
@@ -34,11 +35,10 @@
  * and a check that fires on those teaches nobody anything while quietly
  * refusing ordinary questions.
  *
- * "Salary" and "notice period" are deliberately *not* on this list. They are
- * personal, and they are also different for every application — remembering
- * them would be wrong for the ordinary reason that the answer changes, not
- * because keeping them is dangerous. They simply do not match anything in
- * `CHOOSABLE`, so nothing here reaches them.
+ * "Salary" and "notice period" are deliberately *not* on this list. What you
+ * are asking for and how much notice you have to give are the same answer
+ * next week, and are exactly what somebody tires of typing. What you are paid
+ * *now*, or were paid before, is on it: see the salary history below.
  */
 const NEVER_REMEMBER = [
   /\bssn\b/i,
@@ -117,6 +117,34 @@ const NEVER_REMEMBER = [
   /\bpregnan/i,
   /\bmedical\b/i,
   /\bhealth\b/i,
+  /*
+   * Government numbers by the names the list above did not know. "National
+   * ID number" and "Government ID" are how the forms outside the US and the
+   * UK ask for the thing `ssn` and `national insurance` are there to refuse.
+   */
+  /\b(national|government|state|citizen|personal)[\s-]*(id|identity|identification)\b/i,
+  /*
+   * Where somebody lives, in any of its parts. The store refuses a "home
+   * address", and short typed answers are now kept — so "Address Line 1",
+   * "Zip code" and "Apartment" went into the bank piece by piece, the whole
+   * address the rule exists to keep out of a file that is copied and shared.
+   */
+  /\b(home|mailing|residential|street|postal)\s*address\b/i,
+  /\baddress\s*(line|[12])\b/i,
+  /\b(zip|postal)\s*(code)?\b|\bpostcode\b/i,
+  /\b(apartment|apt)\b/i,
+  /*
+   * What somebody is paid now, or was paid before.
+   *
+   * Asking for it is against the law in a growing list of places, and an
+   * answer given to one employer is the number the next one negotiates down
+   * from. What somebody *expects* is theirs to repeat, and is kept.
+   */
+  /\b(current|present|previous|prior|past|last|most\s+recent|existing)\s+(annual\s+|base\s+|total\s+|gross\s+)?(salary|compensation|pay|wages?|ctc|earnings|remuneration|package)\b/i,
+  /\b(salary|compensation|pay|wage)\s+history\b/i,
+  /\b(currently|previously)\s+(earn|make|paid)\b/i,
+  /\b(were|are)\s+you\s+(currently\s+)?(earning|making|paid)\b/i,
+  /\b(salary|compensation|pay)\b[^.?]{0,30}\b(last|previous|prior|former)\s+(position|role|job|employer|company)\b/i,
 ];
 
 /**
@@ -232,5 +260,127 @@ export function worthRemembering({ question, answer } = {}) {
    */
   if (said.length > 120) return { keep: false, why: 'this is written rather than chosen' };
 
+  return { keep: true };
+}
+
+/* ---------------------------- What was typed ---------------------------- */
+
+/*
+ * The same bargain for a short box somebody typed into, which is where the
+ * rest of the repetition is.
+ *
+ * Measured on the fixtures in tests/reusing.mjs, shaped like Greenhouse's and
+ * Lever's custom questions: a form answered once by hand — "How did you hear
+ * about us?", "Earliest start date", "Expected salary", "Preferred first
+ * name", "Portfolio link", "Current employer", and "Are you 18 or older?" and
+ * "Willing to relocate?" asked as text rather than as buttons — and then a
+ * second form asking the same things in its own words. Before this, the bank
+ * held one row after the first form — the one dropdown on it — and Autofill
+ * on the second filled "Filled 4 fields": the name, the email, and the two
+ * preferred-name boxes given the legal names. None of the eight came back,
+ * so the same eight boxes were typed again on every application.
+ *
+ * Typed text is where the dangerous things live — the header of this file
+ * says so, and it is why only chosen answers were kept at first. So a typed
+ * answer is kept on narrower terms than a chosen one: everything
+ * `worthRemembering` refuses, and then the things only a box can hold.
+ */
+
+/*
+ * Somebody else's details. A box can hold a referee's name and telephone
+ * number, a chosen option cannot — and the answer is right for one employer's
+ * reference check and nobody's next form.
+ */
+const SOMEBODY_ELSE = /\b(references?|referee|referr(?:er|ers|al|ed)|recommender|emergency|next[\s-]*of[\s-]*kin|guardian|spouse|manager'?s?|supervisor'?s?|recruiter'?s?)\b/i;
+
+/*
+ * Questions about this employer, however they avoid naming it. "Why?" is
+ * always why *here*; the rest are the ways a form says "us" without the
+ * company's name in it, which is caught separately by `namesThem`.
+ */
+const ABOUT_THIS_EMPLOYER = [
+  /\bwhy\b/i,
+  /\b(this|our)\s+(company|organi[sz]ation|firm|business|mission|culture|values|products?|services?)\b/i,
+  /\b(join(ing)?|work(ing)?\s+(at|for|with))\s+us\b/i,
+  /\bwork(ing)?\s+here\b/i,
+];
+
+/*
+ * Contact details, whoever they belong to. The applicant's own are the
+ * profile's and are filled from there; anybody else's are not to be kept.
+ */
+const CONTACT_SHAPE = [/[^\s@]+@[^\s@]+\.[^\s@]+/, /\+?\(?\d[\d\s().-]{7,}\d/];
+
+/*
+ * A line, not a paragraph. From here on it is writing, the card's to draft
+ * and the bank's to keep only when somebody saves it there on purpose — and
+ * it is where ResumeM-M's voice corpus starts reading an answer as prose (60
+ * characters), which is the same judgement made from the other side: nothing
+ * kept from a box here is ever read as how somebody writes.
+ */
+const A_LINE = 60;
+
+/**
+ * Whether the employer being applied to is named, as a whole word.
+ *
+ * The name as the page gave it and its first word, which is how people write
+ * it: "Helios" for "Helios Systems, Inc.". A first word that is a common one
+ * — "The", "New" — is not a name.
+ */
+export function namesThem(text, company) {
+  const said = String(text ?? '');
+  const name = String(company ?? '').trim();
+  if (!said || name.length < 3) return false;
+  const first = name.split(/[\s,]+/)[0];
+  const names = [name.replace(/,?\s+(inc|llc|ltd|corp|co|plc|gmbh)\.?$/i, ''), first.length >= 4 && !/^(the|new|north|south|east|west|first|global)$/i.test(first) ? first : '']
+    .filter(Boolean);
+  return names.some((n) =>
+    new RegExp(`(^|[^\\p{L}\\p{N}])${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\p{L}\\p{N}]|$)`, 'iu').test(said),
+  );
+}
+
+/**
+ * Whether a typed box's question is one whose answer may be kept and offered
+ * back, and if not, why. Asked of the question alone, so the bank is never
+ * even asked about one that is not.
+ */
+export function mayRememberTyped(question, company) {
+  const asked = String(question ?? '').trim();
+  if (!asked) return { keep: false, why: 'there is no question here' };
+  if (neverRemember(asked)) return { keep: false, why: 'this one is personal, so it is not kept' };
+  if (SOMEBODY_ELSE.test(asked)) return { keep: false, why: 'this is about somebody else, so it is not kept' };
+  if (dependsOnEmployer(asked) || ABOUT_THIS_EMPLOYER.some((re) => re.test(asked)) || namesThem(asked, company)) {
+    return { keep: false, why: 'the answer depends on the employer, so it is not kept' };
+  }
+  if (asked.length < 8) return { keep: false, why: 'the question is too short to recognise again' };
+  return { keep: true };
+}
+
+/**
+ * Whether a typed answer is worth keeping for next time — and if not, why.
+ *
+ * The same shape as `worthRemembering`, and used both ways: on the way into
+ * the bank, and on the way back out of it, because the bank also holds what
+ * was typed into the Workspace by hand and what was kept before these rules.
+ */
+export function worthRememberingTyped({ question, answer, company } = {}) {
+  const said = String(answer ?? '').trim();
+  const asked = mayRememberTyped(question, company);
+  if (!said) return { keep: false, why: 'there is no answer here' };
+  // The question's refusal first, for the reason given in `worthRemembering`.
+  if (!asked.keep) return asked;
+  /*
+   * A link is one word however long it is — and its digits are an id in a
+   * path, not a telephone number, so it is read for the shapes that are
+   * anchored to the whole answer and not for a number somewhere inside it.
+   */
+  const oneLink = /^https?:\/\/\S+$/i.test(said) && said.length <= 200;
+  if (looksPrivate(said) || (!oneLink && CONTACT_SHAPE.some((re) => re.test(said)))) {
+    return { keep: false, why: 'the answer looks personal, so it is not kept' };
+  }
+  if (namesThem(said, company)) return { keep: false, why: 'the answer depends on the employer, so it is not kept' };
+  if (/[\r\n]/.test(said) || (said.length >= A_LINE && !oneLink)) {
+    return { keep: false, why: 'this is longer than a line, so it is not kept' };
+  }
   return { keep: true };
 }

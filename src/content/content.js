@@ -424,6 +424,53 @@
   /** Stops the one watcher of choices made on this page's form; see `show`. */
   let stopChoices = null;
 
+  /**
+   * And the one of what is typed into its short boxes, with what it has
+   * heard: the answers to keep, by question, until the application is sent or
+   * the form is left — see `keepTyped` — and the questions the person said
+   * not to keep. `typedProfile` is the profile as the last Autofill had it,
+   * which is what says a box is the profile's rather than the person's.
+   */
+  let typedWatch = null;
+  const typedToKeep = new Map();
+  const typedNotKept = new Set();
+  let typedProfile = null;
+  /**
+   * What each frame on the page will keep of what was typed in it, by frame
+   * id: shown on the card beside this document's own list, and kept by the
+   * frame itself. See `watchFrameForm`.
+   */
+  const typedInFrames = new Map();
+
+  /** Who this page is applying to, for the rules that refuse naming them. */
+  const companyHere = () => analysis?.spec?.generatedFor?.company || analysis?.job?.company || '';
+
+  /** The card's list of what will be kept, drawn again from `typedToKeep`. */
+  const showTypedToKeep = () =>
+    cardHandle?.setToKeep?.([
+      ...[...typedToKeep].map(([question, { answer }]) => ({ question, answer })),
+      ...[...typedInFrames.values()].flat().filter(({ question }) => !typedToKeep.has(question)),
+    ]);
+
+  /**
+   * Put what was typed on this form into the bank, now.
+   *
+   * Called when the application is sent and when the form is left — its
+   * `pagehide`, and a route change on a board that never unloads — and not
+   * as each box is typed in, so the answer kept is the one the person ended
+   * on, and one they have said not to keep never leaves the page. One message
+   * for all of them: `pagehide` is the moment a page is least able to wait,
+   * and the worker saves them one after another from there.
+   */
+  const keepTyped = () => {
+    typedWatch?.take();
+    if (typedToKeep.size === 0) return;
+    const answers = [...typedToKeep].map(([question, { answer, itemId }]) => ({ question, answer, itemId }));
+    typedToKeep.clear();
+    send('rememberTyped', { answers }).catch(() => undefined);
+    showTypedToKeep();
+  };
+
   /** Stops the watcher that re-reads the form's questions; see `watchQuestions`. */
   let stopQuestions = null;
 
@@ -600,6 +647,8 @@
    */
   async function runAutofill() {
     const data = await send('autofillData');
+    // What is the profile's to fill, for what is typed afterwards. See `typedBox`.
+    typedProfile = data.fields ?? null;
     // The jobs on the resume being sent, for a form's work-history blocks.
     const history = Array.isArray(data.history) ? data.history : [];
     // And its schools, for an Education section that adds a block per school.
@@ -629,8 +678,11 @@
    * the behaviour this had before the bank existed.
    */
   async function fillThisDocument(fields, history = [], education = []) {
-    const { fillForm, fillComboboxes, fillEducation, choiceQuestions } = await imports.autofill();
-    const questions = choiceQuestions();
+    const { fillForm, fillComboboxes, fillEducation, choiceQuestions, typedQuestions, answerWidgetsFromMemory } =
+      await imports.autofill();
+    const company = companyHere();
+    // And the short boxes typed into last time. See `typedQuestions`.
+    const questions = [...choiceQuestions(), ...typedQuestions(fields, company)];
     const remembered = questions.length
       ? await send('rememberedAnswers', { questions })
           .then((r) => r?.answers ?? [])
@@ -638,10 +690,13 @@
       : [];
     // And then the widgets `fillForm` could only name. See `fillComboboxes`:
     // exact options only, and seen to have taken, or put back as they were.
-    const report = await fillComboboxes(fields, fillForm(fields, { remembered, history }));
-    // Last, the resume's other schools, one "Add another" at a time. See
+    // The history too, for the job months a form asks as lists. See `fillJobMonths`.
+    const report = await fillComboboxes(fields, fillForm(fields, { remembered, history, company }), { history });
+    // Then the resume's other schools, one "Add another" at a time. See
     // `fillEducation`: a resume with one gets only its dates, in the first block.
-    return fillEducation(education, fields, report);
+    const schooled = await fillEducation(education, fields, report);
+    // Last, the react-selects answered on the last form. See `answerWidgetsFromMemory`.
+    return answerWidgetsFromMemory(remembered, schooled);
   }
 
   /**
@@ -953,6 +1008,20 @@
 
       case 'autofill':
         return runAutofill();
+
+      /** One typed answer the person does not want kept. See `keepTyped`. */
+      case 'dontKeep':
+        typedNotKept.add(payload.question);
+        typedToKeep.delete(payload.question);
+        // And in whichever frame it was typed, which keeps its own.
+        for (const [frameId, list] of typedInFrames) {
+          const rest = list.filter((a) => a.question !== payload.question);
+          if (rest.length) typedInFrames.set(frameId, rest);
+          else typedInFrames.delete(frameId);
+        }
+        send('dontKeepInFrames', { question: payload.question }).catch(() => undefined);
+        showTypedToKeep();
+        return { ok: true };
 
       /*
        * The upload boxes, from the folder the card would otherwise ask you to
@@ -1266,6 +1335,14 @@
 
       case 'aiStatus':
         return send('aiStatus', {});
+
+      /*
+       * The card's "Try again" after this page's own read failed: the whole
+       * pass again, onto the card already up. Forced, because it is a button
+       * somebody pressed on a card they are looking at. See `drawError`.
+       */
+      case 'retry':
+        return show({ force: true });
 
       /** Send the user to ResumeM-M, when that is what the card is offering. */
       case 'openTab':
@@ -1970,7 +2047,7 @@
      */
     imports
       .autofill()
-      .then(({ watchChoices, looksLikeApplicationForm, findQuestions }) => {
+      .then(({ watchChoices, watchTyped, looksLikeApplicationForm, findQuestions }) => {
         if (!current()) return;
         /*
          * The choices are watched only once this page is a form, and that
@@ -1982,6 +2059,21 @@
             if (!said.keep) return;
             send('rememberChoice', { question: said.question, answer: said.answer }).catch(() => undefined);
           });
+          /*
+           * And what is typed, held until the form is sent or left. An
+           * emptied box, or one whose answer is refused, takes its question
+           * off the list; one the person said not to keep stays off it.
+           */
+          typedWatch?.stop();
+          typedWatch = watchTyped(
+            (said) => {
+              if (said.keep && !typedNotKept.has(said.question)) {
+                typedToKeep.set(said.question, { answer: said.answer, itemId: said.itemId });
+              } else typedToKeep.delete(said.question);
+              showTypedToKeep();
+            },
+            { profile: () => typedProfile, company: companyHere },
+          );
         };
         /*
          * And its questions, for a form that moves on in place — watched on
@@ -2140,6 +2232,8 @@
         })
         .catch(() => undefined);
     const took = (how) => {
+      // What was typed on it is kept whatever becomes of the record. See `keepTyped`.
+      keepTyped();
       /*
        * Only on the page where an application is actually sent.
        *
@@ -2282,10 +2376,49 @@
     };
     saveWorkNow = save;
     every(2000, save);
+
+    /*
+     * And the store, watched while the card is in front of somebody.
+     *
+     * The card builds from ResumeM-M and then holds what it built, so a
+     * change made there — a variation saved, a bullet reworded, the copy
+     * edited — reached it only on coming back to the tab, and a new
+     * variation not at all until the card was put up again. The store says in
+     * one short string whether anything has moved (`/api/revision`); asked
+     * every few seconds while this tab is visible, and never while it is not,
+     * and the card is told the moment it does. See `storeChanged` in the card.
+     */
+    let revision = null;
+    /*
+     * Where things stand, read now rather than on the first tick: a change
+     * made in the four seconds after the card went up was otherwise taken
+     * for where things started, and never reached it.
+     */
+    send('revision')
+      .then((r) => {
+        revision ??= r?.revision ?? null;
+      })
+      .catch(() => undefined);
+    every(4000, async () => {
+      if (document.visibilityState !== 'visible' || !cardHandle?.storeChanged) return;
+      const now = (await send('revision').catch(() => null))?.revision;
+      if (!now) return;
+      const moved = revision !== null && now !== revision;
+      revision = now;
+      if (!moved) return;
+      await cardHandle?.storeChanged?.();
+      // And the answer bank, matched again for the questions listed. See
+      // `setMatches` in the card.
+      const { questions } = await gatherQuestions().catch(() => ({ questions: [] }));
+      if (questions.length) cardHandle?.setMatches?.(questions);
+    });
     // A navigation is exactly when this matters, and exactly when an interval
     // is least likely to have just run.
     const onHide = () => save();
     window.addEventListener('pagehide', onHide);
+    // And what was typed on the form, which is kept when the form is left and
+    // not when the tab is merely hidden. See `keepTyped`.
+    window.addEventListener('pagehide', keepTyped);
     // Coming back from the builder is the worker's news to break, not this
     // listener's — see the `jh-came-back` message.
     const onVisibility = () => {
@@ -2315,6 +2448,7 @@
 
     teardown.push(() => {
       window.removeEventListener('pagehide', onHide);
+      window.removeEventListener('pagehide', keepTyped);
       window.removeEventListener('pageshow', onShow);
       document.removeEventListener('visibilitychange', onVisibility);
     });
@@ -2338,6 +2472,80 @@
    */
   if (window.top !== window) {
     /*
+     * And what is chosen and typed on the form in here, kept for the next
+     * form as the top document keeps its own.
+     *
+     * Only the top document watched, so on every form served in a frame
+     * (iCIMS, an embedded Greenhouse board, a careers page on another
+     * domain) nothing was kept at all. Autofill already filled these frames
+     * from the bank, and nothing typed in them ever went into it.
+     *
+     * The frame keeps its own list and saves it itself, when the form in
+     * here is sent or the frame is left. The top document may never hear
+     * either: the frame navigates to its thank-you page and the page around
+     * it stays put. The card still shows what will be kept and can say not
+     * to keep one. The list goes up through the worker (`typedInFrame`), and
+     * "Don't keep" comes back down (`jh-frame-dont-keep`).
+     *
+     * The same refusals as on the top page, run here in the frame, so
+     * nothing personal leaves it. They need the employer's name, and a frame
+     * cannot know it, so it asks the top document (`companyHere`). Until an
+     * Autofill hands this frame the profile, every box the profile could
+     * answer counts as the profile's, which only ever keeps less.
+     */
+    let frameProfile = null;
+    let frameCompany = '';
+    const frameTyped = new Map();
+    const frameNotKept = new Set();
+    let frameTypedWatch = null;
+    let frameChoicesWatched = false;
+
+    const tellTop = () =>
+      send('typedInFrame', {
+        answers: [...frameTyped].map(([question, { answer }]) => ({ question, answer })),
+      }).catch(() => undefined);
+    const learnCompany = () =>
+      send('companyHere', {})
+        .then((reply) => {
+          if (reply?.company) frameCompany = reply.company;
+        })
+        .catch(() => undefined);
+
+    const keepFrameTyped = () => {
+      frameTypedWatch?.take();
+      if (frameTyped.size === 0) return;
+      const answers = [...frameTyped].map(([question, { answer, itemId }]) => ({ question, answer, itemId }));
+      frameTyped.clear();
+      send('rememberTyped', { answers }).catch(() => undefined);
+      tellTop();
+    };
+
+    /** Start watching this frame's form, once, if it is an application. */
+    const watchFrameForm = ({ looksLikeApplicationForm, watchChoices, watchTyped }) => {
+      if (frameChoicesWatched || !looksLikeApplicationForm()) return;
+      frameChoicesWatched = true;
+      learnCompany();
+      watchChoices((said) => {
+        if (!said.keep) return;
+        send('rememberChoice', { question: said.question, answer: said.answer }).catch(() => undefined);
+      });
+      frameTypedWatch = watchTyped(
+        (said) => {
+          if (said.keep && !frameNotKept.has(said.question)) {
+            frameTyped.set(said.question, { answer: said.answer, itemId: said.itemId });
+          } else frameTyped.delete(said.question);
+          tellTop();
+          // The top document may not have known the employer when this
+          // frame started. `take` reads every box again before saving, so a
+          // name learnt now still counts.
+          if (!frameCompany) learnCompany();
+        },
+        { profile: () => frameProfile, company: () => frameCompany },
+      );
+      window.addEventListener('pagehide', keepFrameTyped);
+    };
+
+    /*
      * One exception to "a frame does nothing until asked": it watches for the
      * application in it being sent.
      *
@@ -2357,11 +2565,13 @@
         // Answering whether it was taken, for the same reason the top
         // document does: the one send a frame has must not be spent on a
         // record that never reached the store.
-        watchForSending(document, (how) =>
-          send('applicationSentHere', { note: how, url: location.href })
+        watchForSending(document, (how) => {
+          // What was typed on the form being sent, kept whatever becomes of the record.
+          keepFrameTyped();
+          return send('applicationSentHere', { note: how, url: location.href })
             .then((reply) => reply?.ok !== false)
-            .catch(() => false),
-        );
+            .catch(() => false);
+        });
         /*
          * And the receipt, which on an embedded board is drawn in here: the
          * frame goes to Greenhouse's confirmation while the careers page
@@ -2391,6 +2601,8 @@
             imports.autofill().then((autofill) => {
               const { findQuestions, isRequired, wantsCoverLetter, looksLikeApplicationForm } = autofill;
               if (!looksLikeApplicationForm()) return { questions: [], wantsLetter: false };
+              // A form drawn after the frame loaded is found here first.
+              watchFrameForm(autofill);
               return {
                 questions: findQuestions().map((q) => ({ ...q, required: isRequired(q.fieldId) })),
                 wantsLetter: wantsCoverLetter(),
@@ -2459,15 +2671,29 @@
 
         case 'jh-frame-fill':
           answer(
-            imports.autofill().then(({ looksLikeApplicationForm }) =>
+            imports.autofill().then((autofill) => {
               // The one that must not be got wrong. Anything else on the page
               // gets nothing about the person using it.
-              looksLikeApplicationForm()
-                ? fillThisDocument(message.payload?.fields ?? {}, message.payload?.history ?? [], message.payload?.education ?? [])
-                : { filled: [], skipped: [] },
-            ),
+              // Or a frame from the page's own origin. See `mayFillFrame`.
+              if (!autofill.mayFillFrame()) return { filled: [], skipped: [] };
+              // What is the profile's to fill, for what is typed afterwards. See `typedBox`.
+              frameProfile = message.payload?.fields ?? null;
+              watchFrameForm(autofill);
+              return fillThisDocument(message.payload?.fields ?? {}, message.payload?.history ?? [], message.payload?.education ?? []);
+            }),
           );
           return true;
+
+        /** One answer typed in here that the person, on the card, said not to keep. */
+        case 'jh-frame-dont-keep': {
+          const question = message.payload?.question;
+          if (question) {
+            frameNotKept.add(question);
+            if (frameTyped.delete(question)) tellTop();
+          }
+          sendResponse({ ok: true, data: null });
+          return false;
+        }
 
         /*
          * The frame's own markup, when the frame is an application. On the
@@ -2520,8 +2746,10 @@
     if (document.querySelectorAll('input, textarea, select').length >= 2) {
       imports
         .autofill()
-        .then(({ looksLikeApplicationForm }) => {
-          if (looksLikeApplicationForm()) send('applicationFrameHere', {}).catch(() => undefined);
+        .then((autofill) => {
+          if (!autofill.looksLikeApplicationForm()) return;
+          send('applicationFrameHere', {}).catch(() => undefined);
+          watchFrameForm(autofill);
         })
         .catch(() => undefined);
     }
@@ -2571,6 +2799,30 @@
      * found nothing to file it under and was dropped. The top document has
      * known the answer since the card went up.
      */
+    /*
+     * Who this page is applying to, for a frame's refusals: a form in a frame
+     * refuses to keep an answer naming the employer, and only this document
+     * knows who that is. See `watchFrameForm`.
+     */
+    if (message?.type === 'jh-company-here') {
+      sendResponse({ ok: true, data: { company: companyHere() } });
+      return false;
+    }
+    /*
+     * What a frame will keep of what was typed in it, for the card's list.
+     * The frame does the keeping. This only shows it.
+     */
+    if (message?.type === 'jh-frame-typed') {
+      const { frameId, answers } = message.payload ?? {};
+      if (frameId) {
+        const list = (Array.isArray(answers) ? answers : []).filter((a) => !typedNotKept.has(a?.question));
+        if (list.length) typedInFrames.set(frameId, list);
+        else typedInFrames.delete(frameId);
+        showTypedToKeep();
+      }
+      sendResponse({ ok: true });
+      return false;
+    }
     if (message?.type === 'jh-what-is-this') {
       /*
        * No `kind === 'application'` guard here, deliberately.
@@ -2797,6 +3049,8 @@
      * answer went with it.
      */
     saveWorkNow?.();
+    // And what was typed on the form being left, while it is still this page's. See `keepTyped`.
+    keepTyped();
 
     // Saved, and now shut again until the next page's card has been offered
     // what that save just put away. Without this a route change kept the
@@ -2850,6 +3104,10 @@
     // next page is watched only if its own pass finds a form on it.
     stopChoices?.();
     stopChoices = null;
+    typedWatch?.stop();
+    typedWatch = null;
+    typedNotKept.clear();
+    typedInFrames.clear();
     stopQuestions?.();
     stopQuestions = null;
 
@@ -2945,6 +3203,7 @@
     imports.ask().then(({ removeAsk }) => removeAsk()).catch(() => undefined);
     cardHandle = null;
     stopChoices?.();
+    typedWatch?.stop();
     stopQuestions?.();
   });
 

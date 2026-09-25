@@ -2279,6 +2279,11 @@ const handlers = {
   },
 
   /** Compile a proposed spec so the user can look at it before committing. */
+  /** One short string that moves whenever anything in the save changes. */
+  async revision() {
+    return serverFetch('/api/revision');
+  },
+
   /** Whether the resume the card holds is still what the store would give it. */
   async fresh({ spec }) {
     return serverFetch('/api/extension/fresh', { method: 'POST', body: JSON.stringify({ spec }) });
@@ -2474,9 +2479,13 @@ const handlers = {
       body: JSON.stringify({ questions }),
     }).catch(() => null);
 
+    /*
+     * With the row each came from, so that an answer changed after it was
+     * filled goes back onto that row. See `FROM_BANK` in autofill.js.
+     */
     const answers = (reply?.matches ?? [])
       .filter((m) => m?.confident && m.answer)
-      .map((m) => ({ question: m.question, answer: m.answer }));
+      .map((m) => ({ question: m.question, answer: m.answer, ...(m.item?.id ? { itemId: m.item.id } : {}) }));
     return { answers };
   },
 
@@ -2600,6 +2609,70 @@ const handlers = {
       method: 'POST',
       body: JSON.stringify({ question, answer, label: 'Chosen on a form' }),
     });
+  },
+
+  /**
+   * What was typed into a form's short boxes, kept when it was sent or left.
+   *
+   * The same bank and the same route as `rememberChoice`, labelled for where
+   * it came from, and one after another: each save reads the bank and writes
+   * it back whole, so two at once can each write over the other's.
+   *
+   * `itemId` is the row a box was filled from, when it was, so that changing
+   * what was filled replaces that row's answer rather than starting another
+   * one under the second form's wording. As with choices, the refusal
+   * happened on the page — see `worthRememberingTyped`.
+   */
+  async rememberTyped({ answers }) {
+    let kept = 0;
+    for (const { question, answer, itemId } of Array.isArray(answers) ? answers : []) {
+      if (!question?.trim() || !answer?.trim()) continue;
+      const reply = await serverFetch('/api/answers/save', {
+        method: 'POST',
+        body: JSON.stringify({ question, answer, label: 'Typed on a form', ...(itemId ? { itemId } : {}) }),
+      }).catch(() => null);
+      if (reply?.ok) kept++;
+    }
+    return { ok: true, kept };
+  },
+
+  /*
+   * The three messages a form in a frame needs in order to keep what was
+   * typed in it the way the top page does. See `watchFrameForm` in
+   * content.js. The frame saves its own answers through `rememberTyped` and
+   * `rememberChoice`. These three only carry what the frame cannot know or
+   * cannot show: who the page is applying to, and the card's list of what
+   * will be kept, in both directions.
+   */
+
+  /** Who the top document says this tab is applying to. */
+  async companyHere(_payload, tab) {
+    if (tab?.id === undefined) return { company: '' };
+    const reply = await chrome.tabs
+      .sendMessage(tab.id, { type: 'jh-company-here' }, { frameId: 0 })
+      .catch(() => null);
+    return { company: reply?.ok ? (reply.data?.company ?? '') : '' };
+  },
+
+  /** A frame's list of what it will keep, handed to the card in the top document. */
+  async typedInFrame({ answers }, tab, sender) {
+    if (tab?.id === undefined || !sender?.frameId) return { ok: false };
+    await noteFrame(tab.id, sender.frameId);
+    await chrome.tabs
+      .sendMessage(
+        tab.id,
+        { type: 'jh-frame-typed', payload: { frameId: sender.frameId, answers: Array.isArray(answers) ? answers : [] } },
+        { frameId: 0 },
+      )
+      .catch(() => undefined);
+    return { ok: true };
+  },
+
+  /** "Don't keep" pressed on the card, for an answer typed in a frame. */
+  async dontKeepInFrames({ question }, tab) {
+    if (tab?.id === undefined || !question) return { ok: false };
+    await askFrames(tab.id, { type: 'jh-frame-dont-keep', payload: { question } });
+    return { ok: true };
   },
 
   async saveAnswer({ question, answer, itemId, label }) {

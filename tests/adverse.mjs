@@ -157,7 +157,19 @@ async function ownServer(dataDir, poolBuild) {
   const child = spawn('npx', ['tsx', 'src/server/index.ts'], {
     cwd: path.resolve(extensionRoot, '..', 'ResumeM-M'),
     detached: true,
-    env: { ...process.env, RMM_DATA: dataDir, PORT: String(port), RMM_AUTOCOMMIT: '0' },
+    /*
+     * With a list of saves of its own. This server switches saves (see the
+     * swap check below), and switching writes the list of saves recently
+     * open — which, with nothing set, is the one in the home directory of
+     * whoever runs the suite: their own ResumeM-M's list, rewritten by a test.
+     */
+    env: {
+      ...process.env,
+      RMM_DATA: dataDir,
+      PORT: String(port),
+      RMM_AUTOCOMMIT: '0',
+      RMM_PROJECTS_FILE: path.join(os.tmpdir(), `rmm-adverse-projects-${port}.json`),
+    },
     stdio: 'ignore',
   });
   const url = `http://127.0.0.1:${port}`;

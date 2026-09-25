@@ -4859,6 +4859,190 @@ async function main() {
   }, { stored: ['newgrad', 'job-ferrous'] });
   check('and once it is in the store, the copy itself', openedCopy.at(-1) === '/#resumes/job-ferrous', JSON.stringify(openedCopy));
 
+  console.log('\nAttach files, while it is attaching');
+
+  /*
+   * Attaching is the files fetched from the store through the worker, then
+   * offered to every frame on the page — seconds on a portal with embeds —
+   * and while it runs the button should say so and should not start a second
+   * one. Held open here, so the card can be read mid-flight.
+   */
+  const attaching = await inPage(async (createCard) => {
+    let finish;
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary', sections: [] },
+        tailor: 'none',
+        diff: [],
+        rationale: [],
+        skillChanges: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      isForm: true,
+      onAction: (action) => {
+        if (action === 'attachFiles') return new Promise((r) => (finish = () => r({ placed: [{ name: 'Resume.pdf' }], unplaced: [] })));
+        if (action === 'aiStatus') return Promise.resolve({ state: 'on', active: true, serverEnabled: true });
+        return Promise.resolve({});
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const button = (re) => [...root.querySelectorAll('button')].find((b) => re.test(b.textContent));
+    const read = () => ({
+      attach: button(/^Attach|^Attaching/)?.textContent,
+      attachDisabled: button(/^Attach|^Attaching/)?.disabled,
+      autofillDisabled: button(/^Autofill this form/)?.disabled,
+      aiDisabled: button(/AI Tailor/)?.disabled,
+    });
+    button(/^Attach files/)?.click();
+    await new Promise((r) => setTimeout(r, 30));
+    const during = read();
+    finish?.();
+    await new Promise((r) => setTimeout(r, 30));
+    return { during, after: read() };
+  });
+  check('it says it is attaching', attaching.during.attach === 'Attaching…', JSON.stringify(attaching.during));
+  check(
+    'and cannot be pressed again, nor Autofill, which fills the same form',
+    attaching.during.attachDisabled === true && attaching.during.autofillDisabled === true,
+    JSON.stringify(attaching.during),
+  );
+  check(
+    'but the resume is not held up by it',
+    attaching.during.aiDisabled === false,
+    JSON.stringify(attaching.during),
+  );
+  check('and says Attach files again once it is done', attaching.after.attach === 'Attach files' && !attaching.after.attachDisabled, JSON.stringify(attaching.after));
+
+  console.log('\nWhat is kept from this form, and what came from the last one');
+
+  /*
+   * Autofill names the boxes it filled from answers given before, so they
+   * can be read before sending — a figure or a date typed in by a machine is
+   * a thing to check — and the card lists what will be kept from this form,
+   * each with a way to leave it out.
+   */
+  const keeping = await inPage(async (createCard) => {
+    const asked = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary', sections: [] },
+        tailor: 'none',
+        diff: [],
+        rationale: [],
+        skillChanges: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      isForm: true,
+      onAction: (action, payload) => {
+        asked.push({ action, payload });
+        if (action === 'autofill') {
+          return Promise.resolve({
+            filled: [
+              { key: 'email', value: 'x@example.com' },
+              { key: 'remembered', value: 'LinkedIn', question: 'How did you hear about this job?', remembered: true, typed: true },
+              { key: 'remembered', value: 'Hybrid', question: 'Which working arrangement do you prefer?', remembered: true },
+            ],
+            skipped: [],
+          });
+        }
+        if (action === 'aiStatus') return Promise.resolve({ state: 'off', active: false, serverEnabled: false });
+        return Promise.resolve({});
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const button = (re) => [...root.querySelectorAll('button')].find((b) => re.test(b.textContent));
+    button(/^Autofill this form/)?.click();
+    await new Promise((r) => setTimeout(r, 50));
+    const note = root.querySelector('.ok-note')?.textContent ?? '';
+    handle.setToKeep([
+      { question: 'Earliest start date', answer: 'Two weeks after an offer' },
+      { question: 'Which time zone do you work in?', answer: 'US Eastern' },
+    ]);
+    await new Promise((r) => setTimeout(r, 20));
+    const listed = root.querySelector('.to-keep')?.textContent ?? '';
+    const leave = [...root.querySelectorAll('.to-keep button')].find((b) => /Which time zone/.test(b.ariaLabel ?? ''));
+    leave?.click();
+    await new Promise((r) => setTimeout(r, 20));
+    const after = root.querySelector('.to-keep')?.textContent ?? '';
+    handle.setToKeep([]);
+    await new Promise((r) => setTimeout(r, 20));
+    return {
+      note,
+      listed,
+      after,
+      gone: root.querySelector('.to-keep') === null,
+      told: asked.filter((a) => a.action === 'dontKeep').map((a) => a.payload),
+    };
+  });
+  check(
+    'the autofill note names each box filled from answers given before',
+    /2 of them from answers you gave before/.test(keeping.note) &&
+      keeping.note.includes('“How did you hear about this job?”') &&
+      keeping.note.includes('“Which working arrangement do you prefer?”'),
+    keeping.note,
+  );
+  check(
+    'what will be kept from this form is listed, question and answer',
+    /Earliest start date — Two weeks after an offer/.test(keeping.listed) && /Which time zone do you work in\? — US Eastern/.test(keeping.listed),
+    keeping.listed,
+  );
+  check(
+    'and one can be left out, which tells the page not to keep it',
+    !/time zone/.test(keeping.after) && /Earliest start date/.test(keeping.after) &&
+      JSON.stringify(keeping.told) === JSON.stringify([{ question: 'Which time zone do you work in?' }]),
+    JSON.stringify({ after: keeping.after, told: keeping.told }),
+  );
+  check('with nothing to keep, nothing is said about it', keeping.gone, String(keeping.gone));
+
+  /*
+   * The role the card shows while the posting is still being read, which is
+   * the page's own title. iCIMS's sign-in page is titled "Login | Careers
+   * Markon", and the card said the role was that; a SmartRecruiters title
+   * written "Staff&amp;amp;nbsp;Software Engineer" arrives from the browser
+   * as "Staff&amp;nbsp;Software Engineer", decoded once and no further.
+   */
+  console.log('\nThe role shown while the posting is read');
+  const provisional = await inPage(async (createCard, titles) => {
+    const out = {};
+    for (const title of titles) {
+      document.title = title;
+      createCard({ analysis: null, resumes: [], settings: {}, questions: [], needsCoverLetter: false, onAction: async () => ({}) });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      out[title] = root.querySelector('.role.provisional')?.textContent ?? null;
+    }
+    return out;
+  }, [
+    'Login | Careers Markon', 'Sign In | Careers Markon', 'Log In', 'Create Account — Markon', 'Register | Markon',
+    'My Account | Markon', 'Apply | Markon', 'Application — Markon', 'Careers', 'Job Search | Markon', 'Home',
+    'Staff&amp;nbsp;Software Engineer | Smith &amp;amp; Nephew', 'Platform Engineer | Markon',
+  ]);
+  const AUTH = /^(login|sign in|log in|create account|register|my account|apply|application|careers|job search|home)$/i;
+  check(
+    'a title that is an auth or step word is never shown as the role; the role is unknown instead',
+    Object.entries(provisional)
+      .filter(([title]) => !/Engineer/.test(title))
+      .every(([title, shown]) => shown === 'This posting' && !title.split(/\s+[|—]\s+/).some((p) => AUTH.test(p) && shown.includes(p))),
+    JSON.stringify(provisional),
+  );
+  check(
+    'a title escaped twice is shown decoded, with no entity text left in it',
+    provisional['Staff&amp;nbsp;Software Engineer | Smith &amp;amp; Nephew'] === 'Staff Software Engineer | Smith & Nephew',
+    JSON.stringify(provisional),
+  );
+  check('and a real title is shown as it was', provisional['Platform Engineer | Markon'] === 'Platform Engineer | Markon', JSON.stringify(provisional));
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);

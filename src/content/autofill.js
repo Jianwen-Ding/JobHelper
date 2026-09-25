@@ -10,10 +10,42 @@
  * The privacy rule lives on its own, away from everything that reads a form,
  * because it is the part that has to be reviewable without reading this file.
  */
-import { dependsOnEmployer, neverRemember, worthRemembering } from '../shared/remembering.js';
+import {
+  dependsOnEmployer,
+  mayRememberTyped,
+  neverRemember,
+  worthRemembering,
+  worthRememberingTyped,
+} from '../shared/remembering.js';
 
 /** Map a stored profile key to the label/name patterns that mean it. */
 const FIELD_PATTERNS = [
+  /*
+   * The name somebody goes by, above every other name, because "Preferred
+   * first name" says "first name" whole. It used to be left out entirely:
+   * matched as `first_name` it was given the legal name — the one answer the
+   * box is there to be different from — and "Jay" typed there last time could
+   * never come back. The store now sends the name the resume prints as these
+   * keys, and only when it differs from the legal one; with none, the box is
+   * still the person's and the answer they gave last time fills it. See
+   * `typedBox` and `NAME_FOR_THE_FORM`.
+   */
+  /*
+   * Both halves of it in one box, above the first half alone, as `full_name`
+   * is below. Zoox's Lever form asks "What is your preferred first name and
+   * last name?", and "preferred first name" claimed it for the first name.
+   */
+  ['preferred_name', /\b(preferred|chosen)[\s_-]*first[\s_-]*(name[\s_-]*)?(and|&|\+)[\s_-]*last[\s_-]*name\b/i],
+  ['preferred_first_name', /\b(preferred|nick|chosen)[\s_-]*(first|given)[\s_-]*name\b/i],
+  ['preferred_last_name', /\b(preferred|chosen)[\s_-]*(last|family|sur)[\s_-]*name\b/i],
+  ['preferred_middle_name', /\b(preferred|chosen)[\s_-]*middle[\s_-]*name\b/i],
+  /*
+   * And "the name you'd prefer", which is how GitLab's Greenhouse board asks
+   * it: "What's the name you'd prefer us to use throughout the interview
+   * process?". Measured live, it matched nothing, so the box stayed empty and
+   * First and Last Name beside it were given the preferred name.
+   */
+  ['preferred_name', /\b(preferred|nick|chosen)[\s_-]*(full[\s_-]*)?name\b|\bgo(?:es)?[\s_-]+by\b|\bname[\s_-]+(?:that[\s_-]+)?you(?:['’]d|[\s_-]+would)?[\s_-]+prefer\b/i],
   /*
    * Both halves in one box, above either half, because the first pattern to
    * match claims the field: "First and Last Name" says "Last Name" whole and
@@ -34,7 +66,16 @@ const FIELD_PATTERNS = [
   ['middle_name', /\bname[\s_-]*\([\s_-]*middle([\s_-]*name)?[\s_-]*\)/i],
   ['first_name', /\b(first[\s_-]?name|given[\s_-]?name|forename|fname)\b/i],
   ['last_name', /\b(last[\s_-]?name|family[\s_-]?name|surname|lname)\b/i],
-  ['full_name', /\b(full[\s_-]?name|your[\s_-]?name|candidate[\s_-]?name|legal[\s_-]?name)\b/i],
+  /*
+   * Not the full name *of* something. Datadog's Greenhouse board asks "Please
+   * share the full name of your major/final year specialization(s) as it
+   * would appear on your diploma", and it was given "Morgan Testwell" —
+   * measured live, a person's name typed in as their degree subject. A name
+   * followed by "of your", "of the" or "of this" is a thing's name: the
+   * subject, the school, the company's legal name. Left to the patterns below,
+   * which read "major" in it and give the subject, and otherwise to nothing.
+   */
+  ['full_name', /\b(full[\s_-]?name|your[\s_-]?name|candidate[\s_-]?name|legal[\s_-]?name)\b(?![\s_-]+of[\s_-]+(?:your|the|this|that|each|any|a|an)\b)/i],
   ['email', /\b(e-?mail)\b/i],
   /*
    * "Number" on its own is far too broad — requisition number, employee
@@ -54,8 +95,14 @@ const FIELD_PATTERNS = [
    * `name="org"` with "Current company" as its only label, and it read as
    * nothing at all.
    */
-  ['current_company', /\b(current|present|most[\s_-]*recent)[\s_-]*(company|employer|organi[sz]ation|org)\b/i],
-  ['current_title', /\b(current|present|most[\s_-]*recent)[\s_-]*(job[\s_-]*)?(title|role|position)\b/i],
+  /*
+   * And a bracket closed between them: Reddit's Greenhouse board asks "Please
+   * provide the name of your current (or most recent) company", and ")"
+   * stood between "recent" and "company". See `mostRecentJob` for what a
+   * question saying "most recent" is given.
+   */
+  ['current_company', /\b(current|present|most[\s_-]*recent)\)?[\s_-]*(company|employer|organi[sz]ation|org)\b/i],
+  ['current_title', /\b(current|present|most[\s_-]*recent)\)?[\s_-]*(job[\s_-]*)?(title|role|position)\b/i],
   /*
    * When the degree ends. Above school and degree on purpose: the first
    * pattern to match claims the field, and "Graduation date from your
@@ -68,7 +115,14 @@ const FIELD_PATTERNS = [
    */
   ['graduation_month', /(\bgrad\b|\bgraduat\w*|\bcompletion\b).{0,40}\bmonth\b|\bmonth\b.{0,40}\bgraduat/i],
   // "Class of" and "Graduating class" are asking for the year, as "Class year" is.
-  ['graduation_year', /(\bgrad\b|\bgraduat\w*|\bcompletion\b).{0,40}\byear\b|\byear\b.{0,40}\bgraduat|\bclass\s*year\b|\bclass\s+of\b|\bgraduating\s+class\b/i],
+  /*
+   * And "What year will you complete your degree?", which is Okta's Greenhouse
+   * board's: it says neither "graduate" nor "completion", fell through to
+   * `degree`, and — measured live — was reported as a degree with no
+   * matching option in a list of years. Only with the degree named after the
+   * verb: "the year you completed the course" is not a graduation.
+   */
+  ['graduation_year', /(\bgrad\b|\bgraduat\w*|\bcompletion\b).{0,40}\byear\b|\byear\b.{0,40}\bgraduat|\byear\b.{0,40}\bcomplete\b.{0,20}\b(degree|studies|bachelor\w*|master\w*|program(me)?)\b|\bclass\s*year\b|\bclass\s+of\b|\bgraduating\s+class\b/i],
   /*
    * And the date by the words that name the degree's end without saying
    * "graduation": "Expected degree completion" was the example above and no
@@ -79,6 +133,17 @@ const FIELD_PATTERNS = [
   [
     'graduation_date',
     /\bgrad(uation)?\s*date\b|\bdate\s*of\s*graduation\b|\b(expected|anticipated)\s*grad(uation)?\b|\bwhen\s+(do|will)\s+you\s+(expect\s+to\s+)?graduate\b|\bdegree\s+(completion|conferral|end)\b|\b(end|completion)\s*date\b.{0,20}\bgrad(uat\w*)?\b/i,
+  ],
+  /*
+   * And when it began, asked on its own outside an Education block: "Start
+   * date of your degree", "Education start date". With no pattern for it,
+   * the first fell through to `degree` and a date picker was given "Bachelor
+   * of Science". Only with the schooling named — a bare "Start date" is when
+   * somebody can start the job.
+   */
+  [
+    'education_start_date',
+    /\b(start|begin|beginning|commencement)\s*(date|month)?\b.{0,30}\b(degree|education|studies|university|college|program(me)?)\b|\b(degree|education|studies|university|college|program(me)?)\s+(start|begin|beginning)\s*date\b/i,
   ],
   /*
    * The grade and the subject above the school, for the reason graduation is:
@@ -96,7 +161,13 @@ const FIELD_PATTERNS = [
     /\b(major|discipline|field[\s_-]?of[\s_-]?study|(course|area)[\s_-]?of[\s_-]?study|(field|subject)[\s_-]+of[\s_-]+(your[\s_-]+)?degree|degree[\s_-]+(field|subject))\b/i,
   ],
   ['school', /\b(school|university|college|institution|institute)\b/i],
-  ['degree', /\b(degree)\b/i],
+  /*
+   * And the level it is at, asked without the word: BambooHR's "Highest
+   * Education Obtained" lists "College - Bachelor of Science" among its
+   * levels, and was left on "–Select–". Not a label asking when, though: a
+   * date, a year or a month is never the degree's name.
+   */
+  ['degree', /^(?![\s\S]*(?<!-)\b(date|year|month)\b)[\s\S]*(\bdegree\b|\bhighest[\s_-]+(level[\s_-]+of[\s_-]+)?education\b|\beducation(al)?[\s_-]+level\b|\blevel[\s_-]+of[\s_-]+education\b)/i],
   /*
    * The two declarations above every address field. "Are you authorized to
    * work in this country?" is the commonest wording of the right-to-work
@@ -124,12 +195,38 @@ const FIELD_PATTERNS = [
    * And "for employment" where the same question says "to work": "Are you
    * currently eligible for employment in the US?" matched nothing, so the
    * required question was neither answered nor reported.
+   *
+   * And spelled with an "s", as the European boards spell it. Datadog's
+   * Greenhouse board asks "Are you legally authorised to work full-time in the
+   * country where this job is based?", which matched none of these, fell
+   * through to `address_country` on the word "country", and was reported —
+   * measured live — as a country still to be picked by hand from a Yes/No
+   * list. The rest of this file already reads both spellings of the answer.
    */
   [
     'work_authorization',
-    /\b(work[\s_-]?authoriz\w*|legally[\s_-]?authorized|(authoriz|eligib)\w*[\s_-]+(to[\s_-]+work|for[\s_-]+employment)|right[\s_-]?to[\s_-]?work)\b/i,
+    /\b(work[\s_-]?authori[sz]\w*|legally[\s_-]?authori[sz]ed|(authori[sz]|eligib)\w*[\s_-]+(to[\s_-]+work|for[\s_-]+employment)|right[\s_-]?to[\s_-]?work)\b/i,
   ],
   ['requires_sponsorship', /\b(sponsor\w*|visa[\s_-]?status)\b/i],
+  /*
+   * Whether the applicant lives in a country the question names — a yes or a
+   * no that the profile's own country answers. Asked on three systems in the
+   * sweep and answered on none, because no pattern read it: Discord's
+   * Greenhouse board ("Are you currently located in the US?"), JumpCloud's
+   * Lever form ("Do you currently live in the United States of America?")
+   * and Prometheum's JazzHR form ("Do you currently reside in the United
+   * States or Canada?"), each required, each measured live left blank and
+   * unreported. Only with a country named, and only "Yes" for the profile's
+   * own — see `aboutAnotherCountry` — so "Are you located in the Bay Area?"
+   * is not read at all and a question about another country is handed back.
+   * Below the right to work and sponsorship, which claim a question that
+   * mentions residence too; above the address, which would otherwise read
+   * "United States" in it as a country to fill in.
+   */
+  [
+    'lives_in_country',
+    /\b(?:do|are)\s+you\s+(?:currently\s+|presently\s+|now\s+)?(?:live|living|reside|residing|located|based)\s+(?:in|within)\s+(?:the\s+)?(?:US|USA|U\.S\.(?:A\.)?|United\s+States|America|Canada|UK|U\.K\.|United\s+Kingdom)(?![\w.])/i,
+  ],
   /*
    * Both in one box, above the city, which claimed it: "City, State" and
    * "City/State" were given "Boston" on a profile that also holds "MA". See
@@ -226,8 +323,13 @@ const NOT_ABOUT_YOU = [
    * internship forms ask of students — with their own number. The employee
    * who referred you is the commonest of these, and "referral" was already
    * here for how you heard about the job; the person is not.
+   *
+   * But "referred to as" is what you are called, not who sent you. Asana's
+   * Greenhouse board explains its Preferred Full Name box as "The name that
+   * you would like to be referred to as". Measured live, the box was left
+   * empty as somebody else's name.
    */
-  /\b(references?|referee|emergency|next[\s_-]?of[\s_-]?kin|guardian|spouse|supervisor|manager'?s?|recommender|referr(?:er|ers|ing|ed)|recruiters?|parents?|professors?|advis[oe]rs?)\b/i,
+  /\b(references?|referee|emergency|next[\s_-]?of[\s_-]?kin|guardian|spouse|supervisor|manager'?s?|recommender|referr(?:er|ers|ing|ed(?![\s_-]+to[\s_-]+as\b))|recruiters?|parents?|professors?|advis[oe]rs?)\b/i,
   /*
    * A previous employer's address, which the employment-history sections of
    * Taleo and BrassRing ask for field by field. "Employer City" matched
@@ -260,8 +362,13 @@ const NOT_ABOUT_YOU = [
    * name" further on, which still excludes. Every doubt leaves it blank. The
    * rest of the list — the employer's address, location, phone — is
    * somebody else's however current they are.
+   *
+   * "Current/Most Recent Company Name" opens the same way, twice over, and is
+   * how Ashby boards ask it: measured live on Vanta's, where it was excluded
+   * as a past employer's and left blank. So a "current" may be followed by
+   * "/ most recent" or "(or most recent)" before the name.
    */
-  /\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+(address|location|city|town|state|province|country|phone|telephone|email|zip|postal|web[\s_-]?site|url)\b|(?<!^[\W_]*(?:current|present|most[\s_-]*recent)[\s_-]+)\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+name\b/i,
+  /\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+(address|location|city|town|state|province|country|phone|telephone|email|zip|postal|web[\s_-]?site|url)\b|(?<!^[\W_]*(?:current|present|most[\s_-]*recent)(?:[\s_]*(?:\/|\(?\s*or\b)[\s_]*most[\s_-]*recent\)?)?[\s_-]+)\b(employer|company|organi[sz]ation)['’]?s?[\s_-]+name\b/i,
   /*
    * And the school's, which the education sections of the older systems ask
    * for the same way. `school` sits above every address pattern, so "School
@@ -277,6 +384,13 @@ const NOT_ABOUT_YOU = [
    * contact email" gave the applicant's address.
    */
   /\bcontact\b[\s\S]{0,30}\bemployers?\b|\bemployers?\b[\s\S]{0,20}\bcontact\b/i,
+  /*
+   * Why somebody left, which is not where they were: "Reason for leaving your
+   * most recent employer" would otherwise take the employer's name as its
+   * reason. Nothing has been measured filling it — it is here because asking
+   * for the most recent employer (see `mostRecentJob`) is what reaches it.
+   */
+  /\breasons?\b[\s\S]{0,30}\bleav\w*|\bwhy\b[\s\S]{0,20}\bleav\w*/i,
   /*
    * How long, not who. "Years at current company" matched `current_company`
    * and was given the employer's name in a box asking for a number.
@@ -309,6 +423,13 @@ const NOT_ABOUT_YOU = [
    * the URL was typed in as the password, where the reviewer would try it.
    */
   /\b(password|passcode|pass[\s_-]?phrase)\b/i,
+  /*
+   * An address at a school, which the profile's one address is not. Harvey's
+   * Ashby form for law students asks for a "Personal Email Address" and then
+   * a "School Email Address", and measured live, the second was given the
+   * personal address too.
+   */
+  /\b(school|university|college|student|\.edu)['’]?s?[\s_-]*e-?mail\b/i,
   /*
    * A username, which is a part of the link and not the link. "GitHub
    * username", "GitHub handle" and "Username on LinkedIn" matched `github`
@@ -772,6 +893,25 @@ function wholeDateKey(input, key, description) {
  */
 const OURS = 'jobhelper-card-host';
 
+/**
+ * The events this file dispatches itself, so `watchChoices` does not take
+ * Autofill's own filling for a choice somebody made.
+ *
+ * It did: every option Autofill picked fired the same `change` a person's
+ * pick fires, and went into the bank as "Chosen on a form". A choice filled
+ * from a row worded one way was saved again under the form's wording, as a
+ * second row — measured in tests/reusing.mjs, "Which working arrangement do
+ * you prefer?" beside the "…for this position?" it was filled from — and a
+ * guess nobody checked was written down as their answer. By the event object
+ * rather than by `isTrusted`: a page's own scripts, and many real pickers,
+ * dispatch untrusted events for choices a person did make.
+ */
+const OUR_EVENTS = new WeakSet();
+const ours = (event) => {
+  OUR_EVENTS.add(event);
+  return event;
+};
+
 function allRoots(root = document, out = [root]) {
   for (const element of root.querySelectorAll('*')) {
     if (element.id === OURS) continue;
@@ -873,6 +1013,38 @@ function fromLabelledBy(element) {
  */
 const ANOTHER_FIELD = 'input:not([type=hidden]), textarea, select';
 
+/**
+ * A label's words, the way a screen reader says them.
+ *
+ * LinkedIn's Easy Apply writes every question twice inside its label — once
+ * for the eye, marked `aria-hidden`, and once for a screen reader, clipped out
+ * of sight — in two spans with nothing between them. `textContent` ran them
+ * together into "SchoolSchool", which no pattern here reads as a school, so
+ * a Greenhouse form inside Easy Apply was filled with nothing at all:
+ * reported as "Filled 0 fields" over School, Degree and Discipline.
+ *
+ * So the copy marked `aria-hidden` is left out when the label says anything
+ * else, as assistive technology leaves it out, and an element boundary is a
+ * word boundary. A label that is nothing but hidden text keeps it, rather than
+ * becoming no label at all.
+ */
+function labelWords(el) {
+  if (!el) return '';
+  const parts = [];
+  const walk = (node) => {
+    for (const child of node.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) parts.push(child.nodeValue);
+      else if (child.nodeType === Node.ELEMENT_NODE && child.getAttribute('aria-hidden') !== 'true') {
+        parts.push(' ');
+        walk(child);
+        parts.push(' ');
+      }
+    }
+  };
+  walk(el);
+  return clean(parts.join('')) || clean(el.textContent);
+}
+
 function labelFor(input) {
   /*
    * Each of these answers only when it has something to say.
@@ -891,18 +1063,27 @@ function labelFor(input) {
    */
   if (input.id) {
     const label = rootOf(input).querySelector(`label[for="${CSS.escape(input.id)}"]`);
-    const said = clean(label?.textContent);
+    const said = labelWords(label);
     if (said) return said;
   }
 
-  const wrapping = clean(input.closest('label')?.textContent);
+  const wrapping = labelWords(input.closest('label'));
   if (wrapping) return wrapping;
 
   const described = fromLabelledBy(input);
   if (described) return described;
 
+  /*
+   * Unless it only names the kind of control. Rippling's custom questions are
+   * each a widget whose `aria-label` is "Select" — the question itself is a
+   * `<p>` in the block above — so every one of them was described as
+   * "Select": measured live on two Rippling boards (ats.rippling.com/capacity
+   * and /closinglock), "Do you have the unrestricted right to work for any
+   * employer…?" and the rest came out as nothing anybody could match. Such a
+   * label is kept for last, below, and used only if nothing says more.
+   */
   const aria = clean(input.getAttribute('aria-label'));
-  if (aria) return aria;
+  if (aria && !CONTROL_WORD.test(aria)) return aria;
 
   /*
    * Positional fallback: the nearest preceding element that reads like a label.
@@ -936,14 +1117,44 @@ function labelFor(input) {
    * holds a second field, it is the form rather than this field's own group,
    * and whatever label it holds belongs to something else.
    */
+  /*
+   * The same climb, for a question that is not marked as a label at all: the
+   * first thing in the group, holding words and no field of its own. That is
+   * Rippling's shape — `<div><div><p>question</p></div></div>` and then the
+   * field's own wrapper — and its textareas, which have no `aria-label` to
+   * fall back on, were not even offered as questions to answer.
+   */
+  /*
+   * Seven levels, because a widget is deep: Rippling's `role="combobox"` sits
+   * six wrappers below the block holding its question. Every level still has
+   * to hold this one field and no other, which is what bounds the climb.
+   */
   let group = input.parentElement;
-  for (let i = 0; i < 4 && group; i++, group = group.parentElement) {
-    if (group.querySelectorAll(ANOTHER_FIELD).length !== 1) break;
+  for (let i = 0; i < 7 && group; i++, group = group.parentElement) {
+    // One field, whether it is an input or a widget `<div>` (which the old
+    // test, "exactly one input", stopped at before it had begun).
+    if (group.querySelectorAll(`${ANOTHER_FIELD}, [role="combobox"]`).length > 1) break;
     const heading = group.querySelector('label,legend,th,.label,[class*="label"]');
     if (heading && !heading.contains(input)) return clean(heading.textContent);
+    const lead = group.firstElementChild;
+    const said = lead && !lead.contains(input) && !lead.querySelector(ANOTHER_FIELD) ? clean(lead.textContent) : '';
+    if (said && said.length < 300) return said;
   }
-  return '';
+  return aria;
 }
+
+/** An `aria-label` that names the control rather than the question. */
+/*
+ * And says it is required. Workday's Application Questions are "Select One"
+ * buttons labelled " Select One Required", the question being rich text in
+ * the `<legend>` of the `<fieldset>` around them — so every one was described
+ * as "Select One Required", matched nothing, and was neither answered nor
+ * reported. Measured live with a fake profile on NVIDIA's "Are you legally
+ * authorized to work in the United States?" and "Will you now or in the
+ * future require sponsorship…?", and on Intel's questionnaire: every required
+ * right-to-work question left on "Select One" under a report saying nothing.
+ */
+const CONTROL_WORD = /^(select|search|choose|pick|select an option|select one|dropdown|combobox|text ?area|input)\.*(\s+required)?$/i;
 
 /**
  * Everything a field's label might be hiding in. The explicit label leads, so
@@ -1010,8 +1221,45 @@ function isWidgetChoice(element) {
     role === 'combobox' ||
     role === 'listbox' ||
     element.getAttribute?.('aria-haspopup') === 'listbox' ||
-    ['list', 'both'].includes(element.getAttribute?.('aria-autocomplete'))
+    ['list', 'both'].includes(element.getAttribute?.('aria-autocomplete')) ||
+    isWorkdayPrompt(element) ||
+    isFabricSelect(element)
   );
+}
+
+/*
+ * BambooHR's dropdown: Fabric's select, a button saying only that it opens a
+ * menu (`aria-haspopup="true"`), which names that menu in `data-menu-id` and
+ * draws it at the foot of the page as `role="menuitem"` rows. Every list on
+ * its application is one, and none was read as a list. The menu's name is
+ * required as well, because a button opening a menu is otherwise a toolbar.
+ */
+const FABRIC_SELECT = 'button[data-menu-id][aria-haspopup="true"]';
+const isFabricSelect = (element) => Boolean(element.matches?.(FABRIC_SELECT));
+
+/*
+ * Workday's prompt: a search box that is a list, and says so in nothing a
+ * screen reader reads.
+ *
+ * Its School or University, its Field of Study, "How Did You Hear About Us?"
+ * and the phone's country code are each an `<input placeholder="Search">`
+ * with no role and no `aria-autocomplete`, inside a `multiSelectContainer`,
+ * marked only `data-uxi-widget-type="selectinput"`. Nothing here read that as
+ * a list, so it was typed into as a text box. Measured live with a fake
+ * profile on Intel's and NVIDIA's My Experience: "Northeastern University" and
+ * "Computer Science" sat in the search boxes, the report counted both filled,
+ * and Save and Continue answered "The field School or University is required
+ * and must have a value", and the same for Field of Study — words in a search
+ * box are not a choice. Where a person had already picked Computer Science,
+ * on NVIDIA, the words were typed in again beside the pill.
+ *
+ * As a list it is driven the way every list is (see `chooseInWidget`), with
+ * the two things this one needs: the search runs on Enter, and the click has
+ * to land on the option's words (see `wordsOf`). What it holds is its pills
+ * (see `controlOf`), so one already chosen is left alone.
+ */
+function isWorkdayPrompt(element) {
+  return element.getAttribute?.('data-uxi-widget-type') === 'selectinput';
 }
 
 /**
@@ -1040,6 +1288,13 @@ function isFillable(input) {
    * control. "Filled 3 fields", three empty fields.
    */
   if (isDisabled(input) || input.readOnly) return false;
+  /*
+   * And a `<select>` marked `readonly`, which the browser ignores and the page
+   * does not: it is what a Fabric select keeps behind its button, holding only
+   * the choice already made, and was reported as a degree with no matching
+   * option beside the list that had one. See `isFabricSelect`.
+   */
+  if (input instanceof HTMLSelectElement && input.hasAttribute('readonly')) return false;
   if (input.type === 'hidden' || input.type === 'file' || input.type === 'password') return false;
   // Radios are answered as a group, below; checkboxes are consent and are
   // nobody's to tick but the applicant's.
@@ -1056,8 +1311,23 @@ function isFillable(input) {
   // forms inside a fixed modal are ordinary. Whether it occupies space on the
   // page is the question actually being asked.
   if (input.getClientRects().length === 0) return false;
+  if (BOT_TRAP.test(labelFor(input))) return false;
   return true;
 }
+
+/*
+ * A box put there to catch robots, which a person is asked to leave empty.
+ *
+ * Workday's Create Account and Sign In carry one on every tenant: a box named
+ * `website`, labelled "Enter website. This input is for robots only, do not
+ * enter if you're human.", cut down to a pixel with the same `clip` a
+ * screen-reader-only label uses — so it counts as on the page, and `website`
+ * matched it. Measured live on NVIDIA's and Intel's with a fake profile that
+ * has a website: the address went into the trap, and an account created that
+ * way is created by a robot as far as the site can tell. Only a label that
+ * says so in words: robots, not a human, a honeypot.
+ */
+const BOT_TRAP = /\bfor\s+(?:ro)?bots\b|\b(?:ro)?bots?\s+only\b|\bif\s+you(?:'|’|\s+a)?re\s+(?:a\s+)?human\b|\bhoney\s*pot\b/i;
 
 /**
  * Has this dropdown actually been answered?
@@ -1132,10 +1402,35 @@ function nativeSet(element, property, value) {
 }
 
 /** Set a value in a way React and friends actually notice. */
+/*
+ * A date drawn as spin buttons is taken when focus leaves it, and only then.
+ *
+ * Workday's From and To are a month and a year `role="spinbutton"` box inside
+ * one wrapper, and the wrapper reads both boxes into the date — what Save and
+ * Continue checks — on the blur that takes focus out of it. Written without
+ * focus, as every other box is, the boxes showed 06/2025 and Workday answered
+ * "The field From is required and must have a value", for the job's From and
+ * To and for the degree's years alike. Measured live on NVIDIA's and Intel's
+ * My Experience with a fake profile. Blurred after each box it was worse:
+ * the month was taken alone, "Invalid Date: 06/", because focus coming back
+ * into the date is sent to its first box and the year's blur never happened.
+ *
+ * So a spin button is focused before it is written, and focus leaves only
+ * after the last box of its date, the way a person tabs through it. Measured
+ * live after on Intel: Save and Continue took the From and To.
+ */
 function setValue(input, value) {
+  const spin = input.getAttribute?.('role') === 'spinbutton';
+  if (spin) input.focus?.();
   nativeSet(input, 'value', value);
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  input.dispatchEvent(new Event('change', { bubbles: true }));
+  input.dispatchEvent(ours(new Event('input', { bubbles: true })));
+  input.dispatchEvent(ours(new Event('change', { bubbles: true })));
+  if (spin && lastBoxOfItsDate(input)) input.blur?.();
+}
+
+function lastBoxOfItsDate(input) {
+  const boxes = input.closest('[role="group"]')?.querySelectorAll('[role="spinbutton"]');
+  return !boxes?.length || boxes[boxes.length - 1] === input;
 }
 
 /**
@@ -1200,6 +1495,25 @@ const ONLY_A_DIALLING_CODE = /^\s*\+\d{1,4}\s*$/;
 
 function onlyTheStartOfAnAddress(value) {
   return /^\s*(https?:\/\/)?(www\.)?((linkedin\.com(\/in)?|github\.com)\/?)?\s*$/i.test(value) && /\S/.test(value);
+}
+
+/*
+ * Workday's LinkedIn box takes the whole address or nothing.
+ *
+ * Its Social Network URLs ask for the profile in one text box named
+ * `linkedInAccount`, and Save and Continue checks it. A profile stores the link
+ * as a resume prints it, "linkedin.com/in/…", and measured live with a fake
+ * profile on NVIDIA's and Salesforce's My Experience that was refused with
+ * "Invalid LinkedIn URL" — and so was "https://linkedin.com/in/…"; only
+ * "https://www.linkedin.com/in/…" was taken. The same profile, the same place,
+ * written the one way that box accepts. Only that box, and only a link that is
+ * plainly LinkedIn's; anything else is written as the profile has it.
+ */
+const isWorkdayLinkedIn = (input) => input.name === 'linkedInAccount' || input.getAttribute('data-automation-id') === 'linkedInAccount';
+
+function wholeLinkedInAddress(value) {
+  const bare = String(value).trim().replace(/^https?:\/\//i, '').replace(/^(?:www\.)?linkedin\.com\b/i, 'linkedin.com');
+  return /^linkedin\.com\//i.test(bare) ? `https://www.${bare}` : String(value);
 }
 
 function otherWaysToWrite(key, value) {
@@ -1422,6 +1736,36 @@ const MONTH_NAMES = [
  * "December" as text found nothing on a form listing "Dec" and the box was
  * left empty. Three letters at least, so "Ma" is not taken for March or May.
  */
+/**
+ * The months a written date could mean, as "YYYY-MM" — two for "05/01/2027",
+ * which is the first of May or the fifth of January depending on who wrote it.
+ * Empty for anything that is not plainly a date with a month and a year.
+ */
+function monthsMeant(text) {
+  const said = clean(text);
+  const at = (y, m) => (m >= 1 && m <= 12 ? [`${y}-${String(m).padStart(2, '0')}`] : []);
+  let hit;
+  if ((hit = /^(\d{4})-(\d{1,2})(?:-\d{1,2})?$/.exec(said))) return at(hit[1], Number(hit[2]));
+  if ((hit = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(said))) return [...at(hit[3], Number(hit[1])), ...at(hit[3], Number(hit[2]))];
+  if ((hit = /^(\d{1,2})[/.-](\d{4})$/.exec(said))) return at(hit[2], Number(hit[1]));
+  if ((hit = /^([A-Za-z]{3,})\.?,?\s+(?:\d{1,2},?\s+)?(\d{4})$/.exec(said))) return at(hit[2], monthOf(hit[1]) ?? 0);
+  return [];
+}
+
+/**
+ * Whether a date box that rewrote what it was given still holds that month.
+ *
+ * A date picker takes what is typed and writes it back its own way: Notion's
+ * Ashby form turns the graduation date into "05/01/2027". The box held the
+ * right date and the card said it would not take it, because what it held was
+ * not, letter for letter, what was typed. The same month and year, however
+ * written, is the date going in; anything else is still a refusal.
+ */
+function sameMonthWritten(shown, given) {
+  const want = monthsMeant(given);
+  return want.length === 1 && monthsMeant(shown).includes(want[0]);
+}
+
 export function monthOf(text) {
   const said = clean(text).toLowerCase();
   if (!said) return null;
@@ -1524,6 +1868,27 @@ const LEVEL_ONLY =
  * fields where a spelling table exists, and only those. Consulted after an
  * exact match has failed, never instead of one.
  */
+/**
+ * A location dropdown that lists countries, or cities, and not "Boston, MA".
+ *
+ * The location is kept as the whole place, and a list of places holds only
+ * one part of it: Spotify's Lever form asks "What is your location?" with a
+ * list of countries, and the whole "Boston, MA" matched none of them, so a
+ * required question was left for the person with the answer in the profile.
+ * The country first, then the city — each only as the list spells it, or as
+ * the country is otherwise spelled, never a guess.
+ */
+function locationPart(choosable, fields) {
+  for (const [part, value] of [['address_country', fields.address_country], ['address_city', fields.address_city]]) {
+    if (!clean(value ?? '')) continue;
+    const found = choosable.find(
+      (o) => sameOption(o.textContent, value) || sameAnswerSpelledOtherwise(part, o.textContent, value),
+    );
+    if (found) return found;
+  }
+  return null;
+}
+
 function sameAnswerSpelledOtherwise(key, option, value) {
   /*
    * A degree against a list of levels, which is what Greenhouse asks with:
@@ -1532,8 +1897,12 @@ function sameAnswerSpelledOtherwise(key, option, value) {
    * left empty on every Greenhouse form.
    */
   if (key === 'degree') {
+    // Or filed under where it is earned, as BambooHR lists them: "College -
+    // Bachelor of Science", "College - Associates". Read without the heading.
+    const said = clean(option).replace(/^(?:college|university)\s*[-–—:]\s+/i, '');
+    if (said !== clean(option) && sameOption(said, value)) return true;
     const level = degreeLevel(value);
-    return Boolean(level) && LEVEL_ONLY.test(clean(option).replace(/[’]/g, "'")) && degreeLevel(option) === level;
+    return Boolean(level) && LEVEL_ONLY.test(said.replace(/[’]/g, "'")) && degreeLevel(said) === level;
   }
   if (key === 'graduation_month' || key === 'education_start_month') {
     const month = monthOf(value);
@@ -1878,7 +2247,68 @@ const COUNTRIES = [
   ['mx', null, /\bmexico\b/i],
   ['jp', null, /\bjapan\b/i],
   ['il', null, /\bisrael\b/i],
+  /*
+   * And the rest of the places the global boards hire in. A country missing
+   * from this list is a country no question can name, so a question about it
+   * reads as one naming none — the profile's own — and is answered for it.
+   * Measured live on Affirm's Greenhouse board: "Do you now or in the future
+   * require sponsorship for employment visa status in Spain?" was answered
+   * "No" from a profile that only ever said it needs none in the US.
+   *
+   * Names only, never short forms, and only names nothing else is called:
+   * Georgia is also a state and Jordan a person, so neither is here, and a
+   * question naming them is read as it always was.
+   */
+  ['es', null, /\bspain\b/i],
+  ['pt', null, /\bportugal\b/i],
+  ['it', null, /\bital(?:y|ian)\b/i],
+  ['pl', null, /\bpoland\b/i],
+  ['ch', null, /\bswitzerland\b/i],
+  ['se', null, /\bsweden\b/i],
+  ['no', null, /\bnorway\b/i],
+  ['dk', null, /\bdenmark\b/i],
+  ['fi', null, /\bfinland\b/i],
+  ['be', null, /\bbelgium\b/i],
+  ['at', null, /\baustria\b/i],
+  ['cz', null, /\bczech(?:ia|\s+republic)\b/i],
+  ['ro', null, /\bromania\b/i],
+  ['gr', null, /\bgreece\b/i],
+  ['br', null, /\bbrazil\b/i],
+  ['ar', null, /\bargentina\b/i],
+  ['cl', null, /\bchile\b/i],
+  ['co', null, /\bcolombia\b/i],
+  ['cn', null, /\bchina\b/i],
+  ['hk', null, /\bhong\s+kong\b/i],
+  ['tw', null, /\btaiwan\b/i],
+  ['kr', null, /\b(?:south\s+)?korea\b/i],
+  ['ph', null, /\bphilippines\b/i],
+  ['my', null, /\bmalaysia\b/i],
+  ['id', null, /\bindonesia\b/i],
+  ['vn', null, /\bvietnam\b/i],
+  ['th', null, /\bthailand\b/i],
+  ['ae', null, /\bunited\s+arab\s+emirates\b|\bu\.?a\.?e\.?\b|\bdubai\b/i],
+  ['za', null, /\bsouth\s+africa\b/i],
+  ['ng', null, /\bnigeria\b/i],
+  ['tr', null, /\bt(?:ü|u)rk(?:ey|iye)\b/i],
 ];
+
+/*
+ * The dialling code of each country above, for a telephone box a form has
+ * already started with its own. See the phone note in `fillForm`.
+ */
+const DIALLING_CODES = {
+  us: '+1', ca: '+1', uk: '+44', ie: '+353', in: '+91', sg: '+65', de: '+49', fr: '+33', nl: '+31', mx: '+52',
+  jp: '+81', il: '+972', au: '+61', nz: '+64', es: '+34', pt: '+351', it: '+39', pl: '+48', ch: '+41', se: '+46',
+  no: '+47', dk: '+45', fi: '+358', be: '+32', at: '+43', cz: '+420', ro: '+40', gr: '+30', br: '+55', ar: '+54',
+  cl: '+56', co: '+57', cn: '+86', hk: '+852', tw: '+886', kr: '+82', ph: '+63', my: '+60', id: '+62', vn: '+84',
+  th: '+66', ae: '+971', za: '+27', ng: '+234', tr: '+90',
+};
+
+/** The dialling code of the one country `text` names, or `undefined`. */
+function diallingCodeFor(text) {
+  const named = [...countriesIn(text)];
+  return named.length === 1 ? DIALLING_CODES[named[0]] : undefined;
+}
 
 function countriesIn(text) {
   const said = String(text ?? '');
@@ -1887,6 +2317,57 @@ function countriesIn(text) {
     if (short?.test(said) || name.test(said)) out.add(code);
   }
   return out;
+}
+
+/*
+ * A national number's trunk 0, which is dialled at home and not from abroad.
+ *
+ * A UK profile's "07700 900123" went in behind the form's "+44" as "+44 07700
+ * 900123", a number nobody can ring. Behind a dialling code the 0 goes —
+ * except for North America, whose numbers never start with one and are not
+ * touched, and Italy (and the two states inside it), whose numbers keep it.
+ * "(0)" is the same 0, written the way a UK business card writes it. "00" in
+ * front is the international prefix, not a trunk 0, and is left alone.
+ */
+const KEEPS_ITS_ZERO = new Set(['+1', '+39', '+378', '+379']);
+
+function withoutTrunkZero(code, number) {
+  const said = String(number);
+  if (!code || KEEPS_ITS_ZERO.has(code.trim()) || /^\s*\(?00/.test(said)) return said;
+  const dropped = said.trim().replace(/^\(0\)\s*/, '').replace(/^0(?=\d)/, '').replace(/^\(0(?=\d)/, '(');
+  return dropped === said.trim() ? said : dropped;
+}
+
+/** A number stored with its code and its trunk 0 both: "+44 07700 900123", "+44 (0)7700 900123". */
+function withoutTrunkZeroAfterCode(number) {
+  const m = /^\s*(\+\d{1,4})[\s.-]+(.*)$/.exec(String(number));
+  if (!m) return number;
+  const rest = withoutTrunkZero(m[1], m[2]);
+  return rest === m[2] ? number : `${m[1]} ${rest}`;
+}
+
+/*
+ * The dialling code the form shows beside a telephone box: a country-code
+ * select, or the button an intl-tel-input puts in front of its box, "Change
+ * country, selected United Kingdom (+44)". Looked for in the box's own
+ * wrapper and the two around it, never the whole form.
+ */
+function diallingCodeBeside(input) {
+  let scope = input.parentElement;
+  for (let i = 0; i < 3 && scope && scope.localName !== 'form' && scope !== document.body; i++, scope = scope.parentElement) {
+    for (const el of scope.querySelectorAll('select, button, [role="combobox"], input')) {
+      if (el === input) continue;
+      const shown =
+        el instanceof HTMLSelectElement
+          ? `${el.selectedOptions[0]?.textContent ?? ''} ${el.value}`
+          : el.localName === 'input'
+            ? el.value
+            : `${el.getAttribute('aria-label') ?? ''} ${el.textContent}`;
+      const code = /(?:^|[\s(])(\+\d{1,4})(?=$|[\s)])/.exec(shown)?.[1];
+      if (code) return code;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -1901,6 +2382,12 @@ function countriesIn(text) {
  * nothing to compare, and the answer stands as it always did.
  */
 function aboutAnotherCountry(key, value, asked, home) {
+  // Where somebody lives is only ever the profile's own country. See `lives_in_country`.
+  if (key === 'lives_in_country') {
+    const here = countriesIn(home);
+    const named = countriesIn(asked);
+    return here.size > 0 && named.size > 0 && ![...named].some((code) => here.has(code));
+  }
   if (!YES_NO_KEYS.has(key)) return false;
   let declared = countriesIn(value);
   if (declared.size === 0) declared = countriesIn(home);
@@ -1960,10 +2447,23 @@ function yesNoOption(key, value, options, asked = '') {
  * narrower is offered. "Present employer only" and "unknown" are never
  * chosen, and nothing is where the profile does not say about sponsorship.
  */
+/*
+ * Whether a statement about sponsorship denies needing it — in the words
+ * around the need, not anywhere in the sentence. Any "no" at all counted, so
+ * the answer "No, I need sponsorship now." read as a statement that no
+ * sponsorship is needed: measured live on Datadog's Greenhouse board, whose
+ * list is "Yes, no restriction." / "Yes, but I will need sponsorship in the
+ * future." / "No, I need sponsorship now.", a profile needing none was given
+ * the last. A "No," that answers the question is followed by a comma, and a
+ * denial of the need sits in the same clause as it.
+ */
+const DENIES_THE_NEED =
+  /\b(?:not|never|without|don'?t|doesn'?t|won'?t)\b[^.,;]{0,24}\b(?:require|need)|\b(?:require|need)s?\s+no\b|\bno\s+(?:visa\s+)?sponsor/;
+
 function statementKind(text) {
   const said = clean(text).toLowerCase();
   if (/\bnot\s+(?:legally\s+)?authori[sz]ed\b/.test(said)) return 'not-authorized';
-  if (/\b(?:require|need)s?\b[^.]*\bsponsor/.test(said)) return /\b(?:not|no|without|never)\b/.test(said) ? 'any-employer' : 'needs-sponsorship';
+  if (/\b(?:require|need)s?\b[^.]*\bsponsor/.test(said)) return DENIES_THE_NEED.test(said) ? 'any-employer' : 'needs-sponsorship';
   if (!/\bauthori[sz]ed\b/.test(said)) return null;
   if (/\bonly\b|\bunknown\b|\bpresent employer\b|\bcurrent employer\b/.test(said)) return 'restricted';
   return /\bany employer\b|\bwithout restriction\b/.test(said) ? 'any-employer' : 'authorized';
@@ -2020,20 +2520,89 @@ const NOT_LISTED = new RegExp(
   'i',
 );
 
+/*
+ * The job a question asking for the "most recent" one means, from the resume.
+ *
+ * The store sends `current_company` and `current_title` only for a job whose
+ * dates run to the present, and on purpose: "Current company" answered with
+ * the last place somebody worked says they work there now. But plenty of
+ * forms ask for the last one in so many words, and mark it required.
+ * Measured live with a fake profile whose one job (Example Co, Software
+ * Engineering Intern, Jun–Aug 2025) has ended: Vanta's Ashby board left
+ * "Current/Most Recent Company Name" and "Current/Most Recent Job Title"
+ * empty, Samsara's Greenhouse board "Most Recent Employer", and Reddit's
+ * "Please provide the name of your current (or most recent) company" — each
+ * required, each a question the resume being attached plainly answers.
+ *
+ * So a question that says "most recent" is given the newest job on the
+ * resume: one still going, else the one that ended last. Two that cannot be
+ * told apart — both still going, or ending in the same month — give nothing,
+ * as the store's own `currentJob` does. A question saying only "current" is
+ * not touched: it still gets the store's answer or nothing.
+ */
+const MOST_RECENT = /\bmost[\s_-]*recent\b/i;
+
+function mostRecentJob(history) {
+  const jobs = (Array.isArray(history) ? history : []).filter((job) => job?.company);
+  if (jobs.length <= 1) return jobs[0];
+  const ended = (job) => (job.current ? Infinity : job.end?.year ? job.end.year * 12 + (job.end.month ?? 12) : undefined);
+  const ranked = jobs.map((job) => ({ job, at: ended(job) })).filter((r) => r.at !== undefined).sort((a, b) => b.at - a.at);
+  if (ranked.length === 0 || ranked[0].at === ranked[1]?.at) return undefined;
+  return ranked[0].job;
+}
+
+/*
+ * "Yes" to "Do you live in <country>?", wherever the profile has a country.
+ * The question decides whether it is asked of this country: see
+ * `aboutAnotherCountry`.
+ */
+function withResidence(fields) {
+  return fields.address_country && !fields.lives_in_country ? { ...fields, lives_in_country: 'Yes' } : fields;
+}
+
 function withCityAndState(fields) {
   if (fields.city_state || !fields.address_city) return fields;
   const both = fields.address_state ? `${fields.address_city}, ${fields.address_state}` : fields.address_city;
   return { ...fields, city_state: both };
 }
 
-export function fillForm(fields, { overwrite = false, remembered = [], history = [] } = {}) {
-  fields = withCityAndState(fields);
+/**
+ * Which name a name box gets, when a profile has two.
+ *
+ * The legal name, when the box asks for it — "Legal name", "Legal first
+ * name", or plain boxes under a "Legal Name" heading as Workday draws them.
+ * The legal name too in a plain "Name" box on a form that also has a box for
+ * a preferred name, because that form is asking for the two separately. And
+ * otherwise, a plain name box on its own gets the name the person goes by —
+ * the one the resume being sent prints. With one name in the profile, both
+ * are that name.
+ */
+const NAME_FOR_THE_FORM = { full_name: 'preferred_name', first_name: 'preferred_first_name', last_name: 'preferred_last_name' };
+// The preferred-name patterns themselves, so a box read as one is also what
+// tells the form it has one.
+const PREFERRED_NAME_BOXES = FIELD_PATTERNS.filter(([key]) => key.startsWith('preferred_')).map(([, re]) => re);
+const PREFERRED_NAME_BOX = { test: (label) => PREFERRED_NAME_BOXES.some((re) => re.test(label)) };
+const LEGAL = /\blegal\b|\bas\s+(it\s+)?appears\s+on\s+(your\s+)?(passport|government|official|id\b)/i;
+const asksForLegalName = (input) => LEGAL.test(`${clean(labelFor(input))} ${surroundingWords(input)} ${boundedSection(input)}`);
+
+export function fillForm(fields, { overwrite = false, remembered = [], history = [], company = '' } = {}) {
+  fields = withResidence(withCityAndState(fields));
+  // For a question asking about the most recent job. See `mostRecentJob`.
+  const recent = mostRecentJob(history);
+  const lately = {
+    ...fields,
+    current_company: fields.current_company || recent?.company,
+    current_title: fields.current_company ? fields.current_title : fields.current_title || recent?.title,
+  };
   const filled = [];
   const skipped = [];
   // A new pass: what an earlier one pressed has been drawn, or was refused.
   pressedNow = new WeakSet();
 
   const inputs = deepQueryAll('input, textarea, select');
+  // Whether this form has a box of its own for the name somebody goes by.
+  // See `NAME_FOR_THE_FORM`.
+  const asksPreferred = inputs.some((i) => isFillable(i) && PREFERRED_NAME_BOX.test(clean(labelFor(i))));
   for (const input of inputs) {
     if (!isFillable(input)) continue;
 
@@ -2046,7 +2615,9 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     // this question does not need. See `handBack`.
     if (handBack(description, skipped)) continue;
     if (isNotAboutYou(description, clean(labelFor(input)), surroundingWords(input), boundedSection(input))) continue;
-    if (asksForWriting(input)) continue;
+    // A name is not writing, even asked in a paragraph box as a question:
+    // Zoox's "What is your preferred first name and last name?" is a textarea.
+    if (asksForWriting(input) && !PREFERRED_NAME_BOX.test(clean(labelFor(input)))) continue;
 
     /*
      * The first pattern that matches, and then whether the profile has it —
@@ -2070,7 +2641,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     const dated = educationDateKey(input, description);
     const found = dated ? [dated] : FIELD_PATTERNS.find(([, re]) => re.test(description));
     const named = found && !dated ? [addressPartByLabel(clean(labelFor(input)), found[0])] : found;
-    let match = named && fields[named[0]] ? named : undefined;
+    const answers = MOST_RECENT.test(labelFor(input)) ? lately : fields;
+    let match = named && answers[named[0]] ? named : undefined;
 
     if (!match && fields.full_name && BARE_NAME.test(withoutMarkers(labelFor(input)))) {
       match = ['full_name'];
@@ -2082,12 +2654,14 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     if (!match) continue;
 
     const key = wholeDateKey(input, match[0], description);
-    if (!fields[key]) continue;
+    if (!answers[key]) continue;
     // A box for the answer a list above it did not have. See `NOT_LISTED`.
     if (!(input instanceof HTMLSelectElement) && NOT_LISTED.test(description)) continue;
     if (anotherLevelOfStudy(input, key, fields)) continue;
     if (asksYesOrNo(input, key)) continue;
-    let value = fields[key];
+    let value = answers[key];
+    // The legal name or the one the resume prints. See `NAME_FOR_THE_FORM`.
+    if (NAME_FOR_THE_FORM[key] && !asksPreferred && !asksForLegalName(input)) value = answers[NAME_FOR_THE_FORM[key]] || value;
 
     const answered =
       input instanceof HTMLSelectElement
@@ -2101,8 +2675,27 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     }
     // The dialling code the form put there stays, in front of a number that
     // does not carry one of its own.
+    /*
+     * Unless it is some other country's. The code a form starts its box with
+     * is the employer's guess, and it is usually the employer's own country:
+     * Recruitee boards open the box on "+49" for a German company and "+31"
+     * for a Dutch one. Measured live on personio.recruitee.com and
+     * jobs.channable.com with a fake profile living in the United States:
+     * "(555) 010-0199" went in as "+49 5550 100199" and "+31 5550100199" — a
+     * German and a Dutch number nobody answers, reported as filled. Where the
+     * profile names its country and that country's code is known, the number
+     * goes in behind that code instead; with no country to go on, the form's
+     * guess is kept, as it always was.
+     */
     if (key === 'phone' && ONLY_A_DIALLING_CODE.test(input.value) && !/^\s*\+/.test(String(value))) {
-      value = `${input.value.trim()} ${String(value).trim()}`;
+      const code = diallingCodeFor(fields.address_country) ?? input.value.trim();
+      value = `${code} ${withoutTrunkZero(code, String(value).trim())}`;
+    } else if (key === 'phone' && /^\s*\+/.test(String(value))) {
+      value = withoutTrunkZeroAfterCode(value);
+    } else if (key === 'phone' && !(input instanceof HTMLSelectElement)) {
+      // Behind a code the form adds itself, from a select or a widget beside the box.
+      const beside = diallingCodeBeside(input);
+      if (beside) value = withoutTrunkZero(beside, value);
     }
 
     /*
@@ -2117,6 +2710,15 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     }
 
     if (input instanceof HTMLSelectElement) {
+      /*
+       * A telephone number is typed, never picked from a list, so a dropdown
+       * the phone pattern claims is some other question with the word in it:
+       * Ramp's "On a scale of 1–10, how comfortable are you … (phone)?", a
+       * "Phone type" of Mobile, Home and Work. Measured on the live sweep, the
+       * scale was reported as a phone number that would not go in — a failure
+       * on the card for a field that was never the number's.
+       */
+      if (key === 'phone') continue;
       /*
        * Only pick an option that plainly matches; never guess on a dropdown.
        * Compared through `clean` because the enterprise systems pad their
@@ -2141,6 +2743,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
         choosable.find((o) => sameOption(o.textContent, value) || sameOption(o.value, value)) ??
         // A grade against a list of bands. See `gpaOption`.
         (key === 'gpa' ? gpaOption(choosable, value) : null) ??
+        // A location asked as a list of countries or of cities. See `locationPart`.
+        (key === 'location' ? locationPart(choosable, fields) : null) ??
         /*
          * The same answer spelled the list's way: a month as "Dec" or "12", a
          * state as its name or its code, a country by its long name. Only for
@@ -2192,8 +2796,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
         }
         // Both, because choosing from a list fires both. `change` alone is
         // what a script fires, and some widgets only listen for `input`.
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
+        input.dispatchEvent(ours(new Event('input', { bubbles: true })));
+        input.dispatchEvent(ours(new Event('change', { bubbles: true })));
         filled.push({ key, value });
       } else {
         const reason = aboutAnotherCountry(key, value, description) ? ANOTHER_COUNTRY : 'no matching option';
@@ -2215,6 +2819,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
       value = graduationFor(input, fields.education_start_date);
     } else if (key === 'graduation_date' || key === 'education_start_date') {
       value = graduationFor(input, value);
+    } else if (key === 'linkedin' && isWorkdayLinkedIn(input)) {
+      value = wholeLinkedInAddress(value);
     }
     setValue(input, value);
     /*
@@ -2231,9 +2837,27 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
      * "5550100199", as it does to what a person types, and the number was
      * reported refused while it sat in the box.
      */
+    /*
+     * And one that put its own dialling code in front: Teamtailor's
+     * intl-tel-input rewrites "(555) 010-0199" as "+1 555-010-0199" as it is
+     * typed. Measured live on owlco.na.teamtailor.com: the number sat in the
+     * box and the card said the field would not take it. Only a "+" and at
+     * most three digits more, in front of every digit that was given.
+     */
     const digits = (v) => String(v).replace(/\D/g, '');
-    const sameNumber = /phone/.test(key) && digits(value).length >= 7 && digits(input.value) === digits(value);
-    if (input.value !== String(value) && !sameNumber) {
+    /*
+     * And one that took the trunk 0 off as it did: "07700 900123" behind a
+     * +44 the script could not see is "+44 7700 900123". See `withoutTrunkZero`.
+     */
+    const withTheirCode = (shown, given) =>
+      /^\s*\+/.test(shown) &&
+      !/^\s*\+/.test(given) &&
+      [digits(given), digits(given).replace(/^0/, '')].some((d) => digits(shown).endsWith(d) && digits(shown).length - d.length <= 3);
+    const sameNumber =
+      /phone/.test(key) && digits(value).length >= 7 && (digits(input.value) === digits(value) || withTheirCode(input.value, String(value)));
+    // And a date picker that wrote the date back its own way. See `sameMonthWritten`.
+    const sameDate = /^(graduation|education_start)_date$/.test(key) && sameMonthWritten(input.value, String(value));
+    if (input.value !== String(value) && !sameNumber && !sameDate) {
       skipped.push({ key, reason: 'the field would not take it', description: description.slice(0, 60) });
       continue;
     }
@@ -2275,9 +2899,11 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
    * person applying knows — which is the only kind the bank holds.
    */
   const memory = answerFromMemory(remembered);
+  // And what was typed, into the short boxes the profile had nothing for.
+  const typed = answerTypedFromMemory(remembered, fields, company);
   // And the jobs on the resume, into the blocks a work history is asked in.
   const work = fillWorkHistory(history, { overwrite });
-  const done = [...filled, ...radios.filled, ...buttons.filled, ...memory.filled, ...work.filled];
+  const done = [...filled, ...radios.filled, ...buttons.filled, ...memory.filled, ...typed.filled, ...work.filled];
 
   /*
    * A control the memory pass answered is not still waiting, whatever an
@@ -2294,7 +2920,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
 
   return {
     filled: done,
-    skipped: [...waiting, ...memory.skipped, ...work.skipped, ...unfillableChoices(fields, done)],
+    skipped: [...waiting, ...memory.skipped, ...typed.skipped, ...work.skipped, ...unfillableChoices(fields, done)],
   };
 }
 
@@ -2322,7 +2948,43 @@ function inWorkHistory(input) {
       clean(at.querySelector(':scope > legend, :scope > h2, :scope > h3, :scope > h4, :scope > h5')?.textContent);
     if (WORK_HISTORY.test(named)) return true;
   }
-  return WORK_HISTORY.test(boundedSection(input));
+  return WORK_HISTORY.test(boundedSection(input)) || underPlainHeading(input, EMPLOYMENT_HEADING);
+}
+
+/*
+ * A section named by a paragraph rather than a heading.
+ *
+ * Greenhouse's current boards title their Employment block with
+ * `<div><p>Employment</p></div>` as the first child of the block, then one
+ * wrapper per field, and none of that is a heading, a legend or a group — so
+ * the block read as no work history at all. Measured live on Coinbase's and
+ * Lyft's boards with a fake profile holding one job: Company name, Title and
+ * the start and end, month and year, all required, all left empty.
+ *
+ * Read the way a person reads it: from the field outwards, the nearest thing
+ * before it at each level that holds words and no control. A `<label>` is the
+ * field's own and is stepped past; the first other one is the section's
+ * heading, and it answers — this section if it says so exactly, and no
+ * section at all otherwise. So an Education block under its own "Education"
+ * paragraph is never taken for an employment one, whatever sits above it.
+ */
+const EMPLOYMENT_HEADING = /^(employment|employment\s+history|work\s+experience|work\s+history|professional\s+experience|experience)$/i;
+
+function underPlainHeading(input, heading) {
+  // From a widget's whole control, whose own "Select..." is not a heading.
+  const start = isWidgetChoice(input) ? controlOf(input) : input;
+  for (let at = start, n = 0; at?.parentElement && n < 6; at = at.parentElement, n++) {
+    if (at.parentElement.localName === 'form' || at.parentElement.localName === 'body') return false;
+    for (let before = at.previousElementSibling; before; before = before.previousElementSibling) {
+      if (before.querySelector(A_CONTROL) || before.matches(A_CONTROL)) continue;
+      const words = clean(before.textContent);
+      if (!words) continue;
+      const label = before.matches('label') ? before : before.querySelector('label');
+      if (label && clean(label.textContent) === words) break;
+      return heading.test(withoutMarkers(words));
+    }
+  }
+  return false;
 }
 
 /*
@@ -2343,8 +3005,20 @@ const JOB_PARTS = [
 ];
 
 /** The label of the date a month or year box is one half of. */
+/*
+ * Seven wrappers up, not four. Workday draws the date as a `<fieldset>` whose
+ * `<legend>` says "From", and the month box sits five wrappers below it: its
+ * own section, a focus holder, the `role="group"` — which names itself by an
+ * `aria-labelledby` pointing at nothing on the page, so it says nothing — and
+ * two layout divs. Measured live on NVIDIA's and Intel's My Experience with a
+ * fake resume holding one job: Job Title, Company and Role Description were
+ * filled and the required From and To left empty, unreported, because the
+ * climb stopped a level short of the legend. The first named group on the way
+ * up still answers, so a date inside a block named "Work Experience 1" is
+ * never read as that block's name.
+ */
 function dateHalfOf(input) {
-  for (let at = input.parentElement, n = 0; at && n < 4; at = at.parentElement, n++) {
+  for (let at = input.parentElement, n = 0; at && n < 7; at = at.parentElement, n++) {
     if (at.matches('[role="group"], fieldset')) {
       const named = clean(at.getAttribute('aria-label')) || clean(fromLabelledBy(at)) || clean(at.querySelector(':scope > legend')?.textContent);
       if (named) return withoutMarkers(named);
@@ -2363,6 +3037,9 @@ function jobPartOf(input) {
     if ((part === 'current') !== (kind === 'checkbox')) continue;
     return { part };
   }
+  // Both at once, as Greenhouse's Employment block labels them: "Start date month", "End date year".
+  const named = label.match(/^\s*(start|end)\s+date\s+(month|year)\s*$/i);
+  if (named && kind === 'text') return { part: named[1].toLowerCase(), half: named[2].toLowerCase() };
   // A month box and a year box, together one end of the job: Workday's From and To.
   const half = /^\s*(month|mm)\s*$/i.test(label || input.placeholder) ? 'month' : /^\s*(year|yyyy)\s*$/i.test(label || input.placeholder) ? 'year' : null;
   if (kind !== 'text' || !half) return null;
@@ -2395,14 +3072,29 @@ const monthWord = (month) => MONTH_NAMES[month - 1].replace(/^./, (c) => c.toUpp
 export function fillWorkHistory(history, { overwrite = false } = {}) {
   const filled = [];
   const skipped = [];
-  if (!Array.isArray(history) || history.length === 0) return { filled, skipped };
+  for (const { block, job } of jobBlocks(history, skipped)) fillJob(block, job, overwrite, filled, skipped);
+  return { filled, skipped };
+}
+
+/*
+ * A month asked as a list, which `fillJob` cannot type into: Greenhouse's
+ * Employment block asks "Start date month" and "End date month" as
+ * react-select widgets beside plain year boxes. Found with the rest of the
+ * block, and chosen once the page can be waited on — see `fillComboboxes`.
+ */
+const isMonthWidget = (input, found) => found.half === 'month' && isWidgetChoice(input) && !isDisabled(input) && input.getClientRects().length > 0;
+
+/** Each work-history block on the page, and the job on the resume it is for. */
+function jobBlocks(history, skipped = []) {
+  const pairs = [];
+  if (!Array.isArray(history) || history.length === 0) return pairs;
 
   const blocks = [];
   let block = null;
   for (const input of deepQueryAll('input, textarea')) {
     const found = jobPartOf(input);
     if (!found) continue;
-    const usable = found.part === 'current' ? !isDisabled(input) && input.getClientRects().length > 0 : isFillable(input);
+    const usable = found.part === 'current' ? !isDisabled(input) && input.getClientRects().length > 0 : isFillable(input) || isMonthWidget(input, found);
     if (!usable || !inWorkHistory(input)) continue;
     const slot = found.half ? `${found.part}.${found.half}` : found.part;
     if (!block || block.has(slot)) blocks.push((block = new Map()));
@@ -2432,19 +3124,45 @@ export function fillWorkHistory(history, { overwrite = false } = {}) {
       if (index < 0) break;
     }
     used.add(index);
-    fillJob(b, history[index], overwrite, filled, skipped);
+    pairs.push({ block: b, job: history[index] });
   }
-  return { filled, skipped };
+  return pairs;
+}
+
+/** The job months `fillJob` left to a widget, chosen the way every widget is. */
+async function fillJobMonths(history, patience) {
+  const done = [];
+  for (const { block, job } of jobBlocks(history)) {
+    for (const [part, when] of [['start', job.start], ['end', job.current ? null : job.end]]) {
+      const widget = block.get(`${part}.month`);
+      if (!when?.month || !widget || !isWidgetChoice(widget) || widgetShowsAnAnswer(widget)) continue;
+      const value = monthWord(when.month);
+      if ((await chooseInWidget(widget, `job_${part}_month`, value, { patience, fields: {}, asked: '' })) === 'chose') {
+        done.push({ key: `job_${part}_month`, value, widget: true });
+      }
+    }
+  }
+  return done;
 }
 
 function fillJob(block, job, overwrite, filled, skipped) {
   const put = (slot, key, value) => {
     const input = block.get(slot);
     if (!input || value === undefined || value === null || value === '') return;
+    // A list is chosen from later, not typed into. See `fillJobMonths`.
+    if (isWidgetChoice(input)) return;
     if (input.value && !overwrite) return;
     const written = slot === 'start' || slot === 'end' ? graduationFor(input, value) : String(value);
     setValue(input, written);
-    if (input.value === written) filled.push({ key, value: written.slice(0, 80) });
+    /*
+     * The same month without its leading zero is the month. Workday's month
+     * box rewrites "06" as "6" the moment it takes it, and measured live on
+     * NVIDIA's and Intel's My Experience the From and To showed "06/2025" and
+     * "08/2025" while the report said the months had not been taken — telling
+     * the person to type what was already there.
+     */
+    const took = input.value === written || (/\.month$/.test(slot) && /^\d+$/.test(input.value) && Number(input.value) === Number(written));
+    if (took) filled.push({ key, value: written.slice(0, 80) });
     else skipped.push({ key, reason: 'the field would not take it', description: clean(labelFor(input)).slice(0, 60) });
   };
   put('title', 'job_title', job.title);
@@ -2931,6 +3649,7 @@ function optionLabelFor(radio) {
 /** The answers a form offers as options rather than asking you to type. */
 const CHOOSABLE = new Set([
   'work_authorization',
+  'lives_in_country',
   'requires_sponsorship',
   'address_country',
   'address_state',
@@ -3057,8 +3776,8 @@ function answerRadioGroups(fields, overwrite) {
     wanted.click();
     if (!wanted.checked) {
       nativeSet(wanted, 'checked', true);
-      wanted.dispatchEvent(new Event('input', { bubbles: true }));
-      wanted.dispatchEvent(new Event('change', { bubbles: true }));
+      wanted.dispatchEvent(ours(new Event('input', { bubbles: true })));
+      wanted.dispatchEvent(ours(new Event('change', { bubbles: true })));
     }
     filled.push({ key, value: fields[key] });
   }
@@ -3144,6 +3863,8 @@ export function choiceQuestions() {
     if (neverRemember(choice.question) || dependsOnEmployer(choice.question)) continue;
     out.add(choice.question);
   }
+  // And the search-and-pick widgets. See `answerWidgetsFromMemory`.
+  for (const { el, question } of rememberableWidgets()) if (!widgetShowsAnAnswer(el)) out.add(question);
   return [...out];
 }
 
@@ -3181,17 +3902,13 @@ function answerFromMemory(remembered) {
   const skipped = [];
   if (!Array.isArray(remembered) || remembered.length === 0) return { filled, skipped };
 
-  const bank = new Map();
-  for (const { question, answer } of remembered) {
-    const asked = clean(question);
-    if (asked && String(answer ?? '').trim()) bank.set(asked, String(answer).trim());
-  }
+  const bank = bankFrom(remembered);
   if (bank.size === 0) return { filled, skipped };
 
   for (const choice of rememberableChoices()) {
     if (choice.answered()) continue;
     if (neverRemember(choice.question) || dependsOnEmployer(choice.question)) continue;
-    const answer = bank.get(choice.question);
+    const answer = bank.get(choice.question)?.answer;
     if (!answer) continue;
 
     const took = choice.choose(answer);
@@ -3207,6 +3924,386 @@ function answerFromMemory(remembered) {
   return { filled, skipped };
 }
 
+/** The bank as the worker handed it over, by the question it was asked about. */
+function bankFrom(remembered) {
+  const bank = new Map();
+  for (const { question, answer, itemId } of Array.isArray(remembered) ? remembered : []) {
+    const asked = clean(question);
+    if (asked && String(answer ?? '').trim()) bank.set(asked, { answer: String(answer).trim(), itemId });
+  }
+  return bank;
+}
+
+/* ------------------------ Answers typed on the last form ------------------------ */
+
+/*
+ * The short boxes nothing in the profile answers, typed into by hand on every
+ * application.
+ *
+ * Measured with the walk in tests/reusing.mjs — a Greenhouse-shaped form
+ * answered once by hand and sent, then a Lever-shaped one asking the same
+ * questions in its own words. Of the eight short boxes on the first form
+ * ("How did you hear about us?", "Earliest start date", "Expected salary",
+ * "Current employer", "Preferred first name", "Portfolio link", and "Are you
+ * 18 or older?" and "Willing to relocate?" asked as text), none went into the
+ * bank and none came back on the second: the chosen answers were kept, and
+ * these — the ones that are actually typed, letter by letter, each time —
+ * never were.
+ *
+ * One line only. A `<textarea>` is the card's: `findQuestions` offers every
+ * one that asks something, the bank is matched against it there, and "Save
+ * for next time" keeps it — so a second route into the bank for the same box
+ * would be two answers to one question, kept two ways. A combobox is a search
+ * box, not an answer; a date or a telephone box is the profile's or nobody's.
+ */
+const ONE_LINE = new Set(['text', 'search', 'url', 'number']);
+
+/*
+ * Somebody else's details, by the box's own words or the group around it —
+ * the first of `NOT_ABOUT_YOU`, which is the one about people. The rest of
+ * that list is what the profile does not answer ("How did you hear about
+ * us?", "Are you willing to relocate?"), which is exactly what this is for.
+ */
+const OTHER_PEOPLE = NOT_ABOUT_YOU[0];
+
+/**
+ * The profile key this box asks for, the way `fillForm` would find it — or
+ * null when the profile could never answer it.
+ */
+function profileKeyOf(input, description) {
+  const label = clean(labelFor(input));
+  if (asksBothAtOnce(description)) return 'work_authorization';
+  if (isNotAboutYou(description, label, surroundingWords(input), boundedSection(input))) return null;
+  const dated = educationDateKey(input, description);
+  const found = dated ? [dated] : FIELD_PATTERNS.find(([, re]) => re.test(description));
+  let key = found ? (dated ? found[0] : addressPartByLabel(label, found[0])) : null;
+  if (!key && BARE_NAME.test(withoutMarkers(labelFor(input)))) key = 'full_name';
+  if (!key) key = nameHalf(input);
+  if (!key) return null;
+  key = wholeDateKey(input, key, description);
+  // Asked as a yes or a no, `fillForm` leaves it, so the profile does not answer it.
+  return asksYesOrNo(input, key) ? null : key;
+}
+
+/**
+ * Whether this is a short box whose answer is the person's to type, and what
+ * it asks. `fields` is the profile as the last Autofill had it: a box the
+ * profile has a value for is the profile's, and one it could fill but has
+ * nothing for — "Portfolio link" on a profile with no website — is the
+ * person's. With no profile to go on, every box the profile *could* answer is
+ * taken to be the profile's, which only ever keeps less.
+ */
+function typedBox(input, fields) {
+  if (!(input instanceof HTMLInputElement) || !ONE_LINE.has(input.type)) return null;
+  if (isDisabled(input) || input.readOnly || isWidgetChoice(input)) return null;
+  if (rootOf(input)?.host?.id === OURS) return null;
+  const description = describeField(input);
+  if (!description) return null;
+  /*
+   * Not `asksForWriting`, which reads a one-line box's label for the way an
+   * essay prompt opens so that the profile is not typed into one — and "How
+   * did you hear about us?" opens that way. Measured: the commonest of these
+   * questions was the one box on the form never kept. Whether an answer is
+   * writing is read off the answer instead; see `worthRememberingTyped`.
+   */
+  const question = clean(questionFor(input));
+  if (question.length < 8) return null;
+  if (OTHER_PEOPLE.test(`${surroundingWords(input)} ${description}`)) return null;
+  // A row of a past job or a school is the resume's. See `fillWorkHistory`.
+  if (inWorkHistory(input) || EDUCATION_SECTION.test(sectionOf(input))) return null;
+  const key = profileKeyOf(input, description);
+  if (key && (!fields || withCityAndState(fields)[key])) return null;
+  return { question, description, el: input };
+}
+
+function typedBoxes(fields) {
+  const found = [];
+  for (const input of deepQueryAll('input')) {
+    if (!isFillable(input)) continue;
+    const box = typedBox(input, fields);
+    if (box) found.push(box);
+  }
+  return found;
+}
+
+/**
+ * The typed questions on this page worth asking the bank about: empty, and
+ * none that `mayRememberTyped` refuses — so nothing personal, nobody else's
+ * and nothing about this employer is asked about, as well as never kept.
+ */
+export function typedQuestions(fields = null, company = '') {
+  const out = new Set();
+  for (const box of typedBoxes(fields)) {
+    if (box.el.value.trim()) continue;
+    if (!mayRememberTyped(box.question, company).keep) continue;
+    out.add(box.question);
+  }
+  return [...out];
+}
+
+/*
+ * Which bank row filled a box, so that changing what was put there changes
+ * that row rather than starting another. The bank keys a row on the question
+ * as it was first asked; the second form's wording is a different string, and
+ * saved under it the corrected answer sat beside the old one — and the old
+ * one, found first, was what the third form got.
+ */
+const FROM_BANK = new WeakMap();
+
+/**
+ * Type back the answers this person typed on the last form that asked.
+ *
+ * The same three refusals as `answerFromMemory`: nothing already answered,
+ * nothing `worthRememberingTyped` would not have kept, and only what the box
+ * takes as it is — a box that will not hold it is put back as it was.
+ */
+function answerTypedFromMemory(remembered, fields, company) {
+  const filled = [];
+  const skipped = [];
+  const bank = bankFrom(remembered);
+  if (bank.size === 0) return { filled, skipped };
+
+  for (const box of typedBoxes(fields)) {
+    if (box.el.value.trim()) continue;
+    const kept = bank.get(box.question);
+    if (!kept) continue;
+    if (!worthRememberingTyped({ question: box.question, answer: kept.answer, company }).keep) continue;
+
+    const row = { key: 'remembered', value: kept.answer, description: box.description.slice(0, 60) };
+    setValue(box.el, kept.answer);
+    if (box.el.value !== kept.answer || browserWouldRefuse(box.el)) {
+      setValue(box.el, '');
+      skipped.push({ ...row, reason: 'the box would not take the answer you gave before' });
+      continue;
+    }
+    if (kept.itemId) FROM_BANK.set(box.el, kept.itemId);
+    filled.push({ ...row, question: box.question, remembered: true, typed: true });
+  }
+  return { filled, skipped };
+}
+
+/**
+ * Watch what the person types into those boxes, so the next form can have it.
+ *
+ * Written down when the application is sent or the form is left, not as it
+ * is typed: `take` is what the caller calls then. What is typed is told as it
+ * settles — each `change`, which is a box being left — so the card can say
+ * what will be kept and offer not to; and `take` reads every box typed in
+ * again, because the last one is often still being typed in when Submit is
+ * pressed.
+ *
+ * Only what a person typed: `isTrusted`, so what Autofill wrote — which fires
+ * the same events, deliberately, so the page's framework hears it — is never
+ * taken for an answer the person gave. Changing what Autofill wrote is
+ * typing, and is kept. `profile` answers the profile as the last Autofill had
+ * it; see `typedBox`.
+ *
+ * Returns `{ stop, take }`.
+ */
+export function watchTyped(tell, { profile = () => null, company = () => '' } = {}) {
+  const typed = new Set();
+  const read = (input) => {
+    let box;
+    try {
+      box = typedBox(input, profile());
+    } catch {
+      return null;
+    }
+    if (!box) return null;
+    const answer = clean(input.value);
+    const verdict = worthRememberingTyped({ question: box.question, answer, company: company() });
+    const itemId = FROM_BANK.get(input);
+    return verdict.keep
+      ? { question: box.question, answer, keep: true, ...(itemId ? { itemId } : {}) }
+      : { question: box.question, answer, keep: false, why: verdict.why };
+  };
+  const targetOf = (event) => {
+    if (!event.isTrusted) return null;
+    const target = event.composedPath?.()?.[0] ?? event.target;
+    return target instanceof HTMLInputElement ? target : null;
+  };
+  const onInput = (event) => {
+    const input = targetOf(event);
+    if (input) typed.add(input);
+  };
+  const onChange = (event) => {
+    const input = targetOf(event);
+    if (!input) return;
+    typed.add(input);
+    const said = read(input);
+    if (said) tell(said);
+  };
+  document.addEventListener('input', onInput, true);
+  document.addEventListener('change', onChange, true);
+  return {
+    stop() {
+      document.removeEventListener('input', onInput, true);
+      document.removeEventListener('change', onChange, true);
+    },
+    /*
+     * Every box typed in that is still on the page, read as it stands. One
+     * gone with its step was told when it was left, and that stands.
+     */
+    take() {
+      for (const input of typed) {
+        if (!input.isConnected) continue;
+        const said = read(input);
+        if (said) tell(said);
+      }
+      typed.clear();
+    },
+  };
+}
+
+/* ------------------- Answers picked in a search-and-pick widget ------------------- */
+
+/*
+ * A react-select, or anything built like one: a text box that is a combobox,
+ * and a menu it opens. Greenhouse asks its custom questions this way on most
+ * boards now, and a choice made in one was neither kept nor offered again.
+ * `watchChoices` hears a `<select>`'s change and a radio's click, and here
+ * there is neither. The option is chosen on mousedown and the menu closes at
+ * once, so by the time a click arrives its option has left the page. On the
+ * way back, `choiceQuestions` asked the bank only about selects, radios and
+ * ARIA groups.
+ *
+ * Only a widget the profile does not answer. The country, the school, the
+ * degree are the profile's, and `fillComboboxes` fills those from it.
+ */
+const WIDGETS = '[role="combobox"], [aria-haspopup="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"]';
+
+/** What a widget asks, when it is a question for the bank. */
+function widgetQuestion(widget) {
+  if (!isWidgetChoice(widget) || widget.getAttribute('role') === 'listbox' || isDisabled(widget)) return null;
+  if (rootOf(widget)?.host?.id === OURS) return null;
+  const description = describeField(widget);
+  if (!description) return null;
+  const question = clean(questionFor(widget));
+  if (question.length < 8) return null;
+  if (OTHER_PEOPLE.test(`${surroundingWords(widget)} ${description}`)) return null;
+  if (inWorkHistory(widget) || EDUCATION_SECTION.test(sectionOf(widget))) return null;
+  if (profileKeyOf(widget, description)) return null;
+  if (neverRemember(question) || dependsOnEmployer(question)) return null;
+  return { question, description };
+}
+
+/** The widgets on this page that ask the bank's kind of question. */
+function rememberableWidgets() {
+  const found = [];
+  for (const widget of deepQueryAll(WIDGETS)) {
+    if (widget.getClientRects().length === 0) continue;
+    // A combobox `<div>` around its own text box is one question.
+    if (found.some(({ el }) => el.contains(widget) || widget.contains(el))) continue;
+    const said = widgetQuestion(widget);
+    if (said) found.push({ ...said, el: widget });
+  }
+  return found;
+}
+
+/**
+ * The widget a menu belongs to: the one that names it (`aria-controls`,
+ * `aria-owns`), or failing that the only combobox beside it, which is where
+ * react-select draws its menu. Nothing when that is a guess.
+ */
+function ownerOfMenu(list) {
+  if (list.id) {
+    const id = CSS.escape(list.id);
+    const named = deepQueryAll(`[aria-controls~="${id}"], [aria-owns~="${id}"]`).find((el) => isWidgetChoice(el));
+    if (named) return named;
+  }
+  for (let at = list.parentElement, up = 0; at && up < 3; at = at.parentElement, up++) {
+    const boxes = [...at.querySelectorAll(WIDGETS)].filter((el) => el !== list && !list.contains(el));
+    if (boxes.length === 1) return boxes[0];
+    if (boxes.length > 1) return null;
+  }
+  return null;
+}
+
+/** Whether the widget is now showing this answer as its choice. */
+function widgetHolds(widget, answer) {
+  if (!widgetShowsAnAnswer(widget)) return false;
+  return clean(controlOf(widget).textContent).toLowerCase().includes(clean(answer).toLowerCase());
+}
+
+/**
+ * A person's pick in one of these widgets, as `watchChoices` tells a choice:
+ * `{ question, answer }`, once the widget is seen to hold it. Only a pick the
+ * person made (`isTrusted`), so what Autofill chose is never taken for one.
+ */
+function watchWidgetPicks(write, watching) {
+  /*
+   * Read back as soon as the page has drawn the pick, and again a little
+   * later for a page that draws it late. And at once on a send or on
+   * leaving: a pick followed straight by Submit was lost when it waited
+   * 150ms to be read back, because the page had gone by then.
+   */
+  const pending = new Set();
+  const settle = (pick) => {
+    if (!pending.has(pick) || !watching()) return;
+    if (!widgetHolds(pick.widget, pick.answer)) return;
+    pending.delete(pick);
+    write({ question: pick.question, answer: pick.answer });
+  };
+  const settleAll = () => {
+    for (const pick of [...pending]) settle(pick);
+  };
+  const onPick = (event) => {
+    if (!event.isTrusted) return;
+    const target = event.composedPath?.()?.[0] ?? event.target;
+    const option = target?.closest?.('[role="option"]');
+    const list = option?.closest('[role="listbox"]');
+    if (!list || rootOf(list)?.host?.id === OURS) return;
+    const widget = ownerOfMenu(list);
+    if (!widget) return;
+    let said;
+    try {
+      said = widgetQuestion(widget);
+    } catch {
+      return;
+    }
+    if (!said) return;
+    // Read now: the menu closes on this press and takes the option with it.
+    const answer = clean(option.getAttribute('aria-label') || option.textContent);
+    if (!answer) return;
+    // And believed once the page has drawn it, the way `tookIt` reads a choice back.
+    const pick = { widget, answer, question: said.question };
+    pending.add(pick);
+    for (const ms of [0, 100, 400]) setTimeout(() => settle(pick), ms);
+    // Given up on after that: a pick the widget never showed is not a choice.
+    setTimeout(() => pending.delete(pick), 450);
+  };
+  document.addEventListener('mousedown', onPick, true);
+  document.addEventListener('submit', settleAll, true);
+  window.addEventListener('pagehide', settleAll);
+  return () => {
+    document.removeEventListener('mousedown', onPick, true);
+    document.removeEventListener('submit', settleAll, true);
+    window.removeEventListener('pagehide', settleAll);
+  };
+}
+
+/**
+ * Choose in these widgets what the person chose on the last form that asked:
+ * the same refusals as `answerFromMemory`, and only an option that plainly
+ * says the answer, driven and read back by `chooseInWidget` as a profile
+ * value would be. Whatever did not take is put back as it was.
+ */
+export async function answerWidgetsFromMemory(remembered, report, { patience = 4000 } = {}) {
+  const bank = bankFrom(remembered);
+  if (bank.size === 0) return report;
+  const filled = [];
+  for (const { el, question, description } of rememberableWidgets()) {
+    if (widgetShowsAnAnswer(el)) continue;
+    const answer = bank.get(question)?.answer;
+    if (!answer || !worthRemembering({ question, answer }).keep) continue;
+    const how = await chooseInWidget(el, 'remembered', answer, { patience, fields: {}, asked: question });
+    if (how === 'chose') {
+      filled.push({ key: 'remembered', value: answer, description: description.slice(0, 60), question, remembered: true, widget: true });
+    }
+  }
+  return filled.length ? { ...report, filled: [...report.filled, ...filled] } : report;
+}
+
 /** Whether an ARIA option is the one marked as chosen. */
 const isMarkedChosen = (el) =>
   el.getAttribute('aria-checked') === 'true' || el.getAttribute('aria-selected') === 'true';
@@ -3220,8 +4317,8 @@ function chooseInSelect(select, answer) {
   // Two options can share a value, so the write can land on the placeholder.
   // The same read-back `fillForm` does, and for the same reason.
   if (select.selectedOptions[0] !== option) return false;
-  select.dispatchEvent(new Event('input', { bubbles: true }));
-  select.dispatchEvent(new Event('change', { bubbles: true }));
+  select.dispatchEvent(ours(new Event('input', { bubbles: true })));
+  select.dispatchEvent(ours(new Event('change', { bubbles: true })));
   return true;
 }
 
@@ -3236,8 +4333,8 @@ function chooseInRadios(radios, answer) {
   wanted.click();
   if (!wanted.checked) {
     nativeSet(wanted, 'checked', true);
-    wanted.dispatchEvent(new Event('input', { bubbles: true }));
-    wanted.dispatchEvent(new Event('change', { bubbles: true }));
+    wanted.dispatchEvent(ours(new Event('input', { bubbles: true })));
+    wanted.dispatchEvent(ours(new Event('change', { bubbles: true })));
   }
   return wanted.checked;
 }
@@ -3286,12 +4383,35 @@ const PICK_BY_HAND = 'this one has to be picked by hand';
  * element — shared by the report below and by `fillComboboxes`, so the two
  * cannot disagree about which widget is which question.
  */
+/*
+ * One widget per question, not one per key.
+ *
+ * Every key used to be claimed by the first widget that asked it, and by any
+ * box `fillForm` had already typed it into, so a second question wanting the
+ * same answer was never named, never driven and never reported. Measured live
+ * on Greenhouse boards with a fake profile: GitLab's required "What is your
+ * current country of residence?", Chime's required "Country" and Brex's
+ * required "What country are you based in?" were all left on "Select..."
+ * because the phone's country picker, above them, had taken
+ * `address_country`; Affirm's required phone country was left empty because a
+ * text box lower down had; and Anthropic's required "Will you now or will you
+ * in the future require employment visa sponsorship…" was left blank because
+ * "Do you require visa sponsorship?" had taken `requires_sponsorship`. Each
+ * is the same answer to a question asked twice.
+ *
+ * The education keys are still claimed once. A second School or Degree is
+ * another school, and `fillEducation` fills those one block at a time from
+ * the resume; given the first answer again they would all say the newest one.
+ * And a widget inside another — a combobox `<div>` around its own text box —
+ * is the same question once.
+ */
 function widgetChoices(fields, filled) {
-  const already = new Set(filled.map((f) => f.key));
+  const already = new Set(filled.map((f) => f.key).filter((key) => EDUCATION_KEYS.test(key)));
   const found = [];
+  const seen = [];
 
   for (const widget of deepQueryAll(
-    '[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"]',
+    `[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"], [data-uxi-widget-type="selectinput"], ${FABRIC_SELECT}`,
   )) {
     if (!isWidgetChoice(widget)) continue;
     if (widget.getClientRects().length === 0) continue;
@@ -3338,6 +4458,8 @@ function widgetChoices(fields, filled) {
     const dated = educationDateKey(widget, description);
     const key = dated || addressPartByLabel(clean(labelFor(widget)), FIELD_PATTERNS.find(([, re]) => re.test(description))?.[0]);
     if (!key || !fields[key] || already.has(key)) continue;
+    if (seen.some((other) => other.contains(widget) || widget.contains(other))) continue;
+    seen.push(widget);
     /*
      * One already showing an answer is answered, and claims its question.
      *
@@ -3350,7 +4472,7 @@ function widgetChoices(fields, filled) {
      * tool's to reopen.
      */
     if (widgetShowsAnAnswer(widget)) {
-      already.add(key);
+      if (EDUCATION_KEYS.test(key)) already.add(key);
       continue;
     }
     if (anotherLevelOfStudy(widget, key, fields)) continue;
@@ -3358,7 +4480,7 @@ function widgetChoices(fields, filled) {
     // list picks "Yes" by its text too. See `aboutAnotherCountry`.
     const elsewhere = aboutAnotherCountry(key, fields[key], description, fields.address_country);
     found.push({ key, description: description.slice(0, 60), asked: description, el: widget, elsewhere });
-    already.add(key);
+    if (EDUCATION_KEYS.test(key)) already.add(key);
   }
   return found;
 }
@@ -3504,8 +4626,32 @@ function optionsOf(widget, openBefore = null) {
    * "the first that matches" never noticed, and "the only one that matches"
    * did: Boston, Massachusetts was two Bostons and neither was chosen.
    */
+  // And the menu a Fabric select names its own way. See `isFabricSelect`.
+  if (isFabricSelect(widget)) ids.push(widget.getAttribute('data-menu-id'));
   const named = [...new Set(ids.map((id) => widget.getRootNode().getElementById?.(id) ?? document.getElementById(id)).filter(Boolean))];
-  const showing = visibleListboxes().filter((l) => l !== widget);
+  /*
+   * Never a list another control says is its own.
+   *
+   * Workday's questionnaire is a column of "Select One" buttons, each naming
+   * its list in `aria-controls` once the list is drawn, a moment after the
+   * press; and a list shut, by a choice or by Escape, takes about 300ms to
+   * go. Measured live with a fake profile on Intel's Application Questions:
+   * "8) Are you a current Federal, State or Local Government employee…?" was
+   * opened (read as a state), had no "MA", and was shut; "10) Are you
+   * currently authorized to work in the U.S.?" was pressed 12ms later, before
+   * its own list was drawn — so the one list showing was question 8's, "Yes"
+   * was pressed in it, and the applicant was declared a government employee
+   * while the report said the right to work had been answered. NVIDIA's pair
+   * did the same after a choice: "No" meant for "Will you now or in the future
+   * require sponsorship…?" was given to "Are you legally authorized to work in
+   * the United States?", and both were reported filled.
+   */
+  const theirs = (list) =>
+    Boolean(list.id) &&
+    deepQueryAll(`[aria-controls~="${CSS.escape(list.id)}"], [aria-owns~="${CSS.escape(list.id)}"]`).some(
+      (el) => el !== widget && el !== box && !widget.contains(el),
+    );
+  const showing = visibleListboxes().filter((l) => l !== widget && !theirs(l));
   /*
    * And, where the widget names none, the one its own press opened.
    *
@@ -3520,7 +4666,7 @@ function optionsOf(widget, openBefore = null) {
   const fresh = openBefore ? showing.filter((l) => !openBefore.has(l)) : [];
   const lists = named.length ? named : fresh.length ? fresh : showing;
   if (!named.length && lists.length !== 1) return [];
-  return lists.flatMap((l) => [...l.querySelectorAll('[role="option"]')]).filter((o) => !isDisabled(o) && o.getAttribute('aria-disabled') !== 'true');
+  return lists.flatMap((l) => [...l.querySelectorAll('[role="option"], [role="menuitem"]')]).filter((o) => !isDisabled(o) && o.getAttribute('aria-disabled') !== 'true');
 }
 
 /** The option that is plainly this answer, or nothing. Never the nearest. */
@@ -3552,11 +4698,16 @@ function exactOption(options, key, value, fields = {}, asked = '') {
   );
 }
 
-/** A click as a person makes one — some widgets choose on mousedown, some on click. */
+/**
+ * A click as a person makes one — some widgets choose on mousedown, some on
+ * click. Counted as one click, as a mouse's is: a click with a `detail` of 0
+ * is what Enter on a focused button sends, and BambooHR's Fabric select opens
+ * on the keys instead and ignores that click. Its lists never opened.
+ */
 function press(el) {
   for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
     const Ctor = type.startsWith('pointer') && typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
-    el.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, view: window }));
+    el.dispatchEvent(ours(new Ctor(type, { bubbles: true, cancelable: true, view: window, detail: 1 })));
   }
 }
 
@@ -3644,8 +4795,8 @@ function tookIt(widget, box, option, value, hiddenBefore, chosen = option.textCo
  * placeholder, or nothing — and `undefined` for a widget that is not drawn
  * this way at all, which `tookIt` then reads as it always has.
  */
-const DRAWN_VALUE = '[class*="single-value"], [class*="singleValue"], [class*="multi-value__label"], [class*="multiValueLabel"]';
-const DRAWS_ITS_VALUE = `${DRAWN_VALUE}, [class*="value-container"], [class*="ValueContainer"], [class*="__placeholder"]`;
+const DRAWN_VALUE = '[class*="single-value"], [class*="singleValue"], [class*="multi-value__label"], [class*="multiValueLabel"], [data-automation-id="selectedItem"]';
+const DRAWS_ITS_VALUE = `${DRAWN_VALUE}, [class*="value-container"], [class*="ValueContainer"], [class*="__placeholder"], [data-automation-id="multiselectInputContainer"]`;
 
 function drawnValue(control) {
   if (!control?.querySelector?.(DRAWS_ITS_VALUE)) return undefined;
@@ -3655,7 +4806,8 @@ function drawnValue(control) {
 /*
  * What a dropdown says while nothing is chosen.
  */
-const NOTHING_CHOSEN = /^(?:select|choose|pick|search)\b|^please\s+(?:select|choose)\b|^-+|^none\s+selected$|^…$/i;
+// Any kind of dash: BambooHR's says "–Select–", and iCIMS's "— Make a Selection —".
+const NOTHING_CHOSEN = /^(?:select|choose|pick|search)\b|^please\s+(?:select|choose)\b|^[-–—]+|^none\s+selected$|^…$/i;
 
 /**
  * Whether a widget already shows a choice: a pill or a single value drawn
@@ -3681,6 +4833,10 @@ function widgetShowsAnAnswer(widget) {
  * an ignored click beside a paragraph naming the city was reported as filled.
  */
 function controlOf(widget) {
+  // A Workday prompt draws its choices as pills beside the search box, in the
+  // container around both. See `isWorkdayPrompt`.
+  const prompt = widget.closest?.('[data-automation-id="multiSelectContainer"]');
+  if (prompt) return prompt;
   /*
    * Its wrapper, not itself, and a near one. `closest` starts at the element
    * it is called on, and react-select's box is `class="select__input"` — so on
@@ -3731,7 +4887,7 @@ function wouldSubmit(el) {
 /** Put the widget back as it was: nothing typed, nothing open. */
 function undoWidget(widget, box) {
   if (box) setValue(box, '');
-  (box ?? widget).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  (box ?? widget).dispatchEvent(ours(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
   (box ?? widget).blur?.();
 }
 
@@ -3783,9 +4939,9 @@ async function pickListedPlaces(fields) {
     const typed = box?.value.trim();
     if (!typed) continue;
     box.focus?.();
-    box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Unidentified', bubbles: true }));
+    box.dispatchEvent(ours(new KeyboardEvent('keydown', { key: 'Unidentified', bubbles: true })));
     setValue(box, typed);
-    box.dispatchEvent(new KeyboardEvent('keyup', { key: 'Unidentified', bubbles: true }));
+    box.dispatchEvent(ours(new KeyboardEvent('keyup', { key: 'Unidentified', bubbles: true })));
     const drawn = () =>
       [...hidden.parentElement.querySelectorAll('[role="option"], [class*="location"]:not(input), [class*="suggestion"]')].filter(
         (el) => el.childElementCount === 0 && el.getClientRects().length > 0,
@@ -3796,12 +4952,15 @@ async function pickListedPlaces(fields) {
   }
 }
 
-export async function fillComboboxes(fields, report, { patience = 4000 } = {}) {
+export async function fillComboboxes(fields, report, { patience = 4000, history = [] } = {}) {
   // What `fillForm` pressed, now that the page has had its turn to draw it.
   report = await seePresses(report);
+  // The months of the jobs `fillForm` put in, where the form asks them as lists.
+  const months = await fillJobMonths(history, patience);
+  if (months.length) report = { ...report, filled: [...report.filled, ...months] };
   // The same fields `fillForm` read, or a widget it named `city_state` has
   // no value here.
-  fields = withCityAndState(fields);
+  fields = withResidence(withCityAndState(fields));
   await pickListedPlaces(fields);
   const pending = new Set(report.skipped.filter((s) => s.reason === PICK_BY_HAND).map((s) => s.key));
   // The lists that were looked in and did not have the answer. See `NOT_LISTED`.
@@ -3812,20 +4971,24 @@ export async function fillComboboxes(fields, report, { patience = 4000 } = {}) {
   }
 
   const done = [];
-  for (const { key, el: widget, both, elsewhere, asked } of widgetChoices(fields, report.filled)) {
+  // Which question each choice answered: a key can now be asked twice.
+  const chose = new Set();
+  for (const { key, el: widget, both, elsewhere, asked, description } of widgetChoices(fields, report.filled)) {
     if (both || elsewhere || !pending.has(key)) continue;
     const value = String(fields[key]);
     const how = await chooseInWidget(widget, key, value, { patience, fields, asked });
     // Looked for in a list that opened, and not in it. See `NOT_LISTED`.
     if (how === 'unlisted') unlisted.add(key);
-    if (how === 'chose') done.push({ key, value, widget: true });
+    if (how === 'chose') {
+      done.push({ key, value, widget: true });
+      chose.add(`${key}\u0000${description}`);
+    }
   }
 
-  const chose = new Set(done.map((d) => d.key));
   return {
     ...report,
     filled: [...report.filled, ...done, ...fillNotListed(fields, unlisted)],
-    skipped: report.skipped.filter((s) => !(s.reason === PICK_BY_HAND && chose.has(s.key))),
+    skipped: report.skipped.filter((s) => !(s.reason === PICK_BY_HAND && chose.has(`${s.key}\u0000${s.description}`))),
   };
 }
 
@@ -3883,6 +5046,14 @@ async function chooseInWidget(widget, key, value, { patience, fields, asked }) {
     option = await waitForOption(widget, key, value, openBefore, { patience, quiet: 400, fields, asked });
     if (!option) {
       setValue(box, value);
+      /*
+       * A Workday prompt searches when Enter is let go: its keydown notes the
+       * key held and its keyup runs the search. Typed into and left, its list
+       * said "No Items." for as long as it was watched.
+       */
+      if (isWorkdayPrompt(box)) {
+        for (const type of ['keydown', 'keyup']) box.dispatchEvent(ours(new KeyboardEvent(type, { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true })));
+      }
       option = await waitForOption(widget, key, value, openBefore, { patience, fields, asked });
     }
   } else {
@@ -3896,13 +5067,36 @@ async function chooseInWidget(widget, key, value, { patience, fields, asked }) {
   }
   // Read before the press: a menu that closes takes its options with it.
   const chosen = option.textContent;
-  press(option);
+  press(wordsOf(option));
   await pause(60);
   if (!tookIt(widget, box, option, value, hiddenBefore, chosen, shownBefore)) {
     undoWidget(widget, box);
     return 'ignored';
   }
   return 'chose';
+}
+
+/*
+ * Where a person's click on an option lands: on its words, the innermost
+ * element saying all of them — from which the click rises through the option
+ * to every listener above it.
+ *
+ * Pressed on the option itself, a click never reaches a listener inside it,
+ * and Workday's is inside: its `role="option"` row wraps a `promptLeafNode`
+ * holding the only click handler, around a radio and the words. Measured live
+ * on Intel's School or University: "Northeastern University" found in the
+ * list and pressed was not chosen — no pill, the list still open — and the
+ * same press on its words chose it. An option that is nothing but its words
+ * is pressed as before.
+ */
+function wordsOf(option) {
+  const said = clean(option.textContent);
+  let at = option;
+  for (;;) {
+    const inner = [...at.children].find((child) => clean(child.textContent) === said);
+    if (!inner) return at;
+    at = inner;
+  }
 }
 
 /** Whether a widget's own menu is showing. */
@@ -4108,8 +5302,8 @@ async function fillEducationPart(control, key, value, f, patience) {
     if (!option) return { key, reason: 'no matching option', description: description.slice(0, 60) };
     nativeSet(control, 'value', option.value);
     if (control.selectedOptions[0] !== option) return { key, reason: 'the field would not take it', description: description.slice(0, 60) };
-    control.dispatchEvent(new Event('input', { bubbles: true }));
-    control.dispatchEvent(new Event('change', { bubbles: true }));
+    control.dispatchEvent(ours(new Event('input', { bubbles: true })));
+    control.dispatchEvent(ours(new Event('change', { bubbles: true })));
     return { key, value };
   }
   // A box: the date written the way it wants it, as `fillForm` writes one.
@@ -4164,13 +5358,28 @@ const EDUCATION_DATE = /^(education_start|graduation)_(month|year|date)$/;
 
 export async function fillEducation(education, fields, report, { patience = 4000 } = {}) {
   const schools = Array.isArray(education) ? education.filter((e) => clean(e?.school)) : [];
-  if (schools.length === 0) return report;
-  const onlyOne = schools.length === 1;
   let section = educationSection();
   if (!section) return report;
+  /*
+   * Said, where there is an Education section and it is being left.
+   *
+   * Every way out of here was silent, so a form whose dates stayed empty and
+   * whose "Add another" was never pressed looked exactly like one this had
+   * never reached — measured on a Greenhouse board filled from a profile and
+   * no resume: School, Degree and Discipline in, four dates and the second
+   * school out, and a report with nothing about education in it at all.
+   */
+  const leaving = (reason) => ({
+    ...report,
+    skipped: [...report.skipped, { key: 'education_start_date', reason, description: 'Education' }],
+  });
+  if (schools.length === 0) return leaving('the resume sent lists no schools, so the dates and any others were left');
+  const onlyOne = schools.length === 1;
 
   const owner = fields?.school ? schools.findIndex((e) => sameSchool(e.school, fields.school)) : -1;
-  if (fields?.school && owner < 0) return report;
+  if (fields?.school && owner < 0) {
+    return leaving(`the resume sent does not list “${clean(fields.school).slice(0, 60)}”, the school the form was given`);
+  }
   // What the first pass looked at, in the first block. Not asked twice.
   const tried = new Set([...report.filled, ...report.skipped].map((x) => x.key));
 
@@ -4392,6 +5601,8 @@ export function watchChoices(tell) {
     if (option) {
       const group = option.closest('[role="radiogroup"], [role="listbox"], [role="group"]');
       if (!group) return null;
+      // A widget's menu is the widget's question, and `watchWidgetPicks` reads it.
+      if (group.getAttribute('role') === 'listbox' && ownerOfMenu(group)) return null;
       return {
         question: choiceQuestionFor(group),
         answer: clean(option.getAttribute('aria-label') || option.textContent),
@@ -4401,6 +5612,8 @@ export function watchChoices(tell) {
   };
 
   const look = (event) => {
+    // Autofill's own filling, not a choice. See `OUR_EVENTS`.
+    if (OUR_EVENTS.has(event)) return;
     const target = event.composedPath?.()?.[0] ?? event.target;
     if (!target || rootOf(target)?.host?.id === OURS) return;
     let said;
@@ -4436,10 +5649,16 @@ export function watchChoices(tell) {
    */
   document.addEventListener('change', look, true);
   document.addEventListener('click', look, true);
+  // And a pick in a react-select, which fires neither usefully. See `watchWidgetPicks`.
+  const stopPicks = watchWidgetPicks((answer) => {
+    const verdict = worthRemembering(answer);
+    tell(verdict.keep ? { ...answer, keep: true } : { ...answer, keep: false, why: verdict.why });
+  }, () => watching);
   return () => {
     watching = false;
     document.removeEventListener('change', look, true);
     document.removeEventListener('click', look, true);
+    stopPicks();
   };
 }
 
@@ -4491,6 +5710,46 @@ export function looksLikeApplicationForm() {
   // And in every case, enough of a form to be one. Evidence alone let a frame
   // through that merely talked about applying.
   return evidence && keys.size >= 2;
+}
+
+/**
+ * Whether the form in this frame may be given the profile when Autofill is
+ * pressed.
+ *
+ * An application, by the rules above — or a frame served from the page's own
+ * origin. The recognition exists to keep the person's details out of somebody
+ * else's iframe, and a frame from the page's own origin is not somebody else:
+ * the page could read it, and the same form sitting in the page itself would
+ * have been filled without being recognised at all.
+ *
+ * iCIMS is why. Its sign-in step is served in a frame of the careers site and
+ * asks for the email and nothing more — one field, and no words an
+ * application uses, so it was never recognised and Autofill said "Filled 0
+ * fields" over an empty Email box.
+ */
+/*
+ * And only on a hiring system's own host. The page's own origin alone let
+ * every advert a site serves from itself through: measured in
+ * tests/navigation.mjs, forty-eight same-origin advert frames beside the one
+ * application were each given the person's name and email. A frame of
+ * careers-markon.icims.com on that same host is the sign-in; one on a news
+ * site is not. The same list the card uses to tell a tracker's page.
+ */
+const ON_A_TRACKER_HOST =
+  /\b(greenhouse|lever|workday|myworkdayjobs|ashby|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite|bamboohr|rippling|breezy|recruitee|teamtailor|jazzhr|successfactors|brassring)\b/i;
+
+export function mayFillFrame() {
+  if (looksLikeApplicationForm()) return true;
+  try {
+    return (
+      /^https?:$/.test(location.protocol) &&
+      window.top.location.origin === location.origin &&
+      ON_A_TRACKER_HOST.test(location.hostname)
+    );
+  } catch {
+    // Another origin's page, which a frame may not read.
+    return false;
+  }
 }
 
 /** Marks a field so the card can point back at it later. */

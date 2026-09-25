@@ -693,6 +693,45 @@ function countAgainst(counter, text, limit) {
   counter.classList.toggle('over', over);
 }
 
+const NAMED_ENTITIES = { nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", ndash: '–', mdash: '—' };
+
+/*
+ * The page's title as a person reads it. The browser decodes a `<title>` once,
+ * so SmartRecruiters' "Staff&amp;amp;nbsp;Software Engineer" arrives as
+ * "Staff&amp;nbsp;Software Engineer"; decoded here until nothing changes, and
+ * every kind of space made a plain one. The same as ResumeM-M's `readableName`.
+ */
+function readableTitle(text) {
+  let out = String(text ?? '');
+  for (let i = 0; i < 5; i++) {
+    const next = out.replace(/&(#\d{1,7}|#x[0-9a-f]{1,6}|[a-z]{2,8});/gi, (whole, name) => {
+      if (name[0] === '#') {
+        const code = /^#x/i.test(name) ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
+        return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
+      }
+      return Object.hasOwn(NAMED_ENTITIES, name.toLowerCase()) ? NAMED_ENTITIES[name.toLowerCase()] : whole;
+    });
+    if (next === out) break;
+    out = next;
+  }
+  return out.replace(/[\s\u00a0\u2000-\u200b\u202f\u205f\u3000]+/g, ' ').trim();
+}
+
+/*
+ * A title that is a step in front of the job rather than the job. iCIMS's
+ * sign-in page is "Login | Careers Markon", and the card showed that as the
+ * role while the posting was read. The rest of such a title is the site's
+ * name, so the role is unknown until the server says otherwise.
+ */
+const NOT_A_ROLE =
+  /^(log[ -]?in|log[ -]?on|sign[ -]?(in|on|up)|create (an |your )?account|register|registration|my account|apply|apply now|application|careers?|jobs?|job search|search jobs|home|welcome)$/i;
+
+function provisionalRole(title) {
+  const said = readableTitle(title);
+  const parts = said.split(/[|\u2013\u2014\u00b7\u00bb]|\s-\s/).map((part) => part.trim());
+  return !said || parts.some((part) => NOT_A_ROLE.test(part)) ? 'This posting' : said.slice(0, 70);
+}
+
 export function createCard({
   analysis,
   resumes = [],
@@ -813,6 +852,12 @@ export function createCard({
     replaced: { letter: null, answers: {} },
     feedback: '',
     autofillReport: null,
+    /**
+     * What was typed on this form that will be kept for the next one, as
+     * `[{ question, answer }]` — told by content.js as each box is left, and
+     * put in the bank when the form is sent or left. See `drawToKeep`.
+     */
+    toKeep: [],
     /** What the last press of Attach put into the form, and what it could not. */
     attachReport: null,
     /**
@@ -1228,13 +1273,17 @@ export function createCard({
 
   function markChips() {
     const held = carried?.files ?? [];
-    const ready = held.length > 0;
+    // Bytes from a folder that is behind are not ready either. See `folderBehind`.
+    const behind = folderBehind();
+    const ready = held.length > 0 && !behind;
     for (const chip of chipsOnScreen) {
       if (!chip.isConnected) continue;
       chip.classList.toggle('warming', !ready);
       chip.title = ready
         ? 'Drag this into the form\u2019s upload box'
-        : 'Drag this into the form\u2019s upload box \u2014 fetching it now';
+        : behind
+          ? 'Drag this into the form\u2019s upload box \u2014 it is being rebuilt with the latest changes'
+          : 'Drag this into the form\u2019s upload box \u2014 fetching it now';
       /*
        * And named for the copy that will actually be dropped.
        *
@@ -1570,9 +1619,23 @@ export function createCard({
    * rename that silently does nothing on a third of sites is worse than no
    * rename.
    */
+  /*
+   * The rename menu that is open, and what has been typed into its box.
+   *
+   * Both lived only in the DOM — a class taken off, a value typed — and the
+   * card is redrawn under them: the store moving is enough, and the card's own
+   * staging moves it seconds after every build, which is when these chips
+   * appear. Each redraw built the menu shut again, and half a file name went
+   * with it. Kept here, by the file it is for, so a redraw draws it open.
+   */
+  let renaming = null;
+
   function renameMenu(kind, name) {
     const stored = NAMED_TO_STORE[kind] ?? 'Answers';
+    const open = renaming?.name === name;
+    const typing = open && renaming.value !== undefined;
     const put = (naming) => {
+      renaming = null;
       state.naming = {
         shape: naming.shape ?? state.naming?.shape,
         custom: { ...(state.naming?.custom ?? {}) },
@@ -1604,9 +1667,10 @@ export function createCard({
           const open = event.currentTarget.parentElement?.querySelector('.rename-menu');
           closeRenameMenus(open);
           if (open) open.classList.toggle('hidden');
+          renaming = open && !open.classList.contains('hidden') ? { name } : null;
         },
       }),
-      h('div', { className: 'rename-menu hidden' }, [
+      h('div', { className: `rename-menu${open ? '' : ' hidden'}` }, [
         h('button', {
           type: 'button',
           draggable: false,
@@ -1624,6 +1688,7 @@ export function createCard({
             event.stopPropagation();
             const box = event.currentTarget.parentElement?.querySelector('input');
             if (box) {
+              renaming = { name, value: box.value };
               box.classList.remove('hidden');
               box.focus();
               box.select();
@@ -1631,15 +1696,23 @@ export function createCard({
           },
         }),
         h('input', {
-          className: 'rename-box hidden',
+          className: `rename-box${typing ? '' : ' hidden'}`,
           draggable: false,
           type: 'text',
-          value: name.replace(/\.[^.]+$/, ''),
+          // Named, like the letter and answer boxes, so `draw` puts the caret back.
+          dataset: { field: `rename:${name}` },
+          value: typing ? renaming.value : name.replace(/\.[^.]+$/, ''),
           title: 'The extension stays as it is — a portal checks it',
+          oninput: (event) => {
+            if (renaming?.name === name) renaming.value = event.target.value;
+          },
           onkeydown: (event) => {
             event.stopPropagation();
             if (event.key === 'Enter') put({ custom: event.target.value });
-            if (event.key === 'Escape') event.target.classList.add('hidden');
+            if (event.key === 'Escape') {
+              renaming = null;
+              event.target.classList.add('hidden');
+            }
           },
         }),
         h('button', {
@@ -1702,8 +1775,13 @@ export function createCard({
      */
     warmFiles(application);
 
-    /** What this chip would hand over, if the store has answered yet. */
-    const carrying = () => pick(carried?.application === application ? (carried.files ?? []) : []);
+    /**
+     * What this chip would hand over, if the store has answered yet — and
+     * nothing while the folder is behind, so a reach does not arm the page
+     * with the file from before. See `folderBehind`.
+     */
+    const carrying = () =>
+      folderBehind() ? [] : pick(carried?.application === application ? (carried.files ?? []) : []);
 
     /*
      * Tell the page a drag is coming, at the press rather than at the drag.
@@ -1772,6 +1850,21 @@ export function createCard({
     };
 
     chip.ondragstart = (event) => {
+      /*
+       * Refused while the folder is behind the card, as a drag cannot wait
+       * for it to catch up. The bytes in hand are the folder's from before —
+       * before the change "Updated from ResumeM-M" is showing, or a box just
+       * ticked — and would go into the form as they are. Attach files waits
+       * for the stage in the same stretch; this brings it forward, so the
+       * next try carries the file as the card shows it.
+       */
+      if (folderBehind()) {
+        event.preventDefault();
+        tell([]);
+        folderCaughtUp().catch(() => undefined);
+        sayAboutDragging('That file is being rebuilt with the latest changes \u2014 try that drag again in a moment.');
+        return;
+      }
       const held = carried?.application === application ? (carried.files ?? []) : [];
       const files = pick(held);
       if (files.length === 0) {
@@ -1990,6 +2083,16 @@ export function createCard({
     // Both, because it writes both — see `writeEverything`.
     writeApplication: 'drafting',
     autofill: 'page',
+    /*
+     * And attaching, which writes into the same form.
+     *
+     * It was missing, so it fell to the default — the resume lane — and the
+     * labels asked about `attach`, which nothing dispatches. Measured in
+     * tests/card.mjs with the attach held open: the button went on reading
+     * "Attach files", it and Autofill stayed pressable, and "Have AI Tailor"
+     * was greyed out by a file being put in a box.
+     */
+    attachFiles: 'page',
     bundle: 'submit',
     trackStatus: 'submit',
     // Its own lane: staging runs after every build and must block nothing.
@@ -2029,6 +2132,9 @@ export function createCard({
    */
   let rebuildToken = 0;
 
+  /** A `checkFresh` that stood aside for a compile or a rebuild, still owed. */
+  let freshOwed = false;
+
   /**
    * `quiet` is for work nobody asked for.
    *
@@ -2053,6 +2159,7 @@ export function createCard({
     if (!quiet) {
       state.error = null;
       state.errorFix = null;
+      state.passFailed = false;
     }
     draw();
     try {
@@ -2075,6 +2182,8 @@ export function createCard({
       state.error = err.message;
       // Some failures have a way out. Keep it, so the card can offer it.
       state.errorFix = err.jobhelper ?? null;
+      // This button's failure, not the page's. See `drawError`.
+      state.passFailed = false;
       return null;
     } finally {
       running.delete(action);
@@ -2083,6 +2192,17 @@ export function createCard({
       // Keep showing progress for whatever is still going.
       state.busy = [...running].pop() ?? null;
       draw();
+      /*
+       * A store change that arrived while this was out. On the next task,
+       * so a rebuild has cleared `state.rebuilding` first. See `checkFresh`.
+       */
+      if (freshOwed) {
+        setTimeout(() => {
+          if (!freshOwed || busyIn('compile') || state.rebuilding) return;
+          freshOwed = false;
+          handle.checkFresh({ now: true }).catch(() => undefined);
+        });
+      }
     }
   }
 
@@ -3365,7 +3485,31 @@ export function createCard({
   function drawBaseChanged() {
     const base = state.baseChanged;
     if (!base) return null;
-    const mode = state.builtWith === 'ai' ? 'ai' : state.builtWith === 'match' ? 'match' : 'none';
+    /*
+     * Deleted in ResumeM-M since this was offered, and so nothing to build
+     * from. The list follows the store, and the store says nothing more about
+     * a base it no longer has — so the offer stood, naming a resume that had
+     * gone. Said plainly instead, as the picker in `drawProposeView` says it.
+     */
+    if (resumes.length > 0 && !resumes.some((r) => r.id === base.id)) {
+      return h('div', {
+        className: 'hint stale',
+        textContent: `“${base.label}”, the resume this copy was made from, has been deleted in ResumeM-M.`,
+      });
+    }
+    /*
+     * The AI's, or the keyword list — never `none`.
+     *
+     * This read `'match'` off `builtWith` and fell through to `'none'`
+     * otherwise, but `builtWith` has not been `'match'` since the match
+     * became a list of offers: `showOffer` writes `'ai'` or `'none'`. So on
+     * every card that was not the AI's the rebuild asked for no tailoring at
+     * all, and the store answered as asked — a copy with no rationale. The
+     * suggestions went with it. Measured in tests/freshness.mjs: "5 changes"
+     * over the list before the press, "0 changes" after it. The same reading
+     * as `switchBaseTo`, which rebuilds for the same reason.
+     */
+    const mode = state.builtWith === 'ai' ? 'ai' : 'match';
     return h('div', { className: 'hint stale' }, [
       h('span', { textContent: `“${base.label}” changed in ResumeM-M after this copy was made. ` }),
       h('button', {
@@ -3375,7 +3519,6 @@ export function createCard({
         disabled: busyIn('compile') || Boolean(state.rebuilding),
         onclick: async () => {
           state.baseChanged = null;
-          state.baseSeen = base.id;
           await rebuildAs(mode);
           await compile();
         },
@@ -3477,7 +3620,7 @@ export function createCard({
      * is worth nothing if it is a build behind and believes it is not.
      */
     lastPrepared = whatWouldBeStaged();
-    const staged = await act(
+    const mine = act(
       'stage',
       { spec: state.spec, coverLetter: state.letter, answers: collectedAnswers(), naming: state.naming },
       (staged) => {
@@ -3495,7 +3638,45 @@ export function createCard({
       // saying. See `act`.
       { quiet: true },
     );
+    stagingNow = mine;
+    const staged = await mine;
+    if (stagingNow === mine) stagingNow = null;
     if (!staged) lastPrepared = null;
+    // The chips were marked behind while this ran. See `folderBehind`.
+    markChips();
+  }
+
+  /**
+   * The folder brought up to what is on screen, before files are taken from it.
+   *
+   * It follows the screen a step behind: a compile, then `prepareSoon`'s
+   * wait, then the stage itself, a few seconds in all. Nothing that reads the
+   * folder waited for that, and the store changing is when it matters most —
+   * the card says "Updated from ResumeM-M" and shows the new words while it
+   * is still compiling, and Attach files pressed then put the file from
+   * before the change into the form. Staged now if it is behind, and the
+   * stage already running waited for if it is not.
+   */
+  let stagingNow = null;
+  async function folderCaughtUp() {
+    if (!state.staged) return;
+    if (whatWouldBeStaged() !== lastPrepared) {
+      clearTimeout(preparing);
+      await stageFiles();
+    } else if (stagingNow) await stagingNow;
+  }
+
+  /**
+   * Whether the folder is behind what is on screen — the stretch
+   * `folderCaughtUp` waits out.
+   *
+   * The drag chips cannot wait: their bytes are fetched ahead, from the
+   * folder as it was, and a chip picked up in this stretch handed the page
+   * the file from before the change the card was already showing. So they
+   * are marked as updating and refuse the drag until it is over.
+   */
+  function folderBehind() {
+    return Boolean(state.staged) && (whatWouldBeStaged() !== lastPrepared || Boolean(stagingNow));
   }
 
   /**
@@ -4483,11 +4664,13 @@ export function createCard({
        */
       h('button', {
         className: 'tiny',
-        textContent: busyLabel('attach', 'Attach files', 'Attaching…'),
+        textContent: busyLabel('attachFiles', 'Attach files', 'Attaching…'),
         title: 'Put the resume, letter and transcript into this form’s upload boxes',
         disabled: busyIn('page'),
-        onclick: () =>
-          act(
+        onclick: async () => {
+          // The folder as the screen has it first. See `folderCaughtUp`.
+          await folderCaughtUp();
+          return act(
             'attachFiles',
             /*
              * The staged answer first, the analysis's second — the same
@@ -4502,7 +4685,8 @@ export function createCard({
              */
             { application: state.staged?.application?.id ?? analysis?.application?.id ?? null },
             (r) => (state.attachReport = r),
-          ),
+          );
+        },
       }),
     ];
   }
@@ -4645,6 +4829,27 @@ export function createCard({
         }),
       );
       askForResumesAgain();
+    }
+
+    /*
+     * The resume this copy was made from, deleted in ResumeM-M.
+     *
+     * The list follows the store now, and a `<select>` with no option for
+     * the resume it names shows its first one instead. So the picker said the
+     * card had started from whichever resume sorted to the top, while the copy
+     * on screen was still made from the one that went. And that one then read
+     * as chosen already, so choosing it did nothing: no `change`, no switch.
+     * Named as gone, and not offered as something to switch to.
+     */
+    const from = analysis?.baseResumeId;
+    if (from && resumes.length > 0 && ![...baseSelect.options].some((o) => o.value === from)) {
+      const gone = h('option', {
+        value: from,
+        textContent: `${analysis.baseLabel ?? from} (deleted in ResumeM-M)`,
+        disabled: true,
+      });
+      baseSelect.prepend(gone);
+      gone.selected = true;
     }
 
     /*
@@ -5395,6 +5600,7 @@ export function createCard({
               })
             : null,
         drawAutofillNote(),
+        drawToKeep(),
         drawAttachNote(),
       ]),
     );
@@ -5425,10 +5631,30 @@ export function createCard({
           textContent: fix.fix === 'open-save' ? 'Open a save in ResumeM-M' : 'Open ResumeM-M',
           onclick: () => onAction('openTab', { url: fix.serverUrl }),
         }),
+        /*
+         * Again, the thing that failed.
+         *
+         * The commonest way to meet this strip is the page's own read failing
+         * because ResumeM-M was not running — and that read is a whole pass:
+         * the proposal, then the trail, the work carried from the page
+         * before, the form's questions, the resume list, and the gate that
+         * lets the keeper save. This pressed `rebuild` instead, which asks
+         * for the proposal and nothing else, and asked for it as
+         * `builtWith` — `'none'` on a card nothing has been built on, so not
+         * even the keyword list. Measured on a posting opened with the store
+         * down, then started, then Try again: no changes offered where the
+         * same page opened normally offers six, neither of the form's two
+         * questions on the card, and an answer typed into it never held by
+         * the keeper, so it went with the next navigation.
+         *
+         * So a failed pass is tried again as a pass. A failure of one of the
+         * card's own buttons keeps what it did before.
+         */
         h('button', {
           className: 'tiny',
           textContent: busyLabel('retry', 'Try again', 'Trying…'),
-          onclick: () => act('rebuild', { tailor: state.builtWith ?? 'match' }),
+          onclick: () =>
+            state.passFailed ? act('retry', {}) : act('rebuild', { tailor: state.builtWith ?? 'match' }),
         }),
       ]),
     );
@@ -5515,8 +5741,22 @@ export function createCard({
      * once, as a count, because the point is to prompt a look rather than to
      * list the questions back.
      */
-    const remembered = r.filled.filter((f) => f.remembered).length;
-    if (remembered) parts.push(`${remembered} of them from answers you gave before`);
+    /*
+     * Named, not only counted, once typed answers come back too. A count was
+     * enough while the bank only ever ticked a box somebody could see had an
+     * answer beside it; a salary figure or a start date typed into a box by a
+     * machine is a thing to read before sending, and "3 of them" does not say
+     * which three. The questions as this form asks them, since that is what
+     * is on screen to look for.
+     */
+    const remembered = r.filled.filter((f) => f.remembered);
+    if (remembered.length) {
+      const which = remembered.map((f) => f.question).filter(Boolean);
+      parts.push(
+        `${remembered.length} of them from answers you gave before` +
+          (which.length ? ` (${which.map((q) => `“${q}”`).join(', ')})` : ''),
+      );
+    }
 
     /*
      * Skipped is not one thing. A field left alone because it already had an
@@ -6039,7 +6279,7 @@ export function createCard({
          */
         h('button', {
           className: 'tiny',
-          textContent: busyLabel('attach', 'Attach files', 'Attaching…'),
+          textContent: busyLabel('attachFiles', 'Attach files', 'Attaching…'),
           title: 'Put the resume, letter and transcript into this form’s upload boxes',
           disabled: busyIn('page'),
           onclick: () =>
@@ -6098,6 +6338,7 @@ export function createCard({
           })
         : null,
       drawAutofillNote(),
+      drawToKeep(),
       drawAttachNote(),
       h(
         'div',
@@ -6246,6 +6487,39 @@ export function createCard({
     );
   }
 
+  /**
+   * What will be kept from this form for the next one, with a way to not.
+   *
+   * Beside the Autofill note, because that is where the answers come back
+   * next time and so where somebody looks to see what this tool knows. Each
+   * row is the question and what was typed, as the bank will hold it, and a
+   * button that leaves that one out — a figure typed for one employer that
+   * should not be offered to the next, a box answered in a hurry. Nothing is
+   * kept until the form is sent or left, so the button is always in time.
+   */
+  function drawToKeep() {
+    if (!(state.toKeep ?? []).length) return null;
+    return h('div', { className: 'hint to-keep', style: 'margin-top:8px' }, [
+      h('div', { textContent: 'Kept for the next form, once this one is sent or left:' }),
+      ...state.toKeep.map(({ question, answer }) =>
+        h('div', { className: 'row' }, [
+          h('span', { className: 'grow', textContent: `${question} — ${answer}` }),
+          h('button', {
+            className: 'link',
+            textContent: 'Don’t keep',
+            ariaLabel: `Don’t keep “${question}”`,
+            title: 'Leave this answer out of the ones offered on the next form',
+            onclick: () => {
+              state.toKeep = state.toKeep.filter((k) => k.question !== question);
+              draw();
+              onAction('dontKeep', { question }).catch(() => undefined);
+            },
+          }),
+        ]),
+      ),
+    ]);
+  }
+
   /** And the same for the last press of Attach. */
   function drawAttachNote() {
     return (
@@ -6375,6 +6649,7 @@ export function createCard({
       ...dragChips(),
       h('div', { className: 'row' }, formActions()),
       state.autofillReport ? drawAutofillNote() : null,
+      drawToKeep(),
       state.attachReport ? drawAttachNote() : null,
       h('button', {
         className: 'link',
@@ -6393,7 +6668,7 @@ export function createCard({
   function drawReadingView() {
     return h('div', { className: 'body' }, [
       h('div', { className: 'job' }, [
-        h('div', { className: 'role provisional', textContent: document.title.slice(0, 70) || 'This posting' }),
+        h('div', { className: 'role provisional', textContent: provisionalRole(document.title) }),
         h('div', { className: 'co', textContent: location.hostname }),
       ]),
       h('div', { className: 'progress' }),
@@ -6404,7 +6679,7 @@ export function createCard({
 
   draw();
 
-  return {
+  const handle = {
     remove: removeCard,
     /** The analysis, whether this is the first one or a later rebuild. */
     /**
@@ -6507,11 +6782,44 @@ export function createCard({
      *   The resume it was made from, which a copy does not follow. Said,
      *   with a way to build again from it; see `drawBaseChanged`.
      */
-    async checkFresh() {
+    /**
+     * Something in ResumeM-M changed, while this card was on screen.
+     *
+     * Everything the card holds from the store is asked for again: the list
+     * of resumes, so a variation saved there is in the picker without the
+     * card being put up again, and the copy and what it prints, through
+     * `checkFresh` — the same answers coming back to the tab gets.
+     */
+    async storeChanged() {
+      const list = await Promise.resolve(onAction('listResumes', {})).catch(() => null);
+      const listed = Array.isArray(list) ? list : list?.resumes;
+      if (Array.isArray(listed) && JSON.stringify(listed) !== JSON.stringify(resumes)) {
+        resumes = listed;
+        draw();
+      }
+      await this.checkFresh({ now: true });
+    },
+
+    async checkFresh({ now: asked = false } = {}) {
       const of = state.spec;
-      if (!of?.id || !state.render || busyIn('compile') || state.rebuilding) return;
+      if (!of?.id) return;
+      /*
+       * Busy is "not yet", not "no".
+       *
+       * Standing aside while a compile or a rebuild is out is right: either
+       * brings its own answer. But the watcher had already moved past the
+       * revision it was telling us about, so nothing asked again — a compile
+       * that read the store just before the change landed after it, printing
+       * the old words, and the card went on showing them. Owed, and asked
+       * once that work is done. See `act`.
+       */
+      if (busyIn('compile') || state.rebuilding) {
+        freshOwed = true;
+        return;
+      }
+      if (!state.render) return;
       const now = Date.now();
-      if (now - (state.freshAt ?? 0) < 3000) return;
+      if (!asked && now - (state.freshAt ?? 0) < 3000) return;
       state.freshAt = now;
       const reply = await Promise.resolve(onAction('fresh', { spec: of })).catch(() => null);
       if (!reply || state.spec !== of) return;
@@ -6523,9 +6831,19 @@ export function createCard({
       const editedThere =
         reply.stored && seen && reply.storedPrint !== seen && JSON.stringify(reply.stored) !== JSON.stringify(of);
 
-      if (reply.base?.changed && state.baseSeen !== reply.base.id) {
-        state.baseChanged = { id: reply.base.id, label: reply.base.label };
-      }
+      /*
+       * Every time the store says so, not once per base.
+       *
+       * Once "Build it again from there" had been pressed, the base it named
+       * was written down as seen and never reported again — so the next edit
+       * to that same resume, made after the copy had been rebuilt from it,
+       * was silence. Measured in tests/freshness.mjs: rebuild, change the
+       * base again, come back, and no notice. There is nothing to remember
+       * here: the store answers against the copy's own clock, and a rebuilt
+       * copy is stamped when it is made, so it is not "changed" until the
+       * base is changed again.
+       */
+      if (reply.base?.changed) state.baseChanged = { id: reply.base.id, label: reply.base.label };
 
       if (editedThere) {
         state.spec = reply.stored;
@@ -6536,6 +6854,19 @@ export function createCard({
       }
       if (reply.printed && state.printed && reply.printed !== state.printed) {
         state.note = 'Updated from ResumeM-M: what the resume says changed there.';
+        /*
+         * And the folder with it, which nothing else here would redo.
+         *
+         * The compile below re-stages through `prepareSoon`, and that is
+         * skipped when nothing that reaches a file has changed — judged from
+         * the card's own spec, letter and answers. Here none of those has:
+         * the words moved in the store, underneath the same spec. Measured,
+         * with the phone number changed in the profile: the preview printed
+         * the new one and said so, while the resume in the upload folder —
+         * the one Attach files and the drag chips hand the form — still
+         * carried the old one, byte for byte the file staged before.
+         */
+        lastPrepared = null;
         await compile();
         return;
       }
@@ -6621,11 +6952,39 @@ export function createCard({
       draw();
     },
 
+    /**
+     * The bank's answers again, for the questions already listed.
+     *
+     * The card was given them once, when the questions were read, so an
+     * answer written or changed in ResumeM-M's Letters & Answers reached a
+     * card already open only when the page was loaded again. Only what came
+     * from the bank moves: the list is not replaced — a question carried from
+     * the step before, or typed in by hand, stays — and what the person typed
+     * or cleared is `state.answers`, which is read first and not touched.
+     */
+    setMatches(qs) {
+      const fresh = new Map((qs ?? []).map((q) => [q.question, q]));
+      let moved = false;
+      state.questions = (state.questions ?? []).map((q) => {
+        const n = fresh.get(q.question);
+        if (!n || ((n.answer ?? '') === (q.answer ?? '') && n.namesAnother === q.namesAnother)) return q;
+        moved = true;
+        return { ...q, answer: n.answer, confident: n.confident, score: n.score, itemId: n.itemId, namesAnother: n.namesAnother };
+      });
+      if (moved) draw();
+    },
+
     /** Hand back the work worth keeping when this page is replaced. */
     takeWork,
 
     /** Put back the work from the page this one continues. */
     restoreWork,
+    /** What will be kept from this form's typed answers. See `drawToKeep`. */
+    setToKeep(list) {
+      state.toKeep = Array.isArray(list) ? list : [];
+      draw();
+    },
+
     /** Something that happened and went well. See `state.note`. */
     say(text) {
       state.note = text;
@@ -6650,6 +7009,9 @@ export function createCard({
       // The first pass failing is the commonest way to meet this, and the
       // commonest reason is that ResumeM-M is not running.
       state.errorFix = fix;
+      // Only the page's pass says something with a way out through here, so
+      // that is what "Try again" should run. See `drawError`.
+      state.passFailed = Boolean(fix);
       draw();
     },
 
@@ -6676,4 +7038,5 @@ export function createCard({
       return true;
     },
   };
+  return handle;
 }
