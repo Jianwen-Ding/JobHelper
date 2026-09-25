@@ -5484,6 +5484,31 @@ export function looksLikeApplicationForm() {
   return evidence && keys.size >= 2;
 }
 
+/**
+ * Whether the form in this frame may be given the profile when Autofill is
+ * pressed.
+ *
+ * An application, by the rules above — or a frame served from the page's own
+ * origin. The recognition exists to keep the person's details out of somebody
+ * else's iframe, and a frame from the page's own origin is not somebody else:
+ * the page could read it, and the same form sitting in the page itself would
+ * have been filled without being recognised at all.
+ *
+ * iCIMS is why. Its sign-in step is served in a frame of the careers site and
+ * asks for the email and nothing more — one field, and no words an
+ * application uses, so it was never recognised and Autofill said "Filled 0
+ * fields" over an empty Email box.
+ */
+export function mayFillFrame() {
+  if (looksLikeApplicationForm()) return true;
+  try {
+    return /^https?:$/.test(location.protocol) && window.top.location.origin === location.origin;
+  } catch {
+    // Another origin's page, which a frame may not read.
+    return false;
+  }
+}
+
 /** Marks a field so the card can point back at it later. */
 const FIELD_KEY = 'data-jobhelper-field';
 let fieldCounter = 0;

@@ -2674,7 +2674,8 @@
             imports.autofill().then((autofill) => {
               // The one that must not be got wrong. Anything else on the page
               // gets nothing about the person using it.
-              if (!autofill.looksLikeApplicationForm()) return { filled: [], skipped: [] };
+              // Or a frame from the page's own origin. See `mayFillFrame`.
+              if (!autofill.mayFillFrame()) return { filled: [], skipped: [] };
               // What is the profile's to fill, for what is typed afterwards. See `typedBox`.
               frameProfile = message.payload?.fields ?? null;
               watchFrameForm(autofill);

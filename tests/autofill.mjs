@@ -2918,7 +2918,35 @@ const ADDS_ITS_CODE = `<!doctype html><html><head><meta charset="utf-8"><title>A
 </script>
 </body></html>`;
 
-const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL };
+/*
+ * iCIMS's sign-in step, as careers-markon.icims.com served it in September
+ * 2026: the careers page holds nothing but an iframe of its own origin, and
+ * the frame asks for an email and a tick. The hCaptcha that follows the tick
+ * is left out. The frame's address comes from the page's own query, so the
+ * same frame can be put on another origin.
+ */
+const ICIMS_LOGIN = `<!doctype html><html><head><meta charset="utf-8"><title>Login | Careers Markon</title></head><body>
+<div class="iCIMS_JobsTable"><iframe id="icims_content_iframe" title="Job listings" style="width:100%;height:500px"></iframe></div>
+<script>document.getElementById('icims_content_iframe').src = new URLSearchParams(location.search).get('frame') || '/icims-login-frame?in_iframe=1';</script>
+</body></html>`;
+const ICIMS_LOGIN_FRAME = `<!doctype html><html><head><meta charset="utf-8"><title>Login</title></head><body>
+<a href="#icims_content" class="sr-only">Skip to Main Content</a>
+<h1>Enter your email &amp; Accept Privacy Policy</h1>
+<p>Click here to review our Privacy Policy</p>
+<form id="enterEmailForm" class="iCIMS_SignIn" method="post" accept-charset="utf-8" enctype="multipart/form-data" action="/icims-login-frame?step=email&amp;in_iframe=1" onsubmit="return false">
+<label for="email">Email</label>
+<input type="email" autocomplete="email" id="email" name="css_loginName" class="form-control" value="" aria-describedby="iCIMS_ErrorMessage_login">
+<div class="checkbox">
+<label for="accept_privacy"><input type="checkbox" id="accept_privacy" name="accept_privacy" value="1" aria-required="true" aria-describedby="icims_accept_privacy_desc">I accept the Privacy Policy</label>
+<span id="icims_accept_privacy_desc" class="sr-only">You must indicate that you have read and accept the Privacy Policy before you can continue.</span>
+</div>
+<input id="enterEmailSubmitButton" type="submit" class="iCIMS_PrimaryButton " value="Next" disabled="">
+</form>
+<a href="#">Application FAQs</a>
+<p>Software Powered by ICIMS</p>
+</body></html>`;
+
+const PAGES = { '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -6723,6 +6751,34 @@ async function main() {
       'Teamtailor\'s "+1 555-010-0199" is the number that was given, and is reported filled, not refused',
       addsCode.phone === '+1 555-010-0199' && addsCode.filled.includes('phone') && !addsCode.skipped.some((s) => s.startsWith('phone')),
       JSON.stringify(addsCode),
+    );
+
+    /*
+     * The gate `jh-frame-fill` puts in front of a frame, run in the frame:
+     * nothing is filled there unless `mayFillFrame` says so.
+     */
+    const icimsSignIn = async (frameUrl) => {
+      await page.goto(`${base}/icims-login${frameUrl ? `?frame=${encodeURIComponent(frameUrl)}` : ''}`, { waitUntil: 'load' });
+      const frame = page.frames().find((f) => f.url().includes('/icims-login-frame'));
+      return frame.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const may = m.mayFillFrame();
+        if (may) m.fillForm(fields);
+        return { may, application: m.looksLikeApplicationForm(), email: document.getElementById('email').value, ticked: document.getElementById('accept_privacy').checked };
+      }, { b: frameUrl ? new URL(frameUrl).origin : base, fields: SWEEP });
+    };
+    const ownFrame = await icimsSignIn();
+    const otherFrame = await icimsSignIn(`${base.replace('127.0.0.1', 'localhost')}/icims-login-frame?in_iframe=1`);
+    group('iCIMS: the sign-in step, in a frame of the careers site');
+    check(
+      'the Email box in a frame from the page\'s own origin is filled, though one box is not an application',
+      ownFrame.may && !ownFrame.application && ownFrame.email === 'morgan.testwell@example.com' && !ownFrame.ticked,
+      JSON.stringify(ownFrame),
+    );
+    check(
+      'while the same frame on another origin is still given nothing',
+      !otherFrame.may && otherFrame.email === '',
+      JSON.stringify(otherFrame),
     );
   } finally {
     await browser.close();
