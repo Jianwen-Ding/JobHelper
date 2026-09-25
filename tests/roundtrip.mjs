@@ -469,7 +469,8 @@ async function main() {
       await card.getByRole('button', { name: 'Unfold JobHelper' }).click({ timeout: 120_000 });
       await card.locator('.done-box').waitFor({ timeout: 120_000 });
       const done = await card.locator('.done-box').innerText();
-      check('the application folder is written', /-Resume\.pdf/.test(done), done.split('\n')[1] ?? done);
+      // Suffixed when another application staged within twenty minutes holds the plain name.
+      check('the application folder is written', /-Resume(-[\w-]+)?\.pdf/.test(done), done.match(/\S+-Resume\S*\.pdf/)?.[0] ?? done);
 
       /*
        * Asked of the server, not of the card. The card can only show what it
