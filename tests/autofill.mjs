@@ -2338,6 +2338,13 @@ ${workdayQuestion('028095df097b1001ac9359f942cf0000', 'Will you now or in the fu
 </div></div>
 ${WORKDAY_QUESTIONS_SCRIPT}
 </body></html>`;
+const WORKDAY_QUESTIONS_INTEL = `<!doctype html><html><head><meta charset="utf-8"><title>Application Questions 1 of 2</title></head><body>
+<div data-automation-id="applyFlowPrimaryQuestionnairePage"><div data-fkit-id="primaryQuestionnaire--null">
+${workdayQuestion('ceecc5b2f5401001aa31bb9a5d390005', '8)* Are you a current Federal, State or Local Government employee; including military (other than the DOD) or have you at any time in the past 5 years been an employee of one of these entities?')}
+${workdayQuestion('ceecc5b2f5401001aa31bc34396e0006', '10)* Are you currently authorized to work in the U.S.?  NOTE: Respond Yes only if your work authorization is effective as of the date you complete this questionnaire.')}
+</div></div>
+${WORKDAY_QUESTIONS_SCRIPT}
+</body></html>`;
 const JOBS = [
   {
     company: 'Vega Analytics',
@@ -2768,7 +2775,7 @@ const ADDS_ITS_CODE = `<!doctype html><html><head><meta charset="utf-8"><title>A
 </script>
 </body></html>`;
 
-const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS };
+const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -6011,6 +6018,33 @@ async function main() {
         questionnaire.named.includes('requires_sponsorship: this one has to be picked by hand') &&
         questionnaire.answers[0] === 'Yes' && questionnaire.filled.includes('work_authorization'),
       JSON.stringify(questionnaire),
+    );
+
+    const bothAsked = await page.goto(`${base}/workday-questions`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { work_authorization: 'Authorized to work in the US', requires_sponsorship: 'No' };
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        return { answers: [...document.querySelectorAll('button[aria-haspopup="listbox"]')].map((el) => el.textContent), filled: report.filled.map((f) => f.key), log: window.__log };
+      }, { b: base }),
+    );
+    check(
+      'both at once, each in its own list: the one just chosen in is still closing when the next is pressed',
+      JSON.stringify(bothAsked.answers) === '["Yes","No"]',
+      JSON.stringify(bothAsked),
+    );
+    const intel = await page.goto(`${base}/workday-questions-intel`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { address_state: 'MA', work_authorization: 'Authorized to work in the US' };
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        return { answers: [...document.querySelectorAll('button[aria-haspopup="listbox"]')].map((el) => el.textContent), filled: report.filled.map((f) => f.key), log: window.__log };
+      }, { b: base }),
+    );
+    check(
+      'a question looked in and shut is not answered by the next one\'s choice: nobody is declared a government employee',
+      JSON.stringify(intel.answers) === '["Select One","Yes"]' && JSON.stringify(intel.log) === '["ceecc5b2f5401001aa31bc34396e0006 = Yes"]',
+      JSON.stringify(intel),
     );
 
     /* ---------------- Found filling live forms with a fake profile ---------------- */

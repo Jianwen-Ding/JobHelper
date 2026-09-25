@@ -3930,7 +3930,29 @@ function optionsOf(widget, openBefore = null) {
    * did: Boston, Massachusetts was two Bostons and neither was chosen.
    */
   const named = [...new Set(ids.map((id) => widget.getRootNode().getElementById?.(id) ?? document.getElementById(id)).filter(Boolean))];
-  const showing = visibleListboxes().filter((l) => l !== widget);
+  /*
+   * Never a list another control says is its own.
+   *
+   * Workday's questionnaire is a column of "Select One" buttons, each naming
+   * its list in `aria-controls` once the list is drawn, a moment after the
+   * press; and a list shut, by a choice or by Escape, takes about 300ms to
+   * go. Measured live with a fake profile on Intel's Application Questions:
+   * "8) Are you a current Federal, State or Local Government employee…?" was
+   * opened (read as a state), had no "MA", and was shut; "10) Are you
+   * currently authorized to work in the U.S.?" was pressed 12ms later, before
+   * its own list was drawn — so the one list showing was question 8's, "Yes"
+   * was pressed in it, and the applicant was declared a government employee
+   * while the report said the right to work had been answered. NVIDIA's pair
+   * did the same after a choice: "No" meant for "Will you now or in the future
+   * require sponsorship…?" was given to "Are you legally authorized to work in
+   * the United States?", and both were reported filled.
+   */
+  const theirs = (list) =>
+    Boolean(list.id) &&
+    deepQueryAll(`[aria-controls~="${CSS.escape(list.id)}"], [aria-owns~="${CSS.escape(list.id)}"]`).some(
+      (el) => el !== widget && el !== box && !widget.contains(el),
+    );
+  const showing = visibleListboxes().filter((l) => l !== widget && !theirs(l));
   /*
    * And, where the widget names none, the one its own press opened.
    *
