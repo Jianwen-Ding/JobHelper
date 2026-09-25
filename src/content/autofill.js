@@ -1099,7 +1099,17 @@ function labelFor(input) {
 }
 
 /** An `aria-label` that names the control rather than the question. */
-const CONTROL_WORD = /^(select|search|choose|pick|select an option|select one|dropdown|combobox|text ?area|input)\.*$/i;
+/*
+ * And says it is required. Workday's Application Questions are "Select One"
+ * buttons labelled " Select One Required", the question being rich text in
+ * the `<legend>` of the `<fieldset>` around them — so every one was described
+ * as "Select One Required", matched nothing, and was neither answered nor
+ * reported. Measured live with a fake profile on NVIDIA's "Are you legally
+ * authorized to work in the United States?" and "Will you now or in the
+ * future require sponsorship…?", and on Intel's questionnaire: every required
+ * right-to-work question left on "Select One" under a report saying nothing.
+ */
+const CONTROL_WORD = /^(select|search|choose|pick|select an option|select one|dropdown|combobox|text ?area|input)\.*(\s+required)?$/i;
 
 /**
  * Everything a field's label might be hiding in. The explicit label leads, so
@@ -1166,8 +1176,34 @@ function isWidgetChoice(element) {
     role === 'combobox' ||
     role === 'listbox' ||
     element.getAttribute?.('aria-haspopup') === 'listbox' ||
-    ['list', 'both'].includes(element.getAttribute?.('aria-autocomplete'))
+    ['list', 'both'].includes(element.getAttribute?.('aria-autocomplete')) ||
+    isWorkdayPrompt(element)
   );
+}
+
+/*
+ * Workday's prompt: a search box that is a list, and says so in nothing a
+ * screen reader reads.
+ *
+ * Its School or University, its Field of Study, "How Did You Hear About Us?"
+ * and the phone's country code are each an `<input placeholder="Search">`
+ * with no role and no `aria-autocomplete`, inside a `multiSelectContainer`,
+ * marked only `data-uxi-widget-type="selectinput"`. Nothing here read that as
+ * a list, so it was typed into as a text box. Measured live with a fake
+ * profile on Intel's and NVIDIA's My Experience: "Northeastern University" and
+ * "Computer Science" sat in the search boxes, the report counted both filled,
+ * and Save and Continue answered "The field School or University is required
+ * and must have a value", and the same for Field of Study — words in a search
+ * box are not a choice. Where a person had already picked Computer Science,
+ * on NVIDIA, the words were typed in again beside the pill.
+ *
+ * As a list it is driven the way every list is (see `chooseInWidget`), with
+ * the two things this one needs: the search runs on Enter, and the click has
+ * to land on the option's words (see `wordsOf`). What it holds is its pills
+ * (see `controlOf`), so one already chosen is left alone.
+ */
+function isWorkdayPrompt(element) {
+  return element.getAttribute?.('data-uxi-widget-type') === 'selectinput';
 }
 
 /**
@@ -1212,8 +1248,23 @@ function isFillable(input) {
   // forms inside a fixed modal are ordinary. Whether it occupies space on the
   // page is the question actually being asked.
   if (input.getClientRects().length === 0) return false;
+  if (BOT_TRAP.test(labelFor(input))) return false;
   return true;
 }
+
+/*
+ * A box put there to catch robots, which a person is asked to leave empty.
+ *
+ * Workday's Create Account and Sign In carry one on every tenant: a box named
+ * `website`, labelled "Enter website. This input is for robots only, do not
+ * enter if you're human.", cut down to a pixel with the same `clip` a
+ * screen-reader-only label uses — so it counts as on the page, and `website`
+ * matched it. Measured live on NVIDIA's and Intel's with a fake profile that
+ * has a website: the address went into the trap, and an account created that
+ * way is created by a robot as far as the site can tell. Only a label that
+ * says so in words: robots, not a human, a honeypot.
+ */
+const BOT_TRAP = /\bfor\s+(?:ro)?bots\b|\b(?:ro)?bots?\s+only\b|\bif\s+you(?:'|’|\s+a)?re\s+(?:a\s+)?human\b|\bhoney\s*pot\b/i;
 
 /**
  * Has this dropdown actually been answered?
@@ -1288,10 +1339,35 @@ function nativeSet(element, property, value) {
 }
 
 /** Set a value in a way React and friends actually notice. */
+/*
+ * A date drawn as spin buttons is taken when focus leaves it, and only then.
+ *
+ * Workday's From and To are a month and a year `role="spinbutton"` box inside
+ * one wrapper, and the wrapper reads both boxes into the date — what Save and
+ * Continue checks — on the blur that takes focus out of it. Written without
+ * focus, as every other box is, the boxes showed 06/2025 and Workday answered
+ * "The field From is required and must have a value", for the job's From and
+ * To and for the degree's years alike. Measured live on NVIDIA's and Intel's
+ * My Experience with a fake profile. Blurred after each box it was worse:
+ * the month was taken alone, "Invalid Date: 06/", because focus coming back
+ * into the date is sent to its first box and the year's blur never happened.
+ *
+ * So a spin button is focused before it is written, and focus leaves only
+ * after the last box of its date, the way a person tabs through it. Measured
+ * live after on Intel: Save and Continue took the From and To.
+ */
 function setValue(input, value) {
+  const spin = input.getAttribute?.('role') === 'spinbutton';
+  if (spin) input.focus?.();
   nativeSet(input, 'value', value);
   input.dispatchEvent(ours(new Event('input', { bubbles: true })));
   input.dispatchEvent(ours(new Event('change', { bubbles: true })));
+  if (spin && lastBoxOfItsDate(input)) input.blur?.();
+}
+
+function lastBoxOfItsDate(input) {
+  const boxes = input.closest('[role="group"]')?.querySelectorAll('[role="spinbutton"]');
+  return !boxes?.length || boxes[boxes.length - 1] === input;
 }
 
 /**
@@ -1356,6 +1432,25 @@ const ONLY_A_DIALLING_CODE = /^\s*\+\d{1,4}\s*$/;
 
 function onlyTheStartOfAnAddress(value) {
   return /^\s*(https?:\/\/)?(www\.)?((linkedin\.com(\/in)?|github\.com)\/?)?\s*$/i.test(value) && /\S/.test(value);
+}
+
+/*
+ * Workday's LinkedIn box takes the whole address or nothing.
+ *
+ * Its Social Network URLs ask for the profile in one text box named
+ * `linkedInAccount`, and Save and Continue checks it. A profile stores the link
+ * as a resume prints it, "linkedin.com/in/…", and measured live with a fake
+ * profile on NVIDIA's and Salesforce's My Experience that was refused with
+ * "Invalid LinkedIn URL" — and so was "https://linkedin.com/in/…"; only
+ * "https://www.linkedin.com/in/…" was taken. The same profile, the same place,
+ * written the one way that box accepts. Only that box, and only a link that is
+ * plainly LinkedIn's; anything else is written as the profile has it.
+ */
+const isWorkdayLinkedIn = (input) => input.name === 'linkedInAccount' || input.getAttribute('data-automation-id') === 'linkedInAccount';
+
+function wholeLinkedInAddress(value) {
+  const bare = String(value).trim().replace(/^https?:\/\//i, '').replace(/^(?:www\.)?linkedin\.com\b/i, 'linkedin.com');
+  return /^linkedin\.com\//i.test(bare) ? `https://www.${bare}` : String(value);
 }
 
 function otherWaysToWrite(key, value) {
@@ -2512,6 +2607,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
       value = graduationFor(input, fields.education_start_date);
     } else if (key === 'graduation_date' || key === 'education_start_date') {
       value = graduationFor(input, value);
+    } else if (key === 'linkedin' && isWorkdayLinkedIn(input)) {
+      value = wholeLinkedInAddress(value);
     }
     setValue(input, value);
     /*
@@ -2688,8 +2785,20 @@ const JOB_PARTS = [
 ];
 
 /** The label of the date a month or year box is one half of. */
+/*
+ * Seven wrappers up, not four. Workday draws the date as a `<fieldset>` whose
+ * `<legend>` says "From", and the month box sits five wrappers below it: its
+ * own section, a focus holder, the `role="group"` — which names itself by an
+ * `aria-labelledby` pointing at nothing on the page, so it says nothing — and
+ * two layout divs. Measured live on NVIDIA's and Intel's My Experience with a
+ * fake resume holding one job: Job Title, Company and Role Description were
+ * filled and the required From and To left empty, unreported, because the
+ * climb stopped a level short of the legend. The first named group on the way
+ * up still answers, so a date inside a block named "Work Experience 1" is
+ * never read as that block's name.
+ */
 function dateHalfOf(input) {
-  for (let at = input.parentElement, n = 0; at && n < 4; at = at.parentElement, n++) {
+  for (let at = input.parentElement, n = 0; at && n < 7; at = at.parentElement, n++) {
     if (at.matches('[role="group"], fieldset')) {
       const named = clean(at.getAttribute('aria-label')) || clean(fromLabelledBy(at)) || clean(at.querySelector(':scope > legend')?.textContent);
       if (named) return withoutMarkers(named);
@@ -2825,7 +2934,15 @@ function fillJob(block, job, overwrite, filled, skipped) {
     if (input.value && !overwrite) return;
     const written = slot === 'start' || slot === 'end' ? graduationFor(input, value) : String(value);
     setValue(input, written);
-    if (input.value === written) filled.push({ key, value: written.slice(0, 80) });
+    /*
+     * The same month without its leading zero is the month. Workday's month
+     * box rewrites "06" as "6" the moment it takes it, and measured live on
+     * NVIDIA's and Intel's My Experience the From and To showed "06/2025" and
+     * "08/2025" while the report said the months had not been taken — telling
+     * the person to type what was already there.
+     */
+    const took = input.value === written || (/\.month$/.test(slot) && /^\d+$/.test(input.value) && Number(input.value) === Number(written));
+    if (took) filled.push({ key, value: written.slice(0, 80) });
     else skipped.push({ key, reason: 'the field would not take it', description: clean(labelFor(input)).slice(0, 60) });
   };
   put('title', 'job_title', job.title);
@@ -4074,7 +4191,7 @@ function widgetChoices(fields, filled) {
   const seen = [];
 
   for (const widget of deepQueryAll(
-    '[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"]',
+    '[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"], [data-uxi-widget-type="selectinput"]',
   )) {
     if (!isWidgetChoice(widget)) continue;
     if (widget.getClientRects().length === 0) continue;
@@ -4290,7 +4407,29 @@ function optionsOf(widget, openBefore = null) {
    * did: Boston, Massachusetts was two Bostons and neither was chosen.
    */
   const named = [...new Set(ids.map((id) => widget.getRootNode().getElementById?.(id) ?? document.getElementById(id)).filter(Boolean))];
-  const showing = visibleListboxes().filter((l) => l !== widget);
+  /*
+   * Never a list another control says is its own.
+   *
+   * Workday's questionnaire is a column of "Select One" buttons, each naming
+   * its list in `aria-controls` once the list is drawn, a moment after the
+   * press; and a list shut, by a choice or by Escape, takes about 300ms to
+   * go. Measured live with a fake profile on Intel's Application Questions:
+   * "8) Are you a current Federal, State or Local Government employee…?" was
+   * opened (read as a state), had no "MA", and was shut; "10) Are you
+   * currently authorized to work in the U.S.?" was pressed 12ms later, before
+   * its own list was drawn — so the one list showing was question 8's, "Yes"
+   * was pressed in it, and the applicant was declared a government employee
+   * while the report said the right to work had been answered. NVIDIA's pair
+   * did the same after a choice: "No" meant for "Will you now or in the future
+   * require sponsorship…?" was given to "Are you legally authorized to work in
+   * the United States?", and both were reported filled.
+   */
+  const theirs = (list) =>
+    Boolean(list.id) &&
+    deepQueryAll(`[aria-controls~="${CSS.escape(list.id)}"], [aria-owns~="${CSS.escape(list.id)}"]`).some(
+      (el) => el !== widget && el !== box && !widget.contains(el),
+    );
+  const showing = visibleListboxes().filter((l) => l !== widget && !theirs(l));
   /*
    * And, where the widget names none, the one its own press opened.
    *
@@ -4429,8 +4568,8 @@ function tookIt(widget, box, option, value, hiddenBefore, chosen = option.textCo
  * placeholder, or nothing — and `undefined` for a widget that is not drawn
  * this way at all, which `tookIt` then reads as it always has.
  */
-const DRAWN_VALUE = '[class*="single-value"], [class*="singleValue"], [class*="multi-value__label"], [class*="multiValueLabel"]';
-const DRAWS_ITS_VALUE = `${DRAWN_VALUE}, [class*="value-container"], [class*="ValueContainer"], [class*="__placeholder"]`;
+const DRAWN_VALUE = '[class*="single-value"], [class*="singleValue"], [class*="multi-value__label"], [class*="multiValueLabel"], [data-automation-id="selectedItem"]';
+const DRAWS_ITS_VALUE = `${DRAWN_VALUE}, [class*="value-container"], [class*="ValueContainer"], [class*="__placeholder"], [data-automation-id="multiselectInputContainer"]`;
 
 function drawnValue(control) {
   if (!control?.querySelector?.(DRAWS_ITS_VALUE)) return undefined;
@@ -4466,6 +4605,10 @@ function widgetShowsAnAnswer(widget) {
  * an ignored click beside a paragraph naming the city was reported as filled.
  */
 function controlOf(widget) {
+  // A Workday prompt draws its choices as pills beside the search box, in the
+  // container around both. See `isWorkdayPrompt`.
+  const prompt = widget.closest?.('[data-automation-id="multiSelectContainer"]');
+  if (prompt) return prompt;
   /*
    * Its wrapper, not itself, and a near one. `closest` starts at the element
    * it is called on, and react-select's box is `class="select__input"` — so on
@@ -4675,6 +4818,14 @@ async function chooseInWidget(widget, key, value, { patience, fields, asked }) {
     option = await waitForOption(widget, key, value, openBefore, { patience, quiet: 400, fields, asked });
     if (!option) {
       setValue(box, value);
+      /*
+       * A Workday prompt searches when Enter is let go: its keydown notes the
+       * key held and its keyup runs the search. Typed into and left, its list
+       * said "No Items." for as long as it was watched.
+       */
+      if (isWorkdayPrompt(box)) {
+        for (const type of ['keydown', 'keyup']) box.dispatchEvent(ours(new KeyboardEvent(type, { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true })));
+      }
       option = await waitForOption(widget, key, value, openBefore, { patience, fields, asked });
     }
   } else {
@@ -4688,13 +4839,36 @@ async function chooseInWidget(widget, key, value, { patience, fields, asked }) {
   }
   // Read before the press: a menu that closes takes its options with it.
   const chosen = option.textContent;
-  press(option);
+  press(wordsOf(option));
   await pause(60);
   if (!tookIt(widget, box, option, value, hiddenBefore, chosen, shownBefore)) {
     undoWidget(widget, box);
     return 'ignored';
   }
   return 'chose';
+}
+
+/*
+ * Where a person's click on an option lands: on its words, the innermost
+ * element saying all of them — from which the click rises through the option
+ * to every listener above it.
+ *
+ * Pressed on the option itself, a click never reaches a listener inside it,
+ * and Workday's is inside: its `role="option"` row wraps a `promptLeafNode`
+ * holding the only click handler, around a radio and the words. Measured live
+ * on Intel's School or University: "Northeastern University" found in the
+ * list and pressed was not chosen — no pill, the list still open — and the
+ * same press on its words chose it. An option that is nothing but its words
+ * is pressed as before.
+ */
+function wordsOf(option) {
+  const said = clean(option.textContent);
+  let at = option;
+  for (;;) {
+    const inner = [...at.children].find((child) => clean(child.textContent) === said);
+    if (!inner) return at;
+    at = inner;
+  }
 }
 
 /** Whether a widget's own menu is showing. */

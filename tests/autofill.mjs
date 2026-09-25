@@ -2238,6 +2238,256 @@ const WORKDAY_EXPERIENCE_BEGUN = `<!doctype html><html><head><meta charset="utf-
 <div role="group" aria-labelledby="we-head"><h3 id="we-head">Work Experience</h3>${workdayJob(1, { company: 'Acme' })}${workdayJob(2, { description: 'My own words about it.' })}${workdayJob(3, { company: 'Globex' })}</div>
 <label for="project">Project description</label><textarea id="project"></textarea>
 </body></html>`;
+/*
+ * Workday's My Experience as it is drawn live — measured on NVIDIA's and
+ * Intel's tenants (nvidia.wd5.myworkdayjobs.com, intel.wd1.myworkdayjobs.com)
+ * with a fake profile, after pressing Work Experience's "Add". Each date is a
+ * `<fieldset>` whose `<legend>` says "From" or "To", five wrappers above the
+ * month box; the group around the two boxes names itself by an
+ * `aria-labelledby` pointing at an element that is not on the page, and the
+ * boxes say only "Month" and "Year" in their `aria-label`s, with no
+ * placeholder. The Education block beside it asks its years the same way.
+ *
+ * And the date behaves as it does live, because each of those is a way the
+ * fill has been seen to go wrong:
+ *   - the month box rewrites "06" as "6" as soon as it takes it;
+ *   - a month filled while the caret is in it moves it on to the year a
+ *     moment later;
+ *   - focus arriving in a date from outside it is sent to its first box, and
+ *     a box takes what is written into it only while it has the focus;
+ *   - the date is taken — what Save and Continue checks — only when focus
+ *     leaves it, from what each box took. `data-committed` holds
+ *     what was taken, and Workday's "The field From is required and must have
+ *     a value" is a `data-committed` of "".
+ */
+const workdayDate = (id, legend, parts = ['Month', 'Year']) => `
+  <div data-automation-id="formField-${id.split('--')[1]}"><fieldset><legend><label id="label-${id}"><span>${legend}<abbr aria-hidden="true">*</abbr></span></label></legend>
+    <div><div><div aria-hidden="true" id="helpText-${id}">current value is ${parts.map((p) => (p === 'Month' ? 'MM' : 'YYYY')).join('/')}</div>
+      <div id="${id}" aria-labelledby="hiddenDateValueId-${id}" role="group" data-automation-id="dateInputWrapper" data-committed=""><div tabindex="-1">${parts.map((p, i) => `${i ? '<div>/</div>' : ''}
+        <div id="${id}-dateSection${p}" tabindex="-1"><div aria-hidden="true" data-automation-id="dateSection${p}-display">${p === 'Month' ? 'MM' : 'YYYY'}</div>
+          <input role="spinbutton" aria-label="${p}" aria-valuemin="1" aria-valuemax="${p === 'Month' ? 12 : 9999}" id="${id}-dateSection${p}-input" data-automation-id="dateSection${p}-input" value=""></div>`).join('')}
+      </div><div aria-label="Calendar" data-automation-id="dateIcon" role="button" tabindex="0"></div></div>
+    </div></div></fieldset></div>`;
+const WORKDAY_DATES = `<!doctype html><html><head><meta charset="utf-8"><title>My Experience</title></head><body>
+<div data-automation-id="applyFlowMyExpPage">
+<div role="group" aria-labelledby="Work-Experience-section"><h4 id="Work-Experience-section">Work Experience</h4>
+  <div role="group" aria-labelledby="Work-Experience-1-panel"><div><h5 id="Work-Experience-1-panel">Work Experience 1</h5></div>
+    <div data-automation-id="formField-jobTitle"><label for="workExperience-93--jobTitle"><span>Job Title<abbr aria-hidden="true">*</abbr></span></label><div><input type="text" id="workExperience-93--jobTitle" name="jobTitle" aria-required="true"></div></div>
+    <div data-automation-id="formField-companyName"><label for="workExperience-93--companyName"><span>Company<abbr aria-hidden="true">*</abbr></span></label><div><input type="text" id="workExperience-93--companyName" name="companyName" aria-required="true"></div></div>
+    <div data-automation-id="formField-location"><label for="workExperience-93--location">Location</label><div><input type="text" id="workExperience-93--location" name="location"></div></div>
+    <div data-automation-id="formField-currentlyWorkHere"><label for="workExperience-93--currentlyWorkHere">I currently work here</label><input type="checkbox" id="workExperience-93--currentlyWorkHere" name="currentlyWorkHere"></div>
+    ${workdayDate('workExperience-93--startDate', 'From')}
+    ${workdayDate('workExperience-93--endDate', 'To')}
+    <div data-automation-id="formField-roleDescription"><label for="workExperience-93--roleDescription">Role Description</label><textarea id="workExperience-93--roleDescription"></textarea></div>
+  </div>
+</div>
+<div role="group" aria-labelledby="Education-section"><h4 id="Education-section">Education</h4>
+  <div role="group" aria-labelledby="Education-1-panel"><div><h5 id="Education-1-panel">Education 1</h5></div>
+    <div data-automation-id="formField-schoolName"><label for="education-66--schoolName"><span>School or University<abbr aria-hidden="true">*</abbr></span></label><div><input type="text" id="education-66--schoolName" name="schoolName" aria-required="true"></div></div>
+    ${workdayDate('education-66--firstYearAttended', 'From', ['Year'])}
+    ${workdayDate('education-66--lastYearAttended', 'To (Actual or Expected)', ['Year'])}
+  </div>
+  <div><button data-automation-id="add-button" type="button">Add Another</button></div>
+</div>
+</div>
+<script>
+  for (const wrapper of document.querySelectorAll('[data-automation-id="dateInputWrapper"]')) {
+    const boxes = [...wrapper.querySelectorAll('input[role="spinbutton"]')];
+    const [month, year] = boxes.length === 2 ? boxes : [null, boxes[0]];
+    const entered = new Map();
+    for (const box of boxes) box.addEventListener('input', () => {
+      if (box === month && /^0\\d$/.test(month.value)) month.value = String(Number(month.value));
+      if (document.activeElement === box) entered.set(box, box.value);
+    });
+    if (month) month.addEventListener('input', () => {
+      if (month.value && document.activeElement === month) setTimeout(() => { if (document.activeElement === month) year.focus(); }, 0);
+    });
+    wrapper.addEventListener('focusin', (e) => {
+      if (!wrapper.contains(e.relatedTarget) && e.target !== boxes[0]) boxes[0].focus();
+    });
+    wrapper.addEventListener('focusout', (e) => {
+      if (wrapper.contains(e.relatedTarget)) return;
+      const m = entered.get(month) ?? '', y = entered.get(year) ?? '';
+      wrapper.dataset.committed = month ? (m || y ? m + '/' + y : '') : y;
+    });
+  }
+</script>
+</body></html>`;
+/*
+ * Workday's Application Questions as drawn live — NVIDIA's pair on
+ * nvidia.wd5.myworkdayjobs.com, and two of Intel's United States Legal
+ * Questionnaire on intel.wd1.myworkdayjobs.com, measured with a fake profile.
+ * The question is rich text in the `<legend>` of a `<fieldset>`; the answer
+ * is a "Select One" button whose own `aria-label` is " Select One Required",
+ * beside an `<input type="text">` Workday keeps at `display: none`.
+ *
+ * And the lists behave as measured there: pressing a button draws its list
+ * and names it in the button's `aria-controls` a moment later, not at once;
+ * the option now chosen is the one marked `aria-selected`; and a list shut —
+ * by a choice, or by Escape — takes about 300ms to go, still named by its
+ * button until it has.
+ */
+const workdayQuestion = (id, question) => `
+  <div data-automation-id="formField-${id}"><fieldset><legend><div id="rich-${id}"><div data-automation-id="richText"><p>${question}<abbr title="required">*</abbr></p></div></div></legend>
+    <div><div><div><button aria-haspopup="listbox" type="button" value="" aria-label=" Select One Required" name="${id}" id="primaryQuestionnaire--${id}">Select One</button><input type="text" value="" style="display:none"><span>▾</span></div></div><div></div></div>
+  </fieldset></div>`;
+const WORKDAY_QUESTIONS_SCRIPT = `<script>
+  window.__log = [];
+  let n = 0;
+  const shut = (button, list) => setTimeout(() => { list.remove(); if (button.getAttribute('aria-controls') === list.id) { button.removeAttribute('aria-controls'); button.removeAttribute('aria-expanded'); } }, 300);
+  for (const button of document.querySelectorAll('button[aria-haspopup="listbox"]')) {
+    button.addEventListener('click', () => setTimeout(() => {
+      const list = document.createElement('ul');
+      list.id = 'list' + ++n;
+      list.setAttribute('role', 'listbox');
+      for (const text of ['Select One', 'Yes', 'No']) {
+        const li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        li.setAttribute('aria-selected', String(button.textContent === text));
+        if (text === 'Select One') li.setAttribute('aria-disabled', 'true');
+        li.textContent = text;
+        li.addEventListener('click', () => {
+          button.textContent = text;
+          button.setAttribute('aria-label', ' ' + text + ' Required');
+          li.setAttribute('aria-selected', 'true');
+          __log.push(button.name + ' = ' + text);
+          shut(button, list);
+        });
+        list.append(li);
+      }
+      document.body.append(list);
+      button.setAttribute('aria-controls', list.id);
+      button.setAttribute('aria-expanded', 'true');
+      button.addEventListener('keydown', function esc(e) { if (e.key === 'Escape') { button.removeEventListener('keydown', esc); shut(button, list); } });
+    }, 30));
+  }
+</script>`;
+const WORKDAY_QUESTIONS = `<!doctype html><html><head><meta charset="utf-8"><title>Application Questions</title></head><body>
+<div data-automation-id="applyFlowPrimaryQuestionnairePage"><div data-fkit-id="primaryQuestionnaire--null">
+${workdayQuestion('028095df097b1001ac93595f70b80000', '<b>Are you legally authorized to work in the United States?</b>')}
+${workdayQuestion('028095df097b1001ac9359f942cf0000', 'Will you now or in the future require sponsorship for employment visa status (e.g. H-1B visa status)?')}
+</div></div>
+${WORKDAY_QUESTIONS_SCRIPT}
+</body></html>`;
+const WORKDAY_QUESTIONS_INTEL = `<!doctype html><html><head><meta charset="utf-8"><title>Application Questions 1 of 2</title></head><body>
+<div data-automation-id="applyFlowPrimaryQuestionnairePage"><div data-fkit-id="primaryQuestionnaire--null">
+${workdayQuestion('ceecc5b2f5401001aa31bb9a5d390005', '8)* Are you a current Federal, State or Local Government employee; including military (other than the DOD) or have you at any time in the past 5 years been an employee of one of these entities?')}
+${workdayQuestion('ceecc5b2f5401001aa31bc34396e0006', '10)* Are you currently authorized to work in the U.S.?  NOTE: Respond Yes only if your work authorization is effective as of the date you complete this questionnaire.')}
+</div></div>
+${WORKDAY_QUESTIONS_SCRIPT}
+</body></html>`;
+/*
+ * Workday's prompt, as its School or University and Field of Study are drawn
+ * live on Intel's and NVIDIA's My Experience: a search box with no role and
+ * no `aria-autocomplete`, marked only `data-uxi-widget-type="selectinput"`,
+ * inside a `multiSelectContainer` that draws each choice as a pill.
+ *
+ * And it behaves as it did live: typing searches nothing — the search runs
+ * when Enter is let go after being pressed; the options are `role="option"`
+ * rows whose only click handler is on a `promptLeafNode` inside them, around a
+ * radio and the words; the first row is marked `aria-selected` while nothing
+ * has been chosen; and a choice draws a pill and empties the box.
+ */
+const workdayPrompt = (id, label, picked = '') => `
+  <div data-automation-id="formField-${id.split('--')[1]}"><label for="${id}"><span>${label}<abbr aria-hidden="true">*</abbr></span></label>
+    <div><div><div tabindex="-1" data-automation-id="multiSelectContainer" data-uxi-widget-type="multiselect">
+      ${picked ? `<ul role="listbox" aria-label="items selected"><li role="presentation"><div role="option" aria-selected="true" data-automation-id="selectedItem" aria-label="${picked}, press delete to clear value.">${picked}</div></li></ul>` : ''}
+      <div data-automation-id="multiselectInputContainer"><div>
+        <input enterkeyhint="search" placeholder="Search" aria-required="true" autocomplete="off" data-uxi-widget-type="selectinput" id="${id}" data-automation-id="searchBox" value="">
+        <div data-automation-id="promptAriaInstruction" aria-hidden="true">${picked ? '1 item' : '0 items'} selected</div>
+      </div><span data-automation-id="promptIcon" aria-hidden="true">≡</span></div>
+    </div></div></div></div>`;
+const WORKDAY_PROMPTS = `<!doctype html><html><head><meta charset="utf-8"><title>My Experience</title></head><body>
+<div data-automation-id="applyFlowMyExpPage">
+<div role="group" aria-labelledby="Education-section"><h4 id="Education-section">Education</h4>
+  <p>In the 'School' or 'Field of Study' fields, start typing the official English name and press 'Enter' to see suggestions.</p>
+  <div role="group" aria-labelledby="Education-1-panel"><div><h5 id="Education-1-panel">Education 1</h5></div>
+    ${workdayPrompt('education-22--school', 'School or University')}
+    ${workdayPrompt('education-22--fieldOfStudy', 'Field of Study')}
+  </div>
+</div>
+<div role="group" aria-labelledby="Education-section-2"><h4 id="Education-section-2">Education</h4>
+  <div role="group" aria-labelledby="Education-2-panel"><div><h5 id="Education-2-panel">Education 2</h5></div>
+    ${workdayPrompt('education-23--fieldOfStudy', 'Field of Study', 'Computer Science')}
+  </div>
+</div>
+</div>
+<script>
+  window.__log = [];
+  const FOUND = {
+    'Northeastern University': ['Northeastern Illinois University', 'Northeastern Ohio Medical University', 'Northeastern State University', 'Northeastern University', 'University of Northeastern Philippines'],
+    'Computer Science': ['Computational Science & Engineering', 'Computer & Info Science', 'Computer Science', 'Computer Science & Engin.', 'Electrical Engineering and Computer Science'],
+  };
+  const close = () => document.querySelector('[data-automation-id="activeListContainer"]')?.remove();
+  const show = (box, words) => {
+    close();
+    const list = document.createElement('div');
+    list.setAttribute('role', 'listbox');
+    list.setAttribute('data-automation-id', 'activeListContainer');
+    words.forEach((text, i) => {
+      const row = document.createElement('div');
+      row.setAttribute('role', 'option');
+      row.setAttribute('data-automation-id', 'menuItem');
+      row.setAttribute('aria-selected', String(i === 0));
+      row.innerHTML = '<div data-automation-id="promptLeafNode"><div><input type="radio" data-automation-id="radioBtn"></div><div data-automation-id="promptOption"></div></div>';
+      row.querySelector('[data-automation-id="promptOption"]').textContent = text;
+      row.querySelector('[data-automation-id="promptLeafNode"]').addEventListener('click', () => {
+        if (text === 'No Items.') return;
+        const container = box.closest('[data-automation-id="multiSelectContainer"]');
+        container.insertAdjacentHTML('afterbegin', '<ul role="listbox" aria-label="items selected"><li role="presentation"><div role="option" aria-selected="true" data-automation-id="selectedItem"></div></li></ul>');
+        container.querySelector('[data-automation-id="selectedItem"]').textContent = text;
+        box.value = '';
+        __log.push(box.id + ' = ' + text);
+        close();
+      });
+      list.append(row);
+    });
+    document.body.append(list);
+  };
+  for (const box of document.querySelectorAll('[data-uxi-widget-type="selectinput"]')) {
+    let held = false;
+    box.addEventListener('mousedown', () => show(box, ['No Items.']));
+    box.addEventListener('keydown', (e) => { if (e.key === 'Enter') held = true; if (e.key === 'Escape') close(); });
+    box.addEventListener('keyup', (e) => { if (e.key === 'Enter' && held) { held = false; show(box, FOUND[box.value] ?? ['No Items.']); } });
+    box.addEventListener('input', () => __log.push('typed into ' + box.id + ': ' + box.value));
+  }
+</script>
+</body></html>`;
+/*
+ * Workday's Create Account and Sign In, as drawn live on every tenant visited
+ * (NVIDIA, Intel): beside the email and password boxes, a box named
+ * `website` whose label says it is for robots only — cut down to a pixel by
+ * the same `clip` a screen-reader-only label uses, so it counts as on the page.
+ */
+const WORKDAY_SIGN_IN = `<!doctype html><html><head><meta charset="utf-8"><title>Create Account</title>
+<style>.css-umjazw{position:absolute;width:1px;height:1px;margin:-22px -1px -1px;padding:0;border:0;overflow:clip;clip:rect(1px,1px,1px,1px);clip-path:polygon(0 0,0 0,0 0,0 0);white-space:nowrap}.css-i19yjz{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(1px,1px,1px,1px)}</style></head><body>
+<div data-automation-id="signInContent"><h3 id="authViewTitle">Create Account</h3>
+<form data-automation-id="signInFormo">
+  <div data-automation-id="formField-email"><label for="input-14"><span>Email Address<abbr aria-hidden="true">*</abbr></span></label><div><div><input type="text" data-automation-id="email" id="input-14" aria-required="true" autocomplete="email"></div></div></div>
+  <div data-automation-id="formField-password"><label for="input-15"><span>Password<abbr aria-hidden="true">*</abbr></span></label><div><div><input type="password" data-automation-id="password" id="input-15" aria-required="true" autocomplete="new-password"></div></div></div>
+  <div data-automation-id="formField-verifyPassword"><label for="input-16"><span>Verify New Password<abbr aria-hidden="true">*</abbr></span></label><div><div><input type="password" data-automation-id="verifyPassword" id="input-16" aria-required="true" autocomplete="new-password"></div></div></div>
+  <div><div style="position:relative"><label for="03c5ccaf-b610-4fb6-89b9-a72d4e191021" class="css-i19yjz">Enter website. This input is for robots only, do not enter if you're human.</label><input data-automation-id="beecatcher" id="03c5ccaf-b610-4fb6-89b9-a72d4e191021" name="website" type="text" class="css-umjazw"></div></div>
+  <div><label for="createAccountCheckbox">I agree</label><input type="checkbox" id="createAccountCheckbox" data-automation-id="createAccountCheckbox"></div>
+</form></div>
+</body></html>`;
+/*
+ * Workday's Social Network URLs, as NVIDIA's and Salesforce's My Experience
+ * draw it: one text box named `linkedInAccount`, which Save and Continue
+ * refuses with "Invalid LinkedIn URL" unless it holds the whole address —
+ * measured live, "linkedin.com/in/example" and "https://linkedin.com/in/example"
+ * refused, "https://www.linkedin.com/in/example" taken.
+ */
+const WORKDAY_SOCIAL = `<!doctype html><html><head><meta charset="utf-8"><title>My Experience</title></head><body>
+<div data-automation-id="applyFlowMyExpPage">
+<div role="group" aria-labelledby="Social-Network-URLs-section"><h4 id="Social-Network-URLs-section">Social Network URLs</h4>
+  <div data-automation-id="formField-linkedInAccount"><label for="socialNetworkAccounts--linkedInAccount">Please provide a link to your LinkedIn profile:</label>
+    <div><input type="text" id="socialNetworkAccounts--linkedInAccount" name="linkedInAccount" data-automation-id="linkedInAccount"></div></div>
+</div>
+<div role="group" aria-labelledby="Websites-section"><h4 id="Websites-section">Websites</h4>
+  <label for="other-link">Other link to your LinkedIn</label><input type="text" id="other-link" name="otherLink">
+</div>
+</div>
+</body></html>`;
 const JOBS = [
   {
     company: 'Vega Analytics',
@@ -2668,7 +2918,7 @@ const ADDS_ITS_CODE = `<!doctype html><html><head><meta charset="utf-8"><title>A
 </script>
 </body></html>`;
 
-const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED };
+const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -6011,6 +6261,167 @@ async function main() {
       'while a description outside the work history is still a question',
       JSON.stringify(begun.questions) === '["Project description"]',
       JSON.stringify(begun.questions),
+    );
+
+    /*
+     * The same step as Workday draws it live, with the one job a fake resume
+     * lists. See `WORKDAY_DATES`.
+     */
+    const INTERNSHIP = [{ company: 'Example Co', title: 'Software Engineering Intern', start: { year: 2025, month: 6 }, end: { year: 2025, month: 8 }, current: false, description: '• Built example things for testing' }];
+    const liveDates = await page.goto(`${base}/workday-dates`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, jobs }) => {
+        const m = await import(`${b}/autofill.js`);
+        // As content.js's `fillThisDocument` calls it.
+        const fields = { school: 'Northeastern University', education_start_year: '2023', graduation_year: '2027' };
+        const education = [{ school: 'Northeastern University', start: { year: 2023, month: 9 }, end: { year: 2027, month: 5 } }];
+        const report = await m.fillEducation(education, fields, await m.fillComboboxes(fields, m.fillForm(fields, { history: jobs }), { history: jobs }));
+        await new Promise((r) => setTimeout(r, 50));
+        const v = (id) => document.getElementById(id).value;
+        const at = 'workExperience-93--';
+        return {
+          taken: ['workExperience-93--startDate', 'workExperience-93--endDate', 'education-66--firstYearAttended', 'education-66--lastYearAttended'].map((id) => document.getElementById(id).dataset.committed),
+          from: `${v(`${at}startDate-dateSectionMonth-input`)}/${v(`${at}startDate-dateSectionYear-input`)}`,
+          to: `${v(`${at}endDate-dateSectionMonth-input`)}/${v(`${at}endDate-dateSectionYear-input`)}`,
+          title: v(`${at}jobTitle`),
+          filled: report.filled.map((f) => f.key),
+          skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, jobs: INTERNSHIP }),
+    );
+    group('Workday: My Experience as it is drawn live');
+    check(
+      'a job\'s From and To are filled, though the words "From" and "To" are a legend five wrappers above the boxes',
+      liveDates.title === 'Software Engineering Intern' && liveDates.from === '6/2025' && liveDates.to === '8/2025',
+      JSON.stringify(liveDates),
+    );
+    check(
+      'and a month the box rewrites from "06" to "6" is reported filled, not refused',
+      liveDates.filled.includes('job_start_month') && liveDates.filled.includes('job_end_month') && !liveDates.skipped.some((s) => /month/.test(s)),
+      JSON.stringify({ filled: liveDates.filled, skipped: liveDates.skipped }),
+    );
+    check(
+      'and Workday takes each date as a whole: the job\'s From and To and the degree\'s years are what leaving them commits',
+      JSON.stringify(liveDates.taken) === '["6/2025","8/2025","2023","2027"]',
+      JSON.stringify(liveDates.taken),
+    );
+
+    const questionnaire = await page.goto(`${base}/workday-questions`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const buttons = [...document.querySelectorAll('button[aria-haspopup="listbox"]')];
+        const asked = buttons.map((el) => m.questionFor(el));
+        const named = m.fillForm({ work_authorization: 'Authorized to work in the US', requires_sponsorship: 'No' }).skipped.map((s) => `${s.key}: ${s.reason}`);
+        const fields = { work_authorization: 'Authorized to work in the US' };
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        return { asked, named, answers: buttons.map((el) => el.textContent), filled: report.filled.map((f) => f.key) };
+      }, { b: base }),
+    );
+    group('Workday: Application Questions as they are drawn live');
+    check(
+      'each question is read from the legend above it, not from its button\'s " Select One Required"',
+      questionnaire.asked[0].startsWith('Are you legally authorized to work in the United States?') &&
+        questionnaire.asked[1].startsWith('Will you now or in the future require sponsorship'),
+      JSON.stringify(questionnaire.asked),
+    );
+    check(
+      'so both are named in the report, and the right to work is answered "Yes"',
+      questionnaire.named.includes('work_authorization: this one has to be picked by hand') &&
+        questionnaire.named.includes('requires_sponsorship: this one has to be picked by hand') &&
+        questionnaire.answers[0] === 'Yes' && questionnaire.filled.includes('work_authorization'),
+      JSON.stringify(questionnaire),
+    );
+
+    const bothAsked = await page.goto(`${base}/workday-questions`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { work_authorization: 'Authorized to work in the US', requires_sponsorship: 'No' };
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        return { answers: [...document.querySelectorAll('button[aria-haspopup="listbox"]')].map((el) => el.textContent), filled: report.filled.map((f) => f.key), log: window.__log };
+      }, { b: base }),
+    );
+    check(
+      'both at once, each in its own list: the one just chosen in is still closing when the next is pressed',
+      JSON.stringify(bothAsked.answers) === '["Yes","No"]',
+      JSON.stringify(bothAsked),
+    );
+    const intel = await page.goto(`${base}/workday-questions-intel`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { address_state: 'MA', work_authorization: 'Authorized to work in the US' };
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        return { answers: [...document.querySelectorAll('button[aria-haspopup="listbox"]')].map((el) => el.textContent), filled: report.filled.map((f) => f.key), log: window.__log };
+      }, { b: base }),
+    );
+    check(
+      'a question looked in and shut is not answered by the next one\'s choice: nobody is declared a government employee',
+      JSON.stringify(intel.answers) === '["Select One","Yes"]' && JSON.stringify(intel.log) === '["ceecc5b2f5401001aa31bc34396e0006 = Yes"]',
+      JSON.stringify(intel),
+    );
+
+    const prompts = await page.goto(`${base}/workday-prompts`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { school: 'Northeastern University', major: 'Computer Science' };
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        const pills = (id) => [...document.getElementById(id).closest('[data-automation-id="multiSelectContainer"]').querySelectorAll('[data-automation-id="selectedItem"]')].map((p) => p.textContent);
+        return {
+          school: pills('education-22--school'),
+          field: pills('education-22--fieldOfStudy'),
+          boxes: ['education-22--school', 'education-22--fieldOfStudy', 'education-23--fieldOfStudy'].map((id) => document.getElementById(id).value),
+          filled: report.filled.map((f) => `${f.key}${f.widget ? ' (chosen)' : ''}`),
+          log: window.__log,
+        };
+      }, { b: base }),
+    );
+    group('Workday: a search box that is a list');
+    check(
+      'the School and the Field of Study are chosen from the search, as pills saying exactly the profile\'s words',
+      JSON.stringify(prompts.school) === '["Northeastern University"]' && JSON.stringify(prompts.field) === '["Computer Science"]' &&
+        prompts.boxes[0] === '' && prompts.boxes[1] === '' &&
+        prompts.filled.includes('school (chosen)') && prompts.filled.includes('major (chosen)'),
+      JSON.stringify(prompts),
+    );
+    check(
+      'and one already holding a choice is not typed into again',
+      prompts.boxes[2] === '' && !prompts.log.some((l) => l.startsWith('typed into education-23')),
+      JSON.stringify(prompts.log),
+    );
+
+    const signIn = await page.goto(`${base}/workday-sign-in`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm({ email: 'morgan.testwell@example.com', website: 'https://example.com' });
+        return {
+          email: document.getElementById('input-14').value,
+          trap: document.getElementById('03c5ccaf-b610-4fb6-89b9-a72d4e191021').value,
+          filled: report.filled.map((f) => f.key),
+        };
+      }, { b: base }),
+    );
+    group('Workday: signing in');
+    check(
+      'the box "for robots only, do not enter if you\'re human" is left empty, and the email still filled',
+      signIn.trap === '' && signIn.email === 'morgan.testwell@example.com' && !signIn.filled.includes('website'),
+      JSON.stringify(signIn),
+    );
+
+    const social = await page.goto(`${base}/workday-social`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm({ linkedin: 'linkedin.com/in/example' });
+        return {
+          workday: document.getElementById('socialNetworkAccounts--linkedInAccount').value,
+          other: document.getElementById('other-link').value,
+          filled: report.filled.map((f) => f.key),
+          skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base }),
+    );
+    check(
+      'Workday\'s LinkedIn box is given the whole address it insists on; any other box the link as the profile has it',
+      social.workday === 'https://www.linkedin.com/in/example' && social.other === 'linkedin.com/in/example' &&
+        social.filled.filter((k) => k === 'linkedin').length === 2 && social.skipped.length === 0,
+      JSON.stringify(social),
     );
 
     /* ---------------- Found filling live forms with a fake profile ---------------- */
