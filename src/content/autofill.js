@@ -1399,6 +1399,25 @@ function onlyTheStartOfAnAddress(value) {
   return /^\s*(https?:\/\/)?(www\.)?((linkedin\.com(\/in)?|github\.com)\/?)?\s*$/i.test(value) && /\S/.test(value);
 }
 
+/*
+ * Workday's LinkedIn box takes the whole address or nothing.
+ *
+ * Its Social Network URLs ask for the profile in one text box named
+ * `linkedInAccount`, and Save and Continue checks it. A profile stores the link
+ * as a resume prints it, "linkedin.com/in/…", and measured live with a fake
+ * profile on NVIDIA's and Salesforce's My Experience that was refused with
+ * "Invalid LinkedIn URL" — and so was "https://linkedin.com/in/…"; only
+ * "https://www.linkedin.com/in/…" was taken. The same profile, the same place,
+ * written the one way that box accepts. Only that box, and only a link that is
+ * plainly LinkedIn's; anything else is written as the profile has it.
+ */
+const isWorkdayLinkedIn = (input) => input.name === 'linkedInAccount' || input.getAttribute('data-automation-id') === 'linkedInAccount';
+
+function wholeLinkedInAddress(value) {
+  const bare = String(value).trim().replace(/^https?:\/\//i, '').replace(/^(?:www\.)?linkedin\.com\b/i, 'linkedin.com');
+  return /^linkedin\.com\//i.test(bare) ? `https://www.${bare}` : String(value);
+}
+
 function otherWaysToWrite(key, value) {
   const said = String(value).trim();
 
@@ -2553,6 +2572,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
       value = graduationFor(input, fields.education_start_date);
     } else if (key === 'graduation_date' || key === 'education_start_date') {
       value = graduationFor(input, value);
+    } else if (key === 'linkedin' && isWorkdayLinkedIn(input)) {
+      value = wholeLinkedInAddress(value);
     }
     setValue(input, value);
     /*

@@ -2439,6 +2439,24 @@ const WORKDAY_SIGN_IN = `<!doctype html><html><head><meta charset="utf-8"><title
   <div><label for="createAccountCheckbox">I agree</label><input type="checkbox" id="createAccountCheckbox" data-automation-id="createAccountCheckbox"></div>
 </form></div>
 </body></html>`;
+/*
+ * Workday's Social Network URLs, as NVIDIA's and Salesforce's My Experience
+ * draw it: one text box named `linkedInAccount`, which Save and Continue
+ * refuses with "Invalid LinkedIn URL" unless it holds the whole address —
+ * measured live, "linkedin.com/in/example" and "https://linkedin.com/in/example"
+ * refused, "https://www.linkedin.com/in/example" taken.
+ */
+const WORKDAY_SOCIAL = `<!doctype html><html><head><meta charset="utf-8"><title>My Experience</title></head><body>
+<div data-automation-id="applyFlowMyExpPage">
+<div role="group" aria-labelledby="Social-Network-URLs-section"><h4 id="Social-Network-URLs-section">Social Network URLs</h4>
+  <div data-automation-id="formField-linkedInAccount"><label for="socialNetworkAccounts--linkedInAccount">Please provide a link to your LinkedIn profile:</label>
+    <div><input type="text" id="socialNetworkAccounts--linkedInAccount" name="linkedInAccount" data-automation-id="linkedInAccount"></div></div>
+</div>
+<div role="group" aria-labelledby="Websites-section"><h4 id="Websites-section">Websites</h4>
+  <label for="other-link">Other link to your LinkedIn</label><input type="text" id="other-link" name="otherLink">
+</div>
+</div>
+</body></html>`;
 const JOBS = [
   {
     company: 'Vega Analytics',
@@ -2869,7 +2887,7 @@ const ADDS_ITS_CODE = `<!doctype html><html><head><meta charset="utf-8"><title>A
 </script>
 </body></html>`;
 
-const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN };
+const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -6186,6 +6204,25 @@ async function main() {
       'the box "for robots only, do not enter if you\'re human" is left empty, and the email still filled',
       signIn.trap === '' && signIn.email === 'morgan.testwell@example.com' && !signIn.filled.includes('website'),
       JSON.stringify(signIn),
+    );
+
+    const social = await page.goto(`${base}/workday-social`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm({ linkedin: 'linkedin.com/in/example' });
+        return {
+          workday: document.getElementById('socialNetworkAccounts--linkedInAccount').value,
+          other: document.getElementById('other-link').value,
+          filled: report.filled.map((f) => f.key),
+          skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base }),
+    );
+    check(
+      'Workday\'s LinkedIn box is given the whole address it insists on; any other box the link as the profile has it',
+      social.workday === 'https://www.linkedin.com/in/example' && social.other === 'linkedin.com/in/example' &&
+        social.filled.filter((k) => k === 'linkedin').length === 2 && social.skipped.length === 0,
+      JSON.stringify(social),
     );
 
     /* ---------------- Found filling live forms with a fake profile ---------------- */
