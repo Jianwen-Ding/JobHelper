@@ -2291,6 +2291,57 @@ function countriesIn(text) {
   return out;
 }
 
+/*
+ * A national number's trunk 0, which is dialled at home and not from abroad.
+ *
+ * A UK profile's "07700 900123" went in behind the form's "+44" as "+44 07700
+ * 900123", a number nobody can ring. Behind a dialling code the 0 goes —
+ * except for North America, whose numbers never start with one and are not
+ * touched, and Italy (and the two states inside it), whose numbers keep it.
+ * "(0)" is the same 0, written the way a UK business card writes it. "00" in
+ * front is the international prefix, not a trunk 0, and is left alone.
+ */
+const KEEPS_ITS_ZERO = new Set(['+1', '+39', '+378', '+379']);
+
+function withoutTrunkZero(code, number) {
+  const said = String(number);
+  if (!code || KEEPS_ITS_ZERO.has(code.trim()) || /^\s*\(?00/.test(said)) return said;
+  const dropped = said.trim().replace(/^\(0\)\s*/, '').replace(/^0(?=\d)/, '').replace(/^\(0(?=\d)/, '(');
+  return dropped === said.trim() ? said : dropped;
+}
+
+/** A number stored with its code and its trunk 0 both: "+44 07700 900123", "+44 (0)7700 900123". */
+function withoutTrunkZeroAfterCode(number) {
+  const m = /^\s*(\+\d{1,4})[\s.-]+(.*)$/.exec(String(number));
+  if (!m) return number;
+  const rest = withoutTrunkZero(m[1], m[2]);
+  return rest === m[2] ? number : `${m[1]} ${rest}`;
+}
+
+/*
+ * The dialling code the form shows beside a telephone box: a country-code
+ * select, or the button an intl-tel-input puts in front of its box, "Change
+ * country, selected United Kingdom (+44)". Looked for in the box's own
+ * wrapper and the two around it, never the whole form.
+ */
+function diallingCodeBeside(input) {
+  let scope = input.parentElement;
+  for (let i = 0; i < 3 && scope && scope.localName !== 'form' && scope !== document.body; i++, scope = scope.parentElement) {
+    for (const el of scope.querySelectorAll('select, button, [role="combobox"], input')) {
+      if (el === input) continue;
+      const shown =
+        el instanceof HTMLSelectElement
+          ? `${el.selectedOptions[0]?.textContent ?? ''} ${el.value}`
+          : el.localName === 'input'
+            ? el.value
+            : `${el.getAttribute('aria-label') ?? ''} ${el.textContent}`;
+      const code = /(?:^|[\s(])(\+\d{1,4})(?=$|[\s)])/.exec(shown)?.[1];
+      if (code) return code;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Whether a yes/no declaration names one country and the question another.
  *
@@ -2584,7 +2635,13 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
      */
     if (key === 'phone' && ONLY_A_DIALLING_CODE.test(input.value) && !/^\s*\+/.test(String(value))) {
       const code = diallingCodeFor(fields.address_country) ?? input.value.trim();
-      value = `${code} ${String(value).trim()}`;
+      value = `${code} ${withoutTrunkZero(code, String(value).trim())}`;
+    } else if (key === 'phone' && /^\s*\+/.test(String(value))) {
+      value = withoutTrunkZeroAfterCode(value);
+    } else if (key === 'phone' && !(input instanceof HTMLSelectElement)) {
+      // Behind a code the form adds itself, from a select or a widget beside the box.
+      const beside = diallingCodeBeside(input);
+      if (beside) value = withoutTrunkZero(beside, value);
     }
 
     /*
@@ -2734,8 +2791,14 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
      * most three digits more, in front of every digit that was given.
      */
     const digits = (v) => String(v).replace(/\D/g, '');
+    /*
+     * And one that took the trunk 0 off as it did: "07700 900123" behind a
+     * +44 the script could not see is "+44 7700 900123". See `withoutTrunkZero`.
+     */
     const withTheirCode = (shown, given) =>
-      /^\s*\+/.test(shown) && !/^\s*\+/.test(given) && digits(shown).endsWith(digits(given)) && digits(shown).length - digits(given).length <= 3;
+      /^\s*\+/.test(shown) &&
+      !/^\s*\+/.test(given) &&
+      [digits(given), digits(given).replace(/^0/, '')].some((d) => digits(shown).endsWith(d) && digits(shown).length - d.length <= 3);
     const sameNumber =
       /phone/.test(key) && digits(value).length >= 7 && (digits(input.value) === digits(value) || withTheirCode(input.value, String(value)));
     // And a date picker that wrote the date back its own way. See `sameMonthWritten`.

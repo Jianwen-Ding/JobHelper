@@ -2968,6 +2968,45 @@ const ASHBY_DATE = `<!doctype html><html><head><meta charset="utf-8"><title>Appl
  * is left out. The frame's address comes from the page's own query, so the
  * same frame can be put on another origin.
  */
+/*
+ * A telephone box behind a dialling code the form shows beside it: a
+ * country-code select, an intl-tel-input that puts the selected code in
+ * front of what is typed (`naive` keeps a trunk 0, `drops` takes it off as
+ * the real widget does, `flag` does too and shows a flag rather than the
+ * code), or a plain box. `?shape=` picks one, `?code=` the
+ * code chosen.
+ */
+const TRUNK_ZERO = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Halewood</title></head><body>
+<form id="f"></form>
+<script>
+  const q = new URLSearchParams(location.search);
+  const shape = q.get('shape');
+  const code = q.get('code') || '+44';
+  const names = { '+1': 'United States', '+44': 'United Kingdom', '+39': 'Italy' };
+  const box = '<label for="ph">Phone</label><input type="tel" id="ph" name="phone">';
+  const f = document.getElementById('f');
+  if (shape === 'select') {
+    f.innerHTML = '<div class="phone"><label for="cc">Country code</label><select id="cc" name="phone_country_code">' +
+      Object.keys(names).map((c) => '<option value="' + c + '"' + (c === code ? ' selected' : '') + '>' + names[c] + ' (' + c + ')</option>').join('') +
+      '</select>' + box + '</div>';
+  } else if (shape === 'naive' || shape === 'drops' || shape === 'flag') {
+    const button = shape === 'flag'
+      ? '<button type="button" aria-label="Change country">GB</button>'
+      : '<button type="button" aria-label="Change country, selected ' + names[code] + ' (' + code + ')">' + code + '</button>';
+    f.innerHTML = '<label for="ph">Phone</label><div class="iti">' + button +
+      '<input type="tel" id="ph" name="phone"></div>';
+    const input = document.getElementById('ph');
+    input.addEventListener('input', () => {
+      if (input.value.startsWith('+')) return;
+      const typed = input.value.trim();
+      input.value = code + ' ' + (shape !== 'naive' && code !== '+1' ? typed.replace(/^0/, '') : typed);
+    });
+  } else {
+    f.innerHTML = box;
+  }
+</script>
+</body></html>`;
+
 const ICIMS_LOGIN = `<!doctype html><html><head><meta charset="utf-8"><title>Login | Careers Markon</title></head><body>
 <div class="iCIMS_JobsTable"><iframe id="icims_content_iframe" title="Job listings" style="width:100%;height:500px"></iframe></div>
 <script>document.getElementById('icims_content_iframe').src = new URLSearchParams(location.search).get('frame') || '/icims-login-frame?in_iframe=1';</script>
@@ -3054,7 +3093,7 @@ const BAMBOO_FABRIC = `<!doctype html><html><head><meta charset="utf-8"><title>A
   }
 </script>
 </body></html>`;
-const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME };
+const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -6638,8 +6677,77 @@ async function main() {
       usCode.phone === '+1 (555) 010-0199' && usCode.filled.includes('phone'),
       JSON.stringify(usCode),
     );
-    check('and a UK profile\'s behind +44', ukCode.phone === '+44 020 7946 0000', JSON.stringify(ukCode));
+    check('and a UK profile\'s behind +44, without the trunk 0', ukCode.phone === '+44 20 7946 0000', JSON.stringify(ukCode));
     check('with no country in the profile, the form\'s code is kept, as before', noCode.phone === '+31 (555) 010-0199', JSON.stringify(noCode));
+
+    /*
+     * A national number keeps its trunk 0 behind a dialling code: "+44 07700
+     * 900123", which nobody can ring from abroad. Wherever the form puts a
+     * code in front — its own box, a select beside it, a widget that types it
+     * in — the 0 goes, except for the codes whose numbers keep it (Italy's)
+     * and North America's, whose numbers never start with one.
+     */
+    const UK_MOBILE = { ...SWEEP, phone: '07700 900123', address_country: 'United Kingdom' };
+    const ukMobile = await code(UK_MOBILE);
+    const italy = await code({ ...SWEEP, phone: '06 1234 5678', address_country: 'Italy' });
+    const trunk = (query, fields) => page.goto(`${base}/trunk-zero?${query}`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        return {
+          phone: document.getElementById('ph').value,
+          code: document.getElementById('cc')?.value ?? null,
+          filled: report.filled.map((f) => f.key),
+          skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, fields }));
+    const bySelect = await trunk('shape=select&code=%2B44', UK_MOBILE);
+    const bySelectUs = await trunk('shape=select&code=%2B1', SWEEP);
+    const bySelectItaly = await trunk('shape=select&code=%2B39', { ...SWEEP, phone: '06 1234 5678', address_country: 'Italy' });
+    const naive = await trunk('shape=naive&code=%2B44', UK_MOBILE);
+    const drops = await trunk('shape=drops&code=%2B44', UK_MOBILE);
+    const naiveUs = await trunk('shape=naive&code=%2B1', SWEEP);
+    const flag = await trunk('shape=flag&code=%2B44', UK_MOBILE);
+    const storedWithZero = await trunk('shape=plain', { ...UK_MOBILE, phone: '+44 07700 900123' });
+    const storedWithBracket = await trunk('shape=plain', { ...UK_MOBILE, phone: '+44 (0)7700 900123' });
+    const storedUs = await trunk('shape=plain', { ...SWEEP, phone: '+1 (555) 010-0199' });
+    const plainUk = await trunk('shape=plain', UK_MOBILE);
+    group('A national number behind a dialling code loses its trunk 0');
+    check('a UK mobile behind the form\'s +44 is "+44 7700 900123"', ukMobile.phone === '+44 7700 900123' && ukMobile.filled.includes('phone'), JSON.stringify(ukMobile));
+    check('an Italian number keeps its 0 behind +39', italy.phone === '+39 06 1234 5678', JSON.stringify(italy));
+    check(
+      'beside a country-code select on +44, the box is given "7700 900123"',
+      bySelect.phone === '7700 900123' && bySelect.code === '+44' && bySelect.filled.includes('phone'),
+      JSON.stringify(bySelect),
+    );
+    check('beside one on +1, a US number is written as it was', bySelectUs.phone === '(555) 010-0199' && bySelectUs.code === '+1', JSON.stringify(bySelectUs));
+    check('beside one on +39, an Italian number keeps its 0', bySelectItaly.phone === '06 1234 5678', JSON.stringify(bySelectItaly));
+    check(
+      'a widget that types its +44 in front shows "+44 7700 900123", reported filled',
+      naive.phone === '+44 7700 900123' && naive.filled.includes('phone') && !naive.skipped.some((s) => s.startsWith('phone')),
+      JSON.stringify(naive),
+    );
+    check(
+      'and one that takes the 0 off itself is reported filled, not refused',
+      drops.phone === '+44 7700 900123' && drops.filled.includes('phone') && !drops.skipped.some((s) => s.startsWith('phone')),
+      JSON.stringify(drops),
+    );
+    check(
+      'as is one whose +44 could not be seen before typing, once it has taken the 0 off',
+      flag.phone === '+44 7700 900123' && flag.filled.includes('phone') && !flag.skipped.some((s) => s.startsWith('phone')),
+      JSON.stringify(flag),
+    );
+    check('a US number in a widget on +1 is unchanged', naiveUs.phone === '+1 (555) 010-0199' && naiveUs.filled.includes('phone'), JSON.stringify(naiveUs));
+    check(
+      'a number stored as "+44 07700 900123" or "+44 (0)7700 900123" goes in as "+44 7700 900123"',
+      storedWithZero.phone === '+44 7700 900123' && storedWithBracket.phone === '+44 7700 900123',
+      JSON.stringify({ storedWithZero, storedWithBracket }),
+    );
+    check(
+      'while "+1 (555) 010-0199", and a UK number with no code in front, are written as they are',
+      storedUs.phone === '+1 (555) 010-0199' && plainUk.phone === '07700 900123',
+      JSON.stringify({ storedUs, plainUk }),
+    );
 
     const twice = await page.goto(`${base}/asked-twice`, { waitUntil: 'domcontentloaded' }).then(() =>
       page.evaluate(async ({ b, fields }) => {
