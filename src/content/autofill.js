@@ -317,8 +317,13 @@ const NOT_ABOUT_YOU = [
    * internship forms ask of students — with their own number. The employee
    * who referred you is the commonest of these, and "referral" was already
    * here for how you heard about the job; the person is not.
+   *
+   * But "referred to as" is what you are called, not who sent you. Asana's
+   * Greenhouse board explains its Preferred Full Name box as "The name that
+   * you would like to be referred to as". Measured live, the box was left
+   * empty as somebody else's name.
    */
-  /\b(references?|referee|emergency|next[\s_-]?of[\s_-]?kin|guardian|spouse|supervisor|manager'?s?|recommender|referr(?:er|ers|ing|ed)|recruiters?|parents?|professors?|advis[oe]rs?)\b/i,
+  /\b(references?|referee|emergency|next[\s_-]?of[\s_-]?kin|guardian|spouse|supervisor|manager'?s?|recommender|referr(?:er|ers|ing|ed(?![\s_-]+to[\s_-]+as\b))|recruiters?|parents?|professors?|advis[oe]rs?)\b/i,
   /*
    * A previous employer's address, which the employment-history sections of
    * Taleo and BrassRing ask for field by field. "Employer City" matched
