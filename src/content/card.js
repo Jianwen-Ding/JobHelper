@@ -1615,9 +1615,23 @@ export function createCard({
    * rename that silently does nothing on a third of sites is worse than no
    * rename.
    */
+  /*
+   * The rename menu that is open, and what has been typed into its box.
+   *
+   * Both lived only in the DOM — a class taken off, a value typed — and the
+   * card is redrawn under them: the store moving is enough, and the card's own
+   * staging moves it seconds after every build, which is when these chips
+   * appear. Each redraw built the menu shut again, and half a file name went
+   * with it. Kept here, by the file it is for, so a redraw draws it open.
+   */
+  let renaming = null;
+
   function renameMenu(kind, name) {
     const stored = NAMED_TO_STORE[kind] ?? 'Answers';
+    const open = renaming?.name === name;
+    const typing = open && renaming.value !== undefined;
     const put = (naming) => {
+      renaming = null;
       state.naming = {
         shape: naming.shape ?? state.naming?.shape,
         custom: { ...(state.naming?.custom ?? {}) },
@@ -1649,9 +1663,10 @@ export function createCard({
           const open = event.currentTarget.parentElement?.querySelector('.rename-menu');
           closeRenameMenus(open);
           if (open) open.classList.toggle('hidden');
+          renaming = open && !open.classList.contains('hidden') ? { name } : null;
         },
       }),
-      h('div', { className: 'rename-menu hidden' }, [
+      h('div', { className: `rename-menu${open ? '' : ' hidden'}` }, [
         h('button', {
           type: 'button',
           draggable: false,
@@ -1669,6 +1684,7 @@ export function createCard({
             event.stopPropagation();
             const box = event.currentTarget.parentElement?.querySelector('input');
             if (box) {
+              renaming = { name, value: box.value };
               box.classList.remove('hidden');
               box.focus();
               box.select();
@@ -1676,15 +1692,23 @@ export function createCard({
           },
         }),
         h('input', {
-          className: 'rename-box hidden',
+          className: `rename-box${typing ? '' : ' hidden'}`,
           draggable: false,
           type: 'text',
-          value: name.replace(/\.[^.]+$/, ''),
+          // Named, like the letter and answer boxes, so `draw` puts the caret back.
+          dataset: { field: `rename:${name}` },
+          value: typing ? renaming.value : name.replace(/\.[^.]+$/, ''),
           title: 'The extension stays as it is — a portal checks it',
+          oninput: (event) => {
+            if (renaming?.name === name) renaming.value = event.target.value;
+          },
           onkeydown: (event) => {
             event.stopPropagation();
             if (event.key === 'Enter') put({ custom: event.target.value });
-            if (event.key === 'Escape') event.target.classList.add('hidden');
+            if (event.key === 'Escape') {
+              renaming = null;
+              event.target.classList.add('hidden');
+            }
           },
         }),
         h('button', {

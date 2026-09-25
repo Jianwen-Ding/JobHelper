@@ -92,6 +92,7 @@ const SUITES = [
   { name: 'card', file: 'card.mjs', cost: 16 },
   { name: 'roundtrip', file: 'roundtrip.mjs', cost: 13 },
   { name: 'freshness', file: 'freshness.mjs', cost: 12 },
+  { name: 'midaction', file: 'midaction.mjs', cost: 12 },
   { name: 'joins', file: 'joins.mjs', cost: 8 },
   { name: 'ats-forms', file: 'ats-forms.mjs', cost: 7 },
   { name: 'autofill', file: 'autofill.mjs', cost: 2 },
