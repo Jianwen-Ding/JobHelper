@@ -909,6 +909,19 @@ const REQUIREMENT_LABEL = /\b(minimum|requirements?|at\s+least)\b/i;
 const REQUIREMENT_SAID =
   /\b(required|requirements?|must|minimum|at\s+least|mandatory|preferred|encouraged)\b|\b(?:1[6-9]|2[01])(?:\s*\+|\s+(?:years?\s+(?:of\s+age\s+|old\s+)?)?(?:or|and)\s+(?:older|over|above))/i;
 
+/*
+ * Or something the employer offers or does, which a posting's benefits and
+ * conditions name by the same words: "Disability insurance: 100%
+ * employer-paid", "Short-term disability", "Pregnancy and parental leave", a
+ * "Criminal background check" conducted after an offer, a "Gender pay equity"
+ * audit. Measured through this module on a warehouse posting, all seven such
+ * lines went to the AI as the label alone. A question is asked of the
+ * applicant — "Disability Status", "Criminal convictions", "Are you
+ * pregnant?" — and names none of these.
+ */
+const OFFERED_LABEL =
+  /\b(insurance|coverage|leave|benefits?|checks?|screening|pay|polic(y|ies)|programs?|programmes?|hiring|(short|long)[\s-]*term)\b/i;
+
 function scrubStatedAnswers(root) {
   const labels = [];
   const walker = (root.ownerDocument ?? root).createTreeWalker(root, 4 /* NodeFilter.SHOW_TEXT */);
@@ -921,11 +934,13 @@ function scrubStatedAnswers(root) {
     const inline = /^([^:]{1,80}):\s*\S/.exec(said);
     if (inline && STATED_PERSONAL.test(inline[1])) {
       const rest = said.slice(inline[0].length - 1);
-      if (!REQUIREMENT_LABEL.test(inline[1]) && !REQUIREMENT_SAID.test(rest)) node.data = `${inline[1]}:`;
+      if (!REQUIREMENT_LABEL.test(inline[1]) && !OFFERED_LABEL.test(inline[1]) && !REQUIREMENT_SAID.test(rest)) {
+        node.data = `${inline[1]}:`;
+      }
       continue;
     }
     if (said.length > 80 || !STATED_PERSONAL.test(said)) continue;
-    if (REQUIREMENT_LABEL.test(said)) continue;
+    if (REQUIREMENT_LABEL.test(said) || OFFERED_LABEL.test(said)) continue;
     let label = node.parentElement;
     if (!label || label.textContent.trim() !== said) continue;
     // Up through the wrappers that hold nothing else, to what sits beside it.

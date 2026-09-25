@@ -1694,3 +1694,53 @@ describe('the page as sent keeps what a posting requires', () => {
     }
   });
 });
+
+/*
+ * A posting's benefits, under labels that name a personal question.
+ *
+ * "Disability insurance: 100% employer-paid", a "Short-term disability" row,
+ * "Pregnancy and parental leave", a criminal background check "conducted
+ * after an offer": each label names one of the questions whose answers the
+ * scrub empties, and what the posting said about it was emptied with them —
+ * all seven of these lines went to the AI as the label alone. What they name
+ * is a thing the employer offers or does: insurance, leave, a check, a
+ * policy. Below them, a review step's answers under the bare questions, which
+ * must still go.
+ */
+const BENEFITS = `
+  <h1>Warehouse Lead — Northwind Logistics</h1>
+  <h2>Benefits</h2>
+  <ul><li>Disability insurance: KEPT-100% employer-paid</li>
+  <li><strong>Short-term disability</strong> KEPT-Company paid after 90 days</li>
+  <li><strong>Pregnancy and parental leave</strong> KEPT-16 weeks fully paid</li></ul>
+  <table><tr><th>Life &amp; disability coverage</th><td>KEPT-Basic life at 1x salary</td></tr></table>
+  <p><strong>Criminal background check</strong> KEPT-conducted after an offer</p>
+  <dl><dt>Gender pay equity</dt><dd>KEPT-We audit pay every year</dd><dt>Veteran hiring program</dt><dd>KEPT-Hire Heroes partner</dd></dl>
+  <h2>Review your application</h2>
+  <dl><dt>Disability Status</dt><dd>ANSWER-DISABILITY</dd><dt>Gender</dt><dd>ANSWER-GENDER</dd></dl>
+  <p>Criminal convictions: ANSWER-CONVICTIONS</p>
+  <div><label>Are you pregnant?</label><div>ANSWER-PREGNANT</div></div>`;
+
+describe('the page as sent keeps what a posting offers', () => {
+  it('keeps a benefit under a personal label, and still empties an answer under one', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><title>Warehouse Lead</title></head><body>${BENEFITS}</body></html>`);
+      const html = await page.evaluate(async (js) => {
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        return mod.trimForStorage(mod.pageHtml(document));
+      }, source);
+      const lost = [...BENEFITS.matchAll(/KEPT-[^<]+/g)].map((m) => m[0].trim()).filter((fact) => !html.includes(fact));
+      assert.deepEqual(lost, [], `the posting's benefits were emptied: ${lost.join(' | ')}`);
+      const leaked = html.match(/ANSWER-[A-Z]+/g) ?? [];
+      assert.deepEqual(leaked, [], `answers were sent: ${leaked.join(', ')}`);
+    } finally {
+      await browser.close();
+    }
+  });
+});
