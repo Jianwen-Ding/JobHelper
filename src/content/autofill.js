@@ -30,6 +30,12 @@ const FIELD_PATTERNS = [
    * still the person's and the answer they gave last time fills it. See
    * `typedBox` and `NAME_FOR_THE_FORM`.
    */
+  /*
+   * Both halves of it in one box, above the first half alone, as `full_name`
+   * is below. Zoox's Lever form asks "What is your preferred first name and
+   * last name?", and "preferred first name" claimed it for the first name.
+   */
+  ['preferred_name', /\b(preferred|chosen)[\s_-]*first[\s_-]*(name[\s_-]*)?(and|&|\+)[\s_-]*last[\s_-]*name\b/i],
   ['preferred_first_name', /\b(preferred|nick|chosen)[\s_-]*(first|given)[\s_-]*name\b/i],
   ['preferred_last_name', /\b(preferred|chosen)[\s_-]*(last|family|sur)[\s_-]*name\b/i],
   ['preferred_middle_name', /\b(preferred|chosen)[\s_-]*middle[\s_-]*name\b/i],
@@ -2602,7 +2608,9 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     // this question does not need. See `handBack`.
     if (handBack(description, skipped)) continue;
     if (isNotAboutYou(description, clean(labelFor(input)), surroundingWords(input), boundedSection(input))) continue;
-    if (asksForWriting(input)) continue;
+    // A name is not writing, even asked in a paragraph box as a question:
+    // Zoox's "What is your preferred first name and last name?" is a textarea.
+    if (asksForWriting(input) && !PREFERRED_NAME_BOX.test(clean(labelFor(input)))) continue;
 
     /*
      * The first pattern that matches, and then whether the profile has it —
