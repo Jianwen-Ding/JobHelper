@@ -747,7 +747,17 @@ async function main() {
       }
     }
 
-    // Insert a stored answer back into the page's own form.
+    // Insert a stored answer back into the page's own form — once the card is
+    // showing it again. The bank was changed and put back above, and an open
+    // card follows its bank: one that looked while the Halewood answer was in
+    // it holds an empty box until it looks again.
+    await page
+      .waitForFunction(
+        () => (document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelector('.q textarea')?.value ?? '') !== '',
+        null,
+        { timeout: 15_000, polling: 250 },
+      )
+      .catch(() => undefined);
     const insert = card.getByRole('button', { name: 'Insert into form' }).first();
     await insert.click();
     await page.waitForTimeout(400);
