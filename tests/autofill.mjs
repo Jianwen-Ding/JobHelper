@@ -3096,7 +3096,8 @@ async function main() {
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}`;
 
-  const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+  // An iCIMS-shaped host for the sign-in frame, which is only filled on a hiring system's own host.
+  const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox', '--host-resolver-rules=MAP careers-markon.icims.test 127.0.0.1'] });
   try {
     const page = await browser.newPage();
     await page.goto(`${base}/apply`, { waitUntil: 'domcontentloaded' });
@@ -6915,23 +6916,30 @@ async function main() {
      * The gate `jh-frame-fill` puts in front of a frame, run in the frame:
      * nothing is filled there unless `mayFillFrame` says so.
      */
-    const icimsSignIn = async (frameUrl) => {
-      await page.goto(`${base}/icims-login${frameUrl ? `?frame=${encodeURIComponent(frameUrl)}` : ''}`, { waitUntil: 'load' });
+    const icims = base.replace('127.0.0.1', 'careers-markon.icims.test');
+    const icimsSignIn = async (frameUrl, host = icims) => {
+      await page.goto(`${host}/icims-login${frameUrl ? `?frame=${encodeURIComponent(frameUrl)}` : ''}`, { waitUntil: 'load' });
       const frame = page.frames().find((f) => f.url().includes('/icims-login-frame'));
       return frame.evaluate(async ({ b, fields }) => {
         const m = await import(`${b}/autofill.js`);
         const may = m.mayFillFrame();
         if (may) m.fillForm(fields);
         return { may, application: m.looksLikeApplicationForm(), email: document.getElementById('email').value, ticked: document.getElementById('accept_privacy').checked };
-      }, { b: frameUrl ? new URL(frameUrl).origin : base, fields: SWEEP });
+      }, { b: frameUrl ? new URL(frameUrl).origin : host, fields: SWEEP });
     };
     const ownFrame = await icimsSignIn();
+    const notATracker = await icimsSignIn(undefined, base);
     const otherFrame = await icimsSignIn(`${base.replace('127.0.0.1', 'localhost')}/icims-login-frame?in_iframe=1`);
     group('iCIMS: the sign-in step, in a frame of the careers site');
     check(
       'the Email box in a frame from the page\'s own origin is filled, though one box is not an application',
       ownFrame.may && !ownFrame.application && ownFrame.email === 'morgan.testwell@example.com' && !ownFrame.ticked,
       JSON.stringify(ownFrame),
+    );
+    check(
+      'but a frame of a page that is not on a hiring system\'s host is given nothing, own origin or not',
+      !notATracker.may && notATracker.email === '',
+      JSON.stringify(notATracker),
     );
     check(
       'while the same frame on another origin is still given nothing',

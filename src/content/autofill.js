@@ -5610,10 +5610,25 @@ export function looksLikeApplicationForm() {
  * application uses, so it was never recognised and Autofill said "Filled 0
  * fields" over an empty Email box.
  */
+/*
+ * And only on a hiring system's own host. The page's own origin alone let
+ * every advert a site serves from itself through: measured in
+ * tests/navigation.mjs, forty-eight same-origin advert frames beside the one
+ * application were each given the person's name and email. A frame of
+ * careers-markon.icims.com on that same host is the sign-in; one on a news
+ * site is not. The same list the card uses to tell a tracker's page.
+ */
+const ON_A_TRACKER_HOST =
+  /\b(greenhouse|lever|workday|myworkdayjobs|ashby|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite|bamboohr|rippling|breezy|recruitee|teamtailor|jazzhr|successfactors|brassring)\b/i;
+
 export function mayFillFrame() {
   if (looksLikeApplicationForm()) return true;
   try {
-    return /^https?:$/.test(location.protocol) && window.top.location.origin === location.origin;
+    return (
+      /^https?:$/.test(location.protocol) &&
+      window.top.location.origin === location.origin &&
+      ON_A_TRACKER_HOST.test(location.hostname)
+    );
   } catch {
     // Another origin's page, which a frame may not read.
     return false;
