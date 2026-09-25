@@ -3584,7 +3584,7 @@ export function createCard({
      * is worth nothing if it is a build behind and believes it is not.
      */
     lastPrepared = whatWouldBeStaged();
-    const staged = await act(
+    const mine = act(
       'stage',
       { spec: state.spec, coverLetter: state.letter, answers: collectedAnswers(), naming: state.naming },
       (staged) => {
@@ -3602,7 +3602,30 @@ export function createCard({
       // saying. See `act`.
       { quiet: true },
     );
+    stagingNow = mine;
+    const staged = await mine;
+    if (stagingNow === mine) stagingNow = null;
     if (!staged) lastPrepared = null;
+  }
+
+  /**
+   * The folder brought up to what is on screen, before files are taken from it.
+   *
+   * It follows the screen a step behind: a compile, then `prepareSoon`'s
+   * wait, then the stage itself, a few seconds in all. Nothing that reads the
+   * folder waited for that, and the store changing is when it matters most —
+   * the card says "Updated from ResumeM-M" and shows the new words while it
+   * is still compiling, and Attach files pressed then put the file from
+   * before the change into the form. Staged now if it is behind, and the
+   * stage already running waited for if it is not.
+   */
+  let stagingNow = null;
+  async function folderCaughtUp() {
+    if (!state.staged) return;
+    if (whatWouldBeStaged() !== lastPrepared) {
+      clearTimeout(preparing);
+      await stageFiles();
+    } else if (stagingNow) await stagingNow;
   }
 
   /**
@@ -4593,8 +4616,10 @@ export function createCard({
         textContent: busyLabel('attachFiles', 'Attach files', 'Attaching…'),
         title: 'Put the resume, letter and transcript into this form’s upload boxes',
         disabled: busyIn('page'),
-        onclick: () =>
-          act(
+        onclick: async () => {
+          // The folder as the screen has it first. See `folderCaughtUp`.
+          await folderCaughtUp();
+          return act(
             'attachFiles',
             /*
              * The staged answer first, the analysis's second — the same
@@ -4609,7 +4634,8 @@ export function createCard({
              */
             { application: state.staged?.application?.id ?? analysis?.application?.id ?? null },
             (r) => (state.attachReport = r),
-          ),
+          );
+        },
       }),
     ];
   }

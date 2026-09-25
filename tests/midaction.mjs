@@ -87,6 +87,12 @@ const STORE = `(() => {
         return null;
       case 'listResumes':
         return s.resumes ?? [];
+      case 'attachFiles': {
+        // What the folder holds when the files are taken from it.
+        const from = s.folder.at(-1);
+        s.attached = from?.printed ?? null;
+        return { placed: [{ name: 'Jane-Resume.pdf', printed: from?.printed ?? null }], unplaced: [] };
+      }
       case 'attachmentFiles':
         return { files: [{ name: 'Jane-Resume.pdf', base64: 'JVBERi0xLjQK', type: 'application/pdf' }] };
       case 'aiStatus':
@@ -439,6 +445,40 @@ async function main() {
       return { folder: jh.s.folder.map((f) => `${f.as}:${f.printed}`), version: jh.s.version, said: note() };
     });
     check('a stage that was under way when the store moved is followed by one that has the change', overlap.folder.at(-1) === `stage:p${overlap.version}`, JSON.stringify(overlap));
+
+    /*
+     * And Attach files pressed in that stretch. The card has said "Updated
+     * from ResumeM-M" and the preview is being compiled with the change —
+     * and the folder Attach takes from is not rebuilt until the compile
+     * ends and the stage after it has run. Pressed then, the form got the
+     * file from before the change.
+     */
+    await setUp();
+    const attach = await inPage(async () => {
+      const back = jh.s.hold('render');
+      const before = renders().length;
+      jh.s.edit();
+      const watching = jh.handle.storeChanged();
+      await until(() => renders().length > before);
+      button(/^Attach files$/).click();
+      await wait(100);
+      back();
+      await watching;
+      await until(() => jh.s.sent.some((c) => c.action === 'attachFiles'), 5000);
+      await wait(1500);
+      return {
+        version: jh.s.version,
+        folderThen: jh.s.attached,
+        folderNow: jh.s.folder.at(-1)?.printed ?? null,
+        stages: jh.s.sent.filter((c) => c.action === 'stage').length,
+      };
+    });
+    check(
+      'Attach files pressed while the store\'s change is being built attaches the file with the change in it',
+      attach.folderThen === `p${attach.version}`,
+      JSON.stringify(attach),
+    );
+    check('and the folder is not built twice over for it', attach.stages === 2 && attach.folderNow === `p${attach.version}`, JSON.stringify(attach));
   }
 
   /* ------------------------------------------------------------------ */
