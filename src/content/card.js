@@ -6762,6 +6762,28 @@ export function createCard({
       draw();
     },
 
+    /**
+     * The bank's answers again, for the questions already listed.
+     *
+     * The card was given them once, when the questions were read, so an
+     * answer written or changed in ResumeM-M's Letters & Answers reached a
+     * card already open only when the page was loaded again. Only what came
+     * from the bank moves: the list is not replaced — a question carried from
+     * the step before, or typed in by hand, stays — and what the person typed
+     * or cleared is `state.answers`, which is read first and not touched.
+     */
+    setMatches(qs) {
+      const fresh = new Map((qs ?? []).map((q) => [q.question, q]));
+      let moved = false;
+      state.questions = (state.questions ?? []).map((q) => {
+        const n = fresh.get(q.question);
+        if (!n || ((n.answer ?? '') === (q.answer ?? '') && n.namesAnother === q.namesAnother)) return q;
+        moved = true;
+        return { ...q, answer: n.answer, confident: n.confident, score: n.score, itemId: n.itemId, namesAnother: n.namesAnother };
+      });
+      if (moved) draw();
+    },
+
     /** Hand back the work worth keeping when this page is replaced. */
     takeWork,
 

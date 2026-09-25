@@ -2370,13 +2370,28 @@
      * and the card is told the moment it does. See `storeChanged` in the card.
      */
     let revision = null;
+    /*
+     * Where things stand, read now rather than on the first tick: a change
+     * made in the four seconds after the card went up was otherwise taken
+     * for where things started, and never reached it.
+     */
+    send('revision')
+      .then((r) => {
+        revision ??= r?.revision ?? null;
+      })
+      .catch(() => undefined);
     every(4000, async () => {
       if (document.visibilityState !== 'visible' || !cardHandle?.storeChanged) return;
       const now = (await send('revision').catch(() => null))?.revision;
       if (!now) return;
       const moved = revision !== null && now !== revision;
       revision = now;
-      if (moved) await cardHandle?.storeChanged?.();
+      if (!moved) return;
+      await cardHandle?.storeChanged?.();
+      // And the answer bank, matched again for the questions listed. See
+      // `setMatches` in the card.
+      const { questions } = await gatherQuestions().catch(() => ({ questions: [] }));
+      if (questions.length) cardHandle?.setMatches?.(questions);
     });
     // A navigation is exactly when this matters, and exactly when an interval
     // is least likely to have just run.

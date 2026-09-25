@@ -47,9 +47,36 @@ Python on Kubernetes. Responsibilities include distributed systems and Kafka. Mi
 <a href="/careers/quillon/platform-engineer/apply">Apply</a></body></html>`,
 };
 
+/** Two questions no other suite asks, so the bank holds nothing for either until this saves it. */
+const ASKED = 'Describe a streaming pipeline you have kept running in production.';
+const TYPED = 'Which technical decision of yours would you now make differently?';
+const FORM = {
+  name: 'freshness-form',
+  path: '/careers/quillon/stream-engineer',
+  company: COMPANY,
+  html: `<!doctype html><html><head><meta charset="utf-8"><title>Stream Engineer — ${COMPANY}</title>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"JobPosting","title":"Stream Engineer",
+"hiringOrganization":{"@type":"Organization","name":"${COMPANY}"},
+"description":"<p>Run streaming pipelines in Go on Kubernetes. Kafka, AWS.</p>"}</script>
+</head><body><h1>Stream Engineer</h1><p>${COMPANY} is hiring a Stream Engineer to run streaming pipelines in Go on Kubernetes.</p>
+<h2>Apply for this job</h2><form>
+<label for="fn">First Name</label><input id="fn" name="first_name">
+<label for="em">Email</label><input id="em" name="email" type="email">
+<label for="q1">${ASKED}</label><textarea id="q1" name="q1"></textarea>
+<label for="q2">${TYPED}</label><textarea id="q2" name="q2"></textarea>
+</form></body></html>`,
+};
+
 const api = (p, init) => fetch(`${SERVER}/api${p}`, init).then((r) => r.json());
 const put = (p, body) =>
   api(p, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+
+/** This suite's two questions, taken out of the answer bank. */
+async function takeOutOfBank() {
+  const bank = (await api('/store')).answers ?? [];
+  const kept = bank.filter((a) => a.question !== ASKED && a.question !== TYPED);
+  if (kept.length !== bank.length) await put('/answers', kept);
+}
 
 /** The copy this suite's posting was filed with, once it has been. */
 async function theCopy(within = 30_000) {
@@ -80,7 +107,8 @@ async function folderResume() {
 async function main() {
   await requireOpenSave(SERVER);
   await cleanStore(SERVER, [COMPANY]).catch(() => undefined);
-  const fixtures = await serveFixtures([POSTING]);
+  const fixtures = await serveFixtures([POSTING, FORM]);
+  await takeOutOfBank();
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-fresh-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     executablePath: findChromium(),
@@ -241,7 +269,52 @@ async function main() {
       await put('/profile', { ...profile, phone: '555-0142' });
       check('and a change to what the resume prints is compiled again on its own', await says(/what the resume says changed there/, 20_000));
     }
+
+    /*
+     * And the answers. A form's questions are matched against the bank once,
+     * when the card reads them, so an answer written in ResumeM-M's Letters &
+     * Answers while the form was open never reached its empty box. Written
+     * there for both questions, after one has been typed into by hand: the
+     * untouched one takes it, and what was typed stays.
+     */
+    group('An answer written in ResumeM-M while a form is open');
+    {
+      const form = await context.newPage();
+      await form.goto(fixtures.urlFor(FORM), { waitUntil: 'domcontentloaded' });
+      const box = (question) =>
+        form.locator(`${HOST} .q`, { has: form.locator('.qt', { hasText: question }) }).locator('textarea');
+      await box(ASKED).waitFor({ timeout: 30_000 }).catch(() => undefined);
+      check('the card lists the form\'s question with nothing in it yet', (await box(ASKED).inputValue().catch(() => '(not listed)')) === '');
+      await box(TYPED).fill('Typed on the card, by hand.');
+      const WRITTEN = 'Kept a Kafka-to-S3 pipeline under a minute of lag through two region moves.';
+      for (const [question, answer] of [[ASKED, WRITTEN], [TYPED, 'Written in ResumeM-M instead.']]) {
+        await fetch(`${SERVER}/api/answers/save`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ question, answer, label: 'Saved' }),
+        });
+      }
+      const arrived = await form
+        .waitForFunction(
+          ([host, question, text]) =>
+            [...(document.querySelector(host)?.shadowRoot?.querySelectorAll('.q') ?? [])]
+              .find((q) => q.querySelector('.qt')?.textContent.includes(question))
+              ?.querySelector('textarea')?.value === text,
+          [HOST, ASKED, WRITTEN],
+          { timeout: 20_000, polling: 250 },
+        )
+        .then(() => true)
+        .catch(() => false);
+      check('an empty question takes the answer on its own', arrived, await box(ASKED).inputValue().catch(() => '(not listed)'));
+      check(
+        'and one already typed into keeps what was typed',
+        (await box(TYPED).inputValue().catch(() => '')) === 'Typed on the card, by hand.',
+        await box(TYPED).inputValue().catch(() => '(not listed)'),
+      );
+      await form.close();
+    }
   } finally {
+    await takeOutOfBank().catch(() => undefined);
     await fetch(`${SERVER}/api/resumes/${ADDED}`, { method: 'DELETE' }).catch(() => undefined);
     if (profile) await put('/profile', profile).catch(() => undefined);
     await cleanStore(SERVER, [COMPANY]).catch(() => undefined);
