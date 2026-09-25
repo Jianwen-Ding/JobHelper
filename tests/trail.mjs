@@ -1650,6 +1650,8 @@ const REVIEW_STEP = `
   <div><label>Legal Name</label><div>Jianwen Ding</div></div>
   <div><label>Social Security Number</label><div>ANSWER-SSN</div></div>
   <div><div class="lbl"><span>Date of Birth</span></div><div class="val">ANSWER-DOB</div></div>
+  <div><label>Place of Birth</label><div>ANSWER-BIRTHPLACE</div></div>
+  <div><label>Medicare Number</label><div>ANSWER-MEDICARE</div></div>
   <h3>Application Questions</h3>
   <div><label>Are you legally authorized to work in the United States?</label><div>Kept: Yes</div></div>
   <div><label>Have you ever been convicted of a felony?</label><div>ANSWER-CONVICTED</div></div>
@@ -1682,7 +1684,7 @@ describe('the page as sent does not carry answers a review step writes out', () 
       const leaked = html.match(/ANSWER-[A-Z]+/g) ?? [];
       assert.deepEqual(leaked, [], `the review step's answers were sent: ${leaked.join(', ')}`);
       for (const kept of [
-        'Social Security Number', 'Date of Birth', 'Gender', 'Ethnicity', 'Veteran Status',
+        'Social Security Number', 'Date of Birth', 'Place of Birth', 'Medicare Number', 'Gender', 'Ethnicity', 'Veteran Status',
         'Are you Hispanic or Latino?', 'Disability Status:', 'Have you ever been convicted of a felony?',
         'without regard to race, gender, disability or veteran status', 'Jianwen Ding',
         'Kept: Yes', 'Kept: Boston', 'Kept: we provide accommodations on request.', 'Kept: Female', 'Kept: Male',

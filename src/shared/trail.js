@@ -989,6 +989,8 @@ const OPTION_STATE_CLASS = /selected|highlighted|focused|focusvisible|^css-|^ant
  * "Phone Number" — which went to the server and on to the AI the same way; an
  * address has no shape the server could find it by afterwards. Not "Office
  * address" or "Location", which are the posting's.
+ * And where somebody was born, and a Medicare or Medicaid number, which
+ * `remembering.js` refuses and this list did not know.
  *
  * Only the answer, only where it is short, and never a control: a form's own
  * "Gender" label with its `<select>` after it keeps its options, which are the
@@ -999,7 +1001,7 @@ const OPTION_STATE_CLASS = /selected|highlighted|focused|focusvisible|^css-|^ant
  * took the capture from about 10ms to about 14ms.
  */
 const STATED_PERSONAL =
-  /\b(ssn|social\s*security|national\s*insurance|tax\s*(id|identification)|(date|day|month|year)\s*of\s*birth|birth\s*(date|day)|dob|age|passport|driver'?s?\s*licen[cs]e|visa\s*number|(account|card|routing)\s*number|iban|sort\s*code|gender|sex|transgender|non-?binary|sexual\s*orientation|lgbt\w*|race|ethnicit(y|ies)|hispanic|latin[oaxe]s?|national\s*origin|indigenous|aboriginal|veteran|disab(led|ility|ilities)|criminal|convict\w*|felon(y|ies)|religion|marital|pregnan\w*|(e-?mail|phone|mobile|cell|telephone)\s*(address|number|no\.?)|(home|mailing|residential|street|permanent|current)\s*address|address\s*line|zip\s*code|postal\s*code|postcode)\b/i;
+  /\b(ssn|social\s*security|national\s*insurance|tax\s*(id|identification)|(date|day|month|year|place|country|city|town)\s*of\s*birth|birth\s*(date|day|place|country|city|town)|medica(re|id)(\s*(\/|or|and|&)\s*medica(re|id))?\s*(number|no\.?|#|id|card)|dob|age|passport|driver'?s?\s*licen[cs]e|visa\s*number|(account|card|routing)\s*number|iban|sort\s*code|gender|sex|transgender|non-?binary|sexual\s*orientation|lgbt\w*|race|ethnicit(y|ies)|hispanic|latin[oaxe]s?|national\s*origin|indigenous|aboriginal|veteran|disab(led|ility|ilities)|criminal|convict\w*|felon(y|ies)|religion|marital|pregnan\w*|(e-?mail|phone|mobile|cell|telephone)\s*(address|number|no\.?)|(home|mailing|residential|street|permanent|current)\s*address|address\s*line|zip\s*code|postal\s*code|postcode)\b/i;
 const CONTROL =
   'input, select, textarea, button, [contenteditable], [role="radio"], [role="checkbox"], [role="option"], [role="combobox"], [role="listbox"], [role="radiogroup"]';
 
