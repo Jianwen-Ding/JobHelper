@@ -4863,10 +4863,10 @@ export function createCard({
     const madeAt = (r) => r.generatedFor?.at ?? r.temporaryFrom ?? '';
     const built = resumes.filter((r) => tierOf(r) === 'temporary' && !own.includes(r));
     const newest = [...built].sort((a, b) => String(madeAt(b)).localeCompare(String(madeAt(a))));
-    const inUse = (r) => r.id === analysis.baseResumeId;
+    // The one in use is `inUse` above: the resume being switched to, or the one started from.
     const older = state.allPostings || newest.length <= RECENT_POSTINGS
       ? []
-      : newest.slice(RECENT_POSTINGS).filter((r) => !inUse(r));
+      : newest.slice(RECENT_POSTINGS).filter((r) => r.id !== inUse);
     const recent = built.filter((r) => !older.includes(r));
 
     const groups = [
