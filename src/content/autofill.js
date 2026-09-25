@@ -3993,8 +3993,9 @@ export function choiceQuestions() {
  * - Nothing already answered is touched, `overwrite` or not. Overwrite is a
  *   thing the person asked of their *profile*; the bank is a weaker claim
  *   than the profile and a far weaker one than an answer already on screen.
- * - Nothing personal, even if the bank holds it. `worthRemembering` keeps
- *   these out on the way in, but the bank is older than that gate and the
+ * - Nothing personal, even if the bank holds it — by the question or by the
+ *   answer. `worthRemembering` keeps these out on the way in, and is asked
+ *   again here on the way out, because the bank is older than that gate and the
  *   Workspace lets answers be typed in by hand. A date of birth sitting in
  *   the bank must not be typed into a form by a machine. Nor anything whose
  *   answer belongs to one employer — see `DEPENDS_ON_EMPLOYER` — for the
@@ -4018,7 +4019,13 @@ function answerFromMemory(remembered) {
     if (choice.answered()) continue;
     if (neverRemember(choice.question) || dependsOnEmployer(choice.question)) continue;
     const answer = bank.get(choice.question)?.answer;
-    if (!answer) continue;
+    /*
+     * And the answer, as `answerWidgetsFromMemory` reads it: a question
+     * nobody labelled as personal ("Question 88213") can still have a date or
+     * an SSN-shaped option as its answer in the bank, and that is not to be
+     * chosen for somebody by a machine either.
+     */
+    if (!answer || !worthRemembering({ question: choice.question, answer }).keep) continue;
 
     const took = choice.choose(answer);
     const row = { key: 'remembered', value: answer, description: choice.description.slice(0, 60) };

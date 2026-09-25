@@ -625,6 +625,34 @@ const REMEMBERED = `<!doctype html><html><head><meta charset="utf-8"><title>Appl
 </script></body></html>`;
 
 /*
+ * A question nobody labelled as personal, whose answer is. An enterprise
+ * questionnaire names its controls `q_88213`, and its options can be dates â€”
+ * a birthday and any other date are the same characters. The bank can hold
+ * one of these (it is older than the gates, and the Workspace takes answers
+ * typed by hand), and the search-and-pick widgets refuse it by the answer.
+ * The dropdown and the radio group must too.
+ */
+const REMEMBERED_PRIVATE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="f">
+  <label for="q88213">Question 88213 of this form</label>
+  <select id="q88213" name="q_88213">
+    <option value="">Select...</option><option>04/02/1999</option><option>05/03/2000</option>
+  </select>
+
+  <fieldset>
+    <legend>Question 88214 of this form</legend>
+    <label><input type="radio" name="q_88214" value="a"> 123-45-6789</label>
+    <label><input type="radio" name="q_88214" value="b"> 987-65-4321</label>
+  </fieldset>
+
+  <!-- And an ordinary one beside them, which is still answered. -->
+  <label for="arr">Which working arrangement do you prefer?</label>
+  <select id="arr" name="arrangement_q2">
+    <option value="">Select...</option><option>Remote</option><option>Hybrid</option>
+  </select>
+</form></body></html>`;
+
+/*
  * Short boxes the profile has nothing for, as Greenhouse and Lever draw their
  * custom questions: a label, a one-line input named after the question's id.
  * The bank below has a row for every one of them, so which get filled is
@@ -3434,7 +3462,7 @@ const VUETIFY = `<!doctype html><html><head><meta charset="utf-8"><title>Apply â
   }
 </script></body></html>`;
 
-const PAGES = { '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+const PAGES = { '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -5754,6 +5782,41 @@ async function main() {
       memory.fromMemory.length === 3,
       memory.fromMemory.join(' | ') || 'none',
     );
+    /*
+     * An answer that looks personal, under a question that does not. The
+     * widgets refused it by `worthRemembering`; the dropdown and the radio
+     * group looked only at the question, and put a date and an SSN-shaped
+     * option into the form.
+     */
+    const privately = await page.goto(`${base}/remembered-private`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(
+        async ({ b, profile }) => {
+          const m = await import(`${b}/autofill.js`);
+          const report = m.fillForm(profile, {
+            remembered: [
+              { question: 'Question 88213 of this form', answer: '04/02/1999' },
+              { question: 'Question 88214 of this form', answer: '123-45-6789' },
+              { question: 'Which working arrangement do you prefer?', answer: 'Hybrid' },
+            ],
+          });
+          return {
+            date: document.getElementById('q88213').value,
+            ssn: document.querySelector('input[name="q_88214"]:checked')?.value ?? '',
+            arr: document.getElementById('arr').value,
+            fromMemory: report.filled.filter((f) => f.remembered).map((f) => `${f.question} = ${f.value}`),
+          };
+        },
+        { b: base, profile: PROFILE },
+      ),
+    );
+    check('a dropdown is not answered from the bank with an answer that looks personal', privately.date === '', `"${privately.date}"`);
+    check('nor is a radio group', privately.ssn === '', `"${privately.ssn}"`);
+    check(
+      'while the ordinary question beside them still is',
+      privately.arr === 'Hybrid' && privately.fromMemory.length === 1,
+      privately.fromMemory.join(' | ') || 'none',
+    );
+
     /*
      * And nothing changes when there is no bank, which is every first
      * application and every session with the store switched off.
