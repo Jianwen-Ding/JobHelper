@@ -2961,7 +2961,100 @@ const ASHBY_DATE = `<!doctype html><html><head><meta charset="utf-8"><title>Appl
   }
 </script>
 </body></html>`;
-const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE };
+/*
+ * iCIMS's sign-in step, as careers-markon.icims.com served it in September
+ * 2026: the careers page holds nothing but an iframe of its own origin, and
+ * the frame asks for an email and a tick. The hCaptcha that follows the tick
+ * is left out. The frame's address comes from the page's own query, so the
+ * same frame can be put on another origin.
+ */
+const ICIMS_LOGIN = `<!doctype html><html><head><meta charset="utf-8"><title>Login | Careers Markon</title></head><body>
+<div class="iCIMS_JobsTable"><iframe id="icims_content_iframe" title="Job listings" style="width:100%;height:500px"></iframe></div>
+<script>document.getElementById('icims_content_iframe').src = new URLSearchParams(location.search).get('frame') || '/icims-login-frame?in_iframe=1';</script>
+</body></html>`;
+const ICIMS_LOGIN_FRAME = `<!doctype html><html><head><meta charset="utf-8"><title>Login</title></head><body>
+<a href="#icims_content" class="sr-only">Skip to Main Content</a>
+<h1>Enter your email &amp; Accept Privacy Policy</h1>
+<p>Click here to review our Privacy Policy</p>
+<form id="enterEmailForm" class="iCIMS_SignIn" method="post" accept-charset="utf-8" enctype="multipart/form-data" action="/icims-login-frame?step=email&amp;in_iframe=1" onsubmit="return false">
+<label for="email">Email</label>
+<input type="email" autocomplete="email" id="email" name="css_loginName" class="form-control" value="" aria-describedby="iCIMS_ErrorMessage_login">
+<div class="checkbox">
+<label for="accept_privacy"><input type="checkbox" id="accept_privacy" name="accept_privacy" value="1" aria-required="true" aria-describedby="icims_accept_privacy_desc">I accept the Privacy Policy</label>
+<span id="icims_accept_privacy_desc" class="sr-only">You must indicate that you have read and accept the Privacy Policy before you can continue.</span>
+</div>
+<input id="enterEmailSubmitButton" type="submit" class="iCIMS_PrimaryButton " value="Next" disabled="">
+</form>
+<a href="#">Application FAQs</a>
+<p>Software Powered by ICIMS</p>
+</body></html>`;
+
+/*
+ * BambooHR's application, as canopy.bamboohr.com drew it in September 2026:
+ * every dropdown is a Fabric select — a toggle button saying "–Select–" with
+ * `aria-haspopup="true"`, a hidden `<select>` holding only what is chosen,
+ * and a menu drawn at the foot of the page on the press, found through the
+ * button's `data-menu-id` and made of `role="menuitem"` rows. The Country
+ * arrives on the employer's default, which is not this tool's to change.
+ */
+const BAMBOO_FABRIC = `<!doctype html><html><head><meta charset="utf-8"><title>ACCOUNT MANAGER 2 - Canopy Insurance</title></head><body>
+<form>
+<div><label for="nickname_hpcsaf">Please leave this field blank</label><input name="nickname_hpcsaf" id="nickname_hpcsaf" placeholder="Enter your text here" tabindex="-1" type="text"></div>
+<div><label for="firstName">First Name<span aria-hidden="true"> *</span></label><input id="firstName" name="firstName" type="text" required></div>
+<div><label for="lastName">Last Name<span aria-hidden="true"> *</span></label><input id="lastName" name="lastName" type="text" required></div>
+<div class="MuiFormControl-root" data-fabric-component="SelectField InputWrapper"><div><label for="fab-select337">Country<span aria-hidden="true"> *</span></label></div>
+  <div><div class="fab-Select" data-fabric-component="Select"><div style="display: inline-block;"><div class="fab-SelectToggle__container">
+    <button data-menu-id="fab-menu28" aria-expanded="false" aria-haspopup="true" aria-label="Country Jamaica" tabindex="0" class="fab-SelectToggle" type="button"><div class="fab-SelectToggle__guts"><div class="fab-SelectToggle__content">Jamaica</div><div class="fab-SelectToggle__toggleButton"><svg aria-hidden="true"></svg></div></div></button>
+  </div></div><select aria-hidden="true" class="chzn-ignore" id="fab-select337" name="countryId.value" readonly required tabindex="-1" style="border: none; height: 0px; opacity: 0; overflow: hidden; position: absolute; width: 0px;"><option value="110" selected>Jamaica</option></select></div></div></div>
+<div class="MuiFormControl-root" data-fabric-component="SelectField InputWrapper"><div><label for="educationLevelId">Highest Education Obtained</label></div>
+  <div><div class="fab-Select" data-fabric-component="Select"><div style="display: inline-block;"><div class="fab-SelectToggle__container">
+    <button data-menu-id="fab-menu35" aria-expanded="false" aria-haspopup="true" aria-label="Highest Education Obtained –Select–" tabindex="0" class="fab-SelectToggle" type="button"><div class="fab-SelectToggle__guts"><div class="fab-SelectToggle__placeholder">–Select–</div><div class="fab-SelectToggle__toggleButton"><svg aria-hidden="true"></svg></div></div></button>
+  </div></div><select data-has-default-value="" aria-hidden="true" class="chzn-ignore" id="educationLevelId" name="educationLevelId" readonly tabindex="-1" style="border: none; height: 0px; opacity: 0; overflow: hidden; position: absolute; width: 0px;"><option value=""></option></select></div></div></div>
+<div><label for="educationInstitutionName">College/University</label><input id="educationInstitutionName" name="educationInstitutionName" type="text"></div>
+</form>
+<script>
+  const MENUS = {
+    'fab-menu28': ['Canada', 'Jamaica', 'United States'],
+    'fab-menu35': ['GED or Equivalent', 'High School', 'Some College', 'College - Associates', 'College - Bachelor of Arts', 'College - Bachelor of Fine Arts',
+      'College - Bachelor of Science', 'College - Master of Arts', 'College - Master of Science', 'College - Master of Business Administration', 'College - Doctorate'],
+  };
+  const shut = () => { document.querySelector('.fab-MenuVessel')?.remove(); document.querySelectorAll('.fab-SelectToggle').forEach((b) => b.setAttribute('aria-expanded', 'false')); };
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') shut(); });
+  for (const button of document.querySelectorAll('.fab-SelectToggle')) {
+    button.addEventListener('click', (event) => {
+      // As Fabric does: a click with no count is a key's, and the keys open it themselves.
+      if (event.detail === 0) return;
+      const id = button.dataset.menuId;
+      const open = document.querySelector('.fab-MenuVessel');
+      shut();
+      if (open && open.dataset.menuId === id) return;
+      const vessel = document.createElement('div');
+      vessel.className = 'fab-MenuVessel'; vessel.dataset.menuId = id;
+      const list = document.createElement('div');
+      list.id = id; list.setAttribute('role', 'menu'); list.tabIndex = -1; list.className = 'fab-MenuList';
+      MENUS[id].forEach((text, i) => {
+        const row = document.createElement('div');
+        row.className = 'fab-MenuOption'; row.id = id + '-item-' + i; row.setAttribute('role', 'menuitem'); row.tabIndex = -1;
+        row.innerHTML = '<div class="fab-MenuOption__content"><div class="fab-MenuOption__row"><div></div></div></div>';
+        row.querySelector('.fab-MenuOption__row div').textContent = text;
+        row.addEventListener('click', () => {
+          const guts = button.querySelector('.fab-SelectToggle__guts');
+          guts.querySelector('.fab-SelectToggle__placeholder, .fab-SelectToggle__content').outerHTML = '<div class="fab-SelectToggle__content"></div>';
+          guts.querySelector('.fab-SelectToggle__content').textContent = text;
+          button.setAttribute('aria-label', button.getAttribute('aria-label').replace(/ [^ ]+$|–Select–$/, '') + ' ' + text);
+          const select = button.closest('.fab-Select').querySelector('select');
+          select.innerHTML = ''; select.add(new Option(text, String(i + 1), true, true));
+          shut();
+        });
+        list.append(row);
+      });
+      vessel.append(list); document.body.append(vessel);
+      button.setAttribute('aria-expanded', 'true');
+    });
+  }
+</script>
+</body></html>`;
+const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -6816,6 +6909,62 @@ async function main() {
       'Teamtailor\'s "+1 555-010-0199" is the number that was given, and is reported filled, not refused',
       addsCode.phone === '+1 555-010-0199' && addsCode.filled.includes('phone') && !addsCode.skipped.some((s) => s.startsWith('phone')),
       JSON.stringify(addsCode),
+    );
+
+    /*
+     * The gate `jh-frame-fill` puts in front of a frame, run in the frame:
+     * nothing is filled there unless `mayFillFrame` says so.
+     */
+    const icimsSignIn = async (frameUrl) => {
+      await page.goto(`${base}/icims-login${frameUrl ? `?frame=${encodeURIComponent(frameUrl)}` : ''}`, { waitUntil: 'load' });
+      const frame = page.frames().find((f) => f.url().includes('/icims-login-frame'));
+      return frame.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const may = m.mayFillFrame();
+        if (may) m.fillForm(fields);
+        return { may, application: m.looksLikeApplicationForm(), email: document.getElementById('email').value, ticked: document.getElementById('accept_privacy').checked };
+      }, { b: frameUrl ? new URL(frameUrl).origin : base, fields: SWEEP });
+    };
+    const ownFrame = await icimsSignIn();
+    const otherFrame = await icimsSignIn(`${base.replace('127.0.0.1', 'localhost')}/icims-login-frame?in_iframe=1`);
+    group('iCIMS: the sign-in step, in a frame of the careers site');
+    check(
+      'the Email box in a frame from the page\'s own origin is filled, though one box is not an application',
+      ownFrame.may && !ownFrame.application && ownFrame.email === 'morgan.testwell@example.com' && !ownFrame.ticked,
+      JSON.stringify(ownFrame),
+    );
+    check(
+      'while the same frame on another origin is still given nothing',
+      !otherFrame.may && otherFrame.email === '',
+      JSON.stringify(otherFrame),
+    );
+
+    const bamboo = await page.goto(`${base}/bamboo-fabric`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 800 });
+        const shown = (name) => document.querySelector(`[name="${name}"]`).closest('.fab-Select').querySelector('.fab-SelectToggle__guts').firstElementChild.textContent;
+        return {
+          level: shown('educationLevelId'), levelSubmits: document.getElementById('educationLevelId').value,
+          country: shown('countryId.value'), trap: document.getElementById('nickname_hpcsaf').value,
+          first: document.getElementById('firstName').value, school: document.getElementById('educationInstitutionName').value,
+          open: Boolean(document.querySelector('.fab-MenuVessel')),
+          filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, fields: SWEEP }),
+    );
+    group('BambooHR: a Fabric select, opened by its button and chosen in its menu');
+    check(
+      '"Highest Education Obtained" is the degree, chosen as "College - Bachelor of Science" and reported filled',
+      bamboo.level === 'College - Bachelor of Science' && bamboo.levelSubmits === '7' && bamboo.filled.includes('degree') && !bamboo.open &&
+        // And not also reported unanswered, from the select kept behind the button.
+        !bamboo.skipped.some((s) => s.startsWith('degree')),
+      JSON.stringify(bamboo),
+    );
+    check(
+      'while the Country the employer set is left as it came, and the box for robots stays empty',
+      bamboo.country === 'Jamaica' && bamboo.trap === '' && bamboo.first === 'Morgan' && bamboo.school === 'Northeastern University',
+      JSON.stringify(bamboo),
     );
   } finally {
     await browser.close();
