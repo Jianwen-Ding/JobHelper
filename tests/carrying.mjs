@@ -417,7 +417,12 @@ async function main() {
       check('and that the writing is safe', /writing is being held/i.test(what), what);
 
       // The way back: the last page of it, in the tab it belongs to.
-      await popup.locator('#backToApplication').click();
+      // The panel closes itself once it has sent you back, sometimes before
+      // the click has finished being a click; where the tab ends up is what
+      // is being asked.
+      await popup.locator('#backToApplication').click({ noWaitAfter: true }).catch((err) => {
+        if (!/closed/i.test(String(err))) throw err;
+      });
       await page.waitForURL(/helios\/apply/, { timeout: 15_000 }).catch(() => undefined);
       check('"Back to it" returns to where you were', /helios\/apply/.test(page.url()), page.url());
       await popup.close().catch(() => undefined);
