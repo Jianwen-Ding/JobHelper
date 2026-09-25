@@ -677,36 +677,39 @@ async function main() {
           JSON.stringify(labels),
         );
 
+        /*
+         * The one made for this very posting first, in a group of its own —
+         * asked for: "temporary resumes created for a job application should
+         * always be on the very top … when looking at that very job
+         * application". Helios here is this posting's own copy.
+         */
+        const own = shape?.find((g) => g.label === 'For this application');
+        check(
+          'the resume made for this posting is at the very top, on its own',
+          labels.indexOf('For this application') === 0
+            && JSON.stringify((own?.options ?? []).map((o) => o.replace(/^★\s*/, '').replace(/ — uses .*$/, ''))) === JSON.stringify(['Platform Engineer — Helios']),
+          JSON.stringify(own?.options),
+        );
+
         const yours = shape?.find((g) => g.label === 'Bases');
         check(
-          'your own resumes come first',
+          'your own resumes come next',
           Boolean(yours)
-            && labels.indexOf('Bases') === 0
+            && labels.indexOf('Bases') === 1
             && yours.options.some((o) => /^Base resume/.test(o))
             && !yours.options.some((o) => /—\s(Helios|ZzzOther)\b/.test(o)),
           JSON.stringify(yours?.options),
         );
 
         /*
-         * And the one built for this company at the top of the rest, among
-         * the ones it is level with: applying to somewhere you have applied
-         * before, what you sent them last time is the most useful thing to
-         * start from and was the hardest to find. Only a tiebreak, though —
-         * a resume that suits this posting better still sorts above it,
-         * which is what a ranked list is for.
-         */
-        /*
-         * By the name, whatever mark is in front of it. The star is the
-         * store's separate judgement of which resumes are clearly ahead, and
-         * whether one of these two earns it depends on how the rest of this
-         * shared save happens to score — it was read here as part of the
-         * name, so the order passed and the check failed on "★ Platform
-         * Engineer — Helios".
+         * And it is not listed a second time among the other postings'. Which
+         * of those sorts first by fit, and this employer's tiebreak, are
+         * tests/card.mjs's to check with numbers it controls.
          */
         const built = shape?.find((g) => g.label === 'Built for a posting');
         check(
-          'and this company is first among the ones built for a posting',
-          built?.options?.[0]?.replace(/^★\s*/, '').startsWith('Platform Engineer — Helios'),
+          'and it is not listed again among the ones built for other postings',
+          Boolean(built) && !built.options.some((o) => /Platform Engineer — Helios/.test(o)) && built.options.some((o) => /ZzzOther/.test(o)),
           JSON.stringify(built?.options?.slice(0, 3)),
         );
         await page.close();
