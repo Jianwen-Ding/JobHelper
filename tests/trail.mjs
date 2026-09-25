@@ -1791,3 +1791,64 @@ describe('the page as sent does not carry the address and contact details a revi
     }
   });
 });
+
+/*
+ * Two more places a form shows the applicant's own answer as text.
+ *
+ * Ant Design's Select, which careers sites built on it use for every
+ * dropdown, draws the pick as `ant-select-selection-item` with the pick in
+ * its `title` as well, and marks it `ant-select-item-option-selected` in the
+ * dropdown it leaves in the page. And Google's address autocomplete appends
+ * a `pac-container` to the page listing addresses matching what was typed
+ * into the address box — the applicant's street, city and country — and
+ * leaves it there, hidden, once one is chosen. Both went to the server and on
+ * to the AI.
+ */
+const MORE_SHOWN_ANSWERS = `
+  <label for="g">Gender</label>
+  <div class="ant-select ant-select-single ant-select-show-arrow"><div class="ant-select-selector">
+    <span class="ant-select-selection-search"><input type="search" id="g" class="ant-select-selection-search-input" role="combobox" aria-haspopup="listbox" readonly value=""></span>
+    <span class="ant-select-selection-item" title="ANSWER-ANT-TITLE">ANSWER-ANT-SINGLE</span>
+  </div></div>
+  <label for="r">Race (select all that apply)</label>
+  <div class="ant-select ant-select-multiple"><div class="ant-select-selector"><div class="ant-select-selection-overflow">
+    <div class="ant-select-selection-overflow-item"><span class="ant-select-selection-item" title="ANSWER-ANT-MULTI-TITLE"><span class="ant-select-selection-item-content">ANSWER-ANT-MULTI</span><span class="ant-select-selection-item-remove" aria-hidden="true">×</span></span></div>
+    <div class="ant-select-selection-overflow-item ant-select-selection-overflow-item-suffix"><div class="ant-select-selection-search"><input type="search" id="r" class="ant-select-selection-search-input" role="combobox" aria-haspopup="listbox" value=""></div></div>
+  </div></div></div>
+  <div class="ant-select-dropdown ant-select-dropdown-hidden"><div class="rc-virtual-list"><div class="rc-virtual-list-holder-inner">
+    <div aria-selected="false" class="ant-select-item ant-select-item-option" title="Male"><div class="ant-select-item-option-content">Male</div></div>
+    <div aria-selected="true" class="ant-select-item ant-select-item-option ant-select-item-option-active ant-select-item-option-selected" title="Female"><div class="ant-select-item-option-content">Female</div></div>
+  </div></div></div>
+  <label for="addr">Home address</label><input id="addr" type="text" autocomplete="off">
+  <div class="pac-container pac-logo hdpi" style="display: none;">
+    <div class="pac-item"><span class="pac-icon pac-icon-marker"></span><span class="pac-item-query"><span class="pac-matched">ANSWER-PAC-STREET</span></span><span>ANSWER-PAC-CITY</span></div>
+  </div>
+  <p>Location: Remote</p>`;
+
+describe('the page as sent does not carry an answer Ant Design or an address autocomplete shows', () => {
+  it('empties the pick and the typed-address suggestions, and keeps the options and the question', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><title>Apply</title></head><body>${MORE_SHOWN_ANSWERS}</body></html>`);
+      const html = await page.evaluate(async (js) => {
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        return mod.trimForStorage(mod.pageHtml(document));
+      }, source);
+      const leaked = html.match(/ANSWER-[A-Z-]+/g) ?? [];
+      assert.deepEqual(leaked, [], `the applicant's answers were sent: ${leaked.join(', ')}`);
+      const options = [...html.matchAll(/<div[^>]*class="([^"]*ant-select-item-option[^"]*)"[^>]*title="(Male|Female)"/g)];
+      assert.equal(options.length, 2, 'the options themselves are kept');
+      assert.equal(options[0][1], options[1][1], 'the chosen option is still marked apart from the other');
+      for (const kept of ['Gender', 'Race (select all that apply)', 'Home address', 'Location: Remote']) {
+        assert.ok(html.includes(kept), `"${kept}" was lost`);
+      }
+    } finally {
+      await browser.close();
+    }
+  });
+});

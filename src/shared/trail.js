@@ -828,6 +828,14 @@ const SHOWN_CHOICE = [
   '.select2-selection__rendered',
   '.choices__list--single',
   '.choices__list--multiple',
+  /*
+   * Ant Design's pick, single or a chip, with the pick in its `title` too.
+   * And Google's address autocomplete, which appends a list of the addresses
+   * matching what was typed into the address box and leaves it in the page,
+   * hidden, once one is chosen: the applicant's street, city and country.
+   */
+  '.ant-select-selection-item',
+  '.pac-container',
 ].join(', ');
 const REPEATS_CHOICE = ['title', 'aria-label', 'data-value', 'value'];
 
@@ -848,10 +856,12 @@ const REPEATS_CHOICE = ['title', 'aria-label', 'data-value', 'value'];
  * highlight marks go too, because a menu reopens with them on the pick, and
  * so does an emotion `css-…` class: react-select styles the pick differently,
  * so its generated class name is a different hash from its neighbours'. Only
- * on `role="option"`, so nothing but a list's options is touched.
+ * on `role="option"`, so nothing but a list's options is touched — and on Ant
+ * Design's options, which have no role and are marked `-selected` and
+ * `-active` on the pick.
  */
 const OPTION_STATE_ATTRS = ['data-state', 'data-selected', 'data-headlessui-state', 'data-active', 'data-focus', 'data-highlighted'];
-const OPTION_STATE_CLASS = /selected|highlighted|focused|focusvisible|^css-/i;
+const OPTION_STATE_CLASS = /selected|highlighted|focused|focusvisible|^css-|^ant-select-item-option-active$/i;
 
 /*
  * And the answers a review step writes out as text.
@@ -967,9 +977,9 @@ function scrubCopy(root) {
     el.textContent = '';
     for (const name of REPEATS_CHOICE) el.removeAttribute(name);
   }
-  for (const el of root.querySelectorAll('[role="option"], [aria-activedescendant]')) {
+  for (const el of root.querySelectorAll('[role="option"], [aria-activedescendant], .ant-select-item-option')) {
     el.removeAttribute('aria-activedescendant');
-    if (el.getAttribute('role') !== 'option') continue;
+    if (el.getAttribute('role') !== 'option' && !el.classList.contains('ant-select-item-option')) continue;
     for (const name of OPTION_STATE_ATTRS) el.removeAttribute(name);
     for (const token of [...el.classList]) if (OPTION_STATE_CLASS.test(token)) el.classList.remove(token);
   }
