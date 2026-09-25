@@ -870,6 +870,60 @@ describe('a page named "apply" is not a claim about its neighbours', () => {
 });
 
 /*
+ * Meta Careers, as measured on the live site.
+ *
+ * The posting is `/profile/job_details/<id>/`, and "Apply now" — a
+ * `<div role="button">`, not a link — navigates the tab to
+ * `/profile/create_application/<id>/`: the same host, the referrer set, and
+ * the job id at the end of both. The two paths differ in the middle, which is
+ * neither an extension of one by the other nor a sibling, so the trail called
+ * the form a different application and the card came up without the posting.
+ * `/jobs/<id>/` answers with a 301 to the posting, the account pages send you
+ * to `/login/?redirect=…` on the same host, and search results open postings
+ * at other ids in a new tab.
+ */
+describe('a job id at the end of the path, and the view of it before', () => {
+  const meta = (p) => `https://www.metacareers.com${p}`;
+  const job = meta('/profile/job_details/1609178343953401/');
+  const form = meta('/profile/create_application/1609178343953401/');
+
+  it('joins the posting to the form for the same job', () => {
+    assert.equal(relatedPath(job, form), true);
+    assert.equal(relatedPath(form, job), true);
+    assert.equal(judgeApplication(trailOf(at(job, 'Meta')), { url: form, referrerHost: 'metacareers.com' }), 'same');
+    assert.equal(carriesOn(trailOf(at(job, 'Meta')), { url: form }), true);
+  });
+
+  it('does not join another job, in either view', () => {
+    const other = '/2978982495789572/';
+    assert.equal(relatedPath(job, meta(`/profile/job_details${other}`)), false);
+    assert.equal(relatedPath(job, meta(`/profile/create_application${other}`)), false);
+    assert.equal(relatedPath(form, meta(`/profile/create_application${other}`)), false);
+    const trail = trailOf(at(job, 'Meta'), at(form, 'Meta'));
+    assert.equal(judgeApplication(trail, { url: meta(`/profile/job_details${other}`) }), 'different');
+  });
+
+  it('does not join the pages around it that are not this job', () => {
+    for (const p of ['/profile/info', '/profile/settings', '/jobsearch/', '/login/?redirect=x', '/jobs']) {
+      assert.equal(relatedPath(job, meta(p)), false, p);
+      assert.equal(relatedPath(form, meta(p)), false, p);
+    }
+  });
+
+  it('needs a step on one side, and the id after what changed', () => {
+    const rp = (a, b) => relatedPath(`https://x.example${a}`, `https://x.example${b}`);
+    // Two views of one record, neither of them a form.
+    assert.equal(rp('/jobs/view/1609178343953401', '/jobs/similar/1609178343953401'), false);
+    // The id before what changed names a company, not a job.
+    assert.equal(rp('/company/1609178343953401/reviews', '/company/1609178343953401/apply'), false);
+    // A short number is a year or a page, not a job.
+    assert.equal(rp('/blog/news/2024', '/blog/apply/2024'), false);
+    // And more than one segment changed is more than one view.
+    assert.equal(rp('/a/job_details/1609178343953401', '/b/create_application/1609178343953401'), false);
+  });
+});
+
+/*
  * An application is a description and then a form, and on the systems that
  * paginate — Workday, Taleo, a government portal — the form is four or five
  * steps on its own. Keeping only the newest pages therefore pushed out the

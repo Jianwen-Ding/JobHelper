@@ -1709,6 +1709,100 @@ export const HEAVY_POSTING = {
 };
 
 
+/**
+ * Meta Careers' shape, measured on the live site.
+ *
+ * The posting is `/profile/job_details/<id>/`, titled only "… Careers", with a
+ * JSON-LD JobPosting, and it calls `history.replaceState` on itself once it
+ * has drawn. "Apply now" is a `<div role="button">` rather than a link, and a
+ * moment after it is pressed the tab navigates — a real load, same host,
+ * referrer kept — to `/profile/create_application/<id>/`. The job id is at the
+ * end of both; what changes is the segment before it. The form draws itself
+ * after a skeleton, under the same "… Careers" title: resume upload, the
+ * locations, name, email, phone, website, and the self-ID questions, then
+ * Cancel and Submit. The id is made up; the employer is too.
+ */
+const META_ID = '2718281828459045';
+const META_FORM_BODY = `
+    <h2>Platform Engineer</h2>
+    <div role="button" tabindex="0" id="view-job">View job details</div>
+    <form>
+      <h3>Resume upload</h3>
+      <p>Upload your resume from your device. Acceptable formats are .docx or .pdf with a maximum file size of 2MB.</p>
+      <label for="mr">Upload resume</label><input id="mr" name="resume" type="file">
+      <p>Please select one or more locations where you'd like to apply.</p>
+      <label><input type="checkbox" name="loc" value="bellevue"> Bellevue, WA</label>
+      <label><input type="checkbox" name="loc" value="menlo-park"> Menlo Park, CA</label>
+      <label for="mfn">First name</label><input id="mfn" name="first_name">
+      <label for="mln">Last name</label><input id="mln" name="last_name">
+      <label for="mloc">Current location</label><input id="mloc" name="location">
+      <label for="mem">Email</label><input id="mem" name="email" type="email">
+      <label for="mph">Phone number</label><input id="mph" name="phone" type="tel">
+      <label for="mweb">Website (Examples: LinkedIn, GitHub, portfolio)</label><input id="mweb" name="website">
+      <h3>Self ID</h3>
+      <p>Gender, race and ethnicity. We invite you to voluntarily provide your gender and race/ethnicity.</p>
+      <div role="button" tabindex="0">Cancel</div>
+      <div role="button" tabindex="0" id="submit">Submit</div>
+    </form>`;
+
+export const META_ROLE = {
+  name: 'meta-role',
+  path: `/profile/job_details/${META_ID}`,
+  company: 'Meridian',
+  title: 'Platform Engineer',
+  html: page(
+    'Meridian Careers',
+    'Meridian',
+    `<h2>Platform Engineer</h2>
+     <div role="button" tabindex="0" id="apply">Apply now</div>
+     ${ROLE_BODY}`,
+    `<script type="application/ld+json">{"@context":"http://schema.org/","@type":"JobPosting","title":"Platform Engineer","hiringOrganization":{"@type":"Organization","name":"Meridian"}}</script>
+     <script>
+       history.replaceState({}, '', location.href);
+       document.getElementById('apply').addEventListener('click', () => {
+         setTimeout(() => { location.href = '/profile/create_application/${META_ID}/'; }, 400);
+       });
+     </script>`,
+  ),
+};
+
+export const META_FORM = {
+  name: 'meta-form',
+  path: `/profile/create_application/${META_ID}`,
+  html: page(
+    'Meridian Careers',
+    'Meridian',
+    `<div id="view"><div class="skeleton" style="height:200px;background:#ddd"></div></div>`,
+    `<script>
+       setTimeout(() => {
+         history.replaceState({}, '', location.href);
+         document.getElementById('view').innerHTML = ${JSON.stringify(META_FORM_BODY)};
+       }, 800);
+     </script>`,
+  ),
+};
+
+/** Another posting on the same site, at another id, for the join that must not happen. */
+export const META_OTHER_ROLE = {
+  name: 'meta-other-role',
+  path: '/profile/job_details/1414213562373095',
+  company: 'Meridian',
+  title: 'Data Scientist',
+  html: page(
+    'Meridian Careers',
+    'Meridian',
+    `<h2>Data Scientist</h2>
+     <div role="button" tabindex="0">Apply now</div>
+     <h2>About the role</h2>
+     <p>We are looking for a data scientist to own our forecasting models. You
+        will build them in Python and SQL and ship them to production.</p>
+     <h2>Minimum qualifications</h2>
+     <ul><li>Years of experience with statistics</li><li>Experience with SQL</li></ul>
+     <p>Equal opportunity employer. Full-time. Compensation is competitive.</p>`,
+    `<script type="application/ld+json">{"@context":"http://schema.org/","@type":"JobPosting","title":"Data Scientist","hiringOrganization":{"@type":"Organization","name":"Meridian"}}</script>`,
+  ),
+};
+
 export const NAVIGATION = [
   CYGNUS_BOARD, CYGNUS_ROLE_A, CYGNUS_ROLE_B, FRAMED_ROLE, FRAMED_FORM, ADVERT_FRAME, ADVERT_CONTENT,
   EMBEDDED_BOARD, EMBEDDED_BOARD_FRAME, BLOG_WITH_FORM, BLOG_ENQUIRY_FRAME, LATE_RENDER,
@@ -1716,7 +1810,7 @@ export const NAVIGATION = [
   LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY, ORACLE_CE, WORKDAY_STEPS,
   OWN_SITE, ATS_FORM, ATS_FORM_UNANSWERABLE, NEW_TAB_ROLE, NEW_TAB_FORM, NEW_TAB_ASIDE, NEW_TAB_BENEFITS, STEP_ONE, STEP_TWO, STEP_TWO_FORM, SPA_BOARD,
   ONE_ADDRESS_BOARD, SOLO_ROLE, SOLO_OTHER, SOLO_OTHER_FORM, NIMBUS_ROLE, NIMBUS_QUIET_FORM,
-  LETTER_SPA, LETTER_SPA_FORM, LETTER_SPA_PLAIN,
+  LETTER_SPA, LETTER_SPA_FORM, LETTER_SPA_PLAIN, META_ROLE, META_FORM, META_OTHER_ROLE,
 ];
 
 export const ALL = [

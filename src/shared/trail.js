@@ -269,8 +269,43 @@ export function relatedPath(a, b) {
      */
     return (stepA || stepB) && namesTheSameJob(a, b);
   }
+
+  /*
+   * One view of a job swapped for another, with the job's id after it.
+   *
+   * Meta Careers keeps the posting at `/profile/job_details/<id>/` and its
+   * form at `/profile/create_application/<id>/`. The id is at the end of both
+   * and what changes is the segment before it, which is neither of the two
+   * shapes above — so pressing "Apply now" started a fresh application on the
+   * form, with the posting and whatever had been built on it left behind.
+   *
+   * The id is what makes this safe, and only where it follows the change: an
+   * id before it — `/company/<id>/reviews` beside `/company/<id>/apply` — is
+   * whose pages these are, not which job. A job-sized id, not a year or a
+   * page number. And one side has to be a step of a form, read word by word
+   * because these are written `create_application` and `jobApply`; two views
+   * that are neither — `/view/<id>` and `/similar/<id>` — stay apart.
+   */
+  if (sa.length === sb.length) {
+    const differ = sa.map((seg, i) => i).filter((i) => sa[i] !== sb[i]);
+    if (differ.length === 1) {
+      const at = differ[0];
+      const idAfter = sa.slice(at + 1).some((seg) => PATH_JOB_ID.test(seg));
+      if (idAfter && (namesAStep(sa[at]) || namesAStep(sb[at]))) return true;
+    }
+  }
   return false;
 }
+
+/** A path segment that is a job's id: five digits or more, and nothing but an id. */
+const PATH_JOB_ID = /^(?=(?:\D*\d){5})[a-z0-9_-]+$/i;
+
+/** A segment with a step of a form among its words: `create_application`, `jobApply`. */
+const namesAStep = (seg) =>
+  bare(seg)
+    .replace(/([a-z])([A-Z])/g, '$1_$2')
+    .split(/[-_.]+/)
+    .some((word) => STEP_WORDS.test(word));
 
 /** Did the user just click a link to this page, meaning "apply"? */
 export function wasExpected(trail, url, now = Date.now()) {
