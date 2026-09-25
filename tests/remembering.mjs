@@ -222,6 +222,82 @@ test('the questions about the person that look like them are still kept', () => 
  * self-identify" is a choice somebody makes about a particular employer, and a
  * tool that pre-answers it has made a declaration on their behalf.
  */
+/*
+ * Everything ResumeM-M's answer bank refuses, and everything its
+ * `redactIdentifiers` takes out, is refused here too — by name, not by
+ * accident. Measured against ResumeM-M's `isSensitiveQuestion`: "Social
+ * Insurance Number", "NI No.", "ITIN", "Credit card", "Driver’s License" and
+ * the national numbers by their own names were all kept here, so the card
+ * said "will be kept" and the server then declined, or (for the ones the
+ * server does not refuse either) the bank held them. The short ones were
+ * refused only for being short, the wrong reason; the reason is pinned.
+ */
+const REFUSED_BY_THE_SERVER = [
+  'Social Insurance Number',
+  'NI No.',
+  'NI #',
+  'ITIN',
+  'Credit card',
+  'Debit card on file',
+  'Driver’s License Number',
+  "Mother’s maiden name",
+  'Aadhaar number',
+  'Aadhar card number',
+  'NRIC',
+  'NRIC / FIN',
+  'CPF',
+  'DNI',
+  'NIE',
+  'PESEL',
+  'BSN',
+  'Personnummer',
+  'Govt. ID #',
+  "Gov't ID",
+  'Government-issued ID number',
+];
+
+test('every identifier the server refuses or redacts is refused as personal', () => {
+  for (const question of REFUSED_BY_THE_SERVER) {
+    const said = worthRemembering({ question, answer: 'Yes' });
+    assert.equal(said.keep, false, `${question} was kept`);
+    assert.match(said.why, /personal/, `${question}: ${said.why}`);
+    assert.equal(mayRememberTyped(question, '').keep, false, `${question} was kept when typed`);
+  }
+});
+
+/*
+ * And the answers the server refuses or redacts anywhere in them, not only as
+ * the whole answer. Each of these was kept here as a chosen answer.
+ */
+test('an identifier inside an answer, or after its label, is refused', () => {
+  for (const answer of [
+    'SSN 123-45-6789',
+    'SSN 123456789',
+    'GB82 WEST 1234 5698 7654 32',
+    'GB82WEST12345698765432',
+    'AB 12 34 56 C',
+    'AB123456C',
+    'Card 4111-1111-1111-1111 exp 04/29',
+    'DOB: 04/02/1999',
+    'Born on April 2nd, 1999',
+    'Apr. 2, 1999',
+    '2nd April 1999',
+    'Passport # X1234567',
+    'Aadhaar 1234 5678 9012',
+  ]) {
+    assert.equal(looksPrivate(answer), true, answer);
+    assert.equal(worthRemembering({ question: 'Question 88213 of this form', answer }).keep, false, answer);
+  }
+  // And what only looks like one is still an answer.
+  for (const answer of ['May 2026', 'Class of 2019', 'ISO 27001', 'Python 3.12', 'Passport holder', "A driver's license and a car"]) {
+    assert.equal(looksPrivate(answer), false, answer);
+  }
+  // The short names are the forms' capitals, not the words they spell.
+  for (const question of ['Do you have a fin-tech background?', 'Which finance tools have you used?', 'Where did you study (e.g. DNIPRO University)?']) {
+    assert.equal(neverRemember(question), false, question);
+  }
+});
+
 test('the refusal says which kind of refusal it is', () => {
   assert.match(worthRemembering({ question: 'Date of birth', answer: 'April' }).why, /this one is personal/);
   // Unlabelled, so the answer's own shape is the only thing to go on.
