@@ -2057,6 +2057,27 @@ export function graduationFor(input, value) {
 }
 
 /**
+ * A month box that wants the month as a number: a placeholder of "MM", a
+ * `type=number`, a numeric keypad, or no room for more than two characters.
+ *
+ * Reported on an education block asking "Start Date (Month)" and "End Date
+ * (Month)" over boxes whose placeholder is MM: both were left empty beside
+ * years that had gone in. The profile's month is a word, "September", and a
+ * box like that takes "09".
+ */
+function asksMonthAsNumber(input) {
+  if (input.type === 'number' || input.inputMode === 'numeric') return true;
+  if (input.maxLength > 0 && input.maxLength <= 2) return true;
+  return /^\s*mm\s*$/i.test(input.placeholder ?? '');
+}
+
+/** "September" as "09"; anything that is not a month, as it was. */
+function monthAsNumber(value) {
+  const month = monthOf(value);
+  return month ? String(month).padStart(2, '0') : value;
+}
+
+/**
  * Reading a yes/no answer out of a profile that holds a sentence.
  *
  * Measured, and it is the worst miss in the file: a form asking "Are you
@@ -2819,6 +2840,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
       value = graduationFor(input, fields.education_start_date);
     } else if (key === 'graduation_date' || key === 'education_start_date') {
       value = graduationFor(input, value);
+    } else if ((key === 'graduation_month' || key === 'education_start_month') && asksMonthAsNumber(input)) {
+      value = monthAsNumber(value);
     } else if (key === 'linkedin' && isWorkdayLinkedIn(input)) {
       value = wholeLinkedInAddress(value);
     }
@@ -5311,6 +5334,7 @@ async function fillEducationPart(control, key, value, f, patience) {
   if (key.startsWith('graduation_') && control.type === 'month' && f.graduation_date) written = graduationFor(control, f.graduation_date);
   else if (key.startsWith('education_start_') && control.type === 'month' && f.education_start_date) written = graduationFor(control, f.education_start_date);
   else if (key === 'graduation_date' || key === 'education_start_date') written = graduationFor(control, written);
+  else if ((key === 'graduation_month' || key === 'education_start_month') && asksMonthAsNumber(control)) written = monthAsNumber(written);
   const before = control.value;
   setValue(control, written);
   if (control.value !== written || browserWouldRefuse(control)) {

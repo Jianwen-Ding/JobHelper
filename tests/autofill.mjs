@@ -1103,6 +1103,19 @@ const SECTIONS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply 
   <label for="x-avail">Available start date</label><input id="x-avail">
   <label for="x-notice">Notice period end date</label><input id="x-notice">
 </form>
+<form id="mm">
+  <!--
+    Reported: a year box and a month box for each end of the degree, the month's
+    placeholder MM. The years went in and both months were left empty. One
+    month box is type=number; the other keeps digits only, as masked inputs do.
+  -->
+  <h3>Education</h3>
+  <label for="mm-sy">Start Date (Year)*:</label><input id="mm-sy">
+  <label for="mm-sm">Start Date (Month):</label><input id="mm-sm" placeholder="MM" maxlength="2" oninput="this.value = this.value.replace(/\\D/g, '').slice(0, 2)">
+  <label for="mm-ey">End Date (Year)*:</label><input id="mm-ey">
+  <label for="mm-em">End Date (Month):</label><input id="mm-em" type="number" placeholder="MM">
+  <p>+ Add another education</p>
+</form>
 <form id="workday">
   <!-- Workday's education block asks for the years attended, in words none of the others use. -->
   <h3>Education</h3>
@@ -4477,7 +4490,7 @@ async function main() {
         };
         m.fillForm(fields);
         const ids = ['e-sm', 'e-sy', 'e-em', 'e-ey', 'w-sm', 'w-sy', 'w-em', 'w-ey', 'f-from', 'f-to', 'j-sy', 'j-ey', 'wd-first', 'wd-last', 'wd-jfirst', 'x-from', 'x-avail', 'x-notice',
-          's-city', 's-esy', 's-avail', 's-wloc', 's-wcity', 's-after'];
+          's-city', 's-esy', 's-avail', 's-wloc', 's-wcity', 's-after', 'mm-sy', 'mm-sm', 'mm-ey', 'mm-em'];
         return Object.fromEntries(ids.map((id) => [id, document.getElementById(id).value]));
       }, { b: base }),
     );
@@ -4504,6 +4517,11 @@ async function main() {
       JSON.stringify([sections['x-avail'], sections['x-notice']]),
     );
     check('while "Start date" inside it still is', sections['x-from'] === 'September 2022', sections['x-from']);
+    check(
+      'a month box whose placeholder says MM takes the month as two digits',
+      sections['mm-sy'] === '2022' && sections['mm-sm'] === '09' && sections['mm-ey'] === '2026' && sections['mm-em'] === '05',
+      JSON.stringify([sections['mm-sy'], sections['mm-sm'], sections['mm-ey'], sections['mm-em']]),
+    );
     check(
       'Workday’s first and last year attended, under Education only',
       sections['wd-first'] === '2022' && sections['wd-last'] === '2026' && sections['wd-jfirst'] === '',
