@@ -3526,6 +3526,8 @@ export function choiceQuestions() {
     if (neverRemember(choice.question) || dependsOnEmployer(choice.question)) continue;
     out.add(choice.question);
   }
+  // And the search-and-pick widgets. See `answerWidgetsFromMemory`.
+  for (const { el, question } of rememberableWidgets()) if (!widgetShowsAnAnswer(el)) out.add(question);
   return [...out];
 }
 
@@ -3814,6 +3816,155 @@ export function watchTyped(tell, { profile = () => null, company = () => '' } = 
       typed.clear();
     },
   };
+}
+
+/* ------------------- Answers picked in a search-and-pick widget ------------------- */
+
+/*
+ * A react-select, or anything built like one: a text box that is a combobox,
+ * and a menu it opens. Greenhouse asks its custom questions this way on most
+ * boards now, and a choice made in one was neither kept nor offered again.
+ * `watchChoices` hears a `<select>`'s change and a radio's click, and here
+ * there is neither. The option is chosen on mousedown and the menu closes at
+ * once, so by the time a click arrives its option has left the page. On the
+ * way back, `choiceQuestions` asked the bank only about selects, radios and
+ * ARIA groups.
+ *
+ * Only a widget the profile does not answer. The country, the school, the
+ * degree are the profile's, and `fillComboboxes` fills those from it.
+ */
+const WIDGETS = '[role="combobox"], [aria-haspopup="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"]';
+
+/** What a widget asks, when it is a question for the bank. */
+function widgetQuestion(widget) {
+  if (!isWidgetChoice(widget) || widget.getAttribute('role') === 'listbox' || isDisabled(widget)) return null;
+  if (rootOf(widget)?.host?.id === OURS) return null;
+  const description = describeField(widget);
+  if (!description) return null;
+  const question = clean(questionFor(widget));
+  if (question.length < 8) return null;
+  if (OTHER_PEOPLE.test(`${surroundingWords(widget)} ${description}`)) return null;
+  if (inWorkHistory(widget) || EDUCATION_SECTION.test(sectionOf(widget))) return null;
+  if (profileKeyOf(widget, description)) return null;
+  if (neverRemember(question) || dependsOnEmployer(question)) return null;
+  return { question, description };
+}
+
+/** The widgets on this page that ask the bank's kind of question. */
+function rememberableWidgets() {
+  const found = [];
+  for (const widget of deepQueryAll(WIDGETS)) {
+    if (widget.getClientRects().length === 0) continue;
+    // A combobox `<div>` around its own text box is one question.
+    if (found.some(({ el }) => el.contains(widget) || widget.contains(el))) continue;
+    const said = widgetQuestion(widget);
+    if (said) found.push({ ...said, el: widget });
+  }
+  return found;
+}
+
+/**
+ * The widget a menu belongs to: the one that names it (`aria-controls`,
+ * `aria-owns`), or failing that the only combobox beside it, which is where
+ * react-select draws its menu. Nothing when that is a guess.
+ */
+function ownerOfMenu(list) {
+  if (list.id) {
+    const id = CSS.escape(list.id);
+    const named = deepQueryAll(`[aria-controls~="${id}"], [aria-owns~="${id}"]`).find((el) => isWidgetChoice(el));
+    if (named) return named;
+  }
+  for (let at = list.parentElement, up = 0; at && up < 3; at = at.parentElement, up++) {
+    const boxes = [...at.querySelectorAll(WIDGETS)].filter((el) => el !== list && !list.contains(el));
+    if (boxes.length === 1) return boxes[0];
+    if (boxes.length > 1) return null;
+  }
+  return null;
+}
+
+/** Whether the widget is now showing this answer as its choice. */
+function widgetHolds(widget, answer) {
+  if (!widgetShowsAnAnswer(widget)) return false;
+  return clean(controlOf(widget).textContent).toLowerCase().includes(clean(answer).toLowerCase());
+}
+
+/**
+ * A person's pick in one of these widgets, as `watchChoices` tells a choice:
+ * `{ question, answer }`, once the widget is seen to hold it. Only a pick the
+ * person made (`isTrusted`), so what Autofill chose is never taken for one.
+ */
+function watchWidgetPicks(write, watching) {
+  /*
+   * Read back as soon as the page has drawn the pick, and again a little
+   * later for a page that draws it late. And at once on a send or on
+   * leaving: a pick followed straight by Submit was lost when it waited
+   * 150ms to be read back, because the page had gone by then.
+   */
+  const pending = new Set();
+  const settle = (pick) => {
+    if (!pending.has(pick) || !watching()) return;
+    if (!widgetHolds(pick.widget, pick.answer)) return;
+    pending.delete(pick);
+    write({ question: pick.question, answer: pick.answer });
+  };
+  const settleAll = () => {
+    for (const pick of [...pending]) settle(pick);
+  };
+  const onPick = (event) => {
+    if (!event.isTrusted) return;
+    const target = event.composedPath?.()?.[0] ?? event.target;
+    const option = target?.closest?.('[role="option"]');
+    const list = option?.closest('[role="listbox"]');
+    if (!list || rootOf(list)?.host?.id === OURS) return;
+    const widget = ownerOfMenu(list);
+    if (!widget) return;
+    let said;
+    try {
+      said = widgetQuestion(widget);
+    } catch {
+      return;
+    }
+    if (!said) return;
+    // Read now: the menu closes on this press and takes the option with it.
+    const answer = clean(option.getAttribute('aria-label') || option.textContent);
+    if (!answer) return;
+    // And believed once the page has drawn it, the way `tookIt` reads a choice back.
+    const pick = { widget, answer, question: said.question };
+    pending.add(pick);
+    for (const ms of [0, 100, 400]) setTimeout(() => settle(pick), ms);
+    // Given up on after that: a pick the widget never showed is not a choice.
+    setTimeout(() => pending.delete(pick), 450);
+  };
+  document.addEventListener('mousedown', onPick, true);
+  document.addEventListener('submit', settleAll, true);
+  window.addEventListener('pagehide', settleAll);
+  return () => {
+    document.removeEventListener('mousedown', onPick, true);
+    document.removeEventListener('submit', settleAll, true);
+    window.removeEventListener('pagehide', settleAll);
+  };
+}
+
+/**
+ * Choose in these widgets what the person chose on the last form that asked:
+ * the same refusals as `answerFromMemory`, and only an option that plainly
+ * says the answer, driven and read back by `chooseInWidget` as a profile
+ * value would be. Whatever did not take is put back as it was.
+ */
+export async function answerWidgetsFromMemory(remembered, report, { patience = 4000 } = {}) {
+  const bank = bankFrom(remembered);
+  if (bank.size === 0) return report;
+  const filled = [];
+  for (const { el, question, description } of rememberableWidgets()) {
+    if (widgetShowsAnAnswer(el)) continue;
+    const answer = bank.get(question)?.answer;
+    if (!answer || !worthRemembering({ question, answer }).keep) continue;
+    const how = await chooseInWidget(el, 'remembered', answer, { patience, fields: {}, asked: question });
+    if (how === 'chose') {
+      filled.push({ key: 'remembered', value: answer, description: description.slice(0, 60), question, remembered: true, widget: true });
+    }
+  }
+  return filled.length ? { ...report, filled: [...report.filled, ...filled] } : report;
 }
 
 /** Whether an ARIA option is the one marked as chosen. */
@@ -5048,6 +5199,8 @@ export function watchChoices(tell) {
     if (option) {
       const group = option.closest('[role="radiogroup"], [role="listbox"], [role="group"]');
       if (!group) return null;
+      // A widget's menu is the widget's question, and `watchWidgetPicks` reads it.
+      if (group.getAttribute('role') === 'listbox' && ownerOfMenu(group)) return null;
       return {
         question: choiceQuestionFor(group),
         answer: clean(option.getAttribute('aria-label') || option.textContent),
@@ -5094,10 +5247,16 @@ export function watchChoices(tell) {
    */
   document.addEventListener('change', look, true);
   document.addEventListener('click', look, true);
+  // And a pick in a react-select, which fires neither usefully. See `watchWidgetPicks`.
+  const stopPicks = watchWidgetPicks((answer) => {
+    const verdict = worthRemembering(answer);
+    tell(verdict.keep ? { ...answer, keep: true } : { ...answer, keep: false, why: verdict.why });
+  }, () => watching);
   return () => {
     watching = false;
     document.removeEventListener('change', look, true);
     document.removeEventListener('click', look, true);
+    stopPicks();
   };
 }
 

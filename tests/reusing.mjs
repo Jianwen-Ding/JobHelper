@@ -236,6 +236,244 @@ const SECOND_FORM = typedPosting({
   ].join('\n'),
 });
 
+/*
+ * And a third employer, asking the same things in the wordings the store's
+ * matcher did not call the same question until it learned to: an inflection
+ * turned round ("Salary expectations"), another word for a link ("Portfolio
+ * URL"), a question put round a label ("Who is your current employer?"), and
+ * an age put the other way ("Are you at least 18?"). Measured before it did,
+ * each of these came back empty and was typed again.
+ *
+ * Beside them the questions they must not be taken for: the latest start
+ * date, the last name, what somebody is paid now — put "please" and as a
+ * question — and another age.
+ */
+const THIRD_FORM = typedPosting({
+  name: 'typed-third',
+  path: '/cobalt-typed/jobs/808',
+  company: 'Cobalt Freight',
+  title: 'Backend Engineer',
+  after: '/cobalt-typed/thanks',
+  questions: [
+    box('heard', 'How did you hear about this job?'),
+    box('start', 'What is your earliest start date?'),
+    box('salary', 'Salary expectations'),
+    box('employer', 'Who is your current employer?'),
+    box('portfolio', 'Portfolio URL', 'url'),
+    box('adult', 'Are you at least 18?'),
+    // Near the questions above, and different questions.
+    box('latest', 'Latest start date'),
+    box('lname', 'Preferred last name'),
+    box('now-paid', 'Please enter your current salary'),
+    box('prev-employer', 'Who is your previous employer?'),
+    box('drink', 'Are you at least 21?'),
+  ].join('\n'),
+});
+
+/*
+ * And the same thing with the form in a frame, which is how iCIMS serves the
+ * whole of its application, and how a careers page embeds a board served
+ * from another domain. Only the top document watched, so nothing typed or
+ * chosen in either frame was kept.
+ *
+ * One frame shares the page's origin, and the other comes from `localhost`
+ * under a page on 127.0.0.1, a different origin to the browser. Each frame
+ * asks some questions to keep, and some to refuse: what somebody is paid
+ * now, a date of birth, and a question naming the employer. Only the page
+ * around the frame knows the employer's name. The first frame's form
+ * navigates to a thank-you page. The second sends by script and never
+ * leaves the page, so nothing but the send itself tells the frame to keep.
+ */
+const framedPosting = ({ name, path, company, frameSrc }) => ({
+  name,
+  path,
+  company,
+  title: 'Backend Engineer',
+  html: `<!doctype html>
+<html><head><meta charset="utf-8"><title>Backend Engineer at ${company}</title>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"JobPosting",
+ "title":"Backend Engineer",
+ "hiringOrganization":{"@type":"Organization","name":"${company}"},
+ "jobLocation":{"@type":"Place","address":{"@type":"PostalAddress","addressLocality":"Boston","addressRegion":"MA"}},
+ "description":"<p>Build and run our payments services in Go and Postgres, on Kubernetes and AWS.</p><ul><li>Experience with distributed systems</li></ul>"}
+</script></head>
+<body>
+  <h1>Backend Engineer</h1>
+  <p>${company} · Boston, MA</p>
+  <h2>About the role</h2>
+  <p>Build and run our payments services in Go and Postgres, on Kubernetes and
+     AWS, with the CI/CD that ships them.</p>
+  <h2>Minimum qualifications</h2>
+  <ul><li>Experience with distributed systems</li><li>Experience with SQL and AWS</li></ul>
+  <h2>Apply for this job</h2>
+  <iframe id="form" title="Application form" src="${frameSrc}" style="width:100%;height:900px;border:0"></iframe>
+</body></html>`,
+});
+
+const framedForm = ({ name, path, after, company, questions, byScript = false }) => ({
+  name,
+  path,
+  html: `<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+  <form method="post" action="${after}">
+    <label for="fn">First Name</label><input id="fn" name="first_name">
+    <label for="em">Email</label><input id="em" name="email" type="email">
+    <label for="li">LinkedIn Profile</label><input id="li" name="linkedin">
+${questions}
+    <label for="office">Which ${company} office would suit you best?</label><input id="office" name="office" type="text">
+    <label for="now-paid">Current salary</label><input id="now-paid" name="now_paid" type="text">
+    <label for="dob">Date of birth</label><input id="dob" name="dob" type="text">
+    <p>${company} is an equal opportunity employer.</p>
+    <button type="submit">Submit application</button>
+  </form>${
+    byScript
+      ? `
+  <script>
+    // Sent the way a board built as one page sends it: no navigation, and
+    // the frame's own pagehide never fires.
+    document.querySelector('form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      setTimeout(() => {
+        document.body.innerHTML = '<h1>Thank you for applying</h1><p>Your application has been received.</p>';
+      }, 300);
+    });
+  </script>`
+      : ''
+  }
+</body></html>`,
+});
+
+const SAME_ORIGIN_FORM = framedForm({
+  name: 'lumen-frame',
+  path: '/lumen-framed/form',
+  after: '/lumen-framed/thanks',
+  company: 'Lumen Freight',
+  questions: [
+    box('start', 'Earliest start date'),
+    box('portfolio', 'Portfolio link', 'url'),
+    `    <label for="arr">Which working arrangement do you prefer?</label>
+    <select id="arr" name="arrangement">
+      <option value="">Select...</option><option>Remote</option><option>Hybrid</option><option>On-site</option>
+    </select>`,
+  ].join('\n'),
+});
+const SAME_ORIGIN_PAGE = framedPosting({
+  name: 'lumen-page',
+  path: '/lumen-framed/jobs/31',
+  company: 'Lumen Freight',
+  frameSrc: '/lumen-framed/form',
+});
+
+const CROSS_ORIGIN_FORM = framedForm({
+  name: 'nimbus-frame',
+  path: '/nimbus-embed/form',
+  after: '/nimbus-embed/thanks',
+  company: 'Nimbus Air',
+  byScript: true,
+  questions: [
+    box('heard', 'How did you hear about us?'),
+    box('pname', 'Preferred first name'),
+    box('employer', 'Current employer'),
+    `    <label for="reloc">Are you willing to relocate?</label>
+    <select id="reloc" name="relocate">
+      <option value="">Select...</option><option>Yes</option><option>No</option>
+    </select>`,
+  ].join('\n'),
+});
+const CROSS_ORIGIN_PAGE = framedPosting({
+  name: 'nimbus-page',
+  path: '/nimbus/careers/12',
+  company: 'Nimbus Air',
+  frameSrc: '{{ATS}}/nimbus-embed/form',
+});
+
+/*
+ * And a react-select, as Greenhouse draws its custom questions (the markup
+ * and behaviour are the ones tests/autofill.mjs measured on the live board):
+ * a text box with `role="combobox"`, a menu that opens on a press of the
+ * control, and a choice made on mousedown of an option, which then closes
+ * the menu and takes the options away with it. None of these was kept,
+ * because a choice there is neither a `<select>` nor a radio, and the click
+ * after the mousedown lands on an option that is no longer in the page.
+ */
+const reactSelect = (id, label, options) => `
+    <label id="${id}-label" for="${id}">${label}</label>
+    <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+      <div class="select__input-container" data-value=""><input id="${id}" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="${id}-label" autocomplete="off"></div></div></div></div>
+    <script>
+      (() => {
+        const input = document.getElementById(${JSON.stringify(id)});
+        const control = input.closest('.select__control');
+        const items = ${JSON.stringify(options)};
+        let list = null;
+        const close = () => { list?.remove(); list = null; input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-controls'); };
+        const render = (term) => {
+          list?.remove();
+          list = document.createElement('div');
+          list.id = 'react-select-' + input.id + '-listbox';
+          list.setAttribute('role', 'listbox');
+          for (const text of items.filter((t) => t.toLowerCase().includes(term))) {
+            const o = document.createElement('div');
+            o.setAttribute('role', 'option');
+            o.className = 'select__option';
+            o.textContent = text;
+            o.addEventListener('mousedown', (e) => {
+              e.preventDefault();
+              control.querySelector('.select__placeholder')?.remove();
+              let shown = control.querySelector('.select__single-value');
+              if (!shown) {
+                shown = document.createElement('div');
+                shown.className = 'select__single-value';
+                control.querySelector('.select__value-container').prepend(shown);
+              }
+              shown.textContent = text;
+              input.value = '';
+              close();
+            });
+            list.append(o);
+          }
+          control.parentElement.append(list);
+          input.setAttribute('aria-controls', list.id);
+        };
+        control.addEventListener('mousedown', () => {
+          if (list) return;
+          input.setAttribute('aria-expanded', 'true');
+          render('');
+        });
+        input.addEventListener('input', () => { if (list) render(input.value.toLowerCase()); });
+        input.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+      })();
+    </script>`;
+
+const OFFICES = ['Boston', 'New York', 'Remote'];
+const WIDGET_FIRST = typedPosting({
+  name: 'widget-first',
+  path: '/quill-widget/jobs/5',
+  company: 'Quill Robotics',
+  title: 'Backend Engineer',
+  after: '/quill-widget/thanks',
+  questions: [
+    reactSelect('office', 'Which office would you like to work from?', OFFICES),
+    // The profile's, however it is drawn, and not the bank's to keep.
+    reactSelect('country', 'Which country do you live in?', ['United States', 'Canada']),
+    reactSelect('gender', 'What is your gender identity?', ['Female', 'Male', 'Decline to self-identify']),
+  ].join('\n'),
+});
+const WIDGET_SECOND = typedPosting({
+  name: 'widget-second',
+  path: '/tern-widget/jobs/9',
+  company: 'Tern Logistics',
+  title: 'Platform Engineer',
+  after: '/tern-widget/thanks',
+  questions: [
+    reactSelect('office', 'Which office would you like to work from? *', OFFICES),
+    // A different question with the same options, and one the bank has no answer for.
+    reactSelect('visit', 'Which office would you visit first?', OFFICES),
+  ].join('\n'),
+});
+
 const THANKS = (path) => ({
   name: `${path}-thanks`,
   path,
@@ -268,6 +506,25 @@ const putBank = (answers) =>
     body: JSON.stringify(answers),
   });
 
+/*
+ * Empty the bank, and keep it empty until nothing more lands in it.
+ *
+ * A choice made on the page before is saved by the worker in its own time,
+ * and one that arrived just after a bare `putBank([])` put its row back into
+ * the bank the walk thought was empty. Measured: "How did you hear about this
+ * position?" = LinkedIn, from the posting above, was then confidently the
+ * first form's "How did you hear about us?", filled in, and overwritten by
+ * what was typed — so the row kept the posting's wording and three checks
+ * failed on some runs and not others.
+ */
+async function emptyBank() {
+  for (let i = 0; i < 10; i++) {
+    await putBank([]);
+    await new Promise((r) => setTimeout(r, 1500));
+    if ((await bankOf()).length === 0) return;
+  }
+}
+
 /** Ask until `get` answers something, or give up and answer null. */
 async function until(get, ms = 15_000) {
   const end = Date.now() + ms;
@@ -291,7 +548,7 @@ const answerOf = (item) => (item?.variants.find((v) => v.id === item.default) ??
  * employer's form, and Autofill again.
  */
 async function walkTwoForms(context, fixtures) {
-  await putBank([]);
+  await emptyBank();
 
   const first = await context.newPage();
   await first.goto(fixtures.urlFor(FIRST_FORM), { waitUntil: 'domcontentloaded' });
@@ -473,40 +730,235 @@ async function walkTwoForms(context, fixtures) {
   const gone = await until(async () => ((await bankOf()).some((a) => a.question === 'How did you hear about us?') ? null : true), 8_000);
   await editor.close();
 
+  /*
+   * The third employer's form, worded the ways the matcher once missed.
+   */
   const again = await context.newPage();
-  await again.goto(fixtures.urlFor(SECOND_FORM), { waitUntil: 'domcontentloaded' });
+  await again.goto(fixtures.urlFor(THIRD_FORM), { waitUntil: 'domcontentloaded' });
   await settled(again);
   await cardOf(again).getByRole('button', { name: 'Autofill this form' }).click();
   await again
     .waitForFunction(() => document.getElementById('start')?.value !== '', null, { timeout: 20_000 })
     .catch(() => undefined);
-  const later = await valuesOf(again, ['heard', 'start']);
+  const later = await valuesOf(again, ['heard', 'start', 'salary', 'employer', 'portfolio', 'adult', 'latest', 'lname', 'now-paid', 'prev-employer', 'drink']);
   check(
     'and one deleted in the editor is not offered again',
     gone === true && later.heard === '' && later.start === KEPT.start,
     `deleted: ${gone === true}, heard "${later.heard}", start "${later.start}"`,
+  );
+  const reworded = {
+    salary: '$160,000 base',
+    employer: KEPT.employer,
+    portfolio: KEPT.portfolio,
+    adult: KEPT.adult,
+  };
+  const missed = Object.entries(reworded)
+    .filter(([id, v]) => later[id] !== v)
+    .map(([id, v]) => `${id}: "${later[id]}" not "${v}"`);
+  check(
+    'a third form asking in other words — "Salary expectations", "Portfolio URL", "Who is your current employer?", "Are you at least 18?" — gets them back',
+    missed.length === 0,
+    missed.join(' | ') || Object.keys(reworded).join(', '),
+  );
+  const strayed = ['latest', 'lname', 'now-paid', 'prev-employer', 'drink'].filter((id) => later[id] !== '');
+  check(
+    'while the latest start date, the last name, the current salary, the previous employer and another age are left for the person',
+    strayed.length === 0,
+    strayed.map((id) => `${id}: "${later[id]}"`).join(' | ') || 'all empty',
   );
   await again.close();
 }
 
 /*
  * The employers these walks apply to, taken out of the tracker before and
- * after. The two forms are sent, so each leaves an application marked as
+ * after. The forms are sent, so each leaves an application marked as
  * sent — and another suite looking for its own "Helios" in the same save
  * found this one instead.
  */
-const COMPANIES = ['Vantage Systems', 'Helios Systems', 'Orbital Labs'];
+const COMPANIES = ['Vantage Systems', 'Helios Systems', 'Orbital Labs', 'Cobalt Freight', 'Lumen Freight', 'Nimbus Air', 'Quill Robotics', 'Tern Logistics'];
+
+/*
+ * Typed and chosen inside a frame, then sent from inside it. The frame goes to
+ * its thank-you page and the page around it never moves, so only the frame
+ * is in a position to keep anything.
+ */
+async function walkFramedForms(context, fixtures) {
+  console.log('\nTyped and chosen in a frame');
+  const oneWalk = async ({ what, page: posting, typed, chosen, refused, notKept }) => {
+    await emptyBank();
+    const page = await context.newPage();
+    await page.goto(fixtures.urlFor(posting), { waitUntil: 'domcontentloaded' });
+    await settled(page);
+    const frame = page.frameLocator('#form');
+    await frame.locator('#fn').waitFor({ timeout: 15_000 });
+    // Autofill first, the way a form is filled, which is also what tells the
+    // frame which boxes are the profile's and which are the person's.
+    await cardOf(page).getByRole('button', { name: 'Autofill this form' }).click().catch(() => undefined);
+    await frame.locator('#em').evaluate(async (el) => {
+      for (let i = 0; i < 80 && !el.value; i++) await new Promise((r) => setTimeout(r, 250));
+    });
+    for (const [id, value] of Object.entries({ ...typed, ...refused })) await frame.locator(`#${id}`).fill(value);
+    for (const [id, value] of Object.entries(chosen)) await frame.locator(`#${id}`).selectOption(value);
+    // Leave the last box, which is when a browser says it changed.
+    await frame.locator('#fn').click();
+
+    if (notKept) {
+      const offer = cardOf(page).getByRole('button', { name: new RegExp(`Don.t keep “${notKept.question}”`) });
+      await offer.waitFor({ timeout: 10_000 }).catch(() => undefined);
+      const listed = ((await cardOf(page).locator('.to-keep').innerText().catch(() => '')) ?? '').replace(/\s+/g, ' ');
+      check(`${what}: the card lists what the frame will keep, with a way to not keep each one`, (await offer.count()) === 1, listed || '(nothing about keeping)');
+      await offer.click().catch(() => undefined);
+    }
+
+    await frame.locator('button[type=submit]').click();
+    const wanted = Object.keys(typed).length - (notKept ? 1 : 0) + Object.keys(chosen).length;
+    const bank =
+      (await until(async () => {
+        const now = await bankOf();
+        return now.length >= wanted ? now : null;
+      })) ?? (await bankOf());
+    const rows = bank.map((a) => `${a.question} = ${answerOf(a)}`);
+    const expected = { ...typed, ...chosen };
+    if (notKept) delete expected[notKept.id];
+    const missing = Object.values(expected).filter((v) => !bank.some((a) => answerOf(a) === v));
+    check(`${what}: what was typed and chosen in it is kept`, missing.length === 0, rows.join(' | ') || 'nothing kept');
+    // A moment for anything late, so a refusal is not passed by arriving first.
+    await new Promise((r) => setTimeout(r, 1500));
+    const later = await bankOf();
+    const leaked = later.filter((a) =>
+      a.variants.some((v) => [...Object.values(refused), notKept?.value].includes(v.text)),
+    );
+    check(
+      `${what}: while the current salary, the date of birth, the question naming the employer${notKept ? ' and the one the card was told not to keep' : ''} are not`,
+      leaked.length === 0,
+      leaked.map((a) => `${a.question} = ${answerOf(a)}`).join(' | ') || `${later.length} rows, none of them those`,
+    );
+    await page.close();
+  };
+
+  const refused = { office: 'The Boston one', 'now-paid': '$128,000', dob: '04/02/1999' };
+  await oneWalk({
+    what: 'a frame on the same origin',
+    page: SAME_ORIGIN_PAGE,
+    typed: { start: 'Three weeks after an offer', portfolio: 'https://example.dev/framed' },
+    chosen: { arr: 'Remote' },
+    refused,
+  });
+  await oneWalk({
+    what: 'a frame from another origin',
+    page: CROSS_ORIGIN_PAGE,
+    typed: { heard: 'A talk at a meetup', pname: 'Jay-framed', employer: 'Northwind Framed' },
+    chosen: { reloc: 'No' },
+    refused,
+    notKept: { id: 'pname', question: 'Preferred first name', value: 'Jay-framed' },
+  });
+}
+
+/*
+ * A choice made in a react-select on one form, and chosen for the person in
+ * the same widget on the next.
+ */
+async function walkWidgets(context, fixtures) {
+  console.log('\nChosen in a react-select');
+  const shownIn = (page, id) =>
+    page.evaluate(
+      (id) => document.getElementById(id)?.closest('.select__control')?.querySelector('.select__single-value')?.textContent ?? '',
+      id,
+    );
+  // As a person picks: a press on the control, then on the option.
+  const pick = async (page, id, text) => {
+    await page.locator(`#${id}-label + .select-shell .select__control`).click();
+    await page.locator(`#react-select-${id}-listbox [role="option"]`, { hasText: text }).first().click();
+  };
+
+  await emptyBank();
+  const first = await context.newPage();
+  await first.goto(fixtures.urlFor(WIDGET_FIRST), { waitUntil: 'domcontentloaded' });
+  await settled(first);
+  await cardOf(first).getByRole('button', { name: 'Autofill this form' }).click();
+  await first.waitForFunction(() => document.getElementById('em')?.value !== '', null, { timeout: 20_000 }).catch(() => undefined);
+  await pick(first, 'gender', 'Decline to self-identify');
+  // Over whatever Autofill chose there, so that a pick is made in it either way.
+  await pick(first, 'country', 'Canada');
+  // Last, and sent straight after, as somebody does with the last box on a form.
+  await pick(first, 'office', 'New York');
+  await first.click('button[type=submit]');
+  const picked = { office: 'New York', gender: 'Decline to self-identify' };
+  await first.waitForURL(/thanks/, { timeout: 15_000 }).catch(() => undefined);
+  const bank =
+    (await until(async () => {
+      const now = await bankOf();
+      return now.some((a) => /office/i.test(a.question)) ? now : null;
+    })) ?? (await bankOf());
+  await new Promise((r) => setTimeout(r, 1500));
+  const settledBank = await bankOf();
+  const rows = settledBank.map((a) => `${a.question} = ${answerOf(a)}`).join(' | ');
+  check(
+    'a choice picked in a react-select is kept, under the question it was asked with',
+    picked.office === 'New York' &&
+      settledBank.some((a) => a.question === 'Which office would you like to work from?' && answerOf(a) === 'New York'),
+    `picked ${JSON.stringify(picked)}; ${rows || `${bank.length} rows`}`,
+  );
+  check(
+    'while the country, which is the profile’s, and the gender, which is nobody’s to keep, are not',
+    !settledBank.some((a) => /country|gender/i.test(a.question) || a.variants.some((v) => ['Canada', 'United States', 'Decline to self-identify'].includes(v.text))),
+    rows || 'nothing kept',
+  );
+  await first.close();
+
+  const second = await context.newPage();
+  await second.goto(fixtures.urlFor(WIDGET_SECOND), { waitUntil: 'domcontentloaded' });
+  await settled(second);
+  await cardOf(second).getByRole('button', { name: 'Autofill this form' }).click();
+  await second
+    .waitForFunction(
+      () => Boolean(document.getElementById('office')?.closest('.select__control')?.querySelector('.select__single-value')),
+      null,
+      { timeout: 20_000 },
+    )
+    .catch(() => undefined);
+  const got = { office: await shownIn(second, 'office'), visit: await shownIn(second, 'visit') };
+  check('the next form’s react-select is chosen from it', got.office === 'New York', JSON.stringify(got));
+  check('and a different question with the same options is left for the person', got.visit === '', JSON.stringify(got));
+  // What Autofill chose is not a choice the person made, and is not kept again under this form's wording.
+  await new Promise((r) => setTimeout(r, 1500));
+  const after = await bankOf();
+  check(
+    'and what Autofill chose there is not kept as a choice of the person’s',
+    !after.some((a) => a.question === 'Which office would you like to work from? *'),
+    after.map((a) => `${a.question} = ${answerOf(a)}`).join(' | '),
+  );
+  const note = ((await cardOf(second).locator('.ok-note').first().innerText().catch(() => '')) ?? '').trim();
+  check(
+    'the card names it among the answers given before',
+    /from answers you gave before/i.test(note) && /Which office would you like to work from\?/.test(note),
+    note || '(no note)',
+  );
+  await second.close();
+}
 
 async function main() {
   await requireOpenSave(SERVER);
   await cleanStore(SERVER, COMPANIES).catch(() => undefined);
+  // Another origin, for the embedded board: `localhost` is not 127.0.0.1 to a browser.
+  const ats = await serveFixtures([CROSS_ORIGIN_FORM, THANKS('/nimbus-embed/thanks')], { hostname: 'localhost' });
   const fixtures = await serveFixtures([
     POSTING,
     FIRST_FORM,
     SECOND_FORM,
+    THIRD_FORM,
     THANKS('/helios-typed/thanks'),
     THANKS('/orbital-typed/thanks'),
-  ]);
+    THANKS('/cobalt-typed/thanks'),
+    SAME_ORIGIN_PAGE,
+    SAME_ORIGIN_FORM,
+    THANKS('/lumen-framed/thanks'),
+    CROSS_ORIGIN_PAGE,
+    WIDGET_FIRST,
+    WIDGET_SECOND,
+    THANKS('/quill-widget/thanks'),
+    THANKS('/tern-widget/thanks'),
+  ], { vars: { ATS: ats.base } });
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-reusing-'));
 
   /*
@@ -616,11 +1068,14 @@ async function main() {
     await page.close();
 
     await walkTwoForms(context, fixtures);
+    await walkFramedForms(context, fixtures);
+    await walkWidgets(context, fixtures);
   } finally {
     await context.close();
     await putBank(before).catch(() => undefined);
     await cleanStore(SERVER, COMPANIES).catch(() => undefined);
     fixtures.close();
+    ats.close();
     fs.rmSync(userDataDir, { recursive: true, force: true });
   }
 
