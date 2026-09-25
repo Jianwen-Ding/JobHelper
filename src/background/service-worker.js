@@ -498,7 +498,12 @@ async function parkWork(url, entry) {
    */
   return changeStored(key, async (stored) => {
     const held = parkedAt(stored);
-    const kept = [...held.filter((p) => !sameJob(p.job, entry.job)), entry].slice(-PARK_MAX);
+    /*
+     * The same job from the same tab replaces its older copy. From another
+     * tab it is another application — two tabs open on one posting, both
+     * writing — and replacing it handed the first tab the second one's letter.
+     */
+    const kept = [...held.filter((p) => !(sameJob(p.job, entry.job) && p.tab === entry.tab)), entry].slice(-PARK_MAX);
     return { parked: kept, at: Date.now() };
   });
 }
@@ -513,7 +518,16 @@ async function parkWork(url, entry) {
  * page was ever analysed — are still offered, newest first, because that is
  * the case this rescue was built for and it has no better evidence to go on.
  */
-function pickParked(held, job, tabId) {
+function pickParked(parked, job, tabId, openTabs = new Set()) {
+  /*
+   * Never another open tab's. A tab that parked its work and is still open
+   * has only gone to read something else, and is coming back for it; the
+   * address is a shared listing or login page as often as it is the job.
+   * Taken here, it was the other tab's letter "recovered from a tab that
+   * closed" on a tab that never closed, and the tab that wrote it came back
+   * to nothing. Closed tabs' parks, and this tab's own, are still offered.
+   */
+  const held = parked.filter((p) => p.tab === undefined || p.tab === tabId || !openTabs.has(p.tab));
   if (held.length === 0) return null;
   /*
    * This tab's own park first, whatever the page is called.
@@ -527,7 +541,8 @@ function pickParked(held, job, tabId) {
   const thisTabs = held.filter((p) => p.tab !== undefined && p.tab === tabId);
   if (!job) return thisTabs[thisTabs.length - 1] ?? held[held.length - 1];
   const mine = held.filter((p) => sameJob(p.job, job));
-  if (mine.length > 0) return mine[mine.length - 1];
+  const ownMine = mine.filter((p) => p.tab !== undefined && p.tab === tabId);
+  if (mine.length > 0) return ownMine[ownMine.length - 1] ?? mine[mine.length - 1];
   const possible = held.filter((p) => !plainlyOtherJob(p.job, job));
   return possible[possible.length - 1] ?? null;
 }
@@ -1645,7 +1660,10 @@ const handlers = {
      * and a title.
      */
     const looking = nameOfTrail(trail);
-    const rescued = pickParked(held, looking, tab?.id);
+    const openTabs = new Set(
+      held.length > 0 ? ((await chrome.tabs.query({}).catch(() => [])) ?? []).map((t) => t.id) : [],
+    );
+    const rescued = pickParked(held, looking, tab?.id, openTabs);
     if (rescued) {
       const fresh = Date.now() - (rescued.at ?? 0) < TRAIL_STALE_MS;
       // Claimed or expired, this one goes either way. Leaving the stale ones
@@ -3197,7 +3215,11 @@ chrome.tabs?.onRemoved?.addListener(async (tabId) => {
        * writes that follow go out with no `X-RMM-Project` at all — which the
        * store does not refuse. See `saveOf`.
        */
-      const entry = { work: trail.work, save: trail.save, job: nameOfTrail(trail), at: Date.now() };
+      /*
+       * From which tab, too, although it is gone: two tabs closed on the same
+       * posting are two letters, and `parkWork` keeps one per tab per job.
+       */
+      const entry = { work: trail.work, save: trail.save, job: nameOfTrail(trail), tab: tabId, at: Date.now() };
       for (const url of where) await parkWork(url, entry);
     }
   } catch {
