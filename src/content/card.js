@@ -2589,7 +2589,12 @@ export function createCard({
     }
 
     return h('div', { className: 'branch' }, [
-      h('div', { textContent: `This looks like a different job, so it is a new application. The last one was ${was}.` }),
+      /*
+       * A question, because it is one. This is only ever shown when the trail
+       * could not tell — see `judgeApplication`'s `unsure` — and it had read
+       * as a verdict, over a form that was the next step of the job before.
+       */
+      h('div', { textContent: `Is this still ${was}? Not sure, so it is a new application until you say.` }),
       h('div', { className: 'row gap' }, [
         h('button', {
           className: 'tiny',

@@ -178,6 +178,23 @@ export function relatedPath(a, b) {
   if (!pa || !pb) return false;
   if (pa === pb) return true;
 
+  /*
+   * The same job's number, wherever each address keeps it.
+   *
+   * Electronic Arts keeps the posting at
+   * `/careers/JobDetail/Gameplay-Engineer-Intern/216245`, the upload step at
+   * `/careers/ApplicationMethods?jobId=216245` and the form at
+   * `/careers/Register?jobId=216245`. None of those paths is a step word or an
+   * extension of another, so the form was judged a different application and
+   * the trail split one click into it, with the resume built on the posting
+   * left behind. The number is what they share, and it is the job's.
+   *
+   * Only a parameter that names a job — not `id`, `pid`, `oid` or `token`,
+   * which name anything — and only a number the size of a job's, not a page
+   * or a year.
+   */
+  if (sharesAJobNumber(a, b)) return true;
+
   const sa = segments(pa);
   const sb = segments(pb);
   // A root path is a prefix of the whole site and says nothing about which
@@ -299,6 +316,27 @@ export function relatedPath(a, b) {
 
 /** A path segment that is a job's id: five digits or more, and nothing but an id. */
 const PATH_JOB_ID = /^(?=(?:\D*\d){5})[a-z0-9_-]+$/i;
+
+/** Parameters that could name anything, so agreeing on one says nothing about the job. */
+const ANY_PARAM = /^(id|oid|pid|token)$/i;
+
+/** The job numbers an address names in its parameters, leaving out the ones that could name anything. */
+const jobNumbers = (u) => [...jobIds(u)].filter(([key, value]) => !ANY_PARAM.test(key) && PATH_JOB_ID.test(value)).map(([, value]) => value.toLowerCase());
+
+/**
+ * Two addresses that name the same job's number: both in a job parameter, or
+ * one in a parameter and the other as a whole segment of its path.
+ * See `relatedPath`.
+ */
+function sharesAJobNumber(a, b) {
+  const inPath = (u) => new Set(segments(pathOf(u) ?? '').map((seg) => seg.toLowerCase()));
+  const na = jobNumbers(a);
+  const nb = jobNumbers(b);
+  if (na.some((n) => nb.includes(n))) return true;
+  const pa = inPath(a);
+  const pb = inPath(b);
+  return na.some((n) => pb.has(n)) || nb.some((n) => pa.has(n));
+}
 
 /** A segment with a step of a form among its words: `create_application`, `jobApply`. */
 const namesAStep = (seg) =>
@@ -688,7 +726,37 @@ export function judgeApplication(trail, page, now = Date.now()) {
    * The hand-off it exists for is untouched: a form that names no role of its
    * own leaves `looksNew()` false and still joins.
    */
-  return wasLinkedFrom(trail, page.url) ? (looksNew() ? 'unsure' : 'same') : 'different';
+  if (wasLinkedFrom(trail, page.url)) return looksNew() ? 'unsure' : 'same';
+
+  /*
+   * And on the same site, with nothing to say it is another job: ask.
+   *
+   * Everything that reaches this line on the same site is a page nothing
+   * vouched for and nothing refused — the employer agrees or is not given, no
+   * job number disagrees, and the role is not plainly another. That was
+   * `different`, which splits the application with nothing to press: the
+   * resume built on the posting was left behind, and the only way back was to
+   * start again. Reported on Electronic Arts, whose form lives at an address
+   * no rule here connects to its posting: "branching is way too hard. If it
+   * is not certain it should ask." `unsure` asks, and keeps what it left whole
+   * until the question is answered — see `drawBranch`.
+   *
+   * Only for a form, though. A second posting on the same board is another
+   * job far more often than not, and asking about every one would be asking
+   * all day; a form nothing ties to anything is the page that is usually the
+   * next step of the one in hand. And not a form whose own address names a job
+   * number the trail has never seen — that is another job's form.
+   */
+  if (page.kind !== 'application' || looksNew()) return 'different';
+  const sameSite = trail.pages.some((p) => {
+    const there = hostOf(p?.url);
+    return Boolean(there) && (there === here || rootOf(there) === rootOf(here));
+  });
+  if (!sameSite) return 'different';
+  const seen = trail.pages.map((p) => String(p?.url ?? '').toLowerCase());
+  const itsJobs = segments(pathOf(page.url) ?? '').filter((seg) => PATH_JOB_ID.test(seg) && /\d/.test(seg));
+  if (itsJobs.some((id) => !seen.some((u) => u.includes(id.toLowerCase())))) return 'different';
+  return 'unsure';
 }
 
 /**

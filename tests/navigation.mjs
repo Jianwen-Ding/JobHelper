@@ -37,6 +37,7 @@ import {
   LEVER_ROLE,
   META_OTHER_ROLE,
   META_ROLE,
+  EA_ROLE,
   NEW_TAB_ROLE,
   ONE_ADDRESS_BOARD,
   NIMBUS_ROLE,
@@ -367,6 +368,34 @@ async function main() {
       check('meta: the next job is read as itself', /data scientist/i.test(role), role);
       const trail = (await card.locator('.trail-row').allTextContents()).join(' | ');
       check('meta: and the job before it is not part of it', !/platform engineer/i.test(trail), trail || '(no trail)');
+      await page.close();
+    }
+
+    /* ---- Electronic Arts: the job number moves from the path into ?jobId= ---- */
+    /*
+     * Reported against a live posting: pressing Apply "breaks", and
+     * "branching is way too hard". The posting, the upload step and the form
+     * are three unrelated-looking paths on one host; the form is reached by
+     * script from the upload step, so no Apply click vouches for it. Only
+     * `jobId` ties them together.
+     */
+    group('The job number carried from the posting into the form');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(EA_ROLE), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      await buildResume(page);
+
+      await Promise.all([page.waitForURL(/ApplicationMethods\?jobId=/), page.click('#apply')]);
+      await page.waitForLoadState('domcontentloaded');
+      await settled(page);
+      await Promise.all([page.waitForURL(/Register\?jobId=/), page.click('#continue')]);
+      await page.waitForLoadState('domcontentloaded');
+      await page.locator('#e1').waitFor({ timeout: 10_000 });
+      await settled(page);
+      await expectContinuity(page, 'ea', { role: 'Gameplay Engineer Intern' });
+      const card = cardOf(page);
+      check('ea: and it is not offered as a new application', (await card.locator('.branch').count()) === 0, (await card.locator('.branch').textContent().catch(() => '')) || '(no chip)');
       await page.close();
     }
 

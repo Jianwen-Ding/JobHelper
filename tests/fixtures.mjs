@@ -1834,7 +1834,80 @@ export const META_OTHER_ROLE = {
   ),
 };
 
+/**
+ * Electronic Arts' shape, measured on the live site (Avature).
+ *
+ * The posting is `/en_US/careers/JobDetail/<slug>/<id>`; its Apply is a plain
+ * link to `/en_US/careers/ApplicationMethods?jobId=<id>`, a page offering a
+ * login or a resume upload; the upload's Continue sends the tab — by script,
+ * not by a link — to `/en_US/careers/Register?jobId=<id>`, the form. Only the
+ * job number ties the three together. The employer and the number are made up.
+ */
+const EA_ID = '316245';
+export const EA_ROLE = {
+  name: 'ea-role',
+  path: `/en_US/careers/JobDetail/Gameplay-Engineer-Intern/${EA_ID}`,
+  company: 'Emberlight',
+  title: 'Gameplay Engineer Intern',
+  html: page(
+    'Gameplay Engineer Intern - Emberlight',
+    'Emberlight',
+    `<h2>Gameplay Engineer Intern</h2>
+     <a id="apply" href="/en_US/careers/ApplicationMethods?jobId=${EA_ID}&source=LinkedIn">Apply</a>
+     ${ROLE_BODY}`,
+    `<script type="application/ld+json">{"@context":"http://schema.org/","@type":"JobPosting","title":"Gameplay Engineer Intern","hiringOrganization":{"@type":"Organization","name":"Emberlight"}}</script>`,
+  ),
+};
+
+export const EA_METHODS = {
+  name: 'ea-methods',
+  path: '/en_US/careers/ApplicationMethods',
+  html: page(
+    'Applying to Gameplay Engineer Intern | Emberlight',
+    'Emberlight',
+    `<h2>Gameplay Engineer Intern</h2>
+     <h3>Log into your careers account</h3>
+     <label for="eu">Username</label><input id="eu" name="username">
+     <label for="ep">Password</label><input id="ep" name="password" type="password">
+     <button type="button">Log in</button>
+     <h3>First time applicant</h3>
+     <p>Choose a method from the options below to submit your resume.</p>
+     <label for="ef">Upload</label><input id="ef" name="resumeFile" type="file">
+     <button type="button" id="continue">Continue</button>`,
+    `<script>
+       document.getElementById('continue').addEventListener('click', () => {
+         location.href = '/en_US/careers/Register?jobId=${EA_ID}&source=LinkedIn';
+       });
+     </script>`,
+  ),
+};
+
+export const EA_FORM = {
+  name: 'ea-form',
+  path: '/en_US/careers/Register',
+  html: page(
+    'Register | Emberlight',
+    'Emberlight',
+    `<h2>Gameplay Engineer Intern</h2>
+     <form>
+       <fieldset><legend>Personal Information</legend>
+         <label for="e1">Legal First name *</label><input id="e1" name="162">
+         <label for="e2">Preferred First Name *</label><input id="e2" name="2554">
+         <label for="e3">Legal Last Name *</label><input id="e3" name="163">
+         <label for="e4">Email *</label><input id="e4" name="164" type="email">
+         <label for="e5">Mobile Phone Number *</label><input id="e5" name="165" type="tel">
+       </fieldset>
+       <fieldset><legend>Education History</legend>
+         <label for="e6">Type of Degree</label><input id="e6" name="4001">
+         <label for="e7">Major/ Subject of study</label><input id="e7" name="4002">
+       </fieldset>
+       <button type="button">Next</button>
+     </form>`,
+  ),
+};
+
 export const NAVIGATION = [
+  EA_ROLE, EA_METHODS, EA_FORM,
   CYGNUS_BOARD, CYGNUS_ROLE_A, CYGNUS_ROLE_B, FRAMED_ROLE, FRAMED_FORM, ADVERT_FRAME, ADVERT_CONTENT,
   EMBEDDED_BOARD, EMBEDDED_BOARD_FRAME, BLOG_WITH_FORM, BLOG_ENQUIRY_FRAME, LATE_RENDER,
   CROWDED_PAGE, CROWDED_PAGE_FORM,

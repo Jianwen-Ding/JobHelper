@@ -1906,3 +1906,52 @@ describe('the page as sent does not carry an answer Ant Design or an address aut
     }
   });
 });
+
+describe('the same job number, one in the path and one in the parameters', () => {
+  // Reported on Electronic Arts: pressing Apply split the application.
+  const ea = (p) => `https://jobs.ea.com/en_US/careers${p}`;
+  const posting = ea('/JobDetail/Gameplay-Engineer-Intern/216245?source=LinkedIn');
+  const upload = ea('/ApplicationMethods?jobId=216245&source=LinkedIn');
+  const form = ea('/Register?jobId=216245&source=LinkedIn');
+
+  it('joins the posting, the upload step and the form', () => {
+    assert.equal(relatedPath(upload, posting), true);
+    assert.equal(relatedPath(form, upload), true);
+    assert.equal(relatedPath(form, posting), true);
+    const trail = trailOf(at(posting, 'Electronic Arts'), at(upload, 'Electronic Arts'));
+    assert.equal(judgeApplication(trail, { url: form, company: 'Electronic Arts', kind: 'application' }), 'same');
+    assert.equal(judgeApplication(trailOf(at(posting, 'Electronic Arts')), { url: upload }), 'same');
+  });
+
+  it('does not join another job number', () => {
+    assert.equal(relatedPath(ea('/Register?jobId=216246'), posting), false);
+    assert.equal(relatedPath(ea('/Register?jobId=216246'), upload), false);
+  });
+
+  it('does not take a parameter that could name anything, or a number too short to be a job', () => {
+    assert.equal(relatedPath(ea('/Register?id=216245'), posting), false);
+    assert.equal(relatedPath(ea('/Register?jobId=12'), ea('/JobDetail/x/12')), false);
+  });
+});
+
+describe('a form on the same site that nothing ties to the application', () => {
+  const site = (p) => `https://careers.acme.example${p}`;
+  const trail = () => trailOf({ url: site('/jobs/platform-engineer'), company: 'Acme', role: 'Platform Engineer' });
+
+  it('is asked about, not split off', () => {
+    assert.equal(judgeApplication(trail(), { url: site('/candidate/start'), company: 'Acme', kind: 'application' }), 'unsure');
+  });
+
+  it('while another posting on that site is still another job', () => {
+    assert.equal(judgeApplication(trail(), { url: site('/jobs/data-scientist'), company: 'Acme', kind: 'posting' }), 'different');
+  });
+
+  it('and so is a form that names a job number the trail has never seen', () => {
+    assert.equal(judgeApplication(trail(), { url: site('/apply/883412'), company: 'Acme', kind: 'application' }), 'different');
+  });
+
+  it('and so is a form for a plainly different role, or at another employer', () => {
+    assert.equal(judgeApplication(trail(), { url: site('/candidate/start'), role: 'Data Scientist', kind: 'application' }), 'different');
+    assert.equal(judgeApplication(trail(), { url: site('/candidate/start'), company: 'Northwind', kind: 'application' }), 'different');
+  });
+});
