@@ -2918,7 +2918,21 @@ const ADDS_ITS_CODE = `<!doctype html><html><head><meta charset="utf-8"><title>A
 </script>
 </body></html>`;
 
-const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL };
+/*
+ * Two dropdowns from the live sweep. Spotify's Lever form asks "What is your
+ * location?" as a list of countries, and Ramp asks a 1–10 scale whose label
+ * ends "(phone)"; beside them a "Phone type" list, and the phone box itself.
+ */
+const LOCATION_LISTS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+<div class="application-question"><div class="application-label">What is your location?<span class="required">✱</span></div>
+<div class="application-field"><select name="cards[7f1][field0]" id="spotify-loc"><option value="">Select...</option><option>Canada</option><option>Germany</option><option>Sweden</option><option>United Kingdom</option><option>United States</option></select></div></div>
+<label for="ramp-scale">On a scale of 1-10, how comfortable are you speaking with customers (phone)?</label>
+<select id="ramp-scale" name="ramp_scale"><option value="">Select...</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option></select>
+<label for="ph-type">Phone type</label><select id="ph-type" name="phone_type"><option value="">Select...</option><option>Mobile</option><option>Home</option><option>Work</option></select>
+<label for="ph">Phone</label><input id="ph" name="phone" type="tel">
+<label for="office">Office location</label><select id="office" name="office"><option value="">Select...</option><option>United States</option><option>Canada</option></select>
+</form></body></html>`;
+const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -6691,6 +6705,28 @@ async function main() {
           skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
         };
       }, { b: base, fields }));
+    const lists = await page.goto(`${base}/location-lists`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 800 });
+        const v = (id) => document.getElementById(id).value;
+        return {
+          loc: v('spotify-loc'), scale: v('ramp-scale'), type: v('ph-type'), phone: v('ph'), office: v('office'),
+          skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, fields: { ...SWEEP, location: 'Boston, MA' } }),
+    );
+    group('A location asked as a list of countries, and dropdowns that only mention a phone');
+    check(
+      'Spotify\'s "What is your location?" list is answered with the profile\'s country; the office location is not',
+      lists.loc === 'United States' && lists.office === '',
+      JSON.stringify(lists),
+    );
+    check(
+      'a 1–10 scale and a "Phone type" list are not taken for the phone number, nor reported as one that failed',
+      lists.scale === '' && lists.type === '' && lists.phone === '(555) 010-0199' && !lists.skipped.some((s) => s.startsWith('phone')),
+      JSON.stringify(lists),
+    );
     const inUS = await livesIn(SWEEP);
     const nowhere = await livesIn({ ...SWEEP, address_country: undefined });
     group('"Do you live in <country>?", from the profile\'s own country');

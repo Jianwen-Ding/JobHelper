@@ -1775,6 +1775,27 @@ const LEVEL_ONLY =
  * fields where a spelling table exists, and only those. Consulted after an
  * exact match has failed, never instead of one.
  */
+/**
+ * A location dropdown that lists countries, or cities, and not "Boston, MA".
+ *
+ * The location is kept as the whole place, and a list of places holds only
+ * one part of it: Spotify's Lever form asks "What is your location?" with a
+ * list of countries, and the whole "Boston, MA" matched none of them, so a
+ * required question was left for the person with the answer in the profile.
+ * The country first, then the city — each only as the list spells it, or as
+ * the country is otherwise spelled, never a guess.
+ */
+function locationPart(choosable, fields) {
+  for (const [part, value] of [['address_country', fields.address_country], ['address_city', fields.address_city]]) {
+    if (!clean(value ?? '')) continue;
+    const found = choosable.find(
+      (o) => sameOption(o.textContent, value) || sameAnswerSpelledOtherwise(part, o.textContent, value),
+    );
+    if (found) return found;
+  }
+  return null;
+}
+
 function sameAnswerSpelledOtherwise(key, option, value) {
   /*
    * A degree against a list of levels, which is what Greenhouse asks with:
@@ -2510,6 +2531,15 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
 
     if (input instanceof HTMLSelectElement) {
       /*
+       * A telephone number is typed, never picked from a list, so a dropdown
+       * the phone pattern claims is some other question with the word in it:
+       * Ramp's "On a scale of 1–10, how comfortable are you … (phone)?", a
+       * "Phone type" of Mobile, Home and Work. Measured on the live sweep, the
+       * scale was reported as a phone number that would not go in — a failure
+       * on the card for a field that was never the number's.
+       */
+      if (key === 'phone') continue;
+      /*
        * Only pick an option that plainly matches; never guess on a dropdown.
        * Compared through `clean` because the enterprise systems pad their
        * option text — a country list whose entry was `United&nbsp;States`
@@ -2533,6 +2563,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
         choosable.find((o) => sameOption(o.textContent, value) || sameOption(o.value, value)) ??
         // A grade against a list of bands. See `gpaOption`.
         (key === 'gpa' ? gpaOption(choosable, value) : null) ??
+        // A location asked as a list of countries or of cities. See `locationPart`.
+        (key === 'location' ? locationPart(choosable, fields) : null) ??
         /*
          * The same answer spelled the list's way: a month as "Dec" or "12", a
          * state as its name or its code, a country by its long name. Only for
