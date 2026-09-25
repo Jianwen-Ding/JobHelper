@@ -3093,7 +3093,22 @@ const BAMBOO_FABRIC = `<!doctype html><html><head><meta charset="utf-8"><title>A
   }
 </script>
 </body></html>`;
-const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO };
+/*
+ * Four ways a form asks for a name, for the rule on which name goes where:
+ * one name box alone; a name beside a legal name; a name beside a preferred
+ * name; and Workday's plain boxes under a "Legal Name" heading.
+ */
+const page = (body) => `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>${body}</form></body></html>`;
+const NAMES_SINGLE = page(`<label for="n">Full name</label><input id="n" name="name">`);
+const NAMES_WITH_LEGAL = page(`<label for="n">Name</label><input id="n" name="name">
+<label for="l">Legal name</label><input id="l" name="legal_name">`);
+const NAMES_WITH_PREFERRED = page(`<label for="f">First name</label><input id="f" name="first">
+<label for="s">Last name</label><input id="s" name="last">
+<label for="p">Preferred first name</label><input id="p" name="preferred_first">`);
+const NAMES_WORKDAY = page(`<fieldset><legend>Legal Name</legend>
+<label for="g">Given Name(s)</label><input id="g" name="legalName--firstName">
+<label for="fam">Family Name</label><input id="fam" name="legalName--lastName"></fieldset>`);
+const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -6986,6 +7001,30 @@ async function main() {
       picked.itsOwn === '01/01/2020' && picked.skipped.includes('education_start_date: the field would not take it'),
       JSON.stringify(picked),
     );
+    const TWO_NAMES = {
+      ...SWEEP, full_name: 'Morgan Testwell', first_name: 'Morgan', last_name: 'Testwell',
+      preferred_name: 'Mo Testwell', preferred_first_name: 'Mo', preferred_last_name: 'Testwell',
+    };
+    const namesOn = (where, fields) => page_.goto(`${base}${where}`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page_.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm(fields);
+        return Object.fromEntries([...document.querySelectorAll('input')].map((i) => [i.id, i.value]));
+      }, { b: base, fields }));
+    const page_ = page;
+    const single = await namesOn('/names-single', TWO_NAMES);
+    const withLegal = await namesOn('/names-with-legal', TWO_NAMES);
+    const withPreferred = await namesOn('/names-with-preferred', TWO_NAMES);
+    const workday = await namesOn('/names-workday', TWO_NAMES);
+    const oneName = await namesOn('/names-with-preferred', SWEEP);
+    group('Which name goes in which box, with a legal name and a preferred one');
+    check('a single name box gets the preferred name', single.n === 'Mo Testwell', JSON.stringify(single));
+    check('beside a legal-name box, the plain name is the preferred one and the legal box the legal one',
+      withLegal.n === 'Mo Testwell' && withLegal.l === 'Morgan Testwell', JSON.stringify(withLegal));
+    check('beside a preferred-name box, the plain names are the legal ones and the preferred box the preferred one',
+      withPreferred.f === 'Morgan' && withPreferred.s === 'Testwell' && withPreferred.p === 'Mo', JSON.stringify(withPreferred));
+    check('boxes under a "Legal Name" heading get the legal name', workday.g === 'Morgan' && workday.fam === 'Testwell', JSON.stringify(workday));
+    check('and with one name in the profile, a preferred-name box is left for the person', oneName.f === 'Morgan' && oneName.p === '', JSON.stringify(oneName));
     const inUS = await livesIn(SWEEP);
     const nowhere = await livesIn({ ...SWEEP, address_country: undefined });
     group('"Do you live in <country>?", from the profile\'s own country');

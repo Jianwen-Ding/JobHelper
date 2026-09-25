@@ -21,6 +21,20 @@ import {
 /** Map a stored profile key to the label/name patterns that mean it. */
 const FIELD_PATTERNS = [
   /*
+   * The name somebody goes by, above every other name, because "Preferred
+   * first name" says "first name" whole. It used to be left out entirely:
+   * matched as `first_name` it was given the legal name — the one answer the
+   * box is there to be different from — and "Jay" typed there last time could
+   * never come back. The store now sends the name the resume prints as these
+   * keys, and only when it differs from the legal one; with none, the box is
+   * still the person's and the answer they gave last time fills it. See
+   * `typedBox` and `NAME_FOR_THE_FORM`.
+   */
+  ['preferred_first_name', /\b(preferred|nick|chosen)[\s_-]*(first|given)[\s_-]*name\b/i],
+  ['preferred_last_name', /\b(preferred|chosen)[\s_-]*(last|family|sur)[\s_-]*name\b/i],
+  ['preferred_middle_name', /\b(preferred|chosen)[\s_-]*middle[\s_-]*name\b/i],
+  ['preferred_name', /\b(preferred|nick|chosen)[\s_-]*(full[\s_-]*)?name\b|\bgo(?:es)?[\s_-]+by\b/i],
+  /*
    * Both halves in one box, above either half, because the first pattern to
    * match claims the field: "First and Last Name" says "Last Name" whole and
    * was given the surname alone, and "First Name and Last Name" the first
@@ -385,16 +399,6 @@ const NOT_ABOUT_YOU = [
   /\b(previous\w*|former\w*|prior|maiden|alias\w*|other|different)\b[\s\S]{0,20}\b(name|surname)s?\b|\b(name|surname)s?\b[\s\S]{0,24}\b(previous\w*|former\w*)\b/i,
   // How to say a name, which is not the name: "Pronunciation of your name".
   /\b(pronunc\w*|phonetic\w*)\b/i,
-  /*
-   * And the name somebody goes by, which the profile does not hold either.
-   * Measured with the walk in tests/reusing.mjs: "Preferred first name" and
-   * "Preferred last name" matched `first_name` and `last_name` and were given
-   * the legal ones — the one answer each box is there to be different from —
-   * and because the box was then full, "Jay" typed there on the last form
-   * could never be put back. Left empty, it is the person's, and the answer
-   * they gave last time is what fills it. See `typedBox`.
-   */
-  /\b(preferred|nick|chosen)[\s_-]*((first|given|last|family|middle)[\s_-]*)?name\b|\bgo(?:es)?[\s_-]+by\b|\bknown[\s_-]+as\b/i,
   /*
    * The password to a link, which is not the link. Design roles ask for a
    * "Portfolio password" beside the portfolio URL, and as a plain text box —
@@ -2538,6 +2542,22 @@ function withCityAndState(fields) {
   return { ...fields, city_state: both };
 }
 
+/**
+ * Which name a name box gets, when a profile has two.
+ *
+ * The legal name, when the box asks for it — "Legal name", "Legal first
+ * name", or plain boxes under a "Legal Name" heading as Workday draws them.
+ * The legal name too in a plain "Name" box on a form that also has a box for
+ * a preferred name, because that form is asking for the two separately. And
+ * otherwise, a plain name box on its own gets the name the person goes by —
+ * the one the resume being sent prints. With one name in the profile, both
+ * are that name.
+ */
+const NAME_FOR_THE_FORM = { full_name: 'preferred_name', first_name: 'preferred_first_name', last_name: 'preferred_last_name' };
+const PREFERRED_NAME_BOX = /\b(preferred|nick|chosen)[\s_-]*((first|given|last|family|middle|full)[\s_-]*)?name\b|\bgo(?:es)?[\s_-]+by\b/i;
+const LEGAL = /\blegal\b|\bas\s+(it\s+)?appears\s+on\s+(your\s+)?(passport|government|official|id\b)/i;
+const asksForLegalName = (input) => LEGAL.test(`${clean(labelFor(input))} ${surroundingWords(input)} ${boundedSection(input)}`);
+
 export function fillForm(fields, { overwrite = false, remembered = [], history = [], company = '' } = {}) {
   fields = withResidence(withCityAndState(fields));
   // For a question asking about the most recent job. See `mostRecentJob`.
@@ -2553,6 +2573,9 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
   pressedNow = new WeakSet();
 
   const inputs = deepQueryAll('input, textarea, select');
+  // Whether this form has a box of its own for the name somebody goes by.
+  // See `NAME_FOR_THE_FORM`.
+  const asksPreferred = inputs.some((i) => isFillable(i) && PREFERRED_NAME_BOX.test(clean(labelFor(i))));
   for (const input of inputs) {
     if (!isFillable(input)) continue;
 
@@ -2608,6 +2631,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     if (anotherLevelOfStudy(input, key, fields)) continue;
     if (asksYesOrNo(input, key)) continue;
     let value = answers[key];
+    // The legal name or the one the resume prints. See `NAME_FOR_THE_FORM`.
+    if (NAME_FOR_THE_FORM[key] && !asksPreferred && !asksForLegalName(input)) value = answers[NAME_FOR_THE_FORM[key]] || value;
 
     const answered =
       input instanceof HTMLSelectElement
