@@ -33,7 +33,13 @@ const FIELD_PATTERNS = [
   ['preferred_first_name', /\b(preferred|nick|chosen)[\s_-]*(first|given)[\s_-]*name\b/i],
   ['preferred_last_name', /\b(preferred|chosen)[\s_-]*(last|family|sur)[\s_-]*name\b/i],
   ['preferred_middle_name', /\b(preferred|chosen)[\s_-]*middle[\s_-]*name\b/i],
-  ['preferred_name', /\b(preferred|nick|chosen)[\s_-]*(full[\s_-]*)?name\b|\bgo(?:es)?[\s_-]+by\b/i],
+  /*
+   * And "the name you'd prefer", which is how GitLab's Greenhouse board asks
+   * it: "What's the name you'd prefer us to use throughout the interview
+   * process?". Measured live, it matched nothing, so the box stayed empty and
+   * First and Last Name beside it were given the preferred name.
+   */
+  ['preferred_name', /\b(preferred|nick|chosen)[\s_-]*(full[\s_-]*)?name\b|\bgo(?:es)?[\s_-]+by\b|\bname[\s_-]+(?:that[\s_-]+)?you(?:['’]d|[\s_-]+would)?[\s_-]+prefer\b/i],
   /*
    * Both halves in one box, above either half, because the first pattern to
    * match claims the field: "First and Last Name" says "Last Name" whole and
@@ -2554,7 +2560,10 @@ function withCityAndState(fields) {
  * are that name.
  */
 const NAME_FOR_THE_FORM = { full_name: 'preferred_name', first_name: 'preferred_first_name', last_name: 'preferred_last_name' };
-const PREFERRED_NAME_BOX = /\b(preferred|nick|chosen)[\s_-]*((first|given|last|family|middle|full)[\s_-]*)?name\b|\bgo(?:es)?[\s_-]+by\b/i;
+// The preferred-name patterns themselves, so a box read as one is also what
+// tells the form it has one.
+const PREFERRED_NAME_BOXES = FIELD_PATTERNS.filter(([key]) => key.startsWith('preferred_')).map(([, re]) => re);
+const PREFERRED_NAME_BOX = { test: (label) => PREFERRED_NAME_BOXES.some((re) => re.test(label)) };
 const LEGAL = /\blegal\b|\bas\s+(it\s+)?appears\s+on\s+(your\s+)?(passport|government|official|id\b)/i;
 const asksForLegalName = (input) => LEGAL.test(`${clean(labelFor(input))} ${surroundingWords(input)} ${boundedSection(input)}`);
 
