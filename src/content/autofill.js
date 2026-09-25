@@ -109,6 +109,17 @@ const FIELD_PATTERNS = [
     /\bgrad(uation)?\s*date\b|\bdate\s*of\s*graduation\b|\b(expected|anticipated)\s*grad(uation)?\b|\bwhen\s+(do|will)\s+you\s+(expect\s+to\s+)?graduate\b|\bdegree\s+(completion|conferral|end)\b|\b(end|completion)\s*date\b.{0,20}\bgrad(uat\w*)?\b/i,
   ],
   /*
+   * And when it began, asked on its own outside an Education block: "Start
+   * date of your degree", "Education start date". With no pattern for it,
+   * the first fell through to `degree` and a date picker was given "Bachelor
+   * of Science". Only with the schooling named — a bare "Start date" is when
+   * somebody can start the job.
+   */
+  [
+    'education_start_date',
+    /\b(start|begin|beginning|commencement)\s*(date|month)?\b.{0,30}\b(degree|education|studies|university|college|program(me)?)\b|\b(degree|education|studies|university|college|program(me)?)\s+(start|begin|beginning)\s*date\b/i,
+  ],
+  /*
    * The grade and the subject above the school, for the reason graduation is:
    * "College GPA" and "University major" name the institution, and with
    * `school` first they were filled with its name.
@@ -124,7 +135,8 @@ const FIELD_PATTERNS = [
     /\b(major|discipline|field[\s_-]?of[\s_-]?study|(course|area)[\s_-]?of[\s_-]?study|(field|subject)[\s_-]+of[\s_-]+(your[\s_-]+)?degree|degree[\s_-]+(field|subject))\b/i,
   ],
   ['school', /\b(school|university|college|institution|institute)\b/i],
-  ['degree', /\b(degree)\b/i],
+  // Not a label asking when: a date, a year or a month is never the degree's name.
+  ['degree', /^(?![\s\S]*(?<!-)\b(date|year|month)\b)[\s\S]*\bdegree\b/i],
   /*
    * The two declarations above every address field. "Are you authorized to
    * work in this country?" is the commonest wording of the right-to-work
@@ -1673,6 +1685,36 @@ const MONTH_NAMES = [
  * "December" as text found nothing on a form listing "Dec" and the box was
  * left empty. Three letters at least, so "Ma" is not taken for March or May.
  */
+/**
+ * The months a written date could mean, as "YYYY-MM" — two for "05/01/2027",
+ * which is the first of May or the fifth of January depending on who wrote it.
+ * Empty for anything that is not plainly a date with a month and a year.
+ */
+function monthsMeant(text) {
+  const said = clean(text);
+  const at = (y, m) => (m >= 1 && m <= 12 ? [`${y}-${String(m).padStart(2, '0')}`] : []);
+  let hit;
+  if ((hit = /^(\d{4})-(\d{1,2})(?:-\d{1,2})?$/.exec(said))) return at(hit[1], Number(hit[2]));
+  if ((hit = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(said))) return [...at(hit[3], Number(hit[1])), ...at(hit[3], Number(hit[2]))];
+  if ((hit = /^(\d{1,2})[/.-](\d{4})$/.exec(said))) return at(hit[2], Number(hit[1]));
+  if ((hit = /^([A-Za-z]{3,})\.?,?\s+(?:\d{1,2},?\s+)?(\d{4})$/.exec(said))) return at(hit[2], monthOf(hit[1]) ?? 0);
+  return [];
+}
+
+/**
+ * Whether a date box that rewrote what it was given still holds that month.
+ *
+ * A date picker takes what is typed and writes it back its own way: Notion's
+ * Ashby form turns the graduation date into "05/01/2027". The box held the
+ * right date and the card said it would not take it, because what it held was
+ * not, letter for letter, what was typed. The same month and year, however
+ * written, is the date going in; anything else is still a refusal.
+ */
+function sameMonthWritten(shown, given) {
+  const want = monthsMeant(given);
+  return want.length === 1 && monthsMeant(shown).includes(want[0]);
+}
+
 export function monthOf(text) {
   const said = clean(text).toLowerCase();
   if (!said) return null;
@@ -2669,7 +2711,9 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
       /^\s*\+/.test(shown) && !/^\s*\+/.test(given) && digits(shown).endsWith(digits(given)) && digits(shown).length - digits(given).length <= 3;
     const sameNumber =
       /phone/.test(key) && digits(value).length >= 7 && (digits(input.value) === digits(value) || withTheirCode(input.value, String(value)));
-    if (input.value !== String(value) && !sameNumber) {
+    // And a date picker that wrote the date back its own way. See `sameMonthWritten`.
+    const sameDate = /^(graduation|education_start)_date$/.test(key) && sameMonthWritten(input.value, String(value));
+    if (input.value !== String(value) && !sameNumber && !sameDate) {
       skipped.push({ key, reason: 'the field would not take it', description: description.slice(0, 60) });
       continue;
     }

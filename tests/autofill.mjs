@@ -2932,7 +2932,36 @@ const LOCATION_LISTS = `<!doctype html><html><head><meta charset="utf-8"><title>
 <label for="ph">Phone</label><input id="ph" name="phone" type="tel">
 <label for="office">Office location</label><select id="office" name="office"><option value="">Select...</option><option>United States</option><option>Canada</option></select>
 </form></body></html>`;
-const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS };
+/*
+ * Notion's Ashby form, as drawn live: a react-datepicker text box under a
+ * label whose `for` names no element, which writes whatever is typed back as
+ * MM/01/YYYY. A second picker, written the same way, that puts a date of its
+ * own in instead — which is a refusal, and has to go on being said as one.
+ */
+const ASHBY_DATE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+<div data-field-path="59c0ed3c"><label class="ashby-application-form-question-title" for="59c0ed3c-df08">Graduation Date</label><div class="react-datepicker-wrapper"><div class="react-datepicker__input-container"><input type="text" placeholder="Pick date..." class="ashby-application-form-input-date" required value="" data-picker="rewrites"></div></div></div>
+<div data-field-path="7d1e2a"><label class="ashby-application-form-question-title" for="7d1e2a-44">Start date of your degree</label><div class="react-datepicker-wrapper"><div class="react-datepicker__input-container"><input type="text" placeholder="Pick date..." class="ashby-application-form-input-date" value="" data-picker="its-own"></div></div></div>
+<label for="edu-start">Education start date</label><input id="edu-start" name="edu_start" type="text">
+</form>
+<script>
+  const MONTHS = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+  const read = (v) => {
+    let m = /^(\\d{4})-(\\d{1,2})/.exec(v); if (m) return [Number(m[2]), m[1]];
+    m = /^([a-z]{3})[a-z]*\\.?\\s+(\\d{4})$/i.exec(v.trim()); if (m) return [MONTHS.indexOf(m[1].toLowerCase()) + 1, m[2]];
+    m = /^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})$/.exec(v); if (m) return [Number(m[1]), m[3]];
+    m = /^(\\d{1,2})\\/(\\d{4})$/.exec(v); if (m) return [Number(m[1]), m[2]];
+    return null;
+  };
+  for (const box of document.querySelectorAll('input[data-picker]')) {
+    box.addEventListener('input', () => {
+      const got = read(box.value);
+      if (!got || got[0] < 1) return;
+      box.value = box.dataset.picker === 'rewrites' ? String(got[0]).padStart(2, '0') + '/01/' + got[1] : '01/01/2020';
+    });
+  }
+</script>
+</body></html>`;
+const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -6726,6 +6755,34 @@ async function main() {
       'a 1–10 scale and a "Phone type" list are not taken for the phone number, nor reported as one that failed',
       lists.scale === '' && lists.type === '' && lists.phone === '(555) 010-0199' && !lists.skipped.some((s) => s.startsWith('phone')),
       JSON.stringify(lists),
+    );
+    const picked = await page.goto(`${base}/ashby-date`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        const [rewrites, itsOwn] = [...document.querySelectorAll('input[data-picker]')].map((i) => i.value);
+        return {
+          rewrites, itsOwn, plain: document.getElementById('edu-start').value,
+          filled: report.filled.map((f) => f.key),
+          skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, fields: { ...SWEEP, graduation_date: 'May 2027', education_start_date: 'August 2023' } }),
+    );
+    group('A date picker that writes the date back its own way');
+    check(
+      'Notion\'s graduation date, rewritten as 05/01/2027, is counted as filled, not refused',
+      picked.rewrites === '05/01/2027' && picked.filled.includes('graduation_date') && !picked.skipped.some((s) => s.startsWith('graduation_date')),
+      JSON.stringify(picked),
+    );
+    check(
+      'a degree\'s start date, asked on its own, is given the start date and never the degree\'s name',
+      /2023/.test(picked.plain) && !/bachelor/i.test(`${picked.plain} ${picked.itsOwn}`) && picked.filled.includes('education_start_date'),
+      JSON.stringify(picked),
+    );
+    check(
+      'while a picker that puts in a date of its own is still said to have refused it',
+      picked.itsOwn === '01/01/2020' && picked.skipped.includes('education_start_date: the field would not take it'),
+      JSON.stringify(picked),
     );
     const inUS = await livesIn(SWEEP);
     const nowhere = await livesIn({ ...SWEEP, address_country: undefined });
