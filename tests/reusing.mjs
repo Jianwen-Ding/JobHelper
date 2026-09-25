@@ -389,6 +389,91 @@ const CROSS_ORIGIN_PAGE = framedPosting({
   frameSrc: '{{ATS}}/nimbus-embed/form',
 });
 
+/*
+ * And a react-select, as Greenhouse draws its custom questions (the markup
+ * and behaviour are the ones tests/autofill.mjs measured on the live board):
+ * a text box with `role="combobox"`, a menu that opens on a press of the
+ * control, and a choice made on mousedown of an option, which then closes
+ * the menu and takes the options away with it. None of these was kept,
+ * because a choice there is neither a `<select>` nor a radio, and the click
+ * after the mousedown lands on an option that is no longer in the page.
+ */
+const reactSelect = (id, label, options) => `
+    <label id="${id}-label" for="${id}">${label}</label>
+    <div class="select-shell"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+      <div class="select__input-container" data-value=""><input id="${id}" class="select__input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="${id}-label" autocomplete="off"></div></div></div></div>
+    <script>
+      (() => {
+        const input = document.getElementById(${JSON.stringify(id)});
+        const control = input.closest('.select__control');
+        const items = ${JSON.stringify(options)};
+        let list = null;
+        const close = () => { list?.remove(); list = null; input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-controls'); };
+        const render = (term) => {
+          list?.remove();
+          list = document.createElement('div');
+          list.id = 'react-select-' + input.id + '-listbox';
+          list.setAttribute('role', 'listbox');
+          for (const text of items.filter((t) => t.toLowerCase().includes(term))) {
+            const o = document.createElement('div');
+            o.setAttribute('role', 'option');
+            o.className = 'select__option';
+            o.textContent = text;
+            o.addEventListener('mousedown', (e) => {
+              e.preventDefault();
+              control.querySelector('.select__placeholder')?.remove();
+              let shown = control.querySelector('.select__single-value');
+              if (!shown) {
+                shown = document.createElement('div');
+                shown.className = 'select__single-value';
+                control.querySelector('.select__value-container').prepend(shown);
+              }
+              shown.textContent = text;
+              input.value = '';
+              close();
+            });
+            list.append(o);
+          }
+          control.parentElement.append(list);
+          input.setAttribute('aria-controls', list.id);
+        };
+        control.addEventListener('mousedown', () => {
+          if (list) return;
+          input.setAttribute('aria-expanded', 'true');
+          render('');
+        });
+        input.addEventListener('input', () => { if (list) render(input.value.toLowerCase()); });
+        input.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+      })();
+    </script>`;
+
+const OFFICES = ['Boston', 'New York', 'Remote'];
+const WIDGET_FIRST = typedPosting({
+  name: 'widget-first',
+  path: '/quill-widget/jobs/5',
+  company: 'Quill Robotics',
+  title: 'Backend Engineer',
+  after: '/quill-widget/thanks',
+  questions: [
+    reactSelect('office', 'Which office would you like to work from?', OFFICES),
+    // The profile's, however it is drawn, and not the bank's to keep.
+    reactSelect('country', 'Which country do you live in?', ['United States', 'Canada']),
+    reactSelect('gender', 'What is your gender identity?', ['Female', 'Male', 'Decline to self-identify']),
+  ].join('\n'),
+});
+const WIDGET_SECOND = typedPosting({
+  name: 'widget-second',
+  path: '/tern-widget/jobs/9',
+  company: 'Tern Logistics',
+  title: 'Platform Engineer',
+  after: '/tern-widget/thanks',
+  questions: [
+    reactSelect('office', 'Which office would you like to work from? *', OFFICES),
+    // A different question with the same options, and one the bank has no answer for.
+    reactSelect('visit', 'Which office would you visit first?', OFFICES),
+  ].join('\n'),
+});
+
 const THANKS = (path) => ({
   name: `${path}-thanks`,
   path,
@@ -749,6 +834,89 @@ async function walkFramedForms(context, fixtures) {
   });
 }
 
+/*
+ * A choice made in a react-select on one form, and chosen for the person in
+ * the same widget on the next.
+ */
+async function walkWidgets(context, fixtures) {
+  console.log('\nChosen in a react-select');
+  const shownIn = (page, id) =>
+    page.evaluate(
+      (id) => document.getElementById(id)?.closest('.select__control')?.querySelector('.select__single-value')?.textContent ?? '',
+      id,
+    );
+  // As a person picks: a press on the control, then on the option.
+  const pick = async (page, id, text) => {
+    await page.locator(`#${id}-label + .select-shell .select__control`).click();
+    await page.locator(`#react-select-${id}-listbox [role="option"]`, { hasText: text }).first().click();
+  };
+
+  await emptyBank();
+  const first = await context.newPage();
+  await first.goto(fixtures.urlFor(WIDGET_FIRST), { waitUntil: 'domcontentloaded' });
+  await settled(first);
+  await cardOf(first).getByRole('button', { name: 'Autofill this form' }).click();
+  await first.waitForFunction(() => document.getElementById('em')?.value !== '', null, { timeout: 20_000 }).catch(() => undefined);
+  await pick(first, 'gender', 'Decline to self-identify');
+  // Over whatever Autofill chose there, so that a pick is made in it either way.
+  await pick(first, 'country', 'Canada');
+  // Last, and sent straight after, as somebody does with the last box on a form.
+  await pick(first, 'office', 'New York');
+  await first.click('button[type=submit]');
+  const picked = { office: 'New York', gender: 'Decline to self-identify' };
+  await first.waitForURL(/thanks/, { timeout: 15_000 }).catch(() => undefined);
+  const bank =
+    (await until(async () => {
+      const now = await bankOf();
+      return now.some((a) => /office/i.test(a.question)) ? now : null;
+    })) ?? (await bankOf());
+  await new Promise((r) => setTimeout(r, 1500));
+  const settledBank = await bankOf();
+  const rows = settledBank.map((a) => `${a.question} = ${answerOf(a)}`).join(' | ');
+  check(
+    'a choice picked in a react-select is kept, under the question it was asked with',
+    picked.office === 'New York' &&
+      settledBank.some((a) => a.question === 'Which office would you like to work from?' && answerOf(a) === 'New York'),
+    `picked ${JSON.stringify(picked)}; ${rows || `${bank.length} rows`}`,
+  );
+  check(
+    'while the country, which is the profile’s, and the gender, which is nobody’s to keep, are not',
+    !settledBank.some((a) => /country|gender/i.test(a.question) || a.variants.some((v) => ['Canada', 'United States', 'Decline to self-identify'].includes(v.text))),
+    rows || 'nothing kept',
+  );
+  await first.close();
+
+  const second = await context.newPage();
+  await second.goto(fixtures.urlFor(WIDGET_SECOND), { waitUntil: 'domcontentloaded' });
+  await settled(second);
+  await cardOf(second).getByRole('button', { name: 'Autofill this form' }).click();
+  await second
+    .waitForFunction(
+      () => Boolean(document.getElementById('office')?.closest('.select__control')?.querySelector('.select__single-value')),
+      null,
+      { timeout: 20_000 },
+    )
+    .catch(() => undefined);
+  const got = { office: await shownIn(second, 'office'), visit: await shownIn(second, 'visit') };
+  check('the next form’s react-select is chosen from it', got.office === 'New York', JSON.stringify(got));
+  check('and a different question with the same options is left for the person', got.visit === '', JSON.stringify(got));
+  // What Autofill chose is not a choice the person made, and is not kept again under this form's wording.
+  await new Promise((r) => setTimeout(r, 1500));
+  const after = await bankOf();
+  check(
+    'and what Autofill chose there is not kept as a choice of the person’s',
+    !after.some((a) => a.question === 'Which office would you like to work from? *'),
+    after.map((a) => `${a.question} = ${answerOf(a)}`).join(' | '),
+  );
+  const note = ((await cardOf(second).locator('.ok-note').first().innerText().catch(() => '')) ?? '').trim();
+  check(
+    'the card names it among the answers given before',
+    /from answers you gave before/i.test(note) && /Which office would you like to work from\?/.test(note),
+    note || '(no note)',
+  );
+  await second.close();
+}
+
 async function main() {
   await requireOpenSave(SERVER);
   // Another origin, for the embedded board: `localhost` is not 127.0.0.1 to a browser.
@@ -765,6 +933,10 @@ async function main() {
     SAME_ORIGIN_FORM,
     THANKS('/lumen-framed/thanks'),
     CROSS_ORIGIN_PAGE,
+    WIDGET_FIRST,
+    WIDGET_SECOND,
+    THANKS('/quill-widget/thanks'),
+    THANKS('/tern-widget/thanks'),
   ], { vars: { ATS: ats.base } });
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-reusing-'));
 
@@ -876,6 +1048,7 @@ async function main() {
 
     await walkTwoForms(context, fixtures);
     await walkFramedForms(context, fixtures);
+    await walkWidgets(context, fixtures);
   } finally {
     await context.close();
     await putBank(before).catch(() => undefined);
