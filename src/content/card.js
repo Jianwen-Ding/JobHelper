@@ -6284,13 +6284,20 @@ export function createCard({
           // on the list to be un-greyed after it has gone. See `markChips`.
           chipsOnScreen = [];
           askWhatTheFormWants();
-          const chips = b.files.map((f) => liftable(f, application));
-          if (b.files.length > 1) chips.push(liftableAll(b.files, application));
+          /*
+           * By the names they have in the folder the path below leads to, not
+           * the archive's. The archive always uses the plain name, and in the
+           * shared folder that name can be another application's, worked on
+           * in another tab.
+           */
+          const named = b.currentFiles?.length ? b.currentFiles : b.files;
+          const chips = named.map((f) => liftable(f, application));
+          if (named.length > 1) chips.push(liftableAll(named, application));
           // Named as well as mentioned below: a form asking for a transcript,
           // beside two chips that are not one, reads as no opinion about
           // transcripts. See `missingChip`.
           for (const kind of state.wanted?.kinds ?? []) {
-            if (!b.files.some((f) => documentKind(f) === kind) && DOCUMENT_KINDS[kind]) chips.push(missingChip(kind));
+            if (!named.some((f) => documentKind(f) === kind) && DOCUMENT_KINDS[kind]) chips.push(missingChip(kind));
           }
           return [
             h('div', { className: 'files' }, chips),

@@ -520,6 +520,41 @@ async function main() {
     await TABS[0].page.waitForTimeout(4000);
 
     /*
+     * The files each card offers are that tab's, in the one folder all three
+     * upload from.
+     *
+     * Every application's resume wants the same plain name there, and the
+     * plain name went to whichever application was staged last. So tab 1's
+     * card, drawn when it built, went on offering `…-Resume.pdf` — "Copy
+     * folder path, paste it into the upload dialog" — after tabs 2 and 3 had
+     * built, by which time the file under that name was tab 3's resume.
+     * Read from the folder's own manifest, which says which bundle each file
+     * was copied out of, because asking the store would rename them again.
+     */
+    const outDir = (await (await fetch(`${SERVER}/health`)).json()).outDir;
+    const folderSays = () => {
+      try {
+        return JSON.parse(fs.readFileSync(path.join(outDir, 'current', '.rmm-current.json'), 'utf8')).from ?? {};
+      } catch {
+        return {};
+      }
+    };
+    const slugOf = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const ownFiles = (tab, names, where) => {
+      const from = folderSays();
+      const resumes = names.map((n) => n.trim()).filter((n) => /resume/i.test(n));
+      const whose = resumes.map((n) => (from[n] ? path.basename(path.dirname(from[n])) : '(not in the folder)'));
+      check(
+        `${where} tab ${tab.n} offers ${tab.company}'s resume, not another tab's`,
+        resumes.length > 0 && whose.every((w) => w.includes(`-${slugOf(tab.company)}-`)),
+        resumes.length ? resumes.map((n, i) => `${n} → ${whose[i]}`).join(', ') : '(no resume offered)',
+      );
+    };
+    await inTurn('The files each tab offers are its own, in the folder they share', async (tab) => {
+      ownFiles(tab, await cardOf(tab.page).locator('.staged .file.liftable .what').allTextContents(), 'on the form,');
+    });
+
+    /*
      * And then everybody navigates, which is the step the bug needed.
      *
      * Work held in an open card is held in that tab's memory and survives
@@ -627,6 +662,23 @@ async function main() {
       }
     }
 
+    /*
+     * And the panel "Mark as applied" leaves behind, which names the files
+     * again beside the folder path. It named the archive's copies, always
+     * under the plain name — which in the shared folder can be the other
+     * tabs' resume.
+     */
+    group('Marked as applied in one tab, the files it names are still its own');
+    {
+      const tab = TABS[1];
+      const card = cardOf(tab.page);
+      await tab.page.bringToFront();
+      await card.getByRole('button', { name: 'Mark as applied' }).click();
+      await card.locator('.folded-title.applied').waitFor({ timeout: 120_000 }).catch(() => undefined);
+      await card.getByRole('button', { name: 'Unfold JobHelper' }).click().catch(() => undefined);
+      await card.locator('.done-box').waitFor({ timeout: 60_000 }).catch(() => undefined);
+      ownFiles(tab, await card.locator('.done-box .file.liftable .what').allTextContents(), 'filed,');
+    }
     /*
      * Two applications at one employer, for two roles, each saving its letter.
      *
