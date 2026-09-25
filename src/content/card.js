@@ -951,6 +951,15 @@ export function createCard({
     unsent: false,
     /** The text that was saved to the store, so an edit after it can be saved too. */
     letterSavedAs: null,
+    /**
+     * The resume this application was switched to on the card, if it was.
+     * Kept with the work and sent with every rebuild, so it belongs to this
+     * tab's application rather than to every tab. See `heldBase` in the
+     * worker.
+     */
+    baseChosen: null,
+    /** The resume a switch still in flight is going to. See `switchBaseTo`. */
+    switchingTo: null,
   };
 
   /**
@@ -1002,6 +1011,7 @@ export function createCard({
        * See `restoreWork`.
        */
       proposal: state.builtWith === 'ai' ? proposalOf(analysis ?? {}) : null,
+      baseResumeId: state.baseChosen ?? undefined,
       render: state.render,
       actedOnForm: actedOnForm(),
       /*
@@ -1068,6 +1078,8 @@ export function createCard({
       maybeAutoDraft();
       return;
     }
+    // The page's own reading was already made from it; see `heldBase`.
+    if (work.baseResumeId) state.baseChosen = work.baseResumeId;
     /*
      * What was carried is a starting point, not a correction.
      *
@@ -2245,8 +2257,10 @@ export function createCard({
   async function rebuildAs(mode) {
     const mine = ++rebuildToken;
     state.rebuilding = mode;
+    // A switch this overtakes is dropped; see `overtakenHere` in content.js.
+    state.switchingTo = null;
     try {
-      return await act('rebuild', { tailor: mode }, (result) => {
+      return await act('rebuild', { tailor: mode, baseResumeId: state.baseChosen ?? undefined }, (result) => {
         if (mine !== rebuildToken) return;
         /*
          * What came back, not what was asked for.
@@ -2285,14 +2299,35 @@ export function createCard({
     const mode = state.builtWith === 'ai' ? 'ai' : 'match';
     const mine = ++rebuildToken;
     state.rebuilding = mode;
+    /*
+     * The picker says what was picked while it is worked out. It is drawn
+     * from the proposal on screen, and `act` redraws before the reply, so it
+     * went straight back to the resume just turned away from — for the
+     * minutes an AI pass takes — and stayed there if the switch failed.
+     */
+    state.switchingTo = baseResumeId;
     try {
       return await act('setBase', { baseResumeId, tailor: mode }, (result) => {
         if (mine !== rebuildToken) return;
+        if (!result?.spec) return;
+        state.baseChosen = result.baseResumeId ?? baseResumeId;
         // What came back, not what was asked for — see `rebuildAs`.
-        if (result?.spec) showOffer(slotOf(result));
+        const which = slotOf(result);
+        /*
+         * And the other reading goes if it was made from another resume.
+         * It was kept, so "AI tailoring" after a switch put the proposal
+         * from the resume just left back on screen, picker and all.
+         */
+        const other = which === 'ai' ? 'match' : 'ai';
+        if (state.offers[other]?.analysis?.baseResumeId !== state.baseChosen) state.offers[other] = null;
+        showOffer(which);
       });
     } finally {
-      if (mine === rebuildToken) state.rebuilding = null;
+      if (mine === rebuildToken) {
+        state.rebuilding = null;
+        state.switchingTo = null;
+        draw();
+      }
     }
   }
 
@@ -4700,6 +4735,8 @@ export function createCard({
 
   function drawProposeView() {
     const baseSelect = h('select', { title: 'Which resume to start from' });
+    /** The resume the picker says, which is a switch in flight's until it lands. */
+    const inUse = state.switchingTo ?? analysis?.baseResumeId;
 
     /*
      * How much of this posting each resume already uses, worked out by the
@@ -4732,7 +4769,7 @@ export function createCard({
       return h('option', {
         value: r.id,
         textContent: `${star}${r.label}${says}`,
-        selected: r.id === analysis.baseResumeId,
+        selected: r.id === inUse,
       });
     };
 
@@ -4871,7 +4908,7 @@ export function createCard({
     if (baseSelect.options.length === 0) {
       baseSelect.append(
         h('option', {
-          value: analysis?.baseResumeId ?? '',
+          value: inUse ?? '',
           textContent: analysis?.baseLabel ?? 'Your resume',
           selected: true,
         }),

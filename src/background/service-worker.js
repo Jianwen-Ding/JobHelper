@@ -725,7 +725,13 @@ function whichTab(tabId, tab, sender) {
  * being whatever it is.
  */
 async function inheritIfNew(tabId, openerTabId) {
-  if (tabId === undefined || openerTabId === undefined) return;
+  const theirs = await inheritance(tabId, openerTabId);
+  if (theirs) await writeTrail(tabId, { ...theirs, at: Date.now() });
+}
+
+/** What `inheritIfNew` would copy into this tab, or null. Reads only. */
+async function inheritance(tabId, openerTabId) {
+  if (tabId === undefined || openerTabId === undefined) return null;
   const mine = await readTrail(tabId);
   /*
    * And not into a tab that was told to start fresh.
@@ -737,10 +743,10 @@ async function inheritIfNew(tabId, openerTabId) {
    * it: pages, work, save and expectation, as a blind write rather than a
    * merge.
    */
-  if (mine.pages.length > 0 || mine.cleared) return;
+  if (mine.pages.length > 0 || mine.cleared) return null;
 
   const theirs = await readTrail(openerTabId);
-  if (theirs.pages.length === 0) return;
+  if (theirs.pages.length === 0) return null;
 
   /*
    * And only when the tab it came from was in the middle of applying.
@@ -767,9 +773,21 @@ async function inheritIfNew(tabId, openerTabId) {
    * out of the page it came from, with no race in it at all.
    */
   const applying = theirs.expecting?.to && Date.now() - (theirs.expecting.at ?? 0) <= EXPECTATION_MS;
-  if (!applying) return;
+  return applying ? theirs : null;
+}
 
-  await writeTrail(tabId, { ...theirs, at: Date.now() });
+/**
+ * The resume this tab's application was switched to, if it was.
+ *
+ * The card's "Start from" picker used to write the one setting every tab
+ * shares, so switching it on one application changed where every other tab,
+ * and every posting after it, started from. It is kept with the application
+ * instead: the card saves it with its work, and it follows that work to the
+ * form, into a tab Apply opened, and nowhere else. See `analyze`.
+ */
+async function heldBase(tab) {
+  const trail = (await inheritance(tab?.id, tab?.openerTabId)) ?? (await readTrail(tab?.id));
+  return trail.work?.baseResumeId ?? null;
 }
 
 /* ------------------------------------------------------------------ *
@@ -2171,8 +2189,16 @@ const handlers = {
    * back to the stored preference. `useAi` is the older two-way form of the
    * same question and still works.
    */
-  async analyze({ url, title, html, pages, framed, useAi, tailor }, tab) {
+  async analyze({ url, title, html, pages, framed, useAi, tailor, baseResumeId: chosen }, tab) {
     const settings = await getSettings();
+    /*
+     * Which resume to start from: the one this card was just switched to,
+     * then the one this application was switched to, and only then the
+     * default in the popup. The last is marked as a default so the store
+     * will not start this posting from a copy made for another one. See
+     * `heldBase`, and `standingBase` in ResumeM-M.
+     */
+    const held = chosen ? null : await heldBase(tab);
     /*
      * Nothing, unless this call says otherwise.
      *
@@ -2188,7 +2214,7 @@ const handlers = {
      * this fallback is only ever the opening analysis.
      */
     const mode = tailor ?? (typeof useAi === 'boolean' ? (useAi ? 'ai' : 'match') : 'none');
-    const result = await stoppably(tab, 'rebuild', (signal) =>
+    const ask = (base) => stoppably(tab, 'rebuild', (signal) =>
       serverFetch('/api/extension/analyze', {
         method: 'POST',
         signal,
@@ -2218,13 +2244,15 @@ const handlers = {
           // Forgetting to pass this on is invisible: the analysis still works,
           // it is just written from the wrong half of what was read.
           pages,
-          baseResumeId: settings.baseResumeId,
+          baseResumeId: base ?? settings.baseResumeId,
+          baseIsDefault: !base,
           tailor: mode,
           // Older servers read this and know nothing of `tailor`.
           useAi: mode === 'ai',
         }),
       }),
     );
+    let result = await ask(chosen ?? held);
 
     /*
      * And the page counts from here, in the same message that read it.
@@ -2262,7 +2290,7 @@ const handlers = {
       saveOf.set(tab.id, result.save);
     }
     if (result?.isJobPosting) {
-      await remember(tab, {
+      const remembered = await remember(tab, {
         save: result?.save,
         url,
         title,
@@ -2274,6 +2302,12 @@ const handlers = {
         // from the shell.
         html: [html, ...(framed ?? []).map((f) => f.html)].join('\n').slice(0, 400_000),
       });
+      /*
+       * And a page that turned out to start a new application in this tab
+       * was read from the last one's resume. Only now is that known, so it
+       * is read again from the default; if that fails, what was read stands.
+       */
+      if (held && remembered?.startedFresh) result = (await ask(null).catch(() => null)) ?? result;
     }
     return { ...result, trail: summarise(await readTrail(tab?.id)) };
   },

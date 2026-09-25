@@ -1296,8 +1296,21 @@
 
       case 'setBase': {
         const mine = startProposal();
-        await send('setSettings', { patch: { baseResumeId: payload.baseResumeId } });
-        const next = await send('analyze', { ...(await applicationPayload()), ...tailoring(payload) });
+        /*
+         * For this application, not for every tab.
+         *
+         * This wrote the one setting every tab and every posting reads, so
+         * switching here changed where the other tabs rebuilt from and where
+         * the next posting started — a tailored copy picked for one employer
+         * became the starting point of the next. The resume is sent with the
+         * analysis, and the card keeps it with its work; see `heldBase` in
+         * the worker. The popup's picker is the default.
+         */
+        const next = await send('analyze', {
+          ...(await applicationPayload()),
+          ...tailoring(payload),
+          baseResumeId: payload.baseResumeId,
+        });
         // See `startProposal`. Picking two bases in quick succession is
         // ordinary, and so is walking to the next posting while one is still
         // being worked out. See `landLate` for where a superseded one goes,
@@ -1326,7 +1339,12 @@
          * still finishes, still costs whatever it cost, and is then dropped.
          */
         const mine = startProposal();
-        const next = await send('analyze', { ...(await applicationPayload()), ...tailoring(payload) });
+        // From the resume the card is on, which this tab may have switched to.
+        const next = await send('analyze', {
+          ...(await applicationPayload()),
+          ...tailoring(payload),
+          baseResumeId: payload.baseResumeId,
+        });
         if (!stillWanted(mine)) return overtakenHere(mine) ? null : landLate(next);
         analysis = next;
         cardHandle?.update(analysis);

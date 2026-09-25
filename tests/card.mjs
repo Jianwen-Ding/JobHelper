@@ -3268,6 +3268,103 @@ async function main() {
     JSON.stringify(rebased),
   );
 
+  /*
+   * The picker says what was picked, and keeps saying it.
+   *
+   * It was drawn from the proposal on screen, and the card redraws the moment
+   * a switch starts — so it went straight back to the resume just turned away
+   * from while the new one was worked out, and an AI proposal made from that
+   * resume stayed filed beside the new one: "AI tailoring" put it back on
+   * screen, picker and all. A user: "I keep on trying to switch … but it
+   * keeps on putting me back on this other resume".
+   */
+  const stuck = await inPage(async (createCard) => {
+    const made = (base, extra = {}) => ({
+      isJobPosting: true,
+      job: { title: 'Platform Engineer', company: 'Acme' },
+      spec: { id: 'job-acme', label: 'Acme', tier: 'temporary', copiedFrom: base },
+      baseResumeId: base,
+      baseLabel: base === 'base' ? 'New grad' : 'Summer intern',
+      rationale: [],
+      diff: [],
+      ...extra,
+    });
+    const sent = [];
+    let answer = null;
+    const handle = createCard({
+      analysis: made('base'),
+      resumes: [
+        { id: 'base', label: 'New grad', tier: 'base' },
+        { id: 'intern', label: 'Summer intern', tier: 'base' },
+      ],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, ...payload });
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'setBase') {
+          // Held until the test answers it, which is the time a switch takes.
+          const result = await new Promise((resolve, reject) => (answer = { resolve, reject }));
+          handle.update(result);
+          return result;
+        }
+        if (action === 'rebuild') {
+          const result = made(payload.baseResumeId ?? 'base', { tailor: payload.tailor, aiUsed: payload.tailor === 'ai' });
+          handle.update(result);
+          return result;
+        }
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const picker = () => root.querySelector('select')?.value ?? null;
+    const press = (re) => [...root.querySelectorAll('button.mode')].find((b) => re.test(b.textContent))?.click();
+    await wait(100);
+    // An AI reading of the resume it started from, then back to the keyword list.
+    handle.update(made('base', { tailor: 'ai', aiUsed: true }), { show: true });
+    await wait(50);
+    press(/Keyword match/);
+    await wait(50);
+
+    const choose = async (id) => {
+      const select = root.querySelector('select');
+      select.value = id;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      await wait(60);
+    };
+    await choose('intern');
+    const whileSwitching = picker();
+    answer.reject(new Error('The store is restarting'));
+    await wait(60);
+    const afterFailing = picker();
+
+    await choose('intern');
+    answer.resolve(made('intern'));
+    await wait(60);
+    const afterSwitching = picker();
+    press(/AI tailoring|Have AI Tailor/);
+    await wait(100);
+    return {
+      whileSwitching,
+      afterFailing,
+      afterSwitching,
+      afterAi: picker(),
+      rebuilt: sent.filter((c) => c.action === 'rebuild').map((c) => c.baseResumeId ?? null),
+    };
+  });
+
+  check('while a switch is worked out, the picker says the resume picked', stuck.whileSwitching === 'intern', JSON.stringify(stuck));
+  check('and one that failed says the resume still in use', stuck.afterFailing === 'base', JSON.stringify(stuck));
+  check('one that lands says the new resume', stuck.afterSwitching === 'intern', JSON.stringify(stuck));
+  check(
+    'and the AI reading of the resume left behind does not come back with it',
+    stuck.afterAi === 'intern',
+    JSON.stringify(stuck),
+  );
+  check('the AI is asked about the resume switched to', stuck.rebuilt.at(-1) === 'intern', JSON.stringify(stuck.rebuilt));
+
   console.log('\nWhich resume to start from, ranked and marked');
 
   /*

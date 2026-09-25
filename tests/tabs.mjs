@@ -117,8 +117,62 @@ const TABS = [
 ];
 for (const tab of TABS) tab.foreign = TABS.filter((t) => t !== tab);
 
+/*
+ * Starting from a resume, per application.
+ *
+ * The card's "Start from" picker wrote the one setting every tab shares. So
+ * switching it on one application changed where every other tab rebuilt from
+ * and where the next posting started, and a tailored copy picked on one
+ * employer's posting became the starting point of the next: a user's Waymo
+ * posting opened on the resume made for, and sent to, Keysight, and "keeps on
+ * putting me back on this other resume created and submitted on another
+ * site". Two postings of their own, so nothing above is disturbed.
+ */
+const PELLUCID = 'Pellucid Robotics';
+const QUORRA = 'Quorra Labs';
+const KEYSIGHT = 'Keysight Technologies, Inc.';
+const SUMMER = 'tabs-summer-2027-intern';
+const SENT_ELSEWHERE = 'job-keysight-technologies-inc-tabs-engineering-software-developer-intern';
+const jobPage = (company, title, body, extra = '') => `<!doctype html><html><head><meta charset="utf-8"><title>${title} — ${company}</title>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"JobPosting","title":"${title}",
+"hiringOrganization":{"@type":"Organization","name":"${company}"},"description":"<p>${body}</p>"}</script>
+</head><body><h1>${title}</h1><p>${company} is hiring. ${body}</p>${extra}</body></html>`;
+const PELLUCID_ROLE = {
+  name: 'pellucid-role',
+  path: '/pellucid/jobs/robotics-software-intern',
+  company: PELLUCID,
+  html: jobPage(PELLUCID, 'Robotics Software Intern', 'Write Go and Python services on Kubernetes for distributed systems. Kafka, AWS.',
+    '<p><a href="/pellucid/jobs/robotics-software-intern/apply">Apply</a></p>'),
+};
+const PELLUCID_FORM = {
+  name: 'pellucid-form',
+  path: '/pellucid/jobs/robotics-software-intern/apply',
+  company: PELLUCID,
+  html: jobPage(PELLUCID, 'Robotics Software Intern', 'Write Go and Python services on Kubernetes.',
+    `<h2>Apply for this job</h2><form><label for="fn">First Name</label><input id="fn" name="first_name">
+<label for="em">Email</label><input id="em" name="email" type="email"></form>`),
+};
+const QUORRA_ROLE = {
+  name: 'quorra-role',
+  path: '/quorra/careers/platform-intern',
+  company: QUORRA,
+  html: jobPage(QUORRA, 'Platform Intern', 'Run streaming infrastructure in Go on Kubernetes and AWS. Kafka, distributed systems.'),
+};
+const QUORRA_AGAIN = { ...QUORRA_ROLE, name: 'quorra-again', path: '/quorra/careers/data-intern',
+  html: jobPage(QUORRA, 'Data Intern', 'Build pipelines in Python and SQL. Kafka.') };
+
 /** What this suite files under, cleared before it starts as well as after. */
-const MINE = TABS.map((t) => t.company);
+const MINE = [...TABS.map((t) => t.company), PELLUCID, QUORRA, KEYSIGHT];
+
+/** What the "Start from" picker says, and the base the proposal names. */
+const startsFrom = (page) =>
+  page.evaluate(() => {
+    const root = document.querySelector('#jobhelper-card-host')?.shadowRoot;
+    return {
+      value: root?.querySelector('select')?.value ?? null,
+      from: root?.querySelector('.diff-head .from-label')?.textContent ?? null,
+    };
+  });
 
 /**
  * Lifted from `tests/carrying.mjs`: wait for the card to stop changing rather
@@ -320,6 +374,10 @@ async function main() {
     MARIGOLD_FORM,
     KESTREL_ROLE,
     KESTREL_FORM,
+    PELLUCID_ROLE,
+    PELLUCID_FORM,
+    QUORRA_ROLE,
+    QUORRA_AGAIN,
   ]);
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-tabs-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
@@ -566,6 +624,111 @@ async function main() {
           ownsIt(tab, items),
           JSON.stringify(items),
         );
+      }
+    }
+    group('The resume a tab starts from is that application\'s, not every tab\'s');
+    {
+      const json = (r) => r.json();
+      const listed = bare(await fetch(`${SERVER}/api/resumes`).then(json), 'resumes');
+      const base = listed.find((r) => r.id === 'base');
+      const put = (id, spec) =>
+        fetch(`${SERVER}/api/resumes/${id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(spec) });
+      await put(SUMMER, { ...base, id: SUMMER, label: 'Summer 2027 intern', tier: 'base' });
+      // Made for, and sent to, another employer on another site.
+      await put(SENT_ELSEWHERE, {
+        ...base,
+        id: SENT_ELSEWHERE,
+        label: `Engineering Software Developer, Intern in Multiple Locations | ${KEYSIGHT}`,
+        tier: 'temporary',
+        copiedFrom: SUMMER,
+        generatedFor: { company: KEYSIGHT, role: 'Engineering Software Developer, Intern', url: 'https://jobs.keysight.example/1', at: '2026-09-20T10:00:00.000Z' },
+      });
+      await fetch(`${SERVER}/api/applications`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ company: KEYSIGHT, role: 'Engineering Software Developer, Intern', status: 'applied', resumeId: SENT_ELSEWHERE, url: 'https://jobs.keysight.example/1' }),
+      });
+      // And last picked, which is how the default came to name it.
+      await worker.evaluate((id) => chrome.storage.sync.set({ baseResumeId: id }), SENT_ELSEWHERE);
+      const setting = () => worker.evaluate(async () => (await chrome.storage.sync.get('baseResumeId')).baseResumeId);
+      const pinned = new Set([...listed.filter((r) => r.tier === 'base').map((r) => r.id), SUMMER]);
+
+      const a = await context.newPage();
+      const b = await context.newPage();
+      try {
+        await a.bringToFront();
+        await a.goto(fixtures.urlFor(PELLUCID_ROLE), { waitUntil: 'domcontentloaded' });
+        await settled(a);
+        await b.bringToFront();
+        await b.goto(fixtures.urlFor(QUORRA_ROLE), { waitUntil: 'domcontentloaded' });
+        await settled(b);
+        const aAt = await startsFrom(a);
+        const bAt = await startsFrom(b);
+        check(
+          'a posting does not start from a copy made for another application',
+          aAt.value !== SENT_ELSEWHERE && bAt.value !== SENT_ELSEWHERE && !/Keysight/.test(`${aAt.from} ${bAt.from}`),
+          `${aAt.value} · ${bAt.value}`,
+        );
+        check('it starts from a base instead', pinned.has(aAt.value) && pinned.has(bAt.value), `${aAt.value} · ${bAt.value}`);
+
+        // Switched in tab A, to a base that is not the one it started from.
+        const target = aAt.value === SUMMER ? 'base' : SUMMER;
+        await a.bringToFront();
+        await cardOf(a).locator('select').first().selectOption(target);
+        await a.waitForFunction(
+          (want) => document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelector('select')?.value === want &&
+            !/Starting from that resume/.test(document.querySelector('#jobhelper-card-host')?.shadowRoot?.textContent ?? ''),
+          target,
+          { timeout: 30_000 },
+        ).catch(() => undefined);
+        const label = listed.find((r) => r.id === target)?.label ?? 'Summer 2027 intern';
+        let now = await startsFrom(a);
+        check('the switch takes in the tab it was made in', now.value === target && now.from === label, JSON.stringify(now));
+        check('and leaves the default in the popup alone', (await setting()) === SENT_ELSEWHERE, String(await setting()));
+
+        // A redraw, then the store moving under it: built and filed, and two
+        // of the watcher's ticks.
+        await openChanges(cardOf(a));
+        now = await startsFrom(a);
+        check('it holds through a redraw', now.value === target && now.from === label, JSON.stringify(now));
+        await cardOf(a).getByRole('button', { name: /^(Build resume|Recompile)$/ }).first().click();
+        await cardOf(a).locator('.fit.ok, .fit.bad').waitFor({ timeout: 180_000 });
+        await a.waitForTimeout(9000);
+        now = await startsFrom(a);
+        const copy = bare(await fetch(`${SERVER}/api/resumes`).then(json), 'resumes').find((r) => /pellucid/.test(r.id));
+        check('and through the store changing, watched', now.value === target && now.from === label, JSON.stringify(now));
+        check('and the copy filed is built from it', copy?.copiedFrom === target, `${copy?.id} from ${copy?.copiedFrom}`);
+
+        // Tab B, read again: its own application, which nobody switched.
+        await b.bringToFront();
+        await b.reload({ waitUntil: 'domcontentloaded' });
+        await settled(b);
+        const bAgain = await startsFrom(b);
+        check('the other tab still starts from where it started', bAgain.value === bAt.value, `${bAt.value} → ${bAgain.value}`);
+
+        // And the next posting, in that tab, from the default rather than from tab A's switch.
+        await b.goto(fixtures.urlFor(QUORRA_AGAIN), { waitUntil: 'domcontentloaded' });
+        await settled(b);
+        const next = await startsFrom(b);
+        check('and so does the next posting', next.value === bAt.value, `${next.value}`);
+
+        // Tab A, on to its form: the same application, so the same resume.
+        await a.bringToFront();
+        await a.click(`a[href="${PELLUCID_FORM.path}"]`);
+        await a.waitForLoadState('domcontentloaded');
+        await settled(a);
+        now = await startsFrom(a);
+        check('and it follows the application to its form', a.url().endsWith(PELLUCID_FORM.path) && now.value === target && now.from === label, `${a.url()} ${JSON.stringify(now)}`);
+        await a.waitForTimeout(9000);
+        now = await startsFrom(a);
+        check('and stays there', now.value === target && now.from === label, JSON.stringify(now));
+      } finally {
+        await a.close().catch(() => undefined);
+        await b.close().catch(() => undefined);
+        await pointExtensionAt(context, worker, SERVER);
+        await worker.evaluate(() => chrome.storage.sync.remove('baseResumeId')).catch(() => undefined);
+        await fetch(`${SERVER}/api/resumes/${SENT_ELSEWHERE}`, { method: 'DELETE' }).catch(() => undefined);
+        await fetch(`${SERVER}/api/resumes/${SUMMER}`, { method: 'DELETE' }).catch(() => undefined);
       }
     }
   } finally {
