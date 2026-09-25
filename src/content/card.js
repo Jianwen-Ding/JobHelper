@@ -3486,6 +3486,18 @@ export function createCard({
     const base = state.baseChanged;
     if (!base) return null;
     /*
+     * Deleted in ResumeM-M since this was offered, and so nothing to build
+     * from. The list follows the store, and the store says nothing more about
+     * a base it no longer has — so the offer stood, naming a resume that had
+     * gone. Said plainly instead, as the picker in `drawProposeView` says it.
+     */
+    if (resumes.length > 0 && !resumes.some((r) => r.id === base.id)) {
+      return h('div', {
+        className: 'hint stale',
+        textContent: `“${base.label}”, the resume this copy was made from, has been deleted in ResumeM-M.`,
+      });
+    }
+    /*
      * The AI's, or the keyword list — never `none`.
      *
      * This read `'match'` off `builtWith` and fell through to `'none'`

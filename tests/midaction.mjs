@@ -75,7 +75,9 @@ const STORE = `(() => {
           printed: 'p' + s.version,
           stored: s.copy,
           storedPrint: s.copy ? JSON.stringify(s.copy) : null,
-          base: null,
+          // What the store says of the resume the copy was made from: null
+          // when it has nothing to say, as it has once that resume is deleted.
+          base: s.base ?? null,
         };
       case 'rebuild': {
         await gated(action);
@@ -662,6 +664,36 @@ async function main() {
       'and still offers every resume the store has, so any of them can be chosen',
       ['kept', 'other'].every((id) => gone.offered.includes(id)),
       JSON.stringify(gone),
+    );
+
+    /*
+     * And "Build it again from there", already showing when that resume goes.
+     * It was offered because the base had changed since the copy was made;
+     * deleted, there is nothing there to build from, and the store says
+     * nothing more about it — so nothing took the offer down.
+     */
+    await setUp();
+    const offer = await inPage(async () => {
+      const shown = () => ({
+        offered: Boolean(button(/Build it again from there/)),
+        said: jh.root.querySelector('.hint.stale')?.textContent ?? '',
+      });
+      jh.s.base = { id: 'base', label: 'New grad resume', changed: true };
+      await jh.handle.storeChanged();
+      await wait(50);
+      const changed = shown();
+      // Deleted in ResumeM-M: gone from the list, and nothing to say about it.
+      jh.s.resumes = [{ id: 'kept', label: 'Systems resume', tier: 'base' }];
+      jh.s.base = null;
+      await jh.handle.storeChanged();
+      await wait(50);
+      return { changed, deleted: shown() };
+    });
+    check('a base changed in ResumeM-M is offered to build again from', offer.changed.offered, JSON.stringify(offer));
+    check(
+      'and once it is deleted there, the offer goes, and the card says it was deleted',
+      !offer.deleted.offered && /deleted/i.test(offer.deleted.said) && /New grad resume/.test(offer.deleted.said),
+      JSON.stringify(offer),
     );
   }
 
