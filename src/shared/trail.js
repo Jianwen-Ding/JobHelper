@@ -871,7 +871,11 @@ const OPTION_STATE_CLASS = /selected|highlighted|focused|focusvisible|^css-/i;
  * colon in the same text keeps the label. The questions are the identifiers
  * and the equal-opportunity ones, the same families `remembering.js` refuses
  * to keep; written out here rather than imported because this module is loaded
- * on its own in places an import cannot follow.
+ * on its own in places an import cannot follow. And the applicant's address
+ * and contact details — "Address Line 1", "Postal Code", "Email Address",
+ * "Phone Number" — which went to the server and on to the AI the same way; an
+ * address has no shape the server could find it by afterwards. Not "Office
+ * address" or "Location", which are the posting's.
  *
  * Only the answer, only where it is short, and never a control: a form's own
  * "Gender" label with its `<select>` after it keeps its options, which are the
@@ -882,7 +886,7 @@ const OPTION_STATE_CLASS = /selected|highlighted|focused|focusvisible|^css-/i;
  * took the capture from about 10ms to about 14ms.
  */
 const STATED_PERSONAL =
-  /\b(ssn|social\s*security|national\s*insurance|tax\s*(id|identification)|(date|day|month|year)\s*of\s*birth|birth\s*(date|day)|dob|age|passport|driver'?s?\s*licen[cs]e|visa\s*number|(account|card|routing)\s*number|iban|sort\s*code|gender|sex|transgender|non-?binary|sexual\s*orientation|lgbt\w*|race|ethnicit(y|ies)|hispanic|latin[oaxe]s?|national\s*origin|indigenous|aboriginal|veteran|disab(led|ility|ilities)|criminal|convict\w*|felon(y|ies)|religion|marital|pregnan\w*)\b/i;
+  /\b(ssn|social\s*security|national\s*insurance|tax\s*(id|identification)|(date|day|month|year)\s*of\s*birth|birth\s*(date|day)|dob|age|passport|driver'?s?\s*licen[cs]e|visa\s*number|(account|card|routing)\s*number|iban|sort\s*code|gender|sex|transgender|non-?binary|sexual\s*orientation|lgbt\w*|race|ethnicit(y|ies)|hispanic|latin[oaxe]s?|national\s*origin|indigenous|aboriginal|veteran|disab(led|ility|ilities)|criminal|convict\w*|felon(y|ies)|religion|marital|pregnan\w*|(e-?mail|phone|mobile|cell|telephone)\s*(address|number|no\.?)|(home|mailing|residential|street|permanent|current)\s*address|address\s*line|zip\s*code|postal\s*code|postcode)\b/i;
 const CONTROL =
   'input, select, textarea, button, [contenteditable], [role="radio"], [role="checkbox"], [role="option"], [role="combobox"], [role="listbox"], [role="radiogroup"]';
 

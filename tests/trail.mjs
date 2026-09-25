@@ -1744,3 +1744,50 @@ describe('the page as sent keeps what a posting offers', () => {
     }
   });
 });
+
+/*
+ * The applicant's address and contact details, as a review step writes them.
+ *
+ * The scrub knew the identifiers and the equal-opportunity questions, and a
+ * review step's "Address Line 1 / 12 Elm Street", "Postal Code 02115", "Email
+ * Address …" and "Phone Number …" went to the server, into the posting it
+ * keeps and on to the AI. An address has no shape the server could find it
+ * by afterwards, so it is emptied here, by its label. The office a posting
+ * names is not the applicant's, and stays.
+ */
+const CONTACT_REVIEW = `
+  <h1>Payroll Specialist — Acme</h1>
+  <p>Office address: KEPT-100 Main Street, Boston, MA 02110</p>
+  <p>Location: KEPT-Boston (hybrid)</p>
+  <h2>Review your application</h2>
+  <div><label>Legal Name</label><div>KEPT-Jane Doe</div></div>
+  <dl><dt>Address Line 1</dt><dd>ANSWER-ADDRESS</dd><dt>Address Line 2</dt><dd>ANSWER-APARTMENT</dd>
+  <dt>City</dt><dd>KEPT-Somerville</dd><dt>Postal Code</dt><dd>ANSWER-POSTCODE</dd>
+  <dt>Email Address</dt><dd>ANSWER-EMAIL</dd><dt>Phone Number</dt><dd>ANSWER-PHONE</dd></dl>
+  <table><tr><th>Home address</th><td>ANSWER-HOME</td></tr><tr><th>ZIP code</th><td>ANSWER-ZIP</td></tr></table>
+  <p>Mailing address: ANSWER-MAILING</p>
+  <p>Mobile number: ANSWER-MOBILE</p>`;
+
+describe('the page as sent does not carry the address and contact details a review step writes out', () => {
+  it('empties them by their labels, and keeps the office the posting names', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><title>Review</title></head><body>${CONTACT_REVIEW}</body></html>`);
+      const html = await page.evaluate(async (js) => {
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        return mod.trimForStorage(mod.pageHtml(document));
+      }, source);
+      const leaked = html.match(/ANSWER-[A-Z]+/g) ?? [];
+      assert.deepEqual(leaked, [], `the review step's contact details were sent: ${leaked.join(', ')}`);
+      const lost = [...CONTACT_REVIEW.matchAll(/KEPT-[^<]+/g)].map((m) => m[0].trim()).filter((fact) => !html.includes(fact));
+      assert.deepEqual(lost, [], `lost: ${lost.join(' | ')}`);
+    } finally {
+      await browser.close();
+    }
+  });
+});
