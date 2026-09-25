@@ -1273,13 +1273,17 @@ export function createCard({
 
   function markChips() {
     const held = carried?.files ?? [];
-    const ready = held.length > 0;
+    // Bytes from a folder that is behind are not ready either. See `folderBehind`.
+    const behind = folderBehind();
+    const ready = held.length > 0 && !behind;
     for (const chip of chipsOnScreen) {
       if (!chip.isConnected) continue;
       chip.classList.toggle('warming', !ready);
       chip.title = ready
         ? 'Drag this into the form\u2019s upload box'
-        : 'Drag this into the form\u2019s upload box \u2014 fetching it now';
+        : behind
+          ? 'Drag this into the form\u2019s upload box \u2014 it is being rebuilt with the latest changes'
+          : 'Drag this into the form\u2019s upload box \u2014 fetching it now';
       /*
        * And named for the copy that will actually be dropped.
        *
@@ -1771,8 +1775,13 @@ export function createCard({
      */
     warmFiles(application);
 
-    /** What this chip would hand over, if the store has answered yet. */
-    const carrying = () => pick(carried?.application === application ? (carried.files ?? []) : []);
+    /**
+     * What this chip would hand over, if the store has answered yet — and
+     * nothing while the folder is behind, so a reach does not arm the page
+     * with the file from before. See `folderBehind`.
+     */
+    const carrying = () =>
+      folderBehind() ? [] : pick(carried?.application === application ? (carried.files ?? []) : []);
 
     /*
      * Tell the page a drag is coming, at the press rather than at the drag.
@@ -1841,6 +1850,21 @@ export function createCard({
     };
 
     chip.ondragstart = (event) => {
+      /*
+       * Refused while the folder is behind the card, as a drag cannot wait
+       * for it to catch up. The bytes in hand are the folder's from before —
+       * before the change "Updated from ResumeM-M" is showing, or a box just
+       * ticked — and would go into the form as they are. Attach files waits
+       * for the stage in the same stretch; this brings it forward, so the
+       * next try carries the file as the card shows it.
+       */
+      if (folderBehind()) {
+        event.preventDefault();
+        tell([]);
+        folderCaughtUp().catch(() => undefined);
+        sayAboutDragging('That file is being rebuilt with the latest changes \u2014 try that drag again in a moment.');
+        return;
+      }
       const held = carried?.application === application ? (carried.files ?? []) : [];
       const files = pick(held);
       if (files.length === 0) {
@@ -3462,6 +3486,18 @@ export function createCard({
     const base = state.baseChanged;
     if (!base) return null;
     /*
+     * Deleted in ResumeM-M since this was offered, and so nothing to build
+     * from. The list follows the store, and the store says nothing more about
+     * a base it no longer has — so the offer stood, naming a resume that had
+     * gone. Said plainly instead, as the picker in `drawProposeView` says it.
+     */
+    if (resumes.length > 0 && !resumes.some((r) => r.id === base.id)) {
+      return h('div', {
+        className: 'hint stale',
+        textContent: `“${base.label}”, the resume this copy was made from, has been deleted in ResumeM-M.`,
+      });
+    }
+    /*
      * The AI's, or the keyword list — never `none`.
      *
      * This read `'match'` off `builtWith` and fell through to `'none'`
@@ -3606,6 +3642,8 @@ export function createCard({
     const staged = await mine;
     if (stagingNow === mine) stagingNow = null;
     if (!staged) lastPrepared = null;
+    // The chips were marked behind while this ran. See `folderBehind`.
+    markChips();
   }
 
   /**
@@ -3626,6 +3664,19 @@ export function createCard({
       clearTimeout(preparing);
       await stageFiles();
     } else if (stagingNow) await stagingNow;
+  }
+
+  /**
+   * Whether the folder is behind what is on screen — the stretch
+   * `folderCaughtUp` waits out.
+   *
+   * The drag chips cannot wait: their bytes are fetched ahead, from the
+   * folder as it was, and a chip picked up in this stretch handed the page
+   * the file from before the change the card was already showing. So they
+   * are marked as updating and refuse the drag until it is over.
+   */
+  function folderBehind() {
+    return Boolean(state.staged) && (whatWouldBeStaged() !== lastPrepared || Boolean(stagingNow));
   }
 
   /**

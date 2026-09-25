@@ -75,7 +75,9 @@ const STORE = `(() => {
           printed: 'p' + s.version,
           stored: s.copy,
           storedPrint: s.copy ? JSON.stringify(s.copy) : null,
-          base: null,
+          // What the store says of the resume the copy was made from: null
+          // when it has nothing to say, as it has once that resume is deleted.
+          base: s.base ?? null,
         };
       case 'rebuild': {
         await gated(action);
@@ -94,7 +96,12 @@ const STORE = `(() => {
         return { placed: [{ name: 'Jane-Resume.pdf', printed: from?.printed ?? null }], unplaced: [] };
       }
       case 'attachmentFiles':
-        return { files: [{ name: 'Jane-Resume.pdf', base64: 'JVBERi0xLjQK', type: 'application/pdf' }] };
+        // The folder's file, and which build of the store it holds.
+        return {
+          files: [
+            { name: 'Jane-Resume.pdf', base64: 'JVBERi0xLjQK', type: 'application/pdf', printed: s.folder.at(-1)?.printed ?? null },
+          ],
+        };
       case 'aiStatus':
         return { active: true, state: 'on' };
       default:
@@ -298,20 +305,26 @@ async function main() {
         window.drops += 1;
       });
       jh.s.sent.length = 0;
+      window.pressed = jh.root.querySelector('.file.liftable');
     });
     const chip = page.locator('#jobhelper-card-host .file.liftable').first();
     await chip.scrollIntoViewIfNeeded();
     const from = await chip.boundingBox();
     await page.mouse.move(from.x + 20, from.y + from.height / 2);
     await page.mouse.down();
-    // Redrawn between the press and the drag, and again with the drag under way.
+    /*
+     * Redrawn between the press and the drag, and again with the drag under
+     * way — by store changes that leave the file as it is, a resume saved
+     * there and then another. One that changes what the resume prints puts
+     * the folder behind, and a drag started then is refused; see below.
+     */
     await inPage(async () => {
-      jh.s.edit();
+      jh.s.resumes = [...jh.s.resumes, { id: 'added', label: 'Added resume', tier: 'extended' }];
       await jh.handle.storeChanged();
     });
     await page.mouse.move(from.x + 40, from.y + from.height / 2 + 10, { steps: 4 });
     await inPage(async () => {
-      jh.s.edit();
+      jh.s.resumes = [...jh.s.resumes, { id: 'added-2', label: 'Added again', tier: 'extended' }];
       await jh.handle.storeChanged();
     });
     await page.mouse.move(150, 140, { steps: 12 });
@@ -321,11 +334,96 @@ async function main() {
     const after = await inPage(() => ({
       drops: window.drops,
       told: jh.s.sent.filter((c) => c.action === 'dragging').map((c) => c.payload.files.length),
-      redrew: /Updated from ResumeM-M/.test(note()),
+      redrew: !window.pressed.isConnected,
     }));
     check('the drag still lands where it was let go', after.drops === 1 && after.redrew, JSON.stringify(after));
     check('with the page told what is in the air all the way there', midway.length > 0 && midway.at(-1) > 0, JSON.stringify(midway));
     check('and told it is over when it is', after.told.at(-1) === 0, JSON.stringify(after.told));
+  }
+
+  /* ------------------------------------------------------------------ */
+  console.log('\nA chip reached for while the folder is behind the store');
+  {
+    /*
+     * The gap Attach files had, on the chips. A change in ResumeM-M is on
+     * screen — "Updated from ResumeM-M" — while it is compiled, `prepareSoon`
+     * waits, and the stage runs: seconds. The chips hold the folder's bytes
+     * from before, fetched ahead because a drag cannot wait for them, so a
+     * chip picked up then handed the page the file without the change.
+     */
+    await setUp();
+    const behind = await inPage(async () => {
+      await until(() => jh.s.sent.some((c) => c.action === 'attachmentFiles'));
+      await wait(50);
+      const start = jh.s.sent.length;
+      /** Which builds the page has been handed as in the air, since `start`. */
+      const handed = () =>
+        jh.s.sent.slice(start).filter((c) => c.action === 'dragging').flatMap((c) => c.payload.files.map((f) => f.printed));
+      const chip = () => jh.root.querySelector('.file.liftable:not(.all)');
+      /** Reached for and picked up, the way a pointer does it. */
+      const pickUp = () => {
+        const it = chip();
+        it.dispatchEvent(new PointerEvent('pointerenter'));
+        it.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        const drag = new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() });
+        it.dispatchEvent(drag);
+        const out = {
+          refused: drag.defaultPrevented,
+          marked: it.classList.contains('warming'),
+          said: jh.root.querySelector('.drag-note')?.textContent ?? '',
+        };
+        it.dispatchEvent(new DragEvent('dragend', { bubbles: true }));
+        it.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+        return out;
+      };
+
+      const renderBack = jh.s.hold('render');
+      const stageBack = jh.s.hold('stage');
+      const before = jh.s.sent.filter((c) => c.action === 'render').length;
+      jh.s.edit();
+      const watching = jh.handle.storeChanged();
+      await until(() => jh.s.sent.filter((c) => c.action === 'render').length > before);
+      await wait(20);
+      // While the change is being compiled.
+      const compiling = pickUp();
+      renderBack();
+      await watching;
+      await until(() => jh.s.sent.filter((c) => c.action === 'stage').length >= 2, 4000);
+      await wait(20);
+      // While the folder is being built again with it.
+      const staging = pickUp();
+      stageBack();
+      await until(() => jh.s.folder.length >= 2 && chip() && !chip().classList.contains('warming'), 5000);
+      await wait(50);
+      // And once it has been.
+      const caughtUp = pickUp();
+      return {
+        version: jh.s.version,
+        compiling,
+        staging,
+        caughtUp,
+        handed: handed(),
+        folder: jh.s.folder.map((f) => f.printed),
+        stages: jh.s.sent.filter((c) => c.action === 'stage').length,
+      };
+    });
+    const now = `p${behind.version}`;
+    check(
+      'a chip picked up while the change is being built never hands the page the file from before it',
+      behind.handed.every((p) => p === now),
+      JSON.stringify(behind),
+    );
+    check(
+      'it is refused, marked as updating, and says so',
+      [behind.compiling, behind.staging].every((t) => t.refused && t.marked && /try that drag again/i.test(t.said)),
+      JSON.stringify(behind),
+    );
+    check(
+      'and once the folder has the change, it carries it',
+      !behind.caughtUp.refused && !behind.caughtUp.marked && behind.handed.at(-1) === now && behind.folder.at(-1) === now,
+      JSON.stringify(behind),
+    );
+    check('with the folder built once for the change, not once per refused drag', behind.stages === 2, JSON.stringify(behind));
   }
 
   /* ------------------------------------------------------------------ */
@@ -566,6 +664,36 @@ async function main() {
       'and still offers every resume the store has, so any of them can be chosen',
       ['kept', 'other'].every((id) => gone.offered.includes(id)),
       JSON.stringify(gone),
+    );
+
+    /*
+     * And "Build it again from there", already showing when that resume goes.
+     * It was offered because the base had changed since the copy was made;
+     * deleted, there is nothing there to build from, and the store says
+     * nothing more about it — so nothing took the offer down.
+     */
+    await setUp();
+    const offer = await inPage(async () => {
+      const shown = () => ({
+        offered: Boolean(button(/Build it again from there/)),
+        said: jh.root.querySelector('.hint.stale')?.textContent ?? '',
+      });
+      jh.s.base = { id: 'base', label: 'New grad resume', changed: true };
+      await jh.handle.storeChanged();
+      await wait(50);
+      const changed = shown();
+      // Deleted in ResumeM-M: gone from the list, and nothing to say about it.
+      jh.s.resumes = [{ id: 'kept', label: 'Systems resume', tier: 'base' }];
+      jh.s.base = null;
+      await jh.handle.storeChanged();
+      await wait(50);
+      return { changed, deleted: shown() };
+    });
+    check('a base changed in ResumeM-M is offered to build again from', offer.changed.offered, JSON.stringify(offer));
+    check(
+      'and once it is deleted there, the offer goes, and the card says it was deleted',
+      !offer.deleted.offered && /deleted/i.test(offer.deleted.said) && /New grad resume/.test(offer.deleted.said),
+      JSON.stringify(offer),
     );
   }
 
