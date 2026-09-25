@@ -424,6 +424,13 @@ const NOT_ABOUT_YOU = [
    */
   /\b(password|passcode|pass[\s_-]?phrase)\b/i,
   /*
+   * An address at a school, which the profile's one address is not. Harvey's
+   * Ashby form for law students asks for a "Personal Email Address" and then
+   * a "School Email Address", and measured live, the second was given the
+   * personal address too.
+   */
+  /\b(school|university|college|student|\.edu)['’]?s?[\s_-]*e-?mail\b/i,
+  /*
    * A username, which is a part of the link and not the link. "GitHub
    * username", "GitHub handle" and "Username on LinkedIn" matched `github`
    * and `linkedin` and were given the whole profile URL, in a box that will
