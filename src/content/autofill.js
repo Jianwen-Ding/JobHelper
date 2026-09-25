@@ -1064,7 +1064,17 @@ function labelFor(input) {
 }
 
 /** An `aria-label` that names the control rather than the question. */
-const CONTROL_WORD = /^(select|search|choose|pick|select an option|select one|dropdown|combobox|text ?area|input)\.*$/i;
+/*
+ * And says it is required. Workday's Application Questions are "Select One"
+ * buttons labelled " Select One Required", the question being rich text in
+ * the `<legend>` of the `<fieldset>` around them — so every one was described
+ * as "Select One Required", matched nothing, and was neither answered nor
+ * reported. Measured live with a fake profile on NVIDIA's "Are you legally
+ * authorized to work in the United States?" and "Will you now or in the
+ * future require sponsorship…?", and on Intel's questionnaire: every required
+ * right-to-work question left on "Select One" under a report saying nothing.
+ */
+const CONTROL_WORD = /^(select|search|choose|pick|select an option|select one|dropdown|combobox|text ?area|input)\.*(\s+required)?$/i;
 
 /**
  * Everything a field's label might be hiding in. The explicit label leads, so

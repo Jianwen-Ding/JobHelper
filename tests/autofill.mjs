@@ -2282,6 +2282,62 @@ const WORKDAY_DATES = `<!doctype html><html><head><meta charset="utf-8"><title>M
   }
 </script>
 </body></html>`;
+/*
+ * Workday's Application Questions as drawn live — NVIDIA's pair on
+ * nvidia.wd5.myworkdayjobs.com, and two of Intel's United States Legal
+ * Questionnaire on intel.wd1.myworkdayjobs.com, measured with a fake profile.
+ * The question is rich text in the `<legend>` of a `<fieldset>`; the answer
+ * is a "Select One" button whose own `aria-label` is " Select One Required",
+ * beside an `<input type="text">` Workday keeps at `display: none`.
+ *
+ * And the lists behave as measured there: pressing a button draws its list
+ * and names it in the button's `aria-controls` a moment later, not at once;
+ * the option now chosen is the one marked `aria-selected`; and a list shut —
+ * by a choice, or by Escape — takes about 300ms to go, still named by its
+ * button until it has.
+ */
+const workdayQuestion = (id, question) => `
+  <div data-automation-id="formField-${id}"><fieldset><legend><div id="rich-${id}"><div data-automation-id="richText"><p>${question}<abbr title="required">*</abbr></p></div></div></legend>
+    <div><div><div><button aria-haspopup="listbox" type="button" value="" aria-label=" Select One Required" name="${id}" id="primaryQuestionnaire--${id}">Select One</button><input type="text" value="" style="display:none"><span>▾</span></div></div><div></div></div>
+  </fieldset></div>`;
+const WORKDAY_QUESTIONS_SCRIPT = `<script>
+  window.__log = [];
+  let n = 0;
+  const shut = (button, list) => setTimeout(() => { list.remove(); if (button.getAttribute('aria-controls') === list.id) { button.removeAttribute('aria-controls'); button.removeAttribute('aria-expanded'); } }, 300);
+  for (const button of document.querySelectorAll('button[aria-haspopup="listbox"]')) {
+    button.addEventListener('click', () => setTimeout(() => {
+      const list = document.createElement('ul');
+      list.id = 'list' + ++n;
+      list.setAttribute('role', 'listbox');
+      for (const text of ['Select One', 'Yes', 'No']) {
+        const li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        li.setAttribute('aria-selected', String(button.textContent === text));
+        if (text === 'Select One') li.setAttribute('aria-disabled', 'true');
+        li.textContent = text;
+        li.addEventListener('click', () => {
+          button.textContent = text;
+          button.setAttribute('aria-label', ' ' + text + ' Required');
+          li.setAttribute('aria-selected', 'true');
+          __log.push(button.name + ' = ' + text);
+          shut(button, list);
+        });
+        list.append(li);
+      }
+      document.body.append(list);
+      button.setAttribute('aria-controls', list.id);
+      button.setAttribute('aria-expanded', 'true');
+      button.addEventListener('keydown', function esc(e) { if (e.key === 'Escape') { button.removeEventListener('keydown', esc); shut(button, list); } });
+    }, 30));
+  }
+</script>`;
+const WORKDAY_QUESTIONS = `<!doctype html><html><head><meta charset="utf-8"><title>Application Questions</title></head><body>
+<div data-automation-id="applyFlowPrimaryQuestionnairePage"><div data-fkit-id="primaryQuestionnaire--null">
+${workdayQuestion('028095df097b1001ac93595f70b80000', '<b>Are you legally authorized to work in the United States?</b>')}
+${workdayQuestion('028095df097b1001ac9359f942cf0000', 'Will you now or in the future require sponsorship for employment visa status (e.g. H-1B visa status)?')}
+</div></div>
+${WORKDAY_QUESTIONS_SCRIPT}
+</body></html>`;
 const JOBS = [
   {
     company: 'Vega Analytics',
@@ -2712,7 +2768,7 @@ const ADDS_ITS_CODE = `<!doctype html><html><head><meta charset="utf-8"><title>A
 </script>
 </body></html>`;
 
-const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/workday-dates': WORKDAY_DATES };
+const PAGES = { '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -5929,6 +5985,32 @@ async function main() {
       'and Workday takes each date as a whole: the job\'s From and To and the degree\'s years are what leaving them commits',
       JSON.stringify(liveDates.taken) === '["6/2025","8/2025","2023","2027"]',
       JSON.stringify(liveDates.taken),
+    );
+
+    const questionnaire = await page.goto(`${base}/workday-questions`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const buttons = [...document.querySelectorAll('button[aria-haspopup="listbox"]')];
+        const asked = buttons.map((el) => m.questionFor(el));
+        const named = m.fillForm({ work_authorization: 'Authorized to work in the US', requires_sponsorship: 'No' }).skipped.map((s) => `${s.key}: ${s.reason}`);
+        const fields = { work_authorization: 'Authorized to work in the US' };
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        return { asked, named, answers: buttons.map((el) => el.textContent), filled: report.filled.map((f) => f.key) };
+      }, { b: base }),
+    );
+    group('Workday: Application Questions as they are drawn live');
+    check(
+      'each question is read from the legend above it, not from its button\'s " Select One Required"',
+      questionnaire.asked[0].startsWith('Are you legally authorized to work in the United States?') &&
+        questionnaire.asked[1].startsWith('Will you now or in the future require sponsorship'),
+      JSON.stringify(questionnaire.asked),
+    );
+    check(
+      'so both are named in the report, and the right to work is answered "Yes"',
+      questionnaire.named.includes('work_authorization: this one has to be picked by hand') &&
+        questionnaire.named.includes('requires_sponsorship: this one has to be picked by hand') &&
+        questionnaire.answers[0] === 'Yes' && questionnaire.filled.includes('work_authorization'),
+      JSON.stringify(questionnaire),
     );
 
     /* ---------------- Found filling live forms with a fake profile ---------------- */
