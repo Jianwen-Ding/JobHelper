@@ -626,6 +626,42 @@ async function main() {
         );
       }
     }
+
+    /*
+     * Two applications at one employer, for two roles, each saving its letter.
+     *
+     * "Save to store" filed the letter under the day and the employer, so the
+     * second tab's save replaced the first tab's letter in the store: two
+     * applications, one letter, and it was the other role's.
+     */
+    group('Two roles at one employer each keep the letter they saved');
+    {
+      const extensionId = new URL(worker.url()).host;
+      const ask = (page, type, payload) =>
+        page.evaluate(([t, p]) => new Promise((done) => chrome.runtime.sendMessage({ type: t, payload: p }, done)), [type, payload]);
+      const stamp = Date.now();
+      const pair = [
+        { title: 'Robotics Software Intern', body: `Dear ${PELLUCID}, the robotics internship. ${stamp}` },
+        { title: 'Platform Intern', body: `Dear ${PELLUCID}, the platform internship. ${stamp}` },
+      ];
+      const pages = [];
+      try {
+        for (const one of pair) {
+          const page = await context.newPage();
+          pages.push(page);
+          await page.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+          await ask(page, 'saveLetter', { body: one.body, job: { company: PELLUCID, title: one.title } });
+        }
+        const saved = await (await fetch(`${SERVER}/api/letters`)).json();
+        const bodies = (Array.isArray(saved) ? saved : (saved?.letters ?? [])).map((l) => l.body ?? '');
+        for (const one of pair) {
+          check(`the ${one.title} letter is still in the store`, bodies.some((b) => b.includes(one.body)), `${bodies.filter((b) => b.includes(String(stamp))).length} of 2 found`);
+        }
+      } finally {
+        for (const page of pages) await page.close().catch(() => undefined);
+      }
+    }
+
     group('The resume a tab starts from is that application\'s, not every tab\'s');
     {
       const json = (r) => r.json();

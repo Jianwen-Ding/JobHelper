@@ -2794,11 +2794,19 @@ const handlers = {
   },
 
   async saveLetter({ body, job }) {
-    const id = `${new Date().toISOString().slice(0, 10)}-${(job.company ?? 'letter')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 30)}`;
+    /*
+     * The role as well as the employer. Keyed by the employer alone, two
+     * applications at one company — two roles, in two tabs — saved into one
+     * letter, and the second save replaced the first application's.
+     */
+    const slugOf = (s, n) =>
+      String(s ?? '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, n);
+    const role = slugOf(job.title, 40);
+    const id = `${new Date().toISOString().slice(0, 10)}-${slugOf(job.company ?? 'letter', 30) || 'letter'}${role ? `-${role}` : ''}`;
     return serverFetch(`/api/letters/${encodeURIComponent(id)}`, {
       method: 'PUT',
       body: JSON.stringify({
