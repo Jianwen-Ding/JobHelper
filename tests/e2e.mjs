@@ -1166,12 +1166,37 @@ async function main() {
       const chip = card.locator('.done-box .file.liftable').first();
       const name = (await chip.locator('.what').innerText()).trim();
 
-      const from = await chip.boundingBox();
+      /*
+       * Where the chip is once the card has stopped moving. A note arriving
+       * above the list — the autofill report lands late — moves every chip
+       * down a row, and a pointer aimed where the résumé's chip was read came
+       * down on the cover letter's: the drop put both cover-letter files in
+       * the box, exactly as that chip should, and the check read it as the
+       * wrong file.
+       */
+      const settledBox = async () => {
+        let at = await chip.boundingBox();
+        for (let i = 0; i < 20; i++) {
+          await page.waitForTimeout(200);
+          const now = await chip.boundingBox();
+          if (now && at && now.x === at.x && now.y === at.y) return now;
+          at = now;
+        }
+        return at;
+      };
+      let from = await settledBox();
       const to = await box.boundingBox();
       // The pointer arriving is what fetches the bytes, and a drag started
       // before they land is refused on purpose. See `warmFiles`.
       await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
       await page.waitForTimeout(1200);
+      // And again after the wait, in case the card moved during it.
+      const still = await settledBox();
+      if (still.y !== from.y || still.x !== from.x) {
+        from = still;
+        await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+        await page.waitForTimeout(1200);
+      }
       await page.mouse.down();
       await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 14 });
       await page.mouse.up();
