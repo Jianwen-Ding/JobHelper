@@ -1615,9 +1615,23 @@ export function createCard({
    * rename that silently does nothing on a third of sites is worse than no
    * rename.
    */
+  /*
+   * The rename menu that is open, and what has been typed into its box.
+   *
+   * Both lived only in the DOM — a class taken off, a value typed — and the
+   * card is redrawn under them: the store moving is enough, and the card's own
+   * staging moves it seconds after every build, which is when these chips
+   * appear. Each redraw built the menu shut again, and half a file name went
+   * with it. Kept here, by the file it is for, so a redraw draws it open.
+   */
+  let renaming = null;
+
   function renameMenu(kind, name) {
     const stored = NAMED_TO_STORE[kind] ?? 'Answers';
+    const open = renaming?.name === name;
+    const typing = open && renaming.value !== undefined;
     const put = (naming) => {
+      renaming = null;
       state.naming = {
         shape: naming.shape ?? state.naming?.shape,
         custom: { ...(state.naming?.custom ?? {}) },
@@ -1649,9 +1663,10 @@ export function createCard({
           const open = event.currentTarget.parentElement?.querySelector('.rename-menu');
           closeRenameMenus(open);
           if (open) open.classList.toggle('hidden');
+          renaming = open && !open.classList.contains('hidden') ? { name } : null;
         },
       }),
-      h('div', { className: 'rename-menu hidden' }, [
+      h('div', { className: `rename-menu${open ? '' : ' hidden'}` }, [
         h('button', {
           type: 'button',
           draggable: false,
@@ -1669,6 +1684,7 @@ export function createCard({
             event.stopPropagation();
             const box = event.currentTarget.parentElement?.querySelector('input');
             if (box) {
+              renaming = { name, value: box.value };
               box.classList.remove('hidden');
               box.focus();
               box.select();
@@ -1676,15 +1692,23 @@ export function createCard({
           },
         }),
         h('input', {
-          className: 'rename-box hidden',
+          className: `rename-box${typing ? '' : ' hidden'}`,
           draggable: false,
           type: 'text',
-          value: name.replace(/\.[^.]+$/, ''),
+          // Named, like the letter and answer boxes, so `draw` puts the caret back.
+          dataset: { field: `rename:${name}` },
+          value: typing ? renaming.value : name.replace(/\.[^.]+$/, ''),
           title: 'The extension stays as it is — a portal checks it',
+          oninput: (event) => {
+            if (renaming?.name === name) renaming.value = event.target.value;
+          },
           onkeydown: (event) => {
             event.stopPropagation();
             if (event.key === 'Enter') put({ custom: event.target.value });
-            if (event.key === 'Escape') event.target.classList.add('hidden');
+            if (event.key === 'Escape') {
+              renaming = null;
+              event.target.classList.add('hidden');
+            }
           },
         }),
         h('button', {
@@ -2084,6 +2108,9 @@ export function createCard({
    */
   let rebuildToken = 0;
 
+  /** A `checkFresh` that stood aside for a compile or a rebuild, still owed. */
+  let freshOwed = false;
+
   /**
    * `quiet` is for work nobody asked for.
    *
@@ -2141,6 +2168,17 @@ export function createCard({
       // Keep showing progress for whatever is still going.
       state.busy = [...running].pop() ?? null;
       draw();
+      /*
+       * A store change that arrived while this was out. On the next task,
+       * so a rebuild has cleared `state.rebuilding` first. See `checkFresh`.
+       */
+      if (freshOwed) {
+        setTimeout(() => {
+          if (!freshOwed || busyIn('compile') || state.rebuilding) return;
+          freshOwed = false;
+          handle.checkFresh({ now: true }).catch(() => undefined);
+        });
+      }
     }
   }
 
@@ -3546,7 +3584,7 @@ export function createCard({
      * is worth nothing if it is a build behind and believes it is not.
      */
     lastPrepared = whatWouldBeStaged();
-    const staged = await act(
+    const mine = act(
       'stage',
       { spec: state.spec, coverLetter: state.letter, answers: collectedAnswers(), naming: state.naming },
       (staged) => {
@@ -3564,7 +3602,30 @@ export function createCard({
       // saying. See `act`.
       { quiet: true },
     );
+    stagingNow = mine;
+    const staged = await mine;
+    if (stagingNow === mine) stagingNow = null;
     if (!staged) lastPrepared = null;
+  }
+
+  /**
+   * The folder brought up to what is on screen, before files are taken from it.
+   *
+   * It follows the screen a step behind: a compile, then `prepareSoon`'s
+   * wait, then the stage itself, a few seconds in all. Nothing that reads the
+   * folder waited for that, and the store changing is when it matters most —
+   * the card says "Updated from ResumeM-M" and shows the new words while it
+   * is still compiling, and Attach files pressed then put the file from
+   * before the change into the form. Staged now if it is behind, and the
+   * stage already running waited for if it is not.
+   */
+  let stagingNow = null;
+  async function folderCaughtUp() {
+    if (!state.staged) return;
+    if (whatWouldBeStaged() !== lastPrepared) {
+      clearTimeout(preparing);
+      await stageFiles();
+    } else if (stagingNow) await stagingNow;
   }
 
   /**
@@ -4555,8 +4616,10 @@ export function createCard({
         textContent: busyLabel('attachFiles', 'Attach files', 'Attaching…'),
         title: 'Put the resume, letter and transcript into this form’s upload boxes',
         disabled: busyIn('page'),
-        onclick: () =>
-          act(
+        onclick: async () => {
+          // The folder as the screen has it first. See `folderCaughtUp`.
+          await folderCaughtUp();
+          return act(
             'attachFiles',
             /*
              * The staged answer first, the analysis's second — the same
@@ -4571,7 +4634,8 @@ export function createCard({
              */
             { application: state.staged?.application?.id ?? analysis?.application?.id ?? null },
             (r) => (state.attachReport = r),
-          ),
+          );
+        },
       }),
     ];
   }
@@ -4714,6 +4778,27 @@ export function createCard({
         }),
       );
       askForResumesAgain();
+    }
+
+    /*
+     * The resume this copy was made from, deleted in ResumeM-M.
+     *
+     * The list follows the store now, and a `<select>` with no option for
+     * the resume it names shows its first one instead. So the picker said the
+     * card had started from whichever resume sorted to the top, while the copy
+     * on screen was still made from the one that went. And that one then read
+     * as chosen already, so choosing it did nothing: no `change`, no switch.
+     * Named as gone, and not offered as something to switch to.
+     */
+    const from = analysis?.baseResumeId;
+    if (from && resumes.length > 0 && ![...baseSelect.options].some((o) => o.value === from)) {
+      const gone = h('option', {
+        value: from,
+        textContent: `${analysis.baseLabel ?? from} (deleted in ResumeM-M)`,
+        disabled: true,
+      });
+      baseSelect.prepend(gone);
+      gone.selected = true;
     }
 
     /*
@@ -6543,7 +6628,7 @@ export function createCard({
 
   draw();
 
-  return {
+  const handle = {
     remove: removeCard,
     /** The analysis, whether this is the first one or a later rebuild. */
     /**
@@ -6666,7 +6751,22 @@ export function createCard({
 
     async checkFresh({ now: asked = false } = {}) {
       const of = state.spec;
-      if (!of?.id || !state.render || busyIn('compile') || state.rebuilding) return;
+      if (!of?.id) return;
+      /*
+       * Busy is "not yet", not "no".
+       *
+       * Standing aside while a compile or a rebuild is out is right: either
+       * brings its own answer. But the watcher had already moved past the
+       * revision it was telling us about, so nothing asked again — a compile
+       * that read the store just before the change landed after it, printing
+       * the old words, and the card went on showing them. Owed, and asked
+       * once that work is done. See `act`.
+       */
+      if (busyIn('compile') || state.rebuilding) {
+        freshOwed = true;
+        return;
+      }
+      if (!state.render) return;
       const now = Date.now();
       if (!asked && now - (state.freshAt ?? 0) < 3000) return;
       state.freshAt = now;
@@ -6887,4 +6987,5 @@ export function createCard({
       return true;
     },
   };
+  return handle;
 }
