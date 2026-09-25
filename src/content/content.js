@@ -2139,20 +2139,42 @@
   function watchForApplyClicks() {
     const MEANS_APPLY = /\b(apply|application|start (your )?application|submit (your )?application|continue to apply)\b/i;
 
+    /*
+     * Whatever the page draws Apply as, not only the two elements meant for it.
+     *
+     * This was `a[href], button`, so an Apply written as a
+     * `<div role="button">` — Meta Careers, and any board whose handler calls
+     * `window.open` — set no expectation. A new tab inherits the application
+     * only on one (see `inheritIfNew`), and with no anchor on the posting
+     * `wasLinkedFrom` had nothing to read either: the form came up as a fresh
+     * application with the resume just built left behind. Measured in
+     * tests/navigation.mjs: "joined it to the page before — 0 pages".
+     *
+     * `composedPath()[0]` for the same reason `sending.js` gives: a press
+     * inside an open shadow root reaches the document retargeted to its host.
+     */
+    const PRESSABLE =
+      'a[href], button, [role="button"], [role="link"], input[type="submit"], input[type="button"]';
+
     const noticed = (event) => {
-      const link = event.target?.closest?.('a[href], button');
+      const pressed = event.composedPath?.()?.[0] ?? event.target;
+      const link = pressed?.closest?.(PRESSABLE);
       if (!link) return;
 
       const href = link.getAttribute?.('href') ?? '';
-      const label = (link.textContent ?? '').trim().slice(0, 80);
+      // An input's words are its value; everything else's are its contents.
+      const said = link.localName === 'input' ? link.value : link.textContent;
+      const label = (said ?? '').trim().slice(0, 80);
       if (!MEANS_APPLY.test(href) && !MEANS_APPLY.test(label)) return;
 
       let to = href;
       try {
         to = new URL(href, location.href).href;
       } catch {
-        to = location.href; // a button, or a href this page will resolve itself
+        to = location.href; // a href this page will resolve itself
       }
+      // A button, or anything else with no href of its own, resolves to this
+      // page — see `wasExpected`, which reads that as "here or a step below".
       // Best effort by design: if this never arrives, the trail falls back to
       // the host and path rules and to `wasLinkedFrom`, which reads the same
       // link out of the page we came from with no race in it at all.

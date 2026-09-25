@@ -604,6 +604,37 @@ export const NEW_TAB_FORM = {
   html: page('Apply — Nova', 'Nova', FORM_BODY),
 };
 
+/**
+ * The same new tab, opened by an Apply that is not a link or a button.
+ *
+ * A `<div role="button">` with a click handler that calls `window.open` is
+ * how plenty of boards draw Apply. There is no anchor for `wasLinkedFrom` to
+ * read afterwards, so the press is the only evidence the new tab belongs to
+ * this posting.
+ */
+export const DIV_BUTTON_ROLE = {
+  name: 'div-button-role',
+  path: '/vela/openings/platform-engineer',
+  company: 'Vela',
+  title: 'Platform Engineer',
+  html: page(
+    'Platform Engineer at Vela',
+    'Vela',
+    `${ROLE_BODY}<div role="button" tabindex="0" id="apply"><span>Apply now</span></div>`,
+    `<script>
+       document.getElementById('apply').addEventListener('click', () => {
+         window.open('/vela/openings/platform-engineer/apply', '_blank');
+       });
+     </script>`,
+  ),
+};
+
+export const DIV_BUTTON_FORM = {
+  name: 'div-button-form',
+  path: '/vela/openings/platform-engineer/apply',
+  html: page('Apply — Vela', 'Vela', FORM_BODY),
+};
+
 /** A form in two steps, which must stay one application rather than two. */
 export const STEP_ONE = {
   name: 'step-one',
@@ -1811,6 +1842,7 @@ export const NAVIGATION = [
   OWN_SITE, ATS_FORM, ATS_FORM_UNANSWERABLE, NEW_TAB_ROLE, NEW_TAB_FORM, NEW_TAB_ASIDE, NEW_TAB_BENEFITS, STEP_ONE, STEP_TWO, STEP_TWO_FORM, SPA_BOARD,
   ONE_ADDRESS_BOARD, SOLO_ROLE, SOLO_OTHER, SOLO_OTHER_FORM, NIMBUS_ROLE, NIMBUS_QUIET_FORM,
   LETTER_SPA, LETTER_SPA_FORM, LETTER_SPA_PLAIN, META_ROLE, META_FORM, META_OTHER_ROLE,
+  DIV_BUTTON_ROLE, DIV_BUTTON_FORM,
 ];
 
 export const ALL = [

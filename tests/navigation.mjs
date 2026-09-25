@@ -27,6 +27,7 @@ import {
   ATS_FORM,
   CROWDED_PAGE,
   CYGNUS_BOARD,
+  DIV_BUTTON_ROLE,
   BLOG_WITH_FORM,
   EMBEDDED_BOARD,
   FRAMED_ROLE,
@@ -425,6 +426,32 @@ async function main() {
       await tab.waitForLoadState('domcontentloaded');
       await settled(tab);
       await expectContinuity(tab, 'new tab', { role: 'Platform Engineer' });
+      await tab.close();
+      await page.close();
+    }
+
+    /* ---- The same, from an Apply drawn as a div ---- */
+    /*
+     * `watchForApplyClicks` looked for `a[href], button` and nothing else, so
+     * a `<div role="button">` Apply set no expectation. The new tab it opens
+     * inherits only on one — see `inheritIfNew` — and with no anchor on the
+     * posting `wasLinkedFrom` had nothing to read either. The form came up as
+     * a fresh application with the built resume left behind.
+     */
+    group('Apply drawn as a div role=button opens the form in a new tab');
+    {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(DIV_BUTTON_ROLE), { waitUntil: 'domcontentloaded' });
+      await settled(page);
+      await buildResume(page);
+
+      const opened = context.waitForEvent('page');
+      // On the span inside it, as a real press lands.
+      await page.click('#apply span');
+      const tab = await opened;
+      await tab.waitForLoadState('domcontentloaded');
+      await settled(tab);
+      await expectContinuity(tab, 'div role=button', { role: 'Platform Engineer' });
       await tab.close();
       await page.close();
     }
