@@ -717,6 +717,21 @@ function readableTitle(text) {
   return out.replace(/[\s\u00a0\u2000-\u200b\u202f\u205f\u3000]+/g, ' ').trim();
 }
 
+/*
+ * A title that is a step in front of the job rather than the job. iCIMS's
+ * sign-in page is "Login | Careers Markon", and the card showed that as the
+ * role while the posting was read. The rest of such a title is the site's
+ * name, so the role is unknown until the server says otherwise.
+ */
+const NOT_A_ROLE =
+  /^(log[ -]?in|log[ -]?on|sign[ -]?(in|on|up)|create (an |your )?account|register|registration|my account|apply|apply now|application|careers?|jobs?|job search|search jobs|home|welcome)$/i;
+
+function provisionalRole(title) {
+  const said = readableTitle(title);
+  const parts = said.split(/[|\u2013\u2014\u00b7\u00bb]|\s-\s/).map((part) => part.trim());
+  return !said || parts.some((part) => NOT_A_ROLE.test(part)) ? 'This posting' : said.slice(0, 70);
+}
+
 export function createCard({
   analysis,
   resumes = [],
@@ -6517,7 +6532,7 @@ export function createCard({
   function drawReadingView() {
     return h('div', { className: 'body' }, [
       h('div', { className: 'job' }, [
-        h('div', { className: 'role provisional', textContent: readableTitle(document.title).slice(0, 70) || 'This posting' }),
+        h('div', { className: 'role provisional', textContent: provisionalRole(document.title) }),
         h('div', { className: 'co', textContent: location.hostname }),
       ]),
       h('div', { className: 'progress' }),

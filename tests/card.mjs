@@ -5008,7 +5008,8 @@ async function main() {
 
   /*
    * The role the card shows while the posting is still being read, which is
-   * the page's own title. A SmartRecruiters title
+   * the page's own title. iCIMS's sign-in page is titled "Login | Careers
+   * Markon", and the card said the role was that; a SmartRecruiters title
    * written "Staff&amp;amp;nbsp;Software Engineer" arrives from the browser
    * as "Staff&amp;nbsp;Software Engineer", decoded once and no further.
    */
@@ -5027,6 +5028,14 @@ async function main() {
     'My Account | Markon', 'Apply | Markon', 'Application — Markon', 'Careers', 'Job Search | Markon', 'Home',
     'Staff&amp;nbsp;Software Engineer | Smith &amp;amp; Nephew', 'Platform Engineer | Markon',
   ]);
+  const AUTH = /^(login|sign in|log in|create account|register|my account|apply|application|careers|job search|home)$/i;
+  check(
+    'a title that is an auth or step word is never shown as the role; the role is unknown instead',
+    Object.entries(provisional)
+      .filter(([title]) => !/Engineer/.test(title))
+      .every(([title, shown]) => shown === 'This posting' && !title.split(/\s+[|—]\s+/).some((p) => AUTH.test(p) && shown.includes(p))),
+    JSON.stringify(provisional),
+  );
   check(
     'a title escaped twice is shown decoded, with no entity text left in it',
     provisional['Staff&amp;nbsp;Software Engineer | Smith &amp;amp; Nephew'] === 'Staff Software Engineer | Smith & Nephew',
