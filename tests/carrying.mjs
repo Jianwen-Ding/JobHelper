@@ -77,7 +77,9 @@ async function filed(company) {
     fetch(`${SERVER}/api/applications`).then((r) => r.json()),
     fetch(`${SERVER}/api/workspace`).then((r) => r.json()),
   ]);
-  const of = (list) => list.find((x) => (x.company ?? '').toLowerCase().includes(company.toLowerCase()));
+  // By the whole name: "Helios Energy", left in a shared save by something
+  // else, contains "Helios" and was taken for this suite's application.
+  const of = (list) => list.find((x) => (x.company ?? '').trim().toLowerCase() === company.toLowerCase());
   return { application: of(apps.applications ?? []), draft: of(drafts.drafts ?? []) };
 }
 
