@@ -67,6 +67,19 @@ const FORM = {
 </form></body></html>`,
 };
 
+/** A third posting, for a card of its own that the AI tailors. */
+const AI_POSTING = {
+  name: 'freshness-ai-posting',
+  path: '/careers/quillon/streaming-engineer',
+  company: COMPANY,
+  html: `<!doctype html><html><head><meta charset="utf-8"><title>Streaming Engineer — ${COMPANY}</title>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"JobPosting","title":"Streaming Engineer",
+"hiringOrganization":{"@type":"Organization","name":"${COMPANY}"},
+"description":"<p>Keep Kafka streaming pipelines running in Go and Python on Kubernetes and AWS.</p>"}</script>
+</head><body><h1>Streaming Engineer</h1><p>${COMPANY} is hiring a Streaming Engineer to keep Kafka pipelines running in Go
+and Python on Kubernetes and AWS. BS in Computer Science.</p></body></html>`,
+};
+
 const api = (p, init) => fetch(`${SERVER}/api${p}`, init).then((r) => r.json());
 const put = (p, body) =>
   api(p, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -107,7 +120,7 @@ async function folderResume() {
 async function main() {
   await requireOpenSave(SERVER);
   await cleanStore(SERVER, [COMPANY]).catch(() => undefined);
-  const fixtures = await serveFixtures([POSTING, FORM]);
+  const fixtures = await serveFixtures([POSTING, FORM, AI_POSTING]);
   await takeOutOfBank();
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-fresh-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
@@ -117,6 +130,9 @@ async function main() {
     args: ['--no-sandbox', `--disable-extensions-except=${extensionRoot}`, `--load-extension=${extensionRoot}`],
   });
   let profile = null;
+  /** The store's AI settings before this suite switched its stand-in on. */
+  let configWas = null;
+  const aiDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-fresh-ai-'));
   try {
     const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
     await pointExtensionAt(context, worker, SERVER);
@@ -313,7 +329,80 @@ async function main() {
       );
       await form.close();
     }
+
+    /*
+     * And the base edited while the AI was reading the posting. A run takes
+     * minutes, and the copy it made was dated when it finished — so an edit
+     * made during it looked older than the copy, and the card said nothing,
+     * although the copy was made from the base as it was before. On a card of
+     * its own: the first one has been told about this base already.
+     *
+     * The AI is a stand-in: a local script that says when it has started —
+     * by then the store has read the base — takes a few seconds, and answers
+     * with a plan that changes nothing. Nothing leaves this machine.
+     */
+    group('The resume the copy was made from, changed while the AI was reading the posting');
+    {
+      const started = path.join(aiDir, 'started');
+      const fake = path.join(aiDir, 'slow-ai.cjs');
+      fs.writeFileSync(
+        fake,
+        [
+          '#!/usr/bin/env node',
+          `require('node:fs').writeFileSync(${JSON.stringify(started)}, String(Date.now()));`,
+          "setTimeout(() => process.stdout.write(JSON.stringify({ choices: {}, reasoning: 'Took its time.' })), 6000);",
+          '',
+        ].join('\n'),
+      );
+      fs.chmodSync(fake, 0o755);
+      configWas = await api('/config');
+      await put('/config', { ai: { ...configWas.ai, enabled: true, command: fake, args: ['{promptText}'], timeoutMs: 60_000 } });
+      // And the extension's own switch, the other half of the card's AI being on.
+      const settings = await context.newPage();
+      await settings.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
+      await settings.evaluate(() => chrome.storage.sync.set({ useAi: true }));
+      await settings.close();
+
+      const tab = await context.newPage();
+      await tab.goto(fixtures.urlFor(AI_POSTING), { waitUntil: 'domcontentloaded' });
+      const aiCard = tab.locator(`${HOST} .card`);
+      await aiCard.locator('.role').waitFor({ timeout: 30_000 });
+      const aiButton = aiCard.locator('button.mode', { hasText: 'Have AI Tailor' });
+      for (const until = Date.now() + 30_000; Date.now() < until; await tab.waitForTimeout(250)) {
+        if (await aiButton.isEnabled().catch(() => false)) break;
+      }
+      await aiButton.click();
+      for (const until = Date.now() + 30_000; !fs.existsSync(started) && Date.now() < until; ) await tab.waitForTimeout(100);
+      const ran = fs.existsSync(started);
+      // Past the store's second of slack, and well before the run ends.
+      await tab.waitForTimeout(2500);
+      const list = await api('/resumes');
+      const base = (list.resumes ?? list).find((r) => r.id === copy.copiedFrom);
+      await put(`/resumes/${encodeURIComponent(base.id)}`, base);
+      await aiCard.locator('button.mode.on', { hasText: 'AI tailoring' }).waitFor({ timeout: 60_000 }).catch(() => undefined);
+      const landed = (await aiCard.locator('button.mode.on', { hasText: 'AI tailoring' }).count()) === 1;
+      await aiCard.getByRole('button', { name: 'Build resume' }).click({ timeout: 60_000 });
+      await aiCard.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
+      await tab.waitForTimeout(3200);
+      await tab.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+      const said = await tab
+        .waitForFunction(
+          () => /changed in ResumeM-M after this copy was made/.test(document.querySelector('#jobhelper-card-host')?.shadowRoot?.textContent ?? ''),
+          undefined,
+          { timeout: 15_000, polling: 200 },
+        )
+        .then(() => true)
+        .catch(() => false);
+      check(
+        'an edit made to it while the AI read the posting is said once the AI\'s copy is built',
+        ran && landed && said,
+        JSON.stringify({ ran, landed, said, base: base?.id }),
+      );
+      await tab.close();
+    }
   } finally {
+    if (configWas) await put('/config', { ai: configWas.ai }).catch(() => undefined);
+    fs.rmSync(aiDir, { recursive: true, force: true });
     await takeOutOfBank().catch(() => undefined);
     await fetch(`${SERVER}/api/resumes/${ADDED}`, { method: 'DELETE' }).catch(() => undefined);
     if (profile) await put('/profile', profile).catch(() => undefined);
