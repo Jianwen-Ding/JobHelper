@@ -1240,6 +1240,8 @@ export function createCard({
   };
 
   const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  /** The picker's "Show N older…" row, which is not a resume. See `RECENT_POSTINGS`. */
+  const SHOW_OLDER = '__show_older__';
 
   /* ---------------------------------------------------------------- *
    * Dragging a built file into the form                               *
@@ -4809,9 +4811,30 @@ export function createCard({
     );
     const own = resumes.filter((r) => forThis.has(r.id) && tierOf(r) === 'temporary');
 
+    /*
+     * Only the latest postings' resumes, and the rest a choice away.
+     *
+     * Asked for: "show a window of like 10 of the last application resumes
+     * then keep the rest accessible but only seeable under a dropdown menu".
+     * A temporary resume stays a week after its posting is done with, so
+     * "Built for a posting" grows by one an application and the bases were a
+     * scroll away under it. The newest ten are listed — newest by when each
+     * was made for its posting — and the one this card is on is always among
+     * what is shown; "Show N older…" puts the others back in the list.
+     */
+    const RECENT_POSTINGS = 10;
+    const madeAt = (r) => r.generatedFor?.at ?? r.temporaryFrom ?? '';
+    const built = resumes.filter((r) => tierOf(r) === 'temporary' && !own.includes(r));
+    const newest = [...built].sort((a, b) => String(madeAt(b)).localeCompare(String(madeAt(a))));
+    const inUse = (r) => r.id === analysis.baseResumeId;
+    const older = state.allPostings || newest.length <= RECENT_POSTINGS
+      ? []
+      : newest.slice(RECENT_POSTINGS).filter((r) => !inUse(r));
+    const recent = built.filter((r) => !older.includes(r));
+
     const groups = [
       ['For this application', own],
-      ...GROUPS.map(([tier, label]) => [label, resumes.filter((r) => tierOf(r) === tier && !own.includes(r))]),
+      ...GROUPS.map(([tier, label]) => [label, tier === 'temporary' ? recent : resumes.filter((r) => tierOf(r) === tier && !own.includes(r))]),
     ].filter(([, list]) => list.length > 0);
 
     // One group is no grouping, and an empty one reads as a section that
@@ -4823,7 +4846,10 @@ export function createCard({
         baseSelect.append(group);
       }
     } else {
-      for (const r of [...own, ...byFit(resumes.filter((r) => !own.includes(r)), sameEmployer)]) baseSelect.append(option(r));
+      for (const r of [...own, ...byFit(resumes.filter((r) => !own.includes(r) && !older.includes(r)), sameEmployer)]) baseSelect.append(option(r));
+    }
+    if (older.length > 0) {
+      baseSelect.append(h('option', { value: SHOW_OLDER, textContent: `Show ${plural(older.length, 'older posting')}…` }));
     }
 
     /*
@@ -4885,7 +4911,15 @@ export function createCard({
      * An AI proposal is the one thing that cannot be, so that one repeats
      * what was asked for.
      */
-    baseSelect.onchange = () => switchBaseTo(baseSelect.value);
+    baseSelect.onchange = () => {
+      // Not a resume: the rest of the list. See `RECENT_POSTINGS`.
+      if (baseSelect.value === SHOW_OLDER) {
+        state.allPostings = true;
+        draw();
+        return;
+      }
+      switchBaseTo(baseSelect.value);
+    };
 
     /*
      * The button below has to hear about every keystroke here, without a

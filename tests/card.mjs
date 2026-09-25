@@ -3523,6 +3523,66 @@ async function main() {
   const none = await pickerFor({ id: 'app-helios' });
   check('and with nothing made for it yet, the list is as it was', none?.[0]?.label === 'Bases', JSON.stringify(none));
 
+  console.log('\nOnly the latest postings\' resumes, the rest a choice away');
+
+  /*
+   * Asked for: "show a window of like 10 of the last application resumes then
+   * keep the rest accessible but only seeable under a dropdown menu".
+   * Fourteen made for postings, made a day apart; the oldest is the one this
+   * card started from, so it has to stay in view whatever the window says.
+   */
+  const windowed = await inPage(async (createCard) => {
+    const day = (n) => new Date(Date.UTC(2026, 8, n)).toISOString();
+    const built = Array.from({ length: 14 }, (_, i) => ({
+      id: `job-co${i + 1}-role`,
+      label: `Role — Co${i + 1}`,
+      tier: 'temporary',
+      generatedFor: { company: `Co${i + 1}`, role: 'Role', at: day(i + 1) },
+    }));
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Helios' },
+        spec: { id: 'job-helios', label: 'Helios', tier: 'temporary' },
+        baseResumeId: 'job-co1-role',
+        rationale: [],
+        diff: [],
+      },
+      resumes: [{ id: 'newgrad', label: 'New grad', base: true }, ...built],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const read = () => [...root.querySelectorAll('select option')].map((o) => o.textContent);
+    const before = read();
+    const select = root.querySelector('select');
+    select.value = '__show_older__';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 80));
+    return { before, after: read() };
+  });
+  const postings = (list) => (list ?? []).filter((o) => /^Role — Co/.test(o));
+  check(
+    'ten of the fourteen are listed, the newest, with the one in use kept in view',
+    postings(windowed.before).length === 11 &&
+      ['Co14', 'Co5', 'Co1'].every((c) => windowed.before.includes(`Role — ${c}`)) &&
+      !['Co2', 'Co3', 'Co4'].some((c) => windowed.before.includes(`Role — ${c}`)),
+    JSON.stringify(windowed.before),
+  );
+  check(
+    'and the rest are behind one row that says how many',
+    windowed.before?.includes('Show 3 older postings…'),
+    JSON.stringify(windowed.before),
+  );
+  check(
+    'which puts them all back',
+    postings(windowed.after).length === 14 && !windowed.after.some((o) => /older posting/.test(o)),
+    JSON.stringify(windowed.after),
+  );
+
   console.log('\nAdding to a skills group and cutting from it are two decisions');
 
   /*
