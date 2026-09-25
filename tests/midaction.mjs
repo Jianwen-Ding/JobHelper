@@ -371,6 +371,33 @@ async function main() {
       racing.button === 'Build resume' && !racing.fit,
       JSON.stringify(racing),
     );
+
+    /*
+     * And a change the watcher saw while the card could not look. `checkFresh`
+     * stands aside while a compile or a rebuild is out, which is right — but
+     * the watcher had already moved past that revision, so nothing asked
+     * again: the compile landed printing the store as it was before, and the
+     * card went on showing it.
+     */
+    await setUp();
+    const heldCompile = await inPage(async () => {
+      // A box ticked: its compile reads the store, then takes its time.
+      const back = jh.s.hold('render');
+      jh.root.querySelectorAll('.pick input')[0].click();
+      await wait(30);
+      // ResumeM-M changes while it is out, and the watcher sees it.
+      jh.s.edit();
+      await jh.handle.storeChanged();
+      back();
+      await until(() => !jh.s.holds.render && renders().length >= 2);
+      await wait(300);
+      return { compiles: renders().length, said: note() };
+    });
+    check(
+      'a change that arrived during a compile is not lost when the compile ends',
+      heldCompile.compiles >= 3 && /Updated from ResumeM-M/.test(heldCompile.said),
+      JSON.stringify(heldCompile),
+    );
   }
 
   /* ------------------------------------------------------------------ */

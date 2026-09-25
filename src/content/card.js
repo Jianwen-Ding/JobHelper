@@ -2108,6 +2108,9 @@ export function createCard({
    */
   let rebuildToken = 0;
 
+  /** A `checkFresh` that stood aside for a compile or a rebuild, still owed. */
+  let freshOwed = false;
+
   /**
    * `quiet` is for work nobody asked for.
    *
@@ -2165,6 +2168,17 @@ export function createCard({
       // Keep showing progress for whatever is still going.
       state.busy = [...running].pop() ?? null;
       draw();
+      /*
+       * A store change that arrived while this was out. On the next task,
+       * so a rebuild has cleared `state.rebuilding` first. See `checkFresh`.
+       */
+      if (freshOwed) {
+        setTimeout(() => {
+          if (!freshOwed || busyIn('compile') || state.rebuilding) return;
+          freshOwed = false;
+          handle.checkFresh({ now: true }).catch(() => undefined);
+        });
+      }
     }
   }
 
@@ -6588,7 +6602,7 @@ export function createCard({
 
   draw();
 
-  return {
+  const handle = {
     remove: removeCard,
     /** The analysis, whether this is the first one or a later rebuild. */
     /**
@@ -6711,7 +6725,22 @@ export function createCard({
 
     async checkFresh({ now: asked = false } = {}) {
       const of = state.spec;
-      if (!of?.id || !state.render || busyIn('compile') || state.rebuilding) return;
+      if (!of?.id) return;
+      /*
+       * Busy is "not yet", not "no".
+       *
+       * Standing aside while a compile or a rebuild is out is right: either
+       * brings its own answer. But the watcher had already moved past the
+       * revision it was telling us about, so nothing asked again — a compile
+       * that read the store just before the change landed after it, printing
+       * the old words, and the card went on showing them. Owed, and asked
+       * once that work is done. See `act`.
+       */
+      if (busyIn('compile') || state.rebuilding) {
+        freshOwed = true;
+        return;
+      }
+      if (!state.render) return;
       const now = Date.now();
       if (!asked && now - (state.freshAt ?? 0) < 3000) return;
       state.freshAt = now;
@@ -6932,4 +6961,5 @@ export function createCard({
       return true;
     },
   };
+  return handle;
 }
