@@ -4341,6 +4341,43 @@ function fillJob(block, job, overwrite, filled, skipped) {
  * comboboxes for ever. One function, two callers, no drift.
  */
 const A_CHOICE_GROUP = '[role="radiogroup"], [role="listbox"], [role="group"]';
+const AN_ARIA_OPTION = '[role="radio"], [role="option"]';
+
+/*
+ * The options of an ARIA group: those written in it, and those drawn in the
+ * components in it.
+ *
+ * A group whose options are components — `<div role="radiogroup">` holding
+ * an `<x-radio>` for Yes and one for No, each drawing a `<button
+ * role="radio">` in its root — has nothing `querySelectorAll` calls an
+ * option, and was passed over as no choice at all: measured, "Are you
+ * legally authorized to work in the United States?" and the sponsorship
+ * question asked that way were neither answered nor mentioned, where the
+ * same buttons written into the group were answered.
+ *
+ * An option drawn in a component is this group's only when no group of its
+ * own is drawn between them. A component drawing a whole yes/no radiogroup
+ * of its own, put inside the page's `role="group"`, is found as that group,
+ * and its buttons are not also the page's group's.
+ */
+function ariaOptionsIn(group) {
+  return [...drawnWithin(group)].filter(
+    (el) => el.matches(AN_ARIA_OPTION) && (group.contains(el) || closestAround(parentAround(el), A_CHOICE_GROUP) === group),
+  );
+}
+
+/*
+ * The words an ARIA option says: its `aria-label`, or what it shows. A
+ * component that wears `role="radio"` itself and draws its word in its root
+ * from an attribute, `<x-radio role="radio" label="Yes">`, has no
+ * `textContent`; nor has a `<button role="radio">` drawn in a root round a
+ * slot the page puts its word in. Measured, a Yes and a No drawn the first
+ * way read as two empty options, and each question was reported as having
+ * none that matched.
+ */
+function ariaOptionWords(el) {
+  return clean(el.getAttribute('aria-label')) || (el.querySelector('slot') ? drawnText(el) : shownText(el));
+}
 
 function ariaChoiceGroups() {
   const visible = (el) => el.getClientRects().length > 0;
@@ -4358,9 +4395,7 @@ function ariaChoiceGroups() {
     const id = group.getAttribute('id');
     if (id && deepQueryAll(`[aria-controls="${CSS.escape(id)}"], [aria-owns="${CSS.escape(id)}"]`).length > 0) continue;
 
-    const options = [...group.querySelectorAll('[role="radio"], [role="option"]')].filter(
-      (el) => visible(el) && !isDisabled(el),
-    );
+    const options = ariaOptionsIn(group).filter((el) => visible(el) && !isDisabled(el));
     // One option is not a choice, and nothing on this page asked a question
     // with it. Two is the yes/no pair this exists for.
     if (options.length < 2) continue;
@@ -4535,7 +4570,8 @@ function answerChoiceButtons(fields, overwrite, already) {
       skipped.push({ key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) });
       continue;
     }
-    const labelOf = (el) => clean(el.getAttribute('aria-label') || el.textContent);
+    // Pressed buttons as they always were read; ARIA options as they are drawn.
+    const labelOf = toggles ? (el) => clean(el.getAttribute('aria-label') || el.textContent) : ariaOptionWords;
     const wanted =
       options.find((el) => sameOption(labelOf(el), value)) ??
       // And a yes/no pair against a phrase, on the same terms as a radio's.
@@ -5619,8 +5655,7 @@ function chooseInRadios(radios, answer) {
 
 /** Click an ARIA option by its label, and believe the page about the result. */
 function chooseInAria(options, answer) {
-  const labelOf = (el) => clean(el.getAttribute('aria-label') || el.textContent);
-  const wanted = options.find((el) => sameOption(labelOf(el), answer));
+  const wanted = options.find((el) => sameOption(ariaOptionWords(el), answer));
   if (!wanted) return false;
   wanted.click();
   // Never written here: `aria-checked` belongs to the page's own component,
@@ -6943,17 +6978,26 @@ export function watchChoices(tell) {
         once: () => isPressed(button),
       };
     }
-    const option = control?.closest?.('[role="radio"], [role="option"]');
+    /*
+     * Out through the components the press lands in, as `ariaOptionsIn`
+     * finds their options. What is pressed is the innermost thing drawn,
+     * and `closest` stops at the root it is drawn in: a `<button>` inside a
+     * component that wears `role="radio"` itself, or a `<button
+     * role="radio">` drawn in a component inside the page's radiogroup,
+     * found no group, and measured, a person's No to the sponsorship
+     * question pressed on either was not kept at all.
+     */
+    const option = control?.closest ? closestAround(control, AN_ARIA_OPTION) : null;
     // select2's list, whose pick `watchChosenPicks` reads off the select.
     if (option && isSelect2Part(option)) return null;
     if (option) {
-      const group = option.closest('[role="radiogroup"], [role="listbox"], [role="group"]');
+      const group = closestAround(option, A_CHOICE_GROUP);
       if (!group) return null;
       // A widget's menu is the widget's question, and `watchWidgetPicks` reads it.
       if (group.getAttribute('role') === 'listbox' && ownerOfMenu(group)) return null;
       return {
         question: choiceQuestionFor(group),
-        answer: clean(option.getAttribute('aria-label') || option.textContent),
+        answer: ariaOptionWords(option),
       };
     }
     return null;

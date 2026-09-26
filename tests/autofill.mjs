@@ -3105,6 +3105,20 @@ const COMPONENT_DEFINITIONS = `<script>
     '<label><input type="radio" name="' + at(h, 'name') + '" value="No">No</label>');
   const ariaPair = () => '<div role="radiogroup">' + ['Yes', 'No'].map((w) => '<div role="radio" aria-checked="false" tabindex="0">' + w + '</div>').join('') + '</div>';
   def('y-aria-yesno', (h) => '<style>:host { display: block }</style>' + (h.hasAttribute('two') ? ariaPair() + ariaPair() : ariaPair()));
+  // One ARIA radio drawn in a component: a button wearing the role in its root, its word drawn or slotted in; a host
+  // wearing the role itself, its word drawn; and a whole question, its label and its group, drawn in one root.
+  def('y-aria-radio', (h) => '<style>:host { display: inline-block }</style><button type="button" role="radio" aria-checked="false">' +
+    (h.hasAttribute('label') ? at(h, 'label') : '<slot></slot>') + '</button>');
+  customElements.define('y-radio-host', class extends HTMLElement {
+    constructor() {
+      super();
+      this.setAttribute('role', 'radio');
+      this.setAttribute('aria-checked', 'false');
+      this.attachShadow({ mode: 'open' }).innerHTML = '<style>:host { display: inline-block }</style><button type="button" tabindex="-1">' + at(this, 'label') + '</button>';
+    }
+  });
+  def('y-aria-question', (h) => '<style>:host { display: block }</style><label id="q">' + at(h, 'label') + '</label><div role="radiogroup" aria-labelledby="q">' +
+    ['Yes', 'No'].map((w) => '<div role="radio" aria-checked="false" tabindex="0">' + w + '</div>').join('') + '</div>');
   document.addEventListener('click', (e) => {
     const radio = e.composedPath().find((el) => el.getAttribute?.('role') === 'radio');
     if (radio) for (const r of radio.parentNode.querySelectorAll('[role="radio"]')) r.setAttribute('aria-checked', String(r === radio));
@@ -3474,6 +3488,44 @@ const COMPONENT_RADIOS_ONE_NAME = `<!doctype html><html><head><meta charset="utf
 <form>
   <div class="q"><label>Are you legally authorized to work in the United States?</label><y-yesno name="answer"></y-yesno></div>
   <div class="q"><label>Will you now or in the future require visa sponsorship?</label><y-yesno name="answer"></y-yesno></div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * The page's radiogroup, its options each a component. A button wearing
+ * `role="radio"` in each component's root, its word drawn from an attribute
+ * under the authorization question and slotted in under the sponsorship
+ * question; and, on a page of its own, a component wearing the role itself,
+ * its word drawn in its root.
+ *
+ * And, on a third, a section's `role="group"` round two question components,
+ * each drawing its own label and radiogroup: sponsorship, then authorization.
+ */
+const COMPONENT_ARIA_OPTIONS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="ao-auth">Are you legally authorized to work in the United States?</label>
+    <div role="radiogroup" aria-labelledby="ao-auth"><y-aria-radio label="Yes"></y-aria-radio><y-aria-radio label="No"></y-aria-radio></div></div>
+  <div class="q"><label>Will you now or in the future require visa sponsorship?</label>
+    <div role="radiogroup"><y-aria-radio>Yes</y-aria-radio><y-aria-radio>No</y-aria-radio></div></div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+const COMPONENT_ARIA_HOSTS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label>Will you now or in the future require visa sponsorship?</label>
+    <div role="radiogroup"><y-radio-host label="Yes"></y-radio-host><y-radio-host label="No"></y-radio-host></div></div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+const COMPONENT_ARIA_SECTION = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div role="group" aria-label="Work authorization">
+    <y-aria-question label="Will you now or in the future require visa sponsorship?"></y-aria-question>
+    <y-aria-question label="Are you legally authorized to work in the United States?"></y-aria-question>
+  </div>
 </form>
 ${COMPONENT_DEFINITIONS}
 </body></html>`;
@@ -4739,7 +4791,7 @@ const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><tit
   });
 </script></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
 
 const PROFILE = {
   first_name: 'Morgan',
@@ -9297,6 +9349,66 @@ async function main() {
       "and a person's No to the second is kept under the second's question",
       sharedNameSaid.length > 0 && sharedNameSaid.every((s) => s === 'Will you now or in the future require visa sponsorship? — No'),
       JSON.stringify(sharedNameSaid),
+    );
+
+    // Every ARIA radio on the page in the order it is drawn, "x" when marked chosen and "-" when not.
+    const ariaDrawn = () => {
+      const got = [];
+      const walk = (root) => {
+        for (const el of root.querySelectorAll('*')) {
+          if (el.getAttribute('role') === 'radio') got.push(el.getAttribute('aria-checked') === 'true' ? 'x' : '-');
+          if (el.shadowRoot) walk(el.shadowRoot);
+        }
+      };
+      walk(document);
+      return got.join(' ');
+    };
+    const ariaOn = (url) => page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields, ariaDrawn }) => {
+        const m = await import(`${b}/autofill.js`);
+        const asked = m.choiceQuestions();
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        return { chosen: eval(`(${ariaDrawn})`)(), asked, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields: SWEEP, ariaDrawn: String(ariaDrawn) }),
+    );
+    // A person's No, pressed on the button drawn in the component.
+    const pickedOn = async (url, button) => {
+      await page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' });
+      await page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        window.__said = [];
+        window.__stop = m.watchChoices((x) => window.__said.push(`${x.question} — ${x.answer}`));
+      }, { b: base });
+      await button().click();
+      await page.waitForTimeout(200);
+      return page.evaluate(() => (window.__stop(), window.__said));
+    };
+    const ariaOptions = await ariaOn('/component-aria-options');
+    const ariaHosts = await ariaOn('/component-aria-hosts');
+    const ariaSection = await ariaOn('/component-aria-section');
+    const optionPicked = await pickedOn('/component-aria-options', () => page.locator('y-aria-radio').nth(3).locator('button'));
+    const hostPicked = await pickedOn('/component-aria-hosts', () => page.locator('y-radio-host').nth(1).locator('button'));
+    group("The page's radiogroup, its options each a component");
+    check(
+      'buttons wearing role="radio" in components, their words drawn or slotted in, are asked of the bank and answered Yes and No',
+      ariaOptions.chosen === 'x - - x' && ariaOptions.filled.join() === 'work_authorization,requires_sponsorship' && ariaOptions.skipped.length === 0 &&
+        ariaOptions.asked.join() === 'Are you legally authorized to work in the United States?,Will you now or in the future require visa sponsorship?',
+      JSON.stringify(ariaOptions),
+    );
+    check(
+      'components wearing role="radio" themselves, their words drawn in their roots, are answered No',
+      ariaHosts.chosen === '- x' && ariaHosts.filled.join() === 'requires_sponsorship' && ariaHosts.skipped.length === 0,
+      JSON.stringify(ariaHosts),
+    );
+    check(
+      "a section's group round two question components does not take their buttons as its own: each is answered, and nothing is reported",
+      ariaSection.chosen === '- x x -' && ariaSection.filled.join() === 'requires_sponsorship,work_authorization' && ariaSection.skipped.length === 0,
+      JSON.stringify(ariaSection),
+    );
+    check(
+      "a person's No pressed on either kind is kept under the question",
+      [optionPicked, hostPicked].every((said) => said.length > 0 && said.every((s) => s === 'Will you now or in the future require visa sponsorship? — No')),
+      JSON.stringify({ optionPicked, hostPicked }),
     );
 
     const dateParts = await page.goto(`${base}/date-in-parts`, { waitUntil: 'domcontentloaded' }).then(() =>
