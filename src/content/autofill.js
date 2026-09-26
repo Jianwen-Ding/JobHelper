@@ -1947,6 +1947,15 @@ function otherWaysToWrite(key, value) {
     return /^[a-z][a-z0-9+.-]*:/i.test(said) ? [] : [`https://${said}`];
   }
 
+  /*
+   * A state as its two letters, for the box that has room for no more. See
+   * `fitsIn`: "Massachusetts" in a `maxlength=2` State box went in whole.
+   */
+  if (key === 'address_state') {
+    const code = REGION_BY_NAME[said.toLowerCase()];
+    return code ? [code] : [];
+  }
+
   if (key !== 'phone') return [];
   const digits = said.replace(/\D+/g, '');
   if (!digits || digits === said) return [];
@@ -1956,6 +1965,93 @@ function otherWaysToWrite(key, value) {
   // And without it, for the forms that want exactly ten.
   if (digits.length === 11 && digits.startsWith('1')) out.push(digits.slice(1));
   return out;
+}
+
+/*
+ * Whether a value fits in the room a box gives it.
+ *
+ * `maxlength` stops a person's typing and nothing else: a value written by
+ * script goes in whole, however long, and the browser does not count it as
+ * too long when Submit is pressed either — `tooLong` is only ever set by an
+ * edit a person made. So "(555) 010-0199" went into a phone box with
+ * `maxlength=10`, and "Massachusetts" into a State box with `maxlength=2`,
+ * each reported as filled, each a value nobody could have typed there. The
+ * page's own checks (jQuery Validate's `maxlength` rule, and the server's
+ * column behind the box) are the ones that then refuse it, after the card has
+ * said it was done. A shorter way of writing the same answer is used where
+ * there is one — see `otherWaysToWrite` — and otherwise the box is left.
+ */
+const fitsIn = (input, value) => !(input.maxLength > 0 && String(value).length > input.maxLength);
+
+/*
+ * A telephone number asked in two or three boxes: area code, exchange and
+ * line, `(___) ___ - ____`, each with a `maxlength` of its own.
+ *
+ * The enterprise and government systems still ask it that way, and every box
+ * matched `phone` — by its label, or by names like `phone_area`,
+ * `phone_prefix` and `phone_line` — so each was given the whole number:
+ * "(555) 010-0199" three times over, in boxes with room for 3, 3 and 4
+ * characters. An "Area code" box beside a "Phone number" box was the other
+ * half of the same shape: the area code is left alone as a dialling code (see
+ * `DIALLING_CODE`), and the number box, `maxlength=7`, was given all ten
+ * digits, so the area code went in twice and in the wrong box.
+ *
+ * The boxes are the ones on either side of this one with nothing between
+ * them, in its own wrapper or the two around it: each a one-line box with a
+ * `maxlength`, and each either saying nothing of its own or saying it is part
+ * of a telephone number. A country code or an extension ends the run — the
+ * first is the form's, and the second is not in the number. Every box but the
+ * last takes exactly as many digits as it holds, no more than four, and the
+ * last takes the rest, which have to fit: 3 + 3 + 4 or 3 + 7 for a ten-digit
+ * number. Anything else is not a shape this can be sure of, and the number is
+ * left for the person rather than guessed across the boxes.
+ */
+const ONE_LINE_BOX = new Set(['text', 'tel', 'number', 'search']);
+
+function partOfTheNumber(input) {
+  if (!ONE_LINE_BOX.has(input.type) || !(input.maxLength > 0) || !isFillable(input)) return false;
+  const said = describeField(input);
+  if (!said) return true;
+  if (/\b(country|ext(ension)?)\b/i.test(said)) return false;
+  return /\barea\b/i.test(said) || FIELD_PATTERNS.find(([, re]) => re.test(said))?.[0] === 'phone';
+}
+
+function nationalDigits(value) {
+  const said = String(value).trim();
+  const coded = /^\+\d{1,4}[\s.\-)]+(.*)$/.exec(said);
+  if (coded) return coded[1].replace(/\D/g, '');
+  const digits = said.replace(/\D/g, '');
+  return /^\+1\d{10}$/.test(said.replace(/[^\d+]/g, '')) ? digits.slice(1) : digits;
+}
+
+function phoneBoxes(input, value) {
+  const digits = nationalDigits(value);
+  let scope = input.parentElement;
+  for (let i = 0; i < 3 && scope && scope !== document.body; i++, scope = scope.parentElement) {
+    const fields = [...scope.querySelectorAll(ANOTHER_FIELD)].filter((el) => el.getClientRects().length > 0);
+    const at = fields.indexOf(input);
+    let first = at;
+    let last = at;
+    while (first > 0 && partOfTheNumber(fields[first - 1])) first--;
+    while (last < fields.length - 1 && partOfTheNumber(fields[last + 1])) last++;
+    const run = fields.slice(first, last + 1);
+    if (run.length >= 2) {
+      const heads = run.slice(0, -1).map((box) => box.maxLength);
+      const taken = heads.reduce((a, b) => a + b, 0);
+      const rest = digits.length - taken;
+      if (heads.every((n) => n <= 4) && rest > 0 && rest <= run[run.length - 1].maxLength) {
+        let from = 0;
+        return run.map((box, n) => {
+          const part = n < heads.length ? digits.slice(from, from + heads[n]) : digits.slice(from);
+          from += part.length;
+          return [box, part];
+        });
+      }
+      return null;
+    }
+    if (scope.localName === 'form') break;
+  }
+  return null;
 }
 
 /**
@@ -3040,8 +3136,11 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
   // Whether this form has a box of its own for the name somebody goes by.
   // See `NAME_FOR_THE_FORM`.
   const asksPreferred = inputs.some((i) => isFillable(i) && PREFERRED_NAME_BOX.test(clean(labelFor(i))));
+  // The boxes of a telephone number asked in parts, once one of them has
+  // filled them all. See `phoneBoxes`.
+  const numberBoxes = new WeakSet();
   for (const input of inputs) {
-    if (!isFillable(input)) continue;
+    if (!isFillable(input) || numberBoxes.has(input)) continue;
 
     const description = describeField(input);
     if (!description) continue;
@@ -3266,6 +3365,34 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
       value = monthAsNumber(value);
     } else if (key === 'linkedin' && isWorkdayLinkedIn(input)) {
       value = wholeLinkedInAddress(value);
+    }
+    /*
+     * Never more than the box has room for. See `fitsIn`: the same answer
+     * written shorter, or a telephone number spread over the boxes it is
+     * asked in, or nothing and a line on the card saying so.
+     */
+    if (!fitsIn(input, value)) {
+      const shorter = otherWaysToWrite(key, value).find((spelling) => fitsIn(input, spelling));
+      const parts = shorter === undefined && key === 'phone' ? phoneBoxes(input, value) : null;
+      if (parts) {
+        const busy = parts.some(([box]) => box !== input && box.value) && !overwrite;
+        if (!busy) for (const [box, part] of parts) setValue(box, part);
+        for (const [box] of parts) numberBoxes.add(box);
+        if (busy) {
+          skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
+        } else if (parts.every(([box, part]) => box.value === part)) {
+          filled.push({ key, value: parts.map(([, part]) => part).join(' ') });
+        } else {
+          for (const [box] of parts) setValue(box, box === input ? before : '');
+          skipped.push({ key, reason: 'the field would not take it', description: description.slice(0, 60) });
+        }
+        continue;
+      }
+      if (shorter === undefined) {
+        skipped.push({ key, reason: 'the field would not accept it in that form', description: description.slice(0, 60) });
+        continue;
+      }
+      value = shorter;
     }
     setValue(input, value);
     /*
