@@ -3462,7 +3462,425 @@ const VUETIFY = `<!doctype html><html><head><meta charset="utf-8"><title>Apply �
   }
 </script></body></html>`;
 
-const PAGES = { '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+/*
+ * Epic Games' careers site: its own dark application form over Greenhouse's
+ * job-board API, not Greenhouse's embed. Reported: the education block's
+ * "School*:", "Degree*:" and "Discipline:" stayed on "Select" after autofill,
+ * each a placeholder with a chevron. Their DOM is behind a Cloudflare check
+ * and was not seen, so these are the dropdowns a React form like that is
+ * likely built with, each drawn as its library draws itself and answering
+ * the events that library answers — no CDN, no React:
+ *
+ *   - Radix UI Select (and so shadcn/ui): a `button role="combobox"` naming
+ *     its list in `aria-controls`, a `<span>` saying "Select", the list drawn
+ *     on open in a portal at the foot of the page, opened on a mouse's
+ *     pointerdown (or on click, for anything that is not a mouse), an option
+ *     taken on a mouse's pointerup (or on click); and, inside a form, a
+ *     visually hidden `<select aria-hidden tabindex="-1">` beside the button,
+ *     which takes a `change` as a choice ("enable form autofill") and fires
+ *     one of its own after every choice.
+ *   - MUI Select: a `div role="combobox" aria-haspopup="listbox"` opened on
+ *     mousedown, a hidden text `input.MuiSelect-nativeInput` (aria-hidden,
+ *     tabindex -1) holding the value, and a `ul role="listbox"` in a Modal
+ *     portal over an invisible backdrop, which hides the app from assistive
+ *     technology while open and closes on Escape inside it.
+ *   - Headless UI's Listbox (1.7): a `button aria-haspopup="listbox"`
+ *     labelled by its label and itself, a `ul role="listbox"` (here in a
+ *     Portal), opened on click, closed by Escape in the list, a second click
+ *     or a click outside; a hidden input only once something is chosen.
+ *
+ * The values are Greenhouse's ids, as a form posting to its API submits them.
+ * Beside the education block: the Country (the profile's), "How did you hear
+ * about this job?" (the bank's), and things that must not be pressed — a
+ * Pronouns list of the same kind, a Remove button, the Submit button. Every press anywhere
+ * is written down by field in `__pressed`. `?unlisted` takes the profile's
+ * school and discipline out of their lists, the discipline being the last
+ * list pressed.
+ */
+const EPIC_LISTS = {
+  country: { label: 'Country*:', name: 'country', items: [['CA', 'Canada'], ['US', 'United States'], ['MX', 'Mexico']] },
+  school: {
+    label: 'School*:', name: 'school_name_id',
+    items: [['1101', 'Harvard University'], ['4521', 'Northeastern University'], ['4522', 'Northwestern University'], ['8807', 'University of Texas at Austin']],
+  },
+  degree: {
+    label: 'Degree*:', name: 'degree_id',
+    items: [['1', 'High School'], ['2', "Associate's Degree"], ['3', "Bachelor's Degree"], ['4', "Master's Degree"], ['5', 'Master of Business Administration (M.B.A.)'],
+      ['6', 'Juris Doctor (J.D.)'], ['7', 'Doctor of Medicine (M.D.)'], ['8', 'Doctor of Philosophy (Ph.D.)'], ['9', "Engineer's Degree"], ['10', 'Other']],
+  },
+  discipline: {
+    label: 'Discipline:', name: 'discipline_id',
+    items: [['201', 'Accounting'], ['202', 'Biology'], ['203', 'Computer Engineering'], ['204', 'Computer Science'], ['205', 'Economics']],
+  },
+  hear: { label: 'How did you hear about this job?', name: 'hear', items: [['1', 'LinkedIn'], ['2', 'Employee referral'], ['3', 'Job board']] },
+  pronouns: { label: 'Pronouns:', name: 'pronouns', items: [['1', 'She/her'], ['2', 'He/him'], ['3', 'They/them']] },
+};
+
+const epicForm = (library, script, style = '', header = '') => `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Epic Games (${library})</title>
+<style>
+  body { background: #121212; color: #f5f5f5; font-family: sans-serif; margin: 0; }
+  main { padding: 16px 24px; }
+  .row { margin: 14px 0; width: 360px; position: relative; }
+  .row > label, .row label.epic-label { display: block; font-size: 14px; margin-bottom: 4px; color: #ccc; }
+  input[type=text] { background: #202020; color: #fff; border: 1px solid #444; padding: 8px; width: 340px; }
+  ${style}
+</style></head><body>
+<div id="root">${header}<main>
+<form id="application" novalidate>
+  <h2>Personal Information</h2>
+  <div class="row"><label for="first_name">First Name*:</label><input id="first_name" name="first_name" type="text"></div>
+  <div class="row" data-field="country"></div>
+  <h2>Education</h2>
+  <div class="education">
+    <div class="row" data-field="school"></div>
+    <div class="row" data-field="degree"></div>
+    <div class="row" data-field="discipline"></div>
+    <button type="button" id="remove-education">Remove</button>
+  </div>
+  <h2>Additional Questions</h2>
+  <div class="row" data-field="hear"></div>
+  <div class="row" data-field="pronouns"></div>
+  <button type="submit" id="submit">Submit Application</button>
+</form>
+</main></div>
+<script>
+  const LISTS = ${JSON.stringify(EPIC_LISTS)};
+  if (location.search.includes('unlisted')) {
+    LISTS.school.items = LISTS.school.items.filter(([, text]) => text !== 'Northeastern University');
+    LISTS.discipline.items = LISTS.discipline.items.filter(([, text]) => text !== 'Computer Science');
+  }
+  window.__pressed = [];
+  for (const type of ['pointerdown', 'mousedown', 'click']) {
+    document.addEventListener(type, (e) => {
+      const t = e.target;
+      const at = t.closest?.('[data-field]')?.dataset.field ?? t.closest?.('[data-owner]')?.dataset.owner ?? (t.id || t.localName);
+      window.__pressed.push(at);
+    }, true);
+  }
+  window.__submitted = 0;
+  window.__removed = 0;
+  document.getElementById('application').addEventListener('submit', (e) => { e.preventDefault(); window.__submitted++; });
+  document.getElementById('remove-education').addEventListener('click', () => window.__removed++);
+  let uid = 0;
+  const nextId = () => ':r' + (uid++).toString(36) + ':';
+  // Below the control, or moved up to stay on screen, as a positioned popup is.
+  const place = (el, under) => {
+    const r = under.getBoundingClientRect();
+    el.style.left = r.left + 'px'; el.style.minWidth = r.width + 'px';
+    el.style.top = Math.max(4, Math.min(r.bottom + 4, innerHeight - el.offsetHeight - 4)) + 'px';
+  };
+  ${script}
+  for (const row of document.querySelectorAll('[data-field]')) render(row, row.dataset.field, LISTS[row.dataset.field]);
+</script></body></html>`;
+
+const CHEVRON = '<svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true"><path d="M4 6l3.5 3.5L11 6" stroke="currentColor"></path></svg>';
+
+const EPIC_RADIX = epicForm('Radix UI Select', `
+  const render = (row, field, list) => {
+    const contentId = 'radix-' + nextId();
+    row.innerHTML =
+      '<label class="epic-label" for="' + field + '-trigger"></label>' +
+      '<button type="button" role="combobox" aria-controls="' + contentId + '" aria-expanded="false" aria-autocomplete="none" dir="ltr" data-state="closed" data-placeholder="" id="' + field + '-trigger" class="trigger">' +
+      '<span style="pointer-events: none;">Select</span><span aria-hidden="true" class="icon">${CHEVRON.replace(/"/g, '\\"')}</span></button>' +
+      '<select aria-hidden="true" tabindex="-1" name="' + list.name + '" style="position: absolute; border: 0px; width: 1px; height: 1px; padding: 0px; margin: -1px; overflow: hidden; clip: rect(0px, 0px, 0px, 0px); white-space: nowrap; overflow-wrap: normal;"><option value=""></option></select>';
+    row.querySelector('label').textContent = list.label;
+    const trigger = row.querySelector('button');
+    const value = trigger.querySelector('span');
+    const native = row.querySelector('select');
+    // Every item's native option, registered even while the list is closed.
+    for (const [id, text] of list.items) native.add(new Option(text, id));
+    let chosen = '';
+    let content = null;
+    let pointerType = 'touch';
+    let hidden = [];
+    const set = (id) => {
+      if (id === chosen) return;
+      chosen = id;
+      const item = list.items.find(([v]) => v === id);
+      value.textContent = item ? item[1] : 'Select';
+      trigger.toggleAttribute('data-placeholder', !item);
+      // BubbleSelect's effect, on every change of value however it came: the
+      // native value written, and a change event of its own.
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(native, id);
+      native.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    // React's onChange on the hidden select: "enable form autofill".
+    native.addEventListener('change', () => set(native.value));
+    const onOutside = (e) => { if (content && !content.contains(e.target)) close(); };
+    const onEscape = (e) => { if (e.key === 'Escape' && content) { e.preventDefault(); close(); } };
+    const close = () => {
+      if (!content) return;
+      content.remove();
+      content = null;
+      trigger.setAttribute('aria-expanded', 'false');
+      trigger.dataset.state = 'closed';
+      document.body.style.pointerEvents = '';
+      for (const el of hidden) el.removeAttribute('aria-hidden');
+      hidden = [];
+      document.removeEventListener('pointerdown', onOutside, true);
+      document.removeEventListener('keydown', onEscape, true);
+      trigger.focus();
+    };
+    const open = () => {
+      if (content) return;
+      content = document.createElement('div');
+      content.setAttribute('data-radix-popper-content-wrapper', '');
+      content.dataset.owner = field;
+      content.style.cssText = 'position: fixed; z-index: 50; pointer-events: auto;';
+      content.innerHTML = '<div role="listbox" id="' + contentId + '" data-state="open" dir="ltr" tabindex="-1" class="content" style="box-sizing: border-box; display: flex; flex-direction: column; outline: none; pointer-events: auto;">' +
+        '<div data-radix-select-viewport="" role="presentation" style="position: relative; flex: 1 1 0%; overflow: auto;"></div></div>';
+      const viewport = content.querySelector('[data-radix-select-viewport]');
+      for (const [id, text] of list.items) {
+        const textId = 'radix-' + nextId();
+        const item = document.createElement('div');
+        item.setAttribute('role', 'option');
+        item.setAttribute('aria-labelledby', textId);
+        item.setAttribute('aria-selected', String(id === chosen));
+        item.dataset.state = id === chosen ? 'checked' : 'unchecked';
+        item.tabIndex = -1;
+        item.className = 'item';
+        item.setAttribute('data-radix-collection-item', '');
+        item.innerHTML = '<span id="' + textId + '"></span>';
+        item.firstChild.textContent = text;
+        let itemPointer = 'touch';
+        item.addEventListener('pointerdown', (e) => { itemPointer = e.pointerType; });
+        item.addEventListener('pointermove', () => { item.setAttribute('data-highlighted', ''); item.focus({ preventScroll: true }); });
+        item.addEventListener('pointerup', (e) => { if (!e.defaultPrevented && itemPointer === 'mouse') { set(id); close(); } });
+        item.addEventListener('click', () => { if (itemPointer !== 'mouse') { set(id); close(); } });
+        viewport.append(item);
+      }
+      document.body.append(content);
+      place(content, trigger);
+      trigger.setAttribute('aria-expanded', 'true');
+      trigger.dataset.state = 'open';
+      // DismissableLayer and hideOthers.
+      document.body.style.pointerEvents = 'none';
+      hidden = [...document.body.children].filter((el) => el !== content && !el.hasAttribute('aria-hidden') && el.localName !== 'script');
+      for (const el of hidden) el.setAttribute('aria-hidden', 'true');
+      document.addEventListener('pointerdown', onOutside, true);
+      document.addEventListener('keydown', onEscape, true);
+      (viewport.querySelector('[data-state=checked]') ?? viewport.firstElementChild).focus({ preventScroll: true });
+    };
+    trigger.addEventListener('pointerdown', (e) => {
+      pointerType = e.pointerType;
+      if (e.button === 0 && e.ctrlKey === false && e.pointerType === 'mouse') { open(); e.preventDefault(); }
+    });
+    trigger.addEventListener('click', () => { trigger.focus(); if (pointerType !== 'mouse') open(); });
+    trigger.addEventListener('keydown', (e) => { if ([' ', 'Enter', 'ArrowDown', 'ArrowUp'].includes(e.key)) { open(); e.preventDefault(); } });
+  };
+`, `
+  .trigger { display: flex; justify-content: space-between; align-items: center; width: 100%; height: 36px; background: #202020; color: #f5f5f5; border: 1px solid #444; border-radius: 6px; padding: 0 12px; }
+  .content { background: #1b1b1b; border: 1px solid #444; border-radius: 6px; min-width: 8rem; }
+  .item { padding: 6px 8px; cursor: default; }
+`);
+
+const EPIC_MUI = epicForm('MUI Select', `
+  const render = (row, field, list) => {
+    const listboxId = nextId();
+    row.innerHTML =
+      '<label class="epic-label" id="' + field + '-label"></label>' +
+      '<div class="MuiFormControl-root MuiFormControl-fullWidth css-q8hpuo-MuiFormControl-root">' +
+      '<div class="MuiInputBase-root MuiOutlinedInput-root MuiInputBase-colorPrimary MuiInputBase-fullWidth MuiInputBase-formControl css-1ufn0jl">' +
+      '<div tabindex="0" role="combobox" aria-controls="' + listboxId + '" aria-expanded="false" aria-haspopup="listbox" aria-labelledby="' + field + '-label ' + field + '-select" id="' + field + '-select" class="MuiSelect-select MuiSelect-outlined MuiInputBase-input MuiOutlinedInput-input css-qiwgdb"><em>Select</em></div>' +
+      '<input aria-invalid="false" name="' + list.name + '" aria-hidden="true" tabindex="-1" class="MuiSelect-nativeInput css-1k3x8v3" value="">' +
+      '<svg class="MuiSvgIcon-root MuiSvgIcon-fontSizeMedium MuiSelect-icon MuiSelect-iconOutlined css-bi4s6q" focusable="false" aria-hidden="true" viewBox="0 0 24 24" data-testid="ArrowDropDownIcon"><path d="M7 10l5 5 5-5z"></path></svg>' +
+      '<fieldset aria-hidden="true" class="MuiOutlinedInput-notchedOutline css-igs3ac"><legend class="css-ihdtdm"><span class="notranslate">\u200b</span></legend></fieldset>' +
+      '</div></div>';
+    row.querySelector('label').textContent = list.label;
+    const display = row.querySelector('[role=combobox]');
+    const native = row.querySelector('input.MuiSelect-nativeInput');
+    let chosen = '';
+    let modal = null;
+    const set = (id) => {
+      const item = list.items.find(([v]) => v === id);
+      if (!item) return;
+      chosen = id;
+      native.value = id;
+      display.textContent = item[1];
+    };
+    // SelectInput's handleChange on the native input: browser autofill, by value.
+    native.addEventListener('input', () => set(native.value));
+    const close = () => {
+      if (!modal) return;
+      const going = modal;
+      modal = null;
+      display.setAttribute('aria-expanded', 'false');
+      document.getElementById('root').removeAttribute('aria-hidden');
+      display.focus();
+      // Grow's exit, then unmounted.
+      going.querySelector('.MuiPaper-root').style.opacity = '0';
+      setTimeout(() => going.remove(), 200);
+    };
+    const open = () => {
+      if (modal) return;
+      modal = document.createElement('div');
+      modal.setAttribute('role', 'presentation');
+      modal.className = 'MuiPopover-root MuiMenu-root MuiModal-root css-1sucic7';
+      modal.id = 'menu-' + list.name;
+      modal.dataset.owner = field;
+      modal.style.cssText = 'position: fixed; z-index: 1300; inset: 0px;';
+      modal.innerHTML =
+        '<div aria-hidden="true" class="MuiBackdrop-root MuiBackdrop-invisible MuiModal-backdrop css-esi9ax" style="opacity: 1; position: fixed; inset: 0; background-color: transparent; z-index: -1;"></div>' +
+        '<div tabindex="0" data-testid="sentinelStart"></div>' +
+        '<div class="MuiPaper-root MuiPaper-elevation MuiPaper-rounded MuiPaper-elevation8 MuiPopover-paper MuiMenu-paper css-1tktgsa" tabindex="-1" style="position: absolute; opacity: 1; transform: none; transition: opacity 200ms;">' +
+        '<ul class="MuiList-root MuiList-padding MuiMenu-list css-r8u8y9" role="listbox" tabindex="-1" aria-labelledby="' + field + '-label" id="' + listboxId + '"></ul></div>' +
+        '<div tabindex="0" data-testid="sentinelEnd"></div>';
+      const ul = modal.querySelector('ul');
+      const placeholder = document.createElement('li');
+      placeholder.className = 'MuiButtonBase-root MuiMenuItem-root MuiMenuItem-gutters Mui-disabled';
+      placeholder.tabIndex = -1;
+      placeholder.setAttribute('role', 'option');
+      placeholder.setAttribute('aria-disabled', 'true');
+      placeholder.setAttribute('aria-selected', String(chosen === ''));
+      placeholder.dataset.value = '';
+      placeholder.innerHTML = '<em>Select</em>';
+      ul.append(placeholder);
+      for (const [id, text] of list.items) {
+        const li = document.createElement('li');
+        li.className = 'MuiButtonBase-root MuiMenuItem-root MuiMenuItem-gutters' + (id === chosen ? ' Mui-selected' : '');
+        li.tabIndex = id === chosen ? 0 : -1;
+        li.setAttribute('role', 'option');
+        li.setAttribute('aria-selected', String(id === chosen));
+        li.dataset.value = id;
+        li.append(text);
+        li.insertAdjacentHTML('beforeend', '<span class="MuiTouchRipple-root css-w0pj6f"></span>');
+        li.addEventListener('click', () => { set(id); close(); });
+        ul.append(li);
+      }
+      modal.querySelector('.MuiBackdrop-root').addEventListener('click', close);
+      modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } });
+      document.body.append(modal);
+      place(modal.querySelector('.MuiPaper-root'), display);
+      display.setAttribute('aria-expanded', 'true');
+      // ModalManager's ariaHiddenSiblings.
+      document.getElementById('root').setAttribute('aria-hidden', 'true');
+      (ul.querySelector('.Mui-selected') ?? ul.querySelector('li:not(.Mui-disabled)')).focus();
+    };
+    display.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      display.focus();
+      open();
+    });
+    display.addEventListener('keydown', (e) => { if ([' ', 'ArrowUp', 'ArrowDown', 'Enter'].includes(e.key)) { e.preventDefault(); open(); } });
+  };
+`, `
+  .MuiInputBase-root { position: relative; display: flex; align-items: center; border: 1px solid #555; border-radius: 4px; background: #202020; }
+  .MuiSelect-select { flex: 1; padding: 10px 32px 10px 12px; cursor: pointer; user-select: none; min-height: 1.4em; }
+  .MuiSelect-nativeInput { bottom: 0; left: 0; position: absolute; opacity: 0; pointer-events: none; width: 100%; box-sizing: border-box; }
+  .MuiSelect-icon { position: absolute; right: 7px; width: 1em; height: 1em; fill: #ccc; pointer-events: none; }
+  .MuiOutlinedInput-notchedOutline { position: absolute; inset: -5px 0 0; margin: 0; padding: 0 8px; pointer-events: none; border: 0; }
+  .MuiOutlinedInput-notchedOutline legend { visibility: hidden; height: 11px; font-size: 0.75em; padding: 0; max-width: 0.01px; }
+  .MuiPaper-root { background: #1e1e1e; color: #fff; box-shadow: 0 5px 5px -3px #0008; }
+  .MuiList-root { list-style: none; margin: 0; padding: 8px 0; }
+  .MuiMenuItem-root { padding: 6px 16px; cursor: pointer; position: relative; }
+  .MuiMenuItem-root.Mui-disabled { opacity: 0.38; pointer-events: none; }
+  .MuiTouchRipple-root { position: absolute; inset: 0; pointer-events: none; }
+`);
+
+const EPIC_HEADLESS = epicForm('Headless UI Listbox', `
+  let hid = 1;
+  const hlId = (kind) => 'headlessui-listbox-' + kind + '-' + (hid++);
+  const portalRoot = () => {
+    let root = document.getElementById('headlessui-portal-root');
+    if (!root) { root = document.createElement('div'); root.id = 'headlessui-portal-root'; document.body.append(root); }
+    return root;
+  };
+  const render = (row, field, list) => {
+    const labelId = hlId('label');
+    const buttonId = hlId('button');
+    row.innerHTML =
+      '<div class="relative mt-1" data-headlessui-state="">' +
+      '<label id="' + labelId + '" data-headlessui-state="" class="epic-label"></label>' +
+      '<button id="' + buttonId + '" type="button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="' + labelId + ' ' + buttonId + '" data-headlessui-state="" class="relative w-full cursor-default rounded-lg py-2 pl-3 pr-10 text-left">' +
+      '<span class="block truncate">Select</span><span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">${CHEVRON.replace(/"/g, '\\"')}</span></button></div>';
+    row.querySelector('label').textContent = list.label;
+    const listbox = row.firstElementChild;
+    const button = row.querySelector('button');
+    const shown = button.querySelector('span.block');
+    let chosen = null;
+    let options = null;
+    let initial = null;
+    const set = (id, text) => {
+      chosen = id;
+      shown.textContent = text;
+      // The Hidden input for a named Listbox, drawn once there is a value.
+      let hiddenInput = row.querySelector(':scope > input[type=hidden]');
+      if (!hiddenInput) {
+        hiddenInput = document.createElement('input');
+        hiddenInput.type = 'hidden'; hiddenInput.hidden = true; hiddenInput.readOnly = true; hiddenInput.name = list.name;
+        row.insertBefore(hiddenInput, listbox);
+      }
+      hiddenInput.value = id;
+    };
+    const onDown = (e) => { initial = e.target; };
+    const onOutside = (e) => {
+      const target = initial ?? e.target;
+      initial = null;
+      if (!options || button.contains(target) || options.contains(target)) return;
+      close(false);
+    };
+    const close = (refocus = true) => {
+      if (!options) return;
+      options.parentElement.remove();
+      options = null;
+      button.setAttribute('aria-expanded', 'false');
+      button.removeAttribute('aria-controls');
+      button.dataset.headlessuiState = '';
+      document.removeEventListener('mousedown', onDown, true);
+      document.removeEventListener('click', onOutside, true);
+      if (refocus) button.focus({ preventScroll: true });
+    };
+    const open = () => {
+      const holder = document.createElement('div');
+      holder.dataset.owner = field;
+      const optionsId = hlId('options');
+      holder.innerHTML = '<ul aria-labelledby="' + buttonId + '" aria-orientation="vertical" id="' + optionsId + '" role="listbox" tabindex="0" data-headlessui-state="open" class="absolute mt-1 max-h-60 overflow-auto rounded-md py-1"></ul>';
+      options = holder.firstElementChild;
+      for (const [id, text] of list.items) {
+        const li = document.createElement('li');
+        li.id = hlId('option');
+        li.setAttribute('role', 'option');
+        li.tabIndex = -1;
+        li.setAttribute('aria-selected', String(id === chosen));
+        li.dataset.headlessuiState = id === chosen ? 'selected' : '';
+        li.className = 'relative cursor-default select-none py-2 pl-10 pr-4';
+        li.innerHTML = '<span class="block truncate"></span>';
+        li.firstChild.textContent = text;
+        li.addEventListener('mousemove', () => { options?.setAttribute('aria-activedescendant', li.id); });
+        li.addEventListener('click', (e) => { e.preventDefault(); set(id, text); close(); });
+        options.append(li);
+      }
+      options.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+      });
+      portalRoot().append(holder);
+      options.style.position = 'fixed';
+      place(options, button);
+      button.setAttribute('aria-expanded', 'true');
+      button.setAttribute('aria-controls', optionsId);
+      button.dataset.headlessuiState = 'open';
+      document.addEventListener('mousedown', onDown, true);
+      document.addEventListener('click', onOutside, true);
+      options.focus({ preventScroll: true });
+    };
+    button.addEventListener('click', (e) => {
+      if (options) { close(); return; }
+      e.preventDefault();
+      open();
+    });
+    button.addEventListener('keydown', (e) => { if ([' ', 'Enter', 'ArrowDown', 'ArrowUp'].includes(e.key)) { e.preventDefault(); if (!options) open(); } });
+  };
+`, `
+  .relative { position: relative; }
+  button[aria-haspopup] { width: 100%; background: #202020; color: #f5f5f5; border: 1px solid #444; border-radius: 8px; padding: 8px 40px 8px 12px; text-align: left; }
+  .pointer-events-none { pointer-events: none; position: absolute; top: 0; bottom: 0; right: 0; display: flex; align-items: center; padding-right: 8px; }
+  #headlessui-portal-root ul { list-style: none; margin: 0; padding: 4px 0; background: #1b1b1b; color: #fff; border-radius: 6px; max-height: 15rem; overflow: auto; z-index: 10; }
+  #headlessui-portal-root li { padding: 8px 16px 8px 40px; cursor: default; }
+`);
+
+
+const PAGES = { '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -7637,6 +8055,131 @@ async function main() {
         deaf.skipped.includes('address_country: this one has to be picked by hand'),
       JSON.stringify(deaf),
     );
+
+    /*
+     * Epic Games' education block, in each dropdown a form like theirs is
+     * likely built with (see `EPIC_LISTS`). Asked of each: the profile's
+     * school, degree and major chosen, drawn on the button and held in what
+     * it submits, with nothing else on the page pressed and none of it kept
+     * as the person's own answer; a list without the answer left as it was
+     * and said to lack it; the bank's answer chosen; and a person's pick read
+     * back once, under its question.
+     */
+    const EPIC_PROFILE = { ...PROFILE, school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science' };
+    const EPIC = {
+      'Radix UI Select': {
+        url: '/epic-radix',
+        shown: (f) => document.querySelector(`[data-field=${f}] button[role=combobox] > span`).textContent,
+        submits: (f) => document.querySelector(`[data-field=${f}] select`).value,
+        trigger: '[data-field=hear] button[role=combobox]', option: '[role=listbox] [role=option]:has-text("Employee referral")',
+      },
+      'MUI Select': {
+        url: '/epic-mui',
+        shown: (f) => document.querySelector(`[data-field=${f}] .MuiSelect-select`).textContent,
+        submits: (f) => document.querySelector(`[data-field=${f}] input.MuiSelect-nativeInput`).value,
+        trigger: '[data-field=hear] [role=combobox]', option: 'ul[role=listbox] li[role=option]:has-text("Employee referral")',
+      },
+      'Headless UI Listbox': {
+        url: '/epic-headless',
+        shown: (f) => document.querySelector(`[data-field=${f}] button span.block`).textContent,
+        submits: (f) => document.querySelector(`[data-field=${f}] input[type=hidden]`)?.value ?? '',
+        trigger: '[data-field=hear] button[aria-haspopup=listbox]', option: 'ul[role=listbox] li[role=option]:has-text("Employee referral")',
+      },
+    };
+    for (const [lib, E] of Object.entries(EPIC)) {
+      const read = { shown: String(E.shown), submits: String(E.submits) };
+      const look = String(() => {
+        const fields = ['country', 'school', 'degree', 'discipline', 'hear', 'pronouns'];
+        return {
+          shown: Object.fromEntries(fields.map((f) => [f, eval(read.shown)(f).trim()])),
+          submits: Object.fromEntries(fields.map((f) => [f, eval(read.submits)(f)])),
+          pressed: [...new Set(window.__pressed)].sort(),
+          submitted: window.__submitted, removed: window.__removed,
+          open: document.querySelectorAll('[data-owner]').length,
+          usable: !document.getElementById('root').hasAttribute('aria-hidden') && document.body.style.pointerEvents !== 'none',
+        };
+      });
+      const fill = (query) =>
+        page.goto(`${base}${E.url}${query}`, { waitUntil: 'domcontentloaded' }).then(() =>
+          page.evaluate(async ({ b, profile, read, look }) => {
+            const m = await import(`${b}/autofill.js`);
+            const said = [];
+            const stop = m.watchChoices((x) => said.push(x));
+            const report = await m.fillComboboxes(profile, m.fillForm(profile), { patience: 800 });
+            // Past any closing transition, and any late read-back.
+            await new Promise((r) => setTimeout(r, 500));
+            stop();
+            return {
+              ...eval(`(${look})`)(),
+              said: said.map((x) => `${x.question} — ${x.answer}`),
+              filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+            };
+          }, { b: base, profile: EPIC_PROFILE, read, look }),
+        );
+      const filled = await fill('');
+      const unlisted = await fill('?unlisted');
+      await page.goto(`${base}${E.url}`, { waitUntil: 'domcontentloaded' });
+      const fromBank = await page.evaluate(async ({ b, profile, read, look }) => {
+        const m = await import(`${b}/autofill.js`);
+        const asked = m.choiceQuestions();
+        const remembered = [{ question: 'How did you hear about this job?', answer: 'Employee referral' }];
+        const report = await m.answerWidgetsFromMemory(remembered, m.fillForm(profile, { remembered }), { patience: 800 });
+        await new Promise((r) => setTimeout(r, 300));
+        return { ...eval(`(${look})`)(), asked, filled: report.filled.map((f) => f.question ?? f.key) };
+      }, { b: base, profile: PROFILE, read, look });
+      await page.goto(`${base}${E.url}`, { waitUntil: 'domcontentloaded' });
+      await page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        window.__said = [];
+        window.__stop = m.watchChoices((x) => window.__said.push(x));
+      }, { b: base });
+      await page.click(E.trigger);
+      await page.click(E.option);
+      await page.waitForTimeout(500);
+      const picked = await page.evaluate(({ read }) => {
+        window.__stop();
+        return { shown: eval(read.shown)('hear').trim(), submits: eval(read.submits)('hear'), said: window.__said.map((x) => ({ question: x.question, answer: x.answer, keep: x.keep })) };
+      }, { read });
+
+      group(`Epic Games' education block, drawn by ${lib}`);
+      check(
+        'School, Degree and Discipline are chosen from the profile, drawn on each button, held in what each submits, and reported filled',
+        filled.shown.school === 'Northeastern University' && filled.shown.degree === "Bachelor's Degree" && filled.shown.discipline === 'Computer Science' &&
+          filled.submits.school === '4521' && filled.submits.degree === '3' && filled.submits.discipline === '204' &&
+          ['school', 'degree', 'major'].every((k) => filled.filled.filter((f) => f === k).length === 1) &&
+          !filled.skipped.some((s) => /^(school|degree|major):/.test(s)),
+        JSON.stringify(filled),
+      );
+      check(
+        'and the Country beside them, with nothing else on the page pressed and no list left open',
+        filled.shown.country === 'United States' && filled.submits.country === 'US' &&
+          filled.pressed.every((at) => ['country', 'school', 'degree', 'discipline'].includes(at)) && filled.submitted === 0 && filled.removed === 0 &&
+          filled.shown.hear === 'Select' && filled.shown.pronouns === 'Select' && filled.open === 0 && filled.usable,
+        JSON.stringify(filled),
+      );
+      check('none of those choices is kept as an answer the person gave', filled.said.length === 0, JSON.stringify(filled.said));
+      check(
+        'a School and a Discipline list without the answer are left on "Select", shut, and each said once to be the person\'s to pick',
+        unlisted.shown.school === 'Select' && unlisted.submits.school === '' && unlisted.shown.discipline === 'Select' && unlisted.submits.discipline === '' &&
+          unlisted.skipped.filter((s) => s.startsWith('school:')).join() === 'school: this one has to be picked by hand' &&
+          unlisted.skipped.filter((s) => s.startsWith('major:')).join() === 'major: this one has to be picked by hand' &&
+          !unlisted.filled.includes('school') && !unlisted.filled.includes('major') &&
+          unlisted.shown.degree === "Bachelor's Degree" && unlisted.open === 0 && unlisted.usable,
+        JSON.stringify(unlisted),
+      );
+      check(
+        'the question is asked of the bank, and the answer given before is chosen, drawn and held',
+        fromBank.asked.includes('How did you hear about this job?') && fromBank.shown.hear === 'Employee referral' && fromBank.submits.hear === '2' &&
+          fromBank.filled.includes('How did you hear about this job?') && fromBank.shown.pronouns === 'Select' && fromBank.open === 0,
+        JSON.stringify(fromBank),
+      );
+      check(
+        "and a person's pick is kept, once, under the question the next form looks up",
+        picked.shown === 'Employee referral' && picked.said.length === 1 && picked.said[0].question === 'How did you hear about this job?' &&
+          picked.said[0].answer === 'Employee referral' && picked.said[0].keep,
+        JSON.stringify(picked),
+      );
+    }
   } finally {
     await browser.close();
     server.close();

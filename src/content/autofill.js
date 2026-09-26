@@ -1352,6 +1352,53 @@ function isDisabled(node) {
   return typeof node?.matches === 'function' ? node.matches(':disabled') : Boolean(node?.disabled);
 }
 
+/*
+ * A control a dropdown keeps for itself beside its button, which no person
+ * reaches: hidden from a screen reader (`aria-hidden="true"`) and from the
+ * Tab key (`tabindex="-1"`).
+ *
+ * MUI's Select keeps what it submits in one — a text box, `opacity: 0`, named
+ * like the question and holding the chosen option's value — and the box just
+ * before it is the Select's own button saying "Select". So it was read as a
+ * box labelled "Select" and named `school_name_id`, the profile's words were
+ * typed into it, and it was counted filled; MUI takes a value typed there
+ * only when it is one of its options' values, and a form over Greenhouse's
+ * API gives those as ids, so nothing was chosen. Measured on a fixture drawn
+ * as MUI draws itself: School, Degree and Discipline stayed on "Select" and
+ * were reported filled, and because they were claimed the Select beside each
+ * was never driven — the Country, not an education key, was driven and chose.
+ * That is the shape of what Epic Games' form was reported to do.
+ *
+ * Radix's Select keeps a visually hidden `<select>` beside its button, with
+ * no label of its own: read the same way, it was a list labelled by whatever
+ * the button showed, "Select" or the last choice. It takes a `change` as a
+ * choice, but it also fires one of its own after every choice, so a person's
+ * pick — and each one made here — was written down a second time under the
+ * button's words as the question: "Northeastern University — Northeastern
+ * University".
+ *
+ * So a text box like that is never typed into, and a select like that — no
+ * label of its own, an ARIA dropdown beside it — is not filled, asked or
+ * watched as a question: the dropdown is, by `fillComboboxes` and
+ * `watchWidgetPicks`, and what it holds is read back as the dropdown's
+ * (see `hiddenPartner`). A select with a label of its own is left as it was:
+ * select2 hides its select the same way, labels it, and redraws from it.
+ */
+function isWidgetPartner(el) {
+  if (!(el instanceof HTMLInputElement || el instanceof HTMLSelectElement)) return false;
+  if (el.getAttribute('aria-hidden') !== 'true' || el.getAttribute('tabindex') !== '-1') return false;
+  if (el instanceof HTMLInputElement) return el.type !== 'hidden';
+  const labelled =
+    (el.id && rootOf(el).querySelector(`label[for="${CSS.escape(el.id)}"]`)) ||
+    el.closest('label') ||
+    el.hasAttribute('aria-labelledby') ||
+    el.hasAttribute('aria-label');
+  if (labelled) return false;
+  return [...(el.parentElement?.children ?? [])].some(
+    (other) => other !== el && (isWidgetChoice(other) || other.querySelector?.('[role="combobox"], [aria-haspopup="listbox"]')),
+  );
+}
+
 function isFillable(input) {
   /*
    * `:disabled`, not `.disabled`.
@@ -1373,6 +1420,8 @@ function isFillable(input) {
    */
   if (input instanceof HTMLSelectElement && input.hasAttribute('readonly')) return false;
   if (input.type === 'hidden' || input.type === 'file' || input.type === 'password') return false;
+  // What a dropdown keeps beside its button. See `isWidgetPartner`.
+  if (isWidgetPartner(input)) return false;
   // Radios are answered as a group, below; checkboxes are consent and are
   // nobody's to tick but the applicant's.
   if (input.type === 'radio' || input.type === 'checkbox') return false;
@@ -4991,7 +5040,12 @@ function controlOf(widget) {
  */
 function hiddenPartner(widget) {
   const around = controlOf(widget).parentElement ?? controlOf(widget);
-  return around.querySelector?.(':scope > input[type="hidden"]') ?? null;
+  return (
+    around.querySelector?.(':scope > input[type="hidden"]') ??
+    // Or the box or select a dropdown keeps out of sight. See `isWidgetPartner`.
+    [...(around.querySelectorAll?.(':scope > input, :scope > select') ?? [])].find(isWidgetPartner) ??
+    null
+  );
 }
 
 /** Whether pressing this would send its form. */
@@ -5001,11 +5055,44 @@ function wouldSubmit(el) {
   return false;
 }
 
-/** Put the widget back as it was: nothing typed, nothing open. */
-function undoWidget(widget, box) {
+/**
+ * Put the widget back as it was: nothing typed, nothing open.
+ *
+ * Escape is pressed where a person's Escape goes, which is wherever the focus
+ * is — and a menu that takes the focus as it opens hears it there and not on
+ * its button. Headless UI's Listbox focuses its list, MUI's Select an option
+ * inside its Modal, and neither button answers Escape. Sent to the button
+ * only, a list with no option for the answer stayed open over the form —
+ * MUI's with an invisible backdrop over the whole page and the app hidden
+ * from screen readers. Where it is still open after that, a button that
+ * opened it with a press is pressed once more, which is how a person shuts a
+ * dropdown that answers no key at all.
+ */
+function undoWidget(widget, box, openBefore = null) {
   if (box) setValue(box, '');
-  (box ?? widget).dispatchEvent(ours(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+  const escape = (el) =>
+    el.dispatchEvent(ours(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true })));
+  escape(box ?? widget);
+  // Believed about itself where it says: a list closing behind a transition
+  // is still on the page for a moment, and pressing again would reopen it.
+  const open = () => {
+    const said = (box ?? widget).getAttribute('aria-expanded');
+    return said === null ? optionsOf(widget, openBefore).length > 0 : said === 'true';
+  };
+  const focused = deepActiveElement();
+  if (focused && focused !== (box ?? widget) && focused !== document.body && open()) escape(focused);
+  if (!box && open()) press(pressPoint(widget));
   (box ?? widget).blur?.();
+}
+
+/** Where a widget is pressed to open it: itself. */
+const pressPoint = (widget) => widget;
+
+/** The element that has the focus, inside any shadow root that holds it. */
+function deepActiveElement() {
+  let at = document.activeElement;
+  while (at?.shadowRoot?.activeElement) at = at.shadowRoot.activeElement;
+  return at;
 }
 
 /**
@@ -5179,7 +5266,7 @@ async function chooseInWidget(widget, key, value, { patience, fields, asked }) {
   }
   if (!option) {
     const opened = menuIsOpen(widget, box, openBefore);
-    undoWidget(widget, box);
+    undoWidget(widget, box, openBefore);
     return opened ? 'unlisted' : 'missed';
   }
   // Read before the press: a menu that closes takes its options with it.
@@ -5187,7 +5274,7 @@ async function chooseInWidget(widget, key, value, { patience, fields, asked }) {
   press(wordsOf(option));
   await pause(60);
   if (!tookIt(widget, box, option, value, hiddenBefore, chosen, shownBefore)) {
-    undoWidget(widget, box);
+    undoWidget(widget, box, openBefore);
     return 'ignored';
   }
   return 'chose';
@@ -5330,6 +5417,8 @@ function educationBlocks(box) {
   let block = null;
   for (const control of box.querySelectorAll(SECTION_CONTROLS)) {
     if (isDisabled(control) || control.getClientRects().length === 0) continue;
+    // The dropdown beside it is the part. See `isWidgetPartner`.
+    if (isWidgetPartner(control)) continue;
     if (control.type === 'checkbox' || control.type === 'radio') continue;
     const part = educationPartOf(control);
     if (part === 'foreign') return null;
@@ -5684,6 +5773,9 @@ export function watchChoices(tell) {
      * looked up are the same string.
      */
     if (control instanceof HTMLSelectElement) {
+      // Radix's own `change`, after a pick `watchWidgetPicks` reads off the
+      // dropdown. See `isWidgetPartner`.
+      if (isWidgetPartner(control)) return null;
       const option = control.selectedOptions?.[0];
       if (!option || looksLikePlaceholder(option, control)) return null;
       return { question: clean(questionFor(control)), answer: clean(option.textContent) };
