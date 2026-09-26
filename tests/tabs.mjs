@@ -161,8 +161,25 @@ const QUORRA_ROLE = {
 const QUORRA_AGAIN = { ...QUORRA_ROLE, name: 'quorra-again', path: '/quorra/careers/data-intern',
   html: jobPage(QUORRA, 'Data Intern', 'Build pipelines in Python and SQL. Kafka.') };
 
+/*
+ * Two bare application forms at one employer, on its own careers host: titled
+ * "Apply", naming neither the employer nor the role, told apart only by the
+ * job number in the address. The store reads "Orrin" off the host for both.
+ */
+const ORRIN = 'Orrin';
+const ORRIN_HOST = 'careers.orrin.test';
+const ORRIN_FORM = {
+  name: 'orrin-form',
+  path: '/orrin-apply',
+  company: ORRIN,
+  html: `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><h1>Submit your application</h1>
+<form onsubmit="event.preventDefault();"><label for="fn">First Name</label><input id="fn" name="first_name">
+<label for="ln">Last Name</label><input id="ln" name="last_name"><label for="em">Email</label><input id="em" name="email" type="email">
+<label for="rs">Resume</label><input id="rs" name="resume" type="file"><button type="button">Next</button></form></body></html>`,
+};
+
 /** What this suite files under, cleared before it starts as well as after. */
-const MINE = [...TABS.map((t) => t.company), PELLUCID, QUORRA, KEYSIGHT];
+const MINE = [...TABS.map((t) => t.company), PELLUCID, QUORRA, KEYSIGHT, ORRIN];
 
 /** What the "Start from" picker says, and the base the proposal names. */
 const startsFrom = (page) =>
@@ -378,13 +395,19 @@ async function main() {
     PELLUCID_FORM,
     QUORRA_ROLE,
     QUORRA_AGAIN,
+    ORRIN_FORM,
   ]);
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-tabs-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     executablePath: findChromium(),
     headless: true,
     viewport: { width: 1280, height: 900 },
-    args: ['--no-sandbox', `--disable-extensions-except=${extensionRoot}`, `--load-extension=${extensionRoot}`],
+    args: [
+      '--no-sandbox',
+      `--disable-extensions-except=${extensionRoot}`,
+      `--load-extension=${extensionRoot}`,
+      `--host-resolver-rules=MAP ${ORRIN_HOST} 127.0.0.1`,
+    ],
   });
 
   try {
@@ -709,6 +732,63 @@ async function main() {
         for (const one of pair) {
           check(`the ${one.title} letter is still in the store`, bodies.some((b) => b.includes(one.body)), `${bodies.filter((b) => b.includes(String(stamp))).length} of 2 found`);
         }
+      } finally {
+        for (const page of pages) await page.close().catch(() => undefined);
+      }
+    }
+
+    /*
+     * Two bare forms at one employer, one tab each, whose role nothing reads.
+     *
+     * Both were "Orrin" and "Unknown role", and identity is the company and
+     * the role: the second tab's build found the first one's tracker row and
+     * workspace, was filed into its folder, and wrote its tailored copy over
+     * the first one's. The job number in each address is what tells them
+     * apart.
+     */
+    group('Two forms at one employer that name no role are two applications');
+    {
+      const port = new URL(fixtures.urlFor(ORRIN_FORM)).port;
+      const jobs = ['4400001', '4400002'];
+      const pages = [];
+      try {
+        for (const job of jobs) {
+          const page = await context.newPage();
+          pages.push(page);
+          await page.goto(`http://${ORRIN_HOST}:${port}${ORRIN_FORM.path}?gh_jid=${job}`, { waitUntil: 'domcontentloaded' });
+          await settled(page);
+        }
+        for (const page of pages) {
+          await page.bringToFront();
+          const card = cardOf(page);
+          await card.getByRole('button', { name: 'Build resume' }).click();
+          await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 }).catch(() => undefined);
+        }
+        const filed = async () => ({
+          rows: (await applications()).filter((a) => a.company === ORRIN),
+          drafts: ((await (await fetch(`${SERVER}/api/workspace`)).json().catch(() => ({})))?.drafts ?? []).filter((d) => d.company === ORRIN),
+        });
+        let now = await filed();
+        for (let i = 0; i < 75 && (now.rows.length < 2 || now.drafts.length < 2); i++) {
+          await new Promise((done) => setTimeout(done, 200));
+          now = await filed();
+        }
+        const said = JSON.stringify({
+          rows: now.rows.map((a) => [a.id, a.role, a.url, a.resumeId]),
+          drafts: now.drafts.map((d) => [d.id, d.role]),
+        });
+        check('each form is its own tracker row', now.rows.length === 2 && new Set(now.rows.map((a) => a.id)).size === 2, said);
+        check(
+          'each row is the form it was built on, and still says the role is unknown',
+          jobs.every((job) => now.rows.some((a) => (a.url ?? '').endsWith(`gh_jid=${job}`) && /^Unknown role\b/.test(a.role ?? '') && (a.role ?? '').includes(job))),
+          said,
+        );
+        check('each has a workspace of its own', now.drafts.length === 2 && new Set(now.drafts.map((d) => d.id)).size === 2, said);
+        check(
+          'and a tailored copy of its own',
+          now.rows.every((a) => a.resumeId) && new Set(now.rows.map((a) => a.resumeId)).size === 2,
+          said,
+        );
       } finally {
         for (const page of pages) await page.close().catch(() => undefined);
       }
