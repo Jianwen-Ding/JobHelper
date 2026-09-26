@@ -875,6 +875,38 @@ export function createCard({
   const lower = () => {
     if (host.hasAttribute('popover')) host.removeAttribute('popover');
   };
+  /*
+   * Whether the page has put the card out of the top layer while it is still
+   * inside the modal.
+   *
+   * The host is a `[popover]` on the page, and the page's own code can reach
+   * it. A page that hides or toggles every popover it has, as
+   * `document.querySelectorAll('[popover]').forEach((p) => p.hidePopover())`,
+   * hides the card with its own. Measured with a dialog centred by
+   * `translate(-50%, -50%)`: nothing threw and the page's popovers closed as
+   * they should, but the card fell out of the top layer. The inline
+   * `all: initial` kept it on screen, so it was back where `raise` was
+   * written to keep it from, moved from the window's corner to the dialog's
+   * and cut to the dialog's box. Nothing put it back: `reachable` found the
+   * same modal it already had and did nothing, every second.
+   *
+   * Hiding cannot be refused, since `beforetoggle` can only stop an opening.
+   * So the card goes back up once it has gone: on its `toggle` event, which
+   * comes a task later, and from `reachable`, for a toggle that is missed.
+   * Only while it is still in a modal that is still open, so the hiding that
+   * comes with leaving (`lower`, a modal closing) is left alone.
+   */
+  const outOfTopLayer = () => {
+    try {
+      return host.hasAttribute('popover') && !host.matches(':popover-open');
+    } catch {
+      return false;
+    }
+  };
+  const stillBorrowed = () => borrowed !== null && host.parentNode === borrowed && isModal(borrowed);
+  host.addEventListener('toggle', (event) => {
+    if (event.newState === 'closed' && stillBorrowed() && outOfTopLayer()) raise();
+  });
   const letGo = () => {
     borrowed?.removeEventListener('close', onModalClosed);
     borrowed = null;
@@ -888,6 +920,7 @@ export function createCard({
   const reachable = () => {
     if (borrowed && (!host.isConnected || host.parentNode !== borrowed || !isModal(borrowed))) giveBack();
     if (!host.isConnected) return;
+    if (stillBorrowed() && outOfTopLayer()) raise();
     const modal = modalOver();
     if (!modal || modal === borrowed) return;
     letGo();

@@ -5551,6 +5551,106 @@ async function main() {
   await page.evaluate(() => document.querySelectorAll('style[data-page]').forEach((el) => el.remove()));
 
   /*
+   * A page that hides, or toggles, every popover it has.
+   *
+   * Above a modal the card's host is a popover, and a page's own code can
+   * reach it: `document.querySelectorAll('[popover]')` finds it beside the
+   * page's popovers. Measured with the dialog centred by translate: hiding
+   * every one of them took the card out of the top layer, back to the
+   * dialog's corner and cut to the dialog's box, and it stayed there, since
+   * the card found the modal it already had and did nothing. The page's own
+   * popovers have to do what the page asked all the same.
+   */
+  const hidesEveryPopover = await inPage(async (createCard) => {
+    document.querySelectorAll('dialog, #interop-outlet, [popover]').forEach((el) => el.remove());
+    createCard({
+      analysis: { isJobPosting: true, job: { title: 'Platform Engineer', company: 'Acme' }, spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' }, rationale: [] },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    const host = document.querySelector('#jobhelper-card-host');
+    const card = host.shadowRoot.querySelector('.card');
+    const box = () => {
+      const r = card.getBoundingClientRect();
+      return { left: r.left, top: r.top, width: r.width, height: r.height };
+    };
+    const was = box();
+    const tip = document.createElement('div');
+    tip.popover = 'manual';
+    tip.textContent = 'A tip of the page\'s own';
+    const menu = document.createElement('div');
+    menu.popover = 'auto';
+    menu.textContent = 'A menu of the page\'s own';
+    document.body.append(tip);
+    const dialog = document.createElement('dialog');
+    dialog.innerHTML = '<form method="dialog"><label>First name <input name="first"></label><button>Next</button></form>';
+    dialog.style.cssText = 'top: 50%; left: 50%; margin: 0; transform: translate(-50%, -50%);';
+    document.body.append(dialog);
+    dialog.showModal();
+    dialog.querySelector('form').append(menu);
+    await new Promise((r) => setTimeout(r, 60));
+    tip.showPopover();
+    menu.showPopover();
+    const where = (label) => {
+      const now = box();
+      const input = dialog.querySelector('input').getBoundingClientRect();
+      const at = (x, y) => document.elementFromPoint(x, y);
+      return {
+        label,
+        inDialog: host.parentNode === dialog,
+        up: host.matches(':popover-open'),
+        inPlace: ['left', 'top', 'width', 'height'].every((key) => Math.abs(now[key] - was[key]) < 1),
+        whole: at(now.left + 8, now.top + now.height - 8) === host && at(now.left + now.width - 8, now.top + now.height - 8) === host,
+        field: at(input.left + input.width / 2, input.top + input.height / 2)?.localName ?? null,
+        tip: tip.matches(':popover-open'),
+        menu: menu.matches(':popover-open'),
+      };
+    };
+    const raised = where('raised');
+    const everyPopover = (how) => {
+      try {
+        document.querySelectorAll('[popover]').forEach((el) => el[how]());
+        return null;
+      } catch (err) {
+        return String(err);
+      }
+    };
+    const hideThrew = everyPopover('hidePopover');
+    // A task later, as the card's `toggle` comes.
+    await new Promise((r) => setTimeout(r, 30));
+    const hidden = where('hidden');
+    const toggleThrew = everyPopover('togglePopover');
+    await new Promise((r) => setTimeout(r, 30));
+    const toggled = where('toggled');
+    dialog.close();
+    await new Promise((r) => setTimeout(r, 30));
+    const closed = { home: host.parentNode === document.documentElement, attribute: host.getAttribute('popover'), width: box().width };
+    tip.remove();
+    return { raised, hideThrew, hidden, toggleThrew, toggled, closed };
+  });
+  {
+    const { raised, hidden, toggled, closed } = hidesEveryPopover;
+    check('a page with popovers of its own: the card is raised above its modal as before', raised.inDialog && raised.up && raised.inPlace && raised.whole, JSON.stringify(raised));
+    check(
+      'a page that hides every [popover]: its own popovers close, and nothing throws',
+      hidesEveryPopover.hideThrew === null && !hidden.tip && !hidden.menu,
+      JSON.stringify({ threw: hidesEveryPopover.hideThrew, hidden }),
+    );
+    check('and the card is back above the modal, where it was', hidden.inDialog && hidden.up && hidden.inPlace, JSON.stringify(hidden));
+    check('all of it, not cut to the dialog, and off the form\'s field', hidden.whole && hidden.field === 'input', JSON.stringify(hidden));
+    check(
+      'a page that toggles every [popover]: its own popovers open again, and nothing throws',
+      hidesEveryPopover.toggleThrew === null && toggled.tip && toggled.menu,
+      JSON.stringify({ threw: hidesEveryPopover.toggleThrew, toggled }),
+    );
+    check('and the card stays above the modal, where it was, all of it', toggled.inDialog && toggled.up && toggled.inPlace && toggled.whole, JSON.stringify(toggled));
+    check('once that modal closes, the card is on the page again, not a popover, and in view', closed.home && closed.attribute === null && closed.width > 0, JSON.stringify(closed));
+  }
+
+  /*
    * A modal the page throws away with the card inside it. The content script
    * calls `putBack` every second; the card comes back out, rather than going
    * wherever the modal went.
