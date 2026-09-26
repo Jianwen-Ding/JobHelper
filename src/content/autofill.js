@@ -2155,9 +2155,24 @@ function setValue(input, value) {
   if (spin && lastBoxOfItsDate(input)) input.blur?.();
 }
 
+/*
+ * The date's group, and its boxes, as the page draws them.
+ *
+ * `closest` stops at the root a box is drawn in, and `querySelectorAll` does
+ * not open a component, so a date whose boxes are components — the page's
+ * `role="group"` round a month and a year each drawn in one, or a date
+ * component that is itself the group, its boxes loose in its root — had no
+ * group, every box was its date's last, and focus was sent out after the
+ * month alone: measured against a wrapper that takes the date on the blur
+ * that leaves it, as Workday's does, the date was taken as "May/" where the
+ * same boxes written into the page were taken as "May/2026". The nearest
+ * group out through each component (see `closestAround`), and its boxes in
+ * the order they are drawn (see `drawnWithin`).
+ */
 function lastBoxOfItsDate(input) {
-  const boxes = input.closest('[role="group"]')?.querySelectorAll('[role="spinbutton"]');
-  return !boxes?.length || boxes[boxes.length - 1] === input;
+  const group = closestAround(input, '[role="group"]');
+  const boxes = group ? [...drawnWithin(group)].filter((el) => el.matches('[role="spinbutton"]')) : [];
+  return !boxes.length || boxes[boxes.length - 1] === input;
 }
 
 /**

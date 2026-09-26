@@ -3085,6 +3085,16 @@ const COMPONENT_DEFINITIONS = `<script>
     ['+1', '+44', '+39'].map((c) => '<option value="' + c + '"' + (c === at(h, 'code') ? ' selected' : '') + '>' + c + '</option>').join('') + '</select>');
   def('y-tel', (h) => '<style>:host { display: inline-flex }</style><button type="button" aria-label="Change country, selected (' + at(h, 'code') + ')">' +
     at(h, 'code') + '</button><input type="tel" name="' + at(h, 'field') + '" aria-label="' + at(h, 'label') + '">');
+  // A date's spin box, and a date that is itself the group, its boxes loose in its root.
+  def('y-spin', (h) => '<style>:host { display: inline-block }</style><input role="spinbutton" aria-label="' + at(h, 'label') + '" name="' + at(h, 'field') + '">');
+  customElements.define('y-date', class extends HTMLElement {
+    constructor() {
+      super();
+      this.setAttribute('role', 'group');
+      this.attachShadow({ mode: 'open' }).innerHTML = '<style>:host { display: inline-block }</style>' +
+        '<input role="spinbutton" aria-label="Month" name="' + at(this, 'field') + '_month"> / <input role="spinbutton" aria-label="Year" name="' + at(this, 'field') + '_year">';
+    }
+  });
 </script>`;
 
 const LABELLED_FROM_OUTSIDE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
@@ -3328,6 +3338,40 @@ const COMPONENT_DIALLING_CODE = `<!doctype html><html><head><meta charset="utf-8
   </div>
 </form>
 ${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * A date asked as spin boxes drawn in components, and a wrapper that takes
+ * the date as Workday's does: focus arriving from outside the date is sent
+ * to its first box, a box takes what is written into it only while it has
+ * the focus, and the date is taken — into `data-taken` — on the blur that
+ * leaves it. The page's `role="group"` round a Month and a Year each drawn in
+ * a component, and a date component that is itself the group, its boxes
+ * loose in its root.
+ */
+const COMPONENT_DATES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <label>First name</label><input name="q_9800">
+  <fieldset><legend>Expected graduation date</legend>
+    <div role="group" data-date id="d-page"><y-spin label="Month" field="q_9801"></y-spin> / <y-spin label="Year" field="q_9802"></y-spin></div>
+  </fieldset>
+  <fieldset><legend>When do you expect to graduate?</legend><y-date data-date id="d-drawn" field="q_9803"></y-date></fieldset>
+</form>
+${COMPONENT_DEFINITIONS}
+<script>
+  for (const wrapper of document.querySelectorAll('[data-date]')) {
+    const inside = wrapper.shadowRoot ?? wrapper;
+    const boxes = wrapper.shadowRoot ? [...inside.querySelectorAll('input')] : [...inside.querySelectorAll('y-spin')].map((h) => h.shadowRoot.querySelector('input'));
+    const holds = (node) => Boolean(node) && (node === wrapper || wrapper.contains(node) || boxes.includes(node));
+    const entered = new Map();
+    for (const box of boxes) box.addEventListener('input', () => { if (box.getRootNode().activeElement === box) entered.set(box, box.value); });
+    inside.addEventListener('focusin', (e) => { if (!holds(e.relatedTarget) && e.composedPath()[0] !== boxes[0]) boxes[0].focus(); });
+    inside.addEventListener('focusout', (e) => {
+      if (holds(e.relatedTarget)) return;
+      wrapper.dataset.taken = boxes.map((b) => entered.get(b) ?? '').join('/');
+    });
+  }
+</script>
 </body></html>`;
 
 /*
@@ -4591,7 +4635,7 @@ const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><tit
   });
 </script></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -8990,6 +9034,30 @@ async function main() {
       'a Home phone beside an Alternate phone drawn with a +44 of its own keeps its 0, and the Alternate phone is given "7700 900123"',
       drawnCode.q_9704 === '07700 900123' && drawnCode.q_9705 === '7700 900123' && drawnCode.filled.length === 5 && drawnCode.skipped.length === 0,
       JSON.stringify(drawnCode),
+    );
+
+    const drawnDates = await page.goto(`${base}/component-dates`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        await new Promise((r) => setTimeout(r, 50));
+        return {
+          taken: [...document.querySelectorAll('[data-date]')].map((w) => `${w.id}=${w.dataset.taken ?? ''}`),
+          filled: report.filled.map((f) => f.key),
+          skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, fields: GRADUATING }),
+    );
+    group('A date asked as spin boxes drawn in components');
+    check(
+      'the date is taken whole when focus leaves it, not after its month alone: the page\'s group round two components, and a date component that is its own group',
+      JSON.stringify(drawnDates.taken) === '["d-page=May/2026","d-drawn=May/2026"]',
+      JSON.stringify(drawnDates),
+    );
+    check(
+      'and each box is reported filled',
+      drawnDates.filled.join() === 'first_name,graduation_month,graduation_year,graduation_month,graduation_year' && drawnDates.skipped.length === 0,
+      JSON.stringify(drawnDates),
     );
 
     const dateParts = await page.goto(`${base}/date-in-parts`, { waitUntil: 'domcontentloaded' }).then(() =>
