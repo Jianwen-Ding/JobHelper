@@ -7197,7 +7197,14 @@ export function watchChoices(tell) {
     // select2's list, whose pick `watchChosenPicks` reads off the select.
     if (option && isSelect2Part(option)) return null;
     if (option) {
-      const group = closestAround(option, A_CHOICE_GROUP);
+      /*
+       * The group `ariaChoiceGroups` answers it in (`choiceGroupOf`), not
+       * the nearest: a `role="group"` in a listbox heads some of its options.
+       * Measured, a person's Germany in a Country listbox headed "Europe"
+       * over France and Germany was kept as "Europe — Germany", under a
+       * question no form asks, and never offered back to "Country".
+       */
+      const group = choiceGroupOf(option);
       if (!group) return null;
       // A widget's menu is the widget's question, and `watchWidgetPicks` reads it.
       if (group.getAttribute('role') === 'listbox' && ownerOfMenu(group)) return null;

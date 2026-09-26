@@ -9603,6 +9603,22 @@ async function main() {
       JSON.stringify({ ...oneGroup, listboxPicked }),
     );
 
+    // A person's own picks: Germany in the Country listbox headed "Europe", and No to the sponsorship question in each section.
+    const headedPicked = await pickedOn('/page-aria-one-group', () => page.getByText('Germany', { exact: true }));
+    const sectionPicked = await pickedOn('/page-aria-section', () => page.locator('[role="radiogroup"]').first().getByText('No', { exact: true }));
+    const radiogroupSectionPicked = await pickedOn('/page-aria-radiogroup-section', () => page.locator('[role="radiogroup"] [role="radiogroup"]').first().getByText('No', { exact: true }));
+    group('A pick in an ARIA listbox whose options are headed by groups');
+    check(
+      "a person's pick in it is kept under the listbox's question, not the heading over the option",
+      headedPicked.length > 0 && headedPicked.every((s) => s === 'Country — Germany'),
+      JSON.stringify(headedPicked),
+    );
+    check(
+      "and a person's No in a radiogroup inside a section's group, or radiogroup, is still kept under its own question, not the section's",
+      [sectionPicked, radiogroupSectionPicked].every((said) => said.length > 0 && said.every((s) => s === 'Will you now or in the future require visa sponsorship? — No')),
+      JSON.stringify({ sectionPicked, radiogroupSectionPicked }),
+    );
+
     const putIn = (url) => page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' }).then(() =>
       page.evaluate(async ({ b, fields }) => {
         const m = await import(`${b}/autofill.js`);
