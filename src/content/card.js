@@ -1104,6 +1104,8 @@ export function createCard({
     priorLetters: [],
     questions,
     answers: {},
+    /** The same as `letterGaps`, for each AI answer, by question. */
+    answerGaps: {},
     /** Questions whose last "Insert into form" put nothing in, by question. */
     insertMissed: {},
     /**
@@ -1118,7 +1120,7 @@ export function createCard({
      * with a sentence about what was wrong still takes the paragraph it was
      * given, and the only safe way to let it is to keep that paragraph.
      */
-    replaced: { letter: null, letterGaps: [], answers: {} },
+    replaced: { letter: null, letterGaps: [], answers: {}, answerGaps: {} },
     feedback: '',
     autofillReport: null,
     /**
@@ -1320,6 +1322,7 @@ export function createCard({
           .map((q) => [q.question, answerShown(q)])
           .filter(([, a]) => a?.trim()),
       ),
+      answerGaps: state.answerGaps,
     };
   }
 
@@ -1460,6 +1463,7 @@ export function createCard({
     state.letterAutoStarted = state.letterAutoStarted || Boolean(work.letterAutoStarted);
     if (work.priorLetters?.length) state.priorLetters = work.priorLetters;
     state.carriedOver = work.answersByQuestion ?? {};
+    if (work.answerGaps && typeof work.answerGaps === 'object') state.answerGaps = { ...work.answerGaps, ...state.answerGaps };
     applyCarriedAnswers();
     maybeAutoDraft();
     /*
@@ -5087,7 +5091,7 @@ export function createCard({
           for (const slot of slots) {
             const before = state.answers[slot.question] ?? slot.before;
             await act(`answer:${slot.question}`, { question: slot.question, force: true, limit: slot.limit, spec: state.spec }, (one) => {
-              if (one?.executed && one.output) applyAnswer(slot.question, before, one.output);
+              if (one?.executed && one.output) applyAnswer(slot.question, before, one.output, placeholdersOf(one));
             });
           }
           return;
@@ -5112,7 +5116,7 @@ export function createCard({
    *
    * @param before what was in the box when the run was asked for
    */
-  function applyAnswer(question, before, text) {
+  function applyAnswer(question, before, text, gaps = []) {
     if (!text?.trim()) return false;
     /*
      * Nothing in `state.answers` is nobody having written anything.
@@ -5138,7 +5142,15 @@ export function createCard({
       return false;
     }
     state.answers[question] = text;
+    // What the AI left unfilled in it, named beside the box. See `gapNote`.
+    if (gaps.length) state.answerGaps[question] = gaps;
+    else delete state.answerGaps[question];
     return true;
+  }
+
+  /** An answer's slots still in it. */
+  function answerGapsLeft(question) {
+    return gapsLeft(state.answers[question], state.answerGaps[question]);
   }
 
   /*
@@ -6492,7 +6504,12 @@ export function createCard({
     if (!writingNeeded) return null;
 
     const step = h('div', { className: 'step' }, [
-      stepHead(3, 'Application questions', Object.keys(state.answers).length > 0),
+      // Not ticked while an AI answer still has placeholders in it.
+      stepHead(
+        3,
+        'Application questions',
+        Object.keys(state.answers).length > 0 && Object.keys(state.answers).every((q) => answerGapsLeft(q).length === 0),
+      ),
       progressFor(3),
       drawVoiceFrom('answer'),
       /*
@@ -6564,6 +6581,13 @@ export function createCard({
        * the form is sent, so it is counted here while it can still be cut.
        */
       const counter = q.limit ? h('div', { className: 'count faint' }) : null;
+      /*
+       * What the AI left unfilled in this answer, beside it — so a draft with
+       * "[Company Name]" in it is not taken for one to paste into the form.
+       */
+      const gaps = answerGapsLeft(q.question).length
+        ? h('div', { className: 'hint warn', dataset: { note: 'answer-gaps' }, textContent: gapNote(answerGapsLeft(q.question)) })
+        : null;
       countAgainst(counter, value, q.limit);
       const wordLimit = statedWordLimit(q.question);
       const words = h('div', { className: 'wordcount faint' });
@@ -6597,8 +6621,15 @@ export function createCard({
             state.answers[q.question] = e.target.value;
             countAgainst(counter, e.target.value, q.limit);
             countWords(words, e.target.value, wordLimit);
+            // The note follows the typing, as the letter's does.
+            if (gaps) {
+              const left = answerGapsLeft(q.question);
+              gaps.hidden = left.length === 0;
+              if (left.length) gaps.textContent = gapNote(left);
+            }
           },
         }),
+        gaps,
         words,
         counter,
         h('div', { className: 'row gap' }, [
@@ -6677,9 +6708,13 @@ export function createCard({
                    * it here, and this no longer reaches for it either.
                    */
                   if (r?.executed && r.output) {
+                    const gapsBefore = state.answerGaps[q.question] ?? [];
                     // Kept, so it can be put back — see `state.replaced`.
-                    if (applyAnswer(q.question, typedBefore, r.output)) {
-                      if (typedBefore.trim()) state.replaced.answers[q.question] = typedBefore;
+                    if (applyAnswer(q.question, typedBefore, r.output, placeholdersOf(r))) {
+                      if (typedBefore.trim()) {
+                        state.replaced.answers[q.question] = typedBefore;
+                        state.replaced.answerGaps[q.question] = gapsBefore;
+                      }
                       state.changeAnswer[q.question] = '';
                     }
                   } else if (r && !r.executed) {
@@ -6749,7 +6784,9 @@ export function createCard({
                     textContent: 'Put back what you had',
                     onclick: () => {
                       state.answers[q.question] = state.replaced.answers[q.question];
+                      state.answerGaps[q.question] = state.replaced.answerGaps[q.question] ?? [];
                       delete state.replaced.answers[q.question];
+                      delete state.replaced.answerGaps[q.question];
                       draw();
                     },
                   })

@@ -4886,6 +4886,79 @@ async function main() {
     String(gappyFolder.filed.done),
   );
 
+  console.log('\nAn AI answer with placeholders left in it');
+
+  /*
+   * The same for an answer: `/api/ai/answer` names the slots, and the card
+   * put the draft in its box as one to paste into the form.
+   */
+  const gappyAnswer = await inPage(async (createCard) => {
+    const output = 'I want to work at [Company Name] because the platform team ships weekly.';
+    let reply = {
+      executed: true,
+      source: 'ai',
+      output,
+      match: { confident: false },
+      placeholders: ['[Company Name]'],
+      unfinished: 'This answer still has a placeholder in it — "[Company Name]". It is not finished: fill it in, or take the sentence out.',
+    };
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme', description: 'Kafka and Go.' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [{ question: 'Why us?', answer: '', confident: false, fieldId: 'jh-1' }],
+      needsCoverLetter: false,
+      onAction: async (action) => {
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'answer:Why us?') return reply;
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const byText = (t) => [...root.querySelectorAll('.q button')].find((b) => new RegExp(t).test(b.textContent));
+    const box = () => root.querySelector('textarea[data-field="answer:Why us?"]');
+    const note = () => {
+      const n = root.querySelector('.q [data-note="answer-gaps"]');
+      return n && !n.hidden ? n.textContent : null;
+    };
+    const ticked = () =>
+      Boolean([...root.querySelectorAll('.step-head')].find((n) => /Application questions/.test(n.textContent))?.querySelector('.n.done'));
+    await wait(120);
+
+    byText('Draft an answer')?.click();
+    await wait(150);
+    const drafted = { text: box()?.value, note: note(), ticked: ticked() };
+
+    box().value = output.replace('[Company Name]', 'Acme');
+    box().dispatchEvent(new Event('input', { bubbles: true }));
+    const filled = { note: note() };
+
+    reply = { executed: true, source: 'ai', output: 'Acme ships weekly, and so do I.', match: { confident: false }, placeholders: [] };
+    byText('Rewrite for this role|Draft an answer')?.click();
+    await wait(150);
+    const clean = { text: box()?.value, note: note(), ticked: ticked() };
+    return { output, drafted, filled, clean };
+  });
+  check('the AI answer goes in its box as it came', gappyAnswer.drafted.text === gappyAnswer.output, JSON.stringify(gappyAnswer.drafted.text));
+  check(
+    'with a note beside it naming what is left to fill in',
+    gappyAnswer.drafted.note === 'The draft still has [Company Name] in it — fill it in before sending.',
+    String(gappyAnswer.drafted.note),
+  );
+  check('and the step is not ticked as done', gappyAnswer.drafted.ticked === false);
+  check('filled in, the note goes', gappyAnswer.filled.note === null, String(gappyAnswer.filled.note));
+  check(
+    'and an answer with nothing left in it has no such note, and is ticked',
+    gappyAnswer.clean.text === 'Acme ships weekly, and so do I.' && gappyAnswer.clean.note === null && gappyAnswer.clean.ticked === true,
+    JSON.stringify(gappyAnswer.clean),
+  );
+
   console.log('\nThe list of pages stays open through a repaint');
 
   /*
