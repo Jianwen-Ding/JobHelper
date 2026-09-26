@@ -6584,7 +6584,14 @@ function wouldSubmit(el) {
 }
 
 /**
- * Put the widget back as it was: nothing typed, nothing open.
+ * Put the widget back as it was: its box holding what it held before the
+ * fill touched it, nothing open.
+ *
+ * Not an empty box. A box can hold what a person typed before pressing
+ * Autofill — a City box saying "Bost", a School box saying "Northea" — and
+ * the fill types over it when the list lacks the answer. Measured, both put
+ * back empty after a list without the answer and a list that ignored the
+ * click: the words the person typed were gone, with nothing to say so.
  *
  * Escape is pressed where a person's Escape goes, which is wherever the focus
  * is — and a menu that takes the focus as it opens hears it there and not on
@@ -6596,8 +6603,8 @@ function wouldSubmit(el) {
  * opened it with a press is pressed once more, which is how a person shuts a
  * dropdown that answers no key at all.
  */
-function undoWidget(widget, box, openBefore = null) {
-  if (box) setValue(box, '');
+function undoWidget(widget, box, openBefore = null, typedBefore = '') {
+  if (box) setValue(box, typedBefore);
   const escape = (el) =>
     el.dispatchEvent(ours(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true })));
   escape(box ?? widget);
@@ -6748,6 +6755,8 @@ async function chooseInThisWidget(widget, key, value, { patience, fields, asked 
   const box = typingBoxOf(widget);
   const hiddenBefore = hiddenPartner(widget)?.value ?? '';
   const shownBefore = shownBy(widget);
+  // What its box held before anything here touched it. See `undoWidget`.
+  const typedBefore = box?.value ?? '';
 
   /*
    * Never a control that would send the form.
@@ -6810,7 +6819,7 @@ async function chooseInThisWidget(widget, key, value, { patience, fields, asked 
   }
   if (!option) {
     const opened = menuIsOpen(widget, box, openBefore);
-    undoWidget(widget, box, openBefore);
+    undoWidget(widget, box, openBefore, typedBefore);
     return opened ? 'unlisted' : 'missed';
   }
   // Read before the press: a menu that closes takes its options with it.
@@ -6818,7 +6827,7 @@ async function chooseInThisWidget(widget, key, value, { patience, fields, asked 
   press(wordsOf(option));
   await pause(60);
   if (!tookIt(widget, box, option, value, hiddenBefore, chosen, shownBefore)) {
-    undoWidget(widget, box, openBefore);
+    undoWidget(widget, box, openBefore, typedBefore);
     return 'ignored';
   }
   return 'chose';
