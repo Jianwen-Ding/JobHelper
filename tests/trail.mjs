@@ -16,6 +16,7 @@ import {
   EXPECTATION_MS,
   carriesOn,
   keepPages,
+  onlyLists,
   rootOf,
   lighten,
   judgeApplication,
@@ -1955,5 +1956,35 @@ describe('a form on the same site that nothing ties to the application', () => {
   it('and so is a form for a plainly different role, or at another employer', () => {
     assert.equal(judgeApplication(trail(), { url: site('/candidate/start'), role: 'Data Scientist', kind: 'application' }), 'different');
     assert.equal(judgeApplication(trail(), { url: site('/candidate/start'), company: 'Northwind', kind: 'application' }), 'different');
+  });
+});
+
+/*
+ * A page about many jobs is not an application: "Epic — Careers", "Intel —
+ * Intel Careers" and "Activision — intern job openings" were rows in a
+ * tracker, held for resumes built on careers homes and search results.
+ */
+describe('an application that is so far only lists of jobs', () => {
+  const page = (url, kind) => ({ url, kind, company: 'Epic', role: 'Careers' });
+
+  it('is only lists while every page the store read is a listing', () => {
+    assert.equal(onlyLists(trailOf(page('https://www.epic.com/careers/', 'listing'))), true);
+    assert.equal(
+      onlyLists(trailOf(page('https://www.epic.com/careers/', 'listing'), page('https://www.epic.com/careers/search?q=intern', 'listing'))),
+      true,
+    );
+  });
+
+  it('and is an application from the first posting or form in it', () => {
+    assert.equal(onlyLists(trailOf(page('https://www.epic.com/careers/', 'listing'), page('https://careers.epic.com/Jobs/Job?jobid=21300', 'posting'))), false);
+    assert.equal(onlyLists(trailOf(page('https://careers.epic.com/apply?jobid=21300', 'application'))), false);
+  });
+
+  it('while a page the store called nothing, or never classified, is not a list', () => {
+    // An embedded board's outer page is `none`; the application is in its frame.
+    assert.equal(onlyLists(trailOf(page('https://vireo.example/careers/platform-engineer', 'none'))), false);
+    assert.equal(onlyLists(trailOf({ url: 'https://vireo.example/jobs/1' })), false);
+    assert.equal(onlyLists(trailOf()), false);
+    assert.equal(onlyLists(undefined), false);
   });
 });

@@ -26,6 +26,7 @@ import {
   ATS_FORM,
   ATS_FORM_UNANSWERABLE,
   BLOG,
+  CAREERS_HOME,
   CYGNUS_ROLE_A,
   DOCS,
   HELIOS_ROLE,
@@ -69,7 +70,7 @@ const cardOf = (page) => page.locator(`${HOST} .card`);
  * starts is not testing the extension; it is testing what was left lying
  * around.
  */
-const MINE = ['Helios', 'Cygnus'];
+const MINE = ['Helios', 'Cygnus', 'Larkspur'];
 
 /** What the store has filed under a company, as the editor would show it. */
 async function filed(company) {
@@ -599,6 +600,40 @@ async function main() {
         after.map((a) => a.role).join(' | '),
       );
       await cold.close();
+    }
+
+    /*
+     * A page that lists jobs, with a resume built on it anyway.
+     *
+     * The card comes up on a careers home — it is where a job is found, and
+     * the store calls it a list of roles — and building there is allowed. What
+     * followed was a row in the tracker: "Epic — Careers", "Intel — Intel
+     * Careers", "Activision — intern job openings", every one a page of many
+     * jobs filed as an application to one.
+     */
+    group('A resume built on a careers home files nothing');
+    {
+      const home = await context.newPage();
+      await home.goto(fixtures.urlFor(CAREERS_HOME), { waitUntil: 'domcontentloaded' });
+      await settled(home);
+      const card = cardOf(home);
+      await card.getByRole('button', { name: /^(Build resume|Recompile)$/ }).click();
+      await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
+      await home.waitForTimeout(1200);
+      check('the resume is built there, as on any page the card is on', (await drawnPages(home)) > 0, `${await drawnPages(home)} pages`);
+      const mark = await toolbar(worker, home);
+      check('and the page is held in the tab', mark.text !== '', `badge "${mark.text}"`);
+      // The keeper saves every couple of seconds and the folder is staged off
+      // a timer: long enough for either to have filed a row, had it been going to.
+      await home.waitForTimeout(7000);
+      const { application, draft } = await filed('Larkspur');
+      check(
+        'the tracker has no row for a list of jobs',
+        !application,
+        application ? `${application.company} — ${application.role} [${application.status}]` : '',
+      );
+      check('and the Workspace no space for one', !draft, draft ? `${draft.company} — ${draft.role}` : '');
+      await home.close();
     }
 
     group('A report that is not good news');

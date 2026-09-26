@@ -1303,3 +1303,23 @@ export function worthKeeping(work) {
   if (!work) return false;
   return Boolean(work.spec) || Boolean(work.letter?.trim()) || Object.keys(work.answersByQuestion ?? {}).length > 0;
 }
+
+/**
+ * Whether every page this application has read is a page about many jobs.
+ *
+ * A careers home, a board's search results, a job category: the card comes up
+ * on them, because they are where a job is found, and a resume can be built
+ * there. The keeper then held a workspace for them, and the tracker filled with
+ * rows that were never applications — "Epic — Careers", "Intel — Intel
+ * Careers", "Activision — intern job openings", "Adobe — Intern and
+ * Graduate". A row says one job is being applied for, and a list is not one
+ * job; the first posting or form this tab goes on to is.
+ *
+ * Only a page the store called a listing counts. A page whose kind was never
+ * said, or that the store called nothing at all, is not a list: an embedded
+ * board's outer page is `none` while its frame holds the application.
+ */
+export function onlyLists(trail) {
+  const pages = trail?.pages ?? [];
+  return pages.length > 0 && pages.every((p) => p?.kind === 'listing');
+}

@@ -13,6 +13,7 @@ import {
   rootOf,
   judgeApplication,
   keepPages,
+  onlyLists,
   plainlyAnotherRole,
   lighten,
   sameApplication,
@@ -1084,6 +1085,14 @@ function madeSomething(work) {
 async function holdASpace(trail, tabId) {
   const work = trail?.work;
   if (!madeSomething(work)) return;
+  /*
+   * And only for an application, never for a list of them. A resume built on
+   * a careers home or a board's search results is somebody looking, and it
+   * filed "Epic — Careers" and "Intel — Intel Careers" as rows in the tracker.
+   * The work is still kept in the tab as before; a row is held once the
+   * application has a posting or a form in it. See `onlyLists`.
+   */
+  if (onlyLists(trail)) return;
 
   /*
    * Into the save this application was built from, and no other.

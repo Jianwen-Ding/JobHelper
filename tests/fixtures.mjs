@@ -1104,6 +1104,33 @@ export const CYGNUS_ROLE_B = {
 };
 
 
+/**
+ * A careers home: every role there is, and none of them in particular.
+ *
+ * Shaped on the page behind "Epic — Careers" in a real tracker. The card comes
+ * up on a page like this — it is where a job is found, and the store calls it
+ * a listing — and a resume can be built there; what must not happen is a row
+ * in the tracker for it, because a list of jobs is not an application.
+ */
+export const CAREERS_HOME = {
+  name: 'careers-home',
+  path: '/larkspur/careers',
+  company: 'Larkspur',
+  html: page(
+    'Careers | Larkspur',
+    'Larkspur',
+    `<h2>Open positions</h2>
+     <p>View all openings below. We are hiring across the company: full-time roles,
+        internships for students, and new grad programs, with benefits and
+        compensation reviewed every year.</p>
+     <ul>
+       <li><a href="/larkspur/careers/jobs/421301">Software Developer</a></li>
+       <li><a href="/larkspur/careers/jobs/421302">Technical Services</a></li>
+       <li><a href="/larkspur/careers/jobs/421303">Quality Assurance</a></li>
+     </ul>`,
+  ),
+};
+
 /* ------------------------------------------------------------------ *
  * Pages that must stay quiet                                          *
  * ------------------------------------------------------------------ *
@@ -1919,7 +1946,7 @@ export const NAVIGATION = [
 ];
 
 export const ALL = [
-  STREAMLY, NORTHWIND, HELIOS_ROLE, HELIOS_FORM, HEAVY_POSTING, SWAP_FORM, SWAP_FORM_TWO,
+  STREAMLY, NORTHWIND, HELIOS_ROLE, HELIOS_FORM, HEAVY_POSTING, SWAP_FORM, SWAP_FORM_TWO, CAREERS_HOME,
   ...QUIET, ...NAVIGATION,
 ];
 

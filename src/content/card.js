@@ -3843,6 +3843,21 @@ export function createCard({
   async function stageFiles() {
     if (!state.spec) return;
     /*
+     * Not while every page of this application is a list of jobs.
+     *
+     * Staging puts the files in the upload folder and files the application
+     * as `applying` — the tracker's row for it. On a careers home or a board's
+     * search results a resume is built to look at, and there is nothing to
+     * upload to; staging there filed "Epic — Careers" and "Intel — Intel
+     * Careers" as applications. The preview is still built; the folder and
+     * the row wait for a posting or a form.
+     *
+     * The same rule as `onlyLists` in `shared/trail.js`, written out here
+     * because this file is loaded on its own, with nothing to import from.
+     */
+    const pages = analysis?.pages ?? [];
+    if (pages.length > 0 && pages.every((p) => p?.kind === 'listing')) return;
+    /*
      * Recorded before the call, so a second change landing while this one is
      * in flight does not start a second compile of the same thing — and
      * given back if it fails.
