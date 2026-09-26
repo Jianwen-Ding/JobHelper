@@ -7475,7 +7475,7 @@ export function looksLikeApplicationForm() {
  * site is not. The same list the card uses to tell a tracker's page.
  */
 const ON_A_TRACKER_HOST =
-  /\b(greenhouse|lever|workday|myworkdayjobs|ashby|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite|bamboohr|rippling|breezy|recruitee|teamtailor|jazzhr|successfactors|brassring)\b/i;
+  /\b(greenhouse|lever|workday|myworkdayjobs|ashby|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite|bamboohr|rippling|breezy|recruitee|teamtailor|jazzhr|successfactors|brassring|myjobs\.adp|workforcenow\.adp)\b/i;
 
 export function mayFillFrame() {
   if (looksLikeApplicationForm()) return true;
