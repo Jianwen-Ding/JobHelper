@@ -3062,6 +3062,9 @@ const COMPONENT_DEFINITIONS = `<script>
   def('y-inner', (h) => '<input name="' + at(h, 'field') + '" type="' + at(h, 'type', 'text') + '" aria-labelledby="label">');
   def('y-outlined', (h) => '<y-inner field="' + at(h, 'field') + '" type="' + at(h, 'type', 'text') + '"></y-inner><div id="label" class="floating">' + at(h, 'label') + '</div>');
   def('y-check', (h) => '<input type="checkbox" name="' + at(h, 'field') + '">');
+  def('y-shell', (h) => '<style>:host { display: block }</style><y-box' + (h.hasAttribute('inner') ? ' id="' + at(h, 'inner') + '"' : '') +
+    ' field="' + at(h, 'field') + '" type="' + at(h, 'type', 'text') + '"></y-box>');
+  def('y-pair', (h) => '<style>:host { display: flex; gap: 4px }</style><input name="' + at(h, 'field') + '"><input name="' + at(h, 'field2') + '">');
 </script>`;
 
 const LABELLED_FROM_OUTSIDE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
@@ -3083,6 +3086,43 @@ const LABELLED_FROM_OUTSIDE = `<!doctype html><html><head><meta charset="utf-8">
     <y-outlined label="First name" field="q_3101"></y-outlined>
     <y-outlined label="City" field="q_3102"></y-outlined>
     <y-outlined label="Last name" field="q_3103"></y-outlined>
+  </div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * Components the page labels with a `<label>` of its own that is not beside
+ * them: a label wrapping the component, `<label>Last name <y-box>`, and a
+ * label whose `for` names the component's host, here in a column of labels
+ * apart from the column of boxes and in another order, so that nothing near
+ * a box is its label. Each once with the box drawn straight in the component
+ * and once a component further in (`<y-shell>`).
+ *
+ * And the ways that goes wrong. A label wrapping two components; a label, of
+ * either kind, on a component drawing two boxes; the page's `for="h-city"`
+ * where the only element with that id is drawn inside another component's
+ * root; and two components sharing `id="h-last"`, of which `for` names the
+ * first.
+ */
+const LABELLED_AROUND = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <label class="row">Last name <y-box field="q_6001"></y-box></label>
+  <label class="row">Email <y-shell field="q_6002" type="email"></y-shell></label>
+  <label class="row">City <y-box field="q_6101"></y-box> <y-box field="q_6102"></y-box></label>
+  <label class="row">Name <y-pair field="q_6201" field2="q_6202"></y-pair></label>
+
+  <div class="columns">
+    <div class="labels"><label for="h-email">Email</label><label for="h-first">First name</label><label for="h-phone">Phone</label></div>
+    <div class="boxes"><y-box id="h-first" field="q_7001"></y-box><y-box id="h-email" field="q_7002" type="email"></y-box><y-shell id="h-phone" field="q_7003" type="tel"></y-shell></div>
+  </div>
+  <div class="columns">
+    <div class="labels"><label for="h-city">City</label><label for="h-last">Last name</label><label for="h-name">Name</label></div>
+    <div class="boxes">
+      <y-shell inner="h-city" field="q_7101"></y-shell>
+      <y-box id="h-last" field="q_7201"></y-box><y-box id="h-last" field="q_7202"></y-box>
+      <y-pair id="h-name" field="q_7301" field2="q_7302"></y-pair>
+    </div>
   </div>
 </form>
 ${COMPONENT_DEFINITIONS}
@@ -4349,7 +4389,7 @@ const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><tit
   });
 </script></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -8518,6 +8558,39 @@ async function main() {
       'the Phone beside its own component is filled, and nothing else is filled or reported',
       alone.q_4002 === '(555) 010-0199' && alone.filled.join() === 'phone' && alone.skipped.length === 0,
       JSON.stringify(alone),
+    );
+
+    const around = await componentFill('/labelled-around', SWEEP);
+    group('A component the page labels with a <label> that is not beside it');
+    check(
+      'a label wrapping the component is read, whether the box is drawn in it or in a component inside it: Last name and Email',
+      around.q_6001 === 'Testwell' && around.q_6002 === 'morgan.testwell@example.com',
+      JSON.stringify(around),
+    );
+    check(
+      'a label whose for names the component\'s host is read, from a column apart and in another order: First name, Email and Phone',
+      around.q_7001 === 'Morgan' && around.q_7002 === 'morgan.testwell@example.com' && around.q_7003 === '(555) 010-0199',
+      JSON.stringify(around),
+    );
+    check(
+      'a label wrapping two components names neither, and both stay empty',
+      around.q_6101 === '' && around.q_6102 === '',
+      JSON.stringify(around),
+    );
+    check(
+      'a label on a component drawing two boxes, wrapping it or naming it with for, names neither box',
+      around.q_6201 === '' && around.q_6202 === '' && around.q_7301 === '' && around.q_7302 === '',
+      JSON.stringify(around),
+    );
+    check(
+      'the page\'s for="h-city" does not name a component drawn with that id inside another component\'s root',
+      around.q_7101 === '',
+      JSON.stringify(around),
+    );
+    check(
+      'of two components sharing an id, for names the first alone, and nothing else is filled or reported',
+      around.q_7201 === 'Testwell' && around.q_7202 === '' && around.filled.length === 6 && around.skipped.length === 0,
+      JSON.stringify(around),
     );
 
     const dateParts = await page.goto(`${base}/date-in-parts`, { waitUntil: 'domcontentloaded' }).then(() =>

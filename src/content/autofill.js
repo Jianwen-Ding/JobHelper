@@ -1153,6 +1153,53 @@ function labelWords(el) {
   return clean(parts.join('')) || clean(el.textContent);
 }
 
+/**
+ * The `<label>` the page gave the component a field is drawn in, when it gave
+ * the component one rather than the field.
+ *
+ * The page cannot name an `<input>` inside a component's root — neither
+ * `for` nor a wrapping label reaches in — so it names the component: `<label
+ * for="email">Email</label>` and `<x-input id="email">`, or `<label>Email
+ * <x-input></x-input></label>`. `labelFor` asked for `label[for]` in the
+ * input's own root and for `closest('label')`, and both stop at the shadow
+ * root, so both were read as nothing. The words beside the component are
+ * found by the climb in `labelFor`, but these are not beside it: the text
+ * is inside the label with the component, which the climb takes for this
+ * field's own wrapper, and a `for` label is very often in another column
+ * altogether. Measured, Last name, Email and First name wired these ways
+ * came out empty and unreported.
+ *
+ * Out through each root, nearest first, and only while the root holds this
+ * field and no other: a label naming a component that draws a first-name box
+ * and a last-name box names neither, and "Name" in both would be the full
+ * name twice. Then at each host:
+ *
+ * - `label[for]` in the host's own root, and only when that root's element
+ *   with the id *is* this host. An id is only resolved in its own root, so
+ *   the page's `for="city"` does not name a component some other component
+ *   draws with `id="city"`; and ids are not always unique, and `for` names
+ *   the first element with its id, never the second.
+ * - the label wrapping the host, and only when it holds no other field,
+ *   counting the ones drawn in components. A label around two components is
+ *   a row of fields under one heading, and its words are no more the second
+ *   box's than the first's.
+ */
+function componentLabel(input) {
+  let from = input;
+  for (let root = rootOf(from); root instanceof ShadowRoot && root.host.id !== OURS; root = rootOf(from)) {
+    if (fieldsIn(root, ANOTHER_FIELD, 2) > 1) return null;
+    from = root.host;
+    const around = rootOf(from);
+    if (from.id && around.getElementById?.(from.id) === from) {
+      const named = around.querySelector(`label[for="${CSS.escape(from.id)}"]`);
+      if (named) return named;
+    }
+    const wrapping = from.closest('label');
+    if (wrapping && fieldsIn(wrapping, ANOTHER_FIELD, 2) === 1) return wrapping;
+  }
+  return null;
+}
+
 function labelFor(input) {
   // A plain dropdown's own label, and never one found further off. See `PLAIN`.
   if (PLAIN.has(input)) return labelWords(plainLabelOf(input));
@@ -1194,6 +1241,14 @@ function labelFor(input) {
    */
   const aria = clean(input.getAttribute('aria-label'));
   if (aria && !CONTROL_WORD.test(aria)) return aria;
+
+  /*
+   * The label the page gave the component this field is drawn in. After
+   * everything the field says of itself, which is nearer, and before any
+   * guess from position, which it is not. See `componentLabel`.
+   */
+  const hosts = labelWords(componentLabel(input));
+  if (hosts) return hosts;
 
   /*
    * Positional fallback: the nearest preceding element that reads like a label.
