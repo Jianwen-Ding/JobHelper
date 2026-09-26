@@ -2560,10 +2560,16 @@ const handlers = {
    * three; the messaging channel is JSON, so they travel as base64, the same
    * way `pdfBytes` sends one.
    */
-  async attachments({ application }, tab) {
+  async attachments({ application, claim = false }, tab) {
     const { serverUrl } = await getSettings();
+    /*
+     * `claim` gives this application the plain names in the shared folder,
+     * and is sent only for what somebody did — Attach, copying or opening
+     * the folder. See `/attachments` in ResumeM-M.
+     */
+    const query = application ? `?application=${encodeURIComponent(application)}${claim ? '&claim=1' : ''}` : '';
     const list = await serverFetch(
-      `/api/attachments${application ? `?application=${encodeURIComponent(application)}` : ''}`,
+      `/api/attachments${query}`,
       { save: await saveFor(tab?.id) },
     );
     const base = serverUrl.replace(/\/$/, '');

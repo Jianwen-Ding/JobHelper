@@ -1622,15 +1622,14 @@ export function createCard({
    * asks for this application's files first, which gives the names back to
    * it, and the folder holds this job's files at the moment they are picked.
    */
-  function claimFolder() {
-    const application = carried?.application;
+  function claimFolder(of) {
+    const application = of ?? carried?.application;
     if (!application) return Promise.resolve();
-    carried = null;
-    return Promise.resolve(warmFiles(application)).catch(() => undefined);
+    return Promise.resolve(warmFiles(application, { claim: true })).catch(() => undefined);
   }
 
-  function warmFiles(application) {
-    if (carried?.application === application && (carried.files || carried.waiting)) {
+  function warmFiles(application, { claim = false } = {}) {
+    if (!claim && carried?.application === application && (carried.files || carried.waiting)) {
       /*
        * Already warm, and the chips asking may be new ones.
        *
@@ -1647,7 +1646,7 @@ export function createCard({
     }
     carried = { application, files: null, waiting: null };
     const mine = carried;
-    mine.waiting = onAction('attachmentFiles', { application })
+    mine.waiting = onAction('attachmentFiles', { application, claim })
       .then((got) => {
         if (carried !== mine) return;
         mine.files = got?.files ?? [];
@@ -1870,7 +1869,8 @@ export function createCard({
           title: `Open ${name} in a tab`,
           onclick: (event) => {
             event.stopPropagation();
-            onAction('openTab', { url: `/current/${encodeURIComponent(name)}` });
+            // This job's copy under that name, not another tab's: see `claimFolder`.
+            claimFolder(application).then(() => onAction('openTab', { url: `/current/${encodeURIComponent(name)}` }));
           },
         }),
         renameMenu(kind, name),

@@ -1063,7 +1063,7 @@
       }
 
       case 'attachmentFiles': {
-        const got = await send('attachments', { application: payload.application ?? null });
+        const got = await send('attachments', { application: payload.application ?? null, claim: Boolean(payload.claim) });
         return {
           files: got?.files ?? [],
           missing: (got?.missing ?? []).map((m) => ({ name: m.name, why: m.why })),
@@ -1102,7 +1102,8 @@
         return send('fresh', { spec: payload.spec });
 
       case 'attachFiles': {
-        const got = await send('attachments', { application: payload.application ?? null });
+        // Pressed, so this application takes the plain names in the folder.
+        const got = await send('attachments', { application: payload.application ?? null, claim: true });
         const files = got?.files ?? [];
         /*
          * The ones the store listed and could not hand over. They are not
