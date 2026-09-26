@@ -13,6 +13,7 @@ import {
   rootOf,
   judgeApplication,
   keepPages,
+  onlyLists,
   plainlyAnotherRole,
   lighten,
   sameApplication,
@@ -498,7 +499,12 @@ async function parkWork(url, entry) {
    */
   return changeStored(key, async (stored) => {
     const held = parkedAt(stored);
-    const kept = [...held.filter((p) => !sameJob(p.job, entry.job)), entry].slice(-PARK_MAX);
+    /*
+     * The same job from the same tab replaces its older copy. From another
+     * tab it is another application — two tabs open on one posting, both
+     * writing — and replacing it handed the first tab the second one's letter.
+     */
+    const kept = [...held.filter((p) => !(sameJob(p.job, entry.job) && p.tab === entry.tab)), entry].slice(-PARK_MAX);
     return { parked: kept, at: Date.now() };
   });
 }
@@ -513,7 +519,16 @@ async function parkWork(url, entry) {
  * page was ever analysed — are still offered, newest first, because that is
  * the case this rescue was built for and it has no better evidence to go on.
  */
-function pickParked(held, job, tabId) {
+function pickParked(parked, job, tabId, openTabs = new Set()) {
+  /*
+   * Never another open tab's. A tab that parked its work and is still open
+   * has only gone to read something else, and is coming back for it; the
+   * address is a shared listing or login page as often as it is the job.
+   * Taken here, it was the other tab's letter "recovered from a tab that
+   * closed" on a tab that never closed, and the tab that wrote it came back
+   * to nothing. Closed tabs' parks, and this tab's own, are still offered.
+   */
+  const held = parked.filter((p) => p.tab === undefined || p.tab === tabId || !openTabs.has(p.tab));
   if (held.length === 0) return null;
   /*
    * This tab's own park first, whatever the page is called.
@@ -527,7 +542,8 @@ function pickParked(held, job, tabId) {
   const thisTabs = held.filter((p) => p.tab !== undefined && p.tab === tabId);
   if (!job) return thisTabs[thisTabs.length - 1] ?? held[held.length - 1];
   const mine = held.filter((p) => sameJob(p.job, job));
-  if (mine.length > 0) return mine[mine.length - 1];
+  const ownMine = mine.filter((p) => p.tab !== undefined && p.tab === tabId);
+  if (mine.length > 0) return ownMine[ownMine.length - 1] ?? mine[mine.length - 1];
   const possible = held.filter((p) => !plainlyOtherJob(p.job, job));
   return possible[possible.length - 1] ?? null;
 }
@@ -725,7 +741,13 @@ function whichTab(tabId, tab, sender) {
  * being whatever it is.
  */
 async function inheritIfNew(tabId, openerTabId) {
-  if (tabId === undefined || openerTabId === undefined) return;
+  const theirs = await inheritance(tabId, openerTabId);
+  if (theirs) await writeTrail(tabId, { ...theirs, at: Date.now() });
+}
+
+/** What `inheritIfNew` would copy into this tab, or null. Reads only. */
+async function inheritance(tabId, openerTabId) {
+  if (tabId === undefined || openerTabId === undefined) return null;
   const mine = await readTrail(tabId);
   /*
    * And not into a tab that was told to start fresh.
@@ -737,10 +759,10 @@ async function inheritIfNew(tabId, openerTabId) {
    * it: pages, work, save and expectation, as a blind write rather than a
    * merge.
    */
-  if (mine.pages.length > 0 || mine.cleared) return;
+  if (mine.pages.length > 0 || mine.cleared) return null;
 
   const theirs = await readTrail(openerTabId);
-  if (theirs.pages.length === 0) return;
+  if (theirs.pages.length === 0) return null;
 
   /*
    * And only when the tab it came from was in the middle of applying.
@@ -767,9 +789,21 @@ async function inheritIfNew(tabId, openerTabId) {
    * out of the page it came from, with no race in it at all.
    */
   const applying = theirs.expecting?.to && Date.now() - (theirs.expecting.at ?? 0) <= EXPECTATION_MS;
-  if (!applying) return;
+  return applying ? theirs : null;
+}
 
-  await writeTrail(tabId, { ...theirs, at: Date.now() });
+/**
+ * The resume this tab's application was switched to, if it was.
+ *
+ * The card's "Start from" picker used to write the one setting every tab
+ * shares, so switching it on one application changed where every other tab,
+ * and every posting after it, started from. It is kept with the application
+ * instead: the card saves it with its work, and it follows that work to the
+ * form, into a tab Apply opened, and nowhere else. See `analyze`.
+ */
+async function heldBase(tab) {
+  const trail = (await inheritance(tab?.id, tab?.openerTabId)) ?? (await readTrail(tab?.id));
+  return trail.work?.baseResumeId ?? null;
 }
 
 /* ------------------------------------------------------------------ *
@@ -1051,6 +1085,14 @@ function madeSomething(work) {
 async function holdASpace(trail, tabId) {
   const work = trail?.work;
   if (!madeSomething(work)) return;
+  /*
+   * And only for an application, never for a list of them. A resume built on
+   * a careers home or a board's search results is somebody looking, and it
+   * filed "Epic — Careers" and "Intel — Intel Careers" as rows in the tracker.
+   * The work is still kept in the tab as before; a row is held once the
+   * application has a posting or a form in it. See `onlyLists`.
+   */
+  if (onlyLists(trail)) return;
 
   /*
    * Into the save this application was built from, and no other.
@@ -1627,7 +1669,10 @@ const handlers = {
      * and a title.
      */
     const looking = nameOfTrail(trail);
-    const rescued = pickParked(held, looking, tab?.id);
+    const openTabs = new Set(
+      held.length > 0 ? ((await chrome.tabs.query({}).catch(() => [])) ?? []).map((t) => t.id) : [],
+    );
+    const rescued = pickParked(held, looking, tab?.id, openTabs);
     if (rescued) {
       const fresh = Date.now() - (rescued.at ?? 0) < TRAIL_STALE_MS;
       // Claimed or expired, this one goes either way. Leaving the stale ones
@@ -2171,8 +2216,16 @@ const handlers = {
    * back to the stored preference. `useAi` is the older two-way form of the
    * same question and still works.
    */
-  async analyze({ url, title, html, pages, framed, useAi, tailor }, tab) {
+  async analyze({ url, title, html, pages, framed, useAi, tailor, baseResumeId: chosen }, tab) {
     const settings = await getSettings();
+    /*
+     * Which resume to start from: the one this card was just switched to,
+     * then the one this application was switched to, and only then the
+     * default in the popup. The last is marked as a default so the store
+     * will not start this posting from a copy made for another one. See
+     * `heldBase`, and `standingBase` in ResumeM-M.
+     */
+    const held = chosen ? null : await heldBase(tab);
     /*
      * Nothing, unless this call says otherwise.
      *
@@ -2188,7 +2241,7 @@ const handlers = {
      * this fallback is only ever the opening analysis.
      */
     const mode = tailor ?? (typeof useAi === 'boolean' ? (useAi ? 'ai' : 'match') : 'none');
-    const result = await stoppably(tab, 'rebuild', (signal) =>
+    const ask = (base) => stoppably(tab, 'rebuild', (signal) =>
       serverFetch('/api/extension/analyze', {
         method: 'POST',
         signal,
@@ -2218,13 +2271,15 @@ const handlers = {
           // Forgetting to pass this on is invisible: the analysis still works,
           // it is just written from the wrong half of what was read.
           pages,
-          baseResumeId: settings.baseResumeId,
+          baseResumeId: base ?? settings.baseResumeId,
+          baseIsDefault: !base,
           tailor: mode,
           // Older servers read this and know nothing of `tailor`.
           useAi: mode === 'ai',
         }),
       }),
     );
+    let result = await ask(chosen ?? held);
 
     /*
      * And the page counts from here, in the same message that read it.
@@ -2262,7 +2317,7 @@ const handlers = {
       saveOf.set(tab.id, result.save);
     }
     if (result?.isJobPosting) {
-      await remember(tab, {
+      const remembered = await remember(tab, {
         save: result?.save,
         url,
         title,
@@ -2274,6 +2329,12 @@ const handlers = {
         // from the shell.
         html: [html, ...(framed ?? []).map((f) => f.html)].join('\n').slice(0, 400_000),
       });
+      /*
+       * And a page that turned out to start a new application in this tab
+       * was read from the last one's resume. Only now is that known, so it
+       * is read again from the default; if that fails, what was read stands.
+       */
+      if (held && remembered?.startedFresh) result = (await ask(null).catch(() => null)) ?? result;
     }
     return { ...result, trail: summarise(await readTrail(tab?.id)) };
   },
@@ -2742,11 +2803,19 @@ const handlers = {
   },
 
   async saveLetter({ body, job }) {
-    const id = `${new Date().toISOString().slice(0, 10)}-${(job.company ?? 'letter')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 30)}`;
+    /*
+     * The role as well as the employer. Keyed by the employer alone, two
+     * applications at one company — two roles, in two tabs — saved into one
+     * letter, and the second save replaced the first application's.
+     */
+    const slugOf = (s, n) =>
+      String(s ?? '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, n);
+    const role = slugOf(job.title, 40);
+    const id = `${new Date().toISOString().slice(0, 10)}-${slugOf(job.company ?? 'letter', 30) || 'letter'}${role ? `-${role}` : ''}`;
     return serverFetch(`/api/letters/${encodeURIComponent(id)}`, {
       method: 'PUT',
       body: JSON.stringify({
@@ -3163,7 +3232,11 @@ chrome.tabs?.onRemoved?.addListener(async (tabId) => {
        * writes that follow go out with no `X-RMM-Project` at all — which the
        * store does not refuse. See `saveOf`.
        */
-      const entry = { work: trail.work, save: trail.save, job: nameOfTrail(trail), at: Date.now() };
+      /*
+       * From which tab, too, although it is gone: two tabs closed on the same
+       * posting are two letters, and `parkWork` keeps one per tab per job.
+       */
+      const entry = { work: trail.work, save: trail.save, job: nameOfTrail(trail), tab: tabId, at: Date.now() };
       for (const url of where) await parkWork(url, entry);
     }
   } catch {

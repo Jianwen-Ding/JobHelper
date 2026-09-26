@@ -56,7 +56,7 @@ const FIELD_PATTERNS = [
   /*
    * And one half of it, said in brackets after the name it is part of — above
    * `legal name`, which claimed the box whole. "Legal name (First)" and "Legal
-   * name (Last)" were each given "Jianwen Ding", and "Legal name (Middle)" the
+   * name (Last)" were each given "Morgan Testwell", and "Legal name (Middle)" the
    * whole name too, a middle name the profile does not hold. Only a bracket
    * holding the one word: "Full legal name (first, middle, last)" asks for
    * all of it. `middle_name` is never in a profile, so that box stays blank.
@@ -646,10 +646,11 @@ const asksForADiallingCode = (description, label) =>
  */
 function surroundingWords(input) {
   const said = [];
-  const legend = clean(input.closest('fieldset')?.querySelector('legend')?.textContent);
+  // Out of the components the field is drawn in: see `closestAround`.
+  const legend = clean(closestAround(input, 'fieldset')?.querySelector('legend')?.textContent);
   if (legend) said.push(legend);
 
-  const group = input.closest('[role="group"], [role="radiogroup"]');
+  const group = closestAround(input, '[role="group"], [role="radiogroup"]');
   if (group) {
     const named = clean(group.getAttribute('aria-label')) || clean(fromLabelledBy(group));
     if (named) said.push(named);
@@ -950,6 +951,175 @@ const rootOf = (node) => {
 };
 
 /**
+ * The component a node is drawn in, where it is drawn in one — never the
+ * card's own host, whose insides are not the page's.
+ */
+const hostOf = (node) => {
+  const root = node.getRootNode?.();
+  return root instanceof ShadowRoot && root.host.id !== OURS ? root.host : null;
+};
+
+/**
+ * The slot the page's own markup is drawn through, where it is put inside a
+ * component — never one of the card's own.
+ */
+const slotOf = (node) => {
+  const slot = node.assignedSlot;
+  return slot && hostOf(slot) ? slot : null;
+};
+
+/**
+ * The element around this one as the page draws it: the slot it is drawn
+ * through, its parent, or the component it is drawn in.
+ *
+ * The slot first. A component can draw the fieldset, or the group, and put
+ * the page's own fields in it through a `<slot>`: `<x-fieldset
+ * legend="Emergency contact">` whose root is `<fieldset><legend>Emergency
+ * contact</legend><slot></slot></fieldset>`, and the Phone and Email written
+ * in the page between its tags. Those fields are in the page's tree and the
+ * fieldset is in the component's, so neither `closest` nor climbing out
+ * through hosts reached it: measured, an Emergency contact's Phone and Email
+ * slotted that way were given the applicant's own, and a Reference's Email
+ * in a group drawn the same way the applicant's address, where the same form
+ * written without components left all three alone. Through the slot is where
+ * the field is drawn — a field put in a slot outside the component's
+ * fieldset is not in it, as it is not on the screen.
+ */
+const parentAround = (node) => slotOf(node) ?? node.parentElement ?? (node.parentNode instanceof ShadowRoot ? hostOf(node) : null);
+
+/**
+ * `closest`, carried on out of each component the node is drawn in.
+ *
+ * The walks that read what a field sits *in* — the fieldset whose legend says
+ * whose details these are, the group that says which date, the block that
+ * says which job — ask `closest` or climb `parentElement`, and both stop at
+ * the shadow root the field is drawn in. So a box drawn in a component was in
+ * no fieldset and no group at all, however the page nested it: measured, an
+ * Emergency contact's Phone and Email were given the applicant's own, the
+ * Month and Year under "When do you expect to graduate?" were left empty, and
+ * a Work Experience block of components was not filled at all, where the same
+ * form drawn without components was right in every box.
+ *
+ * Unlike a label, which `labelFor` only borrows from outside a component when
+ * the component holds this field alone, what a field sits in needs no such
+ * care: a fieldset around a component is around everything the component
+ * draws, and its legend is as much the context of each box in it as of a box
+ * written straight into the fieldset.
+ *
+ * And in through the slot a field is drawn through, as `parentAround` climbs:
+ * `closest` stops at a host whose root draws the fieldset round its slot.
+ */
+function closestAround(node, selector) {
+  for (let at = node; at; at = parentAround(at)) {
+    if (at.matches?.(selector)) return at;
+  }
+  return null;
+}
+
+/** Whether `node` is drawn inside `box`, climbing as `parentAround` does. */
+function drawnInside(box, node) {
+  for (let at = node; at; at = parentAround(at)) {
+    if (at === box) return true;
+  }
+  return false;
+}
+
+/**
+ * Every element drawn inside `scope`, in the order the page draws them: a
+ * component's root in place of what is written between its tags, and a slot
+ * as what the page put in it. The same tree `parentAround` climbs, walked the
+ * other way. Never the card's own.
+ */
+function* drawnWithin(scope) {
+  const put = scope.localName === 'slot' && hostOf(scope) ? scope.assignedElements() : [];
+  const from = put.length ? put : (scope.shadowRoot && scope.id !== OURS ? scope.shadowRoot : scope).children;
+  for (const child of [...from]) {
+    yield child;
+    yield* drawnWithin(child);
+  }
+}
+
+const drawsAny = (scope, selector) => {
+  for (const el of drawnWithin(scope)) if (el.matches(selector)) return true;
+  return false;
+};
+
+/*
+ * The walks `labelFor` and `isRequired` make, for the page's own field put
+ * into a component through a `<slot>`.
+ *
+ * A component can draw a field's label, and its asterisk, round the slot the
+ * page's box is put in: `<x-field label="Last name"><input
+ * name="q_1"></x-field>`, its root `<div class="field"><label>Last
+ * name</label><slot></slot></div>`. The label is in the component's tree and
+ * the box in the page's, and both walks climbed `parentElement` from the box
+ * to the host and on up the page, never into the root: measured, a Last
+ * name, an Email and a City slotted that way were left empty and unreported,
+ * and a question under a label drawn "Why do you want to work here? *" was
+ * not offered at all, where the same forms written without components were
+ * filled and the question required.
+ *
+ * So they climb as the box is drawn: through the slot it is put in, then the
+ * component's wrappers, then out from its host. What keeps a box from taking
+ * the label of the one beside it is what keeps it from doing so in the page
+ * — stop at another field — but "another field" has to count those put in
+ * through a slot too, which `querySelectorAll` in the component's tree does
+ * not see: two boxes slotted under one label looked, from the label's
+ * wrapper, like none. See `fieldsDrawnIn`.
+ */
+
+/**
+ * The element drawn before this one: the one put in the same slot before it,
+ * or, for the first, what is drawn before the slot. Otherwise
+ * `previousElementSibling`, which for a box put in a slot is whatever the
+ * page wrote before it, drawn somewhere else or not at all: measured, a box
+ * under a label drawn "Employee ID", after which the page had written a help
+ * text "As on your email address" for the slot the component draws below
+ * the box, was given the applicant's email address.
+ */
+function drawnBefore(node) {
+  const slot = slotOf(node);
+  if (!slot) return node.previousElementSibling;
+  const put = slot.assignedElements();
+  const at = put.indexOf(node);
+  return at > 0 ? put[at - 1] : slot.previousElementSibling;
+}
+
+/**
+ * How many fields `scope` holds, up to `enough`: those `fieldsIn` counts,
+ * or those drawn in it (`drawnWithin`), which include the page's own put in
+ * through a slot, whichever is more.
+ */
+function fieldsDrawnIn(scope, selector, enough) {
+  const n = fieldsIn(scope, selector, enough);
+  if (n >= enough) return n;
+  let drawn = scope.matches?.(selector) ? 1 : 0;
+  for (const el of drawnWithin(scope)) {
+    if (el.matches(selector) && ++drawn >= enough) break;
+  }
+  return Math.max(n, drawn);
+}
+
+/**
+ * The label a component draws round the slot a field is put in, when it
+ * draws this field and no other: `<label><span>City</span>
+ * <slot></slot></label>`. As a label written round the box is its own, and
+ * as `componentLabel` takes one round a component: a label round a slot two
+ * boxes are put in is a row of fields under one heading, no more the second
+ * box's than the first's.
+ */
+function labelDrawnRound(input) {
+  let through = false;
+  for (let at = input; at; ) {
+    const slot = slotOf(at);
+    if (slot) through = true;
+    at = slot ?? at.parentElement;
+    if (through && at?.localName === 'label') return fieldsDrawnIn(at, ANOTHER_FIELD, 2) === 1 ? at : null;
+  }
+  return null;
+}
+
+/**
  * Find the label that belongs to a field.
  *
  * Getting this wrong is worse than not filling at all: an earlier version
@@ -983,13 +1153,38 @@ function fromLabelledBy(element) {
      * description of anything.
      */
     .filter((id) => id !== element.id)
-    // Scoped to this field's own root: ids inside a component are not in the
-    // document's id map, so Workday-style labelling breaks there otherwise.
-    .map((id) => rootOf(element).getElementById?.(id)?.textContent
-      ?? rootOf(element).querySelector(`#${CSS.escape(id)}`)?.textContent
-      ?? '')
+    .map((id) => byIdAround(element, id)?.textContent ?? '')
     .join(' ');
   return clean(text);
+}
+
+/**
+ * The element an id names, looked for in this field's own root first and then
+ * in each root enclosing it, nearest first.
+ *
+ * Its own root first: ids inside a component are not in the document's id
+ * map, so Workday-style labelling breaks there otherwise.
+ *
+ * And then outwards, because a component is very often two: an outer field
+ * component draws `<div id="label">Phone number</div>` and an inner box
+ * component, and the inner one puts `aria-labelledby="label"` on its
+ * `<input>`. The id is in the outer component's root, not the input's, so
+ * it resolved to nothing and the box was described by its `name` alone —
+ * measured, a Phone number drawn that way came out empty and unreported. The
+ * browser does not resolve it either, which is the component's bug, but the
+ * words are plainly meant for this box.
+ *
+ * Nearest first, and never sideways into some other component's root: in a
+ * list of such fields each outer component has its own `id="label"`, and the
+ * nearest enclosing one is this box's. Searching every root on the page would
+ * give every box in the list the first one's label.
+ */
+function byIdAround(element, id) {
+  for (let root = rootOf(element); root; root = root.host ? rootOf(root.host) : null) {
+    const found = root.getElementById?.(id) ?? root.querySelector(`#${CSS.escape(id)}`);
+    if (found) return found;
+  }
+  return null;
 }
 
 /**
@@ -1014,6 +1209,102 @@ function fromLabelledBy(element) {
 const ANOTHER_FIELD = 'input:not([type=hidden]), textarea, select';
 
 /**
+ * How many fields `scope` holds, up to `enough`, counting the ones drawn
+ * inside the components in it.
+ *
+ * `querySelectorAll` does not reach into a shadow root, so a component that
+ * draws its `<input>` in its own root looks like an empty element from
+ * outside. Both walks in `labelFor` stop at another field by asking
+ * `querySelector`, and a row of such components is a row of fields that
+ * query cannot see: the walk stepped straight over the component before this
+ * box, and over the question that belonged to it, and gave this box its
+ * neighbour's label. The light DOM is asked first, and a component is only
+ * opened when that has not already found enough.
+ */
+function fieldsIn(scope, selector, enough) {
+  let n = (scope.matches?.(selector) ? 1 : 0) + scope.querySelectorAll(selector).length;
+  if (n >= enough) return n;
+  for (const el of [scope, ...scope.querySelectorAll('*')]) {
+    if (!el.shadowRoot || el.id === OURS) continue;
+    n += fieldsIn(el.shadowRoot, selector, enough - n);
+    if (n >= enough) break;
+  }
+  return n;
+}
+
+/*
+ * What is never drawn, and so is never anybody's label. A component's root
+ * very often begins with its own `<style>`, and its text is CSS: taken for
+ * the words before a box, `:host { display: block }` is the question.
+ */
+const NEVER_SHOWN = 'style, script, template, link, meta, noscript';
+
+/**
+ * The words an element shows, as `labelFor`'s walks read them.
+ *
+ * For a component, that is its shadow root with each slot read as what is
+ * slotted into it, not its `textContent`: a label component given
+ * `text="Email"` draws the word in its root and holds nothing in the page, and
+ * one given the word as a child shows it only through a slot.
+ *
+ * And the same for a slot, or an element drawn round one, in a component's
+ * root, which the walks reach from the page's own box put in through a slot
+ * (see `drawnBefore`): `<label><slot name="label"></slot> *</label>`, the
+ * words the page's, reads by its `textContent` as "*".
+ */
+function shownText(el) {
+  if (el.id === OURS) return clean(el.textContent);
+  if (el.shadowRoot || (hostOf(el) && (el.localName === 'slot' || el.querySelector('slot')))) return drawnText(el);
+  return clean(el.textContent);
+}
+
+/**
+ * The words `el` draws: a component's root in place of what is written
+ * between its tags, and a slot as what is slotted into it. See `shownText`,
+ * which asks this of a component, and `optionLabelFor`, of a label drawn in
+ * one round a slot.
+ */
+function drawnText(el) {
+  const parts = [];
+  const walk = (node) => {
+    const shown = node.localName === 'slot' ? node.assignedNodes({ flatten: true }) : [];
+    const kids = shown.length ? shown : (node.shadowRoot && node.id !== OURS ? node.shadowRoot : node).childNodes;
+    for (const child of kids) {
+      if (child.nodeType === Node.TEXT_NODE) parts.push(child.nodeValue);
+      else if (child.nodeType === Node.ELEMENT_NODE && !child.matches(NEVER_SHOWN) && child.getAttribute('aria-hidden') !== 'true') {
+        parts.push(' ');
+        walk(child);
+        parts.push(' ');
+      }
+    }
+  };
+  walk(el);
+  return clean(parts.join(''));
+}
+
+/** The element above, or the shadow root when there is none inside it. */
+const containerOf = (node) => node.parentElement ?? (node.parentNode instanceof ShadowRoot ? node.parentNode : null);
+
+/**
+ * The group above `node` as the climbs in `labelFor` and `isRequired` take
+ * it: `containerOf`, or, for the page's own element put in a component's
+ * slot, what the component draws round the slot. Each root entered that way
+ * is added to `putInto`.
+ */
+function groupDrawnAround(node, putInto) {
+  const slot = slotOf(node);
+  if (!slot) return containerOf(node);
+  putInto.add(slot.getRootNode());
+  return containerOf(slot);
+}
+
+/*
+ * How far the climb in `labelFor` goes above a component, once it has left
+ * the one the field is drawn in. See there.
+ */
+const LEVELS_OUTSIDE = 3;
+
+/**
  * A label's words, the way a screen reader says them.
  *
  * LinkedIn's Easy Apply writes every question twice inside its label — once
@@ -1028,11 +1319,27 @@ const ANOTHER_FIELD = 'input:not([type=hidden]), textarea, select';
  * word boundary. A label that is nothing but hidden text keeps it, rather than
  * becoming no label at all.
  */
+/*
+ * And the words a `<slot>` shows, which are not its children.
+ *
+ * A web component's label is very often a slot: Shoelace's `<sl-input>`
+ * draws `<label for="input"><slot name="label">` beside its own `<input
+ * id="input">` in its shadow root, and the page writes the words in its own
+ * markup, `<sl-input><span slot="label">First name</span></sl-input>`. What
+ * the slot shows is its assigned nodes, which live in the page, and what it
+ * holds is only the fallback for when nothing is assigned — so the label was
+ * read as empty, and every box drawn this way was described by its `name`
+ * alone. On a form whose names are `q_1001` that is no description at all:
+ * measured, First name, Last name and Email came out empty and unreported.
+ * The assigned nodes when there are any, flattened through a slot passed on
+ * into another component, and the fallback otherwise, as the browser draws it.
+ */
 function labelWords(el) {
   if (!el) return '';
   const parts = [];
   const walk = (node) => {
-    for (const child of node.childNodes) {
+    const shown = node.localName === 'slot' ? node.assignedNodes({ flatten: true }) : [];
+    for (const child of shown.length ? shown : node.childNodes) {
       if (child.nodeType === Node.TEXT_NODE) parts.push(child.nodeValue);
       else if (child.nodeType === Node.ELEMENT_NODE && child.getAttribute('aria-hidden') !== 'true') {
         parts.push(' ');
@@ -1045,7 +1352,56 @@ function labelWords(el) {
   return clean(parts.join('')) || clean(el.textContent);
 }
 
+/**
+ * The `<label>` the page gave the component a field is drawn in, when it gave
+ * the component one rather than the field.
+ *
+ * The page cannot name an `<input>` inside a component's root — neither
+ * `for` nor a wrapping label reaches in — so it names the component: `<label
+ * for="email">Email</label>` and `<x-input id="email">`, or `<label>Email
+ * <x-input></x-input></label>`. `labelFor` asked for `label[for]` in the
+ * input's own root and for `closest('label')`, and both stop at the shadow
+ * root, so both were read as nothing. The words beside the component are
+ * found by the climb in `labelFor`, but these are not beside it: the text
+ * is inside the label with the component, which the climb takes for this
+ * field's own wrapper, and a `for` label is very often in another column
+ * altogether. Measured, Last name, Email and First name wired these ways
+ * came out empty and unreported.
+ *
+ * Out through each root, nearest first, and only while the root holds this
+ * field and no other: a label naming a component that draws a first-name box
+ * and a last-name box names neither, and "Name" in both would be the full
+ * name twice. Then at each host:
+ *
+ * - `label[for]` in the host's own root, and only when that root's element
+ *   with the id *is* this host. An id is only resolved in its own root, so
+ *   the page's `for="city"` does not name a component some other component
+ *   draws with `id="city"`; and ids are not always unique, and `for` names
+ *   the first element with its id, never the second.
+ * - the label wrapping the host, and only when it holds no other field,
+ *   counting the ones drawn in components. A label around two components is
+ *   a row of fields under one heading, and its words are no more the second
+ *   box's than the first's.
+ */
+function componentLabel(input) {
+  let from = input;
+  for (let root = rootOf(from); root instanceof ShadowRoot && root.host.id !== OURS; root = rootOf(from)) {
+    if (fieldsIn(root, ANOTHER_FIELD, 2) > 1) return null;
+    from = root.host;
+    const around = rootOf(from);
+    if (from.id && around.getElementById?.(from.id) === from) {
+      const named = around.querySelector(`label[for="${CSS.escape(from.id)}"]`);
+      if (named) return named;
+    }
+    const wrapping = from.closest('label');
+    if (wrapping && fieldsIn(wrapping, ANOTHER_FIELD, 2) === 1) return wrapping;
+  }
+  return null;
+}
+
 function labelFor(input) {
+  // A plain dropdown's own label, and never one found further off. See `PLAIN`.
+  if (PLAIN.has(input)) return labelWords(plainLabelOf(input));
   /*
    * Each of these answers only when it has something to say.
    *
@@ -1070,6 +1426,10 @@ function labelFor(input) {
   const wrapping = labelWords(input.closest('label'));
   if (wrapping) return wrapping;
 
+  // Or one a component draws round the slot it is put in. See `labelDrawnRound`.
+  const drawnRound = labelWords(labelDrawnRound(input));
+  if (drawnRound) return drawnRound;
+
   const described = fromLabelledBy(input);
   if (described) return described;
 
@@ -1086,6 +1446,14 @@ function labelFor(input) {
   if (aria && !CONTROL_WORD.test(aria)) return aria;
 
   /*
+   * The label the page gave the component this field is drawn in. After
+   * everything the field says of itself, which is nearer, and before any
+   * guess from position, which it is not. See `componentLabel`.
+   */
+  const hosts = labelWords(componentLabel(input));
+  if (hosts) return hosts;
+
+  /*
    * Positional fallback: the nearest preceding element that reads like a label.
    *
    * Stop at another field, and a bare <input> *is* another field. Testing only
@@ -1096,12 +1464,29 @@ function labelFor(input) {
    * box after the email field. That is precisely the failure the note at the
    * top of this function says was fixed.
    */
-  let node = input.previousElementSibling;
-  for (let i = 0; i < 3 && node; i++, node = node.previousElementSibling) {
-    if (node.matches?.(ANOTHER_FIELD) || node.querySelector?.(ANOTHER_FIELD)) break;
-    const text = clean(node.textContent);
-    if (text && text.length < 160) return text;
-  }
+  /*
+   * "Another field" includes one drawn inside a component (see `fieldsIn`),
+   * and what is never drawn is stepped over without being counted: see
+   * `NEVER_SHOWN`.
+   *
+   * And "preceding" is as the page draws it, and so is "another field": a
+   * box put in a component's slot is preceded by what the component draws
+   * before the slot, and by the boxes put in the slot before it. See
+   * `drawnBefore` and `fieldsDrawnIn`.
+   */
+  const lookBack = (from) => {
+    let node = drawnBefore(from);
+    for (let i = 0; i < 3 && node; node = drawnBefore(node)) {
+      if (node.matches(NEVER_SHOWN)) continue;
+      i++;
+      if (fieldsDrawnIn(node, ANOTHER_FIELD, 1)) break;
+      const text = shownText(node);
+      if (text && text.length < 160) return text;
+    }
+    return '';
+  };
+  const before = lookBack(input);
+  if (before) return before;
 
   /*
    * Last resort: the nearest ancestor holding this field and nothing else
@@ -1129,16 +1514,69 @@ function labelFor(input) {
    * six wrappers below the block holding its question. Every level still has
    * to hold this one field and no other, which is what bounds the climb.
    */
-  let group = input.parentElement;
-  for (let i = 0; i < 7 && group; i++, group = group.parentElement) {
-    // One field, whether it is an input or a widget `<div>` (which the old
-    // test, "exactly one input", stopped at before it had begun).
-    if (group.querySelectorAll(`${ANOTHER_FIELD}, [role="combobox"]`).length > 1) break;
+  /*
+   * And on out of a component, to where the page put it.
+   *
+   * Both walks stopped at the shadow root a field is drawn in, since neither
+   * `previousElementSibling` nor `parentElement` leaves it. So a box drawn
+   * alone in a component was labelled only from inside that component, and
+   * the three commonest ways of labelling one from outside were never read:
+   * the page's `<label>Last name</label>` beside `<x-input>`, and a field
+   * component whose root holds a label component and then a box component.
+   * Measured, Last name and Email drawn those ways came out empty and
+   * unreported.
+   *
+   * The shadow root is now one more group, and when it holds this field and
+   * nothing else fillable the walks carry on from its host, exactly as they
+   * start from the field: the few elements before the host, then the groups
+   * around it. The rules that keep them safe are unchanged — stop at another
+   * field, counting the ones inside components, and stop at a group holding
+   * a second one — so in a row of components each with its own label beside
+   * it, each box reads its own, and the one before a component holding a
+   * tick box is never stepped over.
+   *
+   * Only `LEVELS_OUTSIDE` groups beyond the component, where inside the page
+   * the climb goes seven. Those seven are for a widget buried in wrappers of
+   * its own; a component *is* the widget, and its wrappers are the page's.
+   * A component with no label near it is otherwise alone in its section for
+   * as far as the climb goes, and the section's heading, several levels up,
+   * became its label.
+   */
+  // One field, whether it is an input or a widget `<div>` (which the old
+  // test, "exactly one input", stopped at before it had begun).
+  const oneField = `${ANOTHER_FIELD}, [role="combobox"]`;
+  // `from` is where the field is, as seen from `group`: the field itself, the
+  // element holding it, or the component it is drawn in.
+  /*
+   * And in through the slot a box is put in, as `groupDrawnAround` climbs,
+   * counting what is drawn (`fieldsDrawnIn`). A component the page's box is
+   * put into is not the box's own, as one it is drawn in is: it is one more
+   * of the page's wrappers, drawn by somebody else. So its wrappers cost none
+   * of the seven, and leaving it is not leaving the field's component, from
+   * which only `LEVELS_OUTSIDE` more are climbed.
+   */
+  let from = input;
+  const putInto = new Set();
+  let group = groupDrawnAround(input, putInto);
+  for (let i = 0, outside = 0; i < 7 && group && outside <= LEVELS_OUTSIDE; ) {
+    if (fieldsDrawnIn(group, oneField, 2) > 1) break;
     const heading = group.querySelector('label,legend,th,.label,[class*="label"]');
-    if (heading && !heading.contains(input)) return clean(heading.textContent);
-    const lead = group.firstElementChild;
-    const said = lead && !lead.contains(input) && !lead.querySelector(ANOTHER_FIELD) ? clean(lead.textContent) : '';
+    // A label a component draws round a slot says what is put in it, as in `optionLabelFor`.
+    if (heading && !heading.contains(from)) return hostOf(heading) && heading.querySelector('slot') ? drawnText(heading) : clean(heading.textContent);
+    let lead = group.firstElementChild;
+    while (lead?.matches(NEVER_SHOWN)) lead = lead.nextElementSibling;
+    const said = lead && !lead.contains(from) && !fieldsDrawnIn(lead, ANOTHER_FIELD, 1) ? shownText(lead) : '';
     if (said && said.length < 300) return said;
+    const leaving = group instanceof ShadowRoot;
+    const put = putInto.has(leaving ? group : group.getRootNode());
+    from = leaving ? group.host : group;
+    if (leaving) {
+      const beside = lookBack(from);
+      if (beside) return beside;
+    }
+    group = groupDrawnAround(from, putInto);
+    if ((leaving && !put) || outside) outside++;
+    if (!put) i++;
   }
   return aria;
 }
@@ -1195,7 +1633,7 @@ const asWords = (value) => clean(String(value ?? '').replace(/_+/g, ' ').replace
  * always been filled into one that never was. Measured:
  *
  *   FAIL  Lever: fills the fields it should
- *         input[name="urls[LinkedIn]"] wanted "linkedin.com/in/jianwen", got ""
+ *         input[name="urls[LinkedIn]"] wanted "linkedin.com/in/morgantestwell", got ""
  *
  * A description is a bag of words rather than a sentence, so the answer is to
  * carry both: the name as written, which every pattern was designed against,
@@ -1216,6 +1654,8 @@ function questionFor(input) {
 /** A choice dressed as something else: a button, or a text box that is a list. */
 function isWidgetChoice(element) {
   if (element instanceof HTMLSelectElement) return false;
+  // What select2 draws is its select's, which is the question. See `select2Of`.
+  if (isSelect2Part(element)) return false;
   const role = element.getAttribute?.('role');
   return (
     role === 'combobox' ||
@@ -1223,8 +1663,221 @@ function isWidgetChoice(element) {
     element.getAttribute?.('aria-haspopup') === 'listbox' ||
     ['list', 'both'].includes(element.getAttribute?.('aria-autocomplete')) ||
     isWorkdayPrompt(element) ||
-    isFabricSelect(element)
+    isFabricSelect(element) ||
+    PLAIN.has(element)
   );
+}
+
+/*
+ * A dropdown written for the site, with nothing to say it is one.
+ *
+ * No role, no `aria-haspopup`, no select behind it: a `div` saying "Select"
+ * beside a chevron, which on a click draws a `div` of clickable `div`s,
+ * often at the foot of the page. Nothing here read it as a question at all,
+ * so on a fixture drawn that way the School, Degree and Discipline stayed on
+ * "Select" and the report said nothing about any of them.
+ *
+ * Pressing things that say nothing about themselves is how a form gets
+ * something it did not ask for, so one is taken for a dropdown only when
+ * every sign agrees:
+ *
+ *   - its words are a prompt to choose and nothing else — "Select",
+ *     "Select…", "Choose an option" — and no control, link or ARIA widget
+ *     is in it or around it;
+ *   - it draws a chevron (an icon, an arrow character, or a `::before` or
+ *     `::after` of its own) and looks pressable (a pointer, or a place in the
+ *     Tab order);
+ *   - a `<label>` stands just before it, or names it, and belongs to nothing
+ *     else — it is never labelled by a climb through the page, which is how
+ *     a Degree would come to be read as the School above it.
+ *
+ * It is then driven exactly as the ARIA ones are (`chooseInWidget`), only
+ * where the profile or the bank answers its label, and with its list found
+ * as what appeared on the page when it was pressed (see `plainOptions`).
+ */
+const PLAIN = new WeakSet();
+const PLAIN_PROMPT = /^(?:please\s+)?(?:select|choose|pick)(?:\s+(?:one|an?\s+option))?\s*(?:\.{1,3}|…)?$/i;
+const CHEVRON_CHARACTER = /[▾▼⌄˅∨⏷▿⌵]/;
+const promptWords = (text) => clean(String(text ?? '').replace(new RegExp(CHEVRON_CHARACTER.source, 'g'), ''));
+
+/** The plain dropdowns under `root`, each remembered as a widget. */
+function plainDropdowns(root = document) {
+  const found = [];
+  for (const where of allRoots(root)) {
+    const walker = document.createTreeWalker(where, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!PLAIN_PROMPT.test(promptWords(node.nodeValue))) continue;
+      const control = plainControlOver(node.parentElement);
+      if (control && !found.includes(control)) found.push(control);
+    }
+  }
+  return found;
+}
+
+/**
+ * These controls and the plain dropdowns under `root`, in the order the
+ * page has them — or just these, as they came, where there are none.
+ */
+function withPlainDropdowns(found, root = document) {
+  const plain = plainDropdowns(root).filter((el) => !found.includes(el));
+  if (!plain.length) return [...found];
+  return [...found, ...plain].sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_PRECEDING ? 1 : -1));
+}
+
+/** The dropdown whose prompt these words are, or nothing. */
+function plainControlOver(words) {
+  if (!words || rootOf(words)?.host?.id === OURS) return null;
+  const said = promptWords(words.textContent);
+  if (!PLAIN_PROMPT.test(said)) return null;
+  // The outermost element saying the prompt and nothing more.
+  let control = words;
+  while (
+    control.parentElement &&
+    !['body', 'form', 'html'].includes(control.parentElement.localName) &&
+    promptWords(control.parentElement.textContent) === said
+  ) {
+    control = control.parentElement;
+  }
+  if (PLAIN.has(control)) return control;
+  if (!looksLikePlainDropdown(control, words)) return null;
+  PLAIN.add(control);
+  return control;
+}
+
+function looksLikePlainDropdown(control, words) {
+  if (control.getClientRects().length === 0 || getComputedStyle(control).visibility === 'hidden') return false;
+  if (isWidgetChoice(control) || isDisabled(control)) return false;
+  if (control.matches('[role]:not([role="presentation"]):not([role="none"]), [aria-haspopup], [aria-expanded], [contenteditable]')) return false;
+  if (control.querySelector('input:not([type=hidden]), select, textarea, button, a[href], [role="combobox"], [role="listbox"], [aria-haspopup]')) return false;
+  if (control.closest('a[href], label, select, option, textarea, [contenteditable=""], [contenteditable="true"], [role="combobox"], [role="listbox"], [role="option"], [role="menu"], [role="menuitem"], [aria-haspopup]')) return false;
+  const button = control.closest('button');
+  if (button && (button !== control || wouldSubmit(button))) return false;
+  // Not an upload's "Select" beside its file box.
+  if (control.parentElement?.querySelector('input[type=file]')) return false;
+  const pseudo = (el, which) => !['none', 'normal', '""', "''"].includes(getComputedStyle(el, which).content);
+  const chevron =
+    Boolean(control.querySelector('svg, img, i, [class*="chevron" i], [class*="arrow" i], [class*="caret" i]')) ||
+    CHEVRON_CHARACTER.test(control.textContent) ||
+    [control, words].some((el) => pseudo(el, '::after') || pseudo(el, '::before'));
+  if (!chevron) return false;
+  const pressable =
+    getComputedStyle(words).cursor === 'pointer' ||
+    control.matches('button, [tabindex]:not([tabindex^="-"])') ||
+    Boolean(control.querySelector('[tabindex]:not([tabindex^="-"])'));
+  if (!pressable) return false;
+  return Boolean(plainLabelOf(control));
+}
+
+/**
+ * The `<label>` of a plain dropdown: one that names it or something in it,
+ * or the one standing straight before it — or before a wrapper holding
+ * nothing else — and naming nothing else. Never one found further off.
+ */
+function plainLabelOf(control) {
+  const root = rootOf(control);
+  for (const el of [control, ...control.querySelectorAll('[id]')]) {
+    const label = el.id && root.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+    if (label && clean(labelWords(label))) return label;
+  }
+  let at = control;
+  for (let up = 0; up < 3 && at && !['body', 'form', 'html'].includes(at.localName); up++) {
+    let before = at.previousElementSibling;
+    while (before?.matches('input[type=hidden]')) before = before.previousElementSibling;
+    if (before) {
+      const mine = before.localName === 'label' && !before.htmlFor && !before.querySelector(ANOTHER_FIELD) && clean(labelWords(before));
+      return mine ? before : null;
+    }
+    const parent = at.parentElement;
+    if (!parent || [...parent.children].some((other) => other !== at && (clean(other.textContent) || other.matches(A_CONTROL) || other.querySelector(A_CONTROL)))) {
+      return null;
+    }
+    at = parent;
+  }
+  return null;
+}
+
+/** Where a widget is pressed to open it: itself, or a plain one's words. */
+const pressPoint = (widget) => (PLAIN.has(widget) ? wordsOf(widget) : widget);
+
+/*
+ * What appeared on the page while a plain dropdown was being pressed: its
+ * list, since nothing names it. Watched from before the press until the
+ * choice is read back.
+ */
+const APPEARED = new WeakMap();
+
+function watchAppearing(widget) {
+  const seen = new Set();
+  const note = (records) => {
+    for (const record of records) {
+      if (record.type === 'attributes') seen.add(record.target);
+      else for (const node of record.addedNodes) if (node.nodeType === Node.ELEMENT_NODE) seen.add(node);
+    }
+  };
+  const observer = new MutationObserver(note);
+  observer.observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class', 'hidden', 'open'] });
+  APPEARED.set(widget, { seen, words: pressPoint(widget), flush: () => note(observer.takeRecords()) });
+  return () => {
+    observer.disconnect();
+    APPEARED.delete(widget);
+  };
+}
+
+/**
+ * A plain dropdown's options: the words in the one thing that appeared when
+ * it was pressed — and only one, since two is a guess about which is its
+ * list. Only a list holding nothing that could be pressed for some other
+ * purpose (a field, a button, a link), at least two options, and never an
+ * option whose words are said twice.
+ */
+function plainOptions(widget) {
+  const lists = plainAppeared(widget);
+  if (lists.length !== 1) return [];
+  const [list] = lists;
+  if (list.matches('a[href], button, form') || list.querySelector('input:not([type=hidden]), select, textarea, button, a[href], iframe, form')) return [];
+  const worded = [list, ...list.querySelectorAll('*')].filter(
+    (el) => [...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && n.nodeValue.trim()) && el.getClientRects().length > 0,
+  );
+  const said = worded.map((el) => clean(el.textContent).toLowerCase());
+  const options = worded.filter((_, i) => said.indexOf(said[i]) === said.lastIndexOf(said[i]));
+  return options.length >= 2 ? options : [];
+}
+
+/** What has appeared on the page since a plain dropdown was pressed, and is showing. */
+function plainAppeared(widget) {
+  const watch = APPEARED.get(widget);
+  if (!watch) return [];
+  watch.flush();
+  const shown = [...watch.seen].filter(
+    (el) =>
+      el.isConnected &&
+      !el.contains(watch.words) &&
+      !el.contains(widget) &&
+      el.getClientRects().length > 0 &&
+      getComputedStyle(el).visibility !== 'hidden' &&
+      getComputedStyle(el).opacity !== '0',
+  );
+  return shown.filter((el) => !shown.some((other) => other !== el && other.contains(el)));
+}
+
+/** What a plain dropdown shows as chosen, its own list left out. */
+function plainShown(widget) {
+  const lists = [...(APPEARED.get(widget)?.seen ?? [])].filter((el) => el !== widget && widget.contains(el));
+  const walker = document.createTreeWalker(widget, NodeFilter.SHOW_TEXT);
+  let text = '';
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (!lists.some((list) => list.contains(node))) text += ` ${node.nodeValue}`;
+  }
+  return promptWords(text);
+}
+
+/**
+ * Whether a plain dropdown took the choice: it shows the option's words as
+ * its own, and its list has gone. It has no value to read and no state to
+ * ask, so both are needed — an ignored click leaves the list open.
+ */
+function plainTookIt(widget, chosen) {
+  return widget.isConnected && sameOption(plainShown(widget), chosen) && plainOptions(widget).length === 0;
 }
 
 /*
@@ -1283,10 +1936,69 @@ function isWorkdayPrompt(element) {
  * the fill counts only once the container shows the choice. A pick inside
  * the container is read back off the select. See `watchChosenPicks`.
  *
- * bootstrap-select and select2 keep their select on the page, shrunk to a
- * pixel, and redraw on its native `change`, so they need none of this.
+ * bootstrap-select keeps its select on the page, shrunk to a pixel, and
+ * redraws on its native `change`, so it needs none of this. select2 does
+ * too — see `select2Of` for what it does need.
  */
 const CHOSEN = '.chosen-container, .chzn-container';
+
+/*
+ * A `<select>` select2 (4.x) has shrunk to a pixel and drawn again.
+ *
+ * select2 keeps the select on the page as `select2-hidden-accessible`,
+ * labelled by its own `<label for>`, and draws a `.select2-container` straight
+ * after it: a `.select2-selection` that is `role="combobox"`, labelled by the
+ * span that shows the choice, and a dropdown it opens in a second
+ * `.select2-container` at the foot of the body, with a search box
+ * (`aria-autocomplete="list"`) over a `role="listbox"`. It redraws from the
+ * select on `change`, so filling the select fills it. But its drawing was
+ * read as a question of its own: measured on a fixture drawn as select2
+ * draws itself, "Select an option" — the placeholder in the selection — was
+ * offered to the bank beside the select's real question; and a person's pick
+ * was never kept, because select2 picks on mouseup and announces it with
+ * jQuery's `trigger('change')`, which fires no native event, and the option
+ * the pick was made in has left the page before any click arrives.
+ *
+ * So everything select2 draws is its select's, and nothing of it is a widget
+ * or a box (see `isSelect2Part`); the select is filled, asked and read as the
+ * select it is, and a pick made in the drawing is read back off the select by
+ * `watchChosenPicks`, as Chosen's is.
+ */
+const SELECT2 = '.select2-container';
+
+function select2Of(select) {
+  if (!(select instanceof HTMLSelectElement)) return null;
+  const next = select.nextElementSibling;
+  return next?.matches?.(SELECT2) && next.querySelector('.select2-selection') ? next : null;
+}
+
+/**
+ * The select a select2 container stands in for: the one before it, or — for
+ * the dropdown it opens at the foot of the body — the one whose selection
+ * names its list (`select2-<id>-results` beside `select2-<id>-container`).
+ */
+function selectOfSelect2(node) {
+  const container = node?.closest?.(SELECT2);
+  if (!container) return null;
+  const before = container.previousElementSibling;
+  if (before instanceof HTMLSelectElement && select2Of(before) === container) return before;
+  const list = container.querySelector('.select2-results__options[id]');
+  if (!list) return null;
+  const root = container.getRootNode?.();
+  const named = /^select2-(.+)-results$/.exec(list.id);
+  const owner =
+    (named && root?.getElementById?.(`select2-${named[1]}-container`)) ||
+    root?.querySelector?.(`.select2-selection[aria-controls~="${CSS.escape(list.id)}"], .select2-selection[aria-owns~="${CSS.escape(list.id)}"]`);
+  const drawn = owner?.closest?.(SELECT2);
+  const select = drawn?.previousElementSibling;
+  return select instanceof HTMLSelectElement && select2Of(select) === drawn ? select : null;
+}
+
+/** Anything select2 drew for a select: its selection, its search box, its list. */
+function isSelect2Part(node) {
+  const container = node?.closest?.(SELECT2);
+  return Boolean(container && (selectOfSelect2(container) || container.querySelector(':scope > .select2-dropdown')));
+}
 
 function chosenOf(select) {
   if (!(select instanceof HTMLSelectElement)) return null;
@@ -1315,6 +2027,13 @@ function selectOfChosen(container) {
  * say whether it now shows it. True for a select nothing stands in for.
  */
 function redrawStandIn(select) {
+  // select2 redraws on the `change` already sent; asked only whether it did.
+  const select2 = select2Of(select);
+  if (select2) {
+    const said = clean(select.selectedOptions?.[0]?.textContent).toLowerCase();
+    const shown = select2.querySelector('.select2-selection__rendered') ?? select2;
+    return Boolean(said) && clean(shown.textContent).toLowerCase().includes(said);
+  }
   const drawn = chosenOf(select);
   if (!drawn) return true;
   for (const type of ['chosen:updated', 'liszt:updated']) select.dispatchEvent(ours(new Event(type, { bubbles: true })));
@@ -1352,6 +2071,55 @@ function isDisabled(node) {
   return typeof node?.matches === 'function' ? node.matches(':disabled') : Boolean(node?.disabled);
 }
 
+/*
+ * A control a dropdown keeps for itself beside its button, which no person
+ * reaches: hidden from a screen reader (`aria-hidden="true"`) and from the
+ * Tab key (`tabindex="-1"`).
+ *
+ * MUI's Select keeps what it submits in one — a text box, `opacity: 0`, named
+ * like the question and holding the chosen option's value — and the box just
+ * before it is the Select's own button saying "Select". So it was read as a
+ * box labelled "Select" and named `school_name_id`, the profile's words were
+ * typed into it, and it was counted filled; MUI takes a value typed there
+ * only when it is one of its options' values, and a form over Greenhouse's
+ * API gives those as ids, so nothing was chosen. Measured on a fixture drawn
+ * as MUI draws itself: School, Degree and Discipline stayed on "Select" and
+ * were reported filled, and because they were claimed the Select beside each
+ * was never driven — the Country, not an education key, was driven and chose.
+ * That is the shape of what Epic Games' form was reported to do.
+ *
+ * Radix's Select keeps a visually hidden `<select>` beside its button, with
+ * no label of its own: read the same way, it was a list labelled by whatever
+ * the button showed, "Select" or the last choice. It takes a `change` as a
+ * choice, but it also fires one of its own after every choice, so a person's
+ * pick — and each one made here — was written down a second time under the
+ * button's words as the question: "Northeastern University — Northeastern
+ * University".
+ *
+ * So a text box like that is never typed into, and a select like that — no
+ * label of its own, an ARIA dropdown beside it — is not filled, asked or
+ * watched as a question: the dropdown is, by `fillComboboxes` and
+ * `watchWidgetPicks`, and what it holds is read back as the dropdown's
+ * (see `hiddenPartner`). A select with a label of its own is left as it was:
+ * select2 hides its select the same way, labels it, and redraws from it.
+ */
+function isWidgetPartner(el) {
+  if (!(el instanceof HTMLInputElement || el instanceof HTMLSelectElement)) return false;
+  if (el.getAttribute('aria-hidden') !== 'true' || el.getAttribute('tabindex') !== '-1') return false;
+  if (el instanceof HTMLInputElement) return el.type !== 'hidden';
+  // select2's select is the question, labelled or not. See `select2Of`.
+  if (select2Of(el)) return false;
+  const labelled =
+    (el.id && rootOf(el).querySelector(`label[for="${CSS.escape(el.id)}"]`)) ||
+    el.closest('label') ||
+    el.hasAttribute('aria-labelledby') ||
+    el.hasAttribute('aria-label');
+  if (labelled) return false;
+  return [...(el.parentElement?.children ?? [])].some(
+    (other) => other !== el && (isWidgetChoice(other) || other.querySelector?.('[role="combobox"], [aria-haspopup="listbox"]')),
+  );
+}
+
 function isFillable(input) {
   /*
    * `:disabled`, not `.disabled`.
@@ -1373,6 +2141,8 @@ function isFillable(input) {
    */
   if (input instanceof HTMLSelectElement && input.hasAttribute('readonly')) return false;
   if (input.type === 'hidden' || input.type === 'file' || input.type === 'password') return false;
+  // What a dropdown keeps beside its button. See `isWidgetPartner`.
+  if (isWidgetPartner(input)) return false;
   // Radios are answered as a group, below; checkboxes are consent and are
   // nobody's to tick but the applicant's.
   if (input.type === 'radio' || input.type === 'checkbox') return false;
@@ -1386,6 +2156,8 @@ function isFillable(input) {
   if (isWidgetChoice(input)) return false;
   // Chosen's own search box, which is the list's and not a question. See `chosenOf`.
   if (input.closest?.(CHOSEN)) return false;
+  // And select2's. See `select2Of`.
+  if (isSelect2Part(input)) return false;
   // `offsetParent` is null for anything positioned fixed, visible or not, and
   // forms inside a fixed modal are ordinary. Whether it occupies space on the
   // page is the question actually being asked. For a select Chosen has
@@ -1508,9 +2280,24 @@ function setValue(input, value) {
   if (spin && lastBoxOfItsDate(input)) input.blur?.();
 }
 
+/*
+ * The date's group, and its boxes, as the page draws them.
+ *
+ * `closest` stops at the root a box is drawn in, and `querySelectorAll` does
+ * not open a component, so a date whose boxes are components — the page's
+ * `role="group"` round a month and a year each drawn in one, or a date
+ * component that is itself the group, its boxes loose in its root — had no
+ * group, every box was its date's last, and focus was sent out after the
+ * month alone: measured against a wrapper that takes the date on the blur
+ * that leaves it, as Workday's does, the date was taken as "May/" where the
+ * same boxes written into the page were taken as "May/2026". The nearest
+ * group out through each component (see `closestAround`), and its boxes in
+ * the order they are drawn (see `drawnWithin`).
+ */
 function lastBoxOfItsDate(input) {
-  const boxes = input.closest('[role="group"]')?.querySelectorAll('[role="spinbutton"]');
-  return !boxes?.length || boxes[boxes.length - 1] === input;
+  const group = closestAround(input, '[role="group"]');
+  const boxes = group ? [...drawnWithin(group)].filter((el) => el.matches('[role="spinbutton"]')) : [];
+  return !boxes.length || boxes[boxes.length - 1] === input;
 }
 
 /**
@@ -1573,6 +2360,22 @@ const LINKS = new Set(['linkedin', 'github', 'website']);
 /** A phone box holding the country's code and nothing else — "+1", "+44". */
 const ONLY_A_DIALLING_CODE = /^\s*\+\d{1,4}\s*$/;
 
+/*
+ * A box whose value is its input mask and nothing typed into it:
+ * "(___) ___-____", "__/____".
+ *
+ * A mask that is shown only while the box has focus leaves `value` empty the
+ * rest of the time, and those boxes were always filled. One that is always
+ * shown writes the mask into `value` from the start — IMask with `lazy:
+ * false`, Inputmask with `clearMaskOnLostFocus: false`, and the hand-written
+ * masks the enterprise systems put on telephone and date boxes — and such a
+ * box read as already answered: measured, the phone box was reported
+ * "already filled" and left holding underscores. Only the slots and the
+ * punctuation between them, and at least one slot, so a value with a single
+ * digit or letter in it is somebody's answer and stays.
+ */
+const ONLY_A_MASK = /^[\s()\-./+]*_[\s_()\-./+]*$/;
+
 function onlyTheStartOfAnAddress(value) {
   return /^\s*(https?:\/\/)?(www\.)?((linkedin\.com(\/in)?|github\.com)\/?)?\s*$/i.test(value) && /\S/.test(value);
 }
@@ -1602,13 +2405,22 @@ function otherWaysToWrite(key, value) {
   /*
    * A link, with the scheme a `type=url` field insists on.
    *
-   * A profile stores "github.com/Jianwen-Ding", because that is what goes on
+   * A profile stores "github.com/Morgan-Testwell", because that is what goes on
    * a resume — nobody prints the https://. A `type=url` input refuses it, and
    * before this the field was filled, reported as filled, and then blocked the
    * submit. Adding the scheme does not change where the link goes.
    */
   if (LINKS.has(key)) {
     return /^[a-z][a-z0-9+.-]*:/i.test(said) ? [] : [`https://${said}`];
+  }
+
+  /*
+   * A state as its two letters, for the box that has room for no more. See
+   * `fitsIn`: "Massachusetts" in a `maxlength=2` State box went in whole.
+   */
+  if (key === 'address_state') {
+    const code = REGION_BY_NAME[said.toLowerCase()];
+    return code ? [code] : [];
   }
 
   if (key !== 'phone') return [];
@@ -1620,6 +2432,149 @@ function otherWaysToWrite(key, value) {
   // And without it, for the forms that want exactly ten.
   if (digits.length === 11 && digits.startsWith('1')) out.push(digits.slice(1));
   return out;
+}
+
+/*
+ * Whether a value fits in the room a box gives it.
+ *
+ * `maxlength` stops a person's typing and nothing else: a value written by
+ * script goes in whole, however long, and the browser does not count it as
+ * too long when Submit is pressed either — `tooLong` is only ever set by an
+ * edit a person made. So "(555) 010-0199" went into a phone box with
+ * `maxlength=10`, and "Massachusetts" into a State box with `maxlength=2`,
+ * each reported as filled, each a value nobody could have typed there. The
+ * page's own checks (jQuery Validate's `maxlength` rule, and the server's
+ * column behind the box) are the ones that then refuse it, after the card has
+ * said it was done. A shorter way of writing the same answer is used where
+ * there is one — see `otherWaysToWrite` — and otherwise the box is left.
+ */
+const fitsIn = (input, value) => !(input.maxLength > 0 && String(value).length > input.maxLength);
+
+/*
+ * A telephone number asked in two or three boxes: area code, exchange and
+ * line, `(___) ___ - ____`, each with a `maxlength` of its own.
+ *
+ * The enterprise and government systems still ask it that way, and every box
+ * matched `phone` — by its label, or by names like `phone_area`,
+ * `phone_prefix` and `phone_line` — so each was given the whole number:
+ * "(555) 010-0199" three times over, in boxes with room for 3, 3 and 4
+ * characters. An "Area code" box beside a "Phone number" box was the other
+ * half of the same shape: the area code is left alone as a dialling code (see
+ * `DIALLING_CODE`), and the number box, `maxlength=7`, was given all ten
+ * digits, so the area code went in twice and in the wrong box.
+ *
+ * The boxes are the ones on either side of this one with nothing between
+ * them, in its own wrapper or the two around it: each a one-line box with a
+ * `maxlength`, and each either saying nothing of its own or saying it is part
+ * of a telephone number. A country code or an extension ends the run — the
+ * first is the form's, and the second is not in the number. Two or three
+ * boxes: every box but the last takes exactly as many digits as it holds, no
+ * more than four, and the last takes the rest, which have to fit and be no
+ * fewer than the box before took — 3 + 3 + 4 or 3 + 7 for a ten-digit number.
+ * So an unlabelled `+[__]` in front of the three boxes, which would leave
+ * one digit for the last, makes the run a shape this cannot be sure of.
+ * Anything else is left for the person rather than guessed across the boxes.
+ */
+const ONE_LINE_BOX = new Set(['text', 'tel', 'number', 'search']);
+
+function partOfTheNumber(input) {
+  if (!ONE_LINE_BOX.has(input.type) || !(input.maxLength > 0) || !isFillable(input)) return false;
+  const said = describeField(input);
+  if (!said) return true;
+  if (/\b(country|ext(ension)?)\b/i.test(said)) return false;
+  return /\barea\b/i.test(said) || FIELD_PATTERNS.find(([, re]) => re.test(said))?.[0] === 'phone';
+}
+
+function nationalDigits(value) {
+  const said = String(value).trim();
+  const coded = /^\+\d{1,4}[\s.\-)]+(.*)$/.exec(said);
+  if (coded) return coded[1].replace(/\D/g, '');
+  const digits = said.replace(/\D/g, '');
+  return /^\+1\d{10}$/.test(said.replace(/[^\d+]/g, '')) ? digits.slice(1) : digits;
+}
+
+/*
+ * The boxes in `scope` in the order the page draws them, as a run of a
+ * telephone number is read from them.
+ *
+ * A component drawing one box stands for that box, where the page put the
+ * component: `(<x-input maxlength="3">) <x-input maxlength="3"> - <x-input
+ * maxlength="4">` is three boxes in a row, as the same `<input>`s are. A
+ * component drawing more than one is a thing of its own, and stands in the
+ * row as itself, which is no part of any number: its boxes are one question
+ * it asks, read inside it (see `phoneBoxes`), and never joined to a box
+ * beside it that some other component or the page draws. What is slotted
+ * into a component is where the slot is.
+ */
+function boxesDrawnIn(scope) {
+  const out = [];
+  const walk = (node) => {
+    const put = node.localName === 'slot' && hostOf(node) ? node.assignedElements() : [];
+    for (const el of put.length ? put : [...node.children]) {
+      if (el.matches(ANOTHER_FIELD)) out.push(el);
+      else if (!el.shadowRoot || el.id === OURS) walk(el);
+      else if (fieldsIn(el.shadowRoot, ANOTHER_FIELD, 2) > 1) out.push(el);
+      else walk(el.shadowRoot);
+    }
+  };
+  walk(scope);
+  return out;
+}
+
+/*
+ * And out of the component the box is drawn in.
+ *
+ * `querySelectorAll` does not reach into a component and `parentElement`
+ * stops at its root, so a number asked in boxes drawn in components was no
+ * run at all: each box, `maxlength` 3 or 4, was given the whole number, which
+ * did not fit, and was reported as refusing it. Measured, the three boxes of
+ * `(___) ___-____` each drawn in a component, an Area code and a seven-digit
+ * number each drawn in one, and one component drawing all three boxes loose
+ * in its root, were all left empty and reported three times over, where the
+ * same boxes written into the form took 555, 010 and 0199.
+ *
+ * The root is one more wrapper, and costs none of the three, which are the
+ * page's. From a root holding only this box the run is read on outside, from
+ * the component, as `labelFor` climbs; from a root holding more the run is
+ * the root's, and nothing outside is part of it (see `boxesDrawnIn`).
+ */
+function phoneBoxes(input, value) {
+  const digits = nationalDigits(value);
+  let scope = containerOf(input);
+  for (let i = 0; i < 3 && scope && scope !== document.body; ) {
+    // Only the boxes a person can see; a component stands in the row whether or not its host has a box of its own.
+    const fields = boxesDrawnIn(scope).filter((el) => !el.matches(ANOTHER_FIELD) || el.getClientRects().length > 0);
+    const at = fields.indexOf(input);
+    let first = at;
+    let last = at;
+    while (first > 0 && partOfTheNumber(fields[first - 1])) first--;
+    while (last < fields.length - 1 && partOfTheNumber(fields[last + 1])) last++;
+    const run = fields.slice(first, last + 1);
+    if (run.length >= 2) {
+      const heads = run.slice(0, -1).map((box) => box.maxLength);
+      const taken = heads.reduce((a, b) => a + b, 0);
+      const rest = digits.length - taken;
+      if (run.length <= 3 && heads.every((n) => n <= 4) && rest >= heads[heads.length - 1] && rest <= run[run.length - 1].maxLength) {
+        let from = 0;
+        return run.map((box, n) => {
+          const part = n < heads.length ? digits.slice(from, from + heads[n]) : digits.slice(from);
+          from += part.length;
+          return [box, part];
+        });
+      }
+      // The boxes, with nothing to put in them: one number, reported once.
+      return run.map((box) => [box, null]);
+    }
+    if (scope.localName === 'form') break;
+    if (scope instanceof ShadowRoot) {
+      if (scope.host.id === OURS || fieldsIn(scope, ANOTHER_FIELD, 2) > 1) break;
+      scope = containerOf(scope.host);
+    } else {
+      scope = containerOf(scope);
+      i++;
+    }
+  }
+  return null;
 }
 
 /**
@@ -1664,12 +2619,25 @@ const A_CONTROL =
 const rankOf = (heading) =>
   /^h[1-6]$/.test(heading.localName) ? Number(heading.localName[1]) : Number(heading.getAttribute('aria-level')) || 2;
 
+/*
+ * "Holds a control" counts the ones drawn in components (see `fieldsIn`): a
+ * section whose boxes are all components holds none that `querySelector`
+ * can see, so its heading's wrapper was never found, the climb ran on to the
+ * form, and the heading was nobody's bound.
+ *
+ * And as the page draws it (see `drawnWithin`): the heading may be drawn in
+ * a component — `<x-heading>` whose root is an `<h3>`, or `<x-section>`
+ * whose root is `<section><h3>…</h3><slot></slot></section>` round the
+ * page's own fields — and its wrapper is then found by climbing out of the
+ * component, or is the component's `<section>` holding what is slotted in.
+ */
 function sectionBoxOf(heading) {
-  let box = heading.parentElement;
-  while (box && !box.querySelector(A_CONTROL)) box = box.parentElement;
+  let box = parentAround(heading);
+  while (box && !drawsAny(box, A_CONTROL)) box = parentAround(box);
   if (!box || box.localName === 'form' || box.localName === 'body' || box.localName === 'html') return null;
   const rank = rankOf(heading);
-  for (const other of box.querySelectorAll(HEADING)) {
+  for (const other of drawnWithin(box)) {
+    if (!other.matches(HEADING)) continue;
     if (other === heading || other.localName === 'legend') continue;
     if (rankOf(other) <= rank) return null;
   }
@@ -1684,25 +2652,51 @@ function sectionBoxOf(heading) {
  * field, which is the only case where it is evidence about the field rather
  * than about the form.
  */
+/*
+ * For a field drawn in a component, from the component in the form's own
+ * tree. Neither `closest('form')` nor `contains` nor `compareDocumentPosition`
+ * sees through a shadow root — to `compareDocumentPosition` a box in a
+ * component is in another tree, before nothing and after nothing — so it had no
+ * heading over it at all: measured, a City and a Phone drawn in components
+ * under a bounded "Work Experience" heading were given the applicant's own
+ * home and number, where the same boxes written straight into the form were
+ * left for the person as a past job's.
+ *
+ * And the headings a component draws. `querySelectorAll` from the form sees
+ * none drawn in a component's root — `<x-heading text="Work Experience">`
+ * whose root is the `<h3>`, or `<x-section heading="Work Experience">` whose
+ * root is `<section><h3>…</h3><slot></slot></section>` round the page's own
+ * boxes — and a box slotted into a component is before or after nothing
+ * there either. Measured, a City under either was given the applicant's
+ * home, where under the same `<h3>` written into the form it was left for
+ * the person as a past job's; and an "End date year" after an Education
+ * heading drawn in a component was left empty, where after the page's own
+ * `<h3>Education</h3>` it was the graduation year. So the form is walked as
+ * it is drawn (see `drawnWithin`), up to the field, and "inside" is where
+ * the field is drawn (see `drawnInside`). In a form without components that
+ * is the same walk, in the same order, as before.
+ */
 function headingOver(input) {
-  const scope = input.closest?.('form') ?? null;
+  const scope = closestAround(input, 'form');
   if (!scope) return null;
   let found = null;
-  for (const heading of scope.querySelectorAll(HEADING)) {
-    if (!(heading.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING)) break;
+  for (const heading of drawnWithin(scope)) {
+    if (heading === input) break;
+    if (!heading.matches(HEADING)) continue;
     if (heading.localName === 'legend') {
-      if (heading.parentElement?.contains(input)) found = { heading, bounded: false };
+      if (heading.parentElement && drawnInside(heading.parentElement, input)) found = { heading, bounded: false };
       continue;
     }
     const box = sectionBoxOf(heading);
-    if (box && !box.contains(input)) continue;
+    if (box && !drawnInside(box, input)) continue;
     found = { heading, bounded: Boolean(box) };
   }
   return found;
 }
 
 function sectionOf(input) {
-  const legend = input.closest?.('fieldset')?.querySelector(':scope > legend');
+  // Out of the components the field is drawn in: see `closestAround`.
+  const legend = closestAround(input, 'fieldset')?.querySelector(':scope > legend');
   if (legend) return clean(legend.textContent);
   return clean(headingOver(input)?.heading.textContent ?? '');
 }
@@ -1730,8 +2724,46 @@ const EDUCATION_SECTION = /\b(education|academic\w*|schools?|degrees?)\b/i;
  */
 function educationDateKey(input, description) {
   const key = educationDatePart(description);
-  if (!key || !EDUCATION_SECTION.test(sectionOf(input))) return null;
+  if (!key || !EDUCATION_SECTION.test(sectionOf(input))) return graduationPartKey(input);
   return key;
+}
+
+/*
+ * A graduation date asked as a group of boxes, each labelled only with its
+ * part: GOV.UK's date input and the forms built like it, a `<fieldset>` whose
+ * `<legend>` asks "When did you graduate?" or "Expected graduation date" over
+ * a box or a list labelled "Month" and another labelled "Year".
+ *
+ * Every pattern here reads a field's own words, and "Month" and "Year" say
+ * nothing about which date, so both were left empty and unreported beside a
+ * profile holding the graduation. The question is the group's, and it is only
+ * read when the box's own label is nothing but a date part, so the legend is
+ * never a description of an ordinary box under it (see `surroundingWords`).
+ * The group says which date, and only a graduation is filled: a date of birth
+ * or an availability asked the same way matches no pattern. The box says
+ * which part, so "Month" under "Graduation month and year" is still the
+ * month. A "Day" box is left alone, as a guessed day is a guess.
+ */
+const DATE_PART = { month: /^(month|mm)$/i, year: /^(year|yyyy|yy)$/i };
+
+function graduationPartKey(input) {
+  const own = withoutMarkers(labelFor(input)) || clean(input.placeholder);
+  const part = Object.keys(DATE_PART).find((p) => DATE_PART[p].test(own));
+  if (!part) return null;
+  // Out of the components the box is drawn in: see `closestAround`.
+  const legend = closestAround(input, 'fieldset')?.querySelector(':scope > legend');
+  const group = closestAround(input, '[role="group"]');
+  /*
+   * `fromLabelledBy` only for a group there is. A box whose words are "Month"
+   * or "MM" with no fieldset and no group anywhere around it is ordinary — a
+   * card's expiry, a date asked as two loose boxes — and handing it `null`
+   * threw, which took the whole of `fillForm` with it: measured, a form with
+   * a First name box and a box labelled Month beside it filled nothing and
+   * reported nothing.
+   */
+  const asked = clean(legend?.textContent) || clean(group?.getAttribute('aria-label')) || (group ? fromLabelledBy(group) : '');
+  const found = asked ? FIELD_PATTERNS.find(([, re]) => re.test(asked))?.[0] : null;
+  return /^graduation_(month|year|date)$/.test(found ?? '') ? `graduation_${part}` : null;
 }
 
 /*
@@ -2453,10 +3485,45 @@ function withoutTrunkZeroAfterCode(number) {
  * country, selected United Kingdom (+44)". Looked for in the box's own
  * wrapper and the two around it, never the whole form.
  */
+/*
+ * And out of the component the box is drawn in, and into the components
+ * beside it that are only a picker.
+ *
+ * `parentElement` stops at the root a box is drawn in, and
+ * `querySelectorAll` does not open a component, so a code beside a box in a
+ * component was never seen: measured, with the page's own select on +44
+ * beside a telephone box drawn in a component, with the select drawn in a
+ * component beside the page's box, and with an intl-tel-input drawn whole in
+ * one component, button and box loose in its root, a UK mobile went in as
+ * "07700 900123" behind the +44, where written without components it went
+ * in as "7700 900123".
+ *
+ * The root is one more wrapper, costing none of the three. A component
+ * beside the box is read when it draws one control and no more — a picker,
+ * standing where the page put it — or when it is the one the box is drawn
+ * in. One drawing a control and a box of its own is a telephone field of
+ * its own, and its code is its own box's, not this one's.
+ */
+const A_CODE_CONTROL = 'select, button, [role="combobox"], input';
+
+function codeControlsDrawnIn(scope, input) {
+  const out = [];
+  const walk = (node) => {
+    const put = node.localName === 'slot' && hostOf(node) ? node.assignedElements() : [];
+    for (const el of put.length ? put : [...node.children]) {
+      if (el.matches(A_CODE_CONTROL)) out.push(el);
+      if (!el.shadowRoot || el.id === OURS) walk(el);
+      else if (drawnInside(el, input) || fieldsIn(el.shadowRoot, A_CODE_CONTROL, 2) <= 1) walk(el.shadowRoot);
+    }
+  };
+  walk(scope);
+  return out;
+}
+
 function diallingCodeBeside(input) {
-  let scope = input.parentElement;
-  for (let i = 0; i < 3 && scope && scope.localName !== 'form' && scope !== document.body; i++, scope = scope.parentElement) {
-    for (const el of scope.querySelectorAll('select, button, [role="combobox"], input')) {
+  let scope = containerOf(input);
+  for (let i = 0; i < 3 && scope && scope.localName !== 'form' && scope !== document.body; ) {
+    for (const el of codeControlsDrawnIn(scope, input)) {
       if (el === input) continue;
       const shown =
         el instanceof HTMLSelectElement
@@ -2466,6 +3533,13 @@ function diallingCodeBeside(input) {
             : `${el.getAttribute('aria-label') ?? ''} ${el.textContent}`;
       const code = /(?:^|[\s(])(\+\d{1,4})(?=$|[\s)])/.exec(shown)?.[1];
       if (code) return code;
+    }
+    if (scope instanceof ShadowRoot) {
+      if (scope.host.id === OURS) break;
+      scope = containerOf(scope.host);
+    } else {
+      scope = containerOf(scope);
+      i++;
     }
   }
   return undefined;
@@ -2704,8 +3778,11 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
   // Whether this form has a box of its own for the name somebody goes by.
   // See `NAME_FOR_THE_FORM`.
   const asksPreferred = inputs.some((i) => isFillable(i) && PREFERRED_NAME_BOX.test(clean(labelFor(i))));
+  // The boxes of a telephone number asked in parts, once one of them has
+  // filled them all. See `phoneBoxes`.
+  const numberBoxes = new WeakSet();
   for (const input of inputs) {
-    if (!isFillable(input)) continue;
+    if (!isFillable(input) || numberBoxes.has(input)) continue;
 
     const description = describeField(input);
     if (!description) continue;
@@ -2768,6 +3845,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
       input instanceof HTMLSelectElement
         ? selectIsAnswered(input)
         : Boolean(input.value) &&
+          !ONLY_A_MASK.test(input.value) &&
           !(LINKS.has(key) && onlyTheStartOfAnAddress(input.value)) &&
           !(key === 'phone' && ONLY_A_DIALLING_CODE.test(input.value));
     if (answered && !overwrite) {
@@ -2931,6 +4009,38 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     } else if (key === 'linkedin' && isWorkdayLinkedIn(input)) {
       value = wholeLinkedInAddress(value);
     }
+    /*
+     * Never more than the box has room for. See `fitsIn`: the same answer
+     * written shorter, or a telephone number spread over the boxes it is
+     * asked in, or nothing and a line on the card saying so.
+     */
+    if (!fitsIn(input, value)) {
+      const shorter = otherWaysToWrite(key, value).find((spelling) => fitsIn(input, spelling));
+      const parts = shorter === undefined && key === 'phone' ? phoneBoxes(input, value) : null;
+      if (parts) {
+        const unsure = parts.some(([, part]) => part === null);
+        const busy = parts.some(([box]) => box !== input && box.value) && !overwrite;
+        const was = parts.map(([box]) => box.value);
+        if (!busy && !unsure) for (const [box, part] of parts) setValue(box, part);
+        for (const [box] of parts) numberBoxes.add(box);
+        if (unsure) {
+          skipped.push({ key, reason: 'the field would not accept it in that form', description: description.slice(0, 60) });
+        } else if (busy) {
+          skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
+        } else if (parts.every(([box, part]) => box.value === part)) {
+          filled.push({ key, value: parts.map(([, part]) => part).join(' ') });
+        } else {
+          parts.forEach(([box], n) => setValue(box, was[n]));
+          skipped.push({ key, reason: 'the field would not take it', description: description.slice(0, 60) });
+        }
+        continue;
+      }
+      if (shorter === undefined) {
+        skipped.push({ key, reason: 'the field would not accept it in that form', description: description.slice(0, 60) });
+        continue;
+      }
+      value = shorter;
+    }
     setValue(input, value);
     /*
      * Check it went in. Assigning a value a typed input will not accept — a
@@ -3049,7 +4159,8 @@ const WORK_HISTORY = /\b(work|employment|professional|job|career)[\s_-]*(experie
 function inWorkHistory(input) {
   const own = [input.id, input.name, input.getAttribute('data-automation-id')].map(asWords).join(' ');
   if (WORK_HISTORY.test(own)) return true;
-  for (let at = input.parentElement, n = 0; at && n < 8; at = at.parentElement, n++) {
+  // Out of the components the field is drawn in: see `closestAround`.
+  for (let at = parentAround(input), n = 0; at && n < 8; at = parentAround(at), n++) {
     if (!at.matches('[role="group"], fieldset, section')) continue;
     const named =
       clean(at.getAttribute('aria-label')) ||
@@ -3079,14 +4190,26 @@ function inWorkHistory(input) {
  */
 const EMPLOYMENT_HEADING = /^(employment|employment\s+history|work\s+experience|work\s+history|professional\s+experience|experience)$/i;
 
+/*
+ * And out of the components the field is drawn in, as the page draws them.
+ * `parentElement` stops at the shadow root, so a block of components under
+ * its "Employment" paragraph read as no work history, and was left empty
+ * where the same block written straight into the form was filled. Out
+ * through the host (see `parentAround`), stepping past what is never drawn
+ * — a component's root begins with its `<style>`, whose CSS was otherwise
+ * the words before the box, and not a heading — counting a component's
+ * boxes as the controls they are (see `fieldsIn`), and reading a
+ * component's words as it shows them (see `shownText`).
+ */
 function underPlainHeading(input, heading) {
   // From a widget's whole control, whose own "Select..." is not a heading.
   const start = isWidgetChoice(input) ? controlOf(input) : input;
-  for (let at = start, n = 0; at?.parentElement && n < 6; at = at.parentElement, n++) {
-    if (at.parentElement.localName === 'form' || at.parentElement.localName === 'body') return false;
+  for (let at = start, n = 0; at && parentAround(at) && n < 6; at = parentAround(at), n++) {
+    const parent = parentAround(at);
+    if (parent.localName === 'form' || parent.localName === 'body') return false;
     for (let before = at.previousElementSibling; before; before = before.previousElementSibling) {
-      if (before.querySelector(A_CONTROL) || before.matches(A_CONTROL)) continue;
-      const words = clean(before.textContent);
+      if (before.matches(NEVER_SHOWN) || fieldsIn(before, A_CONTROL, 1)) continue;
+      const words = shownText(before);
       if (!words) continue;
       const label = before.matches('label') ? before : before.querySelector('label');
       if (label && clean(label.textContent) === words) break;
@@ -3126,8 +4249,12 @@ const JOB_PARTS = [
  * up still answers, so a date inside a block named "Work Experience 1" is
  * never read as that block's name.
  */
+/*
+ * And out of the components the box is drawn in, a component's host being
+ * one wrapper more: see `closestAround`.
+ */
 function dateHalfOf(input) {
-  for (let at = input.parentElement, n = 0; at && n < 7; at = at.parentElement, n++) {
+  for (let at = parentAround(input), n = 0; at && n < 7; at = parentAround(at), n++) {
     if (at.matches('[role="group"], fieldset')) {
       const named = clean(at.getAttribute('aria-label')) || clean(fromLabelledBy(at)) || clean(at.querySelector(':scope > legend')?.textContent);
       if (named) return withoutMarkers(named);
@@ -3328,11 +4455,73 @@ function fillJob(block, job, overwrite, filled, skipped) {
  * once, to one of them, and a second copy would have gone on opening
  * comboboxes for ever. One function, two callers, no drift.
  */
+const A_CHOICE_GROUP = '[role="radiogroup"], [role="listbox"], [role="group"]';
+const AN_ARIA_OPTION = '[role="radio"], [role="option"]';
+
+/*
+ * The options of an ARIA group: those written in it, and those drawn in the
+ * components in it.
+ *
+ * A group whose options are components — `<div role="radiogroup">` holding
+ * an `<x-radio>` for Yes and one for No, each drawing a `<button
+ * role="radio">` in its root — has nothing `querySelectorAll` calls an
+ * option, and was passed over as no choice at all: measured, "Are you
+ * legally authorized to work in the United States?" and the sponsorship
+ * question asked that way were neither answered nor mentioned, where the
+ * same buttons written into the group were answered.
+ *
+ * An option is this group's only when no group of its own is drawn between
+ * them (`choiceGroupOf`). A component drawing a whole yes/no radiogroup of
+ * its own, put inside the page's `role="group"`, is found as that group, and
+ * its buttons are not also the page's group's. And the same for the page's
+ * own: `group.contains` reaches into a nested group, so a section's
+ * `role="group"` labelled "Work authorization", written round the
+ * sponsorship and authorization questions each with its own label and
+ * radiogroup, took all four buttons as its own. Measured, it was offered to
+ * the bank as a question, "Work authorization", and reported as having no
+ * matching option, though both questions in it were answered.
+ */
+function ariaOptionsIn(group) {
+  return [...drawnWithin(group)].filter((el) => el.matches(AN_ARIA_OPTION) && choiceGroupOf(el) === group);
+}
+
+/*
+ * The ARIA group an option is one of: the nearest drawn round it, out through
+ * each component (`closestAround`). But a `role="group"` in a listbox is not
+ * a question of its own. It is how ARIA heads some of a list's options —
+ * "Europe" over France and Germany, "North America" over Canada and the
+ * United States — and the options are still the listbox's. Taking the
+ * nearest alone, a country list written that way would have no options, and
+ * "North America" would be asked as a question.
+ */
+function choiceGroupOf(option) {
+  let group = closestAround(parentAround(option), A_CHOICE_GROUP);
+  while (group?.getAttribute('role') === 'group') {
+    const outer = closestAround(parentAround(group), A_CHOICE_GROUP);
+    if (outer?.getAttribute('role') !== 'listbox') break;
+    group = outer;
+  }
+  return group;
+}
+
+/*
+ * The words an ARIA option says: its `aria-label`, or what it shows. A
+ * component that wears `role="radio"` itself and draws its word in its root
+ * from an attribute, `<x-radio role="radio" label="Yes">`, has no
+ * `textContent`; nor has a `<button role="radio">` drawn in a root round a
+ * slot the page puts its word in. Measured, a Yes and a No drawn the first
+ * way read as two empty options, and each question was reported as having
+ * none that matched.
+ */
+function ariaOptionWords(el) {
+  return clean(el.getAttribute('aria-label')) || (el.querySelector('slot') ? drawnText(el) : shownText(el));
+}
+
 function ariaChoiceGroups() {
   const visible = (el) => el.getClientRects().length > 0;
   const found = [];
 
-  for (const group of deepQueryAll('[role="radiogroup"], [role="listbox"], [role="group"]')) {
+  for (const group of deepQueryAll(A_CHOICE_GROUP)) {
     if (isDisabled(group) || !visible(group)) continue;
     /*
      * The popup half of a combobox, which is somebody else's to open. A
@@ -3344,9 +4533,7 @@ function ariaChoiceGroups() {
     const id = group.getAttribute('id');
     if (id && deepQueryAll(`[aria-controls="${CSS.escape(id)}"], [aria-owns="${CSS.escape(id)}"]`).length > 0) continue;
 
-    const options = [...group.querySelectorAll('[role="radio"], [role="option"]')].filter(
-      (el) => visible(el) && !isDisabled(el),
-    );
+    const options = ariaOptionsIn(group).filter((el) => visible(el) && !isDisabled(el));
     // One option is not a choice, and nothing on this page asked a question
     // with it. Two is the yes/no pair this exists for.
     if (options.length < 2) continue;
@@ -3521,7 +4708,8 @@ function answerChoiceButtons(fields, overwrite, already) {
       skipped.push({ key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) });
       continue;
     }
-    const labelOf = (el) => clean(el.getAttribute('aria-label') || el.textContent);
+    // Pressed buttons as they always were read; ARIA options as they are drawn.
+    const labelOf = toggles ? (el) => clean(el.getAttribute('aria-label') || el.textContent) : ariaOptionWords;
     const wanted =
       options.find((el) => sameOption(labelOf(el), value)) ??
       // And a yes/no pair against a phrase, on the same terms as a radio's.
@@ -3591,10 +4779,11 @@ function choiceQuestionFor(group) {
   const said = fromLabelledBy(group) || clean(group.getAttribute('aria-label'));
   if (said) return said;
 
-  const legend = clean(group.closest('fieldset')?.querySelector('legend')?.textContent);
+  // Out of the components the group is drawn in: see `closestAround`.
+  const legend = clean(closestAround(group, 'fieldset')?.querySelector('legend')?.textContent);
   if (legend) return legend;
 
-  const header = clean(group.closest('tr')?.querySelector('th')?.textContent);
+  const header = clean(closestAround(group, 'tr')?.querySelector('th')?.textContent);
   if (header) return header;
 
   /*
@@ -3602,11 +4791,74 @@ function choiceQuestionFor(group) {
    * an unbounded climb reaches the whole form and reads every other question
    * as part of this one.
    */
-  for (let at = group.parentElement, up = 0; at && up < 3; at = at.parentElement, up++) {
-    const heading = clean(at.querySelector('label, legend, h1, h2, h3, h4, h5, h6, .label')?.textContent);
+  /*
+   * And on out of a component, as `groupLabelFor` climbs. `parentElement`
+   * stops at the root the group is drawn in, so a yes/no group drawn whole in
+   * a component beside the page's "Are you legally authorized to work in the
+   * United States?" had no question, and was passed over without a word,
+   * where the same group written into the page was answered. The root is one
+   * more wrapper, costing none of the three, and the climb carries on from
+   * its host only when the root holds no other group: a component drawing two
+   * questions' buttons, with no words of its own for either, is not both of
+   * them asking the one question beside it.
+   */
+  /*
+   * And in through the slot the page's group is put in, as `labelFor`
+   * climbs (`groupDrawnAround`). A component can draw the question round the
+   * slot, `<x-question label="Are you legally authorized to work in the
+   * United States?">` round the page's radiogroup, and `parentElement` went
+   * from the group to the host and on up the page, never into the root: see
+   * `headingDrawnBefore`. Its wrappers cost none of the three, as in
+   * `labelFor`.
+   */
+  const HEADINGS = 'label, legend, h1, h2, h3, h4, h5, h6, .label';
+  const putInto = new Set();
+  let at = groupDrawnAround(group, putInto);
+  for (let up = 0; at && up < 3; ) {
+    const put = putInto.has(at instanceof ShadowRoot ? at : at.getRootNode());
+    const drawn = put && headingDrawnBefore(at, (el) => el === group, HEADINGS);
+    const heading = put ? (drawn ? shownText(drawn) : '') : clean(at.querySelector(HEADINGS)?.textContent);
     if (heading) return heading;
+    if (at instanceof ShadowRoot) {
+      const others = deepQueryAll(A_CHOICE_GROUP, at).filter((g) => g !== group && !drawnInside(g, group) && !drawnInside(group, g));
+      if (at.host.id === OURS || others.length > 0) break;
+      at = groupDrawnAround(at.host, putInto);
+    } else {
+      at = groupDrawnAround(at, putInto);
+      if (!put) up++;
+    }
   }
   return '';
+}
+
+/*
+ * The question a component draws for what the page puts in its slot: the
+ * last element matching `selector` drawn in `scope` before the first thing
+ * `ours` picks out, with no field, option or choice group drawn between
+ * them, and not drawn round it.
+ *
+ * Drawn, because the page's radios put in a component's slot are in the
+ * page's tree and the question in the component's: neither
+ * `querySelectorAll` nor `compareDocumentPosition` relates the two. And
+ * only before, with nothing to answer between. A component that draws two
+ * questions, each over its own slot, is drawing each for the group put in
+ * the slot after it, and the second group is not the first's, as the
+ * page's second group under its own label is not. And a component that
+ * draws "Are you legally authorized to work in the United States? Please
+ * explain." over the slot the page puts its text box in is asking that of
+ * the box, not of the Yes and No the page puts in the slot drawn after it.
+ */
+function headingDrawnBefore(scope, ours, selector) {
+  const drawn = [...drawnWithin(scope)];
+  const first = drawn.findIndex(ours);
+  const between = `${ANOTHER_FIELD}, ${AN_ARIA_OPTION}, ${A_CHOICE_GROUP}`;
+  for (let i = first - 1; i >= 0; i--) {
+    const el = drawn[i];
+    if (drawnInside(el, drawn[first])) continue;
+    if (el.matches(between)) return null;
+    if (el.matches(selector)) return el;
+  }
+  return null;
 }
 
 /* ---------------------------- Radio groups ---------------------------- */
@@ -3620,9 +4872,34 @@ function choiceQuestionFor(group) {
  * whole group and nothing else is the group, and whatever heading it carries is
  * the question.
  */
+/*
+ * And out of the components the buttons are drawn in.
+ *
+ * Every walk here asked `closest` or climbed `parentElement`, and both stop
+ * at the root a button is drawn in. So a group whose buttons are components
+ * had no question: measured, "Are you legally authorized to work in the
+ * United States?" as the legend of a fieldset round a Yes and a No each
+ * drawn in a component, and "Will you now or in the future require visa
+ * sponsorship?" as the page's label beside a component drawing both
+ * buttons, were each described by the group's `name` alone, matched nothing,
+ * and were left blank without a word on the card, where the same questions
+ * written without components were answered.
+ *
+ * The fieldset and the row out through each component (see
+ * `closestAround`). The climb takes the root as one more wrapper, costing
+ * none of the five, and carries on from the host; a wrapper holds the group
+ * when every button is drawn inside it (see `drawnInside`). And both of its
+ * guards count what is drawn in components, or they let a group borrow a
+ * question that is not its own: a wrapper holding the page's label and then
+ * a component drawing a text box looked, to `querySelectorAll`, like a
+ * wrapper with no other field in it, and the buttons beside the box took its
+ * question; and a wrapper holding two components each drawing a yes/no group
+ * under its own label looked like one question's own, and the second group
+ * took the first one's label.
+ */
 function groupLabelFor(radios) {
   const first = radios[0];
-  const legend = clean(first.closest('fieldset')?.querySelector('legend')?.textContent);
+  const legend = clean(closestAround(first, 'fieldset')?.querySelector('legend')?.textContent);
   if (legend) return legend;
 
   /*
@@ -3668,44 +4945,83 @@ function groupLabelFor(radios) {
    * reach the table and could take a column heading from some other row as
    * the question for this one.
    */
-  const header = clean(first.closest('tr')?.querySelector('th')?.textContent);
+  const header = clean(closestAround(first, 'tr')?.querySelector('th')?.textContent);
   if (header) return header;
 
-  let group = first.parentElement;
-  for (let i = 0; i < 5 && group; i++, group = group.parentElement) {
-    if (!radios.every((radio) => group.contains(radio))) continue;
-    // Another field in here means this is the form, not this question.
-    if (group.querySelectorAll('input:not([type=radio]):not([type=hidden]), textarea, select').length > 0) break;
-    const headings = [...group.querySelectorAll('label,legend,.label,[class*="label"]')].filter(
-      (el) => !el.querySelector('input, textarea, select'),
-    );
-    /*
-     * Somebody else's buttons are in here too.
-     *
-     * The guard above only counts fields that are *not* radios, so a plain
-     * `<div>` holding several yes/no questions one after another — question
-     * text, Yes, No, next question text, Yes, No, with no fieldset and no
-     * wrapper each, which is how hand-rolled career forms are written — looks
-     * exactly like one question's own group. Taking the first heading then
-     * gave every group in it the *first* question's words.
-     *
-     * Measured: sponsorship asked first and work authorisation second, profile
-     * saying "may not need sponsorship" and "yes, authorised". Both groups
-     * were labelled "require visa sponsorship", both were answered No, and the
-     * form submitted "No, I am not legally authorised to work in the United
-     * States" over the applicant's own answer. The report never mentioned the
-     * question at all — it listed sponsorship twice.
-     *
-     * So when the container is shared, take the nearest heading *above* these
-     * buttons instead: the question text a person reads them under.
-     */
-    const shared = [...group.querySelectorAll('input[type=radio]')].some((el) => !radios.includes(el));
-    const heading = shared
-      ? headings.filter((el) => el.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).pop()
-      : headings[0];
-    if (heading) return clean(heading.textContent);
+  /*
+   * And in through the slot the page's buttons are put in, as `labelFor`
+   * climbs (`groupDrawnAround`). A component can draw the question round the
+   * slot, `<x-question label="Will you now or in the future require visa
+   * sponsorship?">` round the page's Yes and No, and `parentElement` went
+   * from the buttons to the host and on up the page, never into the root. Its
+   * wrappers cost none of the five, as in `labelFor`; a root holds the group
+   * when it draws every button, held or put in through a slot (`drawsThrough`);
+   * another field counts those put in through a slot too (`fieldsDrawnIn`);
+   * and the question is the one drawn before the buttons
+   * (`headingDrawnBefore`).
+   */
+  // Where the buttons are, as seen from the tree `group` is in: the first
+  // button, or the component it is drawn in.
+  let from = first;
+  const putInto = new Set();
+  let group = groupDrawnAround(first, putInto);
+  const holds = (radio) => (group instanceof ShadowRoot ? drawsThrough(group, radio) : drawnInside(group, radio));
+  for (let i = 0; i < 5 && group; ) {
+    const put = putInto.has(group instanceof ShadowRoot ? group : group.getRootNode());
+    if (radios.every(holds)) {
+      // Another field in here means this is the form, not this question.
+      if (fieldsDrawnIn(group, 'input:not([type=radio]):not([type=hidden]), textarea, select', 1) > 0) break;
+      // What a component draws round the slot the buttons are put in. See `headingDrawnBefore`.
+      const drawn = put && headingDrawnBefore(group, (el) => radios.includes(el), 'label,legend,.label,[class*="label"]');
+      if (drawn && shownText(drawn)) return shownText(drawn);
+      const headings = put ? [] : [...group.querySelectorAll('label,legend,.label,[class*="label"]')].filter(
+        (el) => !fieldsIn(el, 'input, textarea, select', 1),
+      );
+      /*
+       * Somebody else's buttons are in here too.
+       *
+       * The guard above only counts fields that are *not* radios, so a plain
+       * `<div>` holding several yes/no questions one after another — question
+       * text, Yes, No, next question text, Yes, No, with no fieldset and no
+       * wrapper each, which is how hand-rolled career forms are written — looks
+       * exactly like one question's own group. Taking the first heading then
+       * gave every group in it the *first* question's words.
+       *
+       * Measured: sponsorship asked first and work authorisation second, profile
+       * saying "may not need sponsorship" and "yes, authorised". Both groups
+       * were labelled "require visa sponsorship", both were answered No, and the
+       * form submitted "No, I am not legally authorised to work in the United
+       * States" over the applicant's own answer. The report never mentioned the
+       * question at all — it listed sponsorship twice.
+       *
+       * So when the container is shared, take the nearest heading *above* these
+       * buttons instead: the question text a person reads them under.
+       */
+      const shared = deepQueryAll('input[type=radio]', group).some((el) => !radios.includes(el));
+      const heading = shared
+        ? headings.filter((el) => el.compareDocumentPosition(from) & Node.DOCUMENT_POSITION_FOLLOWING).pop()
+        : headings[0];
+      if (heading) return clean(heading.textContent);
+    }
+    if (group instanceof ShadowRoot) {
+      if (group.host.id === OURS) break;
+      from = group.host;
+      group = groupDrawnAround(from, putInto);
+    } else {
+      group = groupDrawnAround(group, putInto);
+      if (!put) i++;
+    }
   }
   return '';
+}
+
+/**
+ * Whether `root` draws `node`: holds it, or draws it through a slot it is
+ * put in, however deep.
+ */
+function drawsThrough(root, node) {
+  for (let at = node; at; at = parentAround(at)) if (at.getRootNode() === root) return true;
+  return false;
 }
 
 /**
@@ -3731,12 +5047,23 @@ function onScreen(radio) {
 }
 
 /** What one button of a group means, which is what a human reads beside it. */
+/*
+ * A label round a slot says what is slotted into it. A button drawn in a
+ * component — `<x-radio value="1">Yes</x-radio>`, its root `<label><input
+ * type="radio"><slot></slot></label>` — has a label whose `textContent` is
+ * nothing, the word being the page's, shown through the slot: measured, a
+ * Yes and a No drawn that way under "Are you legally authorized to work in
+ * the United States?" read as two empty options, and the question was
+ * reported as having none that matched, where the same buttons written into
+ * the page were answered Yes.
+ */
 function optionLabelFor(radio) {
+  const words = (label) => (label.querySelector('slot') ? drawnText(label) : clean(label.textContent));
   const wrapping = radio.closest('label');
-  if (wrapping) return clean(wrapping.textContent);
+  if (wrapping) return words(wrapping);
   if (radio.id) {
     const label = rootOf(radio).querySelector(`label[for="${CSS.escape(radio.id)}"]`);
-    if (label) return clean(label.textContent);
+    if (label) return words(label);
   }
   return clean(radio.value);
 }
@@ -3787,19 +5114,59 @@ function radioGroups() {
    * report "already filled" and stay empty. Either way an application is
    * submitted with a required question blank, after being told it was answered.
    */
+  /*
+   * And to the component it is drawn in, as a browser scopes it — unless the
+   * component draws no other button.
+   *
+   * A browser groups radios by name only within one tree, and every shadow
+   * root is a tree of its own. A yes/no component whose root draws its two
+   * buttons under a name of its own, `answer`, used for two questions one
+   * after the other, is two groups on the screen; keyed on the name alone it
+   * was one group of four, matched against "Yes", "Yes", "No", "No", and
+   * measured, "Are you legally authorized to work in the United States?" was
+   * reported as having no matching option and the sponsorship question after
+   * it was never asked, where the same two questions written into the page
+   * under two names were both answered.
+   *
+   * But a component that draws one button — `<x-radio name="q_9901"
+   * value="1">Yes</x-radio>`, its root `<label><input type="radio"><slot>` —
+   * is one button of a group the page makes of all the components sharing
+   * the name, which such components do with script of their own, since the
+   * browser will not. So a root that holds this button and
+   * no other is not a scope of its own: the grouping carries on out to the
+   * tree its host is in. And a form around the host counts as it does around
+   * the page's own radios, since a button drawn in a component has none.
+   */
+  const trees = new WeakMap();
+  let nextTree = 0;
+  const treeOf = (radio) => {
+    let root = rootOf(radio);
+    while (root instanceof ShadowRoot && root.host.id !== OURS && deepQueryAll('input[type=radio]', root).length === 1) root = rootOf(root.host);
+    if (!trees.has(root)) trees.set(root, `t${nextTree++}`);
+    return trees.get(root);
+  };
   const formKeys = new WeakMap();
   let nextForm = 0;
   const scopeOf = (radio) => {
-    const form = radio.form;
-    if (!form) return 'doc';
+    const form = radio.form ?? closestAround(radio, 'form');
+    if (!form) return `doc\u0000${treeOf(radio)}`;
     if (!formKeys.has(form)) formKeys.set(form, `f${nextForm++}`);
-    return formKeys.get(form);
+    return `${formKeys.get(form)}\u0000${treeOf(radio)}`;
   };
 
   const groups = new Map();
   for (const radio of deepQueryAll('input[type=radio]')) {
     if (isDisabled(radio) || !onScreen(radio)) continue;
-    const key = radio.name ? `${scopeOf(radio)}\u0000${radio.name}` : radio.closest('fieldset');
+    /*
+     * Radios with no name are grouped by the fieldset around them, and a
+     * button drawn in a component is in the page's fieldset too: `closest`
+     * stops at its root, so a Yes and a No each drawn nameless in a
+     * component, under a legend asking "Are you legally authorized to work
+     * in the United States?", were no group at all and were passed over
+     * without a word, where the same buttons written into the fieldset were
+     * answered. Out through each component, as `closestAround` goes.
+     */
+    const key = radio.name ? `${scopeOf(radio)}\u0000${radio.name}` : closestAround(radio, 'fieldset');
     if (!key) continue;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(radio);
@@ -3993,8 +5360,9 @@ export function choiceQuestions() {
  * - Nothing already answered is touched, `overwrite` or not. Overwrite is a
  *   thing the person asked of their *profile*; the bank is a weaker claim
  *   than the profile and a far weaker one than an answer already on screen.
- * - Nothing personal, even if the bank holds it. `worthRemembering` keeps
- *   these out on the way in, but the bank is older than that gate and the
+ * - Nothing personal, even if the bank holds it — by the question or by the
+ *   answer. `worthRemembering` keeps these out on the way in, and is asked
+ *   again here on the way out, because the bank is older than that gate and the
  *   Workspace lets answers be typed in by hand. A date of birth sitting in
  *   the bank must not be typed into a form by a machine. Nor anything whose
  *   answer belongs to one employer — see `DEPENDS_ON_EMPLOYER` — for the
@@ -4018,7 +5386,13 @@ function answerFromMemory(remembered) {
     if (choice.answered()) continue;
     if (neverRemember(choice.question) || dependsOnEmployer(choice.question)) continue;
     const answer = bank.get(choice.question)?.answer;
-    if (!answer) continue;
+    /*
+     * And the answer, as `answerWidgetsFromMemory` reads it: a question
+     * nobody labelled as personal ("Question 88213") can still have a date or
+     * an SSN-shaped option as its answer in the bank, and that is not to be
+     * chosen for somebody by a machine either.
+     */
+    if (!answer || !worthRemembering({ question: choice.question, answer }).keep) continue;
 
     const took = choice.choose(answer);
     const row = { key: 'remembered', value: answer, description: choice.description.slice(0, 60) };
@@ -4104,7 +5478,7 @@ function profileKeyOf(input, description) {
  */
 function typedBox(input, fields) {
   if (!(input instanceof HTMLInputElement) || !ONE_LINE.has(input.type)) return null;
-  if (isDisabled(input) || input.readOnly || isWidgetChoice(input)) return null;
+  if (isDisabled(input) || input.readOnly || isWidgetChoice(input) || isSelect2Part(input)) return null;
   if (rootOf(input)?.host?.id === OURS) return null;
   const description = describeField(input);
   if (!description) return null;
@@ -4299,7 +5673,7 @@ function widgetQuestion(widget) {
 /** The widgets on this page that ask the bank's kind of question. */
 function rememberableWidgets() {
   const found = [];
-  for (const widget of deepQueryAll(WIDGETS)) {
+  for (const widget of withPlainDropdowns(deepQueryAll(WIDGETS))) {
     if (widget.getClientRects().length === 0) continue;
     // A combobox `<div>` around its own text box is one question.
     if (found.some(({ el }) => el.contains(widget) || widget.contains(el))) continue;
@@ -4330,6 +5704,7 @@ function ownerOfMenu(list) {
 
 /** Whether the widget is now showing this answer as its choice. */
 function widgetHolds(widget, answer) {
+  if (PLAIN.has(widget)) return sameOption(plainShown(widget), answer);
   if (!widgetShowsAnAnswer(widget)) return false;
   return clean(controlOf(widget).textContent).toLowerCase().includes(clean(answer).toLowerCase());
 }
@@ -4356,31 +5731,66 @@ function watchWidgetPicks(write, watching) {
   const settleAll = () => {
     for (const pick of [...pending]) settle(pick);
   };
-  const onPick = (event) => {
-    if (!event.isTrusted) return;
-    const target = event.composedPath?.()?.[0] ?? event.target;
-    const option = target?.closest?.('[role="option"]');
-    const list = option?.closest('[role="listbox"]');
-    if (!list || rootOf(list)?.host?.id === OURS) return;
-    const widget = ownerOfMenu(list);
-    if (!widget) return;
-    let said;
-    try {
-      said = widgetQuestion(widget);
-    } catch {
-      return;
-    }
-    if (!said) return;
-    // Read now: the menu closes on this press and takes the option with it.
-    const answer = clean(option.getAttribute('aria-label') || option.textContent);
-    if (!answer) return;
-    // And believed once the page has drawn it, the way `tookIt` reads a choice back.
-    const pick = { widget, answer, question: said.question };
+  const expect = (pick) => {
     pending.add(pick);
     for (const ms of [0, 100, 400]) setTimeout(() => settle(pick), ms);
     // Given up on after that: a pick the widget never showed is not a choice.
     setTimeout(() => pending.delete(pick), 450);
   };
+  const question = (widget) => {
+    try {
+      return widgetQuestion(widget)?.question ?? null;
+    } catch {
+      return null;
+    }
+  };
+  /*
+   * A plain dropdown's pick, which has no option to say it is one: the press
+   * that opened it, then the words of the next press outside it — believed
+   * only once the dropdown shows those words as its own. See `PLAIN`.
+   */
+  let opened = null;
+  const onPlainPress = (target) => {
+    if (!target || rootOf(target)?.host?.id === OURS) return;
+    let control = null;
+    for (let at = target, up = 0; at && up < 6 && !control; at = at.parentElement, up++) {
+      control = PLAIN.has(at) ? at : plainControlOver(at);
+    }
+    if (control) {
+      const asked = question(control);
+      opened = asked ? { widget: control, question: asked } : null;
+      return;
+    }
+    const was = opened;
+    opened = null;
+    if (!was?.widget.isConnected) return;
+    const answer = clean(target.textContent);
+    if (!answer || answer.length > 120) return;
+    expect({ widget: was.widget, answer, question: was.question });
+  };
+  const onPick = (event) => {
+    if (!event.isTrusted) return;
+    const target = event.composedPath?.()?.[0] ?? event.target;
+    const option = target?.closest?.('[role="option"]');
+    const list = option?.closest('[role="listbox"]');
+    if (!list) return onPlainPress(target);
+    if (rootOf(list)?.host?.id === OURS || isSelect2Part(list)) return;
+    const widget = ownerOfMenu(list);
+    if (!widget) return;
+    const asked = question(widget);
+    if (!asked) return;
+    // Read now: the menu closes on this press and takes the option with it.
+    const answer = clean(option.getAttribute('aria-label') || option.textContent);
+    if (!answer) return;
+    // And believed once the page has drawn it, the way `tookIt` reads a choice back.
+    expect({ widget, answer, question: asked });
+  };
+  // The plain dropdowns already on the page, so one showing a pick is still known.
+  try {
+    plainDropdowns();
+  } catch {
+    // A page that throws from a getter is not a reason to stop watching.
+  }
   document.addEventListener('mousedown', onPick, true);
   document.addEventListener('submit', settleAll, true);
   window.addEventListener('pagehide', settleAll);
@@ -4451,8 +5861,7 @@ function chooseInRadios(radios, answer) {
 
 /** Click an ARIA option by its label, and believe the page about the result. */
 function chooseInAria(options, answer) {
-  const labelOf = (el) => clean(el.getAttribute('aria-label') || el.textContent);
-  const wanted = options.find((el) => sameOption(labelOf(el), answer));
+  const wanted = options.find((el) => sameOption(ariaOptionWords(el), answer));
   if (!wanted) return false;
   wanted.click();
   // Never written here: `aria-checked` belongs to the page's own component,
@@ -4520,8 +5929,10 @@ function widgetChoices(fields, filled) {
   const found = [];
   const seen = [];
 
-  for (const widget of deepQueryAll(
-    `[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"], [data-uxi-widget-type="selectinput"], ${FABRIC_SELECT}`,
+  for (const widget of withPlainDropdowns(
+    deepQueryAll(
+      `[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"], [data-uxi-widget-type="selectinput"], ${FABRIC_SELECT}`,
+    ),
   )) {
     if (!isWidgetChoice(widget)) continue;
     if (widget.getClientRects().length === 0) continue;
@@ -4581,7 +5992,15 @@ function widgetChoices(fields, filled) {
      * had one. A person's own choice, or the form's default, is not this
      * tool's to reopen.
      */
-    if (widgetShowsAnAnswer(widget)) {
+    /*
+     * And a listbox with an option marked chosen. Its options are on the page,
+     * so `answerChoiceButtons` answers it as an ARIA group and reads it back
+     * by that mark, and `widgetShowsAnAnswer` reads a listbox as never
+     * showing one. Measured, a Country listbox the fill had answered United
+     * States was reported filled and, in the same report, as one to pick by
+     * hand. One left unchosen is still named here.
+     */
+    if (widgetShowsAnAnswer(widget) || listboxHoldsAChoice(widget)) {
       if (EDUCATION_KEYS.test(key)) already.add(key);
       continue;
     }
@@ -4593,6 +6012,11 @@ function widgetChoices(fields, filled) {
     if (EDUCATION_KEYS.test(key)) already.add(key);
   }
   return found;
+}
+
+/** Whether a listbox has one of its own options, as `choiceGroupOf` counts them, marked chosen. */
+function listboxHoldsAChoice(widget) {
+  return widget.getAttribute('role') === 'listbox' && ariaOptionsIn(widget).some(isMarkedChosen);
 }
 
 function unfillableChoices(fields, filled) {
@@ -4703,15 +6127,6 @@ function typingBoxOf(widget) {
   return widget.querySelector?.('input:not([type=hidden])') ?? null;
 }
 
-/**
- * The options this widget opened — and only this widget's.
- *
- * The listbox it names through `aria-controls` or `aria-owns`, which is how an
- * accessible widget says which popup is its own. Failing that, the listbox
- * that is visible, but only if exactly one is: two open listboxes and no
- * pointer to either is a page where choosing is a guess about which one
- * answers this question, and guessing is what this does not do.
- */
 /** The listboxes showing on the page right now. */
 function visibleListboxes() {
   return deepQueryAll('[role="listbox"]').filter(
@@ -4724,21 +6139,62 @@ function visibleListboxes() {
   );
 }
 
+/**
+ * The options this widget opened — and only this widget's.
+ *
+ * The list it names through `aria-controls`, `aria-owns` or
+ * `aria-activedescendant`, which is how an accessible widget says which popup
+ * is its own. Failing that, the listbox its own press opened, or the one
+ * showing inside it, but only if exactly one is: two new listboxes and no
+ * pointer to either is a page where choosing is a guess about which one
+ * answers this question, and guessing is what this does not do. See
+ * `listsOf`.
+ */
 function optionsOf(widget, openBefore = null) {
+  // What its press drew, since nothing names it. See `plainOptions`.
+  if (PLAIN.has(widget)) return plainOptions(widget);
+  return listsOf(widget, openBefore)
+    .flatMap((l) => [...l.querySelectorAll('[role="option"], [role="menuitem"]')])
+    .filter((o) => !isDisabled(o) && o.getAttribute('aria-disabled') !== 'true');
+}
+
+/**
+ * The lists a widget names as its own: through `aria-controls` or
+ * `aria-owns`, the one holding the option its `aria-activedescendant` points
+ * at, or the menu a Fabric select names its own way (see `isFabricSelect`).
+ */
+function namedListsOf(widget) {
   const box = typingBoxOf(widget);
+  const byId = (id) => widget.getRootNode().getElementById?.(id) ?? document.getElementById(id);
   const ids = [widget, box]
     .filter(Boolean)
     .flatMap((el) => `${el.getAttribute('aria-controls') ?? ''} ${el.getAttribute('aria-owns') ?? ''}`.split(/\s+/))
     .filter(Boolean);
+  if (isFabricSelect(widget)) ids.push(widget.getAttribute('data-menu-id'));
+  const lists = ids.map(byId);
+  for (const el of [widget, box].filter(Boolean)) {
+    const active = el.getAttribute('aria-activedescendant');
+    const option = active ? byId(active) : null;
+    if (option) lists.push(option.closest('[role="listbox"], [role="menu"], [role="tree"], [role="grid"]') ?? option.parentElement);
+  }
   /*
    * Each list once. A react-select's typing box is the widget itself, so the
    * one `aria-controls` was read twice and every option listed twice — which
    * "the first that matches" never noticed, and "the only one that matches"
    * did: Boston, Massachusetts was two Bostons and neither was chosen.
    */
-  // And the menu a Fabric select names its own way. See `isFabricSelect`.
-  if (isFabricSelect(widget)) ids.push(widget.getAttribute('data-menu-id'));
-  const named = [...new Set(ids.map((id) => widget.getRootNode().getElementById?.(id) ?? document.getElementById(id)).filter(Boolean))];
+  return [...new Set(lists.filter((l) => l && l !== widget))];
+}
+
+/**
+ * The lists this widget opened — and only this widget's: the ones it names
+ * (`namedListsOf`), or failing that the one listbox its own press opened, or
+ * failing that the one showing inside it.
+ */
+function listsOf(widget, openBefore = null) {
+  const box = typingBoxOf(widget);
+  const named = namedListsOf(widget);
+  if (named.length) return named;
   /*
    * Never a list another control says is its own.
    *
@@ -4774,9 +6230,20 @@ function optionsOf(widget, openBefore = null) {
    * press is not what the press opened.
    */
   const fresh = openBefore ? showing.filter((l) => !openBefore.has(l)) : [];
-  const lists = named.length ? named : fresh.length ? fresh : showing;
-  if (!named.length && lists.length !== 1) return [];
-  return lists.flatMap((l) => [...l.querySelectorAll('[role="option"], [role="menuitem"]')]).filter((o) => !isDisabled(o) && o.getAttribute('aria-disabled') !== 'true');
+  /*
+   * And never merely the one listbox on screen. That was the last resort
+   * here, and a listbox can be on screen because it is another question's.
+   * Measured: a Country listbox the fill had answered, and after it a
+   * "Country of residence" listbox that ignores clicks and opens nothing.
+   * Pressed, the second drew no list, the Country one was the only listbox
+   * showing, and United States was clicked in it for "Country of
+   * residence", which was reported filled with nothing chosen in it. A
+   * list showing before the press is the widget's only when it is inside
+   * the widget.
+   */
+  const inside = showing.filter((l) => widget.contains(l));
+  const lists = fresh.length ? fresh : inside;
+  return lists.length === 1 ? lists : [];
 }
 
 /** The option that is plainly this answer, or nothing. Never the nearest. */
@@ -4832,6 +6299,7 @@ function press(el) {
  * submits carrying something where it carried nothing.
  */
 function tookIt(widget, box, option, value, hiddenBefore, chosen = option.textContent, shownBefore = '') {
+  if (PLAIN.has(widget)) return plainTookIt(widget, chosen);
   const hidden = hiddenPartner(widget);
   if (hidden && hidden.value && hidden.value !== hiddenBefore) return true;
   /*
@@ -4881,22 +6349,45 @@ function tookIt(widget, box, option, value, hiddenBefore, chosen = option.textCo
    * is what a React widget that re-renders its options on click, choosing
    * nothing, looks like: the clicked node is gone and the menu is still open.
    */
-  const control = controlOf(widget).cloneNode(true);
-  for (const list of control.querySelectorAll('[role="listbox"]')) list.remove();
+  const text = shownBy(widget);
   /*
    * The value, or the option it was matched to. "VA" chooses "Virginia", and
    * a dropdown showing "Virginia" does not contain the letters "VA" — so a
    * state chosen correctly was read as ignored and reported as still to pick.
+   *
+   * And only once the control shows something it did not before the press:
+   * words that were in it already are not the choice arriving.
    */
-  const text = clean(control.textContent).toLowerCase();
-  const shows = [value, chosen].some((said) => clean(said) && text.includes(clean(said).toLowerCase()));
+  const changed = text !== shownBefore;
+  const shows = changed && [value, chosen].some((said) => clean(said) && text.includes(clean(said).toLowerCase()));
   /*
    * Or a part of the option it did not show before. Greenhouse's country
    * beside the phone, chosen as "United States +1", draws "+1" and nothing
    * else, so a choice that had plainly taken was reported as still to pick.
    */
-  const part = text.length >= 2 && text !== shownBefore && clean(chosen).toLowerCase().includes(text);
+  const part = text.length >= 2 && changed && clean(chosen).toLowerCase().includes(text);
   return (shows || part) && (!box || !box.value);
+}
+
+/**
+ * What a widget's control shows as its answer, lowercased: its text with its
+ * lists and their options cut out of it.
+ *
+ * Only a listbox was cut out, so a list the widget names that is drawn inside
+ * its control without that role — a plain `<ul>` of options, a `role="menu"`
+ * — lent its words to a click it ignored: a School combobox whose list sat
+ * in its control read "Northeastern University" whether or not anything was
+ * chosen, and was reported filled with "Select One" on it. The same for a
+ * listbox that is itself the question, whose options all say what could be
+ * chosen and none of them what was. An option marked chosen stays, since
+ * that is the control holding its answer.
+ */
+function shownBy(widget) {
+  const control = controlOf(widget).cloneNode(true);
+  const cut = '[role="listbox"], [role="menu"], [role="option"]:not([aria-selected="true"]), [role="menuitem"]';
+  for (const el of control.querySelectorAll(cut)) el.remove();
+  for (const list of namedListsOf(widget)) if (list.id) control.querySelector(`#${CSS.escape(list.id)}`)?.remove();
+  return clean(control.textContent).toLowerCase();
 }
 
 /**
@@ -4984,7 +6475,12 @@ function controlOf(widget) {
  */
 function hiddenPartner(widget) {
   const around = controlOf(widget).parentElement ?? controlOf(widget);
-  return around.querySelector?.(':scope > input[type="hidden"]') ?? null;
+  return (
+    around.querySelector?.(':scope > input[type="hidden"]') ??
+    // Or the box or select a dropdown keeps out of sight. See `isWidgetPartner`.
+    [...(around.querySelectorAll?.(':scope > input, :scope > select') ?? [])].find(isWidgetPartner) ??
+    null
+  );
 }
 
 /** Whether pressing this would send its form. */
@@ -4994,11 +6490,43 @@ function wouldSubmit(el) {
   return false;
 }
 
-/** Put the widget back as it was: nothing typed, nothing open. */
-function undoWidget(widget, box) {
+/**
+ * Put the widget back as it was: nothing typed, nothing open.
+ *
+ * Escape is pressed where a person's Escape goes, which is wherever the focus
+ * is — and a menu that takes the focus as it opens hears it there and not on
+ * its button. Headless UI's Listbox focuses its list, MUI's Select an option
+ * inside its Modal, and neither button answers Escape. Sent to the button
+ * only, a list with no option for the answer stayed open over the form —
+ * MUI's with an invisible backdrop over the whole page and the app hidden
+ * from screen readers. Where it is still open after that, a button that
+ * opened it with a press is pressed once more, which is how a person shuts a
+ * dropdown that answers no key at all.
+ */
+function undoWidget(widget, box, openBefore = null) {
   if (box) setValue(box, '');
-  (box ?? widget).dispatchEvent(ours(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+  const escape = (el) =>
+    el.dispatchEvent(ours(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true })));
+  escape(box ?? widget);
+  // Believed about itself where it says: a list closing behind a transition
+  // is still on the page for a moment, and pressing again would reopen it.
+  const open = () => {
+    // Anything a plain dropdown's press drew, list-shaped or not, is shut again.
+    if (PLAIN.has(widget)) return plainAppeared(widget).length > 0;
+    const said = (box ?? widget).getAttribute('aria-expanded');
+    return said === null ? optionsOf(widget, openBefore).length > 0 : said === 'true';
+  };
+  const focused = deepActiveElement();
+  if (focused && focused !== (box ?? widget) && focused !== document.body && open()) escape(focused);
+  if (!box && open()) press(pressPoint(widget));
   (box ?? widget).blur?.();
+}
+
+/** The element that has the focus, inside any shadow root that holds it. */
+function deepActiveElement() {
+  let at = document.activeElement;
+  while (at?.shadowRoot?.activeElement) at = at.shadowRoot.activeElement;
+  return at;
 }
 
 /**
@@ -5112,10 +6640,21 @@ export async function fillComboboxes(fields, report, { patience = 4000, history 
  * `unlisted` when its list opened and the answer was not in it, and anything
  * else when nothing was chosen. Whatever did not take is put back as it was.
  */
-async function chooseInWidget(widget, key, value, { patience, fields, asked }) {
+async function chooseInWidget(widget, key, value, options) {
+  // A plain dropdown's list is what its press draws, so that is watched for
+  // from before the press. See `plainOptions`.
+  const stop = PLAIN.has(widget) ? watchAppearing(widget) : null;
+  try {
+    return await chooseInThisWidget(widget, key, value, options);
+  } finally {
+    stop?.();
+  }
+}
+
+async function chooseInThisWidget(widget, key, value, { patience, fields, asked }) {
   const box = typingBoxOf(widget);
   const hiddenBefore = hiddenPartner(widget)?.value ?? '';
-  const shownBefore = clean(controlOf(widget).textContent).toLowerCase();
+  const shownBefore = shownBy(widget);
 
   /*
    * Never a control that would send the form.
@@ -5129,8 +6668,14 @@ async function chooseInWidget(widget, key, value, { patience, fields, asked }) {
    */
   if (!box && wouldSubmit(widget)) return 'left';
 
-  widget.focus?.();
+  /*
+   * What was open before the widget is touched at all, focus included: a
+   * menu that opens as it takes the focus is one it opened, and is only
+   * found as that (see `listsOf`) now that the one listbox on screen is not
+   * taken for its own.
+   */
   const openBefore = new Set(visibleListboxes());
+  widget.focus?.();
   let option = null;
   if (box) {
     /*
@@ -5167,12 +6712,12 @@ async function chooseInWidget(widget, key, value, { patience, fields, asked }) {
       option = await waitForOption(widget, key, value, openBefore, { patience, fields, asked });
     }
   } else {
-    press(widget);
+    press(pressPoint(widget));
     option = await waitForOption(widget, key, value, openBefore, { patience, fields, asked });
   }
   if (!option) {
     const opened = menuIsOpen(widget, box, openBefore);
-    undoWidget(widget, box);
+    undoWidget(widget, box, openBefore);
     return opened ? 'unlisted' : 'missed';
   }
   // Read before the press: a menu that closes takes its options with it.
@@ -5180,7 +6725,7 @@ async function chooseInWidget(widget, key, value, { patience, fields, asked }) {
   press(wordsOf(option));
   await pause(60);
   if (!tookIt(widget, box, option, value, hiddenBefore, chosen, shownBefore)) {
-    undoWidget(widget, box);
+    undoWidget(widget, box, openBefore);
     return 'ignored';
   }
   return 'chose';
@@ -5321,8 +6866,10 @@ function educationPartOf(control) {
 function educationBlocks(box) {
   const blocks = [];
   let block = null;
-  for (const control of box.querySelectorAll(SECTION_CONTROLS)) {
+  for (const control of withPlainDropdowns([...box.querySelectorAll(SECTION_CONTROLS)], box)) {
     if (isDisabled(control) || control.getClientRects().length === 0) continue;
+    // The dropdown beside it is the part. See `isWidgetPartner`.
+    if (isWidgetPartner(control)) continue;
     if (control.type === 'checkbox' || control.type === 'radio') continue;
     const part = educationPartOf(control);
     if (part === 'foreign') return null;
@@ -5677,17 +7224,27 @@ export function watchChoices(tell) {
      * looked up are the same string.
      */
     if (control instanceof HTMLSelectElement) {
+      // Radix's own `change`, after a pick `watchWidgetPicks` reads off the
+      // dropdown. See `isWidgetPartner`.
+      if (isWidgetPartner(control)) return null;
       const option = control.selectedOptions?.[0];
       if (!option || looksLikePlaceholder(option, control)) return null;
       return { question: clean(questionFor(control)), answer: clean(option.textContent) };
     }
     if (control instanceof HTMLInputElement && control.type === 'radio') {
       if (!control.checked) return null;
-      const group = [...deepQueryAll('input[type=radio]')].filter(
-        (r) => r.name === control.name && r.form === control.form,
-      );
+      /*
+       * The group `radioGroups` makes, so that what is written down is asked
+       * of the buttons it is asked of when filling. Matching `name` and
+       * `form` here put two yes/no components that draw their buttons under
+       * one name of their own into one group of four, and measured, a
+       * person's No to "Will you now or in the future require visa
+       * sponsorship?" was kept as their No to "Are you legally authorized to
+       * work in the United States?", the question before it.
+       */
+      const group = radioGroups().find((radios) => radios.includes(control)) ?? [control];
       return {
-        question: clean(groupLabelFor(group.length ? group : [control])),
+        question: clean(groupLabelFor(group)),
         answer: optionLabelFor(control),
       };
     }
@@ -5710,15 +7267,33 @@ export function watchChoices(tell) {
         once: () => isPressed(button),
       };
     }
-    const option = control?.closest?.('[role="radio"], [role="option"]');
+    /*
+     * Out through the components the press lands in, as `ariaOptionsIn`
+     * finds their options. What is pressed is the innermost thing drawn,
+     * and `closest` stops at the root it is drawn in: a `<button>` inside a
+     * component that wears `role="radio"` itself, or a `<button
+     * role="radio">` drawn in a component inside the page's radiogroup,
+     * found no group, and measured, a person's No to the sponsorship
+     * question pressed on either was not kept at all.
+     */
+    const option = control?.closest ? closestAround(control, AN_ARIA_OPTION) : null;
+    // select2's list, whose pick `watchChosenPicks` reads off the select.
+    if (option && isSelect2Part(option)) return null;
     if (option) {
-      const group = option.closest('[role="radiogroup"], [role="listbox"], [role="group"]');
+      /*
+       * The group `ariaChoiceGroups` answers it in (`choiceGroupOf`), not
+       * the nearest: a `role="group"` in a listbox heads some of its options.
+       * Measured, a person's Germany in a Country listbox headed "Europe"
+       * over France and Germany was kept as "Europe — Germany", under a
+       * question no form asks, and never offered back to "Country".
+       */
+      const group = choiceGroupOf(option);
       if (!group) return null;
       // A widget's menu is the widget's question, and `watchWidgetPicks` reads it.
       if (group.getAttribute('role') === 'listbox' && ownerOfMenu(group)) return null;
       return {
         question: choiceQuestionFor(group),
-        answer: clean(option.getAttribute('aria-label') || option.textContent),
+        answer: ariaOptionWords(option),
       };
     }
     return null;
@@ -5768,7 +7343,7 @@ export function watchChoices(tell) {
     tell(verdict.keep ? { ...answer, keep: true } : { ...answer, keep: false, why: verdict.why });
   };
   const stopPicks = watchWidgetPicks(told, () => watching);
-  // And one in Chosen, which fires no native event at all. See `chosenOf`.
+  // And one in Chosen or select2, which fire no native event at all. See `chosenOf`.
   const stopChosen = watchChosenPicks(told, () => watching);
   return () => {
     watching = false;
@@ -5780,21 +7355,24 @@ export function watchChoices(tell) {
 }
 
 /**
- * A person's pick in a Chosen list, read off the select it stands in for.
+ * A person's pick in a Chosen or select2 list, read off the select it stands
+ * in for.
  *
- * Chosen picks on mouseup, or on the keyup of Enter, and tells only jQuery.
- * So the select's value is noted when a press or a key goes down inside the
- * container and read again once the page has handled the click or the key
- * that follows; a value that moved is the pick. A native `change` in
- * between — a build that fires one — is heard by `watchChoices` itself, and
- * is not told twice.
+ * Both pick on mouseup, or on a key, and tell only jQuery. So the select's
+ * value is noted when a press or a key goes down inside the container and
+ * read again once the page has handled the release, the click or the key
+ * that follows; a value that moved is the pick. The release, because select2
+ * takes its dropdown off the page on it, and the click that follows has
+ * nowhere left to land. A native `change` in between — a build that fires
+ * one — is heard by `watchChoices` itself, and is not told twice.
  */
 function watchChosenPicks(write, watching) {
   const before = new WeakMap();
   const selectAt = (event) => {
     const target = event.composedPath?.()?.[0] ?? event.target;
     const container = target?.closest?.(CHOSEN);
-    return container ? selectOfChosen(container) : null;
+    if (container) return selectOfChosen(container);
+    return selectOfSelect2(target);
   };
   const note = (event) => {
     const select = selectAt(event);
@@ -5802,7 +7380,7 @@ function watchChosenPicks(write, watching) {
   };
   const heard = (event) => {
     const target = event.composedPath?.()?.[0] ?? event.target;
-    if (target instanceof HTMLSelectElement && chosenOf(target)) before.set(target, target.value);
+    if (target instanceof HTMLSelectElement && (chosenOf(target) || select2Of(target))) before.set(target, target.value);
   };
   const check = (event) => {
     if (!event.isTrusted) return;
@@ -5816,7 +7394,7 @@ function watchChosenPicks(write, watching) {
       write({ question: clean(questionFor(select)), answer: clean(option.textContent) });
     }, 0);
   };
-  const events = [['mousedown', note], ['keydown', note], ['change', heard], ['click', check], ['keyup', check]];
+  const events = [['mousedown', note], ['keydown', note], ['change', heard], ['mouseup', check], ['click', check], ['keyup', check]];
   for (const [type, fn] of events) document.addEventListener(type, fn, true);
   return () => {
     for (const [type, fn] of events) document.removeEventListener(type, fn, true);
@@ -5897,7 +7475,7 @@ export function looksLikeApplicationForm() {
  * site is not. The same list the card uses to tell a tracker's page.
  */
 const ON_A_TRACKER_HOST =
-  /\b(greenhouse|lever|workday|myworkdayjobs|ashby|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite|bamboohr|rippling|breezy|recruitee|teamtailor|jazzhr|successfactors|brassring)\b/i;
+  /\b(greenhouse|lever|workday|myworkdayjobs|ashby|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite|bamboohr|rippling|breezy|recruitee|teamtailor|jazzhr|successfactors|brassring|myjobs\.adp|workforcenow\.adp)\b/i;
 
 export function mayFillFrame() {
   if (looksLikeApplicationForm()) return true;
@@ -6117,17 +7695,52 @@ export function isRequired(fieldId) {
 
   const marked = (text) => /\*|\brequired\b/i.test(text ?? '');
 
-  // The label actually associated with this field.
+  // The label actually associated with this field, or with the component it
+  // is drawn in: see `componentLabel`.
   const own =
     (field.id && rootOf(field).querySelector(`label[for="${CSS.escape(field.id)}"]`)) ||
-    field.closest('label');
+    field.closest('label') ||
+    componentLabel(field);
   if (own) return marked(own.textContent);
 
-  let group = field.parentElement;
-  for (let i = 0; i < 3 && group; i++, group = group.parentElement) {
-    if (group.querySelectorAll(ANOTHER_FIELD).length > 1) break;
+  /*
+   * And on out of a component, as `labelFor` climbs.
+   *
+   * `parentElement` stops at the shadow root a field is drawn in, so a box in
+   * a component had no group at all to find its mark in: `<label>Why do you
+   * want to work here? *</label>` beside a component drawing a textarea read
+   * as optional, and the card listed a required question as one that could
+   * be left. The root is one more group, and when it holds this field alone
+   * the climb carries on from its host; a root costs none of the three
+   * levels, which are the page's wrappers.
+   *
+   * Counting the fields drawn in components, as `labelFor` does (see
+   * `fieldsIn`): a wrapper holding a required question and then a component
+   * with no label of its own looks, to `querySelectorAll`, like a wrapper
+   * holding one field, and the second box took the first one's asterisk.
+   */
+  /*
+   * And in through the slot the page's own box is put in, as `labelFor`
+   * climbs: an asterisk a component draws on the label round its slot is
+   * this box's when the wrapper holds no other, counting those put in the
+   * same component through its slots (`fieldsDrawnIn`). The component's
+   * wrappers cost none of the three.
+   */
+  let from = field;
+  const putInto = new Set();
+  let group = groupDrawnAround(field, putInto);
+  for (let i = 0; i < 3 && group; ) {
+    if (fieldsDrawnIn(group, ANOTHER_FIELD, 2) > 1) break;
     const label = group.querySelector('label,legend');
     if (label) return marked(label.textContent);
+    if (group instanceof ShadowRoot) {
+      if (group.host.id === OURS) break;
+      from = group.host;
+    } else {
+      if (!putInto.has(group.getRootNode())) i++;
+      from = group;
+    }
+    group = groupDrawnAround(from, putInto);
   }
   return false;
 }
@@ -6154,17 +7767,44 @@ function questionOf(field) {
  * elements around it, and never past one that holds another place to write:
  * the label of a different question is exactly what must not be borrowed.
  */
+/*
+ * And out of the component the editor is drawn in.
+ *
+ * An editor drawn in a component — its editing box in the component's root,
+ * the component straight after the page's hidden textarea — was never
+ * matched to the textarea: `previousElementSibling` inside the root is the
+ * component's `<style>`, and `parentElement` stops at the root. Measured,
+ * each such editor was offered as "Editor editing area: main. Press Alt+0
+ * for help.", not required, and the cover letter's editor as a question of
+ * its own, where the same editors drawn into the page were "Why do you want
+ * to work at Acme?", required, and no question at all.
+ *
+ * The root is one more wrapper and costs none of the three. And "another
+ * place to write" counts those drawn in components: two editors drawn in
+ * components side by side after one hidden textarea look, to
+ * `querySelectorAll`, like a wrapper holding nothing else to write in, and
+ * both took the textarea's question.
+ */
+const A_PLACE_TO_WRITE = 'textarea, [contenteditable="true"]';
+
 function takenOver(field) {
   if (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) return null;
   let node = field;
-  for (let i = 0; i < 3 && node; i++, node = node.parentElement) {
+  for (let i = 0; i < 3 && node; ) {
     const before = node.previousElementSibling;
     if (before instanceof HTMLTextAreaElement && before.getClientRects().length === 0) return before;
-    const around = node.parentElement;
-    const others = [...(around?.querySelectorAll('textarea, [contenteditable="true"]') ?? [])].filter(
-      (f) => f !== field && !f.contains(field) && !field.contains(f),
-    );
+    const around = containerOf(node);
+    const others = around
+      ? deepQueryAll(A_PLACE_TO_WRITE, around).filter((f) => f !== field && !drawnInside(f, field) && !drawnInside(field, f))
+      : [];
     if (!around || others.length > 0) return null;
+    if (around instanceof ShadowRoot) {
+      if (around.host.id === OURS) return null;
+      node = around.host;
+    } else {
+      node = around;
+      i++;
+    }
   }
   return null;
 }

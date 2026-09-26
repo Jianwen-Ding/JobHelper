@@ -53,21 +53,21 @@ const documentKind = cardClassifier();
  * came off a university portal or out of a word processor.
  */
 const NAMES = [
-  ['Jianwen-Ding-Resume.pdf', 'resume'],
-  ['Jianwen-Ding-Resume-Streamly.pdf', 'resume'],
+  ['Morgan-Testwell-Resume.pdf', 'resume'],
+  ['Morgan-Testwell-Resume-Streamly.pdf', 'resume'],
   ['Resume_Streamly.pdf', 'resume'],
   ['resume.pdf', 'resume'],
-  ['Jianwen Ding CV.pdf', 'resume'],
+  ['Morgan Testwell CV.pdf', 'resume'],
   ['Curriculum Vitae.pdf', 'resume'],
   ['résumé.pdf', 'resume'],
   ['resumé.pdf', 'resume'],
-  ['Jianwen-Ding-Cover-Letter.pdf', 'letter'],
-  ['Jianwen_Ding_Cover_Letter.pdf', 'letter'],
+  ['Morgan-Testwell-Cover-Letter.pdf', 'letter'],
+  ['Morgan_Testwell_Cover_Letter.pdf', 'letter'],
   ['covering letter.docx', 'letter'],
   ['Transcript.pdf', 'transcript'],
   ['Academic_Transcript.pdf', 'transcript'],
   ['UVA Academic Record.pdf', 'transcript'],
-  ['Jianwen-Ding-Answers.pdf', 'other'],
+  ['Morgan-Testwell-Answers.pdf', 'other'],
   ['something-else.pdf', 'other'],
   ['Portfolio.pdf', 'portfolio'],
   ['writing_sample.pdf', 'portfolio'],
@@ -76,7 +76,7 @@ const NAMES = [
 test('the lift got the card, not something that looks like it', () => {
   // Cheapest possible proof that the two slices are the real ones: the name
   // the folder writes for every application reads as a resume.
-  assert.equal(documentKind('Jianwen-Ding-Resume.pdf'), 'resume');
+  assert.equal(documentKind('Morgan-Testwell-Resume.pdf'), 'resume');
   assert.equal(documentKind('something-else.pdf'), 'other');
 });
 

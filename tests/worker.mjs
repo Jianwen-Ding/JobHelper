@@ -723,6 +723,115 @@ async function main() {
     }
 
     /*
+     * Parked work belongs to the tab that parked it, while that tab is open.
+     *
+     * Parks are keyed by address and an address is not an application: a
+     * shared careers listing, an ATS login page, a board that keeps every
+     * posting at one url. The rescue from a closed tab has to take a park
+     * that is not its own, because a reopened tab has a new id. But a tab
+     * that is still open and has only gone off to read another job is
+     * coming back for it — and another tab opening that address took it
+     * first, "recovered from a tab that closed", leaving nothing for the tab
+     * that wrote it.
+     */
+    group('Another open tab’s parked letter stays with that tab');
+    {
+      const BOARD = 'http://board.example/shared-listing';
+      const a = await context.newPage();
+      const b = await context.newPage();
+      await a.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+      await b.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+      const letterOn = (reply) => reply?.data?.work?.letter ?? null;
+      try {
+        store.save = 'work';
+        store.company = undefined;
+        await driver.evaluate((key) => chrome.storage.session.remove(key), `jh-orphan:${BOARD}`);
+        store.role = 'Platform Engineer';
+        await ask(a, 'analyze', { url: BOARD, title: 'Board', html: '<p>one</p>', company: 'Helios' });
+        await ask(a, 'saveWork', { work: { letter: 'WRITTEN-IN-TAB-A' } });
+        // Tab A goes off to read another job, which parks its letter here.
+        store.role = 'Data Scientist';
+        await ask(a, 'analyze', { url: 'http://vega.example/jobs/ds', title: 'DS', html: '<p>two</p>', company: 'Vega' });
+
+        // Tab B opens the same address on a page nobody can name.
+        store.role = '';
+        store.company = '';
+        await ask(b, 'analyze', { url: BOARD, title: 'Board', html: '<p>unnamed</p>' });
+        const unnamed = await ask(b, 'takeWork', { page: { url: BOARD, title: 'Board' } });
+        store.company = undefined;
+        check('a tab opening an address another open tab parked at is not handed its letter', letterOn(unnamed.reply) !== 'WRITTEN-IN-TAB-A', JSON.stringify(unnamed.reply?.data));
+
+        // And on the same posting, named: a duplicate, not a closed tab.
+        await ask(b, 'clearTrail', {});
+        store.role = 'Platform Engineer';
+        await ask(b, 'analyze', { url: BOARD, title: 'Board', html: '<p>one</p>', company: 'Helios' });
+        const named = await ask(b, 'takeWork', { page: { url: BOARD, title: 'Board' } });
+        check('nor when it is on the same job', letterOn(named.reply) !== 'WRITTEN-IN-TAB-A', JSON.stringify(named.reply?.data));
+
+        // Tab A, back to its job, finds its own letter.
+        await ask(a, 'analyze', { url: BOARD, title: 'Board', html: '<p>one</p>', company: 'Helios' });
+        const back = await ask(a, 'takeWork', { page: { url: BOARD, title: 'Board' } });
+        check('and the tab that wrote it finds it when it comes back', letterOn(back.reply) === 'WRITTEN-IN-TAB-A', JSON.stringify(back.reply?.data));
+      } finally {
+        store.company = undefined;
+        store.role = 'Platform Engineer';
+        await ask(a, 'clearTrail', {}).catch(() => undefined);
+        await ask(b, 'clearTrail', {}).catch(() => undefined);
+        await a.close();
+        await b.close();
+      }
+    }
+
+    /*
+     * Two tabs on the same posting are two applications until somebody says
+     * otherwise, and each one's park is its own.
+     *
+     * `parkWork` replaced whatever was parked at the address for the same
+     * job, whoever parked it — which is right for one tab parking the same
+     * job twice and wrong for two tabs. Both open on one posting, both
+     * writing, both off to read something else: the second park wrote over
+     * the first, and the first tab came back to the second tab's letter.
+     */
+    group('Two tabs on the same posting each come back to their own letter');
+    {
+      const SAME = 'http://careers.helios.example/jobs/platform-twice';
+      const a = await context.newPage();
+      const b = await context.newPage();
+      await a.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+      await b.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+      const letterOn = (reply) => reply?.data?.work?.letter ?? null;
+      try {
+        store.save = 'work';
+        store.company = undefined;
+        store.role = 'Platform Engineer';
+        await driver.evaluate((key) => chrome.storage.session.remove(key), `jh-orphan:${SAME}`);
+        await ask(a, 'analyze', { url: SAME, title: 'Platform', html: '<p>one</p>', company: 'Helios' });
+        await ask(a, 'saveWork', { work: { letter: 'TAB-A-TO-HELIOS' } });
+        await ask(b, 'analyze', { url: SAME, title: 'Platform', html: '<p>one</p>', company: 'Helios' });
+        await ask(b, 'saveWork', { work: { letter: 'TAB-B-TO-HELIOS' } });
+
+        // Each goes off to read another job.
+        store.role = 'Data Scientist';
+        await ask(a, 'analyze', { url: 'http://vega.example/jobs/a', title: 'A', html: '<p>a</p>', company: 'Vega' });
+        await ask(b, 'analyze', { url: 'http://lyra.example/jobs/b', title: 'B', html: '<p>b</p>', company: 'Lyra' });
+
+        // And each comes back.
+        store.role = 'Platform Engineer';
+        await ask(a, 'analyze', { url: SAME, title: 'Platform', html: '<p>one</p>', company: 'Helios' });
+        const atA = await ask(a, 'takeWork', { page: { url: SAME, title: 'Platform' } });
+        await ask(b, 'analyze', { url: SAME, title: 'Platform', html: '<p>one</p>', company: 'Helios' });
+        const atB = await ask(b, 'takeWork', { page: { url: SAME, title: 'Platform' } });
+        check('the first tab comes back to its own letter', letterOn(atA.reply) === 'TAB-A-TO-HELIOS', JSON.stringify(atA.reply?.data?.work));
+        check('and the second to its own', letterOn(atB.reply) === 'TAB-B-TO-HELIOS', JSON.stringify(atB.reply?.data?.work));
+      } finally {
+        await ask(a, 'clearTrail', {}).catch(() => undefined);
+        await ask(b, 'clearTrail', {}).catch(() => undefined);
+        await a.close();
+        await b.close();
+      }
+    }
+
+    /*
      * "Same job — put it back" has to put it back where it can be seen.
      *
      * The merge wrote the letter into the trail and answered with a summary,

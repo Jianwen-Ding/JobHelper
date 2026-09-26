@@ -50,6 +50,20 @@ const NEVER_REMEMBER = [
   /\btin\b/i,
   /\b(date|day|month|year)\s*of\s*birth\b/i,
   /\bbirth\s*(date|day)\b/i,
+  /*
+   * Where somebody was born, which the two above did not reach: "Place of
+   * birth", "Country of birth", "Birthplace", "Where were you born?". The
+   * same words ResumeM-M's `isSensitiveQuestion` refuses.
+   */
+  /\b(place|country|city|town|state|province|county|region)\s*of\s*birth\b/i,
+  /\bbirth\s*(place|country|city|town)\b/i,
+  /\bwhere\s+(were|was)\s+you\s+born\b/i,
+  /*
+   * A Medicare or Medicaid number, named either way or both. `medical` and
+   * `health` below did not reach it. The number, as the server has it, not
+   * the words: "Have you worked with Medicare claims data?" is about work.
+   */
+  /\bmedica(re|id)\b(\s*(\/|or|and|&)\s*medica(re|id)\b)?\s*(number|no\b\.?|#|id\b|card|beneficiary)/i,
   /\bdob\b/i,
   /\bage\b/i,
   // A curly apostrophe as well as a straight one: "Driver’s License" is how a

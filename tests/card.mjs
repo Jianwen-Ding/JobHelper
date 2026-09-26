@@ -2534,7 +2534,7 @@ async function main() {
           // clashing name is refused — the build's own stage goes through.
           if (refuse && payload?.coverLetter) {
             refuse = false;
-            throw new Error('"Cover Letter" is already called Jianwen-Ding-Resume.pdf.');
+            throw new Error('"Cover Letter" is already called Morgan-Testwell-Resume.pdf.');
           }
           return { currentDir: '/tmp/x', application: { id: 'app-1' } };
         }
@@ -3268,6 +3268,103 @@ async function main() {
     JSON.stringify(rebased),
   );
 
+  /*
+   * The picker says what was picked, and keeps saying it.
+   *
+   * It was drawn from the proposal on screen, and the card redraws the moment
+   * a switch starts — so it went straight back to the resume just turned away
+   * from while the new one was worked out, and an AI proposal made from that
+   * resume stayed filed beside the new one: "AI tailoring" put it back on
+   * screen, picker and all. A user: "I keep on trying to switch … but it
+   * keeps on putting me back on this other resume".
+   */
+  const stuck = await inPage(async (createCard) => {
+    const made = (base, extra = {}) => ({
+      isJobPosting: true,
+      job: { title: 'Platform Engineer', company: 'Acme' },
+      spec: { id: 'job-acme', label: 'Acme', tier: 'temporary', copiedFrom: base },
+      baseResumeId: base,
+      baseLabel: base === 'base' ? 'New grad' : 'Summer intern',
+      rationale: [],
+      diff: [],
+      ...extra,
+    });
+    const sent = [];
+    let answer = null;
+    const handle = createCard({
+      analysis: made('base'),
+      resumes: [
+        { id: 'base', label: 'New grad', tier: 'base' },
+        { id: 'intern', label: 'Summer intern', tier: 'base' },
+      ],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, ...payload });
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'setBase') {
+          // Held until the test answers it, which is the time a switch takes.
+          const result = await new Promise((resolve, reject) => (answer = { resolve, reject }));
+          handle.update(result);
+          return result;
+        }
+        if (action === 'rebuild') {
+          const result = made(payload.baseResumeId ?? 'base', { tailor: payload.tailor, aiUsed: payload.tailor === 'ai' });
+          handle.update(result);
+          return result;
+        }
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const picker = () => root.querySelector('select')?.value ?? null;
+    const press = (re) => [...root.querySelectorAll('button.mode')].find((b) => re.test(b.textContent))?.click();
+    await wait(100);
+    // An AI reading of the resume it started from, then back to the keyword list.
+    handle.update(made('base', { tailor: 'ai', aiUsed: true }), { show: true });
+    await wait(50);
+    press(/Keyword match/);
+    await wait(50);
+
+    const choose = async (id) => {
+      const select = root.querySelector('select');
+      select.value = id;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      await wait(60);
+    };
+    await choose('intern');
+    const whileSwitching = picker();
+    answer.reject(new Error('The store is restarting'));
+    await wait(60);
+    const afterFailing = picker();
+
+    await choose('intern');
+    answer.resolve(made('intern'));
+    await wait(60);
+    const afterSwitching = picker();
+    press(/AI tailoring|Have AI Tailor/);
+    await wait(100);
+    return {
+      whileSwitching,
+      afterFailing,
+      afterSwitching,
+      afterAi: picker(),
+      rebuilt: sent.filter((c) => c.action === 'rebuild').map((c) => c.baseResumeId ?? null),
+    };
+  });
+
+  check('while a switch is worked out, the picker says the resume picked', stuck.whileSwitching === 'intern', JSON.stringify(stuck));
+  check('and one that failed says the resume still in use', stuck.afterFailing === 'base', JSON.stringify(stuck));
+  check('one that lands says the new resume', stuck.afterSwitching === 'intern', JSON.stringify(stuck));
+  check(
+    'and the AI reading of the resume left behind does not come back with it',
+    stuck.afterAi === 'intern',
+    JSON.stringify(stuck),
+  );
+  check('the AI is asked about the resume switched to', stuck.rebuilt.at(-1) === 'intern', JSON.stringify(stuck.rebuilt));
+
   console.log('\nWhich resume to start from, ranked and marked');
 
   /*
@@ -3455,6 +3552,132 @@ async function main() {
     'a store with no ranking keeps its order and its plain labels',
     JSON.stringify(unranked) === JSON.stringify(['New grad', 'Lab', 'Role — Acme']),
     JSON.stringify(unranked),
+  );
+
+  console.log('\nThe resume made for this application, at the very top');
+
+  /*
+   * Reported: "temporary resumes created for a job application should always
+   * be on the very top when looking for resume variation options when looking
+   * at that very job application". It sat in "Built for a posting" among every
+   * other posting's, ranked by fit, so the resume written for this form could
+   * be anywhere in the list.
+   */
+  const pickerFor = (application) =>
+    inPage(async (createCard, application) => {
+      createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Platform Engineer', company: 'Helios' },
+          spec: { id: 'job-helios', label: 'Helios', tier: 'temporary' },
+          baseResumeId: 'newgrad',
+          application,
+          rationale: [],
+          diff: [],
+          resumeFit: [
+            { id: 'platform', hits: 6, because: ['Go'], share: 0.6 },
+            { id: 'job-vega-old', hits: 5, because: ['Kafka'], share: 0.5 },
+            { id: 'job-helios-mine', hits: 0, because: [], share: 0 },
+          ],
+          recommended: ['platform'],
+        },
+        resumes: [
+          { id: 'newgrad', label: 'New grad', base: true },
+          { id: 'platform', label: 'Platform', base: true },
+          { id: 'job-vega-old', label: 'Platform Engineer — Vega', tier: 'temporary' },
+          { id: 'job-helios-mine', label: 'Platform Engineer — Helios', tier: 'temporary' },
+        ],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async () => ({}),
+      });
+      await new Promise((r) => setTimeout(r, 80));
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      return [...root.querySelectorAll('select optgroup')].map((g) => ({
+        label: g.label,
+        options: [...g.querySelectorAll('option')].map((o) => o.textContent.replace(/^★ /, '').replace(/ — uses .*$/, '')),
+      }));
+    }, application);
+
+  const mine = await pickerFor({ id: 'app-helios', resumeId: 'job-helios-mine' });
+  check(
+    "this application's own resume is first, in a group of its own, above the bases",
+    mine?.[0]?.label === 'For this application' && JSON.stringify(mine[0].options) === JSON.stringify(['Platform Engineer — Helios']),
+    JSON.stringify(mine),
+  );
+  check(
+    'even though it matches the posting worst, and only there',
+    !mine?.some((g) => g.label !== 'For this application' && g.options.includes('Platform Engineer — Helios')),
+    JSON.stringify(mine),
+  );
+  const aBase = await pickerFor({ id: 'app-helios', resumeId: 'platform' });
+  check(
+    'a base the application was built from stays with the bases',
+    !aBase?.some((g) => g.label === 'For this application') && aBase?.[0]?.label === 'Bases',
+    JSON.stringify(aBase),
+  );
+  const none = await pickerFor({ id: 'app-helios' });
+  check('and with nothing made for it yet, the list is as it was', none?.[0]?.label === 'Bases', JSON.stringify(none));
+
+  console.log('\nOnly the latest postings\' resumes, the rest a choice away');
+
+  /*
+   * Asked for: "show a window of like 10 of the last application resumes then
+   * keep the rest accessible but only seeable under a dropdown menu".
+   * Fourteen made for postings, made a day apart; the oldest is the one this
+   * card started from, so it has to stay in view whatever the window says.
+   */
+  const windowed = await inPage(async (createCard) => {
+    const day = (n) => new Date(Date.UTC(2026, 8, n)).toISOString();
+    const built = Array.from({ length: 14 }, (_, i) => ({
+      id: `job-co${i + 1}-role`,
+      label: `Role — Co${i + 1}`,
+      tier: 'temporary',
+      generatedFor: { company: `Co${i + 1}`, role: 'Role', at: day(i + 1) },
+    }));
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Helios' },
+        spec: { id: 'job-helios', label: 'Helios', tier: 'temporary' },
+        baseResumeId: 'job-co1-role',
+        rationale: [],
+        diff: [],
+      },
+      resumes: [{ id: 'newgrad', label: 'New grad', base: true }, ...built],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const read = () => [...root.querySelectorAll('select option')].map((o) => o.textContent);
+    const before = read();
+    const select = root.querySelector('select');
+    select.value = '__show_older__';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 80));
+    return { before, after: read() };
+  });
+  const postings = (list) => (list ?? []).filter((o) => /^Role — Co/.test(o));
+  check(
+    'ten of the fourteen are listed, the newest, with the one in use kept in view',
+    postings(windowed.before).length === 11 &&
+      ['Co14', 'Co5', 'Co1'].every((c) => windowed.before.includes(`Role — ${c}`)) &&
+      !['Co2', 'Co3', 'Co4'].some((c) => windowed.before.includes(`Role — ${c}`)),
+    JSON.stringify(windowed.before),
+  );
+  check(
+    'and the rest are behind one row that says how many',
+    windowed.before?.includes('Show 3 older postings…'),
+    JSON.stringify(windowed.before),
+  );
+  check(
+    'which puts them all back',
+    postings(windowed.after).length === 14 && !windowed.after.some((o) => /older posting/.test(o)),
+    JSON.stringify(windowed.after),
   );
 
   console.log('\nAdding to a skills group and cutting from it are two decisions');
@@ -3917,7 +4140,7 @@ async function main() {
       // A folder with something in it, so the drag chips have files to be.
       onAction: async (what) =>
         what === 'attachmentFiles'
-          ? { files: [{ name: 'Jianwen-Ding-Resume.pdf' }, { name: 'Jianwen-Ding-Cover-Letter.pdf' }] }
+          ? { files: [{ name: 'Morgan-Testwell-Resume.pdf' }, { name: 'Morgan-Testwell-Cover-Letter.pdf' }] }
           : {},
     });
     const root = document.querySelector('#jobhelper-card-host').shadowRoot;
@@ -4175,8 +4398,10 @@ async function main() {
       isForm: true,
       onAction: async (what) =>
         what === 'attachmentFiles'
-          ? { files: [{ name: 'Jianwen-Ding-Resume.pdf' }, { name: 'Jianwen-Ding-Cover-Letter.pdf' }] }
-          : {},
+          ? { files: [{ name: 'Morgan-Testwell-Resume.pdf' }, { name: 'Morgan-Testwell-Cover-Letter.pdf' }] }
+          : what === 'stage'
+            ? { currentDir: '/tmp/current' }
+            : {},
     });
     const root = document.querySelector('#jobhelper-card-host').shadowRoot;
     /*
@@ -4201,8 +4426,14 @@ async function main() {
       const look = () => {
         const body = root.querySelector('.body.reduced');
         const chips = [...(body?.querySelectorAll('.files > *') ?? [])].map((c) => c.textContent.trim());
-        if (chips.length > 0 || Date.now() - at > 3000) {
-          const note = body?.querySelector('.drag-note')?.textContent ?? '';
+        const said = body?.querySelector('.drag-note')?.textContent ?? '';
+        /*
+         * Once the folder has caught up with the work just restored: until
+         * then the line says the files are being brought up to date, which
+         * they are — restoring re-stages — and a drag would be refused.
+         */
+        if ((chips.length > 0 && /Drag any of these/.test(said)) || Date.now() - at > 6000) {
+          const note = said;
           /*
            * And then the whole card, because the same function draws both
            * and a refactor that dropped them from the propose view would
@@ -4226,13 +4457,13 @@ async function main() {
   check('the reduced card is still the reduced card', reducedChips.small === true);
   check(
     'and it keeps the files to drag into this page',
-    reducedChips.chips.some((c) => /Jianwen-Ding-Resume\.pdf/.test(c)),
+    reducedChips.chips.some((c) => /Morgan-Testwell-Resume\.pdf/.test(c)),
     JSON.stringify(reducedChips.chips),
   );
   check('with the line saying what to do with them', /Drag any of these/.test(reducedChips.note), reducedChips.note);
   check(
     'and the whole card still has them too',
-    reducedChips.wholeChips.some((c) => /Jianwen-Ding-Resume\.pdf/.test(c)),
+    reducedChips.wholeChips.some((c) => /Morgan-Testwell-Resume\.pdf/.test(c)),
     JSON.stringify(reducedChips.wholeChips),
   );
 
@@ -5042,6 +5273,621 @@ async function main() {
     JSON.stringify(provisional),
   );
   check('and a real title is shown as it was', provisional['Platform Engineer | Markon'] === 'Platform Engineer | Markon', JSON.stringify(provisional));
+
+  /*
+   * "Use Original" with only the AI's reading in hand.
+   *
+   * It put back the wordings and the skills the proposal changed, by going to
+   * the keyword list's copy with every box off. The AI also shows and hides
+   * entries and lines, and a list of changes cannot undo those — so with no
+   * keyword list to go to, an entry the AI hid stayed hidden under the button
+   * that promises the resume exactly as it is kept.
+   *
+   * Reached in the ordinary way: the AI tailors, and then a different resume
+   * is picked. The switch repeats the AI for the new resume and drops the
+   * keyword list made from the old one.
+   */
+  console.log('\n"Use Original" after the AI hid an entry');
+
+  const originalAfterAi = await inPage(async (createCard) => {
+    const made = (base, tailor) => ({
+      isJobPosting: true,
+      job: { title: 'Platform Engineer', company: 'Acme' },
+      spec: {
+        id: 'job-acme',
+        label: 'Acme',
+        tier: 'temporary',
+        copiedFrom: base,
+        choices: { b_pipeline: tailor === 'ai' ? 'v_kafka' : 'v_base' },
+        sections: [{ kind: 'experience', entries: tailor === 'ai' ? ['exp_acme'] : ['exp_acme', 'exp_beta'] }],
+      },
+      baseResumeId: base,
+      baseLabel: base === 'base' ? 'New grad' : 'Summer intern',
+      rationale: tailor === 'ai' ? [{ key: 'b_pipeline', from: 'v_base', to: 'v_kafka', toText: 'Built a Kafka pipeline', because: ['kafka'] }] : [],
+      diff: tailor === 'ai' ? [{ kind: 'removed', where: 'Beta Corp' }] : [],
+      tailor,
+      aiUsed: tailor === 'ai',
+    });
+    const renders = [];
+    const asked = [];
+    let handle;
+    handle = createCard({
+      analysis: made('base', 'match'),
+      resumes: [
+        { id: 'base', label: 'New grad', tier: 'base' },
+        { id: 'intern', label: 'Summer intern', tier: 'base' },
+      ],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'render') {
+          renders.push(payload?.spec);
+          return { pages: 1, fits: true };
+        }
+        // As the content script does: the reply is handed to `update`, then returned.
+        if (action === 'rebuild' || action === 'setBase') {
+          asked.push(`${action}:${payload.tailor}`);
+          const result = made(payload.baseResumeId ?? 'base', payload.tailor);
+          handle.update(result);
+          return result;
+        }
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const press = (re) => [...root.querySelectorAll('button.mode')].find((b) => re.test(b.textContent))?.click();
+    await wait(100);
+    press(/Have AI Tailor/);
+    await wait(100);
+    const select = root.querySelector('select');
+    select.value = 'intern';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    await wait(150);
+    const before = renders.length;
+    press(/Use Original/);
+    await wait(300);
+    const sent = renders.slice(before).at(-1) ?? null;
+    return {
+      asked,
+      entries: sent?.sections?.[0]?.entries ?? null,
+      wording: sent?.choices?.b_pipeline ?? null,
+      from: sent?.copiedFrom ?? null,
+      lit: root.querySelector('.mode.on')?.textContent?.trim() ?? null,
+    };
+  });
+
+  check(
+    'the AI tailored and the switch repeated it, so only the AI’s reading was in hand',
+    originalAfterAi.asked[0] === 'rebuild:ai' && originalAfterAi.asked[1] === 'setBase:ai',
+    JSON.stringify(originalAfterAi),
+  );
+  check(
+    '"Use Original" puts back the entry the AI hid',
+    JSON.stringify(originalAfterAi.entries) === JSON.stringify(['exp_acme', 'exp_beta']),
+    JSON.stringify(originalAfterAi),
+  );
+  check(
+    'and the wording, from the resume just picked, with "Use Original" lit',
+    originalAfterAi.wording === 'v_base' && originalAfterAi.from === 'intern' && originalAfterAi.lit === 'Use Original',
+    JSON.stringify(originalAfterAi),
+  );
+
+  console.log('\nAbove a modal the page opens');
+
+  /*
+   * LinkedIn's Easy Apply opens a dialog with showModal() — inside an open
+   * shadow root, `#interop-outlet`, on its new jobs pages. Such a dialog is
+   * drawn in the top layer, above any z-index, and everything outside it goes
+   * inert: the card sat greyed under the backdrop and no press reached it, so
+   * nothing could be dragged from it into the form. Pressed here with the
+   * mouse, since only a real press is refused by an inert element.
+   */
+  const underModal = async (inShadow, { style = '', dimsBackdrops = false } = {}) => {
+    const opened = await inPage((createCard, { shadow, style, dimsBackdrops }) => {
+      document.querySelectorAll('dialog, #interop-outlet, style[data-page]').forEach((el) => el.remove());
+      if (dimsBackdrops) {
+        // Not `dialog::backdrop`: every backdrop, as some pages write it.
+        const sheet = Object.assign(document.createElement('style'), { textContent: '::backdrop { background: rgb(0 0 0 / 50%); }' });
+        sheet.dataset.page = '';
+        document.head.append(sheet);
+      }
+      const handle = createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Gameplay Engineer Intern', company: 'Emberlight' },
+          spec: { id: 'job-ember', label: 'Emberlight', tier: 'temporary' },
+          rationale: [],
+        },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async () => ({}),
+      });
+      window.__handle = handle;
+      const host = document.querySelector('#jobhelper-card-host');
+      const card = host.shadowRoot.querySelector('.card');
+      const before = card.getBoundingClientRect();
+      window.__pressed = 0;
+      host.shadowRoot.addEventListener('click', () => window.__pressed++, true);
+      // The page's own "click outside closes it", as modal libraries write it.
+      window.__closedByPage = 0;
+      let where = document.body;
+      if (shadow) {
+        const outlet = Object.assign(document.createElement('div'), { id: 'interop-outlet' });
+        document.body.append(outlet);
+        where = outlet.attachShadow({ mode: 'open' });
+      }
+      const dialog = document.createElement('dialog');
+      dialog.innerHTML = '<form method="dialog"><label>First name <input name="first"></label><button>Next</button></form>';
+      dialog.style.cssText = style;
+      where.append(dialog);
+      document.addEventListener('click', (event) => {
+        if (dialog.open && !dialog.querySelector('form').contains(event.composedPath()[0])) {
+          window.__closedByPage++;
+          dialog.close();
+        }
+      });
+      dialog.showModal();
+      window.__dialog = dialog;
+      return { left: before.left, top: before.top, right: before.right, width: before.width, height: before.height };
+    }, { shadow: inShadow, style, dimsBackdrops });
+    await page.waitForTimeout(80);
+    const x = opened.left + 40;
+    const y = opened.top + 20;
+    const placed = await page.evaluate(([px, py]) => {
+      const host = document.querySelector('#jobhelper-card-host') ?? window.__dialog.querySelector('#jobhelper-card-host');
+      const box = host?.shadowRoot.querySelector('.card').getBoundingClientRect();
+      const at = document.elementFromPoint(px, py);
+      // What a press at a point would land on, down through the page's shadow roots.
+      const topAt = (ax, ay) => {
+        let hit = document.elementFromPoint(ax, ay);
+        for (let depth = 0; hit && hit !== host && hit.shadowRoot && depth < 8; depth++) {
+          const inner = hit.shadowRoot.elementFromPoint(ax, ay);
+          if (!inner || inner === hit) break;
+          hit = inner;
+        }
+        return hit;
+      };
+      const input = window.__dialog.querySelector('input').getBoundingClientRect();
+      const frame = window.__dialog.getBoundingClientRect();
+      return {
+        inDialog: host?.parentNode === window.__dialog,
+        top: at === host || at === window.__dialog.getRootNode().host && window.__dialog.getRootNode().elementFromPoint(px, py) === host,
+        left: box?.left,
+        y: box?.top,
+        width: box?.width,
+        height: box?.height,
+        // Its bottom corners are the card too, rather than cut off by the dialog.
+        whole: Boolean(box) && topAt(box.left + 8, box.bottom - 8) === host && topAt(box.right - 8, box.bottom - 8) === host,
+        field: topAt(input.left + input.width / 2, input.top + input.height / 2)?.localName ?? null,
+        // A spot of the dialog's own white, inside its border, clear of the card.
+        blank: { x: Math.round(frame.left + 8), y: Math.round(frame.bottom - 8) },
+      };
+    }, [x, y]);
+    /*
+     * The colour the person sees there. The dialog is white and its backdrop
+     * is behind it, so anything darker is a second backdrop laid over it.
+     */
+    const shot = await page.screenshot({ clip: { x: placed.blank.x, y: placed.blank.y, width: 1, height: 1 } });
+    placed.blankColour = await page.evaluate(async (png) => {
+      const img = new Image();
+      img.src = `data:image/png;base64,${png}`;
+      await img.decode();
+      const canvas = Object.assign(document.createElement('canvas'), { width: 1, height: 1 });
+      const pen = canvas.getContext('2d');
+      pen.drawImage(img, 0, 0);
+      return [...pen.getImageData(0, 0, 1, 1).data.slice(0, 3)];
+    }, shot.toString('base64'));
+    await page.mouse.click(x, y);
+    const pressed = await page.evaluate(() => ({ pressed: window.__pressed, open: window.__dialog.open, closedByPage: window.__closedByPage }));
+    await page.evaluate(() => window.__dialog.close());
+    await page.waitForTimeout(50);
+    const after = await page.evaluate(([px, py]) => {
+      const host = [document.querySelector('#jobhelper-card-host'), window.__dialog.querySelector('#jobhelper-card-host')].find(Boolean);
+      const box = host?.shadowRoot.querySelector('.card').getBoundingClientRect();
+      return { home: host?.parentNode === document.documentElement, width: box?.width ?? 0, top: document.elementFromPoint(px, py) === host };
+    }, [x, y]);
+    return { opened, placed, pressed, after };
+  };
+
+  for (const [name, inShadow] of [['a dialog in the page', false], ['a dialog inside a shadow root, as LinkedIn has it', true]]) {
+    const seen = await underModal(inShadow);
+    check(`${name}: the card goes inside the modal, on top of its backdrop`, seen.placed.inDialog && seen.placed.top, JSON.stringify(seen.placed));
+    check(
+      `${name}: and stays where it was on the screen`,
+      Math.abs(seen.placed.left - seen.opened.left) < 1 && Math.abs(seen.placed.width - seen.opened.width) < 1,
+      JSON.stringify({ was: seen.opened, now: seen.placed }),
+    );
+    check(`${name}: a press on it reaches it`, seen.pressed.pressed === 1, JSON.stringify(seen.pressed));
+    check(
+      `${name}: and is not taken by the page as a press outside its modal`,
+      seen.pressed.open && seen.pressed.closedByPage === 0,
+      JSON.stringify(seen.pressed),
+    );
+    check(`${name}: once the modal closes, the card is back on the page and in view`, seen.after.home && seen.after.width > 0 && seen.after.top, JSON.stringify(seen.after));
+  }
+
+  /*
+   * A modal that moves fixed positions. A transform on the dialog — how one
+   * is centred, or animated in — or `will-change: transform`, makes it what
+   * a fixed descendant is placed against instead of the window, and a modal
+   * dialog is `overflow: auto`. Measured before the card went into the top
+   * layer: moved from the window's corner to the dialog's, cut down to the
+   * dialog's box, and lying over the form's first field. The page here also
+   * dims every ::backdrop, as some do, which the card's own must not add to.
+   */
+  for (const [name, inShadow, style] of [
+    ['a dialog centred with translate(-50%, -50%)', false, 'top: 50%; left: 50%; margin: 0; transform: translate(-50%, -50%);'],
+    ['a dialog with will-change: transform, inside a shadow root', true, 'will-change: transform;'],
+  ]) {
+    const seen = await underModal(inShadow, { style, dimsBackdrops: true });
+    const was = { left: seen.opened.left, top: seen.opened.top, width: seen.opened.width, height: seen.opened.height };
+    const now = { left: seen.placed.left, top: seen.placed.y, width: seen.placed.width, height: seen.placed.height };
+    check(`${name}: the card goes inside the modal, on top of its backdrop`, seen.placed.inDialog && seen.placed.top, JSON.stringify(seen.placed));
+    check(
+      `${name}: and stays where it was on the screen, not moved to the dialog's corner`,
+      Object.keys(was).every((key) => Math.abs(now[key] - was[key]) < 1),
+      JSON.stringify({ was, now }),
+    );
+    check(`${name}: all of it is there, not cut down to the dialog's box`, seen.placed.whole, JSON.stringify(seen.placed));
+    check(`${name}: and the form's field is not under it`, seen.placed.field === 'input', JSON.stringify(seen.placed));
+    check(
+      `${name}: nor dimmed by a second backdrop over the dialog`,
+      seen.placed.blankColour.every((channel) => channel > 245),
+      JSON.stringify(seen.placed.blankColour),
+    );
+    check(`${name}: a press on it reaches it`, seen.pressed.pressed === 1, JSON.stringify(seen.pressed));
+    check(
+      `${name}: and is not taken by the page as a press outside its modal`,
+      seen.pressed.open && seen.pressed.closedByPage === 0,
+      JSON.stringify(seen.pressed),
+    );
+    check(`${name}: once the modal closes, the card is back on the page and in view`, seen.after.home && seen.after.width > 0 && seen.after.top, JSON.stringify(seen.after));
+  }
+  await page.evaluate(() => document.querySelectorAll('style[data-page]').forEach((el) => el.remove()));
+
+  /*
+   * A page that hides, or toggles, every popover it has.
+   *
+   * Above a modal the card is a popover. When that was its host, a page's
+   * own code could reach it: `document.querySelectorAll('[popover]')` found
+   * it beside the page's popovers. Measured with the dialog centred by
+   * translate: hiding every one of them took the card out of the top layer,
+   * back to the dialog's corner and cut to the dialog's box, and it stayed
+   * there, since the card found the modal it already had and did nothing.
+   * The page's own popovers have to do what the page asked all the same.
+   */
+  const hidesEveryPopover = await inPage(async (createCard) => {
+    document.querySelectorAll('dialog, #interop-outlet, [popover]').forEach((el) => el.remove());
+    createCard({
+      analysis: { isJobPosting: true, job: { title: 'Platform Engineer', company: 'Acme' }, spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' }, rationale: [] },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    const host = document.querySelector('#jobhelper-card-host');
+    const card = host.shadowRoot.querySelector('.card');
+    const box = () => {
+      const r = card.getBoundingClientRect();
+      return { left: r.left, top: r.top, width: r.width, height: r.height };
+    };
+    const was = box();
+    const tip = document.createElement('div');
+    tip.popover = 'manual';
+    tip.textContent = 'A tip of the page\'s own';
+    const menu = document.createElement('div');
+    menu.popover = 'auto';
+    menu.textContent = 'A menu of the page\'s own';
+    document.body.append(tip);
+    const dialog = document.createElement('dialog');
+    dialog.innerHTML = '<form method="dialog"><label>First name <input name="first"></label><button>Next</button></form>';
+    dialog.style.cssText = 'top: 50%; left: 50%; margin: 0; transform: translate(-50%, -50%);';
+    document.body.append(dialog);
+    dialog.showModal();
+    dialog.querySelector('form').append(menu);
+    await new Promise((r) => setTimeout(r, 60));
+    tip.showPopover();
+    menu.showPopover();
+    const where = (label) => {
+      const now = box();
+      const input = dialog.querySelector('input').getBoundingClientRect();
+      const at = (x, y) => document.elementFromPoint(x, y);
+      return {
+        label,
+        inDialog: host.parentNode === dialog,
+        // In the top layer, whichever of its elements is the popover: see `raise` in card.js.
+        up: host.matches(':popover-open') || Boolean(host.shadowRoot.querySelector(':popover-open')),
+        inPlace: ['left', 'top', 'width', 'height'].every((key) => Math.abs(now[key] - was[key]) < 1),
+        whole: at(now.left + 8, now.top + now.height - 8) === host && at(now.left + now.width - 8, now.top + now.height - 8) === host,
+        field: at(input.left + input.width / 2, input.top + input.height / 2)?.localName ?? null,
+        tip: tip.matches(':popover-open'),
+        menu: menu.matches(':popover-open'),
+      };
+    };
+    const raised = where('raised');
+    const everyPopover = (how) => {
+      try {
+        document.querySelectorAll('[popover]').forEach((el) => el[how]());
+        return null;
+      } catch (err) {
+        return String(err);
+      }
+    };
+    const hideThrew = everyPopover('hidePopover');
+    // A task later, as the card's `toggle` comes.
+    await new Promise((r) => setTimeout(r, 30));
+    const hidden = where('hidden');
+    const toggleThrew = everyPopover('togglePopover');
+    await new Promise((r) => setTimeout(r, 30));
+    const toggled = where('toggled');
+    dialog.close();
+    await new Promise((r) => setTimeout(r, 30));
+    const closed = {
+      home: host.parentNode === document.documentElement,
+      attribute: host.getAttribute('popover') ?? host.shadowRoot.querySelector('[popover]')?.getAttribute('popover') ?? null,
+      width: box().width,
+    };
+    tip.remove();
+    return { raised, hideThrew, hidden, toggleThrew, toggled, closed };
+  });
+  {
+    const { raised, hidden, toggled, closed } = hidesEveryPopover;
+    check('a page with popovers of its own: the card is raised above its modal as before', raised.inDialog && raised.up && raised.inPlace && raised.whole, JSON.stringify(raised));
+    check(
+      'a page that hides every [popover]: its own popovers close, and nothing throws',
+      hidesEveryPopover.hideThrew === null && !hidden.tip && !hidden.menu,
+      JSON.stringify({ threw: hidesEveryPopover.hideThrew, hidden }),
+    );
+    check('and the card is back above the modal, where it was', hidden.inDialog && hidden.up && hidden.inPlace, JSON.stringify(hidden));
+    check('all of it, not cut to the dialog, and off the form\'s field', hidden.whole && hidden.field === 'input', JSON.stringify(hidden));
+    check(
+      'a page that toggles every [popover]: its own popovers open again, and nothing throws',
+      hidesEveryPopover.toggleThrew === null && toggled.tip && toggled.menu,
+      JSON.stringify({ threw: hidesEveryPopover.toggleThrew, toggled }),
+    );
+    check('and the card stays above the modal, where it was, all of it', toggled.inDialog && toggled.up && toggled.inPlace && toggled.whole, JSON.stringify(toggled));
+    check('once that modal closes, the card is on the page again, not a popover, and in view', closed.home && closed.attribute === null && closed.width > 0, JSON.stringify(closed));
+  }
+
+  /*
+   * A page that closes its popover the short way.
+   *
+   * `document.querySelector(':popover-open')?.hidePopover()` is the first
+   * open popover in the document, and a page that only ever has one open
+   * writes it so. With the card's host the popover, the host was inside the
+   * modal, and the modal comes before a popover the page adds at the end of
+   * <body>, so the page closed the card instead. Measured in Chromium over a
+   * dialog centred by translate, and over one with no transform, with a
+   * manual popover of the page's and with an auto one: the card went back
+   * up, and the page's popover stayed open.
+   */
+  for (const [name, kind, style] of [
+    ['a manual popover over a dialog centred by translate', 'manual', 'top: 50%; left: 50%; margin: 0; transform: translate(-50%, -50%);'],
+    ['an auto popover over a dialog centred by translate', 'auto', 'top: 50%; left: 50%; margin: 0; transform: translate(-50%, -50%);'],
+    ['a manual popover over a dialog with no transform', 'manual', ''],
+  ]) {
+    const seen = await inPage(async (createCard, { kind, style }) => {
+      document.querySelectorAll('dialog, #interop-outlet, [popover]').forEach((el) => el.remove());
+      createCard({
+        analysis: { isJobPosting: true, job: { title: 'Platform Engineer', company: 'Acme' }, spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' }, rationale: [] },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async () => ({}),
+      });
+      const host = document.querySelector('#jobhelper-card-host');
+      const card = host.shadowRoot.querySelector('.card');
+      const box = () => {
+        const r = card.getBoundingClientRect();
+        return { left: r.left, top: r.top, width: r.width, height: r.height };
+      };
+      const was = box();
+      const dialog = document.createElement('dialog');
+      dialog.innerHTML = '<form method="dialog"><label>First name <input name="first"></label><button>Next</button></form>';
+      dialog.style.cssText = style;
+      document.body.append(dialog);
+      dialog.showModal();
+      await new Promise((r) => setTimeout(r, 80));
+      // The page's own, added after its modal, at the end of <body>.
+      const tip = document.createElement('div');
+      tip.popover = kind;
+      tip.textContent = 'A popover of the page\'s own';
+      document.body.append(tip);
+      tip.showPopover();
+      const first = document.querySelector(':popover-open');
+      const found = [...document.querySelectorAll('[popover]')].map((el) => (el === tip ? 'page' : el === host ? 'card' : el.localName));
+      let threw = null;
+      try {
+        document.querySelector(':popover-open')?.hidePopover();
+      } catch (err) {
+        threw = String(err);
+      }
+      // A task later, as the card's `toggle` would come.
+      await new Promise((r) => setTimeout(r, 30));
+      const now = box();
+      const at = (x, y) => document.elementFromPoint(x, y);
+      const input = dialog.querySelector('input').getBoundingClientRect();
+      const result = {
+        firstIsPage: first === tip,
+        found,
+        threw,
+        tipOpen: tip.matches(':popover-open'),
+        inDialog: host.parentNode === dialog,
+        up: host.matches(':popover-open') || Boolean(host.shadowRoot.querySelector(':popover-open')),
+        inPlace: ['left', 'top', 'width', 'height'].every((key) => Math.abs(now[key] - was[key]) < 1),
+        whole: at(now.left + 8, now.top + now.height - 8) === host && at(now.left + now.width - 8, now.top + now.height - 8) === host,
+        field: at(input.left + input.width / 2, input.top + input.height / 2)?.localName ?? null,
+      };
+      // What is in the top layer for the card, which ought to be a box of nothing.
+      const raised = host.matches(':popover-open') ? host : host.shadowRoot.querySelector(':popover-open');
+      const drawn = raised?.getBoundingClientRect();
+      result.covers = drawn ? Math.round(drawn.width * drawn.height) : null;
+      dialog.close();
+      tip.remove();
+      return result;
+    }, { kind, style });
+    check(
+      `${name}: the page's first open popover is its own, not the card`,
+      seen.firstIsPage && seen.found.join() === 'page',
+      JSON.stringify(seen),
+    );
+    check(`${name}: closing it closes it, and nothing throws`, !seen.tipOpen && seen.threw === null, JSON.stringify(seen));
+    check(
+      `${name}: and the card is above the modal where it was, all of it, off the form's field`,
+      seen.inDialog && seen.up && seen.inPlace && seen.whole && seen.field === 'input',
+      JSON.stringify(seen),
+    );
+    check(`${name}: and what is raised with the card covers nothing of the page`, seen.covers === 0, JSON.stringify(seen));
+  }
+
+  /*
+   * A modal that moves the card among its own children.
+   *
+   * Taking an element out of the document, even to put it straight back,
+   * hides any popover in it, and with no `toggle` to say so. A page that
+   * reorders what is in its modal, as `dialog.prepend(host)`, leaves the
+   * card in the modal but out of the top layer, moved to the dialog's corner
+   * and cut to its box. The content script's `putBack`, every second, is
+   * what puts it back up.
+   */
+  const reordered = await inPage(async (createCard) => {
+    document.querySelectorAll('dialog, #interop-outlet, [popover]').forEach((el) => el.remove());
+    const handle = createCard({
+      analysis: { isJobPosting: true, job: { title: 'Platform Engineer', company: 'Acme' }, spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' }, rationale: [] },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    const host = document.querySelector('#jobhelper-card-host');
+    const card = host.shadowRoot.querySelector('.card');
+    const box = () => {
+      const r = card.getBoundingClientRect();
+      return { left: r.left, top: r.top, width: r.width, height: r.height };
+    };
+    const was = box();
+    const dialog = document.createElement('dialog');
+    dialog.innerHTML = '<form method="dialog"><label>First name <input name="first"></label><button>Next</button></form>';
+    dialog.style.cssText = 'top: 50%; left: 50%; margin: 0; transform: translate(-50%, -50%);';
+    document.body.append(dialog);
+    dialog.showModal();
+    await new Promise((r) => setTimeout(r, 80));
+    dialog.prepend(host);
+    await new Promise((r) => setTimeout(r, 30));
+    handle.putBack();
+    const now = box();
+    const result = {
+      inDialog: host.parentNode === dialog,
+      up: host.matches(':popover-open') || Boolean(host.shadowRoot.querySelector(':popover-open')),
+      inPlace: ['left', 'top', 'width', 'height'].every((key) => Math.abs(now[key] - was[key]) < 1),
+    };
+    dialog.close();
+    return result;
+  });
+  check('a modal that moves the card among its children: the card is back above it, where it was', reordered.inDialog && reordered.up && reordered.inPlace, JSON.stringify(reordered));
+
+  /*
+   * A modal the page throws away with the card inside it. The content script
+   * calls `putBack` every second; the card comes back out, rather than going
+   * wherever the modal went.
+   */
+  const thrownOut = await inPage(async (createCard) => {
+    document.querySelectorAll('dialog, #interop-outlet').forEach((el) => el.remove());
+    const handle = createCard({
+      analysis: { isJobPosting: true, job: { title: 'Platform Engineer', company: 'Acme' }, spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' }, rationale: [] },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    const host = document.querySelector('#jobhelper-card-host');
+    const dialog = document.createElement('dialog');
+    dialog.innerHTML = '<button>Next</button>';
+    document.body.append(dialog);
+    dialog.showModal();
+    handle.putBack();
+    const inside = host.parentNode === dialog;
+    dialog.remove();
+    const gone = !host.isConnected;
+    const back = handle.putBack();
+    return { inside, gone, back, home: host.parentNode === document.documentElement, width: host.shadowRoot.querySelector('.card').getBoundingClientRect().width };
+  });
+  check('a modal thrown away with the card in it: the card was inside, and went with it', thrownOut.inside && thrownOut.gone, JSON.stringify(thrownOut));
+  check('and putBack brings it back onto the page, in view', thrownOut.back === true && thrownOut.home && thrownOut.width > 0, JSON.stringify(thrownOut));
+
+  /*
+   * Taken off inside a modal in a shadow root, where `getElementById` cannot
+   * see it: the card built next is the only one, not a second beside a card
+   * nothing can remove.
+   */
+  const removedInside = await inPage(async (createCard) => {
+    document.querySelectorAll('dialog, #interop-outlet').forEach((el) => el.remove());
+    const make = () => createCard({
+      analysis: { isJobPosting: true, job: { title: 'Platform Engineer', company: 'Acme' }, spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' }, rationale: [] },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    const first = make();
+    const outlet = Object.assign(document.createElement('div'), { id: 'interop-outlet' });
+    document.body.append(outlet);
+    const shadow = outlet.attachShadow({ mode: 'open' });
+    const dialog = document.createElement('dialog');
+    dialog.innerHTML = '<button>Next</button>';
+    shadow.append(dialog);
+    dialog.showModal();
+    first.putBack();
+    const inside = shadow.querySelector('#jobhelper-card-host') !== null;
+    make();
+    const cards = [...document.querySelectorAll('#jobhelper-card-host'), ...shadow.querySelectorAll('#jobhelper-card-host')].length;
+    first.remove();
+    const left = [...document.querySelectorAll('#jobhelper-card-host'), ...shadow.querySelectorAll('#jobhelper-card-host')].length;
+    dialog.close();
+    return { inside, cards, left };
+  });
+  check('a card inside a modal in a shadow root is replaced, not joined, by the next', removedInside.inside && removedInside.cards === 1, JSON.stringify(removedInside));
+  check('and taking it off takes it off', removedInside.left === 0, JSON.stringify(removedInside));
+
+  // No modal, or one opened with show(): the card stays where it always was.
+  const noModal = await inPage(async (createCard) => {
+    document.querySelectorAll('dialog, #interop-outlet').forEach((el) => el.remove());
+    const handle = createCard({
+      analysis: { isJobPosting: true, job: { title: 'Platform Engineer', company: 'Acme' }, spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' }, rationale: [] },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    const host = document.querySelector('#jobhelper-card-host');
+    handle.putBack();
+    const alone = host.parentNode === document.documentElement;
+    const dialog = document.createElement('dialog');
+    dialog.innerHTML = '<input>';
+    dialog.style.cssText = 'position: fixed; inset: 0; width: 100vw; height: 100vh; max-width: none; max-height: none;';
+    document.body.append(dialog);
+    dialog.show();
+    dialog.querySelector('input').focus();
+    await new Promise((r) => setTimeout(r, 30));
+    handle.putBack();
+    const beside = host.parentNode === document.documentElement;
+    dialog.close();
+    handle.remove();
+    return { alone, beside };
+  });
+  check('with no modal open the card stays a child of <html>', noModal.alone, JSON.stringify(noModal));
+  check('and a dialog that is not modal, even one covering the window, is not moved into', noModal.beside, JSON.stringify(noModal));
 
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);

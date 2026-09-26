@@ -53,8 +53,16 @@ const STORE = `(() => {
     }
   };
   s.edit = () => { s.version += 1; };
+  // \`s.fail[action] = 'null' | 'throw'\` makes the next call of that action come back empty or fail.
+  s.fail = {};
   s.onAction = async (action, payload) => {
     s.sent.push({ action, payload: payload && JSON.parse(JSON.stringify(payload)) });
+    const failing = s.fail[action];
+    if (failing) {
+      delete s.fail[action];
+      if (failing === 'throw') throw new Error('The store did not answer');
+      return null;
+    }
     switch (action) {
       case 'render': {
         const printed = 'p' + s.version;
@@ -695,6 +703,136 @@ async function main() {
       !offer.deleted.offered && /deleted/i.test(offer.deleted.said) && /New grad resume/.test(offer.deleted.said),
       JSON.stringify(offer),
     );
+  }
+
+  /* ------------------------------------------------------------------ */
+  console.log('\nChips that must not stay greyed');
+  {
+    /*
+     * Reported: the files to drag "get greyed out", and hovering one "just
+     * shows a circle spinning". A chip is drawn faded with a busy cursor while
+     * its bytes are being fetched or the folder is behind the screen, and it
+     * has to come back — or say why it cannot — whatever the reason was.
+     */
+    const settle = async (ms = 6000) =>
+      inPage(async (ms) => {
+        const chips = () => [...jh.root.querySelectorAll('.file.liftable:not(.missing)')];
+        await until(() => chips().length > 0 && chips().every((c) => !c.classList.contains('warming')), ms);
+        return {
+          chips: chips().length,
+          grey: chips().filter((c) => c.classList.contains('warming')).length,
+          said: [jh.root.querySelector('.drag-note')?.textContent ?? '', jh.root.querySelector('.error, .err')?.textContent ?? ''].join(' | '),
+          stages: jh.s.sent.filter((c) => c.action === 'stage').length,
+        };
+      }, ms);
+
+    // 1. The bank rewords an answer shown for a question, after the build.
+    await setUp({ questions: [{ question: 'Why Acme?', answer: 'From the bank.', confident: true, fieldId: 'q1' }] });
+    await settle();
+    await inPage(async () => {
+      jh.handle.setMatches([{ question: 'Why Acme?', answer: 'Reworded in ResumeM-M.', confident: true }]);
+      await wait(50);
+    });
+    const reworded = await settle();
+    check(
+      'an answer the bank rewords after the build is staged, and the chips come back',
+      reworded.grey === 0 && reworded.stages >= 2,
+      JSON.stringify(reworded),
+    );
+
+    // 2. A restage that comes back with nothing.
+    await setUp({ letter: true });
+    await settle();
+    const empty = await inPage(async () => {
+      jh.s.fail.stage = 'null';
+      const box = jh.root.querySelector('textarea[data-field="letter"]');
+      box.value = 'Dear Acme,';
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+      await wait(50);
+      return true;
+    });
+    void empty;
+    // The empty one, and the retry after it.
+    await inPage(async () => until(() => jh.s.sent.filter((c) => c.action === 'stage').length >= 3, 12000));
+    const afterEmpty = await settle(8000);
+    check(
+      'a restage that comes back empty is tried again, and the chips come back',
+      afterEmpty.grey === 0 && afterEmpty.stages >= 3,
+      JSON.stringify(afterEmpty),
+    );
+
+    // 3. The files fetch failing once.
+    await setUp({ built: false });
+    await inPage(async () => {
+      jh.s.fail.attachmentFiles = 'throw';
+      button(/Build resume/).click();
+      await until(() => jh.s.folder.length > 0);
+      await wait(100);
+      // Anything that redraws the card afterwards.
+      jh.s.resumes = [...jh.s.resumes, { id: 'added', label: 'Added resume', tier: 'extended' }];
+      await jh.handle.storeChanged();
+    });
+    const afterFetch = await settle();
+    check('a files fetch that failed once is asked again, and the chips come back', afterFetch.grey === 0 && afterFetch.chips > 0, JSON.stringify(afterFetch));
+
+    // 4. A restage that never answers: say so, rather than a spinner with no words.
+    await setUp({ letter: true });
+    await settle();
+    const hung = await inPage(async () => {
+      window.stageBack = jh.s.hold('stage');
+      const box = jh.root.querySelector('textarea[data-field="letter"]');
+      box.value = 'Dear Acme, a letter';
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+      await until(() => jh.s.sent.filter((c) => c.action === 'stage').length >= 2, 4000);
+      await wait(100);
+      const chip = jh.root.querySelector('.file.liftable:not(.all):not(.missing)');
+      return {
+        grey: chip?.classList.contains('warming') ?? null,
+        title: chip?.title ?? '',
+        note: jh.root.querySelector('.drag-note')?.textContent ?? '',
+      };
+    });
+    check(
+      'while the files are being rebuilt, the panel says so in words, not only with a spinner',
+      hung.grey === true && /up to date|rebuil/i.test(hung.note),
+      JSON.stringify(hung),
+    );
+    await inPage(async () => window.stageBack());
+
+    /*
+     * 5. "Not recorded" outlasting a failure that comes after it.
+     *
+     * With the store down, Submit says the application was not recorded — and
+     * the files being brought up to date fail next, with a sentence of their
+     * own, in the same line. That sentence replaced the notice in
+     * tests/adverse.mjs under load, and "ResumeM-M is not open" says nothing
+     * about the application that just went out. Once a send is recorded, a
+     * failure is said as it is.
+     */
+    await setUp({ letter: true });
+    await settle();
+    const failAfter = async (text) =>
+      inPage(async (text) => {
+        if (text) jh.handle.setStatus(text);
+        const before = jh.s.sent.filter((c) => c.action === 'stage').length;
+        jh.s.fail.stage = 'throw';
+        const box = jh.root.querySelector('textarea[data-field="letter"]');
+        box.value = `Dear Acme, ${before}`;
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+        await until(() => jh.s.sent.filter((c) => c.action === 'stage').length > before, 8000);
+        await until(() => /did not answer/.test(jh.root.querySelector('.err')?.textContent ?? ''), 4000);
+        return jh.root.querySelector('.err')?.textContent ?? '';
+      }, text);
+    const unrecorded = await failAfter('Not recorded — ResumeM-M could not be reached.');
+    check(
+      'a failure after an unrecorded send still says the application was not recorded',
+      /^Not recorded — /.test(unrecorded) && /did not answer/.test(unrecorded),
+      unrecorded,
+    );
+    const recorded = await failAfter('Recorded as sent.');
+    check('and once a send is recorded, a failure is said as it is', /^The store did not answer/.test(recorded), recorded);
+    const released = await settle();
+    check('and once the rebuild lands, the chips come back', released.grey === 0, JSON.stringify(released));
   }
 
   await browser.close();

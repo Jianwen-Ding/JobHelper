@@ -19,10 +19,10 @@ const out = (label, value) => console.log(`  ${label}: ${JSON.stringify(value)}`
 
 /* The real dev profile, as /api/autofill serves it, plus email/phone. */
 const PROFILE = {
-  first_name: 'Jianwen',
-  last_name: 'Ding',
-  full_name: 'Jianwen Ding',
-  email: 'ding.jianw@northeastern.edu',
+  first_name: 'Morgan',
+  last_name: 'Testwell',
+  full_name: 'Morgan Testwell',
+  email: 'morgan.testwell@example.com',
   phone: '555-0100',
   linkedin: 'linkedin.com/in/x',
   github: 'github.com/x',

@@ -1104,6 +1104,33 @@ export const CYGNUS_ROLE_B = {
 };
 
 
+/**
+ * A careers home: every role there is, and none of them in particular.
+ *
+ * Shaped on the page behind "Epic — Careers" in a real tracker. The card comes
+ * up on a page like this — it is where a job is found, and the store calls it
+ * a listing — and a resume can be built there; what must not happen is a row
+ * in the tracker for it, because a list of jobs is not an application.
+ */
+export const CAREERS_HOME = {
+  name: 'careers-home',
+  path: '/larkspur/careers',
+  company: 'Larkspur',
+  html: page(
+    'Careers | Larkspur',
+    'Larkspur',
+    `<h2>Open positions</h2>
+     <p>View all openings below. We are hiring across the company: full-time roles,
+        internships for students, and new grad programs, with benefits and
+        compensation reviewed every year.</p>
+     <ul>
+       <li><a href="/larkspur/careers/jobs/421301">Software Developer</a></li>
+       <li><a href="/larkspur/careers/jobs/421302">Technical Services</a></li>
+       <li><a href="/larkspur/careers/jobs/421303">Quality Assurance</a></li>
+     </ul>`,
+  ),
+};
+
 /* ------------------------------------------------------------------ *
  * Pages that must stay quiet                                          *
  * ------------------------------------------------------------------ *
@@ -1540,11 +1567,11 @@ benchmarked against the Boston market, the company said.</p>
  */
 export const CODE_REVIEW = {
   name: 'code-review',
-  path: '/Jianwen-Ding/ResumeM-M/pull/16',
-  html: `<!doctype html><html><head><title>Claude/hello 06h9rf by Jianwen-Ding · Pull Request #16 · Jianwen-Ding/ResumeM-M</title><style>${CHROME}</style></head>
+  path: '/Morgan-Testwell/ResumeM-M/pull/16',
+  html: `<!doctype html><html><head><title>Claude/hello 06h9rf by Morgan-Testwell · Pull Request #16 · Morgan-Testwell/ResumeM-M</title><style>${CHROME}</style></head>
 <body><div class="wrap">
 <h1>Claude/hello 06h9rf <span>#16</span></h1>
-<div><span class="state">Merged</span> Jianwen-Ding merged 8 commits into <code>main</code> from <code>claude/hello-06h9rf</code></div>
+<div><span class="state">Merged</span> Morgan-Testwell merged 8 commits into <code>main</code> from <code>claude/hello-06h9rf</code></div>
 <nav><a href="#conversation">Conversation 0</a><a href="#commits">Commits 8</a><a href="#files">Files changed 16</a></nav>
 <div class="sidebar">
   <div><b>Reviewers</b> No reviews</div>
@@ -1554,12 +1581,12 @@ export const CODE_REVIEW = {
 </div>
 <h2 id="commits">Commits</h2>
 <ul>
-  <li><a href="/Jianwen-Ding/ResumeM-M/commit/aaa1">Say, on the posting, that this one has been applied to before</a></li>
-  <li><a href="/Jianwen-Ding/ResumeM-M/commit/aaa2">Stop an application id being a path, and a rebuild being a deletion</a></li>
-  <li><a href="/Jianwen-Ding/ResumeM-M/commit/aaa3">Give the one-page rule somewhere to go when it is broken</a></li>
-  <li><a href="/Jianwen-Ding/ResumeM-M/commit/aaa4">Render cover letters through LaTeX, like the resume</a></li>
-  <li><a href="/Jianwen-Ding/ResumeM-M/commit/aaa5">Let the AI draft a cover letter and the application answers</a></li>
-  <li><a href="/Jianwen-Ding/ResumeM-M/commit/aaa6">Search the letters and the answer bank, for the same reason as the tracker</a></li>
+  <li><a href="/Morgan-Testwell/ResumeM-M/commit/aaa1">Say, on the posting, that this one has been applied to before</a></li>
+  <li><a href="/Morgan-Testwell/ResumeM-M/commit/aaa2">Stop an application id being a path, and a rebuild being a deletion</a></li>
+  <li><a href="/Morgan-Testwell/ResumeM-M/commit/aaa3">Give the one-page rule somewhere to go when it is broken</a></li>
+  <li><a href="/Morgan-Testwell/ResumeM-M/commit/aaa4">Render cover letters through LaTeX, like the resume</a></li>
+  <li><a href="/Morgan-Testwell/ResumeM-M/commit/aaa5">Let the AI draft a cover letter and the application answers</a></li>
+  <li><a href="/Morgan-Testwell/ResumeM-M/commit/aaa6">Search the letters and the answer bank, for the same reason as the tracker</a></li>
 </ul>
 <h2 id="files">Files changed</h2>
 <ul>
@@ -1591,12 +1618,12 @@ export const CODE_REVIEW = {
  * list is written in. There is no more adversarial input available to this
  * project, and it is not contrived: it is a page its author reads every day.
  *
- * Lines are quoted from the real diff of Jianwen-Ding/ResumeM-M#16.
+ * Lines are quoted from the real diff of Morgan-Testwell/ResumeM-M#16.
  */
 export const CODE_REVIEW_DIFF = {
   name: 'code-review-diff',
-  path: '/Jianwen-Ding/ResumeM-M/pull/16/files',
-  html: `<!doctype html><html><head><title>Claude/hello 06h9rf by Jianwen-Ding · Pull Request #16 · Jianwen-Ding/ResumeM-M</title><style>${CHROME}</style></head>
+  path: '/Morgan-Testwell/ResumeM-M/pull/16/files',
+  html: `<!doctype html><html><head><title>Claude/hello 06h9rf by Morgan-Testwell · Pull Request #16 · Morgan-Testwell/ResumeM-M</title><style>${CHROME}</style></head>
 <body><div class="wrap">
 <h1>Claude/hello 06h9rf <span>#16</span></h1>
 <nav><a href="#conversation">Conversation</a><a href="#files">Files changed 16</a></nav>
@@ -1834,7 +1861,80 @@ export const META_OTHER_ROLE = {
   ),
 };
 
+/**
+ * Electronic Arts' shape, measured on the live site (Avature).
+ *
+ * The posting is `/en_US/careers/JobDetail/<slug>/<id>`; its Apply is a plain
+ * link to `/en_US/careers/ApplicationMethods?jobId=<id>`, a page offering a
+ * login or a resume upload; the upload's Continue sends the tab — by script,
+ * not by a link — to `/en_US/careers/Register?jobId=<id>`, the form. Only the
+ * job number ties the three together. The employer and the number are made up.
+ */
+const EA_ID = '316245';
+export const EA_ROLE = {
+  name: 'ea-role',
+  path: `/en_US/careers/JobDetail/Gameplay-Engineer-Intern/${EA_ID}`,
+  company: 'Emberlight',
+  title: 'Gameplay Engineer Intern',
+  html: page(
+    'Gameplay Engineer Intern - Emberlight',
+    'Emberlight',
+    `<h2>Gameplay Engineer Intern</h2>
+     <a id="apply" href="/en_US/careers/ApplicationMethods?jobId=${EA_ID}&source=LinkedIn">Apply</a>
+     ${ROLE_BODY}`,
+    `<script type="application/ld+json">{"@context":"http://schema.org/","@type":"JobPosting","title":"Gameplay Engineer Intern","hiringOrganization":{"@type":"Organization","name":"Emberlight"}}</script>`,
+  ),
+};
+
+export const EA_METHODS = {
+  name: 'ea-methods',
+  path: '/en_US/careers/ApplicationMethods',
+  html: page(
+    'Applying to Gameplay Engineer Intern | Emberlight',
+    'Emberlight',
+    `<h2>Gameplay Engineer Intern</h2>
+     <h3>Log into your careers account</h3>
+     <label for="eu">Username</label><input id="eu" name="username">
+     <label for="ep">Password</label><input id="ep" name="password" type="password">
+     <button type="button">Log in</button>
+     <h3>First time applicant</h3>
+     <p>Choose a method from the options below to submit your resume.</p>
+     <label for="ef">Upload</label><input id="ef" name="resumeFile" type="file">
+     <button type="button" id="continue">Continue</button>`,
+    `<script>
+       document.getElementById('continue').addEventListener('click', () => {
+         location.href = '/en_US/careers/Register?jobId=${EA_ID}&source=LinkedIn';
+       });
+     </script>`,
+  ),
+};
+
+export const EA_FORM = {
+  name: 'ea-form',
+  path: '/en_US/careers/Register',
+  html: page(
+    'Register | Emberlight',
+    'Emberlight',
+    `<h2>Gameplay Engineer Intern</h2>
+     <form>
+       <fieldset><legend>Personal Information</legend>
+         <label for="e1">Legal First name *</label><input id="e1" name="162">
+         <label for="e2">Preferred First Name *</label><input id="e2" name="2554">
+         <label for="e3">Legal Last Name *</label><input id="e3" name="163">
+         <label for="e4">Email *</label><input id="e4" name="164" type="email">
+         <label for="e5">Mobile Phone Number *</label><input id="e5" name="165" type="tel">
+       </fieldset>
+       <fieldset><legend>Education History</legend>
+         <label for="e6">Type of Degree</label><input id="e6" name="4001">
+         <label for="e7">Major/ Subject of study</label><input id="e7" name="4002">
+       </fieldset>
+       <button type="button">Next</button>
+     </form>`,
+  ),
+};
+
 export const NAVIGATION = [
+  EA_ROLE, EA_METHODS, EA_FORM,
   CYGNUS_BOARD, CYGNUS_ROLE_A, CYGNUS_ROLE_B, FRAMED_ROLE, FRAMED_FORM, ADVERT_FRAME, ADVERT_CONTENT,
   EMBEDDED_BOARD, EMBEDDED_BOARD_FRAME, BLOG_WITH_FORM, BLOG_ENQUIRY_FRAME, LATE_RENDER,
   CROWDED_PAGE, CROWDED_PAGE_FORM,
@@ -1846,7 +1946,7 @@ export const NAVIGATION = [
 ];
 
 export const ALL = [
-  STREAMLY, NORTHWIND, HELIOS_ROLE, HELIOS_FORM, HEAVY_POSTING, SWAP_FORM, SWAP_FORM_TWO,
+  STREAMLY, NORTHWIND, HELIOS_ROLE, HELIOS_FORM, HEAVY_POSTING, SWAP_FORM, SWAP_FORM_TWO, CAREERS_HOME,
   ...QUIET, ...NAVIGATION,
 ];
 

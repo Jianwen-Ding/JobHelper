@@ -187,7 +187,8 @@ async function main() {
         await card.getByRole('button', { name: 'Unfold JobHelper' }).click({ timeout: 120_000 });
         await card.locator('.done-box').waitFor({ timeout: 120_000 });
         const done = await card.locator('.done-box').innerText();
-        check('an application folder is written', /-Resume\.pdf/.test(done), done.split('\n')[1] ?? '');
+        // Suffixed when another application staged within twenty minutes holds the plain name; suites share a server.
+        check('an application folder is written', /-Resume(-[\w-]+)?\.pdf/.test(done), done.match(/\S+-Resume\S*\.pdf/)?.[0] ?? done.split('\n')[1] ?? '');
 
         /*
          * And the letter is in it. A folder announcing itself ready with the

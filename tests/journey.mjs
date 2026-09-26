@@ -337,7 +337,12 @@ async function main() {
       formCard.locator('.done-box').waitFor({ timeout: 90_000 }),
     );
     const written = await formCard.locator('.done-box').innerText();
-    check('the resume is in it, named for the person', /-Resume\.pdf/.test(written), written.split('\n')[1] ?? written);
+    /*
+     * Named for the person, and possibly for the posting too: another
+     * application staged in the last twenty minutes keeps the plain name, and
+     * this one takes a suffix. Suites share a server, so that is ordinary here.
+     */
+    check('the resume is in it, named for the person', /-Resume(-[\w-]+)?\.pdf/.test(written), written.match(/\S+-Resume\S*\.pdf/)?.[0] ?? written);
 
     await page.close();
 

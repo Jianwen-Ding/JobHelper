@@ -205,12 +205,20 @@
   /** The page's own title for itself, before any "at Company" or " — Company". */
   function namesARole() {
     const heading = `${document.title ?? ''} ${document.querySelector('h1')?.textContent ?? ''}`;
-    const named = heading.split(/\s+[–—|]\s+|\s+\bat\b\s+|,/)[0]?.trim() ?? '';
-    return (
-      named.split(/\s+/).length <= 8 &&
-      (ENDS_WITH_ROLE.test(named) || LEADS_WITH_ROLE.test(named)) &&
-      !/^(how|why|what|when|where|the|a|an|is|are|should|we|our|i|my|thanks|thank you)\b/i.test(named)
-    );
+    /*
+     * Or what the page declares itself to be, when its title is the site's:
+     * ADP titles every posting "Career Site", has no <h1>, and puts the role
+     * in `og:title`. The server reads it the same way; see `classifyPage`.
+     */
+    const declared = document.querySelector('meta[property="og:title"], meta[name="og:title"]')?.getAttribute('content') ?? '';
+    return [heading, declared].some((said) => {
+      const named = said.split(/\s+[–—|]\s+|\s+\bat\b\s+|,/)[0]?.trim() ?? '';
+      return (
+        named.split(/\s+/).length <= 8 &&
+        (ENDS_WITH_ROLE.test(named) || LEADS_WITH_ROLE.test(named)) &&
+        !/^(how|why|what|when|where|the|a|an|is|are|should|we|our|i|my|thanks|thank you)\b/i.test(named)
+      );
+    });
   }
 
   function decisiveSignal() {
@@ -306,7 +314,7 @@
    * cloud, and only the candidate side lives under `/CandidateExperience/`.
    */
   const ON_A_TRACKER =
-    /\b(greenhouse|lever|workday|myworkdayjobs|ashby|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite|bamboohr|rippling|breezy|recruitee|teamtailor|jazzhr|successfactors|brassring|candidateexperience)\b/i;
+    /\b(greenhouse|lever|workday|myworkdayjobs|ashby|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite|bamboohr|rippling|breezy|recruitee|teamtailor|jazzhr|successfactors|brassring|candidateexperience|myjobs\.adp|workforcenow\.adp)\b/i;
   const ON_A_BOARD = /\b(indeed|linkedin|glassdoor|monster|ziprecruiter|dice|wellfound|otta|builtin|simplyhired|seek)\b/i;
 
   /*
@@ -340,7 +348,9 @@
     if (ON_A_TRACKER.test(url)) {
       score += 4;
     }
-    if (ON_A_BOARD.test(url)) {
+    // By the host: ADP, Lever and Greenhouse all tag a board's links with the
+    // board's name (`?rb=LINKEDIN`), which is not the page being on one.
+    if (ON_A_BOARD.test(location.hostname)) {
       score += 3;
     }
     if (IN_A_JOBS_AREA.test(url)) {
@@ -1296,8 +1306,21 @@
 
       case 'setBase': {
         const mine = startProposal();
-        await send('setSettings', { patch: { baseResumeId: payload.baseResumeId } });
-        const next = await send('analyze', { ...(await applicationPayload()), ...tailoring(payload) });
+        /*
+         * For this application, not for every tab.
+         *
+         * This wrote the one setting every tab and every posting reads, so
+         * switching here changed where the other tabs rebuilt from and where
+         * the next posting started — a tailored copy picked for one employer
+         * became the starting point of the next. The resume is sent with the
+         * analysis, and the card keeps it with its work; see `heldBase` in
+         * the worker. The popup's picker is the default.
+         */
+        const next = await send('analyze', {
+          ...(await applicationPayload()),
+          ...tailoring(payload),
+          baseResumeId: payload.baseResumeId,
+        });
         // See `startProposal`. Picking two bases in quick succession is
         // ordinary, and so is walking to the next posting while one is still
         // being worked out. See `landLate` for where a superseded one goes,
@@ -1326,7 +1349,12 @@
          * still finishes, still costs whatever it cost, and is then dropped.
          */
         const mine = startProposal();
-        const next = await send('analyze', { ...(await applicationPayload()), ...tailoring(payload) });
+        // From the resume the card is on, which this tab may have switched to.
+        const next = await send('analyze', {
+          ...(await applicationPayload()),
+          ...tailoring(payload),
+          baseResumeId: payload.baseResumeId,
+        });
         if (!stillWanted(mine)) return overtakenHere(mine) ? null : landLate(next);
         analysis = next;
         cardHandle?.update(analysis);
@@ -1695,7 +1723,9 @@
     const worthReading = async () =>
       showNow ||
       ON_A_TRACKER.test(location.href) ||
-      ON_A_BOARD.test(location.href) ||
+      // The host, not the address: any page shared from LinkedIn carries
+      // `utm_source=linkedin`, and that is no reason to read it unasked.
+      ON_A_BOARD.test(location.hostname) ||
       IN_A_JOBS_AREA.test(location.href) ||
       looksLikeApplicationForm() ||
       /*

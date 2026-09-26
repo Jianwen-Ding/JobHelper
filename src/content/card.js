@@ -15,6 +15,32 @@ const STYLE = `
  * board's stylesheet can reach in and nothing here leaks out.
  */
 :host { all: initial; }
+/*
+ * What goes into the top layer above a page's modal (see \`raise\` in
+ * \`createCard\`). Elsewhere it is no box at all, and the card is laid out as
+ * if it were not there. Raised, it is a box of nothing at the window's
+ * corner: the card inside is fixed, and in the top layer fixed is measured
+ * from the window whatever the modal does. So the browser's own rules for a
+ * popover, a box in the middle of the window with a border and a background,
+ * are put back to nothing. Its ::backdrop, which everything in the top layer
+ * gets, needs nothing: the browser draws a popover's clear, and a page that
+ * dims every ::backdrop does it with rules that cannot reach into here. When
+ * the host was the popover, such a page dimmed its own form a second time
+ * under the card, and the host needed a rule of its own against it.
+ */
+.layer { display: contents; }
+.layer:popover-open {
+  display: block;
+  position: fixed;
+  inset: 0 auto auto 0;
+  width: 0;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  overflow: visible;
+}
 * { box-sizing: border-box; }
 
 .card {
@@ -630,7 +656,18 @@ a { color: var(--accent); }
 
 const HOST_ID = 'jobhelper-card-host';
 
+/*
+ * The card on the page now, and how to stop what it listens to. Kept by
+ * reference because the host is not always where an id finds it: above a
+ * modal it lives inside the modal, and a modal in a shadow root is out of
+ * `getElementById`'s reach. See `reachable` in `createCard`.
+ */
+let live = null;
+
 export function removeCard() {
+  live?.stop();
+  live?.host.remove();
+  live = null;
   document.getElementById(HOST_ID)?.remove();
 }
 
@@ -746,13 +783,226 @@ export function createCard({
 
   const host = document.createElement('div');
   host.id = HOST_ID;
+  /*
+   * The host is an element of the page, so the page's rules reach it and beat
+   * `:host`. Inside a page's modal, a rule for the modal's children — a
+   * transform to animate them in — would make the host what the card's fixed
+   * position is measured from. An inline !important is the one thing those
+   * rules cannot override.
+   */
+  host.style.setProperty('all', 'initial', 'important');
   const root = host.attachShadow({ mode: 'open' });
   root.append(Object.assign(document.createElement('style'), { textContent: STYLE }));
 
   const card = document.createElement('div');
   card.className = 'card';
-  root.append(card);
+  // What is raised above a page's modal; see `raise`.
+  const layer = document.createElement('div');
+  layer.className = 'layer';
+  layer.append(card);
+  root.append(layer);
   document.documentElement.append(host);
+
+  /*
+   * Kept where it can be used, above a modal the page opens.
+   *
+   * A dialog opened with showModal() is drawn in the browser's top layer,
+   * above every z-index there is, and everything outside it goes inert.
+   * LinkedIn's Easy Apply opens one, inside a shadow root on its new jobs
+   * pages. The card sat under the backdrop, greyed out and taking no clicks,
+   * so no file could be dragged from it into the form it was there for. The
+   * only way above such a modal is to be inside it. There the card is part of
+   * what the modal lets through, and its own fixed position still places it
+   * against the window, where it was. It goes back to <html> as soon as the
+   * modal closes, because a closed dialog is display: none and would take
+   * the card with it.
+   *
+   * The modal is found by asking the page what is under the card, not by a
+   * query: a query on the document cannot see into a shadow root. What is
+   * under it is the modal itself where the backdrop covers the card, or
+   * something inside the modal where its box does.
+   *
+   * Inside the modal, the card is also shown as a manual popover, which puts
+   * it in the top layer just above the modal (`raise`). Being a child of the
+   * modal is only enough while the modal leaves fixed positions alone. A
+   * dialog with a transform — the usual way to centre one, or to animate it
+   * in — or a filter, perspective, `will-change: transform`, a paint or
+   * layout containment or a backdrop-filter, is what a fixed descendant is
+   * measured from instead of the window, and a modal dialog is
+   * `overflow: auto`. Measured in tests/card.mjs, with a dialog centred by
+   * `translate(-50%, -50%)`: the card left the window's corner for the
+   * dialog's, 14px in, and the dialog cut it down to its own box, so what
+   * showed of the card was its header, lying over the form's first field,
+   * and a press where the card had been fell on the backdrop. An element in
+   * the top layer is laid out against the window whatever its ancestors do,
+   * and is cut by none of them; and it is still inside the modal, so still
+   * not inert.
+   */
+  let borrowed = null;
+  const shadowOf = (element) => {
+    if (element.shadowRoot) return element.shadowRoot;
+    try {
+      // Closed roots too, where the extension is asking.
+      return globalThis.chrome?.dom?.openOrClosedShadowRoot?.(element) ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const isModal = (element) => {
+    try {
+      return element.localName === 'dialog' && element.matches(':modal');
+    } catch {
+      return false;
+    }
+  };
+  const modalOver = () => {
+    const box = card.getBoundingClientRect();
+    if (!box.width || !box.height) return null;
+    const x = Math.min(Math.max(box.left + 12, 0), innerWidth - 1);
+    const y = Math.min(Math.max(box.top + 12, 0), innerHeight - 1);
+    let at = document.elementFromPoint(x, y);
+    // Down through the shadow roots, to what is really there.
+    for (let depth = 0; at && at !== host && depth < 32; depth++) {
+      const inner = shadowOf(at)?.elementFromPoint(x, y);
+      if (!inner || inner === at) break;
+      at = inner;
+    }
+    for (let node = at; node && node !== host; node = node.parentElement ?? node.getRootNode().host ?? null) {
+      if (isModal(node)) return node;
+    }
+    return null;
+  };
+  /*
+   * Into the top layer, above the modal the host was just put inside.
+   * `manual`, so it is never light-dismissed, never closes the page's own
+   * popovers, and moves no focus: the card has nothing marked autofocus, and
+   * the field the modal focused keeps it. Where the browser has no popovers,
+   * the card stays what it was before, a child of the modal, which is right
+   * for any modal that does not move fixed positions.
+   *
+   * The popover is `layer`, inside the shadow root, not the host. The host
+   * was the popover at first, and the host is an element of the page, in
+   * the modal, so the page's own code found it. A page closing its popover
+   * the short way, `document.querySelector(':popover-open')?.hidePopover()`,
+   * got the card instead: the modal comes before a popover added at the end
+   * of <body>, so the card is first in the document. Measured in Chromium
+   * over a dialog centred by translate, and over one with no transform: the
+   * card went back up, as below, and the page's popover, manual or auto,
+   * stayed open. Nothing in the document can match what is in a shadow
+   * root: not `:popover-open`, not `[popover]`, and not the `toggle` that
+   * comes of it. It is still inside the modal as the browser counts it, so
+   * still not inert, and the top layer places it as it placed the host.
+   */
+  const raise = () => {
+    try {
+      layer.setAttribute('popover', 'manual');
+      layer.showPopover();
+    } catch {
+      layer.removeAttribute('popover');
+    }
+  };
+  /*
+   * Out of the top layer again. Taking the host out of the modal hides the
+   * popover anyway; the attribute goes too, so that back at <html> the card
+   * is what it always was there. A popover that is not showing is
+   * `display: none` in the browser's own sheet, which would take the card
+   * out of view with it.
+   */
+  const lower = () => {
+    if (layer.hasAttribute('popover')) layer.removeAttribute('popover');
+  };
+  /*
+   * Whether something has put the card out of the top layer while it is
+   * still inside the modal.
+   *
+   * When the host was the popover, a page that hides or toggles every
+   * popover it has, as
+   * `document.querySelectorAll('[popover]').forEach((p) => p.hidePopover())`,
+   * hid the card with its own. Measured with a dialog centred by
+   * `translate(-50%, -50%)`: nothing threw and the page's popovers closed as
+   * they should, but the card fell out of the top layer, back where `raise`
+   * was written to keep it from, moved from the window's corner to the
+   * dialog's and cut to the dialog's box. Nothing put it back: `reachable`
+   * found the same modal it already had and did nothing, every second. Such
+   * a page no longer finds it (see `raise`), but a page can still reach into
+   * an open shadow root; and a popover is also hidden, with no `toggle`, by
+   * anything that takes the host out of the document for a moment, as a
+   * modal reordering its children does.
+   *
+   * Hiding cannot be refused, since `beforetoggle` can only stop an opening.
+   * So the card goes back up once it has gone: on its `toggle` event, which
+   * comes a task later, and from `reachable`, for a toggle that is missed.
+   * Only while it is still in a modal that is still open, so the hiding that
+   * comes with leaving (`lower`, a modal closing) is left alone.
+   */
+  const outOfTopLayer = () => {
+    try {
+      return layer.hasAttribute('popover') && !layer.matches(':popover-open');
+    } catch {
+      return false;
+    }
+  };
+  const stillBorrowed = () => borrowed !== null && host.parentNode === borrowed && isModal(borrowed);
+  layer.addEventListener('toggle', (event) => {
+    if (event.newState === 'closed' && stillBorrowed() && outOfTopLayer()) raise();
+  });
+  const letGo = () => {
+    borrowed?.removeEventListener('close', onModalClosed);
+    borrowed = null;
+    lower();
+  };
+  const giveBack = () => {
+    if (!borrowed) return;
+    letGo();
+    if (document.documentElement) document.documentElement.append(host);
+  };
+  const reachable = () => {
+    if (borrowed && (!host.isConnected || host.parentNode !== borrowed || !isModal(borrowed))) giveBack();
+    if (!host.isConnected) return;
+    if (stillBorrowed() && outOfTopLayer()) raise();
+    const modal = modalOver();
+    if (!modal || modal === borrowed) return;
+    letGo();
+    borrowed = modal;
+    modal.addEventListener('close', onModalClosed);
+    modal.append(host);
+    raise();
+  };
+  // Out, and straight into the modal underneath if there is one.
+  function onModalClosed() {
+    giveBack();
+    reachable();
+  }
+  /*
+   * Opening a modal moves focus into it, so that is when to look, rather than
+   * up to a second later when the content script next calls `putBack`.
+   */
+  let lookSoon = null;
+  const onFocus = () => {
+    clearTimeout(lookSoon);
+    lookSoon = setTimeout(reachable, 0);
+  };
+  document.addEventListener('focusin', onFocus, true);
+  /*
+   * While inside a page's modal, a press on the card is kept to the card. A
+   * modal that closes on a click "outside" itself, tested by where the press
+   * landed or by which of its elements holds the target, would otherwise take
+   * a press on the card for exactly that. The content script's own listeners
+   * all capture, so they still see these.
+   */
+  const keepToCard = (event) => {
+    if (borrowed) event.stopPropagation();
+  };
+  const PRESSES = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick', 'touchstart', 'touchend'];
+  for (const type of PRESSES) host.addEventListener(type, keepToCard);
+  live = {
+    host,
+    stop: () => {
+      document.removeEventListener('focusin', onFocus, true);
+      clearTimeout(lookSoon);
+      letGo();
+    },
+  };
 
   /*
    * Taking the card off the page, and saying so.
@@ -951,6 +1201,15 @@ export function createCard({
     unsent: false,
     /** The text that was saved to the store, so an edit after it can be saved too. */
     letterSavedAs: null,
+    /**
+     * The resume this application was switched to on the card, if it was.
+     * Kept with the work and sent with every rebuild, so it belongs to this
+     * tab's application rather than to every tab. See `heldBase` in the
+     * worker.
+     */
+    baseChosen: null,
+    /** The resume a switch still in flight is going to. See `switchBaseTo`. */
+    switchingTo: null,
   };
 
   /**
@@ -1002,6 +1261,7 @@ export function createCard({
        * See `restoreWork`.
        */
       proposal: state.builtWith === 'ai' ? proposalOf(analysis ?? {}) : null,
+      baseResumeId: state.baseChosen ?? undefined,
       render: state.render,
       actedOnForm: actedOnForm(),
       /*
@@ -1068,6 +1328,8 @@ export function createCard({
       maybeAutoDraft();
       return;
     }
+    // The page's own reading was already made from it; see `heldBase`.
+    if (work.baseResumeId) state.baseChosen = work.baseResumeId;
     /*
      * What was carried is a starting point, not a correction.
      *
@@ -1240,6 +1502,8 @@ export function createCard({
   };
 
   const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  /** The picker's "Show N older…" row, which is not a resume. See `RECENT_POSTINGS`. */
+  const SHOW_OLDER = '__show_older__';
 
   /* ---------------------------------------------------------------- *
    * Dragging a built file into the form                               *
@@ -1288,8 +1552,8 @@ export function createCard({
        * And named for the copy that will actually be dropped.
        *
        * The two are not the same string. The archive keeps
-       * `Jianwen-Ding-Resume.pdf` and the upload folder keeps
-       * `Jianwen-Ding-Resume-Streamly.pdf` — the folder's names carry the
+       * `Morgan-Testwell-Resume.pdf` and the upload folder keeps
+       * `Morgan-Testwell-Resume-Streamly.pdf` — the folder's names carry the
        * employer, because that is the name a recruiter sees at the other
        * end. The chip is built before the folder has been asked, so it
        * starts with the name the bundle reported and corrects itself the
@@ -1301,6 +1565,37 @@ export function createCard({
       const what = chip.querySelector('.what');
       if (mine.length === 1 && what) what.textContent = mine[0].name;
     }
+    /*
+     * And the words under them say what the fading means. A faded chip with a
+     * busy cursor and a line reading "Drag any of these into the form" is a
+     * control that looks broken; one reading "being brought up to date" is one
+     * that is working.
+     */
+    const note = root?.querySelector?.('.drag-note');
+    if (note && chipsOnScreen.some((c) => c.isConnected)) note.textContent = dragNote();
+    /*
+     * A folder that is behind with nothing on its way to it is put on its way.
+     *
+     * Plenty changes what the folder should hold without anything asking for a
+     * stage: the answer bank rewording an answer shown here (`setMatches`,
+     * off the store watcher), a stage that came back with nothing. The folder
+     * then stayed a build behind for good — and the chips, which refuse to hand
+     * over a stale file, stayed faded with it.
+     */
+    if (behind && !stagingNow) healSoon();
+  }
+
+  /** The line under the chips, for the state they are in. See `markChips`. */
+  function dragNote() {
+    const names = state.stagedFiles ?? [];
+    const short = missingHere({ files: names });
+    const how = 'Drag any of these into the form, or press Attach files below.';
+    if (stageTrouble.gaveUp) {
+      return `These could not be brought up to date with what is on screen${stageTrouble.said ? ` (${stageTrouble.said})` : ''}. Press Try again, or Attach files once it is fixed.`;
+    }
+    if (folderBehind()) return 'Bringing these up to date with your latest changes \u2014 they can be dragged again in a moment.';
+    if (carried && !carried.files) return 'Getting these ready to drag\u2026';
+    return short ? `${short} ${how}` : how;
   }
 
   function warmFiles(application) {
@@ -1309,8 +1604,8 @@ export function createCard({
        * Already warm, and the chips asking may be new ones.
        *
        * `markChips` is what corrects a chip's label from the archive's name
-       * to the folder's — `Jianwen-Ding-Resume.pdf` against
-       * `Jianwen-Ding-Resume-Streamly.pdf` — and it used to be reached only
+       * to the folder's — `Morgan-Testwell-Resume.pdf` against
+       * `Morgan-Testwell-Resume-Streamly.pdf` — and it used to be reached only
        * by the fetch completing. Once the files are warmed before Submit,
        * the panel after Submit builds its chips against a cache that has
        * already resolved, so nothing renamed them and every chip promised a
@@ -1328,13 +1623,28 @@ export function createCard({
         markChips();
       })
       .catch(() => {
-        if (carried === mine) mine.files = [];
+        /*
+         * Not kept. A failed fetch cached as "no files" was never asked again:
+         * the panel drew no chips at all over a folder that had the files in
+         * it, and nothing but a new application would have fetched them. So
+         * it is forgotten, and asked again shortly — a few times, further
+         * apart each time, rather than on every repaint.
+         */
+        if (carried !== mine) return;
+        carried = null;
+        askedWhatIsStaged = undefined;
+        filesMisses += 1;
+        if (filesMisses <= 4) setTimeout(() => state.staged && draw(), 1000 * 2 ** (filesMisses - 1));
       })
       .finally(() => {
-        if (carried === mine) mine.waiting = null;
+        if (carried === mine) {
+          mine.waiting = null;
+          if (mine.files) filesMisses = 0;
+        }
       });
     return mine.waiting;
   }
+  let filesMisses = 0;
 
   /**
    * What this form asks for that was not built.
@@ -1539,8 +1849,8 @@ export function createCard({
      * By what the document is, not by what it is called.
      *
      * The bundle names the archive copy and the folder names the one that
-     * gets uploaded, and they differ: `Jianwen-Ding-Resume.pdf` against
-     * `Jianwen-Ding-Resume-Streamly.pdf`. Matching on the name carried
+     * gets uploaded, and they differ: `Morgan-Testwell-Resume.pdf` against
+     * `Morgan-Testwell-Resume-Streamly.pdf`. Matching on the name carried
      * nothing at all — measured, with the drag refusing itself because the
      * filter came back empty over two perfectly good files.
      *
@@ -2152,6 +2462,25 @@ export function createCard({
    * Only the clearing is skipped. A staging failure still reports: a folder
    * that is a build behind is worth knowing about.
    */
+  /*
+   * A Submit that went out and was not recorded, said until one is.
+   *
+   * The card said "Not recorded — ResumeM-M could not be reached." and then
+   * lost it: every action that fails puts its own sentence in the same line,
+   * and with the store down the ones that run on their own — bringing the
+   * files up to date after a change — fail too, and said "ResumeM-M is not
+   * open". True, and it drops the one thing worth knowing, that the
+   * application just sent is not in the tracker. Measured in
+   * tests/adverse.mjs, where under load the file refresh landed after the
+   * notice and replaced it. So until a send is recorded, a store error said
+   * meanwhile keeps "Not recorded" in front of it.
+   */
+  let unrecorded = false;
+  function stillNotRecorded(said) {
+    const text = String(said ?? '');
+    return unrecorded && text && !/^(Not recorded|Recorded as sent)/.test(text) ? `Not recorded — ${text}` : said;
+  }
+
   async function act(action, payload, apply, { quiet = false } = {}) {
     running.add(action);
     if (!startedAt.has(action)) startedAt.set(action, Date.now());
@@ -2179,7 +2508,7 @@ export function createCard({
        * are going back to.
        */
       if (err.jobhelper?.stopped) return null;
-      state.error = err.message;
+      state.error = stillNotRecorded(err.message);
       // Some failures have a way out. Keep it, so the card can offer it.
       state.errorFix = err.jobhelper ?? null;
       // This button's failure, not the page's. See `drawError`.
@@ -2243,8 +2572,10 @@ export function createCard({
   async function rebuildAs(mode) {
     const mine = ++rebuildToken;
     state.rebuilding = mode;
+    // A switch this overtakes is dropped; see `overtakenHere` in content.js.
+    state.switchingTo = null;
     try {
-      return await act('rebuild', { tailor: mode }, (result) => {
+      return await act('rebuild', { tailor: mode, baseResumeId: state.baseChosen ?? undefined }, (result) => {
         if (mine !== rebuildToken) return;
         /*
          * What came back, not what was asked for.
@@ -2283,14 +2614,35 @@ export function createCard({
     const mode = state.builtWith === 'ai' ? 'ai' : 'match';
     const mine = ++rebuildToken;
     state.rebuilding = mode;
+    /*
+     * The picker says what was picked while it is worked out. It is drawn
+     * from the proposal on screen, and `act` redraws before the reply, so it
+     * went straight back to the resume just turned away from — for the
+     * minutes an AI pass takes — and stayed there if the switch failed.
+     */
+    state.switchingTo = baseResumeId;
     try {
       return await act('setBase', { baseResumeId, tailor: mode }, (result) => {
         if (mine !== rebuildToken) return;
+        if (!result?.spec) return;
+        state.baseChosen = result.baseResumeId ?? baseResumeId;
         // What came back, not what was asked for — see `rebuildAs`.
-        if (result?.spec) showOffer(slotOf(result));
+        const which = slotOf(result);
+        /*
+         * And the other reading goes if it was made from another resume.
+         * It was kept, so "AI tailoring" after a switch put the proposal
+         * from the resume just left back on screen, picker and all.
+         */
+        const other = which === 'ai' ? 'match' : 'ai';
+        if (state.offers[other]?.analysis?.baseResumeId !== state.baseChosen) state.offers[other] = null;
+        showOffer(which);
       });
     } finally {
-      if (mine === rebuildToken) state.rebuilding = null;
+      if (mine === rebuildToken) {
+        state.rebuilding = null;
+        state.switchingTo = null;
+        draw();
+      }
     }
   }
 
@@ -2589,7 +2941,12 @@ export function createCard({
     }
 
     return h('div', { className: 'branch' }, [
-      h('div', { textContent: `This looks like a different job, so it is a new application. The last one was ${was}.` }),
+      /*
+       * A question, because it is one. This is only ever shown when the trail
+       * could not tell — see `judgeApplication`'s `unsure` — and it had read
+       * as a verdict, over a form that was the next step of the job before.
+       */
+      h('div', { textContent: `Is this still ${was}? Not sure, so it is a new application until you say.` }),
       h('div', { className: 'row gap' }, [
         h('button', {
           className: 'tiny',
@@ -3307,6 +3664,28 @@ export function createCard({
   }
 
   async function useOriginal() {
+    /*
+     * With only the AI's reading in hand, the keyword list is fetched first.
+     *
+     * `withAllOff` undoes a list of changes — wordings and skills — and the AI
+     * also shows and hides entries and lines, which no such list records. So
+     * from the AI's copy alone this put the wordings back and left every entry
+     * the AI had hidden still hidden, under the one button that promises the
+     * resume exactly as it is kept. It happens in the ordinary course: picking
+     * another resume while on the AI's reading repeats the AI and drops the
+     * keyword list made from the resume left. The keyword list is the base's
+     * sections as kept, and costs no model.
+     *
+     * Only over the AI's copy: any other proposal on screen already carries
+     * the base's sections, and reverting its list is the whole job. Should
+     * the list not come back, the revert below still takes back what it can.
+     */
+    if (!state.offers.match && state.builtWith === 'ai') {
+      const mine = rebuildToken + 1;
+      await rebuildAs('match');
+      // A newer press overtook it: that press has the screen.
+      if (mine !== rebuildToken) return;
+    }
     // "As you keep it" is the match's list with nothing ticked, so it is that
     // proposal you are on — not a third state of its own.
     if (state.offers.match && state.showing !== 'match') showOffer('match');
@@ -3606,6 +3985,21 @@ export function createCard({
   async function stageFiles() {
     if (!state.spec) return;
     /*
+     * Not while every page of this application is a list of jobs.
+     *
+     * Staging puts the files in the upload folder and files the application
+     * as `applying` — the tracker's row for it. On a careers home or a board's
+     * search results a resume is built to look at, and there is nothing to
+     * upload to; staging there filed "Epic — Careers" and "Intel — Intel
+     * Careers" as applications. The preview is still built; the folder and
+     * the row wait for a posting or a form.
+     *
+     * The same rule as `onlyLists` in `shared/trail.js`, written out here
+     * because this file is loaded on its own, with nothing to import from.
+     */
+    const pages = analysis?.pages ?? [];
+    if (pages.length > 0 && pages.every((p) => p?.kind === 'listing')) return;
+    /*
      * Recorded before the call, so a second change landing while this one is
      * in flight does not start a second compile of the same thing — and
      * given back if it fails.
@@ -3639,11 +4033,63 @@ export function createCard({
       { quiet: true },
     );
     stagingNow = mine;
+    // Marked now, while it runs, and said in words. See `dragNote`.
+    markChips();
     const staged = await mine;
     if (stagingNow === mine) stagingNow = null;
-    if (!staged) lastPrepared = null;
+    if (!staged) {
+      lastPrepared = null;
+      // Remembered, so the retry waits longer each time and the panel can say
+      // why the chips are faded. See `healSoon`.
+      stageTrouble.count += 1;
+      stageTrouble.said = state.error ?? null;
+      stageTrouble.gaveUp = stageTrouble.count > STAGE_RETRIES;
+      if (stageTrouble.gaveUp) draw();
+    } else if (stageTrouble.count) {
+      stageTrouble.count = 0;
+      stageTrouble.said = null;
+      if (stageTrouble.gaveUp) {
+        stageTrouble.gaveUp = false;
+        draw();
+      }
+    }
     // The chips were marked behind while this ran. See `folderBehind`.
     markChips();
+  }
+
+  /*
+   * Stages that came back with nothing, in a row, and whether the card has
+   * stopped retrying on its own. See `healSoon`.
+   */
+  const STAGE_RETRIES = 3;
+  const stageTrouble = { count: 0, said: null, gaveUp: false };
+
+  /**
+   * Stage a folder that is behind, soon, when nothing else is going to.
+   *
+   * Not \`prepareSoon\`: that restarts its wait on every call, which is right
+   * for keystrokes and wrong for this — \`markChips\` runs on every repaint,
+   * and a card repainting for AI progress would push the stage back for as
+   * long as the progress lasted. This waits once, leaves a pending
+   * \`prepareSoon\` to it, backs off after a stage that failed, and stops
+   * after \`STAGE_RETRIES\`, when the panel offers Try again instead. A stage
+   * that keeps being needed with nothing changing is capped too, so a value
+   * that never settles cannot compile on a loop.
+   */
+  let healing = null;
+  const healedAt = [];
+  function healSoon() {
+    if (healing || preparing || stagingNow || !state.spec || stageTrouble.gaveUp) return;
+    const now = Date.now();
+    while (healedAt.length && now - healedAt[0] > 60_000) healedAt.shift();
+    if (healedAt.length >= 4) return;
+    const wait = 1500 * 2 ** stageTrouble.count;
+    healing = setTimeout(() => {
+      healing = null;
+      if (!folderBehind() || stagingNow || preparing) return;
+      healedAt.push(Date.now());
+      stageFiles();
+    }, wait);
   }
 
   /**
@@ -3718,6 +4164,7 @@ export function createCard({
     if (whatWouldBeStaged() === lastPrepared) return;
     clearTimeout(preparing);
     preparing = setTimeout(() => {
+      preparing = null;
       if (whatWouldBeStaged() === lastPrepared) return;
       stageFiles();
     }, 1200);
@@ -4632,15 +5079,30 @@ export function createCard({
         chips.push(missingChip(kind));
       }
     }
+    void short;
     return [
       h('div', { className: 'files' }, chips),
-      h('div', {
-        className: 'drag-note',
-        textContent: short
-          ? `${short} Drag any of these into the form, or press Attach files below.`
-          : 'Drag any of these into the form, or press Attach files below.',
-      }),
-    ];
+      h('div', { className: 'drag-note', textContent: dragNote() }),
+      /*
+       * The way out when the card has stopped retrying on its own. See
+       * `healSoon`: a stage refused three times running is usually something
+       * a person has to fix — a name clash, a store that is not running — and
+       * the retry after it is theirs to start.
+       */
+      stageTrouble.gaveUp
+        ? h('button', {
+            className: 'tiny',
+            textContent: 'Try again',
+            title: 'Build the files into the folder again',
+            onclick: () => {
+              stageTrouble.count = 0;
+              stageTrouble.gaveUp = false;
+              stageTrouble.said = null;
+              stageFiles();
+            },
+          })
+        : null,
+    ].filter(Boolean);
   }
 
   function formActions() {
@@ -4693,6 +5155,8 @@ export function createCard({
 
   function drawProposeView() {
     const baseSelect = h('select', { title: 'Which resume to start from' });
+    /** The resume the picker says, which is a switch in flight's until it lands. */
+    const inUse = state.switchingTo ?? analysis?.baseResumeId;
 
     /*
      * How much of this posting each resume already uses, worked out by the
@@ -4725,7 +5189,7 @@ export function createCard({
       return h('option', {
         value: r.id,
         textContent: `${star}${r.label}${says}`,
-        selected: r.id === analysis.baseResumeId,
+        selected: r.id === inUse,
       });
     };
 
@@ -4788,9 +5252,47 @@ export function createCard({
     const here = (analysis?.job?.company ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     const sameEmployer = (r) => Boolean(here) && r.id.startsWith(`job-${here}-`);
 
-    const groups = GROUPS
-      .map(([tier, label]) => [label, resumes.filter((r) => tierOf(r) === tier)])
-      .filter(([, list]) => list.length > 0);
+    /*
+     * And above all of them, the one made for this application.
+     *
+     * "Temporary resumes created for a job application should always be on
+     * the very top … when looking at that very job application." It sat in
+     * "Built for a posting" among every other posting's, ranked by fit, and
+     * the resume written for the form in front of you could be fifth. The
+     * application's own resume as the store has it, and the copy this card is
+     * building for it — only where it really is a temporary one; a base
+     * picked to start from stays where bases go.
+     */
+    const forThis = new Set(
+      [analysis?.application?.resumeId, state.staged?.application?.resumeId, state.spec?.id].filter(Boolean),
+    );
+    const own = resumes.filter((r) => forThis.has(r.id) && tierOf(r) === 'temporary');
+
+    /*
+     * Only the latest postings' resumes, and the rest a choice away.
+     *
+     * Asked for: "show a window of like 10 of the last application resumes
+     * then keep the rest accessible but only seeable under a dropdown menu".
+     * A temporary resume stays a week after its posting is done with, so
+     * "Built for a posting" grows by one an application and the bases were a
+     * scroll away under it. The newest ten are listed — newest by when each
+     * was made for its posting — and the one this card is on is always among
+     * what is shown; "Show N older…" puts the others back in the list.
+     */
+    const RECENT_POSTINGS = 10;
+    const madeAt = (r) => r.generatedFor?.at ?? r.temporaryFrom ?? '';
+    const built = resumes.filter((r) => tierOf(r) === 'temporary' && !own.includes(r));
+    const newest = [...built].sort((a, b) => String(madeAt(b)).localeCompare(String(madeAt(a))));
+    // The one in use is `inUse` above: the resume being switched to, or the one started from.
+    const older = state.allPostings || newest.length <= RECENT_POSTINGS
+      ? []
+      : newest.slice(RECENT_POSTINGS).filter((r) => r.id !== inUse);
+    const recent = built.filter((r) => !older.includes(r));
+
+    const groups = [
+      ['For this application', own],
+      ...GROUPS.map(([tier, label]) => [label, tier === 'temporary' ? recent : resumes.filter((r) => tierOf(r) === tier && !own.includes(r))]),
+    ].filter(([, list]) => list.length > 0);
 
     // One group is no grouping, and an empty one reads as a section that
     // failed to load.
@@ -4801,7 +5303,10 @@ export function createCard({
         baseSelect.append(group);
       }
     } else {
-      for (const r of byFit(resumes, sameEmployer)) baseSelect.append(option(r));
+      for (const r of [...own, ...byFit(resumes.filter((r) => !own.includes(r) && !older.includes(r)), sameEmployer)]) baseSelect.append(option(r));
+    }
+    if (older.length > 0) {
+      baseSelect.append(h('option', { value: SHOW_OLDER, textContent: `Show ${plural(older.length, 'older posting')}…` }));
     }
 
     /*
@@ -4823,7 +5328,7 @@ export function createCard({
     if (baseSelect.options.length === 0) {
       baseSelect.append(
         h('option', {
-          value: analysis?.baseResumeId ?? '',
+          value: inUse ?? '',
           textContent: analysis?.baseLabel ?? 'Your resume',
           selected: true,
         }),
@@ -4863,7 +5368,15 @@ export function createCard({
      * An AI proposal is the one thing that cannot be, so that one repeats
      * what was asked for.
      */
-    baseSelect.onchange = () => switchBaseTo(baseSelect.value);
+    baseSelect.onchange = () => {
+      // Not a resume: the rest of the list. See `RECENT_POSTINGS`.
+      if (baseSelect.value === SHOW_OLDER) {
+        state.allPostings = true;
+        draw();
+        return;
+      }
+      switchBaseTo(baseSelect.value);
+    };
 
     /*
      * The button below has to hear about every keystroke here, without a
@@ -6191,13 +6704,20 @@ export function createCard({
           // on the list to be un-greyed after it has gone. See `markChips`.
           chipsOnScreen = [];
           askWhatTheFormWants();
-          const chips = b.files.map((f) => liftable(f, application));
-          if (b.files.length > 1) chips.push(liftableAll(b.files, application));
+          /*
+           * By the names they have in the folder the path below leads to, not
+           * the archive's. The archive always uses the plain name, and in the
+           * shared folder that name can be another application's, worked on
+           * in another tab.
+           */
+          const named = b.currentFiles?.length ? b.currentFiles : b.files;
+          const chips = named.map((f) => liftable(f, application));
+          if (named.length > 1) chips.push(liftableAll(named, application));
           // Named as well as mentioned below: a form asking for a transcript,
           // beside two chips that are not one, reads as no opinion about
           // transcripts. See `missingChip`.
           for (const kind of state.wanted?.kinds ?? []) {
-            if (!b.files.some((f) => documentKind(f) === kind) && DOCUMENT_KINDS[kind]) chips.push(missingChip(kind));
+            if (!named.some((f) => documentKind(f) === kind) && DOCUMENT_KINDS[kind]) chips.push(missingChip(kind));
           }
           return [
             h('div', { className: 'files' }, chips),
@@ -6444,6 +6964,16 @@ export function createCard({
               ? drawReducedView()
               : drawProposeView(),
     );
+    /*
+     * The chips just drawn, marked for what they are now.
+     *
+     * `markChips` ran only when bytes arrived or a stage finished, and it
+     * skips a chip that is not on the page yet — so every chip a redraw built
+     * started unmarked, whatever the folder's state: faded after the reason
+     * had passed, or looking ready while a drag would be refused. Reported as
+     * chips that "get greyed out" and show "a circle spinning" on hover.
+     */
+    markChips();
 
     if (wasScrolled) {
       const body = card.querySelector('.body');
@@ -7005,7 +7535,9 @@ export function createCard({
     },
 
     setStatus(text, fix = null) {
-      state.error = text;
+      if (/^Recorded as sent/.test(String(text ?? ''))) unrecorded = false;
+      else if (/^Not recorded/.test(String(text ?? ''))) unrecorded = true;
+      state.error = stillNotRecorded(text);
       // The first pass failing is the commonest way to meet this, and the
       // commonest reason is that ResumeM-M is not running.
       state.errorFix = fix;
@@ -7031,10 +7563,20 @@ export function createCard({
      * Only for a card the page removed. The × and Done go through
      * `closeCard`, whose `onClose` drops the handle, so nothing calls this on
      * a card somebody put away.
+     *
+     * The content script calls this every second, so it is also where the
+     * card is kept above a modal the page opened, and brought back out of one
+     * the page took away with the card inside. See `reachable`.
      */
     putBack() {
-      if (host.isConnected || document.getElementById(HOST_ID) || !document.documentElement) return false;
+      if (live?.host !== host) return false;
+      if (host.isConnected || document.getElementById(HOST_ID) || !document.documentElement) {
+        reachable();
+        return false;
+      }
+      letGo();
       document.documentElement.append(host);
+      reachable();
       return true;
     },
   };

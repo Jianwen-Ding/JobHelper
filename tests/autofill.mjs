@@ -625,6 +625,34 @@ const REMEMBERED = `<!doctype html><html><head><meta charset="utf-8"><title>Appl
 </script></body></html>`;
 
 /*
+ * A question nobody labelled as personal, whose answer is. An enterprise
+ * questionnaire names its controls `q_88213`, and its options can be dates —
+ * a birthday and any other date are the same characters. The bank can hold
+ * one of these (it is older than the gates, and the Workspace takes answers
+ * typed by hand), and the search-and-pick widgets refuse it by the answer.
+ * The dropdown and the radio group must too.
+ */
+const REMEMBERED_PRIVATE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="f">
+  <label for="q88213">Question 88213 of this form</label>
+  <select id="q88213" name="q_88213">
+    <option value="">Select...</option><option>04/02/1999</option><option>05/03/2000</option>
+  </select>
+
+  <fieldset>
+    <legend>Question 88214 of this form</legend>
+    <label><input type="radio" name="q_88214" value="a"> 123-45-6789</label>
+    <label><input type="radio" name="q_88214" value="b"> 987-65-4321</label>
+  </fieldset>
+
+  <!-- And an ordinary one beside them, which is still answered. -->
+  <label for="arr">Which working arrangement do you prefer?</label>
+  <select id="arr" name="arrangement_q2">
+    <option value="">Select...</option><option>Remote</option><option>Hybrid</option>
+  </select>
+</form></body></html>`;
+
+/*
  * Short boxes the profile has nothing for, as Greenhouse and Lever draw their
  * custom questions: a label, a one-line input named after the question's id.
  * The bank below has a row for every one of them, so which get filled is
@@ -2932,6 +2960,998 @@ const ADDS_ITS_CODE = `<!doctype html><html><head><meta charset="utf-8"><title>A
 </body></html>`;
 
 /*
+ * A telephone number asked in parts, the way the older enterprise and
+ * government systems still ask it: area code, exchange and line in three
+ * boxes of 3, 3 and 4 with an extension after, and an area code box beside a
+ * seven-digit number box. Beside them, boxes whose `maxlength` is shorter
+ * than the profile's way of writing the answer: a ten-digit phone box and a
+ * two-letter State box. Beside those, a zip box that is nobody's number.
+ */
+const PHONE_IN_PARTS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <table>
+    <tr><td>Daytime Phone:</td>
+      <td>(<input id="day-area" name="dayPhoneArea" maxlength="3" size="3">) <input id="day-prefix" name="dayPhonePrefix" maxlength="3" size="3"> - <input id="day-line" name="dayPhoneLine" maxlength="4" size="4">
+      Ext. <input id="day-ext" name="dayPhoneExt" maxlength="5" size="5"></td></tr>
+  </table>
+  <div><label for="mob-area">Area code</label><input id="mob-area" name="mobile_area_code" maxlength="3">
+  <label for="mob-number">Mobile phone number</label><input id="mob-number" name="mobile_number" maxlength="7"></div>
+  <label for="alt">Alternate number</label><input id="alt" name="alt_phone" type="tel" maxlength="10">
+  <label for="st">State</label><input id="st" name="state" maxlength="2">
+  <label for="zip">Zip code</label><input id="zip" name="zip" maxlength="5">
+</form></body></html>`;
+
+/*
+ * The same three boxes with an unlabelled box for the country's code in
+ * front, `+[__] ([___]) [___]-[____]`, each named for its place in the number.
+ */
+const PHONE_IN_FOUR = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form><div><label for="p0">Phone</label>
+  +<input id="p0" name="phone_1" maxlength="3" size="3"> (<input id="p1" name="phone_2" maxlength="3" size="3">) <input id="p2" name="phone_3" maxlength="3" size="3"> - <input id="p3" name="phone_4" maxlength="4" size="4">
+</div></form></body></html>`;
+
+/*
+ * A mask that is always shown, so it is the box's value from the start —
+ * IMask's `lazy: false` — and puts every digit written into it back into its
+ * slots. And the same mask with an area code typed into it already.
+ */
+const ALWAYS_MASKED = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <label for="ph">Phone</label><input id="ph" name="phone" type="tel" value="(___) ___-____" maxlength="14">
+  <label for="alt">Alternate phone</label><input id="alt" name="alt_phone" type="tel" value="(617) ___-____" maxlength="14">
+</form>
+<script>
+  const slots = (digits) => { let i = 0; return '(___) ___-____'.replace(/_/g, () => digits[i++] ?? '_'); };
+  for (const box of document.querySelectorAll('input[type=tel]')) {
+    box.addEventListener('input', () => { box.value = slots(box.value.replace(/\\D/g, '').slice(0, 10)); });
+  }
+</script>
+</body></html>`;
+
+/*
+ * Boxes drawn by a web component whose label is a slot, the way Shoelace's
+ * `<sl-input>` draws them: `<label for="input"><slot name="label">` and the
+ * `<input id="input">` in its shadow root, the words in the page's own
+ * markup. Named the way a form builder names them, so the name says nothing.
+ * One is given its label as an attribute instead, which is the slot's
+ * fallback and was always read, and one has a help text slotted in too.
+ */
+const SLOTTED_LABELS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <x-input field="q_1001"><span slot="label">First name</span></x-input>
+  <x-input field="q_1002"><span slot="label">Last name</span></x-input>
+  <x-input field="q_1003" type="email"><span slot="label">Email</span><span slot="help-text">Where the phone number goes, if we cannot reach you.</span></x-input>
+  <x-input field="q_1004" label="City"></x-input>
+  <x-input field="q_1005"><span slot="label">Why do you want to work here?</span></x-input>
+</form>
+<script>
+  customElements.define('x-input', class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' }).innerHTML =
+        '<div part="form-control"><label part="form-control-label" for="input"><slot name="label">' + (this.getAttribute('label') ?? '') + '</slot></label>' +
+        '<div part="base"><input part="input" id="input" type="' + (this.getAttribute('type') ?? 'text') + '" name="' + this.getAttribute('field') + '" aria-describedby="help-text"></div>' +
+        '<div part="form-control-help-text" id="help-text"><slot name="help-text"></slot></div></div>';
+    }
+  });
+</script>
+</body></html>`;
+
+/*
+ * Boxes drawn alone in a component and labelled from outside it, the three
+ * ways that happens. The page's own `<label>` beside `<y-box>`. A field
+ * component whose root holds a label component and then a box component, the
+ * label's words slotted in or drawn from an attribute. And a Material-style
+ * outlined field, the box component first and then its floating label, the
+ * inner `<input>` naming the label with `aria-labelledby` although the id is in
+ * the outer component's root. Then the same in a row: each label beside its
+ * own component with nothing around them, one component with no label between
+ * them, and three outlined fields that all call their label `id="label"`.
+ * Every box starts its root with a `<style>`, as components do.
+ */
+const COMPONENT_DEFINITIONS = `<script>
+  const def = (name, draw) => customElements.define(name, class extends HTMLElement {
+    constructor() { super(); this.attachShadow({ mode: 'open' }).innerHTML = draw(this); }
+  });
+  const at = (h, name, or = '') => h.getAttribute(name) ?? or;
+  def('y-box', (h) => '<style>:host { display: block; margin: 4px 0 }</style><input part="input" name="' + at(h, 'field') + '" type="' + at(h, 'type', 'text') + '"' +
+    (h.hasAttribute('maxlength') ? ' maxlength="' + at(h, 'maxlength') + '"' : '') + '>');
+  def('y-label', (h) => '<span part="label">' + (h.hasAttribute('text') ? at(h, 'text') : '<slot></slot>') + '</span>');
+  def('y-field', (h) => '<style>:host { display: grid }</style>' +
+    (h.hasAttribute('drawn') ? '<y-label text="' + at(h, 'label') + '"></y-label>' : '<y-label>' + at(h, 'label') + '</y-label>') +
+    '<y-box field="' + at(h, 'field') + '" type="' + at(h, 'type', 'text') + '"></y-box>');
+  def('y-inner', (h) => '<input name="' + at(h, 'field') + '" type="' + at(h, 'type', 'text') + '" aria-labelledby="label">');
+  def('y-outlined', (h) => '<y-inner field="' + at(h, 'field') + '" type="' + at(h, 'type', 'text') + '"></y-inner><div id="label" class="floating">' + at(h, 'label') + '</div>');
+  def('y-check', (h) => '<input type="checkbox" name="' + at(h, 'field') + '">');
+  def('y-shell', (h) => '<style>:host { display: block }</style><y-box' + (h.hasAttribute('inner') ? ' id="' + at(h, 'inner') + '"' : '') +
+    ' field="' + at(h, 'field') + '" type="' + at(h, 'type', 'text') + '"></y-box>');
+  def('y-pair', (h) => '<style>:host { display: flex; gap: 4px }</style><input name="' + at(h, 'field') + '"><input name="' + at(h, 'field2') + '">');
+  def('y-area', (h) => '<style>:host { display: block }</style><textarea rows="3" name="' + at(h, 'field') + '"' +
+    (h.hasAttribute('placeholder') ? ' placeholder="' + at(h, 'placeholder') + '"' : '') + '></textarea>');
+  // Components that draw what the page's own fields sit in, and put them in it through a slot.
+  def('y-fieldset', (h) => '<style>:host { display: block }</style><fieldset><legend>' + at(h, 'legend') + '</legend><slot></slot></fieldset>' +
+    '<div class="after"><slot name="after"></slot></div>');
+  def('y-group', (h) => '<style>:host { display: block }</style><div role="group" aria-label="' + at(h, 'label') + '"><slot></slot></div>');
+  def('y-section', (h) => '<style>:host { display: block }</style><section><h3>' + at(h, 'heading') + '</h3><slot></slot></section>' +
+    '<div class="after"><slot name="after"></slot></div>');
+  def('y-heading', (h) => '<style>:host { display: block }</style><h3 part="heading">' + at(h, 'text') + '</h3>');
+  // A telephone number's boxes: two drawn in one component, and all three loose in one root.
+  def('y-two', (h) => '<style>:host { display: inline-flex }</style><input name="' + at(h, 'field') + '" maxlength="' + at(h, 'max') + '">' +
+    '<input name="' + at(h, 'field2') + '" maxlength="' + at(h, 'max2') + '">');
+  def('y-phone3', (h) => '<style>:host { display: inline-flex }</style>(<input name="' + at(h, 'field') + '_area" maxlength="3">) ' +
+    '<input name="' + at(h, 'field') + '_prefix" maxlength="3"> - <input name="' + at(h, 'field') + '_line" maxlength="4">');
+  // A country-code picker drawn in a component, and an intl-tel-input drawn whole in one.
+  def('y-code', (h) => '<style>:host { display: inline-block }</style><select name="' + at(h, 'field') + '" aria-label="Country code">' +
+    ['+1', '+44', '+39'].map((c) => '<option value="' + c + '"' + (c === at(h, 'code') ? ' selected' : '') + '>' + c + '</option>').join('') + '</select>');
+  def('y-tel', (h) => '<style>:host { display: inline-flex }</style><button type="button" aria-label="Change country, selected (' + at(h, 'code') + ')">' +
+    at(h, 'code') + '</button><input type="tel" name="' + at(h, 'field') + '" aria-label="' + at(h, 'label') + '">');
+  // A date's spin box, and a date that is itself the group, its boxes loose in its root.
+  def('y-spin', (h) => '<style>:host { display: inline-block }</style><input role="spinbutton" aria-label="' + at(h, 'label') + '" name="' + at(h, 'field') + '">');
+  customElements.define('y-date', class extends HTMLElement {
+    constructor() {
+      super();
+      this.setAttribute('role', 'group');
+      this.attachShadow({ mode: 'open' }).innerHTML = '<style>:host { display: inline-block }</style>' +
+        '<input role="spinbutton" aria-label="Month" name="' + at(this, 'field') + '_month"> / <input role="spinbutton" aria-label="Year" name="' + at(this, 'field') + '_year">';
+    }
+  });
+  // An editor put on the page's textarea before it, its editing box in a wrapper or loose in its root.
+  def('y-editor', (h) => '<style>:host { display: block }</style>' + (h.hasAttribute('loose') ? '' : '<div class="ck-editor__main" role="presentation">') +
+    '<div role="textbox" aria-label="Editor editing area: main. Press Alt+0 for help." contenteditable="true" style="min-height: 2em"><p><br></p></div>' +
+    (h.hasAttribute('loose') ? '' : '</div>'));
+  // One radio button, its words slotted in; a yes/no pair drawn in one root; and the same as ARIA radios, one group or two.
+  def('y-radio', (h) => '<style>:host { display: inline-block }</style><label><input type="radio" name="' + at(h, 'name') + '" value="' + at(h, 'value') + '"><slot></slot></label>');
+  def('y-yesno', (h) => '<style>:host { display: block }</style><label><input type="radio" name="' + at(h, 'name') + '" value="Yes">Yes</label>' +
+    '<label><input type="radio" name="' + at(h, 'name') + '" value="No">No</label>');
+  const ariaPair = () => '<div role="radiogroup">' + ['Yes', 'No'].map((w) => '<div role="radio" aria-checked="false" tabindex="0">' + w + '</div>').join('') + '</div>';
+  def('y-aria-yesno', (h) => '<style>:host { display: block }</style>' + (h.hasAttribute('two') ? ariaPair() + ariaPair() : ariaPair()));
+  // One ARIA radio drawn in a component: a button wearing the role in its root, its word drawn or slotted in; a host
+  // wearing the role itself, its word drawn; and a whole question, its label and its group, drawn in one root.
+  def('y-aria-radio', (h) => '<style>:host { display: inline-block }</style><button type="button" role="radio" aria-checked="false">' +
+    (h.hasAttribute('label') ? at(h, 'label') : '<slot></slot>') + '</button>');
+  customElements.define('y-radio-host', class extends HTMLElement {
+    constructor() {
+      super();
+      this.setAttribute('role', 'radio');
+      this.setAttribute('aria-checked', 'false');
+      this.attachShadow({ mode: 'open' }).innerHTML = '<style>:host { display: inline-block }</style><button type="button" tabindex="-1">' + at(this, 'label') + '</button>';
+    }
+  });
+  // Components the page puts its own box into, drawing its label, and an asterisk when required, round the slot: the
+  // label before the slot in a wrapper, with a slot after the wrapper; before a wrapper round the slot; loose in the root;
+  // round the slot, its words bare or in a span; its words slotted in; and a label over a slot in a wrapper, then another.
+  const star = (h) => (h.hasAttribute('required') ? ' <span class="req" aria-hidden="true">*</span>' : '');
+  def('y-put-field', (h) => '<style>:host { display: block }</style><div class="field"><label part="label">' + at(h, 'label') + star(h) + '</label><slot></slot></div>' +
+    '<div class="help"><slot name="after"></slot></div>');
+  def('y-put-boxed', (h) => '<style>:host { display: block }</style><div class="field"><label part="label">' + at(h, 'label') + star(h) + '</label>' +
+    '<div class="control"><slot></slot></div></div>');
+  def('y-put-pair', (h) => '<style>:host { display: block }</style><label part="label">' + at(h, 'label') + '</label>' +
+    '<div class="first"><slot name="first"></slot></div><slot></slot>');
+  def('y-put-loose', (h) => '<style>:host { display: block }</style><label part="label">' + at(h, 'label') + star(h) + '</label><slot></slot>');
+  def('y-put-wrap', (h) => '<style>:host { display: block }</style><label part="label">' +
+    (h.hasAttribute('bare') ? at(h, 'label') + star(h) : '<span>' + at(h, 'label') + star(h) + '</span>') + ' <slot></slot></label>');
+  // And one drawing only wrappers round its slot, for a box deep in the page's own.
+  def('y-put-deep', () => '<style>:host { display: block }</style><div class="outer"><div class="inner"><slot></slot></div></div>');
+  def('y-put-named', (h) => '<style>:host { display: block }</style><div class="field"><label part="label"><slot name="label"></slot>' + star(h) + '</label>' +
+    (h.hasAttribute('boxed') ? '<div class="control"><slot></slot></div>' : '<slot></slot>') + '</div>');
+  // And one drawing two questions, each over a slot of its own.
+  def('y-put-two', (h) => '<style>:host { display: block }</style><label part="label">' + at(h, 'label') + '</label><slot name="first"></slot>' +
+    '<label part="label">' + at(h, 'label2') + '</label><slot></slot>');
+  def('y-aria-question', (h) => '<style>:host { display: block }</style><label id="q">' + at(h, 'label') + '</label><div role="radiogroup" aria-labelledby="q">' +
+    ['Yes', 'No'].map((w) => '<div role="radio" aria-checked="false" tabindex="0">' + w + '</div>').join('') + '</div>');
+  document.addEventListener('click', (e) => {
+    const radio = e.composedPath().find((el) => el.getAttribute?.('role') === 'radio');
+    if (radio) for (const r of radio.parentNode.querySelectorAll('[role="radio"]')) r.setAttribute('aria-checked', String(r === radio));
+  });
+</script>`;
+
+const LABELLED_FROM_OUTSIDE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="row"><label>Last name</label><y-box field="q_2001"></y-box></div>
+  <y-field label="Email" field="q_2002" type="email"></y-field>
+  <y-outlined label="Phone number" field="q_2003" type="tel"></y-outlined>
+  <y-field label="City" field="q_2004" drawn></y-field>
+
+  <div class="list">
+    <label>First name</label><y-box field="q_3001"></y-box>
+    <y-box field="q_3002"></y-box>
+    <label>Last name</label><y-box field="q_3003"></y-box>
+    <label>City</label><y-box field="q_3004"></y-box>
+    <label>Email</label><y-box field="q_3005" type="email"></y-box>
+  </div>
+
+  <div class="list">
+    <y-outlined label="First name" field="q_3101"></y-outlined>
+    <y-outlined label="City" field="q_3102"></y-outlined>
+    <y-outlined label="Last name" field="q_3103"></y-outlined>
+  </div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * Components the page labels with a `<label>` of its own that is not beside
+ * them: a label wrapping the component, `<label>Last name <y-box>`, and a
+ * label whose `for` names the component's host, here in a column of labels
+ * apart from the column of boxes and in another order, so that nothing near
+ * a box is its label. Each once with the box drawn straight in the component
+ * and once a component further in (`<y-shell>`).
+ *
+ * And the ways that goes wrong. A label wrapping two components; a label, of
+ * either kind, on a component drawing two boxes; the page's `for="h-city"`
+ * where the only element with that id is drawn inside another component's
+ * root; and two components sharing `id="h-last"`, of which `for` names the
+ * first.
+ */
+const LABELLED_AROUND = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <label class="row">Last name <y-box field="q_6001"></y-box></label>
+  <label class="row">Email <y-shell field="q_6002" type="email"></y-shell></label>
+  <label class="row">City <y-box field="q_6101"></y-box> <y-box field="q_6102"></y-box></label>
+  <label class="row">Name <y-pair field="q_6201" field2="q_6202"></y-pair></label>
+
+  <div class="columns">
+    <div class="labels"><label for="h-email">Email</label><label for="h-first">First name</label><label for="h-phone">Phone</label></div>
+    <div class="boxes"><y-box id="h-first" field="q_7001"></y-box><y-box id="h-email" field="q_7002" type="email"></y-box><y-shell id="h-phone" field="q_7003" type="tel"></y-shell></div>
+  </div>
+  <div class="columns">
+    <div class="labels"><label for="h-city">City</label><label for="h-last">Last name</label><label for="h-name">Name</label></div>
+    <div class="boxes">
+      <y-shell inner="h-city" field="q_7101"></y-shell>
+      <y-box id="h-last" field="q_7201"></y-box><y-box id="h-last" field="q_7202"></y-box>
+      <y-pair id="h-name" field="q_7301" field2="q_7302"></y-pair>
+    </div>
+  </div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * Components inside what says whose, which or whether: the applicant's own
+ * Phone, then a fieldset for an Emergency contact holding a Phone and an
+ * Email drawn in components; a Month and a Year under "When do you expect to
+ * graduate?", an "End date year" in an Education fieldset, and a Month and a
+ * Year under "Date of birth"; and long questions drawn in components, marked
+ * with an asterisk on the page's label beside them, on a label wrapping one,
+ * on a `for` label in a column apart, or not at all. Two of the questions
+ * share a wrapper with the asterisked one before them, which is not theirs.
+ */
+const COMPONENTS_IN_CONTEXT = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label>Phone</label><y-box field="q_8000" type="tel"></y-box></div>
+  <fieldset><legend>Emergency contact</legend>
+    <div class="q"><label>Phone</label><y-box field="q_8001" type="tel"></y-box></div>
+    <y-field label="Email" field="q_8002" type="email"></y-field>
+  </fieldset>
+
+  <fieldset role="group"><legend>When do you expect to graduate?</legend>
+    <label>Month</label><y-box field="q_8101"></y-box>
+    <label>Year</label><y-box field="q_8102"></y-box>
+  </fieldset>
+  <fieldset><legend>Education</legend><div class="q"><label>End date year</label><y-box field="q_8103"></y-box></div></fieldset>
+  <fieldset role="group"><legend>Date of birth</legend>
+    <label>Month</label><y-box field="q_8104"></y-box>
+    <label>Year</label><y-box field="q_8105"></y-box>
+  </fieldset>
+
+  <div class="q"><label>Why do you want to work here? *</label><y-area field="q_8201"></y-area></div>
+  <div class="q"><label>Anything else you would like us to know?</label><y-area field="q_8202"></y-area></div>
+  <div class="q"><label>What drew you to this team? *</label><y-area field="q_8203"></y-area><y-area field="q_8204" placeholder="Is there anything else you would like to add?"></y-area></div>
+  <label class="q">What would you build first here? * <y-area field="q_8205"></y-area></label>
+  <div class="columns">
+    <div class="labels"><label for="h-proud">What are you proudest of? *</label></div>
+    <div class="boxes"><y-area id="h-proud" field="q_8206"></y-area><y-area field="q_8207" placeholder="How did you hear about this role?"></y-area></div>
+  </div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * A Work Experience block drawn in components: Job Title and Company, and a
+ * From and a To each a fieldset over a Month and a Year box, the block named
+ * by the group around it, as the plain Workday block beside it is.
+ */
+const COMPONENT_HISTORY = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div role="group" aria-label="Work Experience 1">
+    <div class="q"><label>Job Title</label><y-box field="q_9001"></y-box></div>
+    <div class="q"><label>Company</label><y-box field="q_9002"></y-box></div>
+    <fieldset><legend>From</legend><label>Month</label><y-box field="q_9003"></y-box><label>Year</label><y-box field="q_9004"></y-box></fieldset>
+    <fieldset><legend>To</legend><label>Month</label><y-box field="q_9005"></y-box><label>Year</label><y-box field="q_9006"></y-box></fieldset>
+  </div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * Components in sections the page names by a heading or a paragraph. A City
+ * and a Phone under a "Work Experience" heading, whose wrapper bounds them —
+ * a past job's — then a Phone after that section has closed, and a City
+ * under "About you", which are the applicant's. And, on its own page, a
+ * Greenhouse-style Employment block, titled by `<p>Employment</p>` as its
+ * first child, of Company name and Title drawn in components.
+ */
+const COMPONENT_SECTIONS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="section"><div class="head"><h3>Work Experience</h3><p>Your most recent job first.</p></div>
+    <div class="q"><label>City</label><y-box field="q_9201"></y-box></div>
+    <div class="q"><label>Phone</label><y-box field="q_9202" type="tel"></y-box></div>
+  </div>
+  <div class="q"><label>Phone</label><y-box field="q_9203" type="tel"></y-box></div>
+  <div class="section"><div class="head"><h3>About you</h3><p>Where you live.</p></div>
+    <div class="q"><label>City</label><y-box field="q_9204"></y-box></div>
+  </div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+const COMPONENT_EMPLOYMENT = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label>First name</label><y-box field="q_9300"></y-box></div>
+  <div class="block"><div><p>Employment</p></div>
+    <div class="q"><label>Company name</label><y-box field="q_9301"></y-box></div>
+    <div class="q"><label>Title</label><y-box field="q_9302"></y-box></div>
+  </div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * The page's own fields, put through a slot into a fieldset or a group that a
+ * component draws: the applicant's Phone, then an Emergency contact's Phone
+ * and Email in `<y-fieldset>`, and an Email put in the slot the component
+ * draws after its fieldset, which is the applicant's; a Reference's Email in
+ * `<y-group>`; and a Month and a Year under "When do you expect to
+ * graduate?".
+ */
+const SLOTTED_FIELDSETS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label>Phone</label><input name="q_9400" type="tel"></div>
+  <y-fieldset legend="Emergency contact">
+    <div class="q"><label>Phone</label><input name="q_9401" type="tel"></div>
+    <div class="q"><label>Email</label><input name="q_9402" type="email"></div>
+    <div class="q" slot="after"><label>Email</label><input name="q_9403" type="email"></div>
+  </y-fieldset>
+  <y-group label="Reference"><div class="q"><label>Email</label><input name="q_9404" type="email"></div></y-group>
+  <y-fieldset legend="When do you expect to graduate?">
+    <label>Month</label><input name="q_9405">
+    <label>Year</label><input name="q_9406">
+  </y-fieldset>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * Headings a component draws. A City under `<y-heading text="Work
+ * Experience">` inside the section's wrapper, and one after that wrapper has
+ * closed; a Phone slotted into `<y-section heading="Work Experience">`, and
+ * one put in the slot it draws after its section; and an "End date year"
+ * after an Education heading drawn in a component, in a form laid out flat.
+ */
+const COMPONENT_HEADINGS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="section"><y-heading text="Work Experience"></y-heading>
+    <div class="q"><label>City</label><input name="q_9501"></div>
+  </div>
+  <div class="q"><label>City</label><input name="q_9502"></div>
+  <y-section heading="Work Experience">
+    <div class="q"><label>Phone</label><input name="q_9503" type="tel"></div>
+    <div class="q" slot="after"><label>Phone</label><input name="q_9504" type="tel"></div>
+  </y-section>
+  <y-heading text="Education"></y-heading>
+  <div class="q"><label>End date year</label><input name="q_9505"></div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * A telephone number asked in boxes drawn in components: the three boxes of
+ * `(___) ___-____` each drawn in one, an Area code and a seven-digit number
+ * each drawn in one, and one component drawing all three boxes loose in its
+ * root. And the shape that is two things, not one number: an area code box
+ * drawn alone in a component beside a component drawing two boxes of its
+ * own, 3 and 4.
+ */
+const COMPONENT_PHONE_PARTS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label>Phone</label>(<y-box field="phone_area" maxlength="3"></y-box>) <y-box field="phone_prefix" maxlength="3"></y-box> -
+    <y-box field="phone_line" maxlength="4"></y-box></div>
+  <div class="q"><label>Area code</label><y-box field="mobile_area_code" maxlength="3"></y-box>
+    <label>Mobile phone number</label><y-box field="mobile_number" maxlength="7"></y-box></div>
+  <div class="q"><label>Home phone</label><y-phone3 field="home_phone"></y-phone3></div>
+  <div class="q"><label>Daytime phone</label>(<y-box field="day_phone_area" maxlength="3"></y-box>)
+    <y-two field="day_phone_prefix" max="3" field2="day_phone_line" max2="4"></y-two></div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * A dialling code beside a telephone box, drawn in components: the page's
+ * select on +44 beside a box drawn in a component, a select drawn in a
+ * component beside the page's box, and an intl-tel-input drawn whole in one
+ * component. And a Home phone drawn alone in a component in a row beside an
+ * Alternate phone drawn with a +44 of its own, which is not the Home
+ * phone's.
+ */
+const COMPONENT_DIALLING_CODE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="phone"><label>Country code</label><select name="cc_1"><option>+1</option><option selected>+44</option></select>
+    <label>Phone</label><y-box type="tel" field="q_9701"></y-box></div>
+  <div class="phone"><label>Country code</label><y-code field="cc_2" code="+44"></y-code>
+    <label>Mobile phone</label><input type="tel" name="q_9702"></div>
+  <div class="q"><label>Mobile phone</label><y-tel code="+44" field="q_9703" label="Mobile phone"></y-tel></div>
+  <div class="row">
+    <div class="q"><label>Home phone</label><y-box type="tel" field="q_9704"></y-box></div>
+    <div class="q"><label>Alternate phone</label><y-tel code="+44" field="q_9705" label="Alternate phone"></y-tel></div>
+  </div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * A date asked as spin boxes drawn in components, and a wrapper that takes
+ * the date as Workday's does: focus arriving from outside the date is sent
+ * to its first box, a box takes what is written into it only while it has
+ * the focus, and the date is taken — into `data-taken` — on the blur that
+ * leaves it. The page's `role="group"` round a Month and a Year each drawn in
+ * a component, and a date component that is itself the group, its boxes
+ * loose in its root.
+ */
+const COMPONENT_DATES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <label>First name</label><input name="q_9800">
+  <fieldset><legend>Expected graduation date</legend>
+    <div role="group" data-date id="d-page"><y-spin label="Month" field="q_9801"></y-spin> / <y-spin label="Year" field="q_9802"></y-spin></div>
+  </fieldset>
+  <fieldset><legend>When do you expect to graduate?</legend><y-date data-date id="d-drawn" field="q_9803"></y-date></fieldset>
+</form>
+${COMPONENT_DEFINITIONS}
+<script>
+  for (const wrapper of document.querySelectorAll('[data-date]')) {
+    const inside = wrapper.shadowRoot ?? wrapper;
+    const boxes = wrapper.shadowRoot ? [...inside.querySelectorAll('input')] : [...inside.querySelectorAll('y-spin')].map((h) => h.shadowRoot.querySelector('input'));
+    const holds = (node) => Boolean(node) && (node === wrapper || wrapper.contains(node) || boxes.includes(node));
+    const entered = new Map();
+    for (const box of boxes) box.addEventListener('input', () => { if (box.getRootNode().activeElement === box) entered.set(box, box.value); });
+    inside.addEventListener('focusin', (e) => { if (!holds(e.relatedTarget) && e.composedPath()[0] !== boxes[0]) boxes[0].focus(); });
+    inside.addEventListener('focusout', (e) => {
+      if (holds(e.relatedTarget)) return;
+      wrapper.dataset.taken = boxes.map((b) => entered.get(b) ?? '').join('/');
+    });
+  }
+</script>
+</body></html>`;
+
+/*
+ * Rich-text editors drawn in components, each straight after the page's
+ * hidden textarea it was put on, as CKEditor draws itself: one whose editing
+ * box is in a wrapper in its root, one whose box is loose in its root, and
+ * one on the cover letter's textarea. And two editors side by side in one
+ * wrapper after a single hidden textarea, which is neither's.
+ */
+const COMPONENT_EDITORS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <label for="ce-why">Why do you want to work at Acme? *</label>
+  <textarea id="ce-why" name="why" style="display: none;"></textarea>
+  <y-editor></y-editor>
+  <label for="ce-proud">What are you proudest of? *</label>
+  <textarea id="ce-proud" name="proud" style="display: none;"></textarea>
+  <y-editor loose></y-editor>
+  <label for="ce-cover">Cover Letter</label>
+  <textarea id="ce-cover" name="cover_letter" style="display: none;"></textarea>
+  <y-editor></y-editor>
+  <label for="ce-team">What drew you to this team? *</label>
+  <textarea id="ce-team" name="team" style="display: none;"></textarea>
+  <div class="pair"><y-editor></y-editor><y-editor></y-editor></div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * Radio groups drawn in components. A Yes and a No each drawn in a component,
+ * valued 1 and 0 with their words slotted in, in a fieldset whose legend is
+ * the question; and a component drawing both buttons beside the page's
+ * label. And the ways a group borrows a question that is not its own: a
+ * component drawing a text box beside its label, then a yes/no component, in
+ * one wrapper; and two yes/no components in one wrapper, each after its own
+ * label.
+ *
+ * On a page of its own, since a form answers each question once: an ARIA
+ * group drawn whole in a component beside the page's label, and a component
+ * drawing two ARIA groups with no words of its own beside a label.
+ */
+const COMPONENT_RADIOS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <fieldset><legend>Are you legally authorized to work in the United States?</legend>
+    <y-radio name="q_9901" value="1">Yes</y-radio><y-radio name="q_9901" value="0">No</y-radio></fieldset>
+  <div class="q"><label>Will you now or in the future require visa sponsorship?</label><y-yesno name="q_9902"></y-yesno></div>
+
+  <div class="q"><label>Are you legally authorized to work in the United States? Please explain.</label><y-box field="q_9903"></y-box>
+    <y-yesno name="q_9904"></y-yesno></div>
+  <div class="qs"><label>Are you legally authorized to work in the United States?</label><y-yesno name="q_9905"></y-yesno>
+    <label>Will you now or in the future require visa sponsorship?</label><y-yesno name="q_9906"></y-yesno></div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+const COMPONENT_ARIA_RADIOS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label>Are you legally authorized to work in the United States?</label><y-aria-yesno id="ca-one"></y-aria-yesno></div>
+  <div class="q"><label>Will you now or in the future require visa sponsorship?</label><y-aria-yesno id="ca-two" two></y-aria-yesno></div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * Radio groups a browser would not make as the page is written. Buttons with
+ * no name, grouped by the fieldset round them: a Yes and a No each drawn in
+ * a component under the authorization question, and a component drawing both
+ * under the sponsorship question. Before them, the same yes/no component with
+ * no name and no fieldset, beside the page's authorization question, which
+ * the same buttons written into the page are not answered by either.
+ *
+ * And, on a page of its own, a yes/no component whose root names its two
+ * buttons `answer`, used for both questions: two groups, since a shadow root
+ * is a tree of its own.
+ */
+const COMPONENT_NAMELESS_RADIOS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label>Are you legally authorized to work in the United States?</label><y-yesno></y-yesno></div>
+  <fieldset><legend>Are you legally authorized to work in the United States?</legend>
+    <y-radio value="1">Yes</y-radio><y-radio value="0">No</y-radio></fieldset>
+  <fieldset><legend>Will you now or in the future require visa sponsorship?</legend><y-yesno></y-yesno></fieldset>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+const COMPONENT_RADIOS_ONE_NAME = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label>Are you legally authorized to work in the United States?</label><y-yesno name="answer"></y-yesno></div>
+  <div class="q"><label>Will you now or in the future require visa sponsorship?</label><y-yesno name="answer"></y-yesno></div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * The page's radiogroup, its options each a component. A button wearing
+ * `role="radio"` in each component's root, its word drawn from an attribute
+ * under the authorization question and slotted in under the sponsorship
+ * question; and, on a page of its own, a component wearing the role itself,
+ * its word drawn in its root.
+ *
+ * And, on a third, a section's `role="group"` round two question components,
+ * each drawing its own label and radiogroup: sponsorship, then authorization.
+ */
+const COMPONENT_ARIA_OPTIONS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="ao-auth">Are you legally authorized to work in the United States?</label>
+    <div role="radiogroup" aria-labelledby="ao-auth"><y-aria-radio label="Yes"></y-aria-radio><y-aria-radio label="No"></y-aria-radio></div></div>
+  <div class="q"><label>Will you now or in the future require visa sponsorship?</label>
+    <div role="radiogroup"><y-aria-radio>Yes</y-aria-radio><y-aria-radio>No</y-aria-radio></div></div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+const COMPONENT_ARIA_HOSTS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label>Will you now or in the future require visa sponsorship?</label>
+    <div role="radiogroup"><y-radio-host label="Yes"></y-radio-host><y-radio-host label="No"></y-radio-host></div></div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+const COMPONENT_ARIA_SECTION = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div role="group" aria-label="Work authorization">
+    <y-aria-question label="Will you now or in the future require visa sponsorship?"></y-aria-question>
+    <y-aria-question label="Are you legally authorized to work in the United States?"></y-aria-question>
+  </div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * The same section written into the page: a `role="group"` labelled "Work
+ * authorization" round the sponsorship and authorization questions, each its
+ * own label and radiogroup; and, on a page of its own, the section a
+ * `role="radiogroup"`.
+ *
+ * And, on a third, groups that are one question however their options are
+ * wrapped: a radiogroup whose Yes and No are each in wrappers of their own,
+ * and a Country listbox whose options are headed "Europe" and "North
+ * America" by a `role="group"` each, as ARIA heads a list's options.
+ */
+const ariaSection = (role, ids) => `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div role="${role}" aria-label="Work authorization">
+    <div class="q"><label id="${ids}-1">Will you now or in the future require visa sponsorship?</label>
+      <div role="radiogroup" aria-labelledby="${ids}-1"><div role="radio" aria-checked="false" tabindex="0">Yes</div><div role="radio" aria-checked="false" tabindex="0">No</div></div></div>
+    <div class="q"><label id="${ids}-2">Are you legally authorized to work in the United States?</label>
+      <div role="radiogroup" aria-labelledby="${ids}-2"><div role="radio" aria-checked="false" tabindex="0">Yes</div><div role="radio" aria-checked="false" tabindex="0">No</div></div></div>
+  </div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+const PAGE_ARIA_SECTION = ariaSection('group', 'ps');
+const PAGE_ARIA_RADIOGROUP_SECTION = ariaSection('radiogroup', 'pr');
+
+const PAGE_ARIA_ONE_GROUP = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="po-auth">Are you legally authorized to work in the United States?</label>
+    <div role="radiogroup" aria-labelledby="po-auth">
+      <div class="row"><span class="dot"></span><div role="radio" aria-checked="false" tabindex="0">Yes</div></div>
+      <div class="row"><div class="cell"><div role="radio" aria-checked="false" tabindex="0">No</div></div></div>
+    </div></div>
+  <div class="q"><label id="po-country">Country</label>
+    <div role="listbox" aria-labelledby="po-country">
+      <div role="group" aria-label="Europe"><div role="option" tabindex="0">France</div><div role="option" tabindex="0">Germany</div></div>
+      <div role="group" aria-label="North America"><div role="option" tabindex="0">Canada</div><div role="option" tabindex="0">United States</div></div>
+    </div></div>
+</form>
+${COMPONENT_DEFINITIONS}
+<script>
+  document.addEventListener('click', (e) => {
+    const option = e.target.closest('[role="option"]');
+    if (option) for (const o of option.closest('[role="listbox"]').querySelectorAll('[role="option"]')) o.setAttribute('aria-selected', String(o === option));
+  });
+</script>
+</body></html>`;
+
+/*
+ * A country asked twice: first as a `<select>`, which takes the answer, and
+ * then as a listbox, "Country of residence", which is left, since each key is
+ * chosen in one ARIA group only (see `answerChoiceButtons`). The listbox is
+ * not answered, and has to be reported as one to pick by hand.
+ */
+const PAGE_LISTBOX_ASKED_AGAIN = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <label for="la-country">Country</label>
+  <select id="la-country" name="la_country"><option value="">Select...</option><option>Canada</option><option>United States</option></select>
+  <div class="q"><label id="la-res">Country of residence</label>
+    <div role="listbox" aria-labelledby="la-res">
+      <div role="option" tabindex="0">Canada</div><div role="option" tabindex="0">United States</div>
+    </div></div>
+</form>
+<script>
+  document.addEventListener('click', (e) => {
+    const option = e.target.closest('[role="option"]');
+    if (option) for (const o of option.closest('[role="listbox"]').querySelectorAll('[role="option"]')) o.setAttribute('aria-selected', String(o === option));
+  });
+</script>
+</body></html>`;
+
+/*
+ * A Country listbox the fill answers, and a "Country of residence" listbox
+ * after it that ignores every click and opens no list of its own. Pressed,
+ * the second draws nothing, so the only list on screen is the Country one:
+ * it is not this question's, and nothing may be chosen in it for this one.
+ * Every click on an option is written down, with the question it is under.
+ */
+const PAGE_LISTBOX_DEAF = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="ld-country">Country</label>
+    <div role="listbox" aria-labelledby="ld-country">
+      <div role="option" tabindex="0">France</div><div role="option" tabindex="0">Germany</div>
+      <div role="option" tabindex="0">Canada</div><div role="option" tabindex="0">United States</div>
+    </div></div>
+  <div class="q"><label id="ld-res">Country of residence</label>
+    <div role="listbox" aria-labelledby="ld-res" data-deaf>
+      <div role="option" tabindex="0">Canada</div><div role="option" tabindex="0">United States</div>
+    </div></div>
+</form>
+<script>
+  window.clicked = [];
+  document.addEventListener('click', (e) => {
+    const option = e.target.closest('[role="option"]');
+    if (!option) return;
+    const list = option.closest('[role="listbox"]');
+    window.clicked.push(document.getElementById(list.getAttribute('aria-labelledby')).textContent + ' — ' + option.textContent);
+    if (!list.hasAttribute('data-deaf')) for (const o of list.querySelectorAll('[role="option"]')) o.setAttribute('aria-selected', String(o === option));
+  });
+</script>
+</body></html>`;
+
+/*
+ * Dropdowns whose lists are theirs without being inside them, beside a
+ * Country listbox on screen the whole time. A School combobox whose list is
+ * drawn at the foot of the body on a press, and named in its
+ * `aria-controls` as it opens. A Degree drawn as react-select draws one: a
+ * text box in a control, the menu drawn in the widget's container on a press
+ * or a keystroke and named nowhere, and the choice drawn as a single value
+ * with the text box emptied. And a Discipline drawn the same way whose menu
+ * opens as the box takes the focus, before any press.
+ */
+const PAGE_PORTALLED_COMBOBOX = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="pp-country">Country</label>
+    <div role="listbox" aria-labelledby="pp-country">
+      <div role="option" tabindex="0">Canada</div><div role="option" tabindex="0">United States</div>
+    </div></div>
+  <div class="q"><label id="pp-school-l">School</label>
+    <button type="button" id="pp-school" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="pp-school-l">Select One</button></div>
+  <div class="q"><label id="pp-degree-l">Degree</label>
+    <div class="select"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+      <input id="pp-degree" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="pp-degree-l" autocomplete="off"></div></div>
+      <input type="hidden" name="degree" id="pp-degree-h"></div></div>
+  <div class="q"><label id="pp-major-l">Discipline</label>
+    <div class="select"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+      <input id="pp-major" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="pp-major-l" autocomplete="off"></div></div>
+      <input type="hidden" name="major" id="pp-major-h"></div></div>
+</form>
+<script>
+  document.addEventListener('click', (e) => {
+    const option = e.target.closest('[role="option"]');
+    if (option && option.closest('form')) for (const o of option.closest('[role="listbox"]').querySelectorAll('[role="option"]')) o.setAttribute('aria-selected', String(o === option));
+  });
+
+  const school = document.getElementById('pp-school');
+  let schoolList = null;
+  const shutSchool = () => { schoolList?.remove(); schoolList = null; school.setAttribute('aria-expanded', 'false'); };
+  school.addEventListener('click', () => {
+    if (schoolList) return shutSchool();
+    schoolList = document.createElement('div');
+    schoolList.id = 'pp-school-list'; schoolList.setAttribute('role', 'listbox');
+    for (const text of ['Boston University', 'Northeastern University']) {
+      const o = document.createElement('div');
+      o.setAttribute('role', 'option'); o.textContent = text;
+      o.addEventListener('click', () => { school.textContent = text; shutSchool(); });
+      schoolList.append(o);
+    }
+    document.body.append(schoolList);
+    school.setAttribute('aria-controls', schoolList.id);
+    school.setAttribute('aria-expanded', 'true');
+  });
+  school.addEventListener('keydown', (e) => { if (e.key === 'Escape') shutSchool(); });
+
+  /*
+   * The menu is drawn in the widget's container and named nowhere. Opened on
+   * a press or a keystroke; or, with \`onFocus\`, as the box takes the focus,
+   * after which a press on the box leaves it be and a keystroke filters the
+   * same menu, as react-select's \`openMenuOnFocus\` does.
+   */
+  function reactSelect(name, options, { onFocus = false } = {}) {
+    const input = document.getElementById('pp-' + name);
+    const holder = input.closest('.select');
+    let menu = null;
+    const shut = () => { menu?.remove(); menu = null; input.setAttribute('aria-expanded', 'false'); };
+    const fill = () => {
+      const typed = input.value.toLowerCase();
+      menu.replaceChildren();
+      for (const text of options.filter((t) => t.toLowerCase().includes(typed))) {
+        const o = document.createElement('div');
+        o.setAttribute('role', 'option'); o.textContent = text;
+        o.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          document.getElementById('pp-' + name + '-h').value = text;
+          const shown = holder.querySelector('.select__placeholder, .select__single-value');
+          shown.className = 'select__single-value'; shown.textContent = text;
+          input.value = '';
+          shut();
+        });
+        menu.append(o);
+      }
+    };
+    const open = () => {
+      shut();
+      menu = document.createElement('div');
+      menu.className = 'select__menu'; menu.setAttribute('role', 'listbox');
+      fill();
+      holder.append(menu);
+      input.setAttribute('aria-expanded', 'true');
+    };
+    if (onFocus) {
+      input.addEventListener('focus', open);
+      input.addEventListener('mousedown', () => { if (!menu) open(); });
+      input.addEventListener('input', () => (menu ? fill() : open()));
+    } else {
+      input.addEventListener('mousedown', open);
+      input.addEventListener('input', open);
+    }
+    input.addEventListener('keydown', (e) => { if (e.key === 'Escape') shut(); });
+    input.addEventListener('blur', () => { input.value = ''; shut(); });
+  }
+  reactSelect('degree', ['Bachelor of Science', 'Master of Science']);
+  reactSelect('major', ['Computer Science', 'Mathematics'], { onFocus: true });
+</script>
+</body></html>`;
+
+/*
+ * A School combobox whose list, named in its `aria-controls`, is drawn inside
+ * the widget's control as a plain list of options with no listbox role, and
+ * which ignores a click on any of them. The list's words are in the control
+ * whether anything is chosen or not, so they are no sign that it took.
+ */
+const PAGE_COMBOBOX_UNROLED_LIST = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="ul-school-l">School</label>
+    <div class="picker-control">
+      <button type="button" id="ul-school" role="combobox" aria-haspopup="listbox" aria-controls="ul-school-list" aria-expanded="false" aria-labelledby="ul-school-l">Select One</button>
+      <ul id="ul-school-list" hidden><li role="option">Boston University</li><li role="option">Northeastern University</li></ul>
+    </div></div>
+</form>
+<script>
+  const school = document.getElementById('ul-school');
+  const list = document.getElementById('ul-school-list');
+  const show = (open) => { list.hidden = !open; school.setAttribute('aria-expanded', String(open)); };
+  school.addEventListener('click', () => show(list.hidden));
+  school.addEventListener('keydown', (e) => { if (e.key === 'Escape') show(false); });
+</script>
+</body></html>`;
+
+/*
+ * The page's own boxes, each put into a component that draws its label round
+ * the slot: in a wrapper before the slot or before a wrapper round it, loose
+ * in its root, round the slot, and with the label's words slotted in too,
+ * beside an asterisk or over a wrapper round the slot. And questions under a
+ * label drawn with an asterisk, or without one. And a Phone put in a
+ * component that draws only wrappers, three of the page's own wrappers below
+ * the paragraph that asks for it, which was read before any of this, as the
+ * same box written into the page is.
+ *
+ * And, on a page of their own, the ways a box takes a label that is not its
+ * own. Two boxes put in one slot under one label, as a label before two boxes
+ * in the page gives the first its words and the second none; and in a slot
+ * in a wrapper apart from the label, which neither takes; and a box put in
+ * a slot after a wrapper round another slot a box is put in, under a label
+ * before that wrapper. A box put in the
+ * slot a component draws after its label's wrapper, and a question put there
+ * after an asterisked one. A label drawn round a slot holding two boxes. And
+ * a help text the page writes before its box, which the component draws in
+ * the slot after the label's wrapper, under the box.
+ */
+const SLOTTED_INTO_LABELS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <y-put-field label="Last name"><input name="q_9601"></y-put-field>
+  <y-put-boxed label="Full name"><input name="q_9610"></y-put-boxed>
+  <y-put-loose label="Email"><input name="q_9602" type="email"></y-put-loose>
+  <y-put-wrap label="City" bare><input name="q_9603"></y-put-wrap>
+  <y-put-named required><span slot="label">First name</span><input name="q_9604"></y-put-named>
+  <y-put-named boxed><span slot="label">State</span><input name="q_9627"></y-put-named>
+  <y-put-field label="Why do you want to work here?" required><textarea name="q_9605"></textarea></y-put-field>
+  <y-put-loose label="What drew you to this team?" required><textarea name="q_9606"></textarea></y-put-loose>
+  <y-put-wrap label="What would you build first here?" required bare><textarea name="q_9607"></textarea></y-put-wrap>
+  <y-put-boxed label="What are you proudest of?" required><textarea name="q_9626"></textarea></y-put-boxed>
+  <y-put-field label="Anything else you would like us to know?"><textarea name="q_9608"></textarea></y-put-field>
+  <div class="block"><div><p>Phone</p></div>
+    <div class="a"><div class="b"><div class="c"><y-put-deep><input name="q_9609" type="tel"></y-put-deep></div></div></div></div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+const SLOTTED_INTO_LABELS_GUARDS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <y-put-field label="City"><input name="q_9611"><input name="q_9612"></y-put-field>
+  <y-put-loose label="Last name"><input name="q_9615"><input name="q_9616"></y-put-loose>
+  <y-put-boxed label="First name"><input name="q_9622"><input name="q_9623"></y-put-boxed>
+  <y-put-pair label="Last name"><input slot="first" name="q_9624"><input name="q_9625"></y-put-pair>
+  <y-put-field label="Email"><input name="q_9613" type="email"><input slot="after" name="q_9614"></y-put-field>
+  <y-put-field label="Why do you want to work here?" required><textarea name="q_9617"></textarea>
+    <textarea slot="after" name="q_9618" placeholder="Is there anything else you would like to add?"></textarea></y-put-field>
+  <y-put-wrap label="City"><input name="q_9619"><input name="q_9620"></y-put-wrap>
+  <y-put-field label="Employee ID"><span slot="after">As on your email address</span><input name="q_9621"></y-put-field>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * A radio question the page puts into a component that draws the question
+ * round the slot, and the same written into the page first: the sponsorship
+ * question over a wrapper holding the page's Yes and No, and the
+ * authorization question beside the page's radiogroup.
+ *
+ * Put into components: the page's Yes and No under the sponsorship question
+ * drawn before a wrapper round the slot, under the authorization question
+ * drawn loose in the root before the slot, and under the sponsorship question
+ * again, its words slotted in beside the asterisk. On a page of its own, the
+ * page's radiogroup under the authorization question drawn loose, and under
+ * the sponsorship question slotted in over a wrapper round the slot.
+ *
+ * And, on pages of their own, the ways a group takes a question that is not
+ * its own. A component drawing the sponsorship question over one slot and
+ * the authorization question over another, the page putting a group in
+ * each, as radios and as radiogroups. And, as radios and as a radiogroup,
+ * the page's Yes and No put in the slot a component draws after the one it
+ * draws "Are you legally authorized to work in the United States? Please
+ * explain." over, which the page puts its text box in. And the Yes and No
+ * put in the one slot under that question, and the text box after them,
+ * which the same written into the page leaves too.
+ */
+const yesNo = (name) => `<label><input type="radio" name="${name}" value="Yes">Yes</label><label><input type="radio" name="${name}" value="No">No</label>`;
+const ariaYesNo = '<div role="radiogroup"><div role="radio" aria-checked="false" tabindex="0">Yes</div><div role="radio" aria-checked="false" tabindex="0">No</div></div>';
+const ASKS_SPONSORSHIP = 'Will you now or in the future require visa sponsorship?';
+const ASKS_AUTHORIZATION = 'Are you legally authorized to work in the United States?';
+const slottedPage = (body) => `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+${body}
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+const PAGE_RADIOS_UNDER_QUESTIONS = slottedPage(`
+  <div class="field"><label>${ASKS_SPONSORSHIP}</label><div class="control">${yesNo('q_9631')}</div></div>
+  <div class="q"><label>${ASKS_AUTHORIZATION}</label>${ariaYesNo}</div>`);
+const SLOTTED_RADIOS = slottedPage(`
+  <y-put-boxed label="${ASKS_SPONSORSHIP}">${yesNo('q_9632')}</y-put-boxed>
+  <y-put-loose label="${ASKS_AUTHORIZATION}">${yesNo('q_9633')}</y-put-loose>
+  <y-put-named required><span slot="label">${ASKS_SPONSORSHIP}</span>${yesNo('q_9634')}</y-put-named>`);
+const SLOTTED_ARIA_RADIOS = slottedPage(`
+  <y-put-loose label="${ASKS_AUTHORIZATION}">${ariaYesNo}</y-put-loose>
+  <y-put-named boxed><span slot="label">${ASKS_SPONSORSHIP}</span>${ariaYesNo}</y-put-named>`);
+const SLOTTED_RADIOS_TWO = slottedPage(`
+  <y-put-two label="${ASKS_SPONSORSHIP}" label2="${ASKS_AUTHORIZATION}"><div slot="first">${yesNo('q_9635')}</div><div>${yesNo('q_9636')}</div></y-put-two>`);
+const SLOTTED_ARIA_TWO = slottedPage(`
+  <y-put-two label="${ASKS_SPONSORSHIP}" label2="${ASKS_AUTHORIZATION}"><div slot="first">${ariaYesNo}</div>${ariaYesNo}</y-put-two>`);
+const SLOTTED_RADIOS_EXPLAIN = slottedPage(`
+  <y-put-field label="${ASKS_AUTHORIZATION} Please explain."><input name="q_9637"><div slot="after">${yesNo('q_9638')}</div></y-put-field>
+  <y-put-field label="${ASKS_AUTHORIZATION} Please explain."><div>${yesNo('q_9639')}</div><input name="q_9640"></y-put-field>`);
+const SLOTTED_ARIA_EXPLAIN = slottedPage(`
+  <y-put-field label="${ASKS_AUTHORIZATION} Please explain."><input name="q_9641"><div slot="after">${ariaYesNo}</div></y-put-field>`);
+
+/*
+ * The same components where nothing beside them is theirs, and every field on
+ * the page is drawn in one, so a query that does not open components sees a
+ * form with no fields at all. One far down a section whose heading is four
+ * wrappers up; one in a group of its own under a group whose label belongs to
+ * the component in it; and one after a component holding a tick box, beside
+ * the consent sentence that is the tick box's.
+ */
+const UNLABELLED_COMPONENTS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <section class="block">
+    <h3>Your email address</h3>
+    <div class="body"><div class="grid"><div class="cell"><div class="control"><y-box field="q_4001"></y-box></div></div></div></div>
+  </section>
+  <div class="q"><label>Phone</label><y-box field="q_4002" type="tel"></y-box></div>
+  <div class="q"><y-box field="q_4003"></y-box></div>
+  <div class="consent">
+    <p>I agree to be contacted by email about this and future roles.</p>
+    <y-check field="q_5001"></y-check>
+    <y-box field="q_5002"></y-box>
+  </div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * A date asked as a group of boxes, each labelled only with its part: the
+ * GOV.UK date input, a `<fieldset>` whose legend is the question over Day,
+ * Month and Year boxes, and the same with a Month and a Year list. Beside the
+ * graduation, a date of birth and a start date asked the same way, which are
+ * not the profile's to answer.
+ */
+const DATE_IN_PARTS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <fieldset role="group"><legend>When do you expect to graduate?</legend>
+    <label for="gov-month">Month</label><input id="gov-month" name="q7-month" inputmode="numeric" maxlength="2">
+    <label for="gov-year">Year</label><input id="gov-year" name="q7-year" inputmode="numeric" maxlength="4">
+  </fieldset>
+  <fieldset><legend>Expected graduation date</legend>
+    <select id="sel-month" name="q8m" aria-label="Month"><option value="">Month</option><option value="01">January</option><option value="05">May</option><option value="12">December</option></select>
+    <select id="sel-year" name="q8y" aria-label="Year"><option value="">Year</option><option>2025</option><option>2026</option><option>2027</option></select>
+  </fieldset>
+  <fieldset role="group"><legend>Date of birth</legend>
+    <label for="dob-day">Day</label><input id="dob-day" name="q9-day" inputmode="numeric">
+    <label for="dob-month">Month</label><input id="dob-month" name="q9-month" inputmode="numeric">
+    <label for="dob-year">Year</label><input id="dob-year" name="q9-year" inputmode="numeric">
+  </fieldset>
+  <fieldset role="group"><legend>When could you start?</legend>
+    <label for="st-month">Month</label><input id="st-month" name="q10-month" inputmode="numeric">
+    <label for="st-year">Year</label><input id="st-year" name="q10-year" inputmode="numeric">
+  </fieldset>
+</form></body></html>`;
+
+/*
+ * A box labelled only "Month", and one whose only words are a placeholder of
+ * "MM", with no fieldset and no group anywhere around them — a card's expiry
+ * asked as two loose boxes — beside the applicant's first name.
+ */
+const MONTH_ALONE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <label for="ma-first">First name</label><input id="ma-first" name="q_1101">
+  <label for="ma-month">Month</label><input id="ma-month" name="q_1102">
+  <input id="ma-mm" name="q_1103" placeholder="MM">
+</form></body></html>`;
+
+/*
  * Two dropdowns from the live sweep. Spotify's Lever form asks "What is your
  * location?" as a list of countries, and Ramp asks a 1–10 scale whose label
  * ends "(phone)"; beside them a "Phone type" list, and the phone box itself.
@@ -3158,7 +4178,7 @@ const NAMES_ZOOX = page(`<ul><li class="application-question"><label><div class=
  */
 const SCHOOL_EMAIL = page(`<div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="_systemfield_email" data-field-entry-id="301289ab-b6ac-4b2c-8c7b-f5e38f544af7__systemfield_email"><label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title" for="_systemfield_email">Personal Email Address</label><div><input placeholder="hello@example.com..." name="_systemfield_email" required="" id="_systemfield_email" type="email" class="_input_80epu_28 _input_1e3gg_32 ashby-application-form-input-text" value=""></div></div><div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="badb95ef-a9fe-4cad-866a-ce1ce98502e6" data-field-entry-id="301289ab-b6ac-4b2c-8c7b-f5e38f544af7_badb95ef-a9fe-4cad-866a-ce1ce98502e6"><label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title" for="badb95ef-a9fe-4cad-866a-ce1ce98502e6">School Email Address</label><div><input placeholder="Type here..." name="badb95ef-a9fe-4cad-866a-ce1ce98502e6" required="" id="badb95ef-a9fe-4cad-866a-ce1ce98502e6" type="text" class="_input_80epu_28 _input_1e3gg_32 ashby-application-form-input-text" value=""></div></div>`);
 /*
- * Three select libraries that draw a list of their own over, or instead of,
+ * Four select libraries that draw a list of their own over, or instead of,
  * a native one — drawn as they draw themselves and driven by the events they
  * listen to, without the libraries.
  */
@@ -3347,6 +4367,150 @@ const BOOTSTRAP_SELECT = `<!doctype html><html><head><meta charset="utf-8"><titl
 </script></body></html>`;
 
 /*
+ * select2 (4.1): the `<select>` kept on the page as
+ * `select2-hidden-accessible` — clipped to a pixel, `aria-hidden="true"` and
+ * `tabindex="-1"`, still labelled by its own `<label for>` — and a
+ * `.select2-container` drawn after it, whose `.select2-selection`
+ * (`role="combobox"`) shows the choice in `.select2-selection__rendered`. It
+ * opens on mousedown into a portal at the foot of the body: a
+ * `.select2-dropdown` with a search box of its own over a `role="listbox"`
+ * of `role="option"` rows. A pick is made on mouseup and announced with
+ * jQuery's `trigger('change')` — jQuery's handlers only, no native event —
+ * and select2 redraws from the select on `change`, which jQuery's `.on` hears
+ * from a native one too.
+ */
+const SELECT2 = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — select2</title>
+<style>
+  .select2-hidden-accessible { border: 0 !important; clip: rect(0 0 0 0) !important; clip-path: inset(50%) !important; height: 1px !important; overflow: hidden !important; padding: 0 !important; position: absolute !important; width: 1px !important; white-space: nowrap !important; }
+  .select2-container { box-sizing: border-box; display: inline-block; position: relative; vertical-align: middle; width: 300px; }
+  .select2-selection--single { display: block; height: 28px; border: 1px solid #aaa; border-radius: 4px; cursor: pointer; }
+  .select2-selection__rendered { display: block; padding: 0 20px 0 8px; line-height: 28px; overflow: hidden; white-space: nowrap; }
+  .select2-selection__placeholder { color: #999; }
+  body > .select2-container--open { position: absolute; }
+  .select2-dropdown { display: block; position: absolute; left: 0; z-index: 1051; width: 300px; background: #fff; border: 1px solid #aaa; }
+  .select2-search__field { width: 100%; box-sizing: border-box; }
+  .select2-results__options { list-style: none; margin: 0; padding: 0; }
+  .select2-results__option { padding: 6px; }
+  .select2-results__option--highlighted { background: #5897fb; color: #fff; }
+</style></head><body>
+<form>
+  <div><label for="first">First name</label><input id="first" name="first_name"></div>
+  <div class="field"><label for="country">Country</label>
+    <select id="country" name="country" class="js-select2" data-placeholder="Select a country">
+      <option value=""></option><option value="CA">Canada</option><option value="US">United States</option><option value="MX">Mexico</option>
+    </select>
+  </div>
+  <div class="field"><label for="hear">How did you hear about this job?</label>
+    <select id="hear" name="hear" class="js-select2" data-placeholder="Select an option">
+      <option value=""></option><option value="li">LinkedIn</option><option value="ref">Employee referral</option><option value="web">Company website</option>
+    </select>
+  </div>
+</form>
+<script>
+  window.jqueryChange = [];
+  window.searched = [];
+  let n = 0;
+  for (const select of document.querySelectorAll('select.js-select2')) {
+    n++;
+    select.classList.add('select2-hidden-accessible');
+    select.setAttribute('aria-hidden', 'true');
+    select.tabIndex = -1;
+    select.dataset.select2Id = 'select2-data-' + n;
+    const box = document.createElement('span');
+    box.className = 'select2 select2-container select2-container--default';
+    box.dir = 'ltr';
+    box.innerHTML = '<span class="selection"><span class="select2-selection select2-selection--single" role="combobox" aria-haspopup="true" aria-expanded="false" tabindex="0" aria-disabled="false" aria-labelledby="select2-' + select.id + '-container">' +
+      '<span class="select2-selection__rendered" id="select2-' + select.id + '-container" role="textbox" aria-readonly="true"></span>' +
+      '<span class="select2-selection__arrow" role="presentation"><b role="presentation"></b></span></span></span><span class="dropdown-wrapper" aria-hidden="true"></span>';
+    select.after(box);
+    const selection = box.querySelector('.select2-selection');
+    const rendered = box.querySelector('.select2-selection__rendered');
+    const resultsId = 'select2-' + select.id + '-results';
+    let portal = null;
+    const draw = () => {
+      const option = select.selectedOptions[0];
+      rendered.textContent = '';
+      if (option && option.value !== '') {
+        rendered.textContent = option.textContent;
+        rendered.title = option.textContent;
+      } else {
+        rendered.removeAttribute('title');
+        rendered.innerHTML = '<span class="select2-selection__placeholder"></span>';
+        rendered.firstChild.textContent = select.dataset.placeholder;
+      }
+    };
+    const close = () => {
+      if (!portal) return;
+      portal.remove();
+      portal = null;
+      box.classList.remove('select2-container--open');
+      selection.setAttribute('aria-expanded', 'false');
+      selection.removeAttribute('aria-controls');
+    };
+    const open = () => {
+      const at = box.getBoundingClientRect();
+      portal = document.createElement('span');
+      portal.className = 'select2-container select2-container--default select2-container--open';
+      portal.style.top = (at.bottom + window.scrollY) + 'px';
+      portal.style.left = (at.left + window.scrollX) + 'px';
+      portal.innerHTML = '<span class="select2-dropdown select2-dropdown--below" dir="ltr"><span class="select2-search select2-search--dropdown">' +
+        '<input class="select2-search__field" type="search" tabindex="0" autocorrect="off" autocapitalize="none" spellcheck="false" role="searchbox" aria-autocomplete="list" autocomplete="off" aria-controls="' + resultsId + '"></span>' +
+        '<span class="select2-results"><ul class="select2-results__options" role="listbox" id="' + resultsId + '" aria-expanded="true" aria-hidden="false"></ul></span></span>';
+      document.body.append(portal);
+      const search = portal.querySelector('.select2-search__field');
+      const list = portal.querySelector('ul');
+      const fill = () => {
+        list.innerHTML = '';
+        const term = search.value.trim().toLowerCase();
+        [...select.options].forEach((option, i) => {
+          if (option.value === '' || (term && !option.textContent.toLowerCase().includes(term))) return;
+          const li = document.createElement('li');
+          li.className = 'select2-results__option select2-results__option--selectable' + (option.selected ? ' select2-results__option--selected' : '');
+          li.id = 'select2-' + select.id + '-result-' + i;
+          li.setAttribute('role', 'option');
+          li.setAttribute('aria-selected', String(option.selected));
+          li.dataset.index = String(i);
+          li.textContent = option.textContent;
+          list.append(li);
+        });
+      };
+      fill();
+      search.addEventListener('input', () => { window.searched.push(search.value); fill(); });
+      list.addEventListener('mouseover', (e) => {
+        list.querySelectorAll('.select2-results__option--highlighted').forEach((li) => li.classList.remove('select2-results__option--highlighted'));
+        e.target.closest('li')?.classList.add('select2-results__option--highlighted');
+      });
+      list.addEventListener('mouseup', (e) => {
+        const li = e.target.closest('li.select2-results__option--selectable');
+        if (!li) return;
+        select.selectedIndex = Number(li.dataset.index);
+        // $element.trigger('input').trigger('change'): jQuery's handlers —
+        // select2's own redraw among them — and no native event.
+        window.jqueryChange.push(select.id);
+        draw();
+        close();
+        selection.focus();
+      });
+      box.classList.add('select2-container--open');
+      selection.setAttribute('aria-expanded', 'true');
+      selection.setAttribute('aria-controls', resultsId);
+      search.focus();
+    };
+    draw();
+    // select2's \`$element.on('change.select2')\`, which a native change reaches —
+    // unless this page is asked to be one that does not redraw, as \`?deaf\`.
+    if (!location.search.includes('deaf')) select.addEventListener('change', draw);
+    selection.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      portal ? close() : open();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+    document.addEventListener('mousedown', (e) => { if (portal && !box.contains(e.target) && !portal.contains(e.target)) close(); });
+  }
+</script></body></html>`;
+
+/*
  * Vuetify 2's v-select: no `<select>` at all. The activator is
  * `.v-input__slot`, `role="button"` with `aria-haspopup="listbox"` and
  * `aria-owns` its list; the label sits inside it, over a readonly text box;
@@ -3434,13 +4598,562 @@ const VUETIFY = `<!doctype html><html><head><meta charset="utf-8"><title>Apply �
   }
 </script></body></html>`;
 
-const PAGES = { '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+/*
+ * Epic Games' careers site: its own dark application form over Greenhouse's
+ * job-board API, not Greenhouse's embed. Reported: the education block's
+ * "School*:", "Degree*:" and "Discipline:" stayed on "Select" after autofill,
+ * each a placeholder with a chevron. Their DOM is behind a Cloudflare check
+ * and was not seen, so these are the dropdowns a React form like that is
+ * likely built with, each drawn as its library draws itself and answering
+ * the events that library answers — no CDN, no React:
+ *
+ *   - Radix UI Select (and so shadcn/ui): a `button role="combobox"` naming
+ *     its list in `aria-controls`, a `<span>` saying "Select", the list drawn
+ *     on open in a portal at the foot of the page, opened on a mouse's
+ *     pointerdown (or on click, for anything that is not a mouse), an option
+ *     taken on a mouse's pointerup (or on click); and, inside a form, a
+ *     visually hidden `<select aria-hidden tabindex="-1">` beside the button,
+ *     which takes a `change` as a choice ("enable form autofill") and fires
+ *     one of its own after every choice.
+ *   - MUI Select: a `div role="combobox" aria-haspopup="listbox"` opened on
+ *     mousedown, a hidden text `input.MuiSelect-nativeInput` (aria-hidden,
+ *     tabindex -1) holding the value, and a `ul role="listbox"` in a Modal
+ *     portal over an invisible backdrop, which hides the app from assistive
+ *     technology while open and closes on Escape inside it.
+ *   - Headless UI's Listbox (1.7): a `button aria-haspopup="listbox"`
+ *     labelled by its label and itself, a `ul role="listbox"` (here in a
+ *     Portal), opened on click, closed by Escape in the list, a second click
+ *     or a click outside; a hidden input only once something is chosen.
+ *   - A plain one written for the site: a `div` saying "Select" with a
+ *     chevron, which opens a `div` of clickable `div`s at the foot of the
+ *     page, with no ARIA at all, labelled only by the `<label>` above it.
+ *
+ * The values are Greenhouse's ids, as a form posting to its API submits them.
+ * Beside the education block: the Country (the profile's), "How did you hear
+ * about this job?" (the bank's), and things that must not be pressed — a
+ * Pronouns list of the same kind, a Remove button, the Submit button, and on
+ * the plain form an unlabelled "Select" in the header. Every press anywhere
+ * is written down by field in `__pressed`. `?unlisted` takes the profile's
+ * school and discipline out of their lists, the discipline being the last
+ * list pressed.
+ */
+const EPIC_LISTS = {
+  country: { label: 'Country*:', name: 'country', items: [['CA', 'Canada'], ['US', 'United States'], ['MX', 'Mexico']] },
+  school: {
+    label: 'School*:', name: 'school_name_id',
+    items: [['1101', 'Harvard University'], ['4521', 'Northeastern University'], ['4522', 'Northwestern University'], ['8807', 'University of Texas at Austin']],
+  },
+  degree: {
+    label: 'Degree*:', name: 'degree_id',
+    items: [['1', 'High School'], ['2', "Associate's Degree"], ['3', "Bachelor's Degree"], ['4', "Master's Degree"], ['5', 'Master of Business Administration (M.B.A.)'],
+      ['6', 'Juris Doctor (J.D.)'], ['7', 'Doctor of Medicine (M.D.)'], ['8', 'Doctor of Philosophy (Ph.D.)'], ['9', "Engineer's Degree"], ['10', 'Other']],
+  },
+  discipline: {
+    label: 'Discipline:', name: 'discipline_id',
+    items: [['201', 'Accounting'], ['202', 'Biology'], ['203', 'Computer Engineering'], ['204', 'Computer Science'], ['205', 'Economics']],
+  },
+  hear: { label: 'How did you hear about this job?', name: 'hear', items: [['1', 'LinkedIn'], ['2', 'Employee referral'], ['3', 'Job board']] },
+  pronouns: { label: 'Pronouns:', name: 'pronouns', items: [['1', 'She/her'], ['2', 'He/him'], ['3', 'They/them']] },
+};
+
+const epicForm = (library, script, style = '', header = '') => `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Epic Games (${library})</title>
+<style>
+  body { background: #121212; color: #f5f5f5; font-family: sans-serif; margin: 0; }
+  main { padding: 16px 24px; }
+  .row { margin: 14px 0; width: 360px; position: relative; }
+  .row > label, .row label.epic-label { display: block; font-size: 14px; margin-bottom: 4px; color: #ccc; }
+  input[type=text] { background: #202020; color: #fff; border: 1px solid #444; padding: 8px; width: 340px; }
+  ${style}
+</style></head><body>
+<div id="root">${header}<main>
+<form id="application" novalidate>
+  <h2>Personal Information</h2>
+  <div class="row"><label for="first_name">First Name*:</label><input id="first_name" name="first_name" type="text"></div>
+  <div class="row" data-field="country"></div>
+  <h2>Education</h2>
+  <div class="education">
+    <div class="row" data-field="school"></div>
+    <div class="row" data-field="degree"></div>
+    <div class="row" data-field="discipline"></div>
+    <button type="button" id="remove-education">Remove</button>
+  </div>
+  <h2>Additional Questions</h2>
+  <div class="row" data-field="hear"></div>
+  <div class="row" data-field="pronouns"></div>
+  <button type="submit" id="submit">Submit Application</button>
+</form>
+</main></div>
+<script>
+  const LISTS = ${JSON.stringify(EPIC_LISTS)};
+  if (location.search.includes('unlisted')) {
+    LISTS.school.items = LISTS.school.items.filter(([, text]) => text !== 'Northeastern University');
+    LISTS.discipline.items = LISTS.discipline.items.filter(([, text]) => text !== 'Computer Science');
+  }
+  window.__pressed = [];
+  for (const type of ['pointerdown', 'mousedown', 'click']) {
+    document.addEventListener(type, (e) => {
+      const t = e.target;
+      const at = t.closest?.('[data-field]')?.dataset.field ?? t.closest?.('[data-owner]')?.dataset.owner ?? (t.id || t.localName);
+      window.__pressed.push(at);
+    }, true);
+  }
+  window.__submitted = 0;
+  window.__removed = 0;
+  document.getElementById('application').addEventListener('submit', (e) => { e.preventDefault(); window.__submitted++; });
+  document.getElementById('remove-education').addEventListener('click', () => window.__removed++);
+  let uid = 0;
+  const nextId = () => ':r' + (uid++).toString(36) + ':';
+  // Below the control, or moved up to stay on screen, as a positioned popup is.
+  const place = (el, under) => {
+    const r = under.getBoundingClientRect();
+    el.style.left = r.left + 'px'; el.style.minWidth = r.width + 'px';
+    el.style.top = Math.max(4, Math.min(r.bottom + 4, innerHeight - el.offsetHeight - 4)) + 'px';
+  };
+  ${script}
+  for (const row of document.querySelectorAll('[data-field]')) render(row, row.dataset.field, LISTS[row.dataset.field]);
+</script></body></html>`;
+
+const CHEVRON = '<svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true"><path d="M4 6l3.5 3.5L11 6" stroke="currentColor"></path></svg>';
+
+const EPIC_RADIX = epicForm('Radix UI Select', `
+  const render = (row, field, list) => {
+    const contentId = 'radix-' + nextId();
+    row.innerHTML =
+      '<label class="epic-label" for="' + field + '-trigger"></label>' +
+      '<button type="button" role="combobox" aria-controls="' + contentId + '" aria-expanded="false" aria-autocomplete="none" dir="ltr" data-state="closed" data-placeholder="" id="' + field + '-trigger" class="trigger">' +
+      '<span style="pointer-events: none;">Select</span><span aria-hidden="true" class="icon">${CHEVRON.replace(/"/g, '\\"')}</span></button>' +
+      '<select aria-hidden="true" tabindex="-1" name="' + list.name + '" style="position: absolute; border: 0px; width: 1px; height: 1px; padding: 0px; margin: -1px; overflow: hidden; clip: rect(0px, 0px, 0px, 0px); white-space: nowrap; overflow-wrap: normal;"><option value=""></option></select>';
+    row.querySelector('label').textContent = list.label;
+    const trigger = row.querySelector('button');
+    const value = trigger.querySelector('span');
+    const native = row.querySelector('select');
+    // Every item's native option, registered even while the list is closed.
+    for (const [id, text] of list.items) native.add(new Option(text, id));
+    let chosen = '';
+    let content = null;
+    let pointerType = 'touch';
+    let hidden = [];
+    const set = (id) => {
+      if (id === chosen) return;
+      chosen = id;
+      const item = list.items.find(([v]) => v === id);
+      value.textContent = item ? item[1] : 'Select';
+      trigger.toggleAttribute('data-placeholder', !item);
+      // BubbleSelect's effect, on every change of value however it came: the
+      // native value written, and a change event of its own.
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(native, id);
+      native.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    // React's onChange on the hidden select: "enable form autofill".
+    native.addEventListener('change', () => set(native.value));
+    const onOutside = (e) => { if (content && !content.contains(e.target)) close(); };
+    const onEscape = (e) => { if (e.key === 'Escape' && content) { e.preventDefault(); close(); } };
+    const close = () => {
+      if (!content) return;
+      content.remove();
+      content = null;
+      trigger.setAttribute('aria-expanded', 'false');
+      trigger.dataset.state = 'closed';
+      document.body.style.pointerEvents = '';
+      for (const el of hidden) el.removeAttribute('aria-hidden');
+      hidden = [];
+      document.removeEventListener('pointerdown', onOutside, true);
+      document.removeEventListener('keydown', onEscape, true);
+      trigger.focus();
+    };
+    const open = () => {
+      if (content) return;
+      content = document.createElement('div');
+      content.setAttribute('data-radix-popper-content-wrapper', '');
+      content.dataset.owner = field;
+      content.style.cssText = 'position: fixed; z-index: 50; pointer-events: auto;';
+      content.innerHTML = '<div role="listbox" id="' + contentId + '" data-state="open" dir="ltr" tabindex="-1" class="content" style="box-sizing: border-box; display: flex; flex-direction: column; outline: none; pointer-events: auto;">' +
+        '<div data-radix-select-viewport="" role="presentation" style="position: relative; flex: 1 1 0%; overflow: auto;"></div></div>';
+      const viewport = content.querySelector('[data-radix-select-viewport]');
+      for (const [id, text] of list.items) {
+        const textId = 'radix-' + nextId();
+        const item = document.createElement('div');
+        item.setAttribute('role', 'option');
+        item.setAttribute('aria-labelledby', textId);
+        item.setAttribute('aria-selected', String(id === chosen));
+        item.dataset.state = id === chosen ? 'checked' : 'unchecked';
+        item.tabIndex = -1;
+        item.className = 'item';
+        item.setAttribute('data-radix-collection-item', '');
+        item.innerHTML = '<span id="' + textId + '"></span>';
+        item.firstChild.textContent = text;
+        let itemPointer = 'touch';
+        item.addEventListener('pointerdown', (e) => { itemPointer = e.pointerType; });
+        item.addEventListener('pointermove', () => { item.setAttribute('data-highlighted', ''); item.focus({ preventScroll: true }); });
+        item.addEventListener('pointerup', (e) => { if (!e.defaultPrevented && itemPointer === 'mouse') { set(id); close(); } });
+        item.addEventListener('click', () => { if (itemPointer !== 'mouse') { set(id); close(); } });
+        viewport.append(item);
+      }
+      document.body.append(content);
+      place(content, trigger);
+      trigger.setAttribute('aria-expanded', 'true');
+      trigger.dataset.state = 'open';
+      // DismissableLayer and hideOthers.
+      document.body.style.pointerEvents = 'none';
+      hidden = [...document.body.children].filter((el) => el !== content && !el.hasAttribute('aria-hidden') && el.localName !== 'script');
+      for (const el of hidden) el.setAttribute('aria-hidden', 'true');
+      document.addEventListener('pointerdown', onOutside, true);
+      document.addEventListener('keydown', onEscape, true);
+      (viewport.querySelector('[data-state=checked]') ?? viewport.firstElementChild).focus({ preventScroll: true });
+    };
+    trigger.addEventListener('pointerdown', (e) => {
+      pointerType = e.pointerType;
+      if (e.button === 0 && e.ctrlKey === false && e.pointerType === 'mouse') { open(); e.preventDefault(); }
+    });
+    trigger.addEventListener('click', () => { trigger.focus(); if (pointerType !== 'mouse') open(); });
+    trigger.addEventListener('keydown', (e) => { if ([' ', 'Enter', 'ArrowDown', 'ArrowUp'].includes(e.key)) { open(); e.preventDefault(); } });
+  };
+`, `
+  .trigger { display: flex; justify-content: space-between; align-items: center; width: 100%; height: 36px; background: #202020; color: #f5f5f5; border: 1px solid #444; border-radius: 6px; padding: 0 12px; }
+  .content { background: #1b1b1b; border: 1px solid #444; border-radius: 6px; min-width: 8rem; }
+  .item { padding: 6px 8px; cursor: default; }
+`);
+
+const EPIC_MUI = epicForm('MUI Select', `
+  const render = (row, field, list) => {
+    const listboxId = nextId();
+    row.innerHTML =
+      '<label class="epic-label" id="' + field + '-label"></label>' +
+      '<div class="MuiFormControl-root MuiFormControl-fullWidth css-q8hpuo-MuiFormControl-root">' +
+      '<div class="MuiInputBase-root MuiOutlinedInput-root MuiInputBase-colorPrimary MuiInputBase-fullWidth MuiInputBase-formControl css-1ufn0jl">' +
+      '<div tabindex="0" role="combobox" aria-controls="' + listboxId + '" aria-expanded="false" aria-haspopup="listbox" aria-labelledby="' + field + '-label ' + field + '-select" id="' + field + '-select" class="MuiSelect-select MuiSelect-outlined MuiInputBase-input MuiOutlinedInput-input css-qiwgdb"><em>Select</em></div>' +
+      '<input aria-invalid="false" name="' + list.name + '" aria-hidden="true" tabindex="-1" class="MuiSelect-nativeInput css-1k3x8v3" value="">' +
+      '<svg class="MuiSvgIcon-root MuiSvgIcon-fontSizeMedium MuiSelect-icon MuiSelect-iconOutlined css-bi4s6q" focusable="false" aria-hidden="true" viewBox="0 0 24 24" data-testid="ArrowDropDownIcon"><path d="M7 10l5 5 5-5z"></path></svg>' +
+      '<fieldset aria-hidden="true" class="MuiOutlinedInput-notchedOutline css-igs3ac"><legend class="css-ihdtdm"><span class="notranslate">\u200b</span></legend></fieldset>' +
+      '</div></div>';
+    row.querySelector('label').textContent = list.label;
+    const display = row.querySelector('[role=combobox]');
+    const native = row.querySelector('input.MuiSelect-nativeInput');
+    let chosen = '';
+    let modal = null;
+    const set = (id) => {
+      const item = list.items.find(([v]) => v === id);
+      if (!item) return;
+      chosen = id;
+      native.value = id;
+      display.textContent = item[1];
+    };
+    // SelectInput's handleChange on the native input: browser autofill, by value.
+    native.addEventListener('input', () => set(native.value));
+    const close = () => {
+      if (!modal) return;
+      const going = modal;
+      modal = null;
+      display.setAttribute('aria-expanded', 'false');
+      document.getElementById('root').removeAttribute('aria-hidden');
+      display.focus();
+      // Grow's exit, then unmounted.
+      going.querySelector('.MuiPaper-root').style.opacity = '0';
+      setTimeout(() => going.remove(), 200);
+    };
+    const open = () => {
+      if (modal) return;
+      modal = document.createElement('div');
+      modal.setAttribute('role', 'presentation');
+      modal.className = 'MuiPopover-root MuiMenu-root MuiModal-root css-1sucic7';
+      modal.id = 'menu-' + list.name;
+      modal.dataset.owner = field;
+      modal.style.cssText = 'position: fixed; z-index: 1300; inset: 0px;';
+      modal.innerHTML =
+        '<div aria-hidden="true" class="MuiBackdrop-root MuiBackdrop-invisible MuiModal-backdrop css-esi9ax" style="opacity: 1; position: fixed; inset: 0; background-color: transparent; z-index: -1;"></div>' +
+        '<div tabindex="0" data-testid="sentinelStart"></div>' +
+        '<div class="MuiPaper-root MuiPaper-elevation MuiPaper-rounded MuiPaper-elevation8 MuiPopover-paper MuiMenu-paper css-1tktgsa" tabindex="-1" style="position: absolute; opacity: 1; transform: none; transition: opacity 200ms;">' +
+        '<ul class="MuiList-root MuiList-padding MuiMenu-list css-r8u8y9" role="listbox" tabindex="-1" aria-labelledby="' + field + '-label" id="' + listboxId + '"></ul></div>' +
+        '<div tabindex="0" data-testid="sentinelEnd"></div>';
+      const ul = modal.querySelector('ul');
+      const placeholder = document.createElement('li');
+      placeholder.className = 'MuiButtonBase-root MuiMenuItem-root MuiMenuItem-gutters Mui-disabled';
+      placeholder.tabIndex = -1;
+      placeholder.setAttribute('role', 'option');
+      placeholder.setAttribute('aria-disabled', 'true');
+      placeholder.setAttribute('aria-selected', String(chosen === ''));
+      placeholder.dataset.value = '';
+      placeholder.innerHTML = '<em>Select</em>';
+      ul.append(placeholder);
+      for (const [id, text] of list.items) {
+        const li = document.createElement('li');
+        li.className = 'MuiButtonBase-root MuiMenuItem-root MuiMenuItem-gutters' + (id === chosen ? ' Mui-selected' : '');
+        li.tabIndex = id === chosen ? 0 : -1;
+        li.setAttribute('role', 'option');
+        li.setAttribute('aria-selected', String(id === chosen));
+        li.dataset.value = id;
+        li.append(text);
+        li.insertAdjacentHTML('beforeend', '<span class="MuiTouchRipple-root css-w0pj6f"></span>');
+        li.addEventListener('click', () => { set(id); close(); });
+        ul.append(li);
+      }
+      modal.querySelector('.MuiBackdrop-root').addEventListener('click', close);
+      modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } });
+      document.body.append(modal);
+      place(modal.querySelector('.MuiPaper-root'), display);
+      display.setAttribute('aria-expanded', 'true');
+      // ModalManager's ariaHiddenSiblings.
+      document.getElementById('root').setAttribute('aria-hidden', 'true');
+      (ul.querySelector('.Mui-selected') ?? ul.querySelector('li:not(.Mui-disabled)')).focus();
+    };
+    display.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      display.focus();
+      open();
+    });
+    display.addEventListener('keydown', (e) => { if ([' ', 'ArrowUp', 'ArrowDown', 'Enter'].includes(e.key)) { e.preventDefault(); open(); } });
+  };
+`, `
+  .MuiInputBase-root { position: relative; display: flex; align-items: center; border: 1px solid #555; border-radius: 4px; background: #202020; }
+  .MuiSelect-select { flex: 1; padding: 10px 32px 10px 12px; cursor: pointer; user-select: none; min-height: 1.4em; }
+  .MuiSelect-nativeInput { bottom: 0; left: 0; position: absolute; opacity: 0; pointer-events: none; width: 100%; box-sizing: border-box; }
+  .MuiSelect-icon { position: absolute; right: 7px; width: 1em; height: 1em; fill: #ccc; pointer-events: none; }
+  .MuiOutlinedInput-notchedOutline { position: absolute; inset: -5px 0 0; margin: 0; padding: 0 8px; pointer-events: none; border: 0; }
+  .MuiOutlinedInput-notchedOutline legend { visibility: hidden; height: 11px; font-size: 0.75em; padding: 0; max-width: 0.01px; }
+  .MuiPaper-root { background: #1e1e1e; color: #fff; box-shadow: 0 5px 5px -3px #0008; }
+  .MuiList-root { list-style: none; margin: 0; padding: 8px 0; }
+  .MuiMenuItem-root { padding: 6px 16px; cursor: pointer; position: relative; }
+  .MuiMenuItem-root.Mui-disabled { opacity: 0.38; pointer-events: none; }
+  .MuiTouchRipple-root { position: absolute; inset: 0; pointer-events: none; }
+`);
+
+const EPIC_HEADLESS = epicForm('Headless UI Listbox', `
+  let hid = 1;
+  const hlId = (kind) => 'headlessui-listbox-' + kind + '-' + (hid++);
+  const portalRoot = () => {
+    let root = document.getElementById('headlessui-portal-root');
+    if (!root) { root = document.createElement('div'); root.id = 'headlessui-portal-root'; document.body.append(root); }
+    return root;
+  };
+  const render = (row, field, list) => {
+    const labelId = hlId('label');
+    const buttonId = hlId('button');
+    row.innerHTML =
+      '<div class="relative mt-1" data-headlessui-state="">' +
+      '<label id="' + labelId + '" data-headlessui-state="" class="epic-label"></label>' +
+      '<button id="' + buttonId + '" type="button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="' + labelId + ' ' + buttonId + '" data-headlessui-state="" class="relative w-full cursor-default rounded-lg py-2 pl-3 pr-10 text-left">' +
+      '<span class="block truncate">Select</span><span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">${CHEVRON.replace(/"/g, '\\"')}</span></button></div>';
+    row.querySelector('label').textContent = list.label;
+    const listbox = row.firstElementChild;
+    const button = row.querySelector('button');
+    const shown = button.querySelector('span.block');
+    let chosen = null;
+    let options = null;
+    let initial = null;
+    const set = (id, text) => {
+      chosen = id;
+      shown.textContent = text;
+      // The Hidden input for a named Listbox, drawn once there is a value.
+      let hiddenInput = row.querySelector(':scope > input[type=hidden]');
+      if (!hiddenInput) {
+        hiddenInput = document.createElement('input');
+        hiddenInput.type = 'hidden'; hiddenInput.hidden = true; hiddenInput.readOnly = true; hiddenInput.name = list.name;
+        row.insertBefore(hiddenInput, listbox);
+      }
+      hiddenInput.value = id;
+    };
+    const onDown = (e) => { initial = e.target; };
+    const onOutside = (e) => {
+      const target = initial ?? e.target;
+      initial = null;
+      if (!options || button.contains(target) || options.contains(target)) return;
+      close(false);
+    };
+    const close = (refocus = true) => {
+      if (!options) return;
+      options.parentElement.remove();
+      options = null;
+      button.setAttribute('aria-expanded', 'false');
+      button.removeAttribute('aria-controls');
+      button.dataset.headlessuiState = '';
+      document.removeEventListener('mousedown', onDown, true);
+      document.removeEventListener('click', onOutside, true);
+      if (refocus) button.focus({ preventScroll: true });
+    };
+    const open = () => {
+      const holder = document.createElement('div');
+      holder.dataset.owner = field;
+      const optionsId = hlId('options');
+      holder.innerHTML = '<ul aria-labelledby="' + buttonId + '" aria-orientation="vertical" id="' + optionsId + '" role="listbox" tabindex="0" data-headlessui-state="open" class="absolute mt-1 max-h-60 overflow-auto rounded-md py-1"></ul>';
+      options = holder.firstElementChild;
+      for (const [id, text] of list.items) {
+        const li = document.createElement('li');
+        li.id = hlId('option');
+        li.setAttribute('role', 'option');
+        li.tabIndex = -1;
+        li.setAttribute('aria-selected', String(id === chosen));
+        li.dataset.headlessuiState = id === chosen ? 'selected' : '';
+        li.className = 'relative cursor-default select-none py-2 pl-10 pr-4';
+        li.innerHTML = '<span class="block truncate"></span>';
+        li.firstChild.textContent = text;
+        li.addEventListener('mousemove', () => { options?.setAttribute('aria-activedescendant', li.id); });
+        li.addEventListener('click', (e) => { e.preventDefault(); set(id, text); close(); });
+        options.append(li);
+      }
+      options.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+      });
+      portalRoot().append(holder);
+      options.style.position = 'fixed';
+      place(options, button);
+      button.setAttribute('aria-expanded', 'true');
+      button.setAttribute('aria-controls', optionsId);
+      button.dataset.headlessuiState = 'open';
+      document.addEventListener('mousedown', onDown, true);
+      document.addEventListener('click', onOutside, true);
+      options.focus({ preventScroll: true });
+    };
+    button.addEventListener('click', (e) => {
+      if (options) { close(); return; }
+      e.preventDefault();
+      open();
+    });
+    button.addEventListener('keydown', (e) => { if ([' ', 'Enter', 'ArrowDown', 'ArrowUp'].includes(e.key)) { e.preventDefault(); if (!options) open(); } });
+  };
+`, `
+  .relative { position: relative; }
+  button[aria-haspopup] { width: 100%; background: #202020; color: #f5f5f5; border: 1px solid #444; border-radius: 8px; padding: 8px 40px 8px 12px; text-align: left; }
+  .pointer-events-none { pointer-events: none; position: absolute; top: 0; bottom: 0; right: 0; display: flex; align-items: center; padding-right: 8px; }
+  #headlessui-portal-root ul { list-style: none; margin: 0; padding: 4px 0; background: #1b1b1b; color: #fff; border-radius: 6px; max-height: 15rem; overflow: auto; z-index: 10; }
+  #headlessui-portal-root li { padding: 8px 16px 8px 40px; cursor: default; }
+`);
+
+
+/*
+ * No ARIA at all: a `div` saying "Select" beside a chevron, and a `div` of
+ * `div`s at the foot of the page, each taking a click. A hidden input beside
+ * it carries the id. Closed by a click outside or a second click on it.
+ * Beside the Pronouns one: an unlabelled "Select" in the header, the shape
+ * of a region picker, which is nobody's question.
+ */
+const EPIC_PLAIN = epicForm('plain dropdown', `
+  const dropdown = (host, list, owner) => {
+    host.innerHTML = '<div class="dropdown__toggle" tabindex="0"><span class="dropdown__value">Select</span>${CHEVRON.replace(/"/g, '\\"')}</div>' +
+      (list.name ? '<input type="hidden" name="' + list.name + '" value="">' : '');
+    const toggle = host.querySelector('.dropdown__toggle');
+    const shown = toggle.querySelector('.dropdown__value');
+    const hiddenInput = host.querySelector('input[type=hidden]');
+    let menu = null;
+    const onOutside = (e) => { if (menu && !menu.contains(e.target) && !toggle.contains(e.target)) close(); };
+    const close = () => {
+      if (!menu) return;
+      menu.remove();
+      menu = null;
+      document.removeEventListener('click', onOutside, true);
+    };
+    toggle.addEventListener('click', () => {
+      if (menu) return close();
+      menu = document.createElement('div');
+      menu.className = 'dropdown__menu';
+      menu.dataset.owner = owner;
+      for (const [id, text] of list.items) {
+        const option = document.createElement('div');
+        option.className = 'dropdown__option';
+        option.textContent = text;
+        option.addEventListener('click', () => {
+          shown.textContent = text;
+          if (hiddenInput) hiddenInput.value = id;
+          close();
+        });
+        menu.append(option);
+      }
+      document.body.append(menu);
+      place(menu, toggle);
+      document.addEventListener('click', onOutside, true);
+    });
+    return toggle;
+  };
+  const render = (row, field, list) => {
+    row.innerHTML = '<label></label><div class="dropdown"></div>';
+    row.querySelector('label').textContent = list.label;
+    dropdown(row.querySelector('.dropdown'), list, field);
+  };
+  window.__region = 0;
+  dropdown(document.getElementById('region'), { items: [['na', 'North America'], ['eu', 'Europe']] }, 'region')
+    .addEventListener('click', () => window.__region++);
+`, `
+  header { display: flex; justify-content: space-between; align-items: center; padding: 8px 24px; background: #000; }
+  .dropdown { position: relative; }
+  .dropdown__toggle { display: flex; justify-content: space-between; align-items: center; background: #202020; border: 1px solid #444; border-radius: 4px; padding: 8px 12px; cursor: pointer; user-select: none; }
+  .dropdown__menu { position: fixed; background: #1b1b1b; border: 1px solid #444; z-index: 20; max-height: 240px; overflow: auto; }
+  .dropdown__option { padding: 8px 12px; cursor: pointer; }
+  .dropdown__option:hover { background: #333; }
+  #region { width: 180px; }
+`, '<header><strong>EPIC GAMES</strong><div id="region"></div></header>');
+
+/*
+ * Things that look nearly like a plain dropdown and are not to be pressed,
+ * each labelled with a question the profile answers: a "Select" whose label
+ * names another control, one with no chevron and nothing to press, a
+ * "Select ▾" that is the form's submit button, one that is a link, and an
+ * upload's "Select" beside its file box. And two that are dropdowns but whose
+ * press draws something that cannot be read as their list alone — a list and
+ * a tooltip at once, a list holding a button — which are pressed to open and
+ * pressed again to shut, and left for the person. Every press is written
+ * down by row.
+ */
+const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title>
+<style>
+  .row { margin: 12px 0; width: 320px; }
+  .dd { display: flex; justify-content: space-between; border: 1px solid #999; padding: 6px 10px; cursor: pointer; }
+  .flat { padding: 6px 10px; }
+  .pop { position: fixed; background: #fff; border: 1px solid #999; top: 10px; left: 400px; }
+  .pop div { padding: 4px 8px; cursor: pointer; }
+</style></head><body>
+<form id="f">
+  <div class="row" id="a"><label for="nowhere">School:</label><div class="dd" tabindex="0"><span>Select</span>${CHEVRON}</div></div>
+  <div class="row" id="b"><label>Degree:</label><div class="flat"><span>Select</span></div></div>
+  <div class="row" id="c"><label>Discipline:</label><button class="dd">Select ▾</button></div>
+  <div class="row" id="d"><label>Country:</label><a class="dd" href="#country"><span>Select</span>${CHEVRON}</a></div>
+  <div class="row" id="e"><label>GPA:</label><div class="dd" tabindex="0">${CHEVRON}<span>Select</span></div><input type="file" name="transcript" style="display:none"></div>
+  <div class="row" id="two"><label>University:</label><div class="dd" tabindex="0"><span>Select</span>${CHEVRON}</div></div>
+  <div class="row" id="buttoned"><label>Major:</label><div class="dd" tabindex="0"><span>Select</span>${CHEVRON}</div></div>
+</form>
+<script>
+  window.__pressed = [];
+  window.__submitted = 0;
+  for (const type of ['pointerdown', 'mousedown', 'click']) {
+    document.addEventListener(type, (e) => window.__pressed.push(e.target.closest?.('.row, [data-owner]')?.id || e.target.closest?.('[data-owner]')?.dataset.owner || e.target.localName), true);
+  }
+  document.getElementById('f').addEventListener('submit', (e) => { e.preventDefault(); window.__submitted++; });
+  const menu = (row, items, extra) => {
+    const toggle = row.querySelector('.dd');
+    let drawn = [];
+    toggle.addEventListener('click', () => {
+      if (drawn.length) { drawn.forEach((el) => el.remove()); drawn = []; return; }
+      const list = document.createElement('div');
+      list.className = 'pop';
+      list.dataset.owner = row.id;
+      for (const text of items) {
+        const option = document.createElement('div');
+        option.textContent = text;
+        option.addEventListener('click', () => { toggle.firstElementChild.textContent = text; drawn.forEach((el) => el.remove()); drawn = []; });
+        list.append(option);
+      }
+      drawn = [list, ...extra(list)];
+      for (const el of drawn) if (!el.isConnected) document.body.append(el);
+    });
+  };
+  menu(document.getElementById('two'), ['Harvard University', 'Northeastern University'], () => {
+    const tip = document.createElement('div');
+    tip.className = 'pop'; tip.style.top = '200px'; tip.dataset.owner = 'two';
+    tip.textContent = 'Pick the school you attended';
+    return [tip];
+  });
+  menu(document.getElementById('buttoned'), ['Biology', 'Computer Science'], (list) => {
+    list.insertAdjacentHTML('beforeend', '<button type="button">Add a discipline</button>');
+    return [];
+  });
+</script></body></html>`;
+
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
 
 const PROFILE = {
-  first_name: 'Jianwen',
-  last_name: 'Ding',
-  full_name: 'Jianwen Ding',
-  email: 'ding.jianw@northeastern.edu',
+  first_name: 'Morgan',
+  last_name: 'Testwell',
+  full_name: 'Morgan Testwell',
+  email: 'morgan.testwell@example.com',
   phone: '555-0100',
   linkedin: 'linkedin.com/in/x',
   github: 'github.com/x',
@@ -3498,8 +5211,8 @@ async function main() {
     }, { b: base, profile: PROFILE });
 
     group('Names');
-    check('a label that is just "Name" gets the whole name', out.values.nm === 'Jianwen Ding', out.values.nm);
-    check('first and last still go to their own fields', out.values.fn === 'Jianwen' && out.values.ln === 'Ding');
+    check('a label that is just "Name" gets the whole name', out.values.nm === 'Morgan Testwell', out.values.nm);
+    check('first and last still go to their own fields', out.values.fn === 'Morgan' && out.values.ln === 'Testwell');
 
     group('Dropdowns');
     // `value` is never empty on a select: the placeholder has a value of its
@@ -3920,7 +5633,7 @@ async function main() {
     check('"Years at current company" is not given the employer', misread.tenure === '', misread.tenure);
     check('"Country phone code" is not given the whole number', misread.cpc === '', misread.cpc);
     check('"Pronunciation of your name" is not given the name', misread.say === '', misread.say);
-    check('while "Full name" still is', misread.fulln === 'Jianwen Ding', misread.fulln);
+    check('while "Full name" still is', misread.fulln === 'Morgan Testwell', misread.fulln);
     /*
      * One box asking for both halves. The first pattern to match claims a
      * field, and "First and Last Name" says "Last Name" whole, so it was given
@@ -3928,22 +5641,22 @@ async function main() {
      */
     check(
       '"First and Last Name" is given the whole name, however the two are joined',
-      [misread.fl1, misread.fl2, misread.fl3].every((v) => v === 'Jianwen Ding'),
+      [misread.fl1, misread.fl2, misread.fl3].every((v) => v === 'Morgan Testwell'),
       JSON.stringify([misread.fl1, misread.fl2, misread.fl3]),
     );
     /*
      * And one half of it, the half said in brackets after the name it belongs
      * to. "Legal name" claimed the box as the whole name, so "Legal name
-     * (First)" and "Legal name (Last)" were both given "Jianwen Ding", and
+     * (First)" and "Legal name (Last)" were both given "Morgan Testwell", and
      * "(Middle)" — which the profile does not hold — the whole name as well.
      */
     check(
       '"Legal name (First)" and "(Last)" are given their own half',
-      misread.ln1 === 'Jianwen' && misread.ln2 === 'Ding',
+      misread.ln1 === 'Morgan' && misread.ln2 === 'Testwell',
       JSON.stringify([misread.ln1, misread.ln2]),
     );
     check('"Legal name (Middle)" is given nothing', misread.ln3 === '', misread.ln3);
-    check('while a legal name asked for whole, parts listed, still is', misread.ln4 === 'Jianwen Ding', misread.ln4);
+    check('while a legal name asked for whole, parts listed, still is', misread.ln4 === 'Morgan Testwell', misread.ln4);
     check('an essay about "your current company" is not given the employer', misread.e1 === '', misread.e1);
     check('"What did you study in school and why?" is not given the school', misread.e2 === '', misread.e2);
     check('"experience with state management" is not given the state', misread.e3 === '', misread.e3);
@@ -3957,7 +5670,7 @@ async function main() {
         const m = await import(`${b}/autofill.js`);
         m.fillForm(profile);
         return Object.fromEntries([...document.querySelectorAll('input, select, textarea')].map((el) => [el.id, el.value]));
-      }, { b: base, profile: { ...PROFILE, address_state: 'MA', location: 'Boston, MA', school: 'Northeastern University', website: 'jianwen.dev', graduation_year: '2027', major: 'Computer Science', degree: 'Bachelor of Science', gpa: '3.9' } }),
+      }, { b: base, profile: { ...PROFILE, address_state: 'MA', location: 'Boston, MA', school: 'Northeastern University', website: 'morgantestwell.dev', graduation_year: '2027', major: 'Computer Science', degree: 'Bachelor of Science', gpa: '3.9' } }),
     );
     // The same form, against a profile that names no degree at all.
     const noLevel = await page.goto(`${base}/more-misread`, { waitUntil: 'domcontentloaded' }).then(() =>
@@ -3987,7 +5700,7 @@ async function main() {
         const m = await import(`${b}/autofill.js`);
         m.fillForm(profile);
         return Object.fromEntries([...document.querySelectorAll('input')].map((el) => [el.id, el.value]));
-      }, { b: base, profile: { ...PROFILE, website: 'jianwen.dev' } }),
+      }, { b: base, profile: { ...PROFILE, website: 'morgantestwell.dev' } }),
     );
     group('A link box holding only the start of an address');
     check('"https://" is not an answer: the profile goes in', /linkedin\.com\/in\/x/.test(prefixed.p1), prefixed.p1);
@@ -4034,7 +5747,7 @@ async function main() {
     group('The password to a link, which is not the link');
     check('"Portfolio password" is not given the portfolio URL', more.pfpw === '', more.pfpw);
     check('nor is "Website password (if any)"', more.webpw === '', more.webpw);
-    check('while "Portfolio" still gets it', more.pf === 'jianwen.dev', more.pf);
+    check('while "Portfolio" still gets it', more.pf === 'morgantestwell.dev', more.pf);
 
     group('Where the school is, and whose website');
     check('"School city" is not given the school\'s name', more.schcity === '', more.schcity);
@@ -4051,7 +5764,7 @@ async function main() {
     check('nor "Last name (previously used, if any)"', more.prevused === '', more.prevused);
     check(
       'while "Last name" and "Legal name" still are',
-      more['own-ln'] === 'Ding' && more['own-legal'] === 'Jianwen Ding',
+      more['own-ln'] === 'Testwell' && more['own-legal'] === 'Morgan Testwell',
       `${more['own-ln']} / ${more['own-legal']}`,
     );
 
@@ -4208,7 +5921,7 @@ async function main() {
     check('nor "Full Name" under "Applicant Signature"', more.sig4 === '', more.sig4);
     check(
       'while "Email you use to sign in" and "Legal name" still are',
-      more['sig-in'] === PROFILE.email && more['own-legal'] === 'Jianwen Ding',
+      more['sig-in'] === PROFILE.email && more['own-legal'] === 'Morgan Testwell',
       `${more['sig-in']} / ${more['own-legal']}`,
     );
 
@@ -4846,7 +6559,7 @@ async function main() {
       page.evaluate(async ({ b }) => {
         const m = await import(`${b}/autofill.js`);
         m.fillForm({
-          first_name: 'Jianwen', last_name: 'Ding', school: 'Northeastern University', major: 'Computer Science', gpa: '3.8',
+          first_name: 'Morgan', last_name: 'Testwell', school: 'Northeastern University', major: 'Computer Science', gpa: '3.8',
           education_start_month: 'September', education_start_year: '2023', education_start_date: 'September 2023',
           graduation_month: 'May', graduation_year: '2027', graduation_date: 'May 2027',
         });
@@ -5066,10 +6779,10 @@ async function main() {
       academics['a-hs'] === '' && academics['a-hsgpa'] === '' && academics['a-ss'] === '',
       JSON.stringify([academics['a-hs'], academics['a-hsgpa'], academics['a-ss']]),
     );
-    check('"Forename" is the first name', academics['a-fore'] === 'Jianwen' && academics['a-sur'] === 'Ding', JSON.stringify([academics['a-fore'], academics['a-sur']]));
+    check('"Forename" is the first name', academics['a-fore'] === 'Morgan' && academics['a-sur'] === 'Testwell', JSON.stringify([academics['a-fore'], academics['a-sur']]));
     check(
       '"First" and "Last" under a legend reading Name',
-      academics['a-first'] === 'Jianwen' && academics['a-last'] === 'Ding',
+      academics['a-first'] === 'Morgan' && academics['a-last'] === 'Testwell',
       JSON.stringify([academics['a-first'], academics['a-last']]),
     );
     /*
@@ -5316,12 +7029,12 @@ async function main() {
      */
     check(
       'a CSRF token between a label and its box does not cost the label',
-      hidden.values.hfn === 'Jianwen',
+      hidden.values.hfn === 'Morgan',
       hidden.values.hfn,
     );
     check(
       'nor does one wrapped in a span, as Workday writes them',
-      hidden.values.hem === 'ding.jianw@northeastern.edu',
+      hidden.values.hem === 'morgan.testwell@example.com',
       hidden.values.hem,
     );
     check(
@@ -5755,6 +7468,41 @@ async function main() {
       memory.fromMemory.join(' | ') || 'none',
     );
     /*
+     * An answer that looks personal, under a question that does not. The
+     * widgets refused it by `worthRemembering`; the dropdown and the radio
+     * group looked only at the question, and put a date and an SSN-shaped
+     * option into the form.
+     */
+    const privately = await page.goto(`${base}/remembered-private`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(
+        async ({ b, profile }) => {
+          const m = await import(`${b}/autofill.js`);
+          const report = m.fillForm(profile, {
+            remembered: [
+              { question: 'Question 88213 of this form', answer: '04/02/1999' },
+              { question: 'Question 88214 of this form', answer: '123-45-6789' },
+              { question: 'Which working arrangement do you prefer?', answer: 'Hybrid' },
+            ],
+          });
+          return {
+            date: document.getElementById('q88213').value,
+            ssn: document.querySelector('input[name="q_88214"]:checked')?.value ?? '',
+            arr: document.getElementById('arr').value,
+            fromMemory: report.filled.filter((f) => f.remembered).map((f) => `${f.question} = ${f.value}`),
+          };
+        },
+        { b: base, profile: PROFILE },
+      ),
+    );
+    check('a dropdown is not answered from the bank with an answer that looks personal', privately.date === '', `"${privately.date}"`);
+    check('nor is a radio group', privately.ssn === '', `"${privately.ssn}"`);
+    check(
+      'while the ordinary question beside them still is',
+      privately.arr === 'Hybrid' && privately.fromMemory.length === 1,
+      privately.fromMemory.join(' | ') || 'none',
+    );
+
+    /*
      * And nothing changes when there is no bank, which is every first
      * application and every session with the store switched off.
      */
@@ -5822,7 +7570,7 @@ async function main() {
         ),
       );
     const onTyped = await typed(PROFILE);
-    const withSite = await typed({ ...PROFILE, website: 'https://jianwen.example' });
+    const withSite = await typed({ ...PROFILE, website: 'https://morgantestwell.example' });
     const noBankTyped = await page.goto(`${base}/typed`, { waitUntil: 'domcontentloaded' }).then(() =>
       page.evaluate(async ({ b, profile }) => {
         const m = await import(`${b}/autofill.js`);
@@ -5852,13 +7600,13 @@ async function main() {
     );
     check(
       'a box the profile fills is filled from the profile, whatever the bank says',
-      onTyped.values.fn === 'Jianwen' && !onTyped.asked.includes('First Name'),
+      onTyped.values.fn === 'Morgan' && !onTyped.asked.includes('First Name'),
       `"${onTyped.values.fn}"`,
     );
     check(
       'and one it could fill but has nothing for is the person’s, until the profile has it',
       onTyped.asked.includes('Portfolio link') && !withSite.asked.includes('Portfolio link') &&
-        withSite.values.portfolio === 'https://jianwen.example',
+        withSite.values.portfolio === 'https://morgantestwell.example',
       JSON.stringify({ without: onTyped.values.portfolio, with: withSite.values.portfolio }),
     );
     check(
@@ -7406,6 +9154,908 @@ async function main() {
       JSON.stringify(addsCode),
     );
 
+    const inParts = await page.goto(`${base}/phone-in-parts`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        const boxes = [...document.querySelectorAll('input')];
+        return {
+          ...Object.fromEntries(boxes.map((el) => [el.id, el.value])),
+          over: boxes.filter((el) => el.maxLength > 0 && el.value.length > el.maxLength).map((el) => el.id),
+          filled: report.filled.map((f) => f.key),
+          skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, fields: { ...SWEEP, address_state: 'Massachusetts' } }),
+    );
+    group('A telephone number asked in parts, and boxes with room for only so much');
+    check(
+      'three boxes of 3, 3 and 4 take the number a part each, and the extension is left empty',
+      inParts['day-area'] === '555' && inParts['day-prefix'] === '010' && inParts['day-line'] === '0199' && inParts['day-ext'] === '',
+      JSON.stringify(inParts),
+    );
+    check(
+      'an area code box and a seven-digit number box take the area code and the rest',
+      inParts['mob-area'] === '555' && inParts['mob-number'] === '0100199',
+      JSON.stringify(inParts),
+    );
+    check('a phone box with room for ten takes the ten digits', inParts.alt === '5550100199', JSON.stringify(inParts));
+    check('a State box with room for two takes the state\'s two letters', inParts.st === 'MA', JSON.stringify(inParts));
+    check(
+      'no box holds more than its maxlength, the zip is left alone, and nothing is reported refused',
+      inParts.over.length === 0 && inParts.zip === '' && !inParts.skipped.some((s) => s.startsWith('phone') || s.startsWith('address_state')),
+      JSON.stringify(inParts),
+    );
+
+    const inFour = await page.goto(`${base}/phone-in-four`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        return {
+          ...Object.fromEntries([...document.querySelectorAll('input')].map((el) => [el.id, el.value])),
+          filled: report.filled.map((f) => f.key),
+          skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, fields: SWEEP }),
+    );
+    check(
+      'an unlabelled box in front of the three, which would leave one digit for the last, leaves all four empty and says so once',
+      ['p0', 'p1', 'p2', 'p3'].every((id) => inFour[id] === '') && inFour.skipped.filter((s) => s.startsWith('phone')).length === 1,
+      JSON.stringify(inFour),
+    );
+
+    const masked = await page.goto(`${base}/always-masked`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        return {
+          ph: document.getElementById('ph').value,
+          alt: document.getElementById('alt').value,
+          filled: report.filled.map((f) => f.key),
+          skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, fields: SWEEP }),
+    );
+    group('A box whose mask is its value from the start');
+    check(
+      'a phone box holding only "(___) ___-____" is filled, and reported filled, not "already filled"',
+      masked.ph === '(555) 010-0199' && masked.filled.filter((k) => k === 'phone').length === 1,
+      JSON.stringify(masked),
+    );
+    check(
+      'one with an area code already typed into its mask is left as it was, as an answer already there',
+      masked.alt === '(617) ___-____' && masked.skipped.filter((s) => s === 'phone: already filled').length === 1,
+      JSON.stringify(masked),
+    );
+
+    const slotted = await page.goto(`${base}/slotted-labels`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        const box = (name) => [...document.querySelectorAll('x-input')].find((x) => x.getAttribute('field') === name).shadowRoot.querySelector('input');
+        return {
+          ...Object.fromEntries(['q_1001', 'q_1002', 'q_1003', 'q_1004', 'q_1005'].map((name) => [name, box(name).value])),
+          filled: report.filled.map((f) => f.key),
+        };
+      }, { b: base, fields: SWEEP }),
+    );
+    group('A web component whose label is a slot');
+    check(
+      'First name, Last name and Email are read off the words slotted into the label, and filled',
+      slotted.q_1001 === 'Morgan' && slotted.q_1002 === 'Testwell' && slotted.q_1003 === 'morgan.testwell@example.com',
+      JSON.stringify(slotted),
+    );
+    check(
+      'a label given as the slot\'s fallback is still read, and a question slotted in is not given anything',
+      slotted.q_1004 === 'Boston' && slotted.q_1005 === '' && slotted.filled.length === 4,
+      JSON.stringify(slotted),
+    );
+
+    // Every box on the page by its name, however deep in components it is drawn.
+    const componentFill = (url, fields) => page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        const boxes = {};
+        const walk = (root) => {
+          for (const el of root.querySelectorAll('*')) {
+            if (el.localName === 'input') boxes[el.name] = el.type === 'checkbox' ? el.checked : el.value;
+            if (el.shadowRoot) walk(el.shadowRoot);
+          }
+        };
+        walk(document);
+        return { ...boxes, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields }),
+    );
+    const outside = await componentFill('/labelled-from-outside', SWEEP);
+    group('A box drawn alone in a component, labelled from outside it');
+    check(
+      'the page\'s own <label> beside the component is read, and Last name is filled',
+      outside.q_2001 === 'Testwell',
+      JSON.stringify(outside),
+    );
+    check(
+      'a label component beside a box component in a field component\'s root is read, slotted or drawn: Email and City',
+      outside.q_2002 === 'morgan.testwell@example.com' && outside.q_2004 === 'Boston',
+      JSON.stringify(outside),
+    );
+    check(
+      'aria-labelledby naming an id in the enclosing component\'s root is read, and Phone number is filled',
+      outside.q_2003 === '(555) 010-0199',
+      JSON.stringify(outside),
+    );
+    check(
+      'in a row of components, each with its label beside it, every box takes its own label, and the one with none beside it stays empty',
+      outside.q_3001 === 'Morgan' && outside.q_3002 === '' && outside.q_3003 === 'Testwell' && outside.q_3004 === 'Boston' &&
+        outside.q_3005 === 'morgan.testwell@example.com',
+      JSON.stringify(outside),
+    );
+    check(
+      'three outlined fields that all call their label id="label" each read the one in their own component',
+      outside.q_3101 === 'Morgan' && outside.q_3102 === 'Boston' && outside.q_3103 === 'Testwell' && outside.filled.length === 11,
+      JSON.stringify(outside),
+    );
+
+    const alone = await componentFill('/unlabelled-components', SWEEP);
+    group('A component with no label of its own near it');
+    check(
+      'one four wrappers below its section\'s heading is not given the heading, and stays empty',
+      alone.q_4001 === '',
+      JSON.stringify(alone),
+    );
+    check(
+      'one alone in its group is not given the label of the group before it, and stays empty',
+      alone.q_4003 === '',
+      JSON.stringify(alone),
+    );
+    check(
+      'a box after a component holding a tick box is not given the consent sentence beside the tick box, and the tick box is left unticked',
+      alone.q_5002 === '' && alone.q_5001 === false,
+      JSON.stringify(alone),
+    );
+    check(
+      'the Phone beside its own component is filled, and nothing else is filled or reported',
+      alone.q_4002 === '(555) 010-0199' && alone.filled.join() === 'phone' && alone.skipped.length === 0,
+      JSON.stringify(alone),
+    );
+
+    const around = await componentFill('/labelled-around', SWEEP);
+    group('A component the page labels with a <label> that is not beside it');
+    check(
+      'a label wrapping the component is read, whether the box is drawn in it or in a component inside it: Last name and Email',
+      around.q_6001 === 'Testwell' && around.q_6002 === 'morgan.testwell@example.com',
+      JSON.stringify(around),
+    );
+    check(
+      'a label whose for names the component\'s host is read, from a column apart and in another order: First name, Email and Phone',
+      around.q_7001 === 'Morgan' && around.q_7002 === 'morgan.testwell@example.com' && around.q_7003 === '(555) 010-0199',
+      JSON.stringify(around),
+    );
+    check(
+      'a label wrapping two components names neither, and both stay empty',
+      around.q_6101 === '' && around.q_6102 === '',
+      JSON.stringify(around),
+    );
+    check(
+      'a label on a component drawing two boxes, wrapping it or naming it with for, names neither box',
+      around.q_6201 === '' && around.q_6202 === '' && around.q_7301 === '' && around.q_7302 === '',
+      JSON.stringify(around),
+    );
+    check(
+      'the page\'s for="h-city" does not name a component drawn with that id inside another component\'s root',
+      around.q_7101 === '',
+      JSON.stringify(around),
+    );
+    check(
+      'of two components sharing an id, for names the first alone, and nothing else is filled or reported',
+      around.q_7201 === 'Testwell' && around.q_7202 === '' && around.filled.length === 6 && around.skipped.length === 0,
+      JSON.stringify(around),
+    );
+
+    const context = await page.goto(`${base}/components-in-context`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        const boxes = {};
+        const walk = (root) => {
+          for (const el of root.querySelectorAll('*')) {
+            if (el.name) boxes[el.name] = el.value;
+            if (el.shadowRoot) walk(el.shadowRoot);
+          }
+        };
+        walk(document);
+        const required = Object.fromEntries(m.findQuestions().map((q) => [q.question, m.isRequired(q.fieldId)]));
+        return { ...boxes, required, filled: report.filled.map((f) => `${f.key}=${f.value}`), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields: { ...SWEEP, graduation_month: 'May', graduation_year: '2026', graduation_date: 'May 2026' } }),
+    );
+    group('A component inside what says whose, which or whether');
+    check(
+      'a Phone and an Email drawn in components under "Emergency contact" are not given the applicant\'s, and the applicant\'s own Phone is',
+      context.q_8001 === '' && context.q_8002 === '' && context.q_8000 === '(555) 010-0199',
+      JSON.stringify(context),
+    );
+    check(
+      'a Month and a Year drawn in components under "When do you expect to graduate?" take the graduation, and so does an End date year under Education',
+      context.q_8101 === 'May' && context.q_8102 === '2026' && context.q_8103 === '2026',
+      JSON.stringify(context),
+    );
+    check(
+      'a Month and a Year under "Date of birth" are left empty, and nothing else is filled or reported',
+      context.q_8104 === '' && context.q_8105 === '' && context.filled.length === 4 && context.skipped.length === 0,
+      JSON.stringify(context),
+    );
+    check(
+      'a question drawn in a component is required by the asterisk on the page\'s label beside it, wrapping it, or naming it with for',
+      context.required['Why do you want to work here?'] === true && context.required['What would you build first here?'] === true &&
+        context.required['What are you proudest of?'] === true,
+      JSON.stringify(context.required),
+    );
+    check(
+      'and not by an asterisk that is not its own: one with no mark, and the two after an asterisked question in the same wrapper, are optional',
+      context.required['Anything else you would like us to know?'] === false &&
+        context.required['Is there anything else you would like to add?'] === false &&
+        context.required['How did you hear about this role?'] === false,
+      JSON.stringify(context.required),
+    );
+
+    const componentJobs = await page.goto(`${base}/component-history`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, jobs }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm({}, { history: jobs });
+        const boxes = {};
+        const walk = (root) => {
+          for (const el of root.querySelectorAll('*')) {
+            if (el.name) boxes[el.name] = el.value;
+            if (el.shadowRoot) walk(el.shadowRoot);
+          }
+        };
+        walk(document);
+        return { ...boxes, filled: report.filled.map((f) => f.key) };
+      }, { b: base, jobs: [JOBS[1]] }),
+    );
+    group('A Work Experience block drawn in components');
+    check(
+      'its Job Title and Company are filled from the resume',
+      componentJobs.q_9001 === 'Software Engineer Co-op' && componentJobs.q_9002 === 'Acme Co.',
+      JSON.stringify(componentJobs),
+    );
+    check(
+      'and the Month and Year under From and under To take the job\'s start and end',
+      componentJobs.q_9003 === '07' && componentJobs.q_9004 === '2022' && componentJobs.q_9005 === '12' && componentJobs.q_9006 === '2022',
+      JSON.stringify(componentJobs),
+    );
+
+    const inSections = await componentFill('/component-sections', SWEEP);
+    group('A component in a section the page names by a heading or a paragraph');
+    check(
+      'a City and a Phone drawn in components under a bounded "Work Experience" heading are not given the applicant\'s',
+      inSections.q_9201 === '' && inSections.q_9202 === '',
+      JSON.stringify(inSections),
+    );
+    check(
+      'a Phone after that section has closed, and a City under "About you", are the applicant\'s, and nothing else is filled',
+      inSections.q_9203 === '(555) 010-0199' && inSections.q_9204 === 'Boston' && inSections.filled.length === 2 && inSections.skipped.length === 0,
+      JSON.stringify(inSections),
+    );
+    const inEmployment = await page.goto(`${base}/component-employment`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields, jobs }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields, { history: jobs });
+        const boxes = {};
+        const walk = (root) => {
+          for (const el of root.querySelectorAll('*')) {
+            if (el.name) boxes[el.name] = el.value;
+            if (el.shadowRoot) walk(el.shadowRoot);
+          }
+        };
+        walk(document);
+        return { ...boxes, filled: report.filled.map((f) => f.key) };
+      }, { b: base, fields: SWEEP, jobs: [JOBS[1]] }),
+    );
+    check(
+      'a Company name and a Title drawn in components under a <p>Employment</p> block are filled from the resume, and First name from the profile',
+      inEmployment.q_9301 === 'Acme Co.' && inEmployment.q_9302 === 'Software Engineer Co-op' && inEmployment.q_9300 === 'Morgan' &&
+        inEmployment.filled.length === 3,
+      JSON.stringify(inEmployment),
+    );
+
+    const GRADUATING = { ...SWEEP, graduation_month: 'May', graduation_year: '2026', graduation_date: 'May 2026' };
+    const slottedIn = await componentFill('/slotted-fieldsets', GRADUATING);
+    group('The page\'s fields put through a slot into a fieldset or a group a component draws');
+    check(
+      'a Phone and an Email slotted into a component\'s "Emergency contact" fieldset are not given the applicant\'s, and the applicant\'s own Phone is',
+      slottedIn.q_9401 === '' && slottedIn.q_9402 === '' && slottedIn.q_9400 === '(555) 010-0199',
+      JSON.stringify(slottedIn),
+    );
+    check(
+      'an Email slotted into a component\'s group named "Reference" is not given the applicant\'s',
+      slottedIn.q_9404 === '',
+      JSON.stringify(slottedIn),
+    );
+    check(
+      'a Month and a Year slotted under "When do you expect to graduate?" take the graduation',
+      slottedIn.q_9405 === 'May' && slottedIn.q_9406 === '2026',
+      JSON.stringify(slottedIn),
+    );
+    check(
+      'an Email put in the slot the component draws after its fieldset is the applicant\'s, and nothing else is filled or reported',
+      slottedIn.q_9403 === 'morgan.testwell@example.com' && slottedIn.filled.length === 4 && slottedIn.skipped.length === 0,
+      JSON.stringify(slottedIn),
+    );
+
+    const drawnHeadings = await componentFill('/component-headings', GRADUATING);
+    group('A heading a component draws');
+    check(
+      'a City under a "Work Experience" heading drawn in a component, in the section\'s wrapper, is not given the applicant\'s',
+      drawnHeadings.q_9501 === '',
+      JSON.stringify(drawnHeadings),
+    );
+    check(
+      'a Phone slotted into a component\'s own Work Experience section is not given the applicant\'s',
+      drawnHeadings.q_9503 === '',
+      JSON.stringify(drawnHeadings),
+    );
+    check(
+      'an "End date year" after an Education heading drawn in a component takes the graduation year',
+      drawnHeadings.q_9505 === '2026',
+      JSON.stringify(drawnHeadings),
+    );
+    check(
+      'a City after that section\'s wrapper has closed, and a Phone in the slot drawn after the section, are the applicant\'s, and nothing else is filled',
+      drawnHeadings.q_9502 === 'Boston' && drawnHeadings.q_9504 === '(555) 010-0199' && drawnHeadings.filled.length === 3 &&
+        drawnHeadings.skipped.length === 0,
+      JSON.stringify(drawnHeadings),
+    );
+
+    const drawnParts = await componentFill('/component-phone-parts', SWEEP);
+    group('A telephone number asked in boxes drawn in components');
+    check(
+      'three boxes of 3, 3 and 4, each drawn in a component, take the number a part each',
+      drawnParts.phone_area === '555' && drawnParts.phone_prefix === '010' && drawnParts.phone_line === '0199',
+      JSON.stringify(drawnParts),
+    );
+    check(
+      'an Area code and a seven-digit number, each drawn in a component, take the area code and the rest',
+      drawnParts.mobile_area_code === '555' && drawnParts.mobile_number === '0100199',
+      JSON.stringify(drawnParts),
+    );
+    check(
+      'a component drawing all three boxes loose in its root fills them a part each',
+      drawnParts.home_phone_area === '555' && drawnParts.home_phone_prefix === '010' && drawnParts.home_phone_line === '0199',
+      JSON.stringify(drawnParts),
+    );
+    check(
+      'an area code box alone in a component is not joined to the two boxes another component draws: all three are left, and reported',
+      drawnParts.day_phone_area === '' && drawnParts.day_phone_prefix === '' && drawnParts.day_phone_line === '' &&
+        drawnParts.filled.length === 3 && drawnParts.skipped.length === 2 && drawnParts.skipped.every((r) => r.startsWith('phone:')),
+      JSON.stringify(drawnParts),
+    );
+
+    const drawnCode = await componentFill('/component-dialling-code', { ...SWEEP, phone: '07700 900123', address_country: 'United Kingdom' });
+    group('A dialling code beside a telephone box, drawn in components');
+    check(
+      'a box drawn in a component beside the page\'s select on +44 is given "7700 900123"',
+      drawnCode.q_9701 === '7700 900123',
+      JSON.stringify(drawnCode),
+    );
+    check(
+      'and so is the page\'s box beside a select drawn in a component, and the box of an intl-tel-input drawn whole in one',
+      drawnCode.q_9702 === '7700 900123' && drawnCode.q_9703 === '7700 900123',
+      JSON.stringify(drawnCode),
+    );
+    check(
+      'a Home phone beside an Alternate phone drawn with a +44 of its own keeps its 0, and the Alternate phone is given "7700 900123"',
+      drawnCode.q_9704 === '07700 900123' && drawnCode.q_9705 === '7700 900123' && drawnCode.filled.length === 5 && drawnCode.skipped.length === 0,
+      JSON.stringify(drawnCode),
+    );
+
+    const drawnDates = await page.goto(`${base}/component-dates`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        await new Promise((r) => setTimeout(r, 50));
+        return {
+          taken: [...document.querySelectorAll('[data-date]')].map((w) => `${w.id}=${w.dataset.taken ?? ''}`),
+          filled: report.filled.map((f) => f.key),
+          skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, fields: GRADUATING }),
+    );
+    group('A date asked as spin boxes drawn in components');
+    check(
+      'the date is taken whole when focus leaves it, not after its month alone: the page\'s group round two components, and a date component that is its own group',
+      JSON.stringify(drawnDates.taken) === '["d-page=May/2026","d-drawn=May/2026"]',
+      JSON.stringify(drawnDates),
+    );
+    check(
+      'and each box is reported filled',
+      drawnDates.filled.join() === 'first_name,graduation_month,graduation_year,graduation_month,graduation_year' && drawnDates.skipped.length === 0,
+      JSON.stringify(drawnDates),
+    );
+
+    const drawnEditors = await page.goto(`${base}/component-editors`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        return m.findQuestions().map((q) => `${q.question}${m.isRequired(q.fieldId) ? ' (required)' : ''}`);
+      }, { b: base }),
+    );
+    group('A rich-text editor drawn in a component, put on the page\'s textarea');
+    check(
+      'an editor drawn in a component after its hidden textarea asks the textarea\'s question, and is required by its label, its box in a wrapper or loose',
+      drawnEditors[0] === 'Why do you want to work at Acme? (required)' && drawnEditors[1] === 'What are you proudest of? (required)',
+      JSON.stringify(drawnEditors),
+    );
+    check(
+      'the cover letter\'s editor is not a question, and two editors side by side after one textarea are not given its question',
+      drawnEditors.length === 4 && !drawnEditors.some((q) => /cover|drew you/i.test(q)),
+      JSON.stringify(drawnEditors),
+    );
+
+    const radiosOn = (url) => page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        const out = {};
+        const walk = (root) => {
+          for (const el of root.querySelectorAll('*')) {
+            if (el.type === 'radio') out[el.name] = el.checked ? el.value : out[el.name] ?? '';
+            if (el.shadowRoot) walk(el.shadowRoot);
+          }
+        };
+        walk(document);
+        for (const host of document.querySelectorAll('y-aria-yesno')) {
+          out[host.id] = [...host.shadowRoot.querySelectorAll('[role="radio"]')].map((r) => (r.getAttribute('aria-checked') === 'true' ? r.textContent : '-')).join('');
+        }
+        return { ...out, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields: SWEEP }),
+    );
+    const drawnRadios = await radiosOn('/component-radios');
+    const drawnAria = await radiosOn('/component-aria-radios');
+    group('A radio group drawn in components');
+    check(
+      'a Yes and a No each drawn in a component, their words slotted in, under a fieldset\'s question: Yes',
+      drawnRadios.q_9901 === '1',
+      JSON.stringify(drawnRadios),
+    );
+    check(
+      'a component drawing both buttons beside the page\'s label is answered',
+      drawnRadios.q_9902 === 'No',
+      JSON.stringify(drawnRadios),
+    );
+    check(
+      'buttons in a wrapper with a text box drawn in a component do not take the box\'s question',
+      drawnRadios.q_9904 === '',
+      JSON.stringify(drawnRadios),
+    );
+    check(
+      'two yes/no components in one wrapper each take the label before them, not the first one\'s',
+      drawnRadios.q_9905 === 'Yes' && drawnRadios.q_9906 === 'No',
+      JSON.stringify(drawnRadios),
+    );
+    check(
+      'and nothing else is filled but the box asking the same question in words, as it is without components',
+      drawnRadios.filled.join() === 'work_authorization,work_authorization,requires_sponsorship,work_authorization,requires_sponsorship' &&
+        drawnRadios.skipped.length === 0,
+      JSON.stringify(drawnRadios),
+    );
+    check(
+      'an ARIA group drawn whole in a component beside the page\'s label is answered',
+      drawnAria['ca-one'] === 'Yes-',
+      JSON.stringify(drawnAria),
+    );
+    check(
+      'a component drawing two ARIA groups with no words of its own does not give both the label beside it, and nothing else is answered',
+      drawnAria['ca-two'] === '----' && drawnAria.filled.join() === 'work_authorization' && drawnAria.skipped.length === 0,
+      JSON.stringify(drawnAria),
+    );
+
+    // Every radio on the page in the order it is drawn, as its value when ticked and "-" when not.
+    const radiosDrawn = () => {
+      const got = [];
+      const walk = (root) => {
+        for (const el of root.querySelectorAll('*')) {
+          if (el.type === 'radio') got.push(el.checked ? el.value : '-');
+          if (el.shadowRoot) walk(el.shadowRoot);
+        }
+      };
+      walk(document);
+      return got.join(' ');
+    };
+    const groupedOn = (url) => page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields, radiosDrawn }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        return { ticked: eval(`(${radiosDrawn})`)(), filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields: SWEEP, radiosDrawn: String(radiosDrawn) }),
+    );
+    const nameless = await groupedOn('/component-nameless-radios');
+    const sharedName = await groupedOn('/component-radios-one-name');
+    // And a person's own pick, No to the second of the two sharing a name.
+    await page.goto(`${base}/component-radios-one-name`, { waitUntil: 'domcontentloaded' });
+    await page.evaluate(async ({ b }) => {
+      const m = await import(`${b}/autofill.js`);
+      window.__said = [];
+      window.__stop = m.watchChoices((x) => window.__said.push(`${x.question} — ${x.answer}`));
+    }, { b: base });
+    await page.locator('y-yesno').nth(1).locator('input[value="No"]').click();
+    await page.waitForTimeout(200);
+    const sharedNameSaid = await page.evaluate(() => (window.__stop(), window.__said));
+    group('A radio group a browser would not make as the page is written');
+    check(
+      'a Yes and a No each drawn in a component with no name are grouped by the fieldset round them, and answered Yes',
+      nameless.ticked.split(' ').slice(2, 4).join(' ') === '1 -',
+      JSON.stringify(nameless),
+    );
+    check(
+      'and a component drawing both with no name, in a fieldset of its own, is answered No',
+      nameless.ticked.split(' ').slice(4).join(' ') === '- No',
+      JSON.stringify(nameless),
+    );
+    check(
+      'a nameless yes/no component in no fieldset is left, as the same buttons without components are, and nothing else is filled',
+      nameless.ticked.split(' ').slice(0, 2).join(' ') === '- -' &&
+        nameless.filled.join() === 'work_authorization,requires_sponsorship' && nameless.skipped.length === 0,
+      JSON.stringify(nameless),
+    );
+    check(
+      'one yes/no component used for two questions under one name of its own is two groups, each answered',
+      sharedName.ticked === 'Yes - - No' && sharedName.filled.join() === 'work_authorization,requires_sponsorship' && sharedName.skipped.length === 0,
+      JSON.stringify(sharedName),
+    );
+    check(
+      "and a person's No to the second is kept under the second's question",
+      sharedNameSaid.length > 0 && sharedNameSaid.every((s) => s === 'Will you now or in the future require visa sponsorship? — No'),
+      JSON.stringify(sharedNameSaid),
+    );
+
+    // Every ARIA radio on the page in the order it is drawn, "x" when marked chosen and "-" when not.
+    const ariaDrawn = () => {
+      const got = [];
+      const walk = (root) => {
+        for (const el of root.querySelectorAll('*')) {
+          if (el.getAttribute('role') === 'radio') got.push(el.getAttribute('aria-checked') === 'true' ? 'x' : '-');
+          if (el.shadowRoot) walk(el.shadowRoot);
+        }
+      };
+      walk(document);
+      return got.join(' ');
+    };
+    const ariaOn = (url) => page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields, ariaDrawn }) => {
+        const m = await import(`${b}/autofill.js`);
+        const asked = m.choiceQuestions();
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        return { chosen: eval(`(${ariaDrawn})`)(), asked, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields: SWEEP, ariaDrawn: String(ariaDrawn) }),
+    );
+    // A person's No, pressed on the button drawn in the component.
+    const pickedOn = async (url, button) => {
+      await page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' });
+      await page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        window.__said = [];
+        window.__stop = m.watchChoices((x) => window.__said.push(`${x.question} — ${x.answer}`));
+      }, { b: base });
+      await button().click();
+      await page.waitForTimeout(200);
+      return page.evaluate(() => (window.__stop(), window.__said));
+    };
+    const ariaOptions = await ariaOn('/component-aria-options');
+    const ariaHosts = await ariaOn('/component-aria-hosts');
+    const ariaSection = await ariaOn('/component-aria-section');
+    const optionPicked = await pickedOn('/component-aria-options', () => page.locator('y-aria-radio').nth(3).locator('button'));
+    const hostPicked = await pickedOn('/component-aria-hosts', () => page.locator('y-radio-host').nth(1).locator('button'));
+    group("The page's radiogroup, its options each a component");
+    check(
+      'buttons wearing role="radio" in components, their words drawn or slotted in, are asked of the bank and answered Yes and No',
+      ariaOptions.chosen === 'x - - x' && ariaOptions.filled.join() === 'work_authorization,requires_sponsorship' && ariaOptions.skipped.length === 0 &&
+        ariaOptions.asked.join() === 'Are you legally authorized to work in the United States?,Will you now or in the future require visa sponsorship?',
+      JSON.stringify(ariaOptions),
+    );
+    check(
+      'components wearing role="radio" themselves, their words drawn in their roots, are answered No',
+      ariaHosts.chosen === '- x' && ariaHosts.filled.join() === 'requires_sponsorship' && ariaHosts.skipped.length === 0,
+      JSON.stringify(ariaHosts),
+    );
+    check(
+      "a section's group round two question components does not take their buttons as its own: each is answered, and nothing is reported",
+      ariaSection.chosen === '- x x -' && ariaSection.filled.join() === 'requires_sponsorship,work_authorization' && ariaSection.skipped.length === 0,
+      JSON.stringify(ariaSection),
+    );
+    check(
+      "a person's No pressed on either kind is kept under the question",
+      [optionPicked, hostPicked].every((said) => said.length > 0 && said.every((s) => s === 'Will you now or in the future require visa sponsorship? — No')),
+      JSON.stringify({ optionPicked, hostPicked }),
+    );
+
+    const pageSection = await ariaOn('/page-aria-section');
+    const pageRadiogroupSection = await ariaOn('/page-aria-radiogroup-section');
+    const oneGroup = await ariaOn('/page-aria-one-group');
+    const listboxPicked = await page.evaluate(() => [...document.querySelectorAll('[role="option"]')].map((o) => (o.getAttribute('aria-selected') === 'true' ? 'x' : '-')).join(' '));
+    group("A section's ARIA group written into the page round two questions");
+    check(
+      "a section's group, or radiogroup, round two question groups does not take their buttons as its own: each is answered, and nothing is reported",
+      [pageSection, pageRadiogroupSection].every((got) => got.chosen === '- x x -' && got.filled.join() === 'requires_sponsorship,work_authorization' &&
+        got.skipped.length === 0 && got.asked.join() === 'Will you now or in the future require visa sponsorship?,Are you legally authorized to work in the United States?'),
+      JSON.stringify({ pageSection, pageRadiogroupSection }),
+    );
+    check(
+      'one radiogroup, its Yes and No each in wrappers of their own, and one listbox, its options headed by a group each, are each one question with all their options',
+      oneGroup.chosen === 'x -' && listboxPicked === '- - - x' && oneGroup.filled.join() === 'work_authorization,address_country',
+      JSON.stringify({ ...oneGroup, listboxPicked }),
+    );
+
+    // A person's own picks: Germany in the Country listbox headed "Europe", and No to the sponsorship question in each section.
+    const headedPicked = await pickedOn('/page-aria-one-group', () => page.getByText('Germany', { exact: true }));
+    const sectionPicked = await pickedOn('/page-aria-section', () => page.locator('[role="radiogroup"]').first().getByText('No', { exact: true }));
+    const radiogroupSectionPicked = await pickedOn('/page-aria-radiogroup-section', () => page.locator('[role="radiogroup"] [role="radiogroup"]').first().getByText('No', { exact: true }));
+    group('A pick in an ARIA listbox whose options are headed by groups');
+    check(
+      "a person's pick in it is kept under the listbox's question, not the heading over the option",
+      headedPicked.length > 0 && headedPicked.every((s) => s === 'Country — Germany'),
+      JSON.stringify(headedPicked),
+    );
+    check(
+      "and a person's No in a radiogroup inside a section's group, or radiogroup, is still kept under its own question, not the section's",
+      [sectionPicked, radiogroupSectionPicked].every((said) => said.length > 0 && said.every((s) => s === 'Will you now or in the future require visa sponsorship? — No')),
+      JSON.stringify({ sectionPicked, radiogroupSectionPicked }),
+    );
+
+    // And a listbox asking a question a `<select>` before it has answered, left unanswered.
+    await page.goto(`${base}/page-listbox-asked-again`, { waitUntil: 'domcontentloaded' });
+    const askedAgain = await page.evaluate(async ({ b, fields }) => {
+      const m = await import(`${b}/autofill.js`);
+      const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 1000 });
+      const picked = [...document.querySelectorAll('[role="option"]')].map((o) => (o.getAttribute('aria-selected') === 'true' ? 'x' : '-')).join(' ');
+      return { select: document.getElementById('la-country').value, picked, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+    }, { b: base, fields: SWEEP });
+    group('An ARIA listbox the fill answered, and one it did not');
+    check(
+      'answered by the fill, it is not also reported as one to pick by hand',
+      oneGroup.skipped.length === 0 && oneGroup.filled.join() === 'work_authorization,address_country',
+      JSON.stringify(oneGroup),
+    );
+    check(
+      'and a listbox left unanswered, its question answered already by a select before it, is still reported as one to pick by hand',
+      askedAgain.select === 'United States' && askedAgain.picked === '- -' && askedAgain.filled.join() === 'address_country' &&
+        askedAgain.skipped.join() === 'address_country: this one has to be picked by hand',
+      JSON.stringify(askedAgain),
+    );
+
+    // Whether each option on the page is chosen: "x" when it is and "-" when not.
+    const optionsPicked = () => [...document.querySelectorAll('[role="option"]')].map((o) => (o.getAttribute('aria-selected') === 'true' ? 'x' : '-')).join(' ');
+    await page.goto(`${base}/page-listbox-deaf`, { waitUntil: 'domcontentloaded' });
+    const deafListbox = await page.evaluate(async ({ b, fields, picked }) => {
+      const m = await import(`${b}/autofill.js`);
+      const optionsPicked = new Function(`return (${picked})()`);
+      const first = m.fillForm(fields);
+      const pickedFirst = optionsPicked();
+      window.clicked = [];
+      const report = await m.fillComboboxes(fields, first, { patience: 1000 });
+      return {
+        pickedFirst, picked: optionsPicked(), clicked: window.clicked,
+        filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason} [${s.description}]`),
+      };
+    }, { b: base, fields: SWEEP, picked: optionsPicked.toString() });
+    await page.goto(`${base}/page-portalled-combobox`, { waitUntil: 'domcontentloaded' });
+    const portalled = await page.evaluate(async ({ b, fields, picked }) => {
+      const m = await import(`${b}/autofill.js`);
+      const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 1000 });
+      return {
+        school: document.getElementById('pp-school').textContent, degree: document.getElementById('pp-degree-h').value,
+        major: document.getElementById('pp-major-h').value,
+        shown: [...document.querySelectorAll('.select__single-value')].map((el) => el.textContent), picked: new Function(`return (${picked})()`)(),
+        open: document.querySelectorAll('[role="listbox"]').length,
+        filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+      };
+    }, { b: base, fields: SWEEP, picked: optionsPicked.toString() });
+    await page.goto(`${base}/page-combobox-unroled-list`, { waitUntil: 'domcontentloaded' });
+    const unroled = await page.evaluate(async ({ b, fields }) => {
+      const m = await import(`${b}/autofill.js`);
+      const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 1000 });
+      return {
+        school: document.getElementById('ul-school').textContent, open: !document.getElementById('ul-school-list').hidden,
+        filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+      };
+    }, { b: base, fields: SWEEP });
+    group("A dropdown chooses only in its own list, and is filled only once it shows the answer");
+    check(
+      'a listbox that opens no list of its own and ignores clicks, beside an answered Country listbox, is reported as one to pick by hand, not filled',
+      deafListbox.filled.join() === 'address_country' &&
+        deafListbox.skipped.join() === 'address_country: this one has to be picked by hand [Country of residence]',
+      JSON.stringify(deafListbox),
+    );
+    check(
+      'and nothing is clicked in the Country listbox for it, which is left as the fill left it',
+      deafListbox.pickedFirst === '- - - x - -' && deafListbox.picked === deafListbox.pickedFirst && !deafListbox.clicked.some((c) => c.startsWith('Country —')),
+      JSON.stringify(deafListbox),
+    );
+    check(
+      'a combobox whose list, drawn inside it and named by aria-controls, has no listbox role and ignores the click is not reported filled for the list\'s words, and is shut again',
+      unroled.school === 'Select One' && !unroled.open && !unroled.filled.includes('school') && unroled.skipped.join() === 'school: this one has to be picked by hand',
+      JSON.stringify(unroled),
+    );
+    check(
+      'a combobox whose list is drawn at the foot of the body and named by aria-controls, beside a listbox on screen, is still filled',
+      portalled.school === 'Northeastern University' && portalled.filled.includes('school') && !portalled.skipped.some((s) => s.startsWith('school:')),
+      JSON.stringify(portalled),
+    );
+    check(
+      'and a react-select whose menu is named nowhere, beside the same listbox, is still filled from the menu its press opened, the Country listbox answered once and nothing left open',
+      portalled.degree === 'Bachelor of Science' && portalled.shown[0] === 'Bachelor of Science' && portalled.filled.slice(0, 3).join() === 'address_country,school,degree' &&
+        !portalled.skipped.some((s) => s.startsWith('degree:')) && portalled.picked === '- x' && portalled.open === 1,
+      JSON.stringify(portalled),
+    );
+    check(
+      'and one whose menu opens as its box takes the focus, before any press, is filled from that menu, and nothing else is left',
+      portalled.major === 'Computer Science' && portalled.shown.join() === 'Bachelor of Science,Computer Science' &&
+        portalled.filled.join() === 'address_country,school,degree,major' && portalled.skipped.length === 0,
+      JSON.stringify(portalled),
+    );
+
+    const putIn = (url) => page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        const boxes = Object.fromEntries([...document.querySelectorAll('input, textarea')].map((el) => [el.name, el.value]));
+        const required = Object.fromEntries(m.findQuestions().map((q) => [q.question, m.isRequired(q.fieldId)]));
+        return { ...boxes, required, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields: SWEEP }),
+    );
+    const putUnder = await putIn('/slotted-into-labels');
+    const putBeside = await putIn('/slotted-into-labels-guards');
+    group("The page's own box put into a component that draws its label round the slot");
+    check(
+      'a Last name, a Full name, an Email, a City, a First name and a State, their labels drawn before the slot or a wrapper round it, loose, round it, or slotted in, are filled, and nothing else',
+      putUnder.q_9601 === 'Testwell' && putUnder.q_9610 === 'Morgan Testwell' && putUnder.q_9602 === 'morgan.testwell@example.com' &&
+        putUnder.q_9603 === 'Boston' && putUnder.q_9604 === 'Morgan' && putUnder.q_9627 === 'MA' &&
+        putUnder.filled.join() === 'last_name,full_name,email,address_city,first_name,address_state,phone' && putUnder.skipped.length === 0,
+      JSON.stringify(putUnder),
+    );
+    check(
+      'questions under a label drawn with an asterisk, before the slot or a wrapper round it, loose or round it, are offered and required, and the one without is optional',
+      JSON.stringify(putUnder.required) ===
+        JSON.stringify({
+          'Why do you want to work here?': true, 'What drew you to this team?': true, 'What would you build first here?': true,
+          'What are you proudest of?': true, 'Anything else you would like us to know?': false,
+        }),
+      JSON.stringify(putUnder.required),
+    );
+    check(
+      'a Phone put in a component drawing only wrappers, deep in the page\'s own, still takes the paragraph above them, as it did',
+      putUnder.q_9609 === '(555) 010-0199',
+      JSON.stringify(putUnder),
+    );
+    check(
+      'of two boxes put in one slot under one label, the first takes it, as without components, and the second nothing; in a wrapper apart from it, or one after the other\'s wrapper, neither',
+      putBeside.q_9611 === 'Boston' && putBeside.q_9612 === '' && putBeside.q_9615 === 'Testwell' && putBeside.q_9616 === '' &&
+        putBeside.q_9622 === '' && putBeside.q_9623 === '' && putBeside.q_9624 === '' && putBeside.q_9625 === '',
+      JSON.stringify(putBeside),
+    );
+    check(
+      "a box put in the slot after the label's wrapper takes neither its label nor its asterisk",
+      putBeside.q_9613 === 'morgan.testwell@example.com' && putBeside.q_9614 === '' &&
+        putBeside.required['Why do you want to work here?'] === true && putBeside.required['Is there anything else you would like to add?'] === false,
+      JSON.stringify(putBeside),
+    );
+    check(
+      'a label drawn round a slot holding two boxes is neither\'s as a label round it: the first takes the words before it, and the second nothing',
+      putBeside.q_9619 === 'Boston' && putBeside.q_9620 === '',
+      JSON.stringify(putBeside),
+    );
+    check(
+      'words the page writes before its box, drawn after it in another slot, are not its label, and nothing else is filled',
+      putBeside.q_9621 === '' && putBeside.filled.join() === 'address_city,last_name,email,address_city' && putBeside.skipped.length === 0,
+      JSON.stringify(putBeside),
+    );
+
+    // Every radio on the page, and every ARIA radio, in the order it is written or drawn: "x" when chosen and "-" when not.
+    const choicesDrawn = () => {
+      const got = [];
+      const walk = (root) => {
+        for (const el of root.querySelectorAll('*')) {
+          if (el.matches('input[type=radio]')) got.push(el.checked ? 'x' : '-');
+          if (el.getAttribute('role') === 'radio') got.push(el.getAttribute('aria-checked') === 'true' ? 'x' : '-');
+          if (el.shadowRoot) walk(el.shadowRoot);
+        }
+      };
+      walk(document);
+      return got.join(' ');
+    };
+    const choicesOn = (url) => page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields, choicesDrawn }) => {
+        const m = await import(`${b}/autofill.js`);
+        const asked = m.choiceQuestions();
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        return { chosen: eval(`(${choicesDrawn})`)(), asked, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields: SWEEP, choicesDrawn: String(choicesDrawn) }),
+    );
+    const underPage = await choicesOn('/page-radios-under-questions');
+    const slottedRadios = await choicesOn('/slotted-radios');
+    const slottedAria = await choicesOn('/slotted-aria-radios');
+    const slottedTwo = await choicesOn('/slotted-radios-two');
+    const slottedAriaTwo = await choicesOn('/slotted-aria-two');
+    const slottedExplain = await choicesOn('/slotted-radios-explain');
+    const slottedAriaExplain = await choicesOn('/slotted-aria-explain');
+    group('A radio question put into a component that draws the question round the slot');
+    check(
+      'written into the page, the Yes and No under the sponsorship question and the radiogroup beside the authorization question are asked and answered',
+      underPage.chosen === '- x x -' && underPage.filled.join() === 'requires_sponsorship,work_authorization' && underPage.skipped.length === 0 &&
+        underPage.asked.join() === `${ASKS_SPONSORSHIP},${ASKS_AUTHORIZATION}`,
+      JSON.stringify(underPage),
+    );
+    check(
+      "the page's Yes and No put in, the question drawn before a wrapper round the slot, loose before it, or its words slotted in, are asked and answered",
+      slottedRadios.chosen === '- x x - - x' && slottedRadios.filled.join() === 'requires_sponsorship,work_authorization,requires_sponsorship' &&
+        slottedRadios.skipped.length === 0 && slottedRadios.asked.join() === `${ASKS_SPONSORSHIP},${ASKS_AUTHORIZATION}`,
+      JSON.stringify(slottedRadios),
+    );
+    check(
+      "the page's radiogroup put in, the question drawn loose before the slot, or its words slotted in over a wrapper round it, is asked and answered",
+      slottedAria.chosen === 'x - - x' && slottedAria.filled.join() === 'work_authorization,requires_sponsorship' && slottedAria.skipped.length === 0 &&
+        slottedAria.asked.join() === `${ASKS_AUTHORIZATION},${ASKS_SPONSORSHIP}`,
+      JSON.stringify(slottedAria),
+    );
+    check(
+      'a component drawing two questions, each over its own slot, gives each group put in the question over its slot, as radios and as radiogroups',
+      [slottedTwo, slottedAriaTwo].every((got) => got.chosen === '- x x -' && got.filled.join() === 'requires_sponsorship,work_authorization' &&
+        got.skipped.length === 0 && got.asked.join() === `${ASKS_SPONSORSHIP},${ASKS_AUTHORIZATION}`),
+      JSON.stringify({ slottedTwo, slottedAriaTwo }),
+    );
+    check(
+      "a Yes and No put in a slot after the one a text box is put in under its question, or with a text box after them in its slot, are left, as radios and as a radiogroup",
+      slottedExplain.chosen === '- - - -' && slottedAriaExplain.chosen === '- -' && slottedExplain.asked.length === 0 && slottedAriaExplain.asked.length === 0,
+      JSON.stringify({ slottedExplain, slottedAriaExplain }),
+    );
+
+    const dateParts = await page.goto(`${base}/date-in-parts`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        return {
+          ...Object.fromEntries([...document.querySelectorAll('input, select')].map((el) => [el.id, el.value])),
+          filled: report.filled.map((f) => `${f.key}=${f.value}`),
+        };
+      }, { b: base, fields: { ...SWEEP, graduation_month: 'May', graduation_year: '2026', graduation_date: 'May 2026' } }),
+    );
+    group('A graduation date asked as boxes labelled Month and Year');
+    check(
+      'the GOV.UK date input under "When do you expect to graduate?" takes 05 and 2026',
+      dateParts['gov-month'] === '05' && dateParts['gov-year'] === '2026',
+      JSON.stringify(dateParts),
+    );
+    check(
+      'a Month and a Year list under "Expected graduation date" are set to May and 2026',
+      dateParts['sel-month'] === '05' && dateParts['sel-year'] === '2026',
+      JSON.stringify(dateParts),
+    );
+    check(
+      'a date of birth and a start date asked the same way are left empty, and nothing else is filled',
+      ['dob-day', 'dob-month', 'dob-year', 'st-month', 'st-year'].every((id) => dateParts[id] === '') && dateParts.filled.length === 4,
+      JSON.stringify(dateParts),
+    );
+
+    const monthAlone = await page.goto(`${base}/month-alone`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        try {
+          const report = m.fillForm(fields);
+          return {
+            ...Object.fromEntries([...document.querySelectorAll('input')].map((el) => [el.id, el.value])),
+            filled: report.filled.map((f) => f.key),
+          };
+        } catch (e) {
+          return { threw: String(e) };
+        }
+      }, { b: base, fields: { ...SWEEP, graduation_month: 'May', graduation_year: '2026', graduation_date: 'May 2026' } }),
+    );
+    group('A box labelled Month with no group around it');
+    check(
+      'the fill does not throw, the first name beside it is filled, and the Month and MM boxes are left empty',
+      !monthAlone.threw && monthAlone['ma-first'] === 'Morgan' && monthAlone['ma-month'] === '' && monthAlone['ma-mm'] === '' &&
+        monthAlone.filled.join() === 'first_name',
+      JSON.stringify(monthAlone),
+    );
+
     /*
      * The gate `jh-frame-fill` puts in front of a frame, run in the frame:
      * nothing is filled there unless `mayFillFrame` says so.
@@ -7469,7 +10119,7 @@ async function main() {
       JSON.stringify(bamboo),
     );
     /*
-     * Chosen, bootstrap-select and Vuetify's v-select, each asked the same
+     * Chosen, bootstrap-select, select2 and Vuetify's v-select, each asked the same
      * three things: filled from the profile, filled from the bank, and a
      * person's pick read back for the bank — each seen in what the widget
      * draws, not only in what it submits.
@@ -7487,6 +10137,12 @@ async function main() {
         submits: (id) => document.getElementById(id).value,
         pick: async () => { await page.click('button[data-id=arrangement]'); await page.click('#bs-select-2 a:has-text("Hybrid")'); },
       },
+      select2: {
+        url: '/select2', question: 'How did you hear about this job?', answer: 'Employee referral', country: 'country', asked: 'hear',
+        shown: (id) => document.getElementById(`select2-${id}-container`).textContent,
+        submits: (id) => document.getElementById(id).value,
+        pick: async () => { await page.click('#select2-hear-container'); await page.click('#select2-hear-results li:has-text("Employee referral")'); },
+      },
       'Vuetify v-select': {
         url: '/vuetify', question: 'Which working arrangement do you prefer?', answer: 'Hybrid', country: 'country', asked: 'arrangement',
         shown: (id) => document.querySelector(`.v-select[data-name=${id}] .v-select__selection`)?.textContent ?? '',
@@ -7502,7 +10158,9 @@ async function main() {
         const report = await m.fillComboboxes(profile, m.fillForm(profile), { patience: 800 });
         return {
           shown: eval(read.shown)(id), submits: eval(read.submits)(id),
-          typedIn: [...document.querySelectorAll('input[type=text], input:not([type])')].filter((i) => i.value && !/first/i.test(`${i.id} ${i.name}`)).map((i) => i.value),
+          typedIn: [...document.querySelectorAll('input[type=text], input[type=search], input:not([type])')].filter((i) => i.value && !/first/i.test(`${i.id} ${i.name}`)).map((i) => i.value),
+          // What a list's own search box was given while it was open, where the page keeps count.
+          searched: window.searched ?? [],
           filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
           typed: m.typedQuestions(),
         };
@@ -7513,7 +10171,7 @@ async function main() {
         const asked = m.choiceQuestions();
         const remembered = [{ question, answer }];
         const report = await m.answerWidgetsFromMemory(remembered, m.fillForm(profile, { remembered }), { patience: 800 });
-        return { asked, shown: eval(read.shown)(id), submits: eval(read.submits)(id), filled: report.filled.map((f) => f.question ?? f.key) };
+        return { asked, shown: eval(read.shown)(id), submits: eval(read.submits)(id), filled: report.filled.map((f) => f.question ?? f.key), searched: window.searched ?? [] };
       }, { b: base, profile: PROFILE, read, id: L.asked, question: L.question, answer: L.answer });
       await page.goto(`${base}${L.url}`, { waitUntil: 'domcontentloaded' });
       await page.evaluate(async ({ b }) => {
@@ -7537,12 +10195,14 @@ async function main() {
       );
       check(
         "and nothing is typed into the widget's own boxes, or offered as a question typed on the form",
-        fromProfile.typedIn.length === 0 && fromProfile.typed.length === 0,
+        fromProfile.typedIn.length === 0 && fromProfile.searched.length === 0 && fromProfile.typed.length === 0,
         JSON.stringify(fromProfile),
       );
       check(
         'the question is asked of the bank, and the answer given before is chosen and drawn',
-        fromBank.asked.includes(L.question) && fromBank.shown === L.answer && fromBank.submits !== '' && fromBank.filled.includes(L.question),
+        // Only the question: never what the widget shows in its place, "Select an option".
+        JSON.stringify(fromBank.asked) === JSON.stringify([L.question]) && fromBank.shown === L.answer && fromBank.submits !== '' &&
+          fromBank.filled.includes(L.question) && fromBank.searched.length === 0,
         JSON.stringify(fromBank),
       );
       check(
@@ -7551,6 +10211,58 @@ async function main() {
         JSON.stringify(picked),
       );
     }
+
+    /*
+     * A select2 left open when Autofill is pressed: its search box is on the
+     * page, focused, and answers `aria-autocomplete="list"` like a
+     * react-select's. It is the list's, not a question — nothing is typed
+     * into it — and the select behind it is filled and drawn all the same.
+     */
+    await page.goto(`${base}/select2`, { waitUntil: 'domcontentloaded' });
+    await page.click('#select2-hear-container');
+    const open2 = await page.evaluate(async ({ b, profile }) => {
+      const m = await import(`${b}/autofill.js`);
+      const remembered = [{ question: 'How did you hear about this job?', answer: 'Employee referral' }];
+      const asked = m.choiceQuestions();
+      let report = m.fillForm(profile, { remembered });
+      report = await m.fillComboboxes(profile, report, { patience: 800 });
+      report = await m.answerWidgetsFromMemory(remembered, report, { patience: 800 });
+      const box = document.querySelector('.select2-search__field');
+      return {
+        asked, searched: window.searched, box: box?.value ?? null,
+        country: document.getElementById('select2-country-container').textContent, countrySubmits: document.getElementById('country').value,
+        hear: document.getElementById('select2-hear-container').textContent, hearSubmits: document.getElementById('hear').value,
+        filled: report.filled.map((f) => f.question ?? f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        typed: m.typedQuestions(),
+      };
+    }, { b: base, profile: PROFILE });
+    group('select2: one left open when Autofill runs');
+    check(
+      'its search box is given nothing and asked nothing, and the selects behind it are filled and drawn',
+      open2.searched.length === 0 && !open2.box && open2.typed.length === 0 &&
+        JSON.stringify(open2.asked) === JSON.stringify(['How did you hear about this job?']) &&
+        open2.country === 'United States' && open2.countrySubmits === 'US' && open2.hear === 'Employee referral' && open2.hearSubmits === 'ref' &&
+        open2.filled.includes('address_country') && open2.filled.includes('How did you hear about this job?'),
+      JSON.stringify(open2),
+    );
+
+    const deaf2 = await page.goto(`${base}/select2?deaf`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(profile);
+        return {
+          submits: document.getElementById('country').value,
+          shown: document.getElementById('select2-country-container').textContent,
+          filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, profile: PROFILE }),
+    );
+    check(
+      'and one that does not redraw is put back as it was and left to be picked by hand',
+      deaf2.submits === '' && deaf2.shown === 'Select a country' && !deaf2.filled.includes('address_country') &&
+        deaf2.skipped.includes('address_country: this one has to be picked by hand'),
+      JSON.stringify(deaf2),
+    );
 
     /*
      * A Chosen that does not redraw on `chosen:updated` is not claimed: the
@@ -7573,6 +10285,165 @@ async function main() {
       deaf.submits === '' && deaf.shown === 'Select a country' && !deaf.filled.includes('address_country') &&
         deaf.skipped.includes('address_country: this one has to be picked by hand'),
       JSON.stringify(deaf),
+    );
+
+    /*
+     * Epic Games' education block, in each dropdown a form like theirs is
+     * likely built with (see `EPIC_LISTS`). Asked of each: the profile's
+     * school, degree and major chosen, drawn on the button and held in what
+     * it submits, with nothing else on the page pressed and none of it kept
+     * as the person's own answer; a list without the answer left as it was
+     * and said to lack it; the bank's answer chosen; and a person's pick read
+     * back once, under its question.
+     */
+    const EPIC_PROFILE = { ...PROFILE, school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science' };
+    const EPIC = {
+      'Radix UI Select': {
+        url: '/epic-radix',
+        shown: (f) => document.querySelector(`[data-field=${f}] button[role=combobox] > span`).textContent,
+        submits: (f) => document.querySelector(`[data-field=${f}] select`).value,
+        trigger: '[data-field=hear] button[role=combobox]', option: '[role=listbox] [role=option]:has-text("Employee referral")',
+      },
+      'MUI Select': {
+        url: '/epic-mui',
+        shown: (f) => document.querySelector(`[data-field=${f}] .MuiSelect-select`).textContent,
+        submits: (f) => document.querySelector(`[data-field=${f}] input.MuiSelect-nativeInput`).value,
+        trigger: '[data-field=hear] [role=combobox]', option: 'ul[role=listbox] li[role=option]:has-text("Employee referral")',
+      },
+      'Headless UI Listbox': {
+        url: '/epic-headless',
+        shown: (f) => document.querySelector(`[data-field=${f}] button span.block`).textContent,
+        submits: (f) => document.querySelector(`[data-field=${f}] input[type=hidden]`)?.value ?? '',
+        trigger: '[data-field=hear] button[aria-haspopup=listbox]', option: 'ul[role=listbox] li[role=option]:has-text("Employee referral")',
+      },
+      'a plain dropdown with no ARIA': {
+        url: '/epic-plain',
+        shown: (f) => document.querySelector(`[data-field=${f}] .dropdown__value`).textContent,
+        submits: (f) => document.querySelector(`[data-field=${f}] input[type=hidden]`).value,
+        trigger: '[data-field=hear] .dropdown__toggle', option: '.dropdown__menu .dropdown__option:has-text("Employee referral")',
+      },
+    };
+    for (const [lib, E] of Object.entries(EPIC)) {
+      const read = { shown: String(E.shown), submits: String(E.submits) };
+      const look = String(() => {
+        const fields = ['country', 'school', 'degree', 'discipline', 'hear', 'pronouns'];
+        return {
+          shown: Object.fromEntries(fields.map((f) => [f, eval(read.shown)(f).trim()])),
+          submits: Object.fromEntries(fields.map((f) => [f, eval(read.submits)(f)])),
+          pressed: [...new Set(window.__pressed)].sort(),
+          submitted: window.__submitted, removed: window.__removed,
+          open: document.querySelectorAll('[data-owner]').length,
+          usable: !document.getElementById('root').hasAttribute('aria-hidden') && document.body.style.pointerEvents !== 'none',
+        };
+      });
+      const fill = (query) =>
+        page.goto(`${base}${E.url}${query}`, { waitUntil: 'domcontentloaded' }).then(() =>
+          page.evaluate(async ({ b, profile, read, look }) => {
+            const m = await import(`${b}/autofill.js`);
+            const said = [];
+            const stop = m.watchChoices((x) => said.push(x));
+            const report = await m.fillComboboxes(profile, m.fillForm(profile), { patience: 800 });
+            // Past any closing transition, and any late read-back.
+            await new Promise((r) => setTimeout(r, 500));
+            stop();
+            return {
+              ...eval(`(${look})`)(),
+              said: said.map((x) => `${x.question} — ${x.answer}`),
+              filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+            };
+          }, { b: base, profile: EPIC_PROFILE, read, look }),
+        );
+      const filled = await fill('');
+      const unlisted = await fill('?unlisted');
+      await page.goto(`${base}${E.url}`, { waitUntil: 'domcontentloaded' });
+      const fromBank = await page.evaluate(async ({ b, profile, read, look }) => {
+        const m = await import(`${b}/autofill.js`);
+        const asked = m.choiceQuestions();
+        const remembered = [{ question: 'How did you hear about this job?', answer: 'Employee referral' }];
+        const report = await m.answerWidgetsFromMemory(remembered, m.fillForm(profile, { remembered }), { patience: 800 });
+        await new Promise((r) => setTimeout(r, 300));
+        return { ...eval(`(${look})`)(), asked, filled: report.filled.map((f) => f.question ?? f.key) };
+      }, { b: base, profile: PROFILE, read, look });
+      await page.goto(`${base}${E.url}`, { waitUntil: 'domcontentloaded' });
+      await page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        window.__said = [];
+        window.__stop = m.watchChoices((x) => window.__said.push(x));
+      }, { b: base });
+      await page.click(E.trigger);
+      await page.click(E.option);
+      await page.waitForTimeout(500);
+      const picked = await page.evaluate(({ read }) => {
+        window.__stop();
+        return { shown: eval(read.shown)('hear').trim(), submits: eval(read.submits)('hear'), said: window.__said.map((x) => ({ question: x.question, answer: x.answer, keep: x.keep })) };
+      }, { read });
+
+      group(`Epic Games' education block, drawn by ${lib}`);
+      check(
+        'School, Degree and Discipline are chosen from the profile, drawn on each button, held in what each submits, and reported filled',
+        filled.shown.school === 'Northeastern University' && filled.shown.degree === "Bachelor's Degree" && filled.shown.discipline === 'Computer Science' &&
+          filled.submits.school === '4521' && filled.submits.degree === '3' && filled.submits.discipline === '204' &&
+          ['school', 'degree', 'major'].every((k) => filled.filled.filter((f) => f === k).length === 1) &&
+          !filled.skipped.some((s) => /^(school|degree|major):/.test(s)),
+        JSON.stringify(filled),
+      );
+      check(
+        'and the Country beside them, with nothing else on the page pressed and no list left open',
+        filled.shown.country === 'United States' && filled.submits.country === 'US' &&
+          filled.pressed.every((at) => ['country', 'school', 'degree', 'discipline'].includes(at)) && filled.submitted === 0 && filled.removed === 0 &&
+          filled.shown.hear === 'Select' && filled.shown.pronouns === 'Select' && filled.open === 0 && filled.usable,
+        JSON.stringify(filled),
+      );
+      check('none of those choices is kept as an answer the person gave', filled.said.length === 0, JSON.stringify(filled.said));
+      check(
+        'a School and a Discipline list without the answer are left on "Select", shut, and each said once to be the person\'s to pick',
+        unlisted.shown.school === 'Select' && unlisted.submits.school === '' && unlisted.shown.discipline === 'Select' && unlisted.submits.discipline === '' &&
+          unlisted.skipped.filter((s) => s.startsWith('school:')).join() === 'school: this one has to be picked by hand' &&
+          unlisted.skipped.filter((s) => s.startsWith('major:')).join() === 'major: this one has to be picked by hand' &&
+          !unlisted.filled.includes('school') && !unlisted.filled.includes('major') &&
+          unlisted.shown.degree === "Bachelor's Degree" && unlisted.open === 0 && unlisted.usable,
+        JSON.stringify(unlisted),
+      );
+      check(
+        'the question is asked of the bank, and the answer given before is chosen, drawn and held',
+        fromBank.asked.includes('How did you hear about this job?') && fromBank.shown.hear === 'Employee referral' && fromBank.submits.hear === '2' &&
+          fromBank.filled.includes('How did you hear about this job?') && fromBank.shown.pronouns === 'Select' && fromBank.open === 0,
+        JSON.stringify(fromBank),
+      );
+      check(
+        "and a person's pick is kept, once, under the question the next form looks up",
+        picked.shown === 'Employee referral' && picked.said.length === 1 && picked.said[0].question === 'How did you hear about this job?' &&
+          picked.said[0].answer === 'Employee referral' && picked.said[0].keep,
+        JSON.stringify(picked),
+      );
+    }
+    const nearMisses = await page.goto(`${base}/plain-near-misses`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(profile, m.fillForm(profile), { patience: 800 });
+        await new Promise((r) => setTimeout(r, 200));
+        return {
+          pressed: [...new Set(window.__pressed)].sort(), submitted: window.__submitted, hash: location.hash,
+          shown: [...document.querySelectorAll('.row')].map((row) => row.textContent.replace(/\s+/g, ' ').trim()),
+          open: document.querySelectorAll('[data-owner]').length,
+          filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, profile: { ...PROFILE, school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science', gpa: '3.8' } }),
+    );
+    group('A plain dropdown only where every sign agrees');
+    check(
+      'a label naming something else, no chevron, a submit button, a link and an upload are never pressed, filled or claimed',
+      nearMisses.pressed.every((at) => ['two', 'buttoned'].includes(at)) && nearMisses.submitted === 0 && nearMisses.hash === '' &&
+        !['school', 'degree', 'major', 'address_country', 'gpa'].some((k) => nearMisses.filled.includes(k)) &&
+        !nearMisses.skipped.some((s) => /^(degree|address_country|gpa):/.test(s)),
+      JSON.stringify(nearMisses),
+    );
+    check(
+      'and a press that draws a list with a tooltip, or a list holding a button, is shut again and left to be picked by hand',
+      nearMisses.pressed.includes('two') && nearMisses.pressed.includes('buttoned') && nearMisses.open === 0 &&
+        nearMisses.shown.every((row) => /Select( ▾)?$/.test(row)) &&
+        nearMisses.skipped.includes('school: this one has to be picked by hand') && nearMisses.skipped.includes('major: this one has to be picked by hand'),
+      JSON.stringify(nearMisses),
     );
   } finally {
     await browser.close();

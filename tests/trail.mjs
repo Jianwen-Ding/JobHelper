@@ -16,6 +16,7 @@ import {
   EXPECTATION_MS,
   carriesOn,
   keepPages,
+  onlyLists,
   rootOf,
   lighten,
   judgeApplication,
@@ -1647,9 +1648,11 @@ const REVIEW_STEP = `
   <h2>Review</h2>
   <p>Helios is an equal opportunity employer. We consider applicants without regard to race, gender, disability or veteran status.</p>
   <h3>My Information</h3>
-  <div><label>Legal Name</label><div>Jianwen Ding</div></div>
+  <div><label>Legal Name</label><div>Morgan Testwell</div></div>
   <div><label>Social Security Number</label><div>ANSWER-SSN</div></div>
   <div><div class="lbl"><span>Date of Birth</span></div><div class="val">ANSWER-DOB</div></div>
+  <div><label>Place of Birth</label><div>ANSWER-BIRTHPLACE</div></div>
+  <div><label>Medicare Number</label><div>ANSWER-MEDICARE</div></div>
   <h3>Application Questions</h3>
   <div><label>Are you legally authorized to work in the United States?</label><div>Kept: Yes</div></div>
   <div><label>Have you ever been convicted of a felony?</label><div>ANSWER-CONVICTED</div></div>
@@ -1682,9 +1685,9 @@ describe('the page as sent does not carry answers a review step writes out', () 
       const leaked = html.match(/ANSWER-[A-Z]+/g) ?? [];
       assert.deepEqual(leaked, [], `the review step's answers were sent: ${leaked.join(', ')}`);
       for (const kept of [
-        'Social Security Number', 'Date of Birth', 'Gender', 'Ethnicity', 'Veteran Status',
+        'Social Security Number', 'Date of Birth', 'Place of Birth', 'Medicare Number', 'Gender', 'Ethnicity', 'Veteran Status',
         'Are you Hispanic or Latino?', 'Disability Status:', 'Have you ever been convicted of a felony?',
-        'without regard to race, gender, disability or veteran status', 'Jianwen Ding',
+        'without regard to race, gender, disability or veteran status', 'Morgan Testwell',
         'Kept: Yes', 'Kept: Boston', 'Kept: we provide accommodations on request.', 'Kept: Female', 'Kept: Male',
       ]) {
         assert.ok(html.includes(kept), `"${kept}" was lost`);
@@ -1904,5 +1907,146 @@ describe('the page as sent does not carry an answer Ant Design or an address aut
     } finally {
       await browser.close();
     }
+  });
+});
+
+describe('the same job number, one in the path and one in the parameters', () => {
+  // Reported on Electronic Arts: pressing Apply split the application.
+  const ea = (p) => `https://jobs.ea.com/en_US/careers${p}`;
+  const posting = ea('/JobDetail/Gameplay-Engineer-Intern/216245?source=LinkedIn');
+  const upload = ea('/ApplicationMethods?jobId=216245&source=LinkedIn');
+  const form = ea('/Register?jobId=216245&source=LinkedIn');
+
+  it('joins the posting, the upload step and the form', () => {
+    assert.equal(relatedPath(upload, posting), true);
+    assert.equal(relatedPath(form, upload), true);
+    assert.equal(relatedPath(form, posting), true);
+    const trail = trailOf(at(posting, 'Electronic Arts'), at(upload, 'Electronic Arts'));
+    assert.equal(judgeApplication(trail, { url: form, company: 'Electronic Arts', kind: 'application' }), 'same');
+    assert.equal(judgeApplication(trailOf(at(posting, 'Electronic Arts')), { url: upload }), 'same');
+  });
+
+  it('does not join another job number', () => {
+    assert.equal(relatedPath(ea('/Register?jobId=216246'), posting), false);
+    assert.equal(relatedPath(ea('/Register?jobId=216246'), upload), false);
+  });
+
+  it('does not take a parameter that could name anything, or a number too short to be a job', () => {
+    assert.equal(relatedPath(ea('/Register?id=216245'), posting), false);
+    assert.equal(relatedPath(ea('/Register?jobId=12'), ea('/JobDetail/x/12')), false);
+  });
+});
+
+describe('a form on the same site that nothing ties to the application', () => {
+  const site = (p) => `https://careers.acme.example${p}`;
+  const trail = () => trailOf({ url: site('/jobs/platform-engineer'), company: 'Acme', role: 'Platform Engineer' });
+
+  it('is asked about, not split off', () => {
+    assert.equal(judgeApplication(trail(), { url: site('/candidate/start'), company: 'Acme', kind: 'application' }), 'unsure');
+  });
+
+  it('while another posting on that site is still another job', () => {
+    assert.equal(judgeApplication(trail(), { url: site('/jobs/data-scientist'), company: 'Acme', kind: 'posting' }), 'different');
+  });
+
+  it('and so is a form that names a job number the trail has never seen', () => {
+    assert.equal(judgeApplication(trail(), { url: site('/apply/883412'), company: 'Acme', kind: 'application' }), 'different');
+  });
+
+  it('and so is a form for a plainly different role, or at another employer', () => {
+    assert.equal(judgeApplication(trail(), { url: site('/candidate/start'), role: 'Data Scientist', kind: 'application' }), 'different');
+    assert.equal(judgeApplication(trail(), { url: site('/candidate/start'), company: 'Northwind', kind: 'application' }), 'different');
+  });
+});
+
+/*
+ * A page about many jobs is not an application: "Epic — Careers", "Intel —
+ * Intel Careers" and "Activision — intern job openings" were rows in a
+ * tracker, held for resumes built on careers homes and search results.
+ */
+/*
+ * Reported on ADP: "the trail being cut off and unnecessarily branched". Apply
+ * on myjobs.adp.com is a button, so it expects the posting's own address, and
+ * it goes to the site's sign-in page, `/astronautics/auth`, before the form.
+ * The sign-in page was judged another application — the trail was cut there —
+ * and the form after it was asked about as a branch.
+ */
+describe('Apply that goes through the site sign-in page first', () => {
+  const adp = (p) => `https://myjobs.adp.com${p}`;
+  const posting = adp('/astronautics/cx/job-details?reqId=5001225797306&rb=LINKEDIN');
+  const pressed = (now = Date.now()) => ({
+    ...trailOf({ url: posting, company: 'Astronautics', role: 'Software Engineering Intern' }),
+    expecting: { to: posting, at: now },
+  });
+
+  it('keeps the sign-in page Apply went to in the application', () => {
+    assert.equal(judgeApplication(pressed(), { url: adp('/astronautics/auth'), kind: 'other' }), 'same');
+    assert.equal(wasExpected(pressed(), adp('/astronautics/auth')), true);
+  });
+
+  it('and the form after signing in, with nothing to ask', () => {
+    const through = trailOf(
+      { url: posting, company: 'Astronautics', role: 'Software Engineering Intern' },
+      { url: adp('/astronautics/auth') },
+    );
+    assert.equal(judgeApplication(through, { url: adp('/astronautics/cx/apply'), kind: 'application' }), 'same');
+    // It carries the job's number back, as ADP's form does; that joins it too.
+    assert.equal(
+      judgeApplication(through, { url: adp('/astronautics/cx/apply?reqId=5001225797306'), kind: 'application' }),
+      'same',
+    );
+  });
+
+  it('but not a sign-in page nobody pressed Apply for, or one pressed for too long ago', () => {
+    const plain = trailOf({ url: posting, company: 'Astronautics', role: 'Software Engineering Intern' });
+    assert.notEqual(judgeApplication(plain, { url: adp('/astronautics/auth'), kind: 'other' }), 'same');
+    const stale = pressed(Date.now() - EXPECTATION_MS - 1000);
+    assert.equal(wasExpected(stale, adp('/astronautics/auth')), false);
+  });
+
+  it('nor a sign-in page on another site', () => {
+    assert.equal(wasExpected(pressed(), 'https://accounts.example.com/login'), false);
+  });
+
+  it('and a form after signing in is still another job when it says so', () => {
+    const through = trailOf(
+      { url: posting, company: 'Astronautics', role: 'Software Engineering Intern' },
+      { url: adp('/astronautics/auth') },
+    );
+    assert.equal(
+      judgeApplication(through, { url: adp('/astronautics/cx/apply?reqId=5001229999999'), kind: 'application' }),
+      'different',
+    );
+    assert.equal(judgeApplication(through, { url: adp('/astronautics/cx/apply'), role: 'Data Scientist', kind: 'application' }), 'different');
+    assert.equal(judgeApplication(through, { url: adp('/astronautics/cx/apply'), company: 'Northwind', kind: 'application' }), 'different');
+  });
+
+  it('while a word like "authors" in a path is not a sign-in step', () => {
+    assert.equal(wasExpected(pressed(), adp('/astronautics/authors')), false);
+  });
+});
+
+describe('an application that is so far only lists of jobs', () => {
+  const page = (url, kind) => ({ url, kind, company: 'Epic', role: 'Careers' });
+
+  it('is only lists while every page the store read is a listing', () => {
+    assert.equal(onlyLists(trailOf(page('https://www.epic.com/careers/', 'listing'))), true);
+    assert.equal(
+      onlyLists(trailOf(page('https://www.epic.com/careers/', 'listing'), page('https://www.epic.com/careers/search?q=intern', 'listing'))),
+      true,
+    );
+  });
+
+  it('and is an application from the first posting or form in it', () => {
+    assert.equal(onlyLists(trailOf(page('https://www.epic.com/careers/', 'listing'), page('https://careers.epic.com/Jobs/Job?jobid=21300', 'posting'))), false);
+    assert.equal(onlyLists(trailOf(page('https://careers.epic.com/apply?jobid=21300', 'application'))), false);
+  });
+
+  it('while a page the store called nothing, or never classified, is not a list', () => {
+    // An embedded board's outer page is `none`; the application is in its frame.
+    assert.equal(onlyLists(trailOf(page('https://vireo.example/careers/platform-engineer', 'none'))), false);
+    assert.equal(onlyLists(trailOf({ url: 'https://vireo.example/jobs/1' })), false);
+    assert.equal(onlyLists(trailOf()), false);
+    assert.equal(onlyLists(undefined), false);
   });
 });

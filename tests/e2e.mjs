@@ -1055,7 +1055,8 @@ async function main() {
      * "Resume Streamly.pdf" tells a recruiter at Streamly nothing they do not
      * know. The job title is in the name only when the setting asks for it.
      */
-    check('application folder written', /-Resume\.pdf/.test(done), done.split('\n')[1] ?? done);
+    // Suffixed when another application staged within twenty minutes holds the plain name; suites share a server.
+    check('application folder written', /-Resume(-[\w-]+)?\.pdf/.test(done), done.match(/\S+-Resume\S*\.pdf/)?.[0] ?? done.split('\n')[1] ?? done);
     check(
       'a cover letter is bundled only once there is one',
       /-Cover-Letter\.pdf/.test(done) === offered_letter > 0,

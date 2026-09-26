@@ -254,7 +254,28 @@ const REFUSED_BY_THE_SERVER = [
   'Govt. ID #',
   "Gov't ID",
   'Government-issued ID number',
+  /*
+   * Where somebody was born, and a Medicare or Medicaid number, which neither
+   * side refused: "Place of birth" missed `date of birth`, "Birthplace"
+   * missed `birth date`, and neither `medical` nor `health` is in "Medicare".
+   */
+  'Place of birth',
+  'Country of birth',
+  'City of birth',
+  'Birthplace',
+  'Birth place',
+  'Birth country',
+  'Where were you born?',
+  'Medicare number',
+  'Medicaid number',
+  'Medicare/Medicaid number',
 ];
+
+test('a question about work that says "birth" or "Medicare" is still kept', () => {
+  for (const question of ['Are you willing to give birth to new ideas?', 'Have you worked with Medicare claims data?']) {
+    assert.equal(neverRemember(question), false, question);
+  }
+});
 
 test('every identifier the server refuses or redacts is refused as personal', () => {
   for (const question of REFUSED_BY_THE_SERVER) {

@@ -117,8 +117,79 @@ const TABS = [
 ];
 for (const tab of TABS) tab.foreign = TABS.filter((t) => t !== tab);
 
+/*
+ * Starting from a resume, per application.
+ *
+ * The card's "Start from" picker wrote the one setting every tab shares. So
+ * switching it on one application changed where every other tab rebuilt from
+ * and where the next posting started, and a tailored copy picked on one
+ * employer's posting became the starting point of the next: a user's Waymo
+ * posting opened on the resume made for, and sent to, Keysight, and "keeps on
+ * putting me back on this other resume created and submitted on another
+ * site". Two postings of their own, so nothing above is disturbed.
+ */
+const PELLUCID = 'Pellucid Robotics';
+const QUORRA = 'Quorra Labs';
+const KEYSIGHT = 'Keysight Technologies, Inc.';
+const SUMMER = 'tabs-summer-2027-intern';
+const SENT_ELSEWHERE = 'job-keysight-technologies-inc-tabs-engineering-software-developer-intern';
+const jobPage = (company, title, body, extra = '') => `<!doctype html><html><head><meta charset="utf-8"><title>${title} — ${company}</title>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"JobPosting","title":"${title}",
+"hiringOrganization":{"@type":"Organization","name":"${company}"},"description":"<p>${body}</p>"}</script>
+</head><body><h1>${title}</h1><p>${company} is hiring. ${body}</p>${extra}</body></html>`;
+const PELLUCID_ROLE = {
+  name: 'pellucid-role',
+  path: '/pellucid/jobs/robotics-software-intern',
+  company: PELLUCID,
+  html: jobPage(PELLUCID, 'Robotics Software Intern', 'Write Go and Python services on Kubernetes for distributed systems. Kafka, AWS.',
+    '<p><a href="/pellucid/jobs/robotics-software-intern/apply">Apply</a></p>'),
+};
+const PELLUCID_FORM = {
+  name: 'pellucid-form',
+  path: '/pellucid/jobs/robotics-software-intern/apply',
+  company: PELLUCID,
+  html: jobPage(PELLUCID, 'Robotics Software Intern', 'Write Go and Python services on Kubernetes.',
+    `<h2>Apply for this job</h2><form><label for="fn">First Name</label><input id="fn" name="first_name">
+<label for="em">Email</label><input id="em" name="email" type="email"></form>`),
+};
+const QUORRA_ROLE = {
+  name: 'quorra-role',
+  path: '/quorra/careers/platform-intern',
+  company: QUORRA,
+  html: jobPage(QUORRA, 'Platform Intern', 'Run streaming infrastructure in Go on Kubernetes and AWS. Kafka, distributed systems.'),
+};
+const QUORRA_AGAIN = { ...QUORRA_ROLE, name: 'quorra-again', path: '/quorra/careers/data-intern',
+  html: jobPage(QUORRA, 'Data Intern', 'Build pipelines in Python and SQL. Kafka.') };
+
+/*
+ * Two bare application forms at one employer, on its own careers host: titled
+ * "Apply", naming neither the employer nor the role, told apart only by the
+ * job number in the address. The store reads "Orrin" off the host for both.
+ */
+const ORRIN = 'Orrin';
+const ORRIN_HOST = 'careers.orrin.test';
+const ORRIN_FORM = {
+  name: 'orrin-form',
+  path: '/orrin-apply',
+  company: ORRIN,
+  html: `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><h1>Submit your application</h1>
+<form onsubmit="event.preventDefault();"><label for="fn">First Name</label><input id="fn" name="first_name">
+<label for="ln">Last Name</label><input id="ln" name="last_name"><label for="em">Email</label><input id="em" name="email" type="email">
+<label for="rs">Resume</label><input id="rs" name="resume" type="file"><button type="button">Next</button></form></body></html>`,
+};
+
 /** What this suite files under, cleared before it starts as well as after. */
-const MINE = TABS.map((t) => t.company);
+const MINE = [...TABS.map((t) => t.company), PELLUCID, QUORRA, KEYSIGHT, ORRIN];
+
+/** What the "Start from" picker says, and the base the proposal names. */
+const startsFrom = (page) =>
+  page.evaluate(() => {
+    const root = document.querySelector('#jobhelper-card-host')?.shadowRoot;
+    return {
+      value: root?.querySelector('select')?.value ?? null,
+      from: root?.querySelector('.diff-head .from-label')?.textContent ?? null,
+    };
+  });
 
 /**
  * Lifted from `tests/carrying.mjs`: wait for the card to stop changing rather
@@ -320,13 +391,23 @@ async function main() {
     MARIGOLD_FORM,
     KESTREL_ROLE,
     KESTREL_FORM,
+    PELLUCID_ROLE,
+    PELLUCID_FORM,
+    QUORRA_ROLE,
+    QUORRA_AGAIN,
+    ORRIN_FORM,
   ]);
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-tabs-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     executablePath: findChromium(),
     headless: true,
     viewport: { width: 1280, height: 900 },
-    args: ['--no-sandbox', `--disable-extensions-except=${extensionRoot}`, `--load-extension=${extensionRoot}`],
+    args: [
+      '--no-sandbox',
+      `--disable-extensions-except=${extensionRoot}`,
+      `--load-extension=${extensionRoot}`,
+      `--host-resolver-rules=MAP ${ORRIN_HOST} 127.0.0.1`,
+    ],
   });
 
   try {
@@ -462,6 +543,41 @@ async function main() {
     await TABS[0].page.waitForTimeout(4000);
 
     /*
+     * The files each card offers are that tab's, in the one folder all three
+     * upload from.
+     *
+     * Every application's resume wants the same plain name there, and the
+     * plain name went to whichever application was staged last. So tab 1's
+     * card, drawn when it built, went on offering `…-Resume.pdf` — "Copy
+     * folder path, paste it into the upload dialog" — after tabs 2 and 3 had
+     * built, by which time the file under that name was tab 3's resume.
+     * Read from the folder's own manifest, which says which bundle each file
+     * was copied out of, because asking the store would rename them again.
+     */
+    const outDir = (await (await fetch(`${SERVER}/health`)).json()).outDir;
+    const folderSays = () => {
+      try {
+        return JSON.parse(fs.readFileSync(path.join(outDir, 'current', '.rmm-current.json'), 'utf8')).from ?? {};
+      } catch {
+        return {};
+      }
+    };
+    const slugOf = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const ownFiles = (tab, names, where) => {
+      const from = folderSays();
+      const resumes = names.map((n) => n.trim()).filter((n) => /resume/i.test(n));
+      const whose = resumes.map((n) => (from[n] ? path.basename(path.dirname(from[n])) : '(not in the folder)'));
+      check(
+        `${where} tab ${tab.n} offers ${tab.company}'s resume, not another tab's`,
+        resumes.length > 0 && whose.every((w) => w.includes(`-${slugOf(tab.company)}-`)),
+        resumes.length ? resumes.map((n, i) => `${n} → ${whose[i]}`).join(', ') : '(no resume offered)',
+      );
+    };
+    await inTurn('The files each tab offers are its own, in the folder they share', async (tab) => {
+      ownFiles(tab, await cardOf(tab.page).locator('.staged .file.liftable .what').allTextContents(), 'on the form,');
+    });
+
+    /*
      * And then everybody navigates, which is the step the bug needed.
      *
      * Work held in an open card is held in that tab's memory and survives
@@ -566,6 +682,221 @@ async function main() {
           ownsIt(tab, items),
           JSON.stringify(items),
         );
+      }
+    }
+
+    /*
+     * And the panel "Mark as applied" leaves behind, which names the files
+     * again beside the folder path. It named the archive's copies, always
+     * under the plain name — which in the shared folder can be the other
+     * tabs' resume.
+     */
+    group('Marked as applied in one tab, the files it names are still its own');
+    {
+      const tab = TABS[1];
+      const card = cardOf(tab.page);
+      await tab.page.bringToFront();
+      await card.getByRole('button', { name: 'Mark as applied' }).click();
+      await card.locator('.folded-title.applied').waitFor({ timeout: 120_000 }).catch(() => undefined);
+      await card.getByRole('button', { name: 'Unfold JobHelper' }).click().catch(() => undefined);
+      await card.locator('.done-box').waitFor({ timeout: 60_000 }).catch(() => undefined);
+      ownFiles(tab, await card.locator('.done-box .file.liftable .what').allTextContents(), 'filed,');
+    }
+    /*
+     * Two applications at one employer, for two roles, each saving its letter.
+     *
+     * "Save to store" filed the letter under the day and the employer, so the
+     * second tab's save replaced the first tab's letter in the store: two
+     * applications, one letter, and it was the other role's.
+     */
+    group('Two roles at one employer each keep the letter they saved');
+    {
+      const extensionId = new URL(worker.url()).host;
+      const ask = (page, type, payload) =>
+        page.evaluate(([t, p]) => new Promise((done) => chrome.runtime.sendMessage({ type: t, payload: p }, done)), [type, payload]);
+      const stamp = Date.now();
+      const pair = [
+        { title: 'Robotics Software Intern', body: `Dear ${PELLUCID}, the robotics internship. ${stamp}` },
+        { title: 'Platform Intern', body: `Dear ${PELLUCID}, the platform internship. ${stamp}` },
+      ];
+      const pages = [];
+      try {
+        for (const one of pair) {
+          const page = await context.newPage();
+          pages.push(page);
+          await page.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
+          await ask(page, 'saveLetter', { body: one.body, job: { company: PELLUCID, title: one.title } });
+        }
+        const saved = await (await fetch(`${SERVER}/api/letters`)).json();
+        const bodies = (Array.isArray(saved) ? saved : (saved?.letters ?? [])).map((l) => l.body ?? '');
+        for (const one of pair) {
+          check(`the ${one.title} letter is still in the store`, bodies.some((b) => b.includes(one.body)), `${bodies.filter((b) => b.includes(String(stamp))).length} of 2 found`);
+        }
+      } finally {
+        for (const page of pages) await page.close().catch(() => undefined);
+      }
+    }
+
+    /*
+     * Two bare forms at one employer, one tab each, whose role nothing reads.
+     *
+     * Both were "Orrin" and "Unknown role", and identity is the company and
+     * the role: the second tab's build found the first one's tracker row and
+     * workspace, was filed into its folder, and wrote its tailored copy over
+     * the first one's. The job number in each address is what tells them
+     * apart.
+     */
+    group('Two forms at one employer that name no role are two applications');
+    {
+      const port = new URL(fixtures.urlFor(ORRIN_FORM)).port;
+      const jobs = ['4400001', '4400002'];
+      const pages = [];
+      try {
+        for (const job of jobs) {
+          const page = await context.newPage();
+          pages.push(page);
+          await page.goto(`http://${ORRIN_HOST}:${port}${ORRIN_FORM.path}?gh_jid=${job}`, { waitUntil: 'domcontentloaded' });
+          await settled(page);
+        }
+        for (const page of pages) {
+          await page.bringToFront();
+          const card = cardOf(page);
+          await card.getByRole('button', { name: 'Build resume' }).click();
+          await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 }).catch(() => undefined);
+        }
+        const filed = async () => ({
+          rows: (await applications()).filter((a) => a.company === ORRIN),
+          drafts: ((await (await fetch(`${SERVER}/api/workspace`)).json().catch(() => ({})))?.drafts ?? []).filter((d) => d.company === ORRIN),
+        });
+        let now = await filed();
+        for (let i = 0; i < 75 && (now.rows.length < 2 || now.drafts.length < 2); i++) {
+          await new Promise((done) => setTimeout(done, 200));
+          now = await filed();
+        }
+        const said = JSON.stringify({
+          rows: now.rows.map((a) => [a.id, a.role, a.url, a.resumeId]),
+          drafts: now.drafts.map((d) => [d.id, d.role]),
+        });
+        check('each form is its own tracker row', now.rows.length === 2 && new Set(now.rows.map((a) => a.id)).size === 2, said);
+        check(
+          'each row is the form it was built on, and still says the role is unknown',
+          jobs.every((job) => now.rows.some((a) => (a.url ?? '').endsWith(`gh_jid=${job}`) && /^Unknown role\b/.test(a.role ?? '') && (a.role ?? '').includes(job))),
+          said,
+        );
+        check('each has a workspace of its own', now.drafts.length === 2 && new Set(now.drafts.map((d) => d.id)).size === 2, said);
+        check(
+          'and a tailored copy of its own',
+          now.rows.every((a) => a.resumeId) && new Set(now.rows.map((a) => a.resumeId)).size === 2,
+          said,
+        );
+      } finally {
+        for (const page of pages) await page.close().catch(() => undefined);
+      }
+    }
+
+    group('The resume a tab starts from is that application\'s, not every tab\'s');
+    {
+      const json = (r) => r.json();
+      const listed = bare(await fetch(`${SERVER}/api/resumes`).then(json), 'resumes');
+      const base = listed.find((r) => r.id === 'base');
+      const put = (id, spec) =>
+        fetch(`${SERVER}/api/resumes/${id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(spec) });
+      await put(SUMMER, { ...base, id: SUMMER, label: 'Summer 2027 intern', tier: 'base' });
+      // Made for, and sent to, another employer on another site.
+      await put(SENT_ELSEWHERE, {
+        ...base,
+        id: SENT_ELSEWHERE,
+        label: `Engineering Software Developer, Intern in Multiple Locations | ${KEYSIGHT}`,
+        tier: 'temporary',
+        copiedFrom: SUMMER,
+        generatedFor: { company: KEYSIGHT, role: 'Engineering Software Developer, Intern', url: 'https://jobs.keysight.example/1', at: '2026-09-20T10:00:00.000Z' },
+      });
+      await fetch(`${SERVER}/api/applications`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ company: KEYSIGHT, role: 'Engineering Software Developer, Intern', status: 'applied', resumeId: SENT_ELSEWHERE, url: 'https://jobs.keysight.example/1' }),
+      });
+      // And last picked, which is how the default came to name it.
+      await worker.evaluate((id) => chrome.storage.sync.set({ baseResumeId: id }), SENT_ELSEWHERE);
+      const setting = () => worker.evaluate(async () => (await chrome.storage.sync.get('baseResumeId')).baseResumeId);
+      const pinned = new Set([...listed.filter((r) => r.tier === 'base').map((r) => r.id), SUMMER]);
+
+      const a = await context.newPage();
+      const b = await context.newPage();
+      try {
+        await a.bringToFront();
+        await a.goto(fixtures.urlFor(PELLUCID_ROLE), { waitUntil: 'domcontentloaded' });
+        await settled(a);
+        await b.bringToFront();
+        await b.goto(fixtures.urlFor(QUORRA_ROLE), { waitUntil: 'domcontentloaded' });
+        await settled(b);
+        const aAt = await startsFrom(a);
+        const bAt = await startsFrom(b);
+        check(
+          'a posting does not start from a copy made for another application',
+          aAt.value !== SENT_ELSEWHERE && bAt.value !== SENT_ELSEWHERE && !/Keysight/.test(`${aAt.from} ${bAt.from}`),
+          `${aAt.value} · ${bAt.value}`,
+        );
+        check('it starts from a base instead', pinned.has(aAt.value) && pinned.has(bAt.value), `${aAt.value} · ${bAt.value}`);
+
+        // Switched in tab A, to a base that is not the one it started from.
+        const target = aAt.value === SUMMER ? 'base' : SUMMER;
+        await a.bringToFront();
+        await cardOf(a).locator('select').first().selectOption(target);
+        await a.waitForFunction(
+          (want) => document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelector('select')?.value === want &&
+            !/Starting from that resume/.test(document.querySelector('#jobhelper-card-host')?.shadowRoot?.textContent ?? ''),
+          target,
+          { timeout: 30_000 },
+        ).catch(() => undefined);
+        const label = listed.find((r) => r.id === target)?.label ?? 'Summer 2027 intern';
+        let now = await startsFrom(a);
+        check('the switch takes in the tab it was made in', now.value === target && now.from === label, JSON.stringify(now));
+        check('and leaves the default in the popup alone', (await setting()) === SENT_ELSEWHERE, String(await setting()));
+
+        // A redraw, then the store moving under it: built and filed, and two
+        // of the watcher's ticks.
+        await openChanges(cardOf(a));
+        now = await startsFrom(a);
+        check('it holds through a redraw', now.value === target && now.from === label, JSON.stringify(now));
+        await cardOf(a).getByRole('button', { name: /^(Build resume|Recompile)$/ }).first().click();
+        await cardOf(a).locator('.fit.ok, .fit.bad').waitFor({ timeout: 180_000 });
+        await a.waitForTimeout(9000);
+        now = await startsFrom(a);
+        const copy = bare(await fetch(`${SERVER}/api/resumes`).then(json), 'resumes').find((r) => /pellucid/.test(r.id));
+        check('and through the store changing, watched', now.value === target && now.from === label, JSON.stringify(now));
+        check('and the copy filed is built from it', copy?.copiedFrom === target, `${copy?.id} from ${copy?.copiedFrom}`);
+
+        // Tab B, read again: its own application, which nobody switched.
+        await b.bringToFront();
+        await b.reload({ waitUntil: 'domcontentloaded' });
+        await settled(b);
+        const bAgain = await startsFrom(b);
+        check('the other tab still starts from where it started', bAgain.value === bAt.value, `${bAt.value} → ${bAgain.value}`);
+
+        // And the next posting, in that tab, from the default rather than from tab A's switch.
+        await b.goto(fixtures.urlFor(QUORRA_AGAIN), { waitUntil: 'domcontentloaded' });
+        await settled(b);
+        const next = await startsFrom(b);
+        check('and so does the next posting', next.value === bAt.value, `${next.value}`);
+
+        // Tab A, on to its form: the same application, so the same resume.
+        await a.bringToFront();
+        await a.click(`a[href="${PELLUCID_FORM.path}"]`);
+        await a.waitForLoadState('domcontentloaded');
+        await settled(a);
+        now = await startsFrom(a);
+        check('and it follows the application to its form', a.url().endsWith(PELLUCID_FORM.path) && now.value === target && now.from === label, `${a.url()} ${JSON.stringify(now)}`);
+        await a.waitForTimeout(9000);
+        now = await startsFrom(a);
+        check('and stays there', now.value === target && now.from === label, JSON.stringify(now));
+      } finally {
+        await a.close().catch(() => undefined);
+        await b.close().catch(() => undefined);
+        await pointExtensionAt(context, worker, SERVER);
+        await worker.evaluate(() => chrome.storage.sync.remove('baseResumeId')).catch(() => undefined);
+        await fetch(`${SERVER}/api/resumes/${SENT_ELSEWHERE}`, { method: 'DELETE' }).catch(() => undefined);
+        await fetch(`${SERVER}/api/resumes/${SUMMER}`, { method: 'DELETE' }).catch(() => undefined);
       }
     }
   } finally {

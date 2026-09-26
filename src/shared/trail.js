@@ -178,6 +178,23 @@ export function relatedPath(a, b) {
   if (!pa || !pb) return false;
   if (pa === pb) return true;
 
+  /*
+   * The same job's number, wherever each address keeps it.
+   *
+   * Electronic Arts keeps the posting at
+   * `/careers/JobDetail/Gameplay-Engineer-Intern/216245`, the upload step at
+   * `/careers/ApplicationMethods?jobId=216245` and the form at
+   * `/careers/Register?jobId=216245`. None of those paths is a step word or an
+   * extension of another, so the form was judged a different application and
+   * the trail split one click into it, with the resume built on the posting
+   * left behind. The number is what they share, and it is the job's.
+   *
+   * Only a parameter that names a job — not `id`, `pid`, `oid` or `token`,
+   * which name anything — and only a number the size of a job's, not a page
+   * or a year.
+   */
+  if (sharesAJobNumber(a, b)) return true;
+
   const sa = segments(pa);
   const sb = segments(pb);
   // A root path is a prefix of the whole site and says nothing about which
@@ -300,6 +317,27 @@ export function relatedPath(a, b) {
 /** A path segment that is a job's id: five digits or more, and nothing but an id. */
 const PATH_JOB_ID = /^(?=(?:\D*\d){5})[a-z0-9_-]+$/i;
 
+/** Parameters that could name anything, so agreeing on one says nothing about the job. */
+const ANY_PARAM = /^(id|oid|pid|token)$/i;
+
+/** The job numbers an address names in its parameters, leaving out the ones that could name anything. */
+const jobNumbers = (u) => [...jobIds(u)].filter(([key, value]) => !ANY_PARAM.test(key) && PATH_JOB_ID.test(value)).map(([, value]) => value.toLowerCase());
+
+/**
+ * Two addresses that name the same job's number: both in a job parameter, or
+ * one in a parameter and the other as a whole segment of its path.
+ * See `relatedPath`.
+ */
+function sharesAJobNumber(a, b) {
+  const inPath = (u) => new Set(segments(pathOf(u) ?? '').map((seg) => seg.toLowerCase()));
+  const na = jobNumbers(a);
+  const nb = jobNumbers(b);
+  if (na.some((n) => nb.includes(n))) return true;
+  const pa = inPath(a);
+  const pb = inPath(b);
+  return na.some((n) => pb.has(n)) || nb.some((n) => pa.has(n));
+}
+
 /** A segment with a step of a form among its words: `create_application`, `jobApply`. */
 const namesAStep = (seg) =>
   bare(seg)
@@ -319,7 +357,33 @@ export function wasExpected(trail, url, now = Date.now()) {
   const b = pathOf(url);
   if (!a || !b) return false;
   if (hostOf(expecting.to) !== hostOf(url)) return false;
+  /*
+   * Or on the site's sign-in page, which is where Apply goes first on a site
+   * that wants an account.
+   *
+   * ADP's is the one reported: Apply on
+   * `/astronautics/cx/job-details?reqId=…` is a button, so what it sets up to
+   * expect is the posting's own address, and it goes to
+   * `/astronautics/auth` — neither the same path nor a step under it. The
+   * sign-in page was judged a different application and the trail was cut
+   * there, and the form after it, measured against a trail that now started
+   * at the sign-in page, was asked about as a branch. Only on the host Apply
+   * was pressed on, and only while the click is fresh.
+   */
+  if (signInStep(url)) return true;
   return sameOrUnder(a, b);
+}
+
+/*
+ * An address that is a site's sign-in or sign-up step, by its path.
+ *
+ * Whole segments only, so `/authors` or `/login-help-center` is not one.
+ */
+const SIGN_IN_STEP =
+  /^(auth|authenticate|login|log-in|signin|sign-in|sign_in|logon|sso|oauth|oauth2|authorize|register|registration|signup|sign-up|createaccount|create-account)$/i;
+
+export function signInStep(url) {
+  return segments(pathOf(url) ?? '').some((seg) => SIGN_IN_STEP.test(seg));
 }
 
 /*
@@ -688,7 +752,52 @@ export function judgeApplication(trail, page, now = Date.now()) {
    * The hand-off it exists for is untouched: a form that names no role of its
    * own leaves `looksNew()` false and still joins.
    */
-  return wasLinkedFrom(trail, page.url) ? (looksNew() ? 'unsure' : 'same') : 'different';
+  if (wasLinkedFrom(trail, page.url)) return looksNew() ? 'unsure' : 'same';
+
+  /*
+   * And on the same site, with nothing to say it is another job: ask.
+   *
+   * Everything that reaches this line on the same site is a page nothing
+   * vouched for and nothing refused — the employer agrees or is not given, no
+   * job number disagrees, and the role is not plainly another. That was
+   * `different`, which splits the application with nothing to press: the
+   * resume built on the posting was left behind, and the only way back was to
+   * start again. Reported on Electronic Arts, whose form lives at an address
+   * no rule here connects to its posting: "branching is way too hard. If it
+   * is not certain it should ask." `unsure` asks, and keeps what it left whole
+   * until the question is answered — see `drawBranch`.
+   *
+   * Only for a form, though. A second posting on the same board is another
+   * job far more often than not, and asking about every one would be asking
+   * all day; a form nothing ties to anything is the page that is usually the
+   * next step of the one in hand. And not a form whose own address names a job
+   * number the trail has never seen — that is another job's form.
+   */
+  if (page.kind !== 'application' || looksNew()) return 'different';
+  const sameSite = trail.pages.some((p) => {
+    const there = hostOf(p?.url);
+    return Boolean(there) && (there === here || rootOf(there) === rootOf(here));
+  });
+  if (!sameSite) return 'different';
+  const seen = trail.pages.map((p) => String(p?.url ?? '').toLowerCase());
+  const itsJobs = segments(pathOf(page.url) ?? '').filter((seg) => PATH_JOB_ID.test(seg) && /\d/.test(seg));
+  if (itsJobs.some((id) => !seen.some((u) => u.includes(id.toLowerCase())))) return 'different';
+  /*
+   * The form that comes straight after signing in is the one Apply was
+   * pressed for.
+   *
+   * A site that wants an account sends Apply to its sign-in page and, once
+   * you are in, on to the form — at an address that often says nothing about
+   * the job. On ADP that form was asked about as a possible new application
+   * one step after the sign-in page it followed. When the page before this
+   * one, on this site, is the sign-in step, nothing here is left to ask: the
+   * employer agrees or is not given, the role is not another and no job
+   * number disagrees.
+   */
+  const last = trail.pages[trail.pages.length - 1];
+  const lastHost = hostOf(last?.url);
+  if (lastHost && (lastHost === here || rootOf(lastHost) === rootOf(here)) && signInStep(last.url)) return 'same';
+  return 'unsure';
 }
 
 /**
@@ -921,6 +1030,8 @@ const OPTION_STATE_CLASS = /selected|highlighted|focused|focusvisible|^css-|^ant
  * "Phone Number" — which went to the server and on to the AI the same way; an
  * address has no shape the server could find it by afterwards. Not "Office
  * address" or "Location", which are the posting's.
+ * And where somebody was born, and a Medicare or Medicaid number, which
+ * `remembering.js` refuses and this list did not know.
  *
  * Only the answer, only where it is short, and never a control: a form's own
  * "Gender" label with its `<select>` after it keeps its options, which are the
@@ -931,7 +1042,7 @@ const OPTION_STATE_CLASS = /selected|highlighted|focused|focusvisible|^css-|^ant
  * took the capture from about 10ms to about 14ms.
  */
 const STATED_PERSONAL =
-  /\b(ssn|social\s*security|national\s*insurance|tax\s*(id|identification)|(date|day|month|year)\s*of\s*birth|birth\s*(date|day)|dob|age|passport|driver'?s?\s*licen[cs]e|visa\s*number|(account|card|routing)\s*number|iban|sort\s*code|gender|sex|transgender|non-?binary|sexual\s*orientation|lgbt\w*|race|ethnicit(y|ies)|hispanic|latin[oaxe]s?|national\s*origin|indigenous|aboriginal|veteran|disab(led|ility|ilities)|criminal|convict\w*|felon(y|ies)|religion|marital|pregnan\w*|(e-?mail|phone|mobile|cell|telephone)\s*(address|number|no\.?)|(home|mailing|residential|street|permanent|current)\s*address|address\s*line|zip\s*code|postal\s*code|postcode)\b/i;
+  /\b(ssn|social\s*security|national\s*insurance|tax\s*(id|identification)|(date|day|month|year|place|country|city|town)\s*of\s*birth|birth\s*(date|day|place|country|city|town)|medica(re|id)(\s*(\/|or|and|&)\s*medica(re|id))?\s*(number|no\.?|#|id|card)|dob|age|passport|driver'?s?\s*licen[cs]e|visa\s*number|(account|card|routing)\s*number|iban|sort\s*code|gender|sex|transgender|non-?binary|sexual\s*orientation|lgbt\w*|race|ethnicit(y|ies)|hispanic|latin[oaxe]s?|national\s*origin|indigenous|aboriginal|veteran|disab(led|ility|ilities)|criminal|convict\w*|felon(y|ies)|religion|marital|pregnan\w*|(e-?mail|phone|mobile|cell|telephone)\s*(address|number|no\.?)|(home|mailing|residential|street|permanent|current)\s*address|address\s*line|zip\s*code|postal\s*code|postcode)\b/i;
 const CONTROL =
   'input, select, textarea, button, [contenteditable], [role="radio"], [role="checkbox"], [role="option"], [role="combobox"], [role="listbox"], [role="radiogroup"]';
 
@@ -1232,4 +1343,24 @@ export function keepPages(pages, max) {
 export function worthKeeping(work) {
   if (!work) return false;
   return Boolean(work.spec) || Boolean(work.letter?.trim()) || Object.keys(work.answersByQuestion ?? {}).length > 0;
+}
+
+/**
+ * Whether every page this application has read is a page about many jobs.
+ *
+ * A careers home, a board's search results, a job category: the card comes up
+ * on them, because they are where a job is found, and a resume can be built
+ * there. The keeper then held a workspace for them, and the tracker filled with
+ * rows that were never applications — "Epic — Careers", "Intel — Intel
+ * Careers", "Activision — intern job openings", "Adobe — Intern and
+ * Graduate". A row says one job is being applied for, and a list is not one
+ * job; the first posting or form this tab goes on to is.
+ *
+ * Only a page the store called a listing counts. A page whose kind was never
+ * said, or that the store called nothing at all, is not a list: an embedded
+ * board's outer page is `none` while its frame holds the application.
+ */
+export function onlyLists(trail) {
+  const pages = trail?.pages ?? [];
+  return pages.length > 0 && pages.every((p) => p?.kind === 'listing');
 }
