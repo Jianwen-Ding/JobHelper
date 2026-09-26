@@ -7289,17 +7289,44 @@ function questionOf(field) {
  * elements around it, and never past one that holds another place to write:
  * the label of a different question is exactly what must not be borrowed.
  */
+/*
+ * And out of the component the editor is drawn in.
+ *
+ * An editor drawn in a component — its editing box in the component's root,
+ * the component straight after the page's hidden textarea — was never
+ * matched to the textarea: `previousElementSibling` inside the root is the
+ * component's `<style>`, and `parentElement` stops at the root. Measured,
+ * each such editor was offered as "Editor editing area: main. Press Alt+0
+ * for help.", not required, and the cover letter's editor as a question of
+ * its own, where the same editors drawn into the page were "Why do you want
+ * to work at Acme?", required, and no question at all.
+ *
+ * The root is one more wrapper and costs none of the three. And "another
+ * place to write" counts those drawn in components: two editors drawn in
+ * components side by side after one hidden textarea look, to
+ * `querySelectorAll`, like a wrapper holding nothing else to write in, and
+ * both took the textarea's question.
+ */
+const A_PLACE_TO_WRITE = 'textarea, [contenteditable="true"]';
+
 function takenOver(field) {
   if (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) return null;
   let node = field;
-  for (let i = 0; i < 3 && node; i++, node = node.parentElement) {
+  for (let i = 0; i < 3 && node; ) {
     const before = node.previousElementSibling;
     if (before instanceof HTMLTextAreaElement && before.getClientRects().length === 0) return before;
-    const around = node.parentElement;
-    const others = [...(around?.querySelectorAll('textarea, [contenteditable="true"]') ?? [])].filter(
-      (f) => f !== field && !f.contains(field) && !field.contains(f),
-    );
+    const around = containerOf(node);
+    const others = around
+      ? deepQueryAll(A_PLACE_TO_WRITE, around).filter((f) => f !== field && !drawnInside(f, field) && !drawnInside(field, f))
+      : [];
     if (!around || others.length > 0) return null;
+    if (around instanceof ShadowRoot) {
+      if (around.host.id === OURS) return null;
+      node = around.host;
+    } else {
+      node = around;
+      i++;
+    }
   }
   return null;
 }
