@@ -357,7 +357,33 @@ export function wasExpected(trail, url, now = Date.now()) {
   const b = pathOf(url);
   if (!a || !b) return false;
   if (hostOf(expecting.to) !== hostOf(url)) return false;
+  /*
+   * Or on the site's sign-in page, which is where Apply goes first on a site
+   * that wants an account.
+   *
+   * ADP's is the one reported: Apply on
+   * `/astronautics/cx/job-details?reqId=…` is a button, so what it sets up to
+   * expect is the posting's own address, and it goes to
+   * `/astronautics/auth` — neither the same path nor a step under it. The
+   * sign-in page was judged a different application and the trail was cut
+   * there, and the form after it, measured against a trail that now started
+   * at the sign-in page, was asked about as a branch. Only on the host Apply
+   * was pressed on, and only while the click is fresh.
+   */
+  if (signInStep(url)) return true;
   return sameOrUnder(a, b);
+}
+
+/*
+ * An address that is a site's sign-in or sign-up step, by its path.
+ *
+ * Whole segments only, so `/authors` or `/login-help-center` is not one.
+ */
+const SIGN_IN_STEP =
+  /^(auth|authenticate|login|log-in|signin|sign-in|sign_in|logon|sso|oauth|oauth2|authorize|register|registration|signup|sign-up|createaccount|create-account)$/i;
+
+export function signInStep(url) {
+  return segments(pathOf(url) ?? '').some((seg) => SIGN_IN_STEP.test(seg));
 }
 
 /*
@@ -756,6 +782,21 @@ export function judgeApplication(trail, page, now = Date.now()) {
   const seen = trail.pages.map((p) => String(p?.url ?? '').toLowerCase());
   const itsJobs = segments(pathOf(page.url) ?? '').filter((seg) => PATH_JOB_ID.test(seg) && /\d/.test(seg));
   if (itsJobs.some((id) => !seen.some((u) => u.includes(id.toLowerCase())))) return 'different';
+  /*
+   * The form that comes straight after signing in is the one Apply was
+   * pressed for.
+   *
+   * A site that wants an account sends Apply to its sign-in page and, once
+   * you are in, on to the form — at an address that often says nothing about
+   * the job. On ADP that form was asked about as a possible new application
+   * one step after the sign-in page it followed. When the page before this
+   * one, on this site, is the sign-in step, nothing here is left to ask: the
+   * employer agrees or is not given, the role is not another and no job
+   * number disagrees.
+   */
+  const last = trail.pages[trail.pages.length - 1];
+  const lastHost = hostOf(last?.url);
+  if (lastHost && (lastHost === here || rootOf(lastHost) === rootOf(here)) && signInStep(last.url)) return 'same';
   return 'unsure';
 }
 

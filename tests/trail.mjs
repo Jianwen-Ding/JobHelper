@@ -1964,6 +1964,68 @@ describe('a form on the same site that nothing ties to the application', () => {
  * Intel Careers" and "Activision — intern job openings" were rows in a
  * tracker, held for resumes built on careers homes and search results.
  */
+/*
+ * Reported on ADP: "the trail being cut off and unnecessarily branched". Apply
+ * on myjobs.adp.com is a button, so it expects the posting's own address, and
+ * it goes to the site's sign-in page, `/astronautics/auth`, before the form.
+ * The sign-in page was judged another application — the trail was cut there —
+ * and the form after it was asked about as a branch.
+ */
+describe('Apply that goes through the site sign-in page first', () => {
+  const adp = (p) => `https://myjobs.adp.com${p}`;
+  const posting = adp('/astronautics/cx/job-details?reqId=5001225797306&rb=LINKEDIN');
+  const pressed = (now = Date.now()) => ({
+    ...trailOf({ url: posting, company: 'Astronautics', role: 'Software Engineering Intern' }),
+    expecting: { to: posting, at: now },
+  });
+
+  it('keeps the sign-in page Apply went to in the application', () => {
+    assert.equal(judgeApplication(pressed(), { url: adp('/astronautics/auth'), kind: 'other' }), 'same');
+    assert.equal(wasExpected(pressed(), adp('/astronautics/auth')), true);
+  });
+
+  it('and the form after signing in, with nothing to ask', () => {
+    const through = trailOf(
+      { url: posting, company: 'Astronautics', role: 'Software Engineering Intern' },
+      { url: adp('/astronautics/auth') },
+    );
+    assert.equal(judgeApplication(through, { url: adp('/astronautics/cx/apply'), kind: 'application' }), 'same');
+    // It carries the job's number back, as ADP's form does; that joins it too.
+    assert.equal(
+      judgeApplication(through, { url: adp('/astronautics/cx/apply?reqId=5001225797306'), kind: 'application' }),
+      'same',
+    );
+  });
+
+  it('but not a sign-in page nobody pressed Apply for, or one pressed for too long ago', () => {
+    const plain = trailOf({ url: posting, company: 'Astronautics', role: 'Software Engineering Intern' });
+    assert.notEqual(judgeApplication(plain, { url: adp('/astronautics/auth'), kind: 'other' }), 'same');
+    const stale = pressed(Date.now() - EXPECTATION_MS - 1000);
+    assert.equal(wasExpected(stale, adp('/astronautics/auth')), false);
+  });
+
+  it('nor a sign-in page on another site', () => {
+    assert.equal(wasExpected(pressed(), 'https://accounts.example.com/login'), false);
+  });
+
+  it('and a form after signing in is still another job when it says so', () => {
+    const through = trailOf(
+      { url: posting, company: 'Astronautics', role: 'Software Engineering Intern' },
+      { url: adp('/astronautics/auth') },
+    );
+    assert.equal(
+      judgeApplication(through, { url: adp('/astronautics/cx/apply?reqId=5001229999999'), kind: 'application' }),
+      'different',
+    );
+    assert.equal(judgeApplication(through, { url: adp('/astronautics/cx/apply'), role: 'Data Scientist', kind: 'application' }), 'different');
+    assert.equal(judgeApplication(through, { url: adp('/astronautics/cx/apply'), company: 'Northwind', kind: 'application' }), 'different');
+  });
+
+  it('while a word like "authors" in a path is not a sign-in step', () => {
+    assert.equal(wasExpected(pressed(), adp('/astronautics/authors')), false);
+  });
+});
+
 describe('an application that is so far only lists of jobs', () => {
   const page = (url, kind) => ({ url, kind, company: 'Epic', role: 'Careers' });
 
