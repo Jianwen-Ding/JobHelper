@@ -1611,6 +1611,24 @@ export function createCard({
     return short ? `${short} ${how}` : how;
   }
 
+  /**
+   * Take the plain names in the shared folder back for this application.
+   *
+   * Whichever application asked last holds `First-Last-Resume.pdf` there —
+   * the one in hand always gets the plain name, as asked. A chip carries its
+   * own bytes, so a drag is right whoever holds the name; a path pasted into
+   * an upload dialog is not, and with three tabs open the file under the name
+   * this card shows could be another tab's. So copying or opening the folder
+   * asks for this application's files first, which gives the names back to
+   * it, and the folder holds this job's files at the moment they are picked.
+   */
+  function claimFolder() {
+    const application = carried?.application;
+    if (!application) return Promise.resolve();
+    carried = null;
+    return Promise.resolve(warmFiles(application)).catch(() => undefined);
+  }
+
   function warmFiles(application) {
     if (carried?.application === application && (carried.files || carried.waiting)) {
       /*
@@ -6020,13 +6038,16 @@ export function createCard({
                   className: 'tiny',
                   textContent: 'Copy folder path',
                   title: 'Paste it into the upload dialog',
-                  onclick: () => navigator.clipboard?.writeText(uploadFolder()),
+                  onclick: () => {
+                    navigator.clipboard?.writeText(uploadFolder()).catch(() => undefined);
+                    claimFolder();
+                  },
                 }),
                 h('button', {
                   className: 'tiny',
                   textContent: 'Open the folder',
                   title: 'See the files in a tab, and open any of them',
-                  onclick: () => onAction('openTab', { url: '/current' }),
+                  onclick: () => claimFolder().then(() => onAction('openTab', { url: '/current' })),
                 }),
               ]),
               /*
@@ -6774,13 +6795,16 @@ export function createCard({
             className: 'tiny',
             textContent: 'Open the folder',
             title: 'See the files in a tab, and open any of them',
-            onclick: () => onAction('openTab', { url: '/current' }),
+            onclick: () => claimFolder().then(() => onAction('openTab', { url: '/current' })),
           }),
           h('button', {
             className: 'tiny',
             textContent: 'Copy folder path',
             title: 'Paste it into the upload dialog',
-            onclick: () => navigator.clipboard?.writeText(b.currentDir ?? b.dir),
+            onclick: () => {
+              navigator.clipboard?.writeText(b.currentDir ?? b.dir).catch(() => undefined);
+              claimFolder();
+            },
           }),
           // Not claimed when it is not true — see `missing` above.
           b.currentDir

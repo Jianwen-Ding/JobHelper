@@ -573,8 +573,18 @@ async function main() {
         resumes.length ? resumes.map((n, i) => `${n} → ${whose[i]}`).join(', ') : '(no resume offered)',
       );
     };
+    /*
+     * Every card offers the plain name — the one in hand always gets it, as
+     * asked — and the folder can hold only one file under it. So what is
+     * checked is the moment it matters: copying the folder path in a tab
+     * gives the names back to that tab's application before anything is
+     * pasted, and the file under the name its card shows is its own.
+     */
     await inTurn('The files each tab offers are its own, in the folder they share', async (tab) => {
-      ownFiles(tab, await cardOf(tab.page).locator('.staged .file.liftable .what').allTextContents(), 'on the form,');
+      const card = cardOf(tab.page);
+      await card.locator('.staged').getByRole('button', { name: 'Copy folder path' }).first().click();
+      await tab.page.waitForTimeout(1500);
+      ownFiles(tab, await card.locator('.staged .file.liftable .what').allTextContents(), 'on the form,');
     });
 
     /*
@@ -700,6 +710,9 @@ async function main() {
       await card.locator('.folded-title.applied').waitFor({ timeout: 120_000 }).catch(() => undefined);
       await card.getByRole('button', { name: 'Unfold JobHelper' }).click().catch(() => undefined);
       await card.locator('.done-box').waitFor({ timeout: 60_000 }).catch(() => undefined);
+      // As on the form: copying the folder path is what claims the names.
+      await card.locator('.done-box').getByRole('button', { name: 'Copy folder path' }).first().click().catch(() => undefined);
+      await tab.page.waitForTimeout(1500);
       ownFiles(tab, await card.locator('.done-box .file.liftable .what').allTextContents(), 'filed,');
     }
     /*
