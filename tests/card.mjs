@@ -4399,7 +4399,9 @@ async function main() {
       onAction: async (what) =>
         what === 'attachmentFiles'
           ? { files: [{ name: 'Jianwen-Ding-Resume.pdf' }, { name: 'Jianwen-Ding-Cover-Letter.pdf' }] }
-          : {},
+          : what === 'stage'
+            ? { currentDir: '/tmp/current' }
+            : {},
     });
     const root = document.querySelector('#jobhelper-card-host').shadowRoot;
     /*
@@ -4424,8 +4426,14 @@ async function main() {
       const look = () => {
         const body = root.querySelector('.body.reduced');
         const chips = [...(body?.querySelectorAll('.files > *') ?? [])].map((c) => c.textContent.trim());
-        if (chips.length > 0 || Date.now() - at > 3000) {
-          const note = body?.querySelector('.drag-note')?.textContent ?? '';
+        const said = body?.querySelector('.drag-note')?.textContent ?? '';
+        /*
+         * Once the folder has caught up with the work just restored: until
+         * then the line says the files are being brought up to date, which
+         * they are — restoring re-stages — and a drag would be refused.
+         */
+        if ((chips.length > 0 && /Drag any of these/.test(said)) || Date.now() - at > 6000) {
+          const note = said;
           /*
            * And then the whole card, because the same function draws both
            * and a refactor that dropped them from the propose view would

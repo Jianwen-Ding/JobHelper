@@ -1315,6 +1315,37 @@ export function createCard({
       const what = chip.querySelector('.what');
       if (mine.length === 1 && what) what.textContent = mine[0].name;
     }
+    /*
+     * And the words under them say what the fading means. A faded chip with a
+     * busy cursor and a line reading "Drag any of these into the form" is a
+     * control that looks broken; one reading "being brought up to date" is one
+     * that is working.
+     */
+    const note = root?.querySelector?.('.drag-note');
+    if (note && chipsOnScreen.some((c) => c.isConnected)) note.textContent = dragNote();
+    /*
+     * A folder that is behind with nothing on its way to it is put on its way.
+     *
+     * Plenty changes what the folder should hold without anything asking for a
+     * stage: the answer bank rewording an answer shown here (`setMatches`,
+     * off the store watcher), a stage that came back with nothing. The folder
+     * then stayed a build behind for good — and the chips, which refuse to hand
+     * over a stale file, stayed faded with it.
+     */
+    if (behind && !stagingNow) healSoon();
+  }
+
+  /** The line under the chips, for the state they are in. See `markChips`. */
+  function dragNote() {
+    const names = state.stagedFiles ?? [];
+    const short = missingHere({ files: names });
+    const how = 'Drag any of these into the form, or press Attach files below.';
+    if (stageTrouble.gaveUp) {
+      return `These could not be brought up to date with what is on screen${stageTrouble.said ? ` (${stageTrouble.said})` : ''}. Press Try again, or Attach files once it is fixed.`;
+    }
+    if (folderBehind()) return 'Bringing these up to date with your latest changes \u2014 they can be dragged again in a moment.';
+    if (carried && !carried.files) return 'Getting these ready to drag\u2026';
+    return short ? `${short} ${how}` : how;
   }
 
   function warmFiles(application) {
@@ -1342,13 +1373,28 @@ export function createCard({
         markChips();
       })
       .catch(() => {
-        if (carried === mine) mine.files = [];
+        /*
+         * Not kept. A failed fetch cached as "no files" was never asked again:
+         * the panel drew no chips at all over a folder that had the files in
+         * it, and nothing but a new application would have fetched them. So
+         * it is forgotten, and asked again shortly — a few times, further
+         * apart each time, rather than on every repaint.
+         */
+        if (carried !== mine) return;
+        carried = null;
+        askedWhatIsStaged = undefined;
+        filesMisses += 1;
+        if (filesMisses <= 4) setTimeout(() => state.staged && draw(), 1000 * 2 ** (filesMisses - 1));
       })
       .finally(() => {
-        if (carried === mine) mine.waiting = null;
+        if (carried === mine) {
+          mine.waiting = null;
+          if (mine.files) filesMisses = 0;
+        }
       });
     return mine.waiting;
   }
+  let filesMisses = 0;
 
   /**
    * What this form asks for that was not built.
@@ -3703,11 +3749,63 @@ export function createCard({
       { quiet: true },
     );
     stagingNow = mine;
+    // Marked now, while it runs, and said in words. See `dragNote`.
+    markChips();
     const staged = await mine;
     if (stagingNow === mine) stagingNow = null;
-    if (!staged) lastPrepared = null;
+    if (!staged) {
+      lastPrepared = null;
+      // Remembered, so the retry waits longer each time and the panel can say
+      // why the chips are faded. See `healSoon`.
+      stageTrouble.count += 1;
+      stageTrouble.said = state.error ?? null;
+      stageTrouble.gaveUp = stageTrouble.count > STAGE_RETRIES;
+      if (stageTrouble.gaveUp) draw();
+    } else if (stageTrouble.count) {
+      stageTrouble.count = 0;
+      stageTrouble.said = null;
+      if (stageTrouble.gaveUp) {
+        stageTrouble.gaveUp = false;
+        draw();
+      }
+    }
     // The chips were marked behind while this ran. See `folderBehind`.
     markChips();
+  }
+
+  /*
+   * Stages that came back with nothing, in a row, and whether the card has
+   * stopped retrying on its own. See `healSoon`.
+   */
+  const STAGE_RETRIES = 3;
+  const stageTrouble = { count: 0, said: null, gaveUp: false };
+
+  /**
+   * Stage a folder that is behind, soon, when nothing else is going to.
+   *
+   * Not \`prepareSoon\`: that restarts its wait on every call, which is right
+   * for keystrokes and wrong for this — \`markChips\` runs on every repaint,
+   * and a card repainting for AI progress would push the stage back for as
+   * long as the progress lasted. This waits once, leaves a pending
+   * \`prepareSoon\` to it, backs off after a stage that failed, and stops
+   * after \`STAGE_RETRIES\`, when the panel offers Try again instead. A stage
+   * that keeps being needed with nothing changing is capped too, so a value
+   * that never settles cannot compile on a loop.
+   */
+  let healing = null;
+  const healedAt = [];
+  function healSoon() {
+    if (healing || preparing || stagingNow || !state.spec || stageTrouble.gaveUp) return;
+    const now = Date.now();
+    while (healedAt.length && now - healedAt[0] > 60_000) healedAt.shift();
+    if (healedAt.length >= 4) return;
+    const wait = 1500 * 2 ** stageTrouble.count;
+    healing = setTimeout(() => {
+      healing = null;
+      if (!folderBehind() || stagingNow || preparing) return;
+      healedAt.push(Date.now());
+      stageFiles();
+    }, wait);
   }
 
   /**
@@ -3782,6 +3880,7 @@ export function createCard({
     if (whatWouldBeStaged() === lastPrepared) return;
     clearTimeout(preparing);
     preparing = setTimeout(() => {
+      preparing = null;
       if (whatWouldBeStaged() === lastPrepared) return;
       stageFiles();
     }, 1200);
@@ -4696,15 +4795,30 @@ export function createCard({
         chips.push(missingChip(kind));
       }
     }
+    void short;
     return [
       h('div', { className: 'files' }, chips),
-      h('div', {
-        className: 'drag-note',
-        textContent: short
-          ? `${short} Drag any of these into the form, or press Attach files below.`
-          : 'Drag any of these into the form, or press Attach files below.',
-      }),
-    ];
+      h('div', { className: 'drag-note', textContent: dragNote() }),
+      /*
+       * The way out when the card has stopped retrying on its own. See
+       * `healSoon`: a stage refused three times running is usually something
+       * a person has to fix — a name clash, a store that is not running — and
+       * the retry after it is theirs to start.
+       */
+      stageTrouble.gaveUp
+        ? h('button', {
+            className: 'tiny',
+            textContent: 'Try again',
+            title: 'Build the files into the folder again',
+            onclick: () => {
+              stageTrouble.count = 0;
+              stageTrouble.gaveUp = false;
+              stageTrouble.said = null;
+              stageFiles();
+            },
+          })
+        : null,
+    ].filter(Boolean);
   }
 
   function formActions() {
@@ -6566,6 +6680,16 @@ export function createCard({
               ? drawReducedView()
               : drawProposeView(),
     );
+    /*
+     * The chips just drawn, marked for what they are now.
+     *
+     * `markChips` ran only when bytes arrived or a stage finished, and it
+     * skips a chip that is not on the page yet — so every chip a redraw built
+     * started unmarked, whatever the folder's state: faded after the reason
+     * had passed, or looking ready while a drag would be refused. Reported as
+     * chips that "get greyed out" and show "a circle spinning" on hover.
+     */
+    markChips();
 
     if (wasScrolled) {
       const body = card.querySelector('.body');
