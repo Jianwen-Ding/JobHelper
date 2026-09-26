@@ -983,13 +983,38 @@ function fromLabelledBy(element) {
      * description of anything.
      */
     .filter((id) => id !== element.id)
-    // Scoped to this field's own root: ids inside a component are not in the
-    // document's id map, so Workday-style labelling breaks there otherwise.
-    .map((id) => rootOf(element).getElementById?.(id)?.textContent
-      ?? rootOf(element).querySelector(`#${CSS.escape(id)}`)?.textContent
-      ?? '')
+    .map((id) => byIdAround(element, id)?.textContent ?? '')
     .join(' ');
   return clean(text);
+}
+
+/**
+ * The element an id names, looked for in this field's own root first and then
+ * in each root enclosing it, nearest first.
+ *
+ * Its own root first: ids inside a component are not in the document's id
+ * map, so Workday-style labelling breaks there otherwise.
+ *
+ * And then outwards, because a component is very often two: an outer field
+ * component draws `<div id="label">Phone number</div>` and an inner box
+ * component, and the inner one puts `aria-labelledby="label"` on its
+ * `<input>`. The id is in the outer component's root, not the input's, so
+ * it resolved to nothing and the box was described by its `name` alone —
+ * measured, a Phone number drawn that way came out empty and unreported. The
+ * browser does not resolve it either, which is the component's bug, but the
+ * words are plainly meant for this box.
+ *
+ * Nearest first, and never sideways into some other component's root: in a
+ * list of such fields each outer component has its own `id="label"`, and the
+ * nearest enclosing one is this box's. Searching every root on the page would
+ * give every box in the list the first one's label.
+ */
+function byIdAround(element, id) {
+  for (let root = rootOf(element); root; root = root.host ? rootOf(root.host) : null) {
+    const found = root.getElementById?.(id) ?? root.querySelector(`#${CSS.escape(id)}`);
+    if (found) return found;
+  }
+  return null;
 }
 
 /**
@@ -1012,6 +1037,73 @@ function fromLabelledBy(element) {
  * never confident about.
  */
 const ANOTHER_FIELD = 'input:not([type=hidden]), textarea, select';
+
+/**
+ * How many fields `scope` holds, up to `enough`, counting the ones drawn
+ * inside the components in it.
+ *
+ * `querySelectorAll` does not reach into a shadow root, so a component that
+ * draws its `<input>` in its own root looks like an empty element from
+ * outside. Both walks in `labelFor` stop at another field by asking
+ * `querySelector`, and a row of such components is a row of fields that
+ * query cannot see: the walk stepped straight over the component before this
+ * box, and over the question that belonged to it, and gave this box its
+ * neighbour's label. The light DOM is asked first, and a component is only
+ * opened when that has not already found enough.
+ */
+function fieldsIn(scope, selector, enough) {
+  let n = (scope.matches?.(selector) ? 1 : 0) + scope.querySelectorAll(selector).length;
+  if (n >= enough) return n;
+  for (const el of [scope, ...scope.querySelectorAll('*')]) {
+    if (!el.shadowRoot || el.id === OURS) continue;
+    n += fieldsIn(el.shadowRoot, selector, enough - n);
+    if (n >= enough) break;
+  }
+  return n;
+}
+
+/*
+ * What is never drawn, and so is never anybody's label. A component's root
+ * very often begins with its own `<style>`, and its text is CSS: taken for
+ * the words before a box, `:host { display: block }` is the question.
+ */
+const NEVER_SHOWN = 'style, script, template, link, meta, noscript';
+
+/**
+ * The words an element shows, as `labelFor`'s walks read them.
+ *
+ * For a component, that is its shadow root with each slot read as what is
+ * slotted into it, not its `textContent`: a label component given
+ * `text="Email"` draws the word in its root and holds nothing in the page, and
+ * one given the word as a child shows it only through a slot.
+ */
+function shownText(el) {
+  if (!el.shadowRoot || el.id === OURS) return clean(el.textContent);
+  const parts = [];
+  const walk = (node) => {
+    const shown = node.localName === 'slot' ? node.assignedNodes({ flatten: true }) : [];
+    const kids = shown.length ? shown : (node.shadowRoot && node.id !== OURS ? node.shadowRoot : node).childNodes;
+    for (const child of kids) {
+      if (child.nodeType === Node.TEXT_NODE) parts.push(child.nodeValue);
+      else if (child.nodeType === Node.ELEMENT_NODE && !child.matches(NEVER_SHOWN) && child.getAttribute('aria-hidden') !== 'true') {
+        parts.push(' ');
+        walk(child);
+        parts.push(' ');
+      }
+    }
+  };
+  walk(el);
+  return clean(parts.join(''));
+}
+
+/** The element above, or the shadow root when there is none inside it. */
+const containerOf = (node) => node.parentElement ?? (node.parentNode instanceof ShadowRoot ? node.parentNode : null);
+
+/*
+ * How far the climb in `labelFor` goes above a component, once it has left
+ * the one the field is drawn in. See there.
+ */
+const LEVELS_OUTSIDE = 3;
 
 /**
  * A label's words, the way a screen reader says them.
@@ -1114,12 +1206,24 @@ function labelFor(input) {
    * box after the email field. That is precisely the failure the note at the
    * top of this function says was fixed.
    */
-  let node = input.previousElementSibling;
-  for (let i = 0; i < 3 && node; i++, node = node.previousElementSibling) {
-    if (node.matches?.(ANOTHER_FIELD) || node.querySelector?.(ANOTHER_FIELD)) break;
-    const text = clean(node.textContent);
-    if (text && text.length < 160) return text;
-  }
+  /*
+   * "Another field" includes one drawn inside a component (see `fieldsIn`),
+   * and what is never drawn is stepped over without being counted: see
+   * `NEVER_SHOWN`.
+   */
+  const lookBack = (from) => {
+    let node = from.previousElementSibling;
+    for (let i = 0; i < 3 && node; node = node.previousElementSibling) {
+      if (node.matches(NEVER_SHOWN)) continue;
+      i++;
+      if (fieldsIn(node, ANOTHER_FIELD, 1)) break;
+      const text = shownText(node);
+      if (text && text.length < 160) return text;
+    }
+    return '';
+  };
+  const before = lookBack(input);
+  if (before) return before;
 
   /*
    * Last resort: the nearest ancestor holding this field and nothing else
@@ -1147,16 +1251,57 @@ function labelFor(input) {
    * six wrappers below the block holding its question. Every level still has
    * to hold this one field and no other, which is what bounds the climb.
    */
-  let group = input.parentElement;
-  for (let i = 0; i < 7 && group; i++, group = group.parentElement) {
-    // One field, whether it is an input or a widget `<div>` (which the old
-    // test, "exactly one input", stopped at before it had begun).
-    if (group.querySelectorAll(`${ANOTHER_FIELD}, [role="combobox"]`).length > 1) break;
+  /*
+   * And on out of a component, to where the page put it.
+   *
+   * Both walks stopped at the shadow root a field is drawn in, since neither
+   * `previousElementSibling` nor `parentElement` leaves it. So a box drawn
+   * alone in a component was labelled only from inside that component, and
+   * the three commonest ways of labelling one from outside were never read:
+   * the page's `<label>Last name</label>` beside `<x-input>`, and a field
+   * component whose root holds a label component and then a box component.
+   * Measured, Last name and Email drawn those ways came out empty and
+   * unreported.
+   *
+   * The shadow root is now one more group, and when it holds this field and
+   * nothing else fillable the walks carry on from its host, exactly as they
+   * start from the field: the few elements before the host, then the groups
+   * around it. The rules that keep them safe are unchanged — stop at another
+   * field, counting the ones inside components, and stop at a group holding
+   * a second one — so in a row of components each with its own label beside
+   * it, each box reads its own, and the one before a component holding a
+   * tick box is never stepped over.
+   *
+   * Only `LEVELS_OUTSIDE` groups beyond the component, where inside the page
+   * the climb goes seven. Those seven are for a widget buried in wrappers of
+   * its own; a component *is* the widget, and its wrappers are the page's.
+   * A component with no label near it is otherwise alone in its section for
+   * as far as the climb goes, and the section's heading, several levels up,
+   * became its label.
+   */
+  // One field, whether it is an input or a widget `<div>` (which the old
+  // test, "exactly one input", stopped at before it had begun).
+  const oneField = `${ANOTHER_FIELD}, [role="combobox"]`;
+  // `from` is where the field is, as seen from `group`: the field itself, the
+  // element holding it, or the component it is drawn in.
+  let from = input;
+  let group = containerOf(input);
+  for (let i = 0, outside = 0; i < 7 && group && outside <= LEVELS_OUTSIDE; i++) {
+    if (fieldsIn(group, oneField, 2) > 1) break;
     const heading = group.querySelector('label,legend,th,.label,[class*="label"]');
-    if (heading && !heading.contains(input)) return clean(heading.textContent);
-    const lead = group.firstElementChild;
-    const said = lead && !lead.contains(input) && !lead.querySelector(ANOTHER_FIELD) ? clean(lead.textContent) : '';
+    if (heading && !heading.contains(from)) return clean(heading.textContent);
+    let lead = group.firstElementChild;
+    while (lead?.matches(NEVER_SHOWN)) lead = lead.nextElementSibling;
+    const said = lead && !lead.contains(from) && !fieldsIn(lead, ANOTHER_FIELD, 1) ? shownText(lead) : '';
     if (said && said.length < 300) return said;
+    const leaving = group instanceof ShadowRoot;
+    from = leaving ? group.host : group;
+    if (leaving) {
+      const beside = lookBack(from);
+      if (beside) return beside;
+    }
+    group = containerOf(from);
+    if (leaving || outside) outside++;
   }
   return aria;
 }

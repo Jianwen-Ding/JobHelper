@@ -3038,6 +3038,82 @@ const SLOTTED_LABELS = `<!doctype html><html><head><meta charset="utf-8"><title>
 </body></html>`;
 
 /*
+ * Boxes drawn alone in a component and labelled from outside it, the three
+ * ways that happens. The page's own `<label>` beside `<y-box>`. A field
+ * component whose root holds a label component and then a box component, the
+ * label's words slotted in or drawn from an attribute. And a Material-style
+ * outlined field, the box component first and then its floating label, the
+ * inner `<input>` naming the label with `aria-labelledby` although the id is in
+ * the outer component's root. Then the same in a row: each label beside its
+ * own component with nothing around them, one component with no label between
+ * them, and three outlined fields that all call their label `id="label"`.
+ * Every box starts its root with a `<style>`, as components do.
+ */
+const COMPONENT_DEFINITIONS = `<script>
+  const def = (name, draw) => customElements.define(name, class extends HTMLElement {
+    constructor() { super(); this.attachShadow({ mode: 'open' }).innerHTML = draw(this); }
+  });
+  const at = (h, name, or = '') => h.getAttribute(name) ?? or;
+  def('y-box', (h) => '<style>:host { display: block; margin: 4px 0 }</style><input part="input" name="' + at(h, 'field') + '" type="' + at(h, 'type', 'text') + '">');
+  def('y-label', (h) => '<span part="label">' + (h.hasAttribute('text') ? at(h, 'text') : '<slot></slot>') + '</span>');
+  def('y-field', (h) => '<style>:host { display: grid }</style>' +
+    (h.hasAttribute('drawn') ? '<y-label text="' + at(h, 'label') + '"></y-label>' : '<y-label>' + at(h, 'label') + '</y-label>') +
+    '<y-box field="' + at(h, 'field') + '" type="' + at(h, 'type', 'text') + '"></y-box>');
+  def('y-inner', (h) => '<input name="' + at(h, 'field') + '" type="' + at(h, 'type', 'text') + '" aria-labelledby="label">');
+  def('y-outlined', (h) => '<y-inner field="' + at(h, 'field') + '" type="' + at(h, 'type', 'text') + '"></y-inner><div id="label" class="floating">' + at(h, 'label') + '</div>');
+  def('y-check', (h) => '<input type="checkbox" name="' + at(h, 'field') + '">');
+</script>`;
+
+const LABELLED_FROM_OUTSIDE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="row"><label>Last name</label><y-box field="q_2001"></y-box></div>
+  <y-field label="Email" field="q_2002" type="email"></y-field>
+  <y-outlined label="Phone number" field="q_2003" type="tel"></y-outlined>
+  <y-field label="City" field="q_2004" drawn></y-field>
+
+  <div class="list">
+    <label>First name</label><y-box field="q_3001"></y-box>
+    <y-box field="q_3002"></y-box>
+    <label>Last name</label><y-box field="q_3003"></y-box>
+    <label>City</label><y-box field="q_3004"></y-box>
+    <label>Email</label><y-box field="q_3005" type="email"></y-box>
+  </div>
+
+  <div class="list">
+    <y-outlined label="First name" field="q_3101"></y-outlined>
+    <y-outlined label="City" field="q_3102"></y-outlined>
+    <y-outlined label="Last name" field="q_3103"></y-outlined>
+  </div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * The same components where nothing beside them is theirs, and every field on
+ * the page is drawn in one, so a query that does not open components sees a
+ * form with no fields at all. One far down a section whose heading is four
+ * wrappers up; one in a group of its own under a group whose label belongs to
+ * the component in it; and one after a component holding a tick box, beside
+ * the consent sentence that is the tick box's.
+ */
+const UNLABELLED_COMPONENTS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <section class="block">
+    <h3>Your email address</h3>
+    <div class="body"><div class="grid"><div class="cell"><div class="control"><y-box field="q_4001"></y-box></div></div></div></div>
+  </section>
+  <div class="q"><label>Phone</label><y-box field="q_4002" type="tel"></y-box></div>
+  <div class="q"><y-box field="q_4003"></y-box></div>
+  <div class="consent">
+    <p>I agree to be contacted by email about this and future roles.</p>
+    <y-check field="q_5001"></y-check>
+    <y-box field="q_5002"></y-box>
+  </div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
  * A date asked as a group of boxes, each labelled only with its part: the
  * GOV.UK date input, a `<fieldset>` whose legend is the question over Day,
  * Month and Year boxes, and the same with a Month and a Year list. Beside the
@@ -4261,7 +4337,7 @@ const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><tit
   });
 </script></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/date-in-parts': DATE_IN_PARTS, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/date-in-parts': DATE_IN_PARTS, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -8362,6 +8438,74 @@ async function main() {
       'a label given as the slot\'s fallback is still read, and a question slotted in is not given anything',
       slotted.q_1004 === 'Boston' && slotted.q_1005 === '' && slotted.filled.length === 4,
       JSON.stringify(slotted),
+    );
+
+    // Every box on the page by its name, however deep in components it is drawn.
+    const componentFill = (url, fields) => page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        const boxes = {};
+        const walk = (root) => {
+          for (const el of root.querySelectorAll('*')) {
+            if (el.localName === 'input') boxes[el.name] = el.type === 'checkbox' ? el.checked : el.value;
+            if (el.shadowRoot) walk(el.shadowRoot);
+          }
+        };
+        walk(document);
+        return { ...boxes, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields }),
+    );
+    const outside = await componentFill('/labelled-from-outside', SWEEP);
+    group('A box drawn alone in a component, labelled from outside it');
+    check(
+      'the page\'s own <label> beside the component is read, and Last name is filled',
+      outside.q_2001 === 'Testwell',
+      JSON.stringify(outside),
+    );
+    check(
+      'a label component beside a box component in a field component\'s root is read, slotted or drawn: Email and City',
+      outside.q_2002 === 'morgan.testwell@example.com' && outside.q_2004 === 'Boston',
+      JSON.stringify(outside),
+    );
+    check(
+      'aria-labelledby naming an id in the enclosing component\'s root is read, and Phone number is filled',
+      outside.q_2003 === '(555) 010-0199',
+      JSON.stringify(outside),
+    );
+    check(
+      'in a row of components, each with its label beside it, every box takes its own label, and the one with none beside it stays empty',
+      outside.q_3001 === 'Morgan' && outside.q_3002 === '' && outside.q_3003 === 'Testwell' && outside.q_3004 === 'Boston' &&
+        outside.q_3005 === 'morgan.testwell@example.com',
+      JSON.stringify(outside),
+    );
+    check(
+      'three outlined fields that all call their label id="label" each read the one in their own component',
+      outside.q_3101 === 'Morgan' && outside.q_3102 === 'Boston' && outside.q_3103 === 'Testwell' && outside.filled.length === 11,
+      JSON.stringify(outside),
+    );
+
+    const alone = await componentFill('/unlabelled-components', SWEEP);
+    group('A component with no label of its own near it');
+    check(
+      'one four wrappers below its section\'s heading is not given the heading, and stays empty',
+      alone.q_4001 === '',
+      JSON.stringify(alone),
+    );
+    check(
+      'one alone in its group is not given the label of the group before it, and stays empty',
+      alone.q_4003 === '',
+      JSON.stringify(alone),
+    );
+    check(
+      'a box after a component holding a tick box is not given the consent sentence beside the tick box, and the tick box is left unticked',
+      alone.q_5002 === '' && alone.q_5001 === false,
+      JSON.stringify(alone),
+    );
+    check(
+      'the Phone beside its own component is filled, and nothing else is filled or reported',
+      alone.q_4002 === '(555) 010-0199' && alone.filled.join() === 'phone' && alone.skipped.length === 0,
+      JSON.stringify(alone),
     );
 
     const dateParts = await page.goto(`${base}/date-in-parts`, { waitUntil: 'domcontentloaded' }).then(() =>
