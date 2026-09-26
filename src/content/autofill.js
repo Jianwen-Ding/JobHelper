@@ -6280,7 +6280,15 @@ function listsOf(widget, openBefore = null) {
    * list showing before the press is the widget's only when it is inside
    * the widget.
    */
-  const inside = showing.filter((l) => widget.contains(l));
+  /*
+   * Nor one whose every option is marked chosen: that is what the widget
+   * holds, drawn as chips, not a list to choose from. Measured, a Country
+   * multi-select saying "Select countries" over a `role="listbox"` of its
+   * chosen chips, holding "United States" and opening nothing on a press:
+   * the chip was the option pressed, and pressing a chip takes it out, so
+   * the country it held was lost and it was reported as one to pick by hand.
+   */
+  const inside = showing.filter((l) => widget.contains(l) && !holdsOnlyChosen(l));
   const lists = fresh.length ? fresh : inside;
   return lists.length === 1 ? lists : [];
 }
@@ -6312,6 +6320,12 @@ function drawnByAnother(list, widget) {
     if (others.length) return true;
   }
   return false;
+}
+
+/** Whether a list has options and every one of them is marked chosen. */
+function holdsOnlyChosen(list) {
+  const options = [...list.querySelectorAll('[role="option"], [role="menuitem"]')];
+  return options.length > 0 && options.every(isMarkedChosen);
 }
 
 /** The option that is plainly this answer, or nothing. Never the nearest. */

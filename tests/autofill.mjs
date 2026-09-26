@@ -4023,6 +4023,45 @@ const PAGE_FOCUS_OPENS_ANOTHER = `<!doctype html><html><head><meta charset="utf-
 </body></html>`;
 
 /*
+ * A Country multi-select saying "Select countries" over a `role="listbox"`
+ * of the chips it holds, each an option marked chosen, holding "United
+ * States". Pressing a chip takes it out, and the dropdown itself opens only
+ * on the keyboard. And a School whose list is always open inside it, its
+ * first option highlighted (`aria-selected`) as MUI's `autoHighlight` leaves
+ * it, a click choosing and drawing the choice over the list.
+ */
+const PAGE_CHOSEN_CHIPS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="c-country-l">Country</label>
+    <div id="c-country" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="c-country-l">
+      <span class="prompt">Select countries</span>
+      <div role="listbox" aria-label="Chosen" aria-multiselectable="true" class="chips">
+        <span role="option" aria-selected="true" class="chip">United States</span>
+      </div>
+    </div></div>
+  <div class="q"><label id="c-school-l">School</label>
+    <div id="c-school" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="true" aria-labelledby="c-school-l">
+      <span class="prompt">Select…</span>
+      <div role="listbox" class="always"><div role="option" aria-selected="true">Boston University</div><div role="option" aria-selected="false">Northeastern University</div></div>
+    </div></div>
+</form>
+<script>
+  window.log = [];
+  // Pressing a chip takes it out; the dropdown itself opens only on the keyboard.
+  document.querySelector('.chips').addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip'); if (!chip) return;
+    window.log.push('removed ' + chip.textContent); chip.remove();
+  });
+  // A School whose list is always open inside it; a click chooses, and the choice is drawn over the list.
+  for (const o of document.querySelectorAll('.always [role=option]')) o.addEventListener('click', () => {
+    for (const x of document.querySelectorAll('.always [role=option]')) x.setAttribute('aria-selected', String(x === o));
+    document.querySelector('#c-school .prompt').textContent = o.textContent; window.log.push('chose ' + o.textContent);
+  });
+  window.state = () => ({ school: document.querySelector('#c-school .prompt').textContent, chips: [...document.querySelectorAll('.chip')].map((c) => c.textContent), open: document.querySelectorAll('[role=listbox]').length });
+</script>
+</body></html>`;
+
+/*
  * The page's own boxes, each put into a component that draws its label round
  * the slot: in a wrapper before the slot or before a wrapper round it, loose
  * in its root, round the slot, and with the label's words slotted in too,
@@ -5391,7 +5430,7 @@ const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><tit
   });
 </script></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
 
 const PROFILE = {
   first_name: 'Morgan',
@@ -10208,6 +10247,25 @@ async function main() {
       unnudged.spon === 'No' && unnudged.auth === 'Yes' && unnudged.log.join() === 'sponsorship No,authorization Yes' &&
         unnudged.filled.join() === 'requires_sponsorship,work_authorization' && unnudged.skipped.length === 0,
       JSON.stringify(unnudged),
+    );
+
+    await page.goto(`${base}/page-chosen-chips`, { waitUntil: 'domcontentloaded' });
+    const chips = await page.evaluate(async ({ b, fields }) => {
+      const m = await import(`${b}/autofill.js`);
+      const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 1000 });
+      return { ...window.state(), log: window.log, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+    }, { b: base, fields: SWEEP });
+    group('The chips a dropdown holds are not a list to choose from');
+    check(
+      'a multi-select whose chosen chips are a listbox inside it, opening nothing on a press, has no chip pressed for its answer: United States is kept',
+      chips.chips.join() === 'United States' && !chips.log.some((l) => l.startsWith('removed')) && !chips.filled.includes('address_country') &&
+        chips.skipped.join() === 'address_country: this one has to be picked by hand',
+      JSON.stringify(chips),
+    );
+    check(
+      'but a dropdown whose list, one option highlighted, is always open inside it is still chosen in from that list',
+      chips.school === 'Northeastern University' && chips.log.includes('chose Northeastern University') && chips.filled.includes('school'),
+      JSON.stringify(chips),
     );
 
     const putIn = (url) => page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' }).then(() =>
