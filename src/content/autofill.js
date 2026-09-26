@@ -646,10 +646,11 @@ const asksForADiallingCode = (description, label) =>
  */
 function surroundingWords(input) {
   const said = [];
-  const legend = clean(input.closest('fieldset')?.querySelector('legend')?.textContent);
+  // Out of the components the field is drawn in: see `closestAround`.
+  const legend = clean(closestAround(input, 'fieldset')?.querySelector('legend')?.textContent);
   if (legend) said.push(legend);
 
-  const group = input.closest('[role="group"], [role="radiogroup"]');
+  const group = closestAround(input, '[role="group"], [role="radiogroup"]');
   if (group) {
     const named = clean(group.getAttribute('aria-label')) || clean(fromLabelledBy(group));
     if (named) said.push(named);
@@ -948,6 +949,45 @@ const rootOf = (node) => {
   const root = node.getRootNode?.();
   return root?.querySelector ? root : document;
 };
+
+/**
+ * The component a node is drawn in, where it is drawn in one — never the
+ * card's own host, whose insides are not the page's.
+ */
+const hostOf = (node) => {
+  const root = node.getRootNode?.();
+  return root instanceof ShadowRoot && root.host.id !== OURS ? root.host : null;
+};
+
+/** The element around this one: its parent, or the component it is drawn in. */
+const parentAround = (node) => node.parentElement ?? (node.parentNode instanceof ShadowRoot ? hostOf(node) : null);
+
+/**
+ * `closest`, carried on out of each component the node is drawn in.
+ *
+ * The walks that read what a field sits *in* — the fieldset whose legend says
+ * whose details these are, the group that says which date, the block that
+ * says which job — ask `closest` or climb `parentElement`, and both stop at
+ * the shadow root the field is drawn in. So a box drawn in a component was in
+ * no fieldset and no group at all, however the page nested it: measured, an
+ * Emergency contact's Phone and Email were given the applicant's own, the
+ * Month and Year under "When do you expect to graduate?" were left empty, and
+ * a Work Experience block of components was not filled at all, where the same
+ * form drawn without components was right in every box.
+ *
+ * Unlike a label, which `labelFor` only borrows from outside a component when
+ * the component holds this field alone, what a field sits in needs no such
+ * care: a fieldset around a component is around everything the component
+ * draws, and its legend is as much the context of each box in it as of a box
+ * written straight into the fieldset.
+ */
+function closestAround(node, selector) {
+  for (let at = node; at; at = hostOf(at)) {
+    const found = at.closest?.(selector);
+    if (found) return found;
+  }
+  return null;
+}
 
 /**
  * Find the label that belongs to a field.
@@ -2369,7 +2409,8 @@ function headingOver(input) {
 }
 
 function sectionOf(input) {
-  const legend = input.closest?.('fieldset')?.querySelector(':scope > legend');
+  // Out of the components the field is drawn in: see `closestAround`.
+  const legend = closestAround(input, 'fieldset')?.querySelector(':scope > legend');
   if (legend) return clean(legend.textContent);
   return clean(headingOver(input)?.heading.textContent ?? '');
 }
@@ -2423,8 +2464,9 @@ function graduationPartKey(input) {
   const own = withoutMarkers(labelFor(input)) || clean(input.placeholder);
   const part = Object.keys(DATE_PART).find((p) => DATE_PART[p].test(own));
   if (!part) return null;
-  const legend = input.closest('fieldset')?.querySelector(':scope > legend');
-  const group = input.closest('[role="group"]');
+  // Out of the components the box is drawn in: see `closestAround`.
+  const legend = closestAround(input, 'fieldset')?.querySelector(':scope > legend');
+  const group = closestAround(input, '[role="group"]');
   /*
    * `fromLabelledBy` only for a group there is. A box whose words are "Month"
    * or "MM" with no fieldset and no group anywhere around it is ordinary — a
@@ -3789,7 +3831,8 @@ const WORK_HISTORY = /\b(work|employment|professional|job|career)[\s_-]*(experie
 function inWorkHistory(input) {
   const own = [input.id, input.name, input.getAttribute('data-automation-id')].map(asWords).join(' ');
   if (WORK_HISTORY.test(own)) return true;
-  for (let at = input.parentElement, n = 0; at && n < 8; at = at.parentElement, n++) {
+  // Out of the components the field is drawn in: see `closestAround`.
+  for (let at = parentAround(input), n = 0; at && n < 8; at = parentAround(at), n++) {
     if (!at.matches('[role="group"], fieldset, section')) continue;
     const named =
       clean(at.getAttribute('aria-label')) ||
@@ -3866,8 +3909,12 @@ const JOB_PARTS = [
  * up still answers, so a date inside a block named "Work Experience 1" is
  * never read as that block's name.
  */
+/*
+ * And out of the components the box is drawn in, a component's host being
+ * one wrapper more: see `closestAround`.
+ */
 function dateHalfOf(input) {
-  for (let at = input.parentElement, n = 0; at && n < 7; at = at.parentElement, n++) {
+  for (let at = parentAround(input), n = 0; at && n < 7; at = parentAround(at), n++) {
     if (at.matches('[role="group"], fieldset')) {
       const named = clean(at.getAttribute('aria-label')) || clean(fromLabelledBy(at)) || clean(at.querySelector(':scope > legend')?.textContent);
       if (named) return withoutMarkers(named);
@@ -6963,17 +7010,44 @@ export function isRequired(fieldId) {
 
   const marked = (text) => /\*|\brequired\b/i.test(text ?? '');
 
-  // The label actually associated with this field.
+  // The label actually associated with this field, or with the component it
+  // is drawn in: see `componentLabel`.
   const own =
     (field.id && rootOf(field).querySelector(`label[for="${CSS.escape(field.id)}"]`)) ||
-    field.closest('label');
+    field.closest('label') ||
+    componentLabel(field);
   if (own) return marked(own.textContent);
 
-  let group = field.parentElement;
-  for (let i = 0; i < 3 && group; i++, group = group.parentElement) {
-    if (group.querySelectorAll(ANOTHER_FIELD).length > 1) break;
+  /*
+   * And on out of a component, as `labelFor` climbs.
+   *
+   * `parentElement` stops at the shadow root a field is drawn in, so a box in
+   * a component had no group at all to find its mark in: `<label>Why do you
+   * want to work here? *</label>` beside a component drawing a textarea read
+   * as optional, and the card listed a required question as one that could
+   * be left. The root is one more group, and when it holds this field alone
+   * the climb carries on from its host; a root costs none of the three
+   * levels, which are the page's wrappers.
+   *
+   * Counting the fields drawn in components, as `labelFor` does (see
+   * `fieldsIn`): a wrapper holding a required question and then a component
+   * with no label of its own looks, to `querySelectorAll`, like a wrapper
+   * holding one field, and the second box took the first one's asterisk.
+   */
+  let from = field;
+  let group = containerOf(field);
+  for (let i = 0; i < 3 && group; ) {
+    if (fieldsIn(group, ANOTHER_FIELD, 2) > 1) break;
     const label = group.querySelector('label,legend');
     if (label) return marked(label.textContent);
+    if (group instanceof ShadowRoot) {
+      if (group.host.id === OURS) break;
+      from = group.host;
+    } else {
+      from = group;
+      i++;
+    }
+    group = containerOf(from);
   }
   return false;
 }

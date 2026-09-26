@@ -3065,6 +3065,8 @@ const COMPONENT_DEFINITIONS = `<script>
   def('y-shell', (h) => '<style>:host { display: block }</style><y-box' + (h.hasAttribute('inner') ? ' id="' + at(h, 'inner') + '"' : '') +
     ' field="' + at(h, 'field') + '" type="' + at(h, 'type', 'text') + '"></y-box>');
   def('y-pair', (h) => '<style>:host { display: flex; gap: 4px }</style><input name="' + at(h, 'field') + '"><input name="' + at(h, 'field2') + '">');
+  def('y-area', (h) => '<style>:host { display: block }</style><textarea rows="3" name="' + at(h, 'field') + '"' +
+    (h.hasAttribute('placeholder') ? ' placeholder="' + at(h, 'placeholder') + '"' : '') + '></textarea>');
 </script>`;
 
 const LABELLED_FROM_OUTSIDE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
@@ -3123,6 +3125,63 @@ const LABELLED_AROUND = `<!doctype html><html><head><meta charset="utf-8"><title
       <y-box id="h-last" field="q_7201"></y-box><y-box id="h-last" field="q_7202"></y-box>
       <y-pair id="h-name" field="q_7301" field2="q_7302"></y-pair>
     </div>
+  </div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * Components inside what says whose, which or whether: the applicant's own
+ * Phone, then a fieldset for an Emergency contact holding a Phone and an
+ * Email drawn in components; a Month and a Year under "When do you expect to
+ * graduate?", an "End date year" in an Education fieldset, and a Month and a
+ * Year under "Date of birth"; and long questions drawn in components, marked
+ * with an asterisk on the page's label beside them, on a label wrapping one,
+ * on a `for` label in a column apart, or not at all. Two of the questions
+ * share a wrapper with the asterisked one before them, which is not theirs.
+ */
+const COMPONENTS_IN_CONTEXT = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label>Phone</label><y-box field="q_8000" type="tel"></y-box></div>
+  <fieldset><legend>Emergency contact</legend>
+    <div class="q"><label>Phone</label><y-box field="q_8001" type="tel"></y-box></div>
+    <y-field label="Email" field="q_8002" type="email"></y-field>
+  </fieldset>
+
+  <fieldset role="group"><legend>When do you expect to graduate?</legend>
+    <label>Month</label><y-box field="q_8101"></y-box>
+    <label>Year</label><y-box field="q_8102"></y-box>
+  </fieldset>
+  <fieldset><legend>Education</legend><div class="q"><label>End date year</label><y-box field="q_8103"></y-box></div></fieldset>
+  <fieldset role="group"><legend>Date of birth</legend>
+    <label>Month</label><y-box field="q_8104"></y-box>
+    <label>Year</label><y-box field="q_8105"></y-box>
+  </fieldset>
+
+  <div class="q"><label>Why do you want to work here? *</label><y-area field="q_8201"></y-area></div>
+  <div class="q"><label>Anything else you would like us to know?</label><y-area field="q_8202"></y-area></div>
+  <div class="q"><label>What drew you to this team? *</label><y-area field="q_8203"></y-area><y-area field="q_8204" placeholder="Is there anything else you would like to add?"></y-area></div>
+  <label class="q">What would you build first here? * <y-area field="q_8205"></y-area></label>
+  <div class="columns">
+    <div class="labels"><label for="h-proud">What are you proudest of? *</label></div>
+    <div class="boxes"><y-area id="h-proud" field="q_8206"></y-area><y-area field="q_8207" placeholder="How did you hear about this role?"></y-area></div>
+  </div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * A Work Experience block drawn in components: Job Title and Company, and a
+ * From and a To each a fieldset over a Month and a Year box, the block named
+ * by the group around it, as the plain Workday block beside it is.
+ */
+const COMPONENT_HISTORY = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div role="group" aria-label="Work Experience 1">
+    <div class="q"><label>Job Title</label><y-box field="q_9001"></y-box></div>
+    <div class="q"><label>Company</label><y-box field="q_9002"></y-box></div>
+    <fieldset><legend>From</legend><label>Month</label><y-box field="q_9003"></y-box><label>Year</label><y-box field="q_9004"></y-box></fieldset>
+    <fieldset><legend>To</legend><label>Month</label><y-box field="q_9005"></y-box><label>Year</label><y-box field="q_9006"></y-box></fieldset>
   </div>
 </form>
 ${COMPONENT_DEFINITIONS}
@@ -4389,7 +4448,7 @@ const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><tit
   });
 </script></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -8591,6 +8650,79 @@ async function main() {
       'of two components sharing an id, for names the first alone, and nothing else is filled or reported',
       around.q_7201 === 'Testwell' && around.q_7202 === '' && around.filled.length === 6 && around.skipped.length === 0,
       JSON.stringify(around),
+    );
+
+    const context = await page.goto(`${base}/components-in-context`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        const boxes = {};
+        const walk = (root) => {
+          for (const el of root.querySelectorAll('*')) {
+            if (el.name) boxes[el.name] = el.value;
+            if (el.shadowRoot) walk(el.shadowRoot);
+          }
+        };
+        walk(document);
+        const required = Object.fromEntries(m.findQuestions().map((q) => [q.question, m.isRequired(q.fieldId)]));
+        return { ...boxes, required, filled: report.filled.map((f) => `${f.key}=${f.value}`), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields: { ...SWEEP, graduation_month: 'May', graduation_year: '2026', graduation_date: 'May 2026' } }),
+    );
+    group('A component inside what says whose, which or whether');
+    check(
+      'a Phone and an Email drawn in components under "Emergency contact" are not given the applicant\'s, and the applicant\'s own Phone is',
+      context.q_8001 === '' && context.q_8002 === '' && context.q_8000 === '(555) 010-0199',
+      JSON.stringify(context),
+    );
+    check(
+      'a Month and a Year drawn in components under "When do you expect to graduate?" take the graduation, and so does an End date year under Education',
+      context.q_8101 === 'May' && context.q_8102 === '2026' && context.q_8103 === '2026',
+      JSON.stringify(context),
+    );
+    check(
+      'a Month and a Year under "Date of birth" are left empty, and nothing else is filled or reported',
+      context.q_8104 === '' && context.q_8105 === '' && context.filled.length === 4 && context.skipped.length === 0,
+      JSON.stringify(context),
+    );
+    check(
+      'a question drawn in a component is required by the asterisk on the page\'s label beside it, wrapping it, or naming it with for',
+      context.required['Why do you want to work here?'] === true && context.required['What would you build first here?'] === true &&
+        context.required['What are you proudest of?'] === true,
+      JSON.stringify(context.required),
+    );
+    check(
+      'and not by an asterisk that is not its own: one with no mark, and the two after an asterisked question in the same wrapper, are optional',
+      context.required['Anything else you would like us to know?'] === false &&
+        context.required['Is there anything else you would like to add?'] === false &&
+        context.required['How did you hear about this role?'] === false,
+      JSON.stringify(context.required),
+    );
+
+    const componentJobs = await page.goto(`${base}/component-history`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, jobs }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm({}, { history: jobs });
+        const boxes = {};
+        const walk = (root) => {
+          for (const el of root.querySelectorAll('*')) {
+            if (el.name) boxes[el.name] = el.value;
+            if (el.shadowRoot) walk(el.shadowRoot);
+          }
+        };
+        walk(document);
+        return { ...boxes, filled: report.filled.map((f) => f.key) };
+      }, { b: base, jobs: [JOBS[1]] }),
+    );
+    group('A Work Experience block drawn in components');
+    check(
+      'its Job Title and Company are filled from the resume',
+      componentJobs.q_9001 === 'Software Engineer Co-op' && componentJobs.q_9002 === 'Acme Co.',
+      JSON.stringify(componentJobs),
+    );
+    check(
+      'and the Month and Year under From and under To take the job\'s start and end',
+      componentJobs.q_9003 === '07' && componentJobs.q_9004 === '2022' && componentJobs.q_9005 === '12' && componentJobs.q_9006 === '2022',
+      JSON.stringify(componentJobs),
     );
 
     const dateParts = await page.goto(`${base}/date-in-parts`, { waitUntil: 'domcontentloaded' }).then(() =>
