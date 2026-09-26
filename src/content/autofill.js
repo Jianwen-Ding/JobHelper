@@ -1909,6 +1909,22 @@ const LINKS = new Set(['linkedin', 'github', 'website']);
 /** A phone box holding the country's code and nothing else — "+1", "+44". */
 const ONLY_A_DIALLING_CODE = /^\s*\+\d{1,4}\s*$/;
 
+/*
+ * A box whose value is its input mask and nothing typed into it:
+ * "(___) ___-____", "__/____".
+ *
+ * A mask that is shown only while the box has focus leaves `value` empty the
+ * rest of the time, and those boxes were always filled. One that is always
+ * shown writes the mask into `value` from the start — IMask with `lazy:
+ * false`, Inputmask with `clearMaskOnLostFocus: false`, and the hand-written
+ * masks the enterprise systems put on telephone and date boxes — and such a
+ * box read as already answered: measured, the phone box was reported
+ * "already filled" and left holding underscores. Only the slots and the
+ * punctuation between them, and at least one slot, so a value with a single
+ * digit or letter in it is somebody's answer and stays.
+ */
+const ONLY_A_MASK = /^[\s()\-./+]*_[\s_()\-./+]*$/;
+
 function onlyTheStartOfAnAddress(value) {
   return /^\s*(https?:\/\/)?(www\.)?((linkedin\.com(\/in)?|github\.com)\/?)?\s*$/i.test(value) && /\S/.test(value);
 }
@@ -3203,6 +3219,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
       input instanceof HTMLSelectElement
         ? selectIsAnswered(input)
         : Boolean(input.value) &&
+          !ONLY_A_MASK.test(input.value) &&
           !(LINKS.has(key) && onlyTheStartOfAnAddress(input.value)) &&
           !(key === 'phone' && ONLY_A_DIALLING_CODE.test(input.value));
     if (answered && !overwrite) {
