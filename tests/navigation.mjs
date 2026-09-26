@@ -30,6 +30,7 @@ import {
   DIV_BUTTON_ROLE,
   BLOG_WITH_FORM,
   EMBEDDED_BOARD,
+  EMBEDDED_POSTING,
   FRAMED_ROLE,
   LATE_RENDER,
   LETTER_SPA,
@@ -1060,6 +1061,34 @@ async function main() {
       if (there) {
         const role = (await cardOf(page).locator('.role').textContent())?.trim() ?? '';
         check('and reads the role that was rendered in', /platform engineer/i.test(role), role);
+      }
+      await page.close();
+    }
+
+    /* ---- The posting is inside the embed, and the form has gone ---- */
+    group('A careers page around an embedded posting, after applying');
+    {
+      const page = await context.newPage();
+      const url = fixtures.urlFor(EMBEDDED_POSTING);
+      await page.goto(url, { waitUntil: 'load' });
+      await page.frameLocator('#ashby_embed_iframe').locator('h1').waitFor();
+      // Pressed, as the toolbar button is: the shell says nothing on its own.
+      const popup = await context.newPage();
+      await popup.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
+      await popup.evaluate(async (want) => {
+        const [tab] = await chrome.tabs.query({ url: want });
+        if (tab) await chrome.tabs.sendMessage(tab.id, { type: 'show-card' }).catch(() => undefined);
+      }, url);
+      await popup.close();
+      const there = await appears(page, HOST, 9000);
+      check('the card comes up when asked', there);
+      if (there) {
+        await settled(page);
+        const card = cardOf(page);
+        const role = (await card.locator('.role').textContent())?.trim() ?? '';
+        check('and reads the role out of the embedded posting, not the shell', /software development engineer/i.test(role), role);
+        const co = (await card.locator('.co').textContent())?.trim() ?? '';
+        check('and never files "Job openings" as the employer', !/job openings/i.test(co), co);
       }
       await page.close();
     }

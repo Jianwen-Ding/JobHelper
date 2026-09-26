@@ -2753,11 +2753,19 @@
          * down, so without it the page is analysed as the empty shell it looks
          * like from outside.
          */
+        /*
+         * A form, or a posting. An embed is often the whole posting — its
+         * heading and its JobPosting data — around a form that is not there
+         * yet, or not any more: Qumulo's Ashby embed after the application
+         * went in says "Thank you" where the form was, and the card, reading
+         * only the shell, called the job "This posting" at "Job openings".
+         * `decisiveSignal` is the strict test: declared, or titled as a role.
+         */
         case 'jh-frame-html':
           answer(
             Promise.all([imports.autofill(), imports.trail()]).then(
               ([{ looksLikeApplicationForm }, { trimForStorage, pageHtml }]) =>
-                looksLikeApplicationForm()
+                looksLikeApplicationForm() || decisiveSignal()
                   ? {
                       url: location.href,
                       title: document.title,

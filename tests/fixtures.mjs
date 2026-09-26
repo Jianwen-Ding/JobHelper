@@ -818,6 +818,51 @@ export const EMBEDDED_BOARD_FRAME = {
 };
 
 /**
+ * A careers page that embeds one posting, after the application went in.
+ *
+ * Reported from life on qumulo.com: the page is "Job openings" around an
+ * Ashby embed, and the embed is the posting — its heading, its JobPosting
+ * data — with a "Thank you, your application was submitted" in place of the
+ * form. Only frames holding a form were read, so the card had the shell and
+ * nothing else: "This posting", from "Job openings".
+ */
+export const EMBEDDED_POSTING = {
+  name: 'embedded-posting',
+  path: '/tern/job-openings',
+  company: 'Tern',
+  title: 'Software Development Engineer - Internship 2027',
+  html: `<!doctype html>
+<html><head><title>Job openings</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Job openings</h1><p>Discover the open positions at Tern.</p></div>
+  <div class="wrap">
+    <iframe id="ashby_embed_iframe" title="Ashby Job Board"
+            src="/tern/embed/posting?ashby_jid=7a2c"
+            style="width:100%;height:600px;border:0"></iframe>
+  </div>
+</body></html>`,
+};
+
+export const EMBEDDED_POSTING_FRAME = {
+  name: 'embedded-posting-frame',
+  path: '/tern/embed/posting',
+  html: `<!doctype html>
+<html><head><meta charset="utf-8"><title>Software Development Engineer - Internship 2027 @ Tern</title>
+<script type="application/ld+json">${JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'JobPosting',
+    title: 'Software Development Engineer - Internship 2027',
+    hiringOrganization: { '@type': 'Organization', name: 'Tern' },
+    description: 'Build storage software in C++ and Python.',
+  })}</script><style>${CHROME}</style></head>
+<body><div class="wrap">
+  <h1>Software Development Engineer - Internship 2027</h1>
+  <div role="status"><strong>Success</strong> Thank you for your interest in Tern! Your application was successfully submitted.</div>
+  ${ROLE_BODY}
+</div></body></html>`,
+};
+
+/**
  * A posting that is not in the page when the page loads.
  *
  * Workday, Ashby and most of the modern boards serve an empty shell and fetch
@@ -1936,7 +1981,7 @@ export const EA_FORM = {
 export const NAVIGATION = [
   EA_ROLE, EA_METHODS, EA_FORM,
   CYGNUS_BOARD, CYGNUS_ROLE_A, CYGNUS_ROLE_B, FRAMED_ROLE, FRAMED_FORM, ADVERT_FRAME, ADVERT_CONTENT,
-  EMBEDDED_BOARD, EMBEDDED_BOARD_FRAME, BLOG_WITH_FORM, BLOG_ENQUIRY_FRAME, LATE_RENDER,
+  EMBEDDED_BOARD, EMBEDDED_BOARD_FRAME, EMBEDDED_POSTING, EMBEDDED_POSTING_FRAME, BLOG_WITH_FORM, BLOG_ENQUIRY_FRAME, LATE_RENDER,
   CROWDED_PAGE, CROWDED_PAGE_FORM,
   LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY, ORACLE_CE, WORKDAY_STEPS,
   OWN_SITE, ATS_FORM, ATS_FORM_UNANSWERABLE, NEW_TAB_ROLE, NEW_TAB_FORM, NEW_TAB_ASIDE, NEW_TAB_BENEFITS, STEP_ONE, STEP_TWO, STEP_TWO_FORM, SPA_BOARD,
