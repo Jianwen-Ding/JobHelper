@@ -2370,7 +2370,15 @@ function graduationPartKey(input) {
   if (!part) return null;
   const legend = input.closest('fieldset')?.querySelector(':scope > legend');
   const group = input.closest('[role="group"]');
-  const asked = clean(legend?.textContent) || clean(group?.getAttribute('aria-label')) || fromLabelledBy(group);
+  /*
+   * `fromLabelledBy` only for a group there is. A box whose words are "Month"
+   * or "MM" with no fieldset and no group anywhere around it is ordinary — a
+   * card's expiry, a date asked as two loose boxes — and handing it `null`
+   * threw, which took the whole of `fillForm` with it: measured, a form with
+   * a First name box and a box labelled Month beside it filled nothing and
+   * reported nothing.
+   */
+  const asked = clean(legend?.textContent) || clean(group?.getAttribute('aria-label')) || (group ? fromLabelledBy(group) : '');
   const found = asked ? FIELD_PATTERNS.find(([, re]) => re.test(asked))?.[0] : null;
   return /^graduation_(month|year|date)$/.test(found ?? '') ? `graduation_${part}` : null;
 }
