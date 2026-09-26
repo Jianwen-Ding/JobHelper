@@ -1046,6 +1046,8 @@ function labelWords(el) {
 }
 
 function labelFor(input) {
+  // A plain dropdown's own label, and never one found further off. See `PLAIN`.
+  if (PLAIN.has(input)) return labelWords(plainLabelOf(input));
   /*
    * Each of these answers only when it has something to say.
    *
@@ -1223,8 +1225,221 @@ function isWidgetChoice(element) {
     element.getAttribute?.('aria-haspopup') === 'listbox' ||
     ['list', 'both'].includes(element.getAttribute?.('aria-autocomplete')) ||
     isWorkdayPrompt(element) ||
-    isFabricSelect(element)
+    isFabricSelect(element) ||
+    PLAIN.has(element)
   );
+}
+
+/*
+ * A dropdown written for the site, with nothing to say it is one.
+ *
+ * No role, no `aria-haspopup`, no select behind it: a `div` saying "Select"
+ * beside a chevron, which on a click draws a `div` of clickable `div`s,
+ * often at the foot of the page. Nothing here read it as a question at all,
+ * so on a fixture drawn that way the School, Degree and Discipline stayed on
+ * "Select" and the report said nothing about any of them.
+ *
+ * Pressing things that say nothing about themselves is how a form gets
+ * something it did not ask for, so one is taken for a dropdown only when
+ * every sign agrees:
+ *
+ *   - its words are a prompt to choose and nothing else — "Select",
+ *     "Select…", "Choose an option" — and no control, link or ARIA widget
+ *     is in it or around it;
+ *   - it draws a chevron (an icon, an arrow character, or a `::before` or
+ *     `::after` of its own) and looks pressable (a pointer, or a place in the
+ *     Tab order);
+ *   - a `<label>` stands just before it, or names it, and belongs to nothing
+ *     else — it is never labelled by a climb through the page, which is how
+ *     a Degree would come to be read as the School above it.
+ *
+ * It is then driven exactly as the ARIA ones are (`chooseInWidget`), only
+ * where the profile or the bank answers its label, and with its list found
+ * as what appeared on the page when it was pressed (see `plainOptions`).
+ */
+const PLAIN = new WeakSet();
+const PLAIN_PROMPT = /^(?:please\s+)?(?:select|choose|pick)(?:\s+(?:one|an?\s+option))?\s*(?:\.{1,3}|…)?$/i;
+const CHEVRON_CHARACTER = /[▾▼⌄˅∨⏷▿⌵]/;
+const promptWords = (text) => clean(String(text ?? '').replace(new RegExp(CHEVRON_CHARACTER.source, 'g'), ''));
+
+/** The plain dropdowns under `root`, each remembered as a widget. */
+function plainDropdowns(root = document) {
+  const found = [];
+  for (const where of allRoots(root)) {
+    const walker = document.createTreeWalker(where, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!PLAIN_PROMPT.test(promptWords(node.nodeValue))) continue;
+      const control = plainControlOver(node.parentElement);
+      if (control && !found.includes(control)) found.push(control);
+    }
+  }
+  return found;
+}
+
+/**
+ * These controls and the plain dropdowns under `root`, in the order the
+ * page has them — or just these, as they came, where there are none.
+ */
+function withPlainDropdowns(found, root = document) {
+  const plain = plainDropdowns(root).filter((el) => !found.includes(el));
+  if (!plain.length) return [...found];
+  return [...found, ...plain].sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_PRECEDING ? 1 : -1));
+}
+
+/** The dropdown whose prompt these words are, or nothing. */
+function plainControlOver(words) {
+  if (!words || rootOf(words)?.host?.id === OURS) return null;
+  const said = promptWords(words.textContent);
+  if (!PLAIN_PROMPT.test(said)) return null;
+  // The outermost element saying the prompt and nothing more.
+  let control = words;
+  while (
+    control.parentElement &&
+    !['body', 'form', 'html'].includes(control.parentElement.localName) &&
+    promptWords(control.parentElement.textContent) === said
+  ) {
+    control = control.parentElement;
+  }
+  if (PLAIN.has(control)) return control;
+  if (!looksLikePlainDropdown(control, words)) return null;
+  PLAIN.add(control);
+  return control;
+}
+
+function looksLikePlainDropdown(control, words) {
+  if (control.getClientRects().length === 0 || getComputedStyle(control).visibility === 'hidden') return false;
+  if (isWidgetChoice(control) || isDisabled(control)) return false;
+  if (control.matches('[role]:not([role="presentation"]):not([role="none"]), [aria-haspopup], [aria-expanded], [contenteditable]')) return false;
+  if (control.querySelector('input:not([type=hidden]), select, textarea, button, a[href], [role="combobox"], [role="listbox"], [aria-haspopup]')) return false;
+  if (control.closest('a[href], label, select, option, textarea, [contenteditable=""], [contenteditable="true"], [role="combobox"], [role="listbox"], [role="option"], [role="menu"], [role="menuitem"], [aria-haspopup]')) return false;
+  const button = control.closest('button');
+  if (button && (button !== control || wouldSubmit(button))) return false;
+  // Not an upload's "Select" beside its file box.
+  if (control.parentElement?.querySelector('input[type=file]')) return false;
+  const pseudo = (el, which) => !['none', 'normal', '""', "''"].includes(getComputedStyle(el, which).content);
+  const chevron =
+    Boolean(control.querySelector('svg, img, i, [class*="chevron" i], [class*="arrow" i], [class*="caret" i]')) ||
+    CHEVRON_CHARACTER.test(control.textContent) ||
+    [control, words].some((el) => pseudo(el, '::after') || pseudo(el, '::before'));
+  if (!chevron) return false;
+  const pressable =
+    getComputedStyle(words).cursor === 'pointer' ||
+    control.matches('button, [tabindex]:not([tabindex^="-"])') ||
+    Boolean(control.querySelector('[tabindex]:not([tabindex^="-"])'));
+  if (!pressable) return false;
+  return Boolean(plainLabelOf(control));
+}
+
+/**
+ * The `<label>` of a plain dropdown: one that names it or something in it,
+ * or the one standing straight before it — or before a wrapper holding
+ * nothing else — and naming nothing else. Never one found further off.
+ */
+function plainLabelOf(control) {
+  const root = rootOf(control);
+  for (const el of [control, ...control.querySelectorAll('[id]')]) {
+    const label = el.id && root.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+    if (label && clean(labelWords(label))) return label;
+  }
+  let at = control;
+  for (let up = 0; up < 3 && at && !['body', 'form', 'html'].includes(at.localName); up++) {
+    let before = at.previousElementSibling;
+    while (before?.matches('input[type=hidden]')) before = before.previousElementSibling;
+    if (before) {
+      const mine = before.localName === 'label' && !before.htmlFor && !before.querySelector(ANOTHER_FIELD) && clean(labelWords(before));
+      return mine ? before : null;
+    }
+    const parent = at.parentElement;
+    if (!parent || [...parent.children].some((other) => other !== at && (clean(other.textContent) || other.matches(A_CONTROL) || other.querySelector(A_CONTROL)))) {
+      return null;
+    }
+    at = parent;
+  }
+  return null;
+}
+
+/** Where a widget is pressed to open it: itself, or a plain one's words. */
+const pressPoint = (widget) => (PLAIN.has(widget) ? wordsOf(widget) : widget);
+
+/*
+ * What appeared on the page while a plain dropdown was being pressed: its
+ * list, since nothing names it. Watched from before the press until the
+ * choice is read back.
+ */
+const APPEARED = new WeakMap();
+
+function watchAppearing(widget) {
+  const seen = new Set();
+  const note = (records) => {
+    for (const record of records) {
+      if (record.type === 'attributes') seen.add(record.target);
+      else for (const node of record.addedNodes) if (node.nodeType === Node.ELEMENT_NODE) seen.add(node);
+    }
+  };
+  const observer = new MutationObserver(note);
+  observer.observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class', 'hidden', 'open'] });
+  APPEARED.set(widget, { seen, words: pressPoint(widget), flush: () => note(observer.takeRecords()) });
+  return () => {
+    observer.disconnect();
+    APPEARED.delete(widget);
+  };
+}
+
+/**
+ * A plain dropdown's options: the words in the one thing that appeared when
+ * it was pressed — and only one, since two is a guess about which is its
+ * list. Only a list holding nothing that could be pressed for some other
+ * purpose (a field, a button, a link), at least two options, and never an
+ * option whose words are said twice.
+ */
+function plainOptions(widget) {
+  const lists = plainAppeared(widget);
+  if (lists.length !== 1) return [];
+  const [list] = lists;
+  if (list.matches('a[href], button, form') || list.querySelector('input:not([type=hidden]), select, textarea, button, a[href], iframe, form')) return [];
+  const worded = [list, ...list.querySelectorAll('*')].filter(
+    (el) => [...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && n.nodeValue.trim()) && el.getClientRects().length > 0,
+  );
+  const said = worded.map((el) => clean(el.textContent).toLowerCase());
+  const options = worded.filter((_, i) => said.indexOf(said[i]) === said.lastIndexOf(said[i]));
+  return options.length >= 2 ? options : [];
+}
+
+/** What has appeared on the page since a plain dropdown was pressed, and is showing. */
+function plainAppeared(widget) {
+  const watch = APPEARED.get(widget);
+  if (!watch) return [];
+  watch.flush();
+  const shown = [...watch.seen].filter(
+    (el) =>
+      el.isConnected &&
+      !el.contains(watch.words) &&
+      !el.contains(widget) &&
+      el.getClientRects().length > 0 &&
+      getComputedStyle(el).visibility !== 'hidden' &&
+      getComputedStyle(el).opacity !== '0',
+  );
+  return shown.filter((el) => !shown.some((other) => other !== el && other.contains(el)));
+}
+
+/** What a plain dropdown shows as chosen, its own list left out. */
+function plainShown(widget) {
+  const lists = [...(APPEARED.get(widget)?.seen ?? [])].filter((el) => el !== widget && widget.contains(el));
+  const walker = document.createTreeWalker(widget, NodeFilter.SHOW_TEXT);
+  let text = '';
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (!lists.some((list) => list.contains(node))) text += ` ${node.nodeValue}`;
+  }
+  return promptWords(text);
+}
+
+/**
+ * Whether a plain dropdown took the choice: it shows the option's words as
+ * its own, and its list has gone. It has no value to read and no state to
+ * ask, so both are needed — an ignored click leaves the list open.
+ */
+function plainTookIt(widget, chosen) {
+  return widget.isConnected && sameOption(plainShown(widget), chosen) && plainOptions(widget).length === 0;
 }
 
 /*
@@ -4355,7 +4570,7 @@ function widgetQuestion(widget) {
 /** The widgets on this page that ask the bank's kind of question. */
 function rememberableWidgets() {
   const found = [];
-  for (const widget of deepQueryAll(WIDGETS)) {
+  for (const widget of withPlainDropdowns(deepQueryAll(WIDGETS))) {
     if (widget.getClientRects().length === 0) continue;
     // A combobox `<div>` around its own text box is one question.
     if (found.some(({ el }) => el.contains(widget) || widget.contains(el))) continue;
@@ -4386,6 +4601,7 @@ function ownerOfMenu(list) {
 
 /** Whether the widget is now showing this answer as its choice. */
 function widgetHolds(widget, answer) {
+  if (PLAIN.has(widget)) return sameOption(plainShown(widget), answer);
   if (!widgetShowsAnAnswer(widget)) return false;
   return clean(controlOf(widget).textContent).toLowerCase().includes(clean(answer).toLowerCase());
 }
@@ -4412,31 +4628,66 @@ function watchWidgetPicks(write, watching) {
   const settleAll = () => {
     for (const pick of [...pending]) settle(pick);
   };
-  const onPick = (event) => {
-    if (!event.isTrusted) return;
-    const target = event.composedPath?.()?.[0] ?? event.target;
-    const option = target?.closest?.('[role="option"]');
-    const list = option?.closest('[role="listbox"]');
-    if (!list || rootOf(list)?.host?.id === OURS) return;
-    const widget = ownerOfMenu(list);
-    if (!widget) return;
-    let said;
-    try {
-      said = widgetQuestion(widget);
-    } catch {
-      return;
-    }
-    if (!said) return;
-    // Read now: the menu closes on this press and takes the option with it.
-    const answer = clean(option.getAttribute('aria-label') || option.textContent);
-    if (!answer) return;
-    // And believed once the page has drawn it, the way `tookIt` reads a choice back.
-    const pick = { widget, answer, question: said.question };
+  const expect = (pick) => {
     pending.add(pick);
     for (const ms of [0, 100, 400]) setTimeout(() => settle(pick), ms);
     // Given up on after that: a pick the widget never showed is not a choice.
     setTimeout(() => pending.delete(pick), 450);
   };
+  const question = (widget) => {
+    try {
+      return widgetQuestion(widget)?.question ?? null;
+    } catch {
+      return null;
+    }
+  };
+  /*
+   * A plain dropdown's pick, which has no option to say it is one: the press
+   * that opened it, then the words of the next press outside it — believed
+   * only once the dropdown shows those words as its own. See `PLAIN`.
+   */
+  let opened = null;
+  const onPlainPress = (target) => {
+    if (!target || rootOf(target)?.host?.id === OURS) return;
+    let control = null;
+    for (let at = target, up = 0; at && up < 6 && !control; at = at.parentElement, up++) {
+      control = PLAIN.has(at) ? at : plainControlOver(at);
+    }
+    if (control) {
+      const asked = question(control);
+      opened = asked ? { widget: control, question: asked } : null;
+      return;
+    }
+    const was = opened;
+    opened = null;
+    if (!was?.widget.isConnected) return;
+    const answer = clean(target.textContent);
+    if (!answer || answer.length > 120) return;
+    expect({ widget: was.widget, answer, question: was.question });
+  };
+  const onPick = (event) => {
+    if (!event.isTrusted) return;
+    const target = event.composedPath?.()?.[0] ?? event.target;
+    const option = target?.closest?.('[role="option"]');
+    const list = option?.closest('[role="listbox"]');
+    if (!list) return onPlainPress(target);
+    if (rootOf(list)?.host?.id === OURS) return;
+    const widget = ownerOfMenu(list);
+    if (!widget) return;
+    const asked = question(widget);
+    if (!asked) return;
+    // Read now: the menu closes on this press and takes the option with it.
+    const answer = clean(option.getAttribute('aria-label') || option.textContent);
+    if (!answer) return;
+    // And believed once the page has drawn it, the way `tookIt` reads a choice back.
+    expect({ widget, answer, question: asked });
+  };
+  // The plain dropdowns already on the page, so one showing a pick is still known.
+  try {
+    plainDropdowns();
+  } catch {
+    // A page that throws from a getter is not a reason to stop watching.
+  }
   document.addEventListener('mousedown', onPick, true);
   document.addEventListener('submit', settleAll, true);
   window.addEventListener('pagehide', settleAll);
@@ -4576,8 +4827,10 @@ function widgetChoices(fields, filled) {
   const found = [];
   const seen = [];
 
-  for (const widget of deepQueryAll(
-    `[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"], [data-uxi-widget-type="selectinput"], ${FABRIC_SELECT}`,
+  for (const widget of withPlainDropdowns(
+    deepQueryAll(
+      `[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"], [data-uxi-widget-type="selectinput"], ${FABRIC_SELECT}`,
+    ),
   )) {
     if (!isWidgetChoice(widget)) continue;
     if (widget.getClientRects().length === 0) continue;
@@ -4781,6 +5034,8 @@ function visibleListboxes() {
 }
 
 function optionsOf(widget, openBefore = null) {
+  // What its press drew, since nothing names it. See `plainOptions`.
+  if (PLAIN.has(widget)) return plainOptions(widget);
   const box = typingBoxOf(widget);
   const ids = [widget, box]
     .filter(Boolean)
@@ -4888,6 +5143,7 @@ function press(el) {
  * submits carrying something where it carried nothing.
  */
 function tookIt(widget, box, option, value, hiddenBefore, chosen = option.textContent, shownBefore = '') {
+  if (PLAIN.has(widget)) return plainTookIt(widget, chosen);
   const hidden = hiddenPartner(widget);
   if (hidden && hidden.value && hidden.value !== hiddenBefore) return true;
   /*
@@ -5076,6 +5332,8 @@ function undoWidget(widget, box, openBefore = null) {
   // Believed about itself where it says: a list closing behind a transition
   // is still on the page for a moment, and pressing again would reopen it.
   const open = () => {
+    // Anything a plain dropdown's press drew, list-shaped or not, is shut again.
+    if (PLAIN.has(widget)) return plainAppeared(widget).length > 0;
     const said = (box ?? widget).getAttribute('aria-expanded');
     return said === null ? optionsOf(widget, openBefore).length > 0 : said === 'true';
   };
@@ -5084,9 +5342,6 @@ function undoWidget(widget, box, openBefore = null) {
   if (!box && open()) press(pressPoint(widget));
   (box ?? widget).blur?.();
 }
-
-/** Where a widget is pressed to open it: itself. */
-const pressPoint = (widget) => widget;
 
 /** The element that has the focus, inside any shadow root that holds it. */
 function deepActiveElement() {
@@ -5206,7 +5461,18 @@ export async function fillComboboxes(fields, report, { patience = 4000, history 
  * `unlisted` when its list opened and the answer was not in it, and anything
  * else when nothing was chosen. Whatever did not take is put back as it was.
  */
-async function chooseInWidget(widget, key, value, { patience, fields, asked }) {
+async function chooseInWidget(widget, key, value, options) {
+  // A plain dropdown's list is what its press draws, so that is watched for
+  // from before the press. See `plainOptions`.
+  const stop = PLAIN.has(widget) ? watchAppearing(widget) : null;
+  try {
+    return await chooseInThisWidget(widget, key, value, options);
+  } finally {
+    stop?.();
+  }
+}
+
+async function chooseInThisWidget(widget, key, value, { patience, fields, asked }) {
   const box = typingBoxOf(widget);
   const hiddenBefore = hiddenPartner(widget)?.value ?? '';
   const shownBefore = clean(controlOf(widget).textContent).toLowerCase();
@@ -5261,7 +5527,7 @@ async function chooseInWidget(widget, key, value, { patience, fields, asked }) {
       option = await waitForOption(widget, key, value, openBefore, { patience, fields, asked });
     }
   } else {
-    press(widget);
+    press(pressPoint(widget));
     option = await waitForOption(widget, key, value, openBefore, { patience, fields, asked });
   }
   if (!option) {
@@ -5415,7 +5681,7 @@ function educationPartOf(control) {
 function educationBlocks(box) {
   const blocks = [];
   let block = null;
-  for (const control of box.querySelectorAll(SECTION_CONTROLS)) {
+  for (const control of withPlainDropdowns([...box.querySelectorAll(SECTION_CONTROLS)], box)) {
     if (isDisabled(control) || control.getClientRects().length === 0) continue;
     // The dropdown beside it is the part. See `isWidgetPartner`.
     if (isWidgetPartner(control)) continue;

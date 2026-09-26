@@ -3488,11 +3488,15 @@ const VUETIFY = `<!doctype html><html><head><meta charset="utf-8"><title>Apply �
  *     labelled by its label and itself, a `ul role="listbox"` (here in a
  *     Portal), opened on click, closed by Escape in the list, a second click
  *     or a click outside; a hidden input only once something is chosen.
+ *   - A plain one written for the site: a `div` saying "Select" with a
+ *     chevron, which opens a `div` of clickable `div`s at the foot of the
+ *     page, with no ARIA at all, labelled only by the `<label>` above it.
  *
  * The values are Greenhouse's ids, as a form posting to its API submits them.
  * Beside the education block: the Country (the profile's), "How did you hear
  * about this job?" (the bank's), and things that must not be pressed — a
- * Pronouns list of the same kind, a Remove button, the Submit button. Every press anywhere
+ * Pronouns list of the same kind, a Remove button, the Submit button, and on
+ * the plain form an unlabelled "Select" in the header. Every press anywhere
  * is written down by field in `__pressed`. `?unlisted` takes the profile's
  * school and discipline out of their lists, the discipline being the last
  * list pressed.
@@ -3880,7 +3884,134 @@ const EPIC_HEADLESS = epicForm('Headless UI Listbox', `
 `);
 
 
-const PAGES = { '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+/*
+ * No ARIA at all: a `div` saying "Select" beside a chevron, and a `div` of
+ * `div`s at the foot of the page, each taking a click. A hidden input beside
+ * it carries the id. Closed by a click outside or a second click on it.
+ * Beside the Pronouns one: an unlabelled "Select" in the header, the shape
+ * of a region picker, which is nobody's question.
+ */
+const EPIC_PLAIN = epicForm('plain dropdown', `
+  const dropdown = (host, list, owner) => {
+    host.innerHTML = '<div class="dropdown__toggle" tabindex="0"><span class="dropdown__value">Select</span>${CHEVRON.replace(/"/g, '\\"')}</div>' +
+      (list.name ? '<input type="hidden" name="' + list.name + '" value="">' : '');
+    const toggle = host.querySelector('.dropdown__toggle');
+    const shown = toggle.querySelector('.dropdown__value');
+    const hiddenInput = host.querySelector('input[type=hidden]');
+    let menu = null;
+    const onOutside = (e) => { if (menu && !menu.contains(e.target) && !toggle.contains(e.target)) close(); };
+    const close = () => {
+      if (!menu) return;
+      menu.remove();
+      menu = null;
+      document.removeEventListener('click', onOutside, true);
+    };
+    toggle.addEventListener('click', () => {
+      if (menu) return close();
+      menu = document.createElement('div');
+      menu.className = 'dropdown__menu';
+      menu.dataset.owner = owner;
+      for (const [id, text] of list.items) {
+        const option = document.createElement('div');
+        option.className = 'dropdown__option';
+        option.textContent = text;
+        option.addEventListener('click', () => {
+          shown.textContent = text;
+          if (hiddenInput) hiddenInput.value = id;
+          close();
+        });
+        menu.append(option);
+      }
+      document.body.append(menu);
+      place(menu, toggle);
+      document.addEventListener('click', onOutside, true);
+    });
+    return toggle;
+  };
+  const render = (row, field, list) => {
+    row.innerHTML = '<label></label><div class="dropdown"></div>';
+    row.querySelector('label').textContent = list.label;
+    dropdown(row.querySelector('.dropdown'), list, field);
+  };
+  window.__region = 0;
+  dropdown(document.getElementById('region'), { items: [['na', 'North America'], ['eu', 'Europe']] }, 'region')
+    .addEventListener('click', () => window.__region++);
+`, `
+  header { display: flex; justify-content: space-between; align-items: center; padding: 8px 24px; background: #000; }
+  .dropdown { position: relative; }
+  .dropdown__toggle { display: flex; justify-content: space-between; align-items: center; background: #202020; border: 1px solid #444; border-radius: 4px; padding: 8px 12px; cursor: pointer; user-select: none; }
+  .dropdown__menu { position: fixed; background: #1b1b1b; border: 1px solid #444; z-index: 20; max-height: 240px; overflow: auto; }
+  .dropdown__option { padding: 8px 12px; cursor: pointer; }
+  .dropdown__option:hover { background: #333; }
+  #region { width: 180px; }
+`, '<header><strong>EPIC GAMES</strong><div id="region"></div></header>');
+
+/*
+ * Things that look nearly like a plain dropdown and are not to be pressed,
+ * each labelled with a question the profile answers: a "Select" whose label
+ * names another control, one with no chevron and nothing to press, a
+ * "Select ▾" that is the form's submit button, one that is a link, and an
+ * upload's "Select" beside its file box. And two that are dropdowns but whose
+ * press draws something that cannot be read as their list alone — a list and
+ * a tooltip at once, a list holding a button — which are pressed to open and
+ * pressed again to shut, and left for the person. Every press is written
+ * down by row.
+ */
+const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title>
+<style>
+  .row { margin: 12px 0; width: 320px; }
+  .dd { display: flex; justify-content: space-between; border: 1px solid #999; padding: 6px 10px; cursor: pointer; }
+  .flat { padding: 6px 10px; }
+  .pop { position: fixed; background: #fff; border: 1px solid #999; top: 10px; left: 400px; }
+  .pop div { padding: 4px 8px; cursor: pointer; }
+</style></head><body>
+<form id="f">
+  <div class="row" id="a"><label for="nowhere">School:</label><div class="dd" tabindex="0"><span>Select</span>${CHEVRON}</div></div>
+  <div class="row" id="b"><label>Degree:</label><div class="flat"><span>Select</span></div></div>
+  <div class="row" id="c"><label>Discipline:</label><button class="dd">Select ▾</button></div>
+  <div class="row" id="d"><label>Country:</label><a class="dd" href="#country"><span>Select</span>${CHEVRON}</a></div>
+  <div class="row" id="e"><label>GPA:</label><div class="dd" tabindex="0">${CHEVRON}<span>Select</span></div><input type="file" name="transcript" style="display:none"></div>
+  <div class="row" id="two"><label>University:</label><div class="dd" tabindex="0"><span>Select</span>${CHEVRON}</div></div>
+  <div class="row" id="buttoned"><label>Major:</label><div class="dd" tabindex="0"><span>Select</span>${CHEVRON}</div></div>
+</form>
+<script>
+  window.__pressed = [];
+  window.__submitted = 0;
+  for (const type of ['pointerdown', 'mousedown', 'click']) {
+    document.addEventListener(type, (e) => window.__pressed.push(e.target.closest?.('.row, [data-owner]')?.id || e.target.closest?.('[data-owner]')?.dataset.owner || e.target.localName), true);
+  }
+  document.getElementById('f').addEventListener('submit', (e) => { e.preventDefault(); window.__submitted++; });
+  const menu = (row, items, extra) => {
+    const toggle = row.querySelector('.dd');
+    let drawn = [];
+    toggle.addEventListener('click', () => {
+      if (drawn.length) { drawn.forEach((el) => el.remove()); drawn = []; return; }
+      const list = document.createElement('div');
+      list.className = 'pop';
+      list.dataset.owner = row.id;
+      for (const text of items) {
+        const option = document.createElement('div');
+        option.textContent = text;
+        option.addEventListener('click', () => { toggle.firstElementChild.textContent = text; drawn.forEach((el) => el.remove()); drawn = []; });
+        list.append(option);
+      }
+      drawn = [list, ...extra(list)];
+      for (const el of drawn) if (!el.isConnected) document.body.append(el);
+    });
+  };
+  menu(document.getElementById('two'), ['Harvard University', 'Northeastern University'], () => {
+    const tip = document.createElement('div');
+    tip.className = 'pop'; tip.style.top = '200px'; tip.dataset.owner = 'two';
+    tip.textContent = 'Pick the school you attended';
+    return [tip];
+  });
+  menu(document.getElementById('buttoned'), ['Biology', 'Computer Science'], (list) => {
+    list.insertAdjacentHTML('beforeend', '<button type="button">Add a discipline</button>');
+    return [];
+  });
+</script></body></html>`;
+
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -8085,6 +8216,12 @@ async function main() {
         submits: (f) => document.querySelector(`[data-field=${f}] input[type=hidden]`)?.value ?? '',
         trigger: '[data-field=hear] button[aria-haspopup=listbox]', option: 'ul[role=listbox] li[role=option]:has-text("Employee referral")',
       },
+      'a plain dropdown with no ARIA': {
+        url: '/epic-plain',
+        shown: (f) => document.querySelector(`[data-field=${f}] .dropdown__value`).textContent,
+        submits: (f) => document.querySelector(`[data-field=${f}] input[type=hidden]`).value,
+        trigger: '[data-field=hear] .dropdown__toggle', option: '.dropdown__menu .dropdown__option:has-text("Employee referral")',
+      },
     };
     for (const [lib, E] of Object.entries(EPIC)) {
       const read = { shown: String(E.shown), submits: String(E.submits) };
@@ -8180,6 +8317,34 @@ async function main() {
         JSON.stringify(picked),
       );
     }
+    const nearMisses = await page.goto(`${base}/plain-near-misses`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(profile, m.fillForm(profile), { patience: 800 });
+        await new Promise((r) => setTimeout(r, 200));
+        return {
+          pressed: [...new Set(window.__pressed)].sort(), submitted: window.__submitted, hash: location.hash,
+          shown: [...document.querySelectorAll('.row')].map((row) => row.textContent.replace(/\s+/g, ' ').trim()),
+          open: document.querySelectorAll('[data-owner]').length,
+          filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, profile: { ...PROFILE, school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science', gpa: '3.8' } }),
+    );
+    group('A plain dropdown only where every sign agrees');
+    check(
+      'a label naming something else, no chevron, a submit button, a link and an upload are never pressed, filled or claimed',
+      nearMisses.pressed.every((at) => ['two', 'buttoned'].includes(at)) && nearMisses.submitted === 0 && nearMisses.hash === '' &&
+        !['school', 'degree', 'major', 'address_country', 'gpa'].some((k) => nearMisses.filled.includes(k)) &&
+        !nearMisses.skipped.some((s) => /^(degree|address_country|gpa):/.test(s)),
+      JSON.stringify(nearMisses),
+    );
+    check(
+      'and a press that draws a list with a tooltip, or a list holding a button, is shut again and left to be picked by hand',
+      nearMisses.pressed.includes('two') && nearMisses.pressed.includes('buttoned') && nearMisses.open === 0 &&
+        nearMisses.shown.every((row) => /Select( ▾)?$/.test(row)) &&
+        nearMisses.skipped.includes('school: this one has to be picked by hand') && nearMisses.skipped.includes('major: this one has to be picked by hand'),
+      JSON.stringify(nearMisses),
+    );
   } finally {
     await browser.close();
     server.close();
