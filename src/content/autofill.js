@@ -2032,11 +2032,13 @@ const fitsIn = (input, value) => !(input.maxLength > 0 && String(value).length >
  * them, in its own wrapper or the two around it: each a one-line box with a
  * `maxlength`, and each either saying nothing of its own or saying it is part
  * of a telephone number. A country code or an extension ends the run — the
- * first is the form's, and the second is not in the number. Every box but the
- * last takes exactly as many digits as it holds, no more than four, and the
- * last takes the rest, which have to fit: 3 + 3 + 4 or 3 + 7 for a ten-digit
- * number. Anything else is not a shape this can be sure of, and the number is
- * left for the person rather than guessed across the boxes.
+ * first is the form's, and the second is not in the number. Two or three
+ * boxes: every box but the last takes exactly as many digits as it holds, no
+ * more than four, and the last takes the rest, which have to fit and be no
+ * fewer than the box before took — 3 + 3 + 4 or 3 + 7 for a ten-digit number.
+ * So an unlabelled `+[__]` in front of the three boxes, which would leave
+ * one digit for the last, makes the run a shape this cannot be sure of.
+ * Anything else is left for the person rather than guessed across the boxes.
  */
 const ONE_LINE_BOX = new Set(['text', 'tel', 'number', 'search']);
 
@@ -2071,7 +2073,7 @@ function phoneBoxes(input, value) {
       const heads = run.slice(0, -1).map((box) => box.maxLength);
       const taken = heads.reduce((a, b) => a + b, 0);
       const rest = digits.length - taken;
-      if (heads.every((n) => n <= 4) && rest > 0 && rest <= run[run.length - 1].maxLength) {
+      if (run.length <= 3 && heads.every((n) => n <= 4) && rest >= heads[heads.length - 1] && rest <= run[run.length - 1].maxLength) {
         let from = 0;
         return run.map((box, n) => {
           const part = n < heads.length ? digits.slice(from, from + heads[n]) : digits.slice(from);
@@ -2079,7 +2081,8 @@ function phoneBoxes(input, value) {
           return [box, part];
         });
       }
-      return null;
+      // The boxes, with nothing to put in them: one number, reported once.
+      return run.map((box) => [box, null]);
     }
     if (scope.localName === 'form') break;
   }
@@ -3437,15 +3440,19 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
       const shorter = otherWaysToWrite(key, value).find((spelling) => fitsIn(input, spelling));
       const parts = shorter === undefined && key === 'phone' ? phoneBoxes(input, value) : null;
       if (parts) {
+        const unsure = parts.some(([, part]) => part === null);
         const busy = parts.some(([box]) => box !== input && box.value) && !overwrite;
-        if (!busy) for (const [box, part] of parts) setValue(box, part);
+        const was = parts.map(([box]) => box.value);
+        if (!busy && !unsure) for (const [box, part] of parts) setValue(box, part);
         for (const [box] of parts) numberBoxes.add(box);
-        if (busy) {
+        if (unsure) {
+          skipped.push({ key, reason: 'the field would not accept it in that form', description: description.slice(0, 60) });
+        } else if (busy) {
           skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
         } else if (parts.every(([box, part]) => box.value === part)) {
           filled.push({ key, value: parts.map(([, part]) => part).join(' ') });
         } else {
-          for (const [box] of parts) setValue(box, box === input ? before : '');
+          parts.forEach(([box], n) => setValue(box, was[n]));
           skipped.push({ key, reason: 'the field would not take it', description: description.slice(0, 60) });
         }
         continue;
