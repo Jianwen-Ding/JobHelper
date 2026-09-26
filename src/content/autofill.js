@@ -5992,7 +5992,15 @@ function widgetChoices(fields, filled) {
      * had one. A person's own choice, or the form's default, is not this
      * tool's to reopen.
      */
-    if (widgetShowsAnAnswer(widget)) {
+    /*
+     * And a listbox with an option marked chosen. Its options are on the page,
+     * so `answerChoiceButtons` answers it as an ARIA group and reads it back
+     * by that mark, and `widgetShowsAnAnswer` reads a listbox as never
+     * showing one. Measured, a Country listbox the fill had answered United
+     * States was reported filled and, in the same report, as one to pick by
+     * hand. One left unchosen is still named here.
+     */
+    if (widgetShowsAnAnswer(widget) || listboxHoldsAChoice(widget)) {
       if (EDUCATION_KEYS.test(key)) already.add(key);
       continue;
     }
@@ -6004,6 +6012,11 @@ function widgetChoices(fields, filled) {
     if (EDUCATION_KEYS.test(key)) already.add(key);
   }
   return found;
+}
+
+/** Whether a listbox has one of its own options, as `choiceGroupOf` counts them, marked chosen. */
+function listboxHoldsAChoice(widget) {
+  return widget.getAttribute('role') === 'listbox' && ariaOptionsIn(widget).some(isMarkedChosen);
 }
 
 function unfillableChoices(fields, filled) {
