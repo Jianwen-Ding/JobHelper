@@ -6251,10 +6251,11 @@ function listsOf(widget, openBefore = null) {
    * the United States?", and both were reported filled.
    */
   const theirs = (list) =>
-    Boolean(list.id) &&
-    deepQueryAll(`[aria-controls~="${CSS.escape(list.id)}"], [aria-owns~="${CSS.escape(list.id)}"]`).some(
-      (el) => el !== widget && el !== box && !widget.contains(el),
-    );
+    (Boolean(list.id) &&
+      deepQueryAll(`[aria-controls~="${CSS.escape(list.id)}"], [aria-owns~="${CSS.escape(list.id)}"]`).some(
+        (el) => el !== widget && el !== box && !widget.contains(el),
+      )) ||
+    drawnByAnother(list, widget);
   const showing = visibleListboxes().filter((l) => l !== widget && !theirs(l));
   /*
    * And, where the widget names none, the one its own press opened.
@@ -6282,6 +6283,35 @@ function listsOf(widget, openBefore = null) {
   const inside = showing.filter((l) => widget.contains(l));
   const lists = fresh.length ? fresh : inside;
   return lists.length === 1 ? lists : [];
+}
+
+/**
+ * Whether a list is drawn beside another question's widget rather than this
+ * one's: the nearest thing around it holding a widget holds another and not
+ * this one.
+ *
+ * A list that names no widget is taken as this one's when it is the one
+ * that opened as this one was pressed. But a page can open another
+ * question's then too. Measured, a sponsorship question drawn as
+ * react-select draws one — its menu in its own container, named nowhere —
+ * on a page that opens that menu whenever the focus moves: it was answered
+ * No, then the authorization question after it was focused and pressed,
+ * the sponsorship menu was the one list that opened, and "Yes" was chosen
+ * in it. Sponsorship was reported filled with No and showed Yes. A menu
+ * drawn at the foot of the body, or in the container round this widget, is
+ * still this one's.
+ */
+const A_WIDGET = `[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"], [data-uxi-widget-type="selectinput"], ${FABRIC_SELECT}, select`;
+
+function drawnByAnother(list, widget) {
+  for (let at = parentAround(list); at; at = parentAround(at)) {
+    if (drawnInside(at, widget)) return false;
+    const others = [...(at.querySelectorAll?.(A_WIDGET) ?? [])].filter(
+      (el) => !list.contains(el) && !el.contains(list) && !isWidgetPartner(el) && isShowing(el),
+    );
+    if (others.length) return true;
+  }
+  return false;
 }
 
 /** The option that is plainly this answer, or nothing. Never the nearest. */
