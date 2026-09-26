@@ -1218,6 +1218,8 @@ function questionFor(input) {
 /** A choice dressed as something else: a button, or a text box that is a list. */
 function isWidgetChoice(element) {
   if (element instanceof HTMLSelectElement) return false;
+  // What select2 draws is its select's, which is the question. See `select2Of`.
+  if (isSelect2Part(element)) return false;
   const role = element.getAttribute?.('role');
   return (
     role === 'combobox' ||
@@ -1498,10 +1500,69 @@ function isWorkdayPrompt(element) {
  * the fill counts only once the container shows the choice. A pick inside
  * the container is read back off the select. See `watchChosenPicks`.
  *
- * bootstrap-select and select2 keep their select on the page, shrunk to a
- * pixel, and redraw on its native `change`, so they need none of this.
+ * bootstrap-select keeps its select on the page, shrunk to a pixel, and
+ * redraws on its native `change`, so it needs none of this. select2 does
+ * too — see `select2Of` for what it does need.
  */
 const CHOSEN = '.chosen-container, .chzn-container';
+
+/*
+ * A `<select>` select2 (4.x) has shrunk to a pixel and drawn again.
+ *
+ * select2 keeps the select on the page as `select2-hidden-accessible`,
+ * labelled by its own `<label for>`, and draws a `.select2-container` straight
+ * after it: a `.select2-selection` that is `role="combobox"`, labelled by the
+ * span that shows the choice, and a dropdown it opens in a second
+ * `.select2-container` at the foot of the body, with a search box
+ * (`aria-autocomplete="list"`) over a `role="listbox"`. It redraws from the
+ * select on `change`, so filling the select fills it. But its drawing was
+ * read as a question of its own: measured on a fixture drawn as select2
+ * draws itself, "Select an option" — the placeholder in the selection — was
+ * offered to the bank beside the select's real question; and a person's pick
+ * was never kept, because select2 picks on mouseup and announces it with
+ * jQuery's `trigger('change')`, which fires no native event, and the option
+ * the pick was made in has left the page before any click arrives.
+ *
+ * So everything select2 draws is its select's, and nothing of it is a widget
+ * or a box (see `isSelect2Part`); the select is filled, asked and read as the
+ * select it is, and a pick made in the drawing is read back off the select by
+ * `watchChosenPicks`, as Chosen's is.
+ */
+const SELECT2 = '.select2-container';
+
+function select2Of(select) {
+  if (!(select instanceof HTMLSelectElement)) return null;
+  const next = select.nextElementSibling;
+  return next?.matches?.(SELECT2) && next.querySelector('.select2-selection') ? next : null;
+}
+
+/**
+ * The select a select2 container stands in for: the one before it, or — for
+ * the dropdown it opens at the foot of the body — the one whose selection
+ * names its list (`select2-<id>-results` beside `select2-<id>-container`).
+ */
+function selectOfSelect2(node) {
+  const container = node?.closest?.(SELECT2);
+  if (!container) return null;
+  const before = container.previousElementSibling;
+  if (before instanceof HTMLSelectElement && select2Of(before) === container) return before;
+  const list = container.querySelector('.select2-results__options[id]');
+  if (!list) return null;
+  const root = container.getRootNode?.();
+  const named = /^select2-(.+)-results$/.exec(list.id);
+  const owner =
+    (named && root?.getElementById?.(`select2-${named[1]}-container`)) ||
+    root?.querySelector?.(`.select2-selection[aria-controls~="${CSS.escape(list.id)}"], .select2-selection[aria-owns~="${CSS.escape(list.id)}"]`);
+  const drawn = owner?.closest?.(SELECT2);
+  const select = drawn?.previousElementSibling;
+  return select instanceof HTMLSelectElement && select2Of(select) === drawn ? select : null;
+}
+
+/** Anything select2 drew for a select: its selection, its search box, its list. */
+function isSelect2Part(node) {
+  const container = node?.closest?.(SELECT2);
+  return Boolean(container && (selectOfSelect2(container) || container.querySelector(':scope > .select2-dropdown')));
+}
 
 function chosenOf(select) {
   if (!(select instanceof HTMLSelectElement)) return null;
@@ -1530,6 +1591,13 @@ function selectOfChosen(container) {
  * say whether it now shows it. True for a select nothing stands in for.
  */
 function redrawStandIn(select) {
+  // select2 redraws on the `change` already sent; asked only whether it did.
+  const select2 = select2Of(select);
+  if (select2) {
+    const said = clean(select.selectedOptions?.[0]?.textContent).toLowerCase();
+    const shown = select2.querySelector('.select2-selection__rendered') ?? select2;
+    return Boolean(said) && clean(shown.textContent).toLowerCase().includes(said);
+  }
   const drawn = chosenOf(select);
   if (!drawn) return true;
   for (const type of ['chosen:updated', 'liszt:updated']) select.dispatchEvent(ours(new Event(type, { bubbles: true })));
@@ -1603,6 +1671,8 @@ function isWidgetPartner(el) {
   if (!(el instanceof HTMLInputElement || el instanceof HTMLSelectElement)) return false;
   if (el.getAttribute('aria-hidden') !== 'true' || el.getAttribute('tabindex') !== '-1') return false;
   if (el instanceof HTMLInputElement) return el.type !== 'hidden';
+  // select2's select is the question, labelled or not. See `select2Of`.
+  if (select2Of(el)) return false;
   const labelled =
     (el.id && rootOf(el).querySelector(`label[for="${CSS.escape(el.id)}"]`)) ||
     el.closest('label') ||
@@ -1650,6 +1720,8 @@ function isFillable(input) {
   if (isWidgetChoice(input)) return false;
   // Chosen's own search box, which is the list's and not a question. See `chosenOf`.
   if (input.closest?.(CHOSEN)) return false;
+  // And select2's. See `select2Of`.
+  if (isSelect2Part(input)) return false;
   // `offsetParent` is null for anything positioned fixed, visible or not, and
   // forms inside a fixed modal are ordinary. Whether it occupies space on the
   // page is the question actually being asked. For a select Chosen has
@@ -4375,7 +4447,7 @@ function profileKeyOf(input, description) {
  */
 function typedBox(input, fields) {
   if (!(input instanceof HTMLInputElement) || !ONE_LINE.has(input.type)) return null;
-  if (isDisabled(input) || input.readOnly || isWidgetChoice(input)) return null;
+  if (isDisabled(input) || input.readOnly || isWidgetChoice(input) || isSelect2Part(input)) return null;
   if (rootOf(input)?.host?.id === OURS) return null;
   const description = describeField(input);
   if (!description) return null;
@@ -4671,7 +4743,7 @@ function watchWidgetPicks(write, watching) {
     const option = target?.closest?.('[role="option"]');
     const list = option?.closest('[role="listbox"]');
     if (!list) return onPlainPress(target);
-    if (rootOf(list)?.host?.id === OURS) return;
+    if (rootOf(list)?.host?.id === OURS || isSelect2Part(list)) return;
     const widget = ownerOfMenu(list);
     if (!widget) return;
     const asked = question(widget);
@@ -6076,6 +6148,8 @@ export function watchChoices(tell) {
       };
     }
     const option = control?.closest?.('[role="radio"], [role="option"]');
+    // select2's list, whose pick `watchChosenPicks` reads off the select.
+    if (option && isSelect2Part(option)) return null;
     if (option) {
       const group = option.closest('[role="radiogroup"], [role="listbox"], [role="group"]');
       if (!group) return null;
@@ -6133,7 +6207,7 @@ export function watchChoices(tell) {
     tell(verdict.keep ? { ...answer, keep: true } : { ...answer, keep: false, why: verdict.why });
   };
   const stopPicks = watchWidgetPicks(told, () => watching);
-  // And one in Chosen, which fires no native event at all. See `chosenOf`.
+  // And one in Chosen or select2, which fire no native event at all. See `chosenOf`.
   const stopChosen = watchChosenPicks(told, () => watching);
   return () => {
     watching = false;
@@ -6145,21 +6219,24 @@ export function watchChoices(tell) {
 }
 
 /**
- * A person's pick in a Chosen list, read off the select it stands in for.
+ * A person's pick in a Chosen or select2 list, read off the select it stands
+ * in for.
  *
- * Chosen picks on mouseup, or on the keyup of Enter, and tells only jQuery.
- * So the select's value is noted when a press or a key goes down inside the
- * container and read again once the page has handled the click or the key
- * that follows; a value that moved is the pick. A native `change` in
- * between — a build that fires one — is heard by `watchChoices` itself, and
- * is not told twice.
+ * Both pick on mouseup, or on a key, and tell only jQuery. So the select's
+ * value is noted when a press or a key goes down inside the container and
+ * read again once the page has handled the release, the click or the key
+ * that follows; a value that moved is the pick. The release, because select2
+ * takes its dropdown off the page on it, and the click that follows has
+ * nowhere left to land. A native `change` in between — a build that fires
+ * one — is heard by `watchChoices` itself, and is not told twice.
  */
 function watchChosenPicks(write, watching) {
   const before = new WeakMap();
   const selectAt = (event) => {
     const target = event.composedPath?.()?.[0] ?? event.target;
     const container = target?.closest?.(CHOSEN);
-    return container ? selectOfChosen(container) : null;
+    if (container) return selectOfChosen(container);
+    return selectOfSelect2(target);
   };
   const note = (event) => {
     const select = selectAt(event);
@@ -6167,7 +6244,7 @@ function watchChosenPicks(write, watching) {
   };
   const heard = (event) => {
     const target = event.composedPath?.()?.[0] ?? event.target;
-    if (target instanceof HTMLSelectElement && chosenOf(target)) before.set(target, target.value);
+    if (target instanceof HTMLSelectElement && (chosenOf(target) || select2Of(target))) before.set(target, target.value);
   };
   const check = (event) => {
     if (!event.isTrusted) return;
@@ -6181,7 +6258,7 @@ function watchChosenPicks(write, watching) {
       write({ question: clean(questionFor(select)), answer: clean(option.textContent) });
     }, 0);
   };
-  const events = [['mousedown', note], ['keydown', note], ['change', heard], ['click', check], ['keyup', check]];
+  const events = [['mousedown', note], ['keydown', note], ['change', heard], ['mouseup', check], ['click', check], ['keyup', check]];
   for (const [type, fn] of events) document.addEventListener(type, fn, true);
   return () => {
     for (const [type, fn] of events) document.removeEventListener(type, fn, true);

@@ -3186,7 +3186,7 @@ const NAMES_ZOOX = page(`<ul><li class="application-question"><label><div class=
  */
 const SCHOOL_EMAIL = page(`<div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="_systemfield_email" data-field-entry-id="301289ab-b6ac-4b2c-8c7b-f5e38f544af7__systemfield_email"><label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title" for="_systemfield_email">Personal Email Address</label><div><input placeholder="hello@example.com..." name="_systemfield_email" required="" id="_systemfield_email" type="email" class="_input_80epu_28 _input_1e3gg_32 ashby-application-form-input-text" value=""></div></div><div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="badb95ef-a9fe-4cad-866a-ce1ce98502e6" data-field-entry-id="301289ab-b6ac-4b2c-8c7b-f5e38f544af7_badb95ef-a9fe-4cad-866a-ce1ce98502e6"><label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title" for="badb95ef-a9fe-4cad-866a-ce1ce98502e6">School Email Address</label><div><input placeholder="Type here..." name="badb95ef-a9fe-4cad-866a-ce1ce98502e6" required="" id="badb95ef-a9fe-4cad-866a-ce1ce98502e6" type="text" class="_input_80epu_28 _input_1e3gg_32 ashby-application-form-input-text" value=""></div></div>`);
 /*
- * Three select libraries that draw a list of their own over, or instead of,
+ * Four select libraries that draw a list of their own over, or instead of,
  * a native one — drawn as they draw themselves and driven by the events they
  * listen to, without the libraries.
  */
@@ -3371,6 +3371,150 @@ const BOOTSTRAP_SELECT = `<!doctype html><html><head><meta charset="utf-8"><titl
     select.addEventListener('change', render);
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
     render();
+  }
+</script></body></html>`;
+
+/*
+ * select2 (4.1): the `<select>` kept on the page as
+ * `select2-hidden-accessible` — clipped to a pixel, `aria-hidden="true"` and
+ * `tabindex="-1"`, still labelled by its own `<label for>` — and a
+ * `.select2-container` drawn after it, whose `.select2-selection`
+ * (`role="combobox"`) shows the choice in `.select2-selection__rendered`. It
+ * opens on mousedown into a portal at the foot of the body: a
+ * `.select2-dropdown` with a search box of its own over a `role="listbox"`
+ * of `role="option"` rows. A pick is made on mouseup and announced with
+ * jQuery's `trigger('change')` — jQuery's handlers only, no native event —
+ * and select2 redraws from the select on `change`, which jQuery's `.on` hears
+ * from a native one too.
+ */
+const SELECT2 = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — select2</title>
+<style>
+  .select2-hidden-accessible { border: 0 !important; clip: rect(0 0 0 0) !important; clip-path: inset(50%) !important; height: 1px !important; overflow: hidden !important; padding: 0 !important; position: absolute !important; width: 1px !important; white-space: nowrap !important; }
+  .select2-container { box-sizing: border-box; display: inline-block; position: relative; vertical-align: middle; width: 300px; }
+  .select2-selection--single { display: block; height: 28px; border: 1px solid #aaa; border-radius: 4px; cursor: pointer; }
+  .select2-selection__rendered { display: block; padding: 0 20px 0 8px; line-height: 28px; overflow: hidden; white-space: nowrap; }
+  .select2-selection__placeholder { color: #999; }
+  body > .select2-container--open { position: absolute; }
+  .select2-dropdown { display: block; position: absolute; left: 0; z-index: 1051; width: 300px; background: #fff; border: 1px solid #aaa; }
+  .select2-search__field { width: 100%; box-sizing: border-box; }
+  .select2-results__options { list-style: none; margin: 0; padding: 0; }
+  .select2-results__option { padding: 6px; }
+  .select2-results__option--highlighted { background: #5897fb; color: #fff; }
+</style></head><body>
+<form>
+  <div><label for="first">First name</label><input id="first" name="first_name"></div>
+  <div class="field"><label for="country">Country</label>
+    <select id="country" name="country" class="js-select2" data-placeholder="Select a country">
+      <option value=""></option><option value="CA">Canada</option><option value="US">United States</option><option value="MX">Mexico</option>
+    </select>
+  </div>
+  <div class="field"><label for="hear">How did you hear about this job?</label>
+    <select id="hear" name="hear" class="js-select2" data-placeholder="Select an option">
+      <option value=""></option><option value="li">LinkedIn</option><option value="ref">Employee referral</option><option value="web">Company website</option>
+    </select>
+  </div>
+</form>
+<script>
+  window.jqueryChange = [];
+  window.searched = [];
+  let n = 0;
+  for (const select of document.querySelectorAll('select.js-select2')) {
+    n++;
+    select.classList.add('select2-hidden-accessible');
+    select.setAttribute('aria-hidden', 'true');
+    select.tabIndex = -1;
+    select.dataset.select2Id = 'select2-data-' + n;
+    const box = document.createElement('span');
+    box.className = 'select2 select2-container select2-container--default';
+    box.dir = 'ltr';
+    box.innerHTML = '<span class="selection"><span class="select2-selection select2-selection--single" role="combobox" aria-haspopup="true" aria-expanded="false" tabindex="0" aria-disabled="false" aria-labelledby="select2-' + select.id + '-container">' +
+      '<span class="select2-selection__rendered" id="select2-' + select.id + '-container" role="textbox" aria-readonly="true"></span>' +
+      '<span class="select2-selection__arrow" role="presentation"><b role="presentation"></b></span></span></span><span class="dropdown-wrapper" aria-hidden="true"></span>';
+    select.after(box);
+    const selection = box.querySelector('.select2-selection');
+    const rendered = box.querySelector('.select2-selection__rendered');
+    const resultsId = 'select2-' + select.id + '-results';
+    let portal = null;
+    const draw = () => {
+      const option = select.selectedOptions[0];
+      rendered.textContent = '';
+      if (option && option.value !== '') {
+        rendered.textContent = option.textContent;
+        rendered.title = option.textContent;
+      } else {
+        rendered.removeAttribute('title');
+        rendered.innerHTML = '<span class="select2-selection__placeholder"></span>';
+        rendered.firstChild.textContent = select.dataset.placeholder;
+      }
+    };
+    const close = () => {
+      if (!portal) return;
+      portal.remove();
+      portal = null;
+      box.classList.remove('select2-container--open');
+      selection.setAttribute('aria-expanded', 'false');
+      selection.removeAttribute('aria-controls');
+    };
+    const open = () => {
+      const at = box.getBoundingClientRect();
+      portal = document.createElement('span');
+      portal.className = 'select2-container select2-container--default select2-container--open';
+      portal.style.top = (at.bottom + window.scrollY) + 'px';
+      portal.style.left = (at.left + window.scrollX) + 'px';
+      portal.innerHTML = '<span class="select2-dropdown select2-dropdown--below" dir="ltr"><span class="select2-search select2-search--dropdown">' +
+        '<input class="select2-search__field" type="search" tabindex="0" autocorrect="off" autocapitalize="none" spellcheck="false" role="searchbox" aria-autocomplete="list" autocomplete="off" aria-controls="' + resultsId + '"></span>' +
+        '<span class="select2-results"><ul class="select2-results__options" role="listbox" id="' + resultsId + '" aria-expanded="true" aria-hidden="false"></ul></span></span>';
+      document.body.append(portal);
+      const search = portal.querySelector('.select2-search__field');
+      const list = portal.querySelector('ul');
+      const fill = () => {
+        list.innerHTML = '';
+        const term = search.value.trim().toLowerCase();
+        [...select.options].forEach((option, i) => {
+          if (option.value === '' || (term && !option.textContent.toLowerCase().includes(term))) return;
+          const li = document.createElement('li');
+          li.className = 'select2-results__option select2-results__option--selectable' + (option.selected ? ' select2-results__option--selected' : '');
+          li.id = 'select2-' + select.id + '-result-' + i;
+          li.setAttribute('role', 'option');
+          li.setAttribute('aria-selected', String(option.selected));
+          li.dataset.index = String(i);
+          li.textContent = option.textContent;
+          list.append(li);
+        });
+      };
+      fill();
+      search.addEventListener('input', () => { window.searched.push(search.value); fill(); });
+      list.addEventListener('mouseover', (e) => {
+        list.querySelectorAll('.select2-results__option--highlighted').forEach((li) => li.classList.remove('select2-results__option--highlighted'));
+        e.target.closest('li')?.classList.add('select2-results__option--highlighted');
+      });
+      list.addEventListener('mouseup', (e) => {
+        const li = e.target.closest('li.select2-results__option--selectable');
+        if (!li) return;
+        select.selectedIndex = Number(li.dataset.index);
+        // $element.trigger('input').trigger('change'): jQuery's handlers —
+        // select2's own redraw among them — and no native event.
+        window.jqueryChange.push(select.id);
+        draw();
+        close();
+        selection.focus();
+      });
+      box.classList.add('select2-container--open');
+      selection.setAttribute('aria-expanded', 'true');
+      selection.setAttribute('aria-controls', resultsId);
+      search.focus();
+    };
+    draw();
+    // select2's \`$element.on('change.select2')\`, which a native change reaches —
+    // unless this page is asked to be one that does not redraw, as \`?deaf\`.
+    if (!location.search.includes('deaf')) select.addEventListener('change', draw);
+    selection.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      portal ? close() : open();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+    document.addEventListener('mousedown', (e) => { if (portal && !box.contains(e.target) && !portal.contains(e.target)) close(); });
   }
 </script></body></html>`;
 
@@ -4011,7 +4155,7 @@ const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><tit
   });
 </script></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -8081,7 +8225,7 @@ async function main() {
       JSON.stringify(bamboo),
     );
     /*
-     * Chosen, bootstrap-select and Vuetify's v-select, each asked the same
+     * Chosen, bootstrap-select, select2 and Vuetify's v-select, each asked the same
      * three things: filled from the profile, filled from the bank, and a
      * person's pick read back for the bank — each seen in what the widget
      * draws, not only in what it submits.
@@ -8099,6 +8243,12 @@ async function main() {
         submits: (id) => document.getElementById(id).value,
         pick: async () => { await page.click('button[data-id=arrangement]'); await page.click('#bs-select-2 a:has-text("Hybrid")'); },
       },
+      select2: {
+        url: '/select2', question: 'How did you hear about this job?', answer: 'Employee referral', country: 'country', asked: 'hear',
+        shown: (id) => document.getElementById(`select2-${id}-container`).textContent,
+        submits: (id) => document.getElementById(id).value,
+        pick: async () => { await page.click('#select2-hear-container'); await page.click('#select2-hear-results li:has-text("Employee referral")'); },
+      },
       'Vuetify v-select': {
         url: '/vuetify', question: 'Which working arrangement do you prefer?', answer: 'Hybrid', country: 'country', asked: 'arrangement',
         shown: (id) => document.querySelector(`.v-select[data-name=${id}] .v-select__selection`)?.textContent ?? '',
@@ -8114,7 +8264,9 @@ async function main() {
         const report = await m.fillComboboxes(profile, m.fillForm(profile), { patience: 800 });
         return {
           shown: eval(read.shown)(id), submits: eval(read.submits)(id),
-          typedIn: [...document.querySelectorAll('input[type=text], input:not([type])')].filter((i) => i.value && !/first/i.test(`${i.id} ${i.name}`)).map((i) => i.value),
+          typedIn: [...document.querySelectorAll('input[type=text], input[type=search], input:not([type])')].filter((i) => i.value && !/first/i.test(`${i.id} ${i.name}`)).map((i) => i.value),
+          // What a list's own search box was given while it was open, where the page keeps count.
+          searched: window.searched ?? [],
           filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
           typed: m.typedQuestions(),
         };
@@ -8125,7 +8277,7 @@ async function main() {
         const asked = m.choiceQuestions();
         const remembered = [{ question, answer }];
         const report = await m.answerWidgetsFromMemory(remembered, m.fillForm(profile, { remembered }), { patience: 800 });
-        return { asked, shown: eval(read.shown)(id), submits: eval(read.submits)(id), filled: report.filled.map((f) => f.question ?? f.key) };
+        return { asked, shown: eval(read.shown)(id), submits: eval(read.submits)(id), filled: report.filled.map((f) => f.question ?? f.key), searched: window.searched ?? [] };
       }, { b: base, profile: PROFILE, read, id: L.asked, question: L.question, answer: L.answer });
       await page.goto(`${base}${L.url}`, { waitUntil: 'domcontentloaded' });
       await page.evaluate(async ({ b }) => {
@@ -8149,12 +8301,14 @@ async function main() {
       );
       check(
         "and nothing is typed into the widget's own boxes, or offered as a question typed on the form",
-        fromProfile.typedIn.length === 0 && fromProfile.typed.length === 0,
+        fromProfile.typedIn.length === 0 && fromProfile.searched.length === 0 && fromProfile.typed.length === 0,
         JSON.stringify(fromProfile),
       );
       check(
         'the question is asked of the bank, and the answer given before is chosen and drawn',
-        fromBank.asked.includes(L.question) && fromBank.shown === L.answer && fromBank.submits !== '' && fromBank.filled.includes(L.question),
+        // Only the question: never what the widget shows in its place, "Select an option".
+        JSON.stringify(fromBank.asked) === JSON.stringify([L.question]) && fromBank.shown === L.answer && fromBank.submits !== '' &&
+          fromBank.filled.includes(L.question) && fromBank.searched.length === 0,
         JSON.stringify(fromBank),
       );
       check(
@@ -8163,6 +8317,58 @@ async function main() {
         JSON.stringify(picked),
       );
     }
+
+    /*
+     * A select2 left open when Autofill is pressed: its search box is on the
+     * page, focused, and answers `aria-autocomplete="list"` like a
+     * react-select's. It is the list's, not a question — nothing is typed
+     * into it — and the select behind it is filled and drawn all the same.
+     */
+    await page.goto(`${base}/select2`, { waitUntil: 'domcontentloaded' });
+    await page.click('#select2-hear-container');
+    const open2 = await page.evaluate(async ({ b, profile }) => {
+      const m = await import(`${b}/autofill.js`);
+      const remembered = [{ question: 'How did you hear about this job?', answer: 'Employee referral' }];
+      const asked = m.choiceQuestions();
+      let report = m.fillForm(profile, { remembered });
+      report = await m.fillComboboxes(profile, report, { patience: 800 });
+      report = await m.answerWidgetsFromMemory(remembered, report, { patience: 800 });
+      const box = document.querySelector('.select2-search__field');
+      return {
+        asked, searched: window.searched, box: box?.value ?? null,
+        country: document.getElementById('select2-country-container').textContent, countrySubmits: document.getElementById('country').value,
+        hear: document.getElementById('select2-hear-container').textContent, hearSubmits: document.getElementById('hear').value,
+        filled: report.filled.map((f) => f.question ?? f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        typed: m.typedQuestions(),
+      };
+    }, { b: base, profile: PROFILE });
+    group('select2: one left open when Autofill runs');
+    check(
+      'its search box is given nothing and asked nothing, and the selects behind it are filled and drawn',
+      open2.searched.length === 0 && !open2.box && open2.typed.length === 0 &&
+        JSON.stringify(open2.asked) === JSON.stringify(['How did you hear about this job?']) &&
+        open2.country === 'United States' && open2.countrySubmits === 'US' && open2.hear === 'Employee referral' && open2.hearSubmits === 'ref' &&
+        open2.filled.includes('address_country') && open2.filled.includes('How did you hear about this job?'),
+      JSON.stringify(open2),
+    );
+
+    const deaf2 = await page.goto(`${base}/select2?deaf`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(profile);
+        return {
+          submits: document.getElementById('country').value,
+          shown: document.getElementById('select2-country-container').textContent,
+          filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+        };
+      }, { b: base, profile: PROFILE }),
+    );
+    check(
+      'and one that does not redraw is put back as it was and left to be picked by hand',
+      deaf2.submits === '' && deaf2.shown === 'Select a country' && !deaf2.filled.includes('address_country') &&
+        deaf2.skipped.includes('address_country: this one has to be picked by hand'),
+      JSON.stringify(deaf2),
+    );
 
     /*
      * A Chosen that does not redraw on `chosen:updated` is not claimed: the
