@@ -15,6 +15,13 @@ const STYLE = `
  * board's stylesheet can reach in and nothing here leaks out.
  */
 :host { all: initial; }
+/*
+ * Above a page's modal the host is a popover in the top layer (see \`raise\` in
+ * \`createCard\`), and everything there gets a ::backdrop. A page that dims
+ * every ::backdrop, not only its dialog's, would have dimmed its own form a
+ * second time under the card. Important here outranks important in the page.
+ */
+:host::backdrop { display: none !important; }
 * { box-sizing: border-box; }
 
 .card {
@@ -791,6 +798,22 @@ export function createCard({
    * query: a query on the document cannot see into a shadow root. What is
    * under it is the modal itself where the backdrop covers the card, or
    * something inside the modal where its box does.
+   *
+   * Inside the modal, the host is also shown as a manual popover, which puts
+   * it in the top layer just above the modal (`raise`). Being a child of the
+   * modal is only enough while the modal leaves fixed positions alone. A
+   * dialog with a transform — the usual way to centre one, or to animate it
+   * in — or a filter, perspective, `will-change: transform`, a paint or
+   * layout containment or a backdrop-filter, is what a fixed descendant is
+   * measured from instead of the window, and a modal dialog is
+   * `overflow: auto`. Measured in tests/card.mjs, with a dialog centred by
+   * `translate(-50%, -50%)`: the card left the window's corner for the
+   * dialog's, 14px in, and the dialog cut it down to its own box, so what
+   * showed of the card was its header, lying over the form's first field,
+   * and a press where the card had been fell on the backdrop. An element in
+   * the top layer is laid out against the window whatever its ancestors do,
+   * and is cut by none of them; and it is still inside the modal, so still
+   * not inert.
    */
   let borrowed = null;
   const shadowOf = (element) => {
@@ -826,9 +849,36 @@ export function createCard({
     }
     return null;
   };
+  /*
+   * Into the top layer, above the modal the host was just put inside.
+   * `manual`, so it is never light-dismissed, never closes the page's own
+   * popovers, and moves no focus: the card has nothing marked autofocus, and
+   * the field the modal focused keeps it. Where the browser has no popovers,
+   * the card stays what it was before, a child of the modal, which is right
+   * for any modal that does not move fixed positions.
+   */
+  const raise = () => {
+    try {
+      host.setAttribute('popover', 'manual');
+      host.showPopover();
+    } catch {
+      host.removeAttribute('popover');
+    }
+  };
+  /*
+   * Out of the top layer again. Taking the host out of the modal hides the
+   * popover anyway; the attribute goes too, so that back at <html> the host
+   * is what it always was there. A popover that is not showing is
+   * `display: none` in the browser's own sheet, and only the host's inline
+   * `all: initial` would be keeping the card in view.
+   */
+  const lower = () => {
+    if (host.hasAttribute('popover')) host.removeAttribute('popover');
+  };
   const letGo = () => {
     borrowed?.removeEventListener('close', onModalClosed);
     borrowed = null;
+    lower();
   };
   const giveBack = () => {
     if (!borrowed) return;
@@ -844,6 +894,7 @@ export function createCard({
     borrowed = modal;
     modal.addEventListener('close', onModalClosed);
     modal.append(host);
+    raise();
   };
   // Out, and straight into the modal underneath if there is one.
   function onModalClosed() {

@@ -5385,9 +5385,15 @@ async function main() {
    * nothing could be dragged from it into the form. Pressed here with the
    * mouse, since only a real press is refused by an inert element.
    */
-  const underModal = async (inShadow) => {
-    const opened = await inPage((createCard, shadow) => {
-      document.querySelectorAll('dialog, #interop-outlet').forEach((el) => el.remove());
+  const underModal = async (inShadow, { style = '', dimsBackdrops = false } = {}) => {
+    const opened = await inPage((createCard, { shadow, style, dimsBackdrops }) => {
+      document.querySelectorAll('dialog, #interop-outlet, style[data-page]').forEach((el) => el.remove());
+      if (dimsBackdrops) {
+        // Not `dialog::backdrop`: every backdrop, as some pages write it.
+        const sheet = Object.assign(document.createElement('style'), { textContent: '::backdrop { background: rgb(0 0 0 / 50%); }' });
+        sheet.dataset.page = '';
+        document.head.append(sheet);
+      }
       const handle = createCard({
         analysis: {
           isJobPosting: true,
@@ -5417,6 +5423,7 @@ async function main() {
       }
       const dialog = document.createElement('dialog');
       dialog.innerHTML = '<form method="dialog"><label>First name <input name="first"></label><button>Next</button></form>';
+      dialog.style.cssText = style;
       where.append(dialog);
       document.addEventListener('click', (event) => {
         if (dialog.open && !dialog.querySelector('form').contains(event.composedPath()[0])) {
@@ -5426,8 +5433,8 @@ async function main() {
       });
       dialog.showModal();
       window.__dialog = dialog;
-      return { left: before.left, top: before.top, right: before.right, width: before.width };
-    }, inShadow);
+      return { left: before.left, top: before.top, right: before.right, width: before.width, height: before.height };
+    }, { shadow: inShadow, style, dimsBackdrops });
     await page.waitForTimeout(80);
     const x = opened.left + 40;
     const y = opened.top + 20;
@@ -5435,13 +5442,46 @@ async function main() {
       const host = document.querySelector('#jobhelper-card-host') ?? window.__dialog.querySelector('#jobhelper-card-host');
       const box = host?.shadowRoot.querySelector('.card').getBoundingClientRect();
       const at = document.elementFromPoint(px, py);
+      // What a press at a point would land on, down through the page's shadow roots.
+      const topAt = (ax, ay) => {
+        let hit = document.elementFromPoint(ax, ay);
+        for (let depth = 0; hit && hit !== host && hit.shadowRoot && depth < 8; depth++) {
+          const inner = hit.shadowRoot.elementFromPoint(ax, ay);
+          if (!inner || inner === hit) break;
+          hit = inner;
+        }
+        return hit;
+      };
+      const input = window.__dialog.querySelector('input').getBoundingClientRect();
+      const frame = window.__dialog.getBoundingClientRect();
       return {
         inDialog: host?.parentNode === window.__dialog,
         top: at === host || at === window.__dialog.getRootNode().host && window.__dialog.getRootNode().elementFromPoint(px, py) === host,
         left: box?.left,
+        y: box?.top,
         width: box?.width,
+        height: box?.height,
+        // Its bottom corners are the card too, rather than cut off by the dialog.
+        whole: Boolean(box) && topAt(box.left + 8, box.bottom - 8) === host && topAt(box.right - 8, box.bottom - 8) === host,
+        field: topAt(input.left + input.width / 2, input.top + input.height / 2)?.localName ?? null,
+        // A spot of the dialog's own white, inside its border, clear of the card.
+        blank: { x: Math.round(frame.left + 8), y: Math.round(frame.bottom - 8) },
       };
     }, [x, y]);
+    /*
+     * The colour the person sees there. The dialog is white and its backdrop
+     * is behind it, so anything darker is a second backdrop laid over it.
+     */
+    const shot = await page.screenshot({ clip: { x: placed.blank.x, y: placed.blank.y, width: 1, height: 1 } });
+    placed.blankColour = await page.evaluate(async (png) => {
+      const img = new Image();
+      img.src = `data:image/png;base64,${png}`;
+      await img.decode();
+      const canvas = Object.assign(document.createElement('canvas'), { width: 1, height: 1 });
+      const pen = canvas.getContext('2d');
+      pen.drawImage(img, 0, 0);
+      return [...pen.getImageData(0, 0, 1, 1).data.slice(0, 3)];
+    }, shot.toString('base64'));
     await page.mouse.click(x, y);
     const pressed = await page.evaluate(() => ({ pressed: window.__pressed, open: window.__dialog.open, closedByPage: window.__closedByPage }));
     await page.evaluate(() => window.__dialog.close());
@@ -5470,6 +5510,45 @@ async function main() {
     );
     check(`${name}: once the modal closes, the card is back on the page and in view`, seen.after.home && seen.after.width > 0 && seen.after.top, JSON.stringify(seen.after));
   }
+
+  /*
+   * A modal that moves fixed positions. A transform on the dialog — how one
+   * is centred, or animated in — or `will-change: transform`, makes it what
+   * a fixed descendant is placed against instead of the window, and a modal
+   * dialog is `overflow: auto`. Measured before the card went into the top
+   * layer: moved from the window's corner to the dialog's, cut down to the
+   * dialog's box, and lying over the form's first field. The page here also
+   * dims every ::backdrop, as some do, which the card's own must not add to.
+   */
+  for (const [name, inShadow, style] of [
+    ['a dialog centred with translate(-50%, -50%)', false, 'top: 50%; left: 50%; margin: 0; transform: translate(-50%, -50%);'],
+    ['a dialog with will-change: transform, inside a shadow root', true, 'will-change: transform;'],
+  ]) {
+    const seen = await underModal(inShadow, { style, dimsBackdrops: true });
+    const was = { left: seen.opened.left, top: seen.opened.top, width: seen.opened.width, height: seen.opened.height };
+    const now = { left: seen.placed.left, top: seen.placed.y, width: seen.placed.width, height: seen.placed.height };
+    check(`${name}: the card goes inside the modal, on top of its backdrop`, seen.placed.inDialog && seen.placed.top, JSON.stringify(seen.placed));
+    check(
+      `${name}: and stays where it was on the screen, not moved to the dialog's corner`,
+      Object.keys(was).every((key) => Math.abs(now[key] - was[key]) < 1),
+      JSON.stringify({ was, now }),
+    );
+    check(`${name}: all of it is there, not cut down to the dialog's box`, seen.placed.whole, JSON.stringify(seen.placed));
+    check(`${name}: and the form's field is not under it`, seen.placed.field === 'input', JSON.stringify(seen.placed));
+    check(
+      `${name}: nor dimmed by a second backdrop over the dialog`,
+      seen.placed.blankColour.every((channel) => channel > 245),
+      JSON.stringify(seen.placed.blankColour),
+    );
+    check(`${name}: a press on it reaches it`, seen.pressed.pressed === 1, JSON.stringify(seen.pressed));
+    check(
+      `${name}: and is not taken by the page as a press outside its modal`,
+      seen.pressed.open && seen.pressed.closedByPage === 0,
+      JSON.stringify(seen.pressed),
+    );
+    check(`${name}: once the modal closes, the card is back on the page and in view`, seen.after.home && seen.after.width > 0 && seen.after.top, JSON.stringify(seen.after));
+  }
+  await page.evaluate(() => document.querySelectorAll('style[data-page]').forEach((el) => el.remove()));
 
   /*
    * A modal the page throws away with the card inside it. The content script
