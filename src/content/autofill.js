@@ -1174,6 +1174,16 @@ const NEVER_SHOWN = 'style, script, template, link, meta, noscript';
  */
 function shownText(el) {
   if (!el.shadowRoot || el.id === OURS) return clean(el.textContent);
+  return drawnText(el);
+}
+
+/**
+ * The words `el` draws: a component's root in place of what is written
+ * between its tags, and a slot as what is slotted into it. See `shownText`,
+ * which asks this of a component, and `optionLabelFor`, of a label drawn in
+ * one round a slot.
+ */
+function drawnText(el) {
   const parts = [];
   const walk = (node) => {
     const shown = node.localName === 'slot' ? node.assignedNodes({ flatten: true }) : [];
@@ -4330,11 +4340,13 @@ function fillJob(block, job, overwrite, filled, skipped) {
  * once, to one of them, and a second copy would have gone on opening
  * comboboxes for ever. One function, two callers, no drift.
  */
+const A_CHOICE_GROUP = '[role="radiogroup"], [role="listbox"], [role="group"]';
+
 function ariaChoiceGroups() {
   const visible = (el) => el.getClientRects().length > 0;
   const found = [];
 
-  for (const group of deepQueryAll('[role="radiogroup"], [role="listbox"], [role="group"]')) {
+  for (const group of deepQueryAll(A_CHOICE_GROUP)) {
     if (isDisabled(group) || !visible(group)) continue;
     /*
      * The popup half of a combobox, which is somebody else's to open. A
@@ -4593,10 +4605,11 @@ function choiceQuestionFor(group) {
   const said = fromLabelledBy(group) || clean(group.getAttribute('aria-label'));
   if (said) return said;
 
-  const legend = clean(group.closest('fieldset')?.querySelector('legend')?.textContent);
+  // Out of the components the group is drawn in: see `closestAround`.
+  const legend = clean(closestAround(group, 'fieldset')?.querySelector('legend')?.textContent);
   if (legend) return legend;
 
-  const header = clean(group.closest('tr')?.querySelector('th')?.textContent);
+  const header = clean(closestAround(group, 'tr')?.querySelector('th')?.textContent);
   if (header) return header;
 
   /*
@@ -4604,9 +4617,29 @@ function choiceQuestionFor(group) {
    * an unbounded climb reaches the whole form and reads every other question
    * as part of this one.
    */
-  for (let at = group.parentElement, up = 0; at && up < 3; at = at.parentElement, up++) {
+  /*
+   * And on out of a component, as `groupLabelFor` climbs. `parentElement`
+   * stops at the root the group is drawn in, so a yes/no group drawn whole in
+   * a component beside the page's "Are you legally authorized to work in the
+   * United States?" had no question, and was passed over without a word,
+   * where the same group written into the page was answered. The root is one
+   * more wrapper, costing none of the three, and the climb carries on from
+   * its host only when the root holds no other group: a component drawing two
+   * questions' buttons, with no words of its own for either, is not both of
+   * them asking the one question beside it.
+   */
+  let at = containerOf(group);
+  for (let up = 0; at && up < 3; ) {
     const heading = clean(at.querySelector('label, legend, h1, h2, h3, h4, h5, h6, .label')?.textContent);
     if (heading) return heading;
+    if (at instanceof ShadowRoot) {
+      const others = deepQueryAll(A_CHOICE_GROUP, at).filter((g) => g !== group && !drawnInside(g, group) && !drawnInside(group, g));
+      if (at.host.id === OURS || others.length > 0) break;
+      at = containerOf(at.host);
+    } else {
+      at = containerOf(at);
+      up++;
+    }
   }
   return '';
 }
@@ -4622,9 +4655,34 @@ function choiceQuestionFor(group) {
  * whole group and nothing else is the group, and whatever heading it carries is
  * the question.
  */
+/*
+ * And out of the components the buttons are drawn in.
+ *
+ * Every walk here asked `closest` or climbed `parentElement`, and both stop
+ * at the root a button is drawn in. So a group whose buttons are components
+ * had no question: measured, "Are you legally authorized to work in the
+ * United States?" as the legend of a fieldset round a Yes and a No each
+ * drawn in a component, and "Will you now or in the future require visa
+ * sponsorship?" as the page's label beside a component drawing both
+ * buttons, were each described by the group's `name` alone, matched nothing,
+ * and were left blank without a word on the card, where the same questions
+ * written without components were answered.
+ *
+ * The fieldset and the row out through each component (see
+ * `closestAround`). The climb takes the root as one more wrapper, costing
+ * none of the five, and carries on from the host; a wrapper holds the group
+ * when every button is drawn inside it (see `drawnInside`). And both of its
+ * guards count what is drawn in components, or they let a group borrow a
+ * question that is not its own: a wrapper holding the page's label and then
+ * a component drawing a text box looked, to `querySelectorAll`, like a
+ * wrapper with no other field in it, and the buttons beside the box took its
+ * question; and a wrapper holding two components each drawing a yes/no group
+ * under its own label looked like one question's own, and the second group
+ * took the first one's label.
+ */
 function groupLabelFor(radios) {
   const first = radios[0];
-  const legend = clean(first.closest('fieldset')?.querySelector('legend')?.textContent);
+  const legend = clean(closestAround(first, 'fieldset')?.querySelector('legend')?.textContent);
   if (legend) return legend;
 
   /*
@@ -4670,42 +4728,56 @@ function groupLabelFor(radios) {
    * reach the table and could take a column heading from some other row as
    * the question for this one.
    */
-  const header = clean(first.closest('tr')?.querySelector('th')?.textContent);
+  const header = clean(closestAround(first, 'tr')?.querySelector('th')?.textContent);
   if (header) return header;
 
-  let group = first.parentElement;
-  for (let i = 0; i < 5 && group; i++, group = group.parentElement) {
-    if (!radios.every((radio) => group.contains(radio))) continue;
-    // Another field in here means this is the form, not this question.
-    if (group.querySelectorAll('input:not([type=radio]):not([type=hidden]), textarea, select').length > 0) break;
-    const headings = [...group.querySelectorAll('label,legend,.label,[class*="label"]')].filter(
-      (el) => !el.querySelector('input, textarea, select'),
-    );
-    /*
-     * Somebody else's buttons are in here too.
-     *
-     * The guard above only counts fields that are *not* radios, so a plain
-     * `<div>` holding several yes/no questions one after another — question
-     * text, Yes, No, next question text, Yes, No, with no fieldset and no
-     * wrapper each, which is how hand-rolled career forms are written — looks
-     * exactly like one question's own group. Taking the first heading then
-     * gave every group in it the *first* question's words.
-     *
-     * Measured: sponsorship asked first and work authorisation second, profile
-     * saying "may not need sponsorship" and "yes, authorised". Both groups
-     * were labelled "require visa sponsorship", both were answered No, and the
-     * form submitted "No, I am not legally authorised to work in the United
-     * States" over the applicant's own answer. The report never mentioned the
-     * question at all — it listed sponsorship twice.
-     *
-     * So when the container is shared, take the nearest heading *above* these
-     * buttons instead: the question text a person reads them under.
-     */
-    const shared = [...group.querySelectorAll('input[type=radio]')].some((el) => !radios.includes(el));
-    const heading = shared
-      ? headings.filter((el) => el.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).pop()
-      : headings[0];
-    if (heading) return clean(heading.textContent);
+  // Where the buttons are, as seen from the tree `group` is in: the first
+  // button, or the component it is drawn in.
+  let from = first;
+  let group = containerOf(first);
+  const holds = (radio) =>
+    group instanceof ShadowRoot ? drawnInside(group.host, radio) && radio.getRootNode() !== rootOf(group.host) : drawnInside(group, radio);
+  for (let i = 0; i < 5 && group; ) {
+    if (radios.every(holds)) {
+      // Another field in here means this is the form, not this question.
+      if (fieldsIn(group, 'input:not([type=radio]):not([type=hidden]), textarea, select', 1) > 0) break;
+      const headings = [...group.querySelectorAll('label,legend,.label,[class*="label"]')].filter(
+        (el) => !fieldsIn(el, 'input, textarea, select', 1),
+      );
+      /*
+       * Somebody else's buttons are in here too.
+       *
+       * The guard above only counts fields that are *not* radios, so a plain
+       * `<div>` holding several yes/no questions one after another — question
+       * text, Yes, No, next question text, Yes, No, with no fieldset and no
+       * wrapper each, which is how hand-rolled career forms are written — looks
+       * exactly like one question's own group. Taking the first heading then
+       * gave every group in it the *first* question's words.
+       *
+       * Measured: sponsorship asked first and work authorisation second, profile
+       * saying "may not need sponsorship" and "yes, authorised". Both groups
+       * were labelled "require visa sponsorship", both were answered No, and the
+       * form submitted "No, I am not legally authorised to work in the United
+       * States" over the applicant's own answer. The report never mentioned the
+       * question at all — it listed sponsorship twice.
+       *
+       * So when the container is shared, take the nearest heading *above* these
+       * buttons instead: the question text a person reads them under.
+       */
+      const shared = deepQueryAll('input[type=radio]', group).some((el) => !radios.includes(el));
+      const heading = shared
+        ? headings.filter((el) => el.compareDocumentPosition(from) & Node.DOCUMENT_POSITION_FOLLOWING).pop()
+        : headings[0];
+      if (heading) return clean(heading.textContent);
+    }
+    if (group instanceof ShadowRoot) {
+      if (group.host.id === OURS) break;
+      from = group.host;
+      group = containerOf(from);
+    } else {
+      group = containerOf(group);
+      i++;
+    }
   }
   return '';
 }
@@ -4733,12 +4805,23 @@ function onScreen(radio) {
 }
 
 /** What one button of a group means, which is what a human reads beside it. */
+/*
+ * A label round a slot says what is slotted into it. A button drawn in a
+ * component — `<x-radio value="1">Yes</x-radio>`, its root `<label><input
+ * type="radio"><slot></slot></label>` — has a label whose `textContent` is
+ * nothing, the word being the page's, shown through the slot: measured, a
+ * Yes and a No drawn that way under "Are you legally authorized to work in
+ * the United States?" read as two empty options, and the question was
+ * reported as having none that matched, where the same buttons written into
+ * the page were answered Yes.
+ */
 function optionLabelFor(radio) {
+  const words = (label) => (label.querySelector('slot') ? drawnText(label) : clean(label.textContent));
   const wrapping = radio.closest('label');
-  if (wrapping) return clean(wrapping.textContent);
+  if (wrapping) return words(wrapping);
   if (radio.id) {
     const label = rootOf(radio).querySelector(`label[for="${CSS.escape(radio.id)}"]`);
-    if (label) return clean(label.textContent);
+    if (label) return words(label);
   }
   return clean(radio.value);
 }

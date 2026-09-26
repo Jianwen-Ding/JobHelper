@@ -3099,6 +3099,16 @@ const COMPONENT_DEFINITIONS = `<script>
   def('y-editor', (h) => '<style>:host { display: block }</style>' + (h.hasAttribute('loose') ? '' : '<div class="ck-editor__main" role="presentation">') +
     '<div role="textbox" aria-label="Editor editing area: main. Press Alt+0 for help." contenteditable="true" style="min-height: 2em"><p><br></p></div>' +
     (h.hasAttribute('loose') ? '' : '</div>'));
+  // One radio button, its words slotted in; a yes/no pair drawn in one root; and the same as ARIA radios, one group or two.
+  def('y-radio', (h) => '<style>:host { display: inline-block }</style><label><input type="radio" name="' + at(h, 'name') + '" value="' + at(h, 'value') + '"><slot></slot></label>');
+  def('y-yesno', (h) => '<style>:host { display: block }</style><label><input type="radio" name="' + at(h, 'name') + '" value="Yes">Yes</label>' +
+    '<label><input type="radio" name="' + at(h, 'name') + '" value="No">No</label>');
+  const ariaPair = () => '<div role="radiogroup">' + ['Yes', 'No'].map((w) => '<div role="radio" aria-checked="false" tabindex="0">' + w + '</div>').join('') + '</div>';
+  def('y-aria-yesno', (h) => '<style>:host { display: block }</style>' + (h.hasAttribute('two') ? ariaPair() + ariaPair() : ariaPair()));
+  document.addEventListener('click', (e) => {
+    const radio = e.composedPath().find((el) => el.getAttribute?.('role') === 'radio');
+    if (radio) for (const r of radio.parentNode.querySelectorAll('[role="radio"]')) r.setAttribute('aria-checked', String(r === radio));
+  });
 </script>`;
 
 const LABELLED_FROM_OUTSIDE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
@@ -3399,6 +3409,41 @@ const COMPONENT_EDITORS = `<!doctype html><html><head><meta charset="utf-8"><tit
   <label for="ce-team">What drew you to this team? *</label>
   <textarea id="ce-team" name="team" style="display: none;"></textarea>
   <div class="pair"><y-editor></y-editor><y-editor></y-editor></div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * Radio groups drawn in components. A Yes and a No each drawn in a component,
+ * valued 1 and 0 with their words slotted in, in a fieldset whose legend is
+ * the question; and a component drawing both buttons beside the page's
+ * label. And the ways a group borrows a question that is not its own: a
+ * component drawing a text box beside its label, then a yes/no component, in
+ * one wrapper; and two yes/no components in one wrapper, each after its own
+ * label.
+ *
+ * On a page of its own, since a form answers each question once: an ARIA
+ * group drawn whole in a component beside the page's label, and a component
+ * drawing two ARIA groups with no words of its own beside a label.
+ */
+const COMPONENT_RADIOS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <fieldset><legend>Are you legally authorized to work in the United States?</legend>
+    <y-radio name="q_9901" value="1">Yes</y-radio><y-radio name="q_9901" value="0">No</y-radio></fieldset>
+  <div class="q"><label>Will you now or in the future require visa sponsorship?</label><y-yesno name="q_9902"></y-yesno></div>
+
+  <div class="q"><label>Are you legally authorized to work in the United States? Please explain.</label><y-box field="q_9903"></y-box>
+    <y-yesno name="q_9904"></y-yesno></div>
+  <div class="qs"><label>Are you legally authorized to work in the United States?</label><y-yesno name="q_9905"></y-yesno>
+    <label>Will you now or in the future require visa sponsorship?</label><y-yesno name="q_9906"></y-yesno></div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+const COMPONENT_ARIA_RADIOS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label>Are you legally authorized to work in the United States?</label><y-aria-yesno id="ca-one"></y-aria-yesno></div>
+  <div class="q"><label>Will you now or in the future require visa sponsorship?</label><y-aria-yesno id="ca-two" two></y-aria-yesno></div>
 </form>
 ${COMPONENT_DEFINITIONS}
 </body></html>`;
@@ -4664,7 +4709,7 @@ const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><tit
   });
 </script></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -9105,6 +9150,64 @@ async function main() {
       'the cover letter\'s editor is not a question, and two editors side by side after one textarea are not given its question',
       drawnEditors.length === 4 && !drawnEditors.some((q) => /cover|drew you/i.test(q)),
       JSON.stringify(drawnEditors),
+    );
+
+    const radiosOn = (url) => page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        const out = {};
+        const walk = (root) => {
+          for (const el of root.querySelectorAll('*')) {
+            if (el.type === 'radio') out[el.name] = el.checked ? el.value : out[el.name] ?? '';
+            if (el.shadowRoot) walk(el.shadowRoot);
+          }
+        };
+        walk(document);
+        for (const host of document.querySelectorAll('y-aria-yesno')) {
+          out[host.id] = [...host.shadowRoot.querySelectorAll('[role="radio"]')].map((r) => (r.getAttribute('aria-checked') === 'true' ? r.textContent : '-')).join('');
+        }
+        return { ...out, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields: SWEEP }),
+    );
+    const drawnRadios = await radiosOn('/component-radios');
+    const drawnAria = await radiosOn('/component-aria-radios');
+    group('A radio group drawn in components');
+    check(
+      'a Yes and a No each drawn in a component, their words slotted in, under a fieldset\'s question: Yes',
+      drawnRadios.q_9901 === '1',
+      JSON.stringify(drawnRadios),
+    );
+    check(
+      'a component drawing both buttons beside the page\'s label is answered',
+      drawnRadios.q_9902 === 'No',
+      JSON.stringify(drawnRadios),
+    );
+    check(
+      'buttons in a wrapper with a text box drawn in a component do not take the box\'s question',
+      drawnRadios.q_9904 === '',
+      JSON.stringify(drawnRadios),
+    );
+    check(
+      'two yes/no components in one wrapper each take the label before them, not the first one\'s',
+      drawnRadios.q_9905 === 'Yes' && drawnRadios.q_9906 === 'No',
+      JSON.stringify(drawnRadios),
+    );
+    check(
+      'and nothing else is filled but the box asking the same question in words, as it is without components',
+      drawnRadios.filled.join() === 'work_authorization,work_authorization,requires_sponsorship,work_authorization,requires_sponsorship' &&
+        drawnRadios.skipped.length === 0,
+      JSON.stringify(drawnRadios),
+    );
+    check(
+      'an ARIA group drawn whole in a component beside the page\'s label is answered',
+      drawnAria['ca-one'] === 'Yes-',
+      JSON.stringify(drawnAria),
+    );
+    check(
+      'a component drawing two ARIA groups with no words of its own does not give both the label beside it, and nothing else is answered',
+      drawnAria['ca-two'] === '----' && drawnAria.filled.join() === 'work_authorization' && drawnAria.skipped.length === 0,
+      JSON.stringify(drawnAria),
     );
 
     const dateParts = await page.goto(`${base}/date-in-parts`, { waitUntil: 'domcontentloaded' }).then(() =>
