@@ -2371,9 +2371,15 @@ const A_CONTROL =
 const rankOf = (heading) =>
   /^h[1-6]$/.test(heading.localName) ? Number(heading.localName[1]) : Number(heading.getAttribute('aria-level')) || 2;
 
+/*
+ * "Holds a control" counts the ones drawn in components (see `fieldsIn`): a
+ * section whose boxes are all components holds none that `querySelector`
+ * can see, so its heading's wrapper was never found, the climb ran on to the
+ * form, and the heading was nobody's bound.
+ */
 function sectionBoxOf(heading) {
   let box = heading.parentElement;
-  while (box && !box.querySelector(A_CONTROL)) box = box.parentElement;
+  while (box && !fieldsIn(box, A_CONTROL, 1)) box = box.parentElement;
   if (!box || box.localName === 'form' || box.localName === 'body' || box.localName === 'html') return null;
   const rank = rankOf(heading);
   for (const other of box.querySelectorAll(HEADING)) {
@@ -2391,18 +2397,33 @@ function sectionBoxOf(heading) {
  * field, which is the only case where it is evidence about the field rather
  * than about the form.
  */
+/*
+ * For a field drawn in a component, from the component in the form's own
+ * tree. Neither `closest('form')` nor `contains` nor `compareDocumentPosition`
+ * sees through a shadow root — to `compareDocumentPosition` a box in a
+ * component is in another tree, before nothing and after nothing — so it had no
+ * heading over it at all: measured, a City and a Phone drawn in components
+ * under a bounded "Work Experience" heading were given the applicant's own
+ * home and number, where the same boxes written straight into the form were
+ * left for the person as a past job's.
+ */
 function headingOver(input) {
-  const scope = input.closest?.('form') ?? null;
+  let at = input;
+  let scope = at.closest?.('form') ?? null;
+  while (!scope && hostOf(at)) {
+    at = hostOf(at);
+    scope = at.closest('form');
+  }
   if (!scope) return null;
   let found = null;
   for (const heading of scope.querySelectorAll(HEADING)) {
-    if (!(heading.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING)) break;
+    if (!(heading.compareDocumentPosition(at) & Node.DOCUMENT_POSITION_FOLLOWING)) break;
     if (heading.localName === 'legend') {
-      if (heading.parentElement?.contains(input)) found = { heading, bounded: false };
+      if (heading.parentElement?.contains(at)) found = { heading, bounded: false };
       continue;
     }
     const box = sectionBoxOf(heading);
-    if (box && !box.contains(input)) continue;
+    if (box && !box.contains(at)) continue;
     found = { heading, bounded: Boolean(box) };
   }
   return found;
@@ -3862,14 +3883,26 @@ function inWorkHistory(input) {
  */
 const EMPLOYMENT_HEADING = /^(employment|employment\s+history|work\s+experience|work\s+history|professional\s+experience|experience)$/i;
 
+/*
+ * And out of the components the field is drawn in, as the page draws them.
+ * `parentElement` stops at the shadow root, so a block of components under
+ * its "Employment" paragraph read as no work history, and was left empty
+ * where the same block written straight into the form was filled. Out
+ * through the host (see `parentAround`), stepping past what is never drawn
+ * — a component's root begins with its `<style>`, whose CSS was otherwise
+ * the words before the box, and not a heading — counting a component's
+ * boxes as the controls they are (see `fieldsIn`), and reading a
+ * component's words as it shows them (see `shownText`).
+ */
 function underPlainHeading(input, heading) {
   // From a widget's whole control, whose own "Select..." is not a heading.
   const start = isWidgetChoice(input) ? controlOf(input) : input;
-  for (let at = start, n = 0; at?.parentElement && n < 6; at = at.parentElement, n++) {
-    if (at.parentElement.localName === 'form' || at.parentElement.localName === 'body') return false;
+  for (let at = start, n = 0; at && parentAround(at) && n < 6; at = parentAround(at), n++) {
+    const parent = parentAround(at);
+    if (parent.localName === 'form' || parent.localName === 'body') return false;
     for (let before = at.previousElementSibling; before; before = before.previousElementSibling) {
-      if (before.querySelector(A_CONTROL) || before.matches(A_CONTROL)) continue;
-      const words = clean(before.textContent);
+      if (before.matches(NEVER_SHOWN) || fieldsIn(before, A_CONTROL, 1)) continue;
+      const words = shownText(before);
       if (!words) continue;
       const label = before.matches('label') ? before : before.querySelector('label');
       if (label && clean(label.textContent) === words) break;
