@@ -4872,19 +4872,59 @@ function radioGroups() {
    * report "already filled" and stay empty. Either way an application is
    * submitted with a required question blank, after being told it was answered.
    */
+  /*
+   * And to the component it is drawn in, as a browser scopes it — unless the
+   * component draws no other button.
+   *
+   * A browser groups radios by name only within one tree, and every shadow
+   * root is a tree of its own. A yes/no component whose root draws its two
+   * buttons under a name of its own, `answer`, used for two questions one
+   * after the other, is two groups on the screen; keyed on the name alone it
+   * was one group of four, matched against "Yes", "Yes", "No", "No", and
+   * measured, "Are you legally authorized to work in the United States?" was
+   * reported as having no matching option and the sponsorship question after
+   * it was never asked, where the same two questions written into the page
+   * under two names were both answered.
+   *
+   * But a component that draws one button — `<x-radio name="q_9901"
+   * value="1">Yes</x-radio>`, its root `<label><input type="radio"><slot>` —
+   * is one button of a group the page makes of all the components sharing
+   * the name, which such components do with script of their own, since the
+   * browser will not. So a root that holds this button and
+   * no other is not a scope of its own: the grouping carries on out to the
+   * tree its host is in. And a form around the host counts as it does around
+   * the page's own radios, since a button drawn in a component has none.
+   */
+  const trees = new WeakMap();
+  let nextTree = 0;
+  const treeOf = (radio) => {
+    let root = rootOf(radio);
+    while (root instanceof ShadowRoot && root.host.id !== OURS && deepQueryAll('input[type=radio]', root).length === 1) root = rootOf(root.host);
+    if (!trees.has(root)) trees.set(root, `t${nextTree++}`);
+    return trees.get(root);
+  };
   const formKeys = new WeakMap();
   let nextForm = 0;
   const scopeOf = (radio) => {
-    const form = radio.form;
-    if (!form) return 'doc';
+    const form = radio.form ?? closestAround(radio, 'form');
+    if (!form) return `doc\u0000${treeOf(radio)}`;
     if (!formKeys.has(form)) formKeys.set(form, `f${nextForm++}`);
-    return formKeys.get(form);
+    return `${formKeys.get(form)}\u0000${treeOf(radio)}`;
   };
 
   const groups = new Map();
   for (const radio of deepQueryAll('input[type=radio]')) {
     if (isDisabled(radio) || !onScreen(radio)) continue;
-    const key = radio.name ? `${scopeOf(radio)}\u0000${radio.name}` : radio.closest('fieldset');
+    /*
+     * Radios with no name are grouped by the fieldset around them, and a
+     * button drawn in a component is in the page's fieldset too: `closest`
+     * stops at its root, so a Yes and a No each drawn nameless in a
+     * component, under a legend asking "Are you legally authorized to work
+     * in the United States?", were no group at all and were passed over
+     * without a word, where the same buttons written into the fieldset were
+     * answered. Out through each component, as `closestAround` goes.
+     */
+    const key = radio.name ? `${scopeOf(radio)}\u0000${radio.name}` : closestAround(radio, 'fieldset');
     if (!key) continue;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(radio);
@@ -6869,11 +6909,18 @@ export function watchChoices(tell) {
     }
     if (control instanceof HTMLInputElement && control.type === 'radio') {
       if (!control.checked) return null;
-      const group = [...deepQueryAll('input[type=radio]')].filter(
-        (r) => r.name === control.name && r.form === control.form,
-      );
+      /*
+       * The group `radioGroups` makes, so that what is written down is asked
+       * of the buttons it is asked of when filling. Matching `name` and
+       * `form` here put two yes/no components that draw their buttons under
+       * one name of their own into one group of four, and measured, a
+       * person's No to "Will you now or in the future require visa
+       * sponsorship?" was kept as their No to "Are you legally authorized to
+       * work in the United States?", the question before it.
+       */
+      const group = radioGroups().find((radios) => radios.includes(control)) ?? [control];
       return {
-        question: clean(groupLabelFor(group.length ? group : [control])),
+        question: clean(groupLabelFor(group)),
         answer: optionLabelFor(control),
       };
     }
