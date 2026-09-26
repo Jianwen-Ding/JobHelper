@@ -3779,6 +3779,73 @@ const PAGE_COMBOBOX_UNROLED_LIST = `<!doctype html><html><head><meta charset="ut
 </body></html>`;
 
 /*
+ * Dropdowns whose options are highlighted — marked `aria-selected`, as ARIA
+ * 1.2's combobox, Downshift and MUI's Autocomplete mark the option under the
+ * pointer — as the pointer goes down on them or over them, and chosen only on
+ * Enter: a School button and a Country box, each list drawn at the foot of the
+ * body on a press and named in `aria-controls`. And a Degree button that
+ * shows nothing of its own, whose choice is drawn beside it and marked chosen
+ * in its list, which stays mounted and hidden once shut.
+ */
+const PAGE_HIGHLIGHT_ONLY = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="hl-school-l">School</label>
+    <button type="button" id="hl-school" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="hl-school-l">Select One</button></div>
+  <div class="q"><label id="hl-country-l" for="hl-country">Country</label>
+    <div class="ac"><input id="hl-country" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="hl-country-l" autocomplete="off"></div></div>
+  <div class="q"><label id="hl-degree-l">Degree</label>
+    <span id="hl-degree-v"></span><button type="button" id="hl-degree" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="hl-degree-l" aria-controls="hl-degree-list" class="chevron"></button>
+    <ul id="hl-degree-list" role="listbox" style="display:none"><li role="option" aria-selected="false">Bachelor of Science</li><li role="option" aria-selected="false">Master of Science</li></ul></div>
+</form>
+<script>
+  window.log = [];
+  // Options are highlighted (aria-selected) as the pointer goes down on them or over them; only Enter commits.
+  function widget(el, box, options, commit) {
+    let list = null;
+    const shut = () => { list?.remove(); list = null; el.setAttribute('aria-expanded', 'false'); el.removeAttribute('aria-activedescendant'); };
+    const open = () => {
+      if (list) return;
+      list = document.createElement('ul');
+      list.id = el.id + '-list'; list.setAttribute('role', 'listbox');
+      options.forEach((text, i) => {
+        const o = document.createElement('li');
+        o.setAttribute('role', 'option'); o.id = el.id + '-o' + i; o.textContent = text; o.setAttribute('aria-selected', 'false');
+        const hl = () => { for (const x of list.children) x.setAttribute('aria-selected', String(x === o)); el.setAttribute('aria-activedescendant', o.id); window.log.push('highlight ' + text); };
+        o.addEventListener('pointerdown', hl); o.addEventListener('mouseover', hl);
+        o.addEventListener('mousedown', (e) => e.preventDefault());
+        list.append(o);
+      });
+      document.body.append(list);
+      el.setAttribute('aria-controls', list.id); el.setAttribute('aria-expanded', 'true');
+    };
+    el.addEventListener(box ? 'mousedown' : 'click', () => (list && !box ? shut() : open()));
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') shut();
+      if (e.key === 'Enter' && list) {
+        const o = list.querySelector('[aria-selected="true"]');
+        if (o) { commit(o.textContent); window.log.push('commit ' + o.textContent); }
+        shut();
+      }
+    });
+  }
+  const school = document.getElementById('hl-school');
+  widget(school, false, ['Boston University', 'Northeastern University'], (t) => { school.textContent = t; });
+  const country = document.getElementById('hl-country');
+  widget(country, true, ['Canada', 'United States'], (t) => { country.value = t; });
+  // An icon-only Degree whose choice is drawn beside it, and marked in its list, which stays mounted and hidden.
+  const degree = document.getElementById('hl-degree'), dlist = document.getElementById('hl-degree-list');
+  const dshow = (open) => { dlist.style.display = open ? '' : 'none'; degree.setAttribute('aria-expanded', String(open)); };
+  degree.addEventListener('click', () => dshow(dlist.style.display === 'none'));
+  degree.addEventListener('keydown', (e) => { if (e.key === 'Escape') dshow(false); });
+  for (const o of dlist.children) o.addEventListener('click', () => {
+    for (const x of dlist.children) x.setAttribute('aria-selected', String(x === o));
+    document.getElementById('hl-degree-v').textContent = o.textContent; window.log.push('commit ' + o.textContent); dshow(false);
+  });
+  window.state = () => ({ degree: document.getElementById('hl-degree-v').textContent, school: school.textContent, country: country.value, open: [...document.querySelectorAll('[role=listbox]')].filter((l) => l.getClientRects().length).length });
+</script>
+</body></html>`;
+
+/*
  * The page's own boxes, each put into a component that draws its label round
  * the slot: in a wrapper before the slot or before a wrapper round it, loose
  * in its root, round the slot, and with the label's words slotted in too,
@@ -5147,7 +5214,7 @@ const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><tit
   });
 </script></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
 
 const PROFILE = {
   first_name: 'Morgan',
@@ -9890,6 +9957,26 @@ async function main() {
       portalled.major === 'Computer Science' && portalled.shown.join() === 'Bachelor of Science,Computer Science' &&
         portalled.filled.join() === 'address_country,school,degree,major' && portalled.skipped.length === 0,
       JSON.stringify(portalled),
+    );
+
+    await page.goto(`${base}/page-highlight-only`, { waitUntil: 'domcontentloaded' });
+    const highlighted = await page.evaluate(async ({ b, fields }) => {
+      const m = await import(`${b}/autofill.js`);
+      const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 1000 });
+      return { ...window.state(), log: window.log, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+    }, { b: base, fields: SWEEP });
+    group('A dropdown whose options are only highlighted by the press is not filled');
+    check(
+      'a combobox and a typing box whose press only highlights the option (aria-selected), choosing on Enter, are reported as ones to pick by hand, not filled, and their lists are shut again',
+      highlighted.school === 'Select One' && highlighted.country === '' && highlighted.open === 0 &&
+        !highlighted.filled.includes('school') && !highlighted.filled.includes('address_country') &&
+        highlighted.skipped.includes('school: this one has to be picked by hand') && highlighted.skipped.includes('address_country: this one has to be picked by hand'),
+      JSON.stringify(highlighted),
+    );
+    check(
+      'and a combobox showing nothing of its own, whose choice is marked in its list as that list shuts, is still filled',
+      highlighted.degree === 'Bachelor of Science' && highlighted.filled.includes('degree') && !highlighted.skipped.some((s) => s.startsWith('degree:')),
+      JSON.stringify(highlighted),
     );
 
     const putIn = (url) => page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' }).then(() =>

@@ -6129,14 +6129,17 @@ function typingBoxOf(widget) {
 
 /** The listboxes showing on the page right now. */
 function visibleListboxes() {
-  return deepQueryAll('[role="listbox"]').filter(
-    /*
-     * `visibility: hidden` keeps a box, so a closed menu that an exit
-     * transition leaves mounted counted as open — and as a second listbox
-     * it refused every unlinked widget on the page.
-     */
-    (l) => l.getClientRects().length > 0 && getComputedStyle(l).visibility !== 'hidden',
-  );
+  return deepQueryAll('[role="listbox"]').filter(isShowing);
+}
+
+/*
+ * Whether an element is drawn where it can be seen. `visibility: hidden`
+ * keeps a box, so a closed menu that an exit transition leaves mounted
+ * counted as open — and as a second listbox it refused every unlinked widget
+ * on the page.
+ */
+function isShowing(el) {
+  return el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
 }
 
 /**
@@ -6330,7 +6333,18 @@ function tookIt(widget, box, option, value, hiddenBefore, chosen = option.textCo
       (said.length >= 2 && clean(chosen).toLowerCase().includes(said))
     );
   }
-  if (option.isConnected && option.getAttribute('aria-selected') === 'true') return true;
+  /*
+   * The option marked chosen — once its list has shut. In a combobox's popup
+   * `aria-selected` is where the highlight is, and it moves with the pointer
+   * and the arrow keys: ARIA 1.2's pattern, Downshift and MUI's Autocomplete
+   * all mark the option under the pointer that way. Measured, a School and a
+   * Country whose options are highlighted as the pointer goes down on them
+   * and chosen only on Enter were reported filled on "Select One" and an
+   * empty box, both lists left open. A list still showing after the press is
+   * one the press did not close, and its mark is the highlight; a choice
+   * shows in the control, which is read below.
+   */
+  if (option.isConnected && option.getAttribute('aria-selected') === 'true' && !isShowing(option)) return true;
   /*
    * An autocomplete that writes the choice into its own box — MUI, Downshift,
    * Ant Design — with no hidden input and the option gone once the menu
