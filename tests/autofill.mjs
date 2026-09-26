@@ -3117,6 +3117,23 @@ const COMPONENT_DEFINITIONS = `<script>
       this.attachShadow({ mode: 'open' }).innerHTML = '<style>:host { display: inline-block }</style><button type="button" tabindex="-1">' + at(this, 'label') + '</button>';
     }
   });
+  // Components the page puts its own box into, drawing its label, and an asterisk when required, round the slot: the
+  // label before the slot in a wrapper, with a slot after the wrapper; before a wrapper round the slot; loose in the root;
+  // round the slot, its words bare or in a span; its words slotted in; and a label over a slot in a wrapper, then another.
+  const star = (h) => (h.hasAttribute('required') ? ' <span class="req" aria-hidden="true">*</span>' : '');
+  def('y-put-field', (h) => '<style>:host { display: block }</style><div class="field"><label part="label">' + at(h, 'label') + star(h) + '</label><slot></slot></div>' +
+    '<div class="help"><slot name="after"></slot></div>');
+  def('y-put-boxed', (h) => '<style>:host { display: block }</style><div class="field"><label part="label">' + at(h, 'label') + star(h) + '</label>' +
+    '<div class="control"><slot></slot></div></div>');
+  def('y-put-pair', (h) => '<style>:host { display: block }</style><label part="label">' + at(h, 'label') + '</label>' +
+    '<div class="first"><slot name="first"></slot></div><slot></slot>');
+  def('y-put-loose', (h) => '<style>:host { display: block }</style><label part="label">' + at(h, 'label') + star(h) + '</label><slot></slot>');
+  def('y-put-wrap', (h) => '<style>:host { display: block }</style><label part="label">' +
+    (h.hasAttribute('bare') ? at(h, 'label') + star(h) : '<span>' + at(h, 'label') + star(h) + '</span>') + ' <slot></slot></label>');
+  // And one drawing only wrappers round its slot, for a box deep in the page's own.
+  def('y-put-deep', () => '<style>:host { display: block }</style><div class="outer"><div class="inner"><slot></slot></div></div>');
+  def('y-put-named', (h) => '<style>:host { display: block }</style><div class="field"><label part="label"><slot name="label"></slot>' + star(h) + '</label>' +
+    (h.hasAttribute('boxed') ? '<div class="control"><slot></slot></div>' : '<slot></slot>') + '</div>');
   def('y-aria-question', (h) => '<style>:host { display: block }</style><label id="q">' + at(h, 'label') + '</label><div role="radiogroup" aria-labelledby="q">' +
     ['Yes', 'No'].map((w) => '<div role="radio" aria-checked="false" tabindex="0">' + w + '</div>').join('') + '</div>');
   document.addEventListener('click', (e) => {
@@ -3526,6 +3543,61 @@ const COMPONENT_ARIA_SECTION = `<!doctype html><html><head><meta charset="utf-8"
     <y-aria-question label="Will you now or in the future require visa sponsorship?"></y-aria-question>
     <y-aria-question label="Are you legally authorized to work in the United States?"></y-aria-question>
   </div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * The page's own boxes, each put into a component that draws its label round
+ * the slot: in a wrapper before the slot or before a wrapper round it, loose
+ * in its root, round the slot, and with the label's words slotted in too,
+ * beside an asterisk or over a wrapper round the slot. And questions under a
+ * label drawn with an asterisk, or without one. And a Phone put in a
+ * component that draws only wrappers, three of the page's own wrappers below
+ * the paragraph that asks for it, which was read before any of this, as the
+ * same box written into the page is.
+ *
+ * And, on a page of their own, the ways a box takes a label that is not its
+ * own. Two boxes put in one slot under one label, as a label before two boxes
+ * in the page gives the first its words and the second none; and in a slot
+ * in a wrapper apart from the label, which neither takes; and a box put in
+ * a slot after a wrapper round another slot a box is put in, under a label
+ * before that wrapper. A box put in the
+ * slot a component draws after its label's wrapper, and a question put there
+ * after an asterisked one. A label drawn round a slot holding two boxes. And
+ * a help text the page writes before its box, which the component draws in
+ * the slot after the label's wrapper, under the box.
+ */
+const SLOTTED_INTO_LABELS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <y-put-field label="Last name"><input name="q_9601"></y-put-field>
+  <y-put-boxed label="Full name"><input name="q_9610"></y-put-boxed>
+  <y-put-loose label="Email"><input name="q_9602" type="email"></y-put-loose>
+  <y-put-wrap label="City" bare><input name="q_9603"></y-put-wrap>
+  <y-put-named required><span slot="label">First name</span><input name="q_9604"></y-put-named>
+  <y-put-named boxed><span slot="label">State</span><input name="q_9627"></y-put-named>
+  <y-put-field label="Why do you want to work here?" required><textarea name="q_9605"></textarea></y-put-field>
+  <y-put-loose label="What drew you to this team?" required><textarea name="q_9606"></textarea></y-put-loose>
+  <y-put-wrap label="What would you build first here?" required bare><textarea name="q_9607"></textarea></y-put-wrap>
+  <y-put-boxed label="What are you proudest of?" required><textarea name="q_9626"></textarea></y-put-boxed>
+  <y-put-field label="Anything else you would like us to know?"><textarea name="q_9608"></textarea></y-put-field>
+  <div class="block"><div><p>Phone</p></div>
+    <div class="a"><div class="b"><div class="c"><y-put-deep><input name="q_9609" type="tel"></y-put-deep></div></div></div></div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+const SLOTTED_INTO_LABELS_GUARDS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <y-put-field label="City"><input name="q_9611"><input name="q_9612"></y-put-field>
+  <y-put-loose label="Last name"><input name="q_9615"><input name="q_9616"></y-put-loose>
+  <y-put-boxed label="First name"><input name="q_9622"><input name="q_9623"></y-put-boxed>
+  <y-put-pair label="Last name"><input slot="first" name="q_9624"><input name="q_9625"></y-put-pair>
+  <y-put-field label="Email"><input name="q_9613" type="email"><input slot="after" name="q_9614"></y-put-field>
+  <y-put-field label="Why do you want to work here?" required><textarea name="q_9617"></textarea>
+    <textarea slot="after" name="q_9618" placeholder="Is there anything else you would like to add?"></textarea></y-put-field>
+  <y-put-wrap label="City"><input name="q_9619"><input name="q_9620"></y-put-wrap>
+  <y-put-field label="Employee ID"><span slot="after">As on your email address</span><input name="q_9621"></y-put-field>
 </form>
 ${COMPONENT_DEFINITIONS}
 </body></html>`;
@@ -4791,7 +4863,7 @@ const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><tit
   });
 </script></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
 
 const PROFILE = {
   first_name: 'Morgan',
@@ -9409,6 +9481,62 @@ async function main() {
       "a person's No pressed on either kind is kept under the question",
       [optionPicked, hostPicked].every((said) => said.length > 0 && said.every((s) => s === 'Will you now or in the future require visa sponsorship? — No')),
       JSON.stringify({ optionPicked, hostPicked }),
+    );
+
+    const putIn = (url) => page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        const boxes = Object.fromEntries([...document.querySelectorAll('input, textarea')].map((el) => [el.name, el.value]));
+        const required = Object.fromEntries(m.findQuestions().map((q) => [q.question, m.isRequired(q.fieldId)]));
+        return { ...boxes, required, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields: SWEEP }),
+    );
+    const putUnder = await putIn('/slotted-into-labels');
+    const putBeside = await putIn('/slotted-into-labels-guards');
+    group("The page's own box put into a component that draws its label round the slot");
+    check(
+      'a Last name, a Full name, an Email, a City, a First name and a State, their labels drawn before the slot or a wrapper round it, loose, round it, or slotted in, are filled, and nothing else',
+      putUnder.q_9601 === 'Testwell' && putUnder.q_9610 === 'Morgan Testwell' && putUnder.q_9602 === 'morgan.testwell@example.com' &&
+        putUnder.q_9603 === 'Boston' && putUnder.q_9604 === 'Morgan' && putUnder.q_9627 === 'MA' &&
+        putUnder.filled.join() === 'last_name,full_name,email,address_city,first_name,address_state,phone' && putUnder.skipped.length === 0,
+      JSON.stringify(putUnder),
+    );
+    check(
+      'questions under a label drawn with an asterisk, before the slot or a wrapper round it, loose or round it, are offered and required, and the one without is optional',
+      JSON.stringify(putUnder.required) ===
+        JSON.stringify({
+          'Why do you want to work here?': true, 'What drew you to this team?': true, 'What would you build first here?': true,
+          'What are you proudest of?': true, 'Anything else you would like us to know?': false,
+        }),
+      JSON.stringify(putUnder.required),
+    );
+    check(
+      'a Phone put in a component drawing only wrappers, deep in the page\'s own, still takes the paragraph above them, as it did',
+      putUnder.q_9609 === '(555) 010-0199',
+      JSON.stringify(putUnder),
+    );
+    check(
+      'of two boxes put in one slot under one label, the first takes it, as without components, and the second nothing; in a wrapper apart from it, or one after the other\'s wrapper, neither',
+      putBeside.q_9611 === 'Boston' && putBeside.q_9612 === '' && putBeside.q_9615 === 'Testwell' && putBeside.q_9616 === '' &&
+        putBeside.q_9622 === '' && putBeside.q_9623 === '' && putBeside.q_9624 === '' && putBeside.q_9625 === '',
+      JSON.stringify(putBeside),
+    );
+    check(
+      "a box put in the slot after the label's wrapper takes neither its label nor its asterisk",
+      putBeside.q_9613 === 'morgan.testwell@example.com' && putBeside.q_9614 === '' &&
+        putBeside.required['Why do you want to work here?'] === true && putBeside.required['Is there anything else you would like to add?'] === false,
+      JSON.stringify(putBeside),
+    );
+    check(
+      'a label drawn round a slot holding two boxes is neither\'s as a label round it: the first takes the words before it, and the second nothing',
+      putBeside.q_9619 === 'Boston' && putBeside.q_9620 === '',
+      JSON.stringify(putBeside),
+    );
+    check(
+      'words the page writes before its box, drawn after it in another slot, are not its label, and nothing else is filled',
+      putBeside.q_9621 === '' && putBeside.filled.join() === 'address_city,last_name,email,address_city' && putBeside.skipped.length === 0,
+      JSON.stringify(putBeside),
     );
 
     const dateParts = await page.goto(`${base}/date-in-parts`, { waitUntil: 'domcontentloaded' }).then(() =>

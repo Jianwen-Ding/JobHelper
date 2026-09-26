@@ -1044,6 +1044,81 @@ const drawsAny = (scope, selector) => {
   return false;
 };
 
+/*
+ * The walks `labelFor` and `isRequired` make, for the page's own field put
+ * into a component through a `<slot>`.
+ *
+ * A component can draw a field's label, and its asterisk, round the slot the
+ * page's box is put in: `<x-field label="Last name"><input
+ * name="q_1"></x-field>`, its root `<div class="field"><label>Last
+ * name</label><slot></slot></div>`. The label is in the component's tree and
+ * the box in the page's, and both walks climbed `parentElement` from the box
+ * to the host and on up the page, never into the root: measured, a Last
+ * name, an Email and a City slotted that way were left empty and unreported,
+ * and a question under a label drawn "Why do you want to work here? *" was
+ * not offered at all, where the same forms written without components were
+ * filled and the question required.
+ *
+ * So they climb as the box is drawn: through the slot it is put in, then the
+ * component's wrappers, then out from its host. What keeps a box from taking
+ * the label of the one beside it is what keeps it from doing so in the page
+ * — stop at another field — but "another field" has to count those put in
+ * through a slot too, which `querySelectorAll` in the component's tree does
+ * not see: two boxes slotted under one label looked, from the label's
+ * wrapper, like none. See `fieldsDrawnIn`.
+ */
+
+/**
+ * The element drawn before this one: the one put in the same slot before it,
+ * or, for the first, what is drawn before the slot. Otherwise
+ * `previousElementSibling`, which for a box put in a slot is whatever the
+ * page wrote before it, drawn somewhere else or not at all: measured, a box
+ * under a label drawn "Employee ID", after which the page had written a help
+ * text "As on your email address" for the slot the component draws below
+ * the box, was given the applicant's email address.
+ */
+function drawnBefore(node) {
+  const slot = slotOf(node);
+  if (!slot) return node.previousElementSibling;
+  const put = slot.assignedElements();
+  const at = put.indexOf(node);
+  return at > 0 ? put[at - 1] : slot.previousElementSibling;
+}
+
+/**
+ * How many fields `scope` holds, up to `enough`: those `fieldsIn` counts,
+ * or those drawn in it (`drawnWithin`), which include the page's own put in
+ * through a slot, whichever is more.
+ */
+function fieldsDrawnIn(scope, selector, enough) {
+  const n = fieldsIn(scope, selector, enough);
+  if (n >= enough) return n;
+  let drawn = scope.matches?.(selector) ? 1 : 0;
+  for (const el of drawnWithin(scope)) {
+    if (el.matches(selector) && ++drawn >= enough) break;
+  }
+  return Math.max(n, drawn);
+}
+
+/**
+ * The label a component draws round the slot a field is put in, when it
+ * draws this field and no other: `<label><span>City</span>
+ * <slot></slot></label>`. As a label written round the box is its own, and
+ * as `componentLabel` takes one round a component: a label round a slot two
+ * boxes are put in is a row of fields under one heading, no more the second
+ * box's than the first's.
+ */
+function labelDrawnRound(input) {
+  let through = false;
+  for (let at = input; at; ) {
+    const slot = slotOf(at);
+    if (slot) through = true;
+    at = slot ?? at.parentElement;
+    if (through && at?.localName === 'label') return fieldsDrawnIn(at, ANOTHER_FIELD, 2) === 1 ? at : null;
+  }
+  return null;
+}
+
 /**
  * Find the label that belongs to a field.
  *
@@ -1171,10 +1246,16 @@ const NEVER_SHOWN = 'style, script, template, link, meta, noscript';
  * slotted into it, not its `textContent`: a label component given
  * `text="Email"` draws the word in its root and holds nothing in the page, and
  * one given the word as a child shows it only through a slot.
+ *
+ * And the same for a slot, or an element drawn round one, in a component's
+ * root, which the walks reach from the page's own box put in through a slot
+ * (see `drawnBefore`): `<label><slot name="label"></slot> *</label>`, the
+ * words the page's, reads by its `textContent` as "*".
  */
 function shownText(el) {
-  if (!el.shadowRoot || el.id === OURS) return clean(el.textContent);
-  return drawnText(el);
+  if (el.id === OURS) return clean(el.textContent);
+  if (el.shadowRoot || (hostOf(el) && (el.localName === 'slot' || el.querySelector('slot')))) return drawnText(el);
+  return clean(el.textContent);
 }
 
 /**
@@ -1203,6 +1284,19 @@ function drawnText(el) {
 
 /** The element above, or the shadow root when there is none inside it. */
 const containerOf = (node) => node.parentElement ?? (node.parentNode instanceof ShadowRoot ? node.parentNode : null);
+
+/**
+ * The group above `node` as the climbs in `labelFor` and `isRequired` take
+ * it: `containerOf`, or, for the page's own element put in a component's
+ * slot, what the component draws round the slot. Each root entered that way
+ * is added to `putInto`.
+ */
+function groupDrawnAround(node, putInto) {
+  const slot = slotOf(node);
+  if (!slot) return containerOf(node);
+  putInto.add(slot.getRootNode());
+  return containerOf(slot);
+}
 
 /*
  * How far the climb in `labelFor` goes above a component, once it has left
@@ -1332,6 +1426,10 @@ function labelFor(input) {
   const wrapping = labelWords(input.closest('label'));
   if (wrapping) return wrapping;
 
+  // Or one a component draws round the slot it is put in. See `labelDrawnRound`.
+  const drawnRound = labelWords(labelDrawnRound(input));
+  if (drawnRound) return drawnRound;
+
   const described = fromLabelledBy(input);
   if (described) return described;
 
@@ -1370,13 +1468,18 @@ function labelFor(input) {
    * "Another field" includes one drawn inside a component (see `fieldsIn`),
    * and what is never drawn is stepped over without being counted: see
    * `NEVER_SHOWN`.
+   *
+   * And "preceding" is as the page draws it, and so is "another field": a
+   * box put in a component's slot is preceded by what the component draws
+   * before the slot, and by the boxes put in the slot before it. See
+   * `drawnBefore` and `fieldsDrawnIn`.
    */
   const lookBack = (from) => {
-    let node = from.previousElementSibling;
-    for (let i = 0; i < 3 && node; node = node.previousElementSibling) {
+    let node = drawnBefore(from);
+    for (let i = 0; i < 3 && node; node = drawnBefore(node)) {
       if (node.matches(NEVER_SHOWN)) continue;
       i++;
-      if (fieldsIn(node, ANOTHER_FIELD, 1)) break;
+      if (fieldsDrawnIn(node, ANOTHER_FIELD, 1)) break;
       const text = shownText(node);
       if (text && text.length < 160) return text;
     }
@@ -1444,24 +1547,36 @@ function labelFor(input) {
   const oneField = `${ANOTHER_FIELD}, [role="combobox"]`;
   // `from` is where the field is, as seen from `group`: the field itself, the
   // element holding it, or the component it is drawn in.
+  /*
+   * And in through the slot a box is put in, as `groupDrawnAround` climbs,
+   * counting what is drawn (`fieldsDrawnIn`). A component the page's box is
+   * put into is not the box's own, as one it is drawn in is: it is one more
+   * of the page's wrappers, drawn by somebody else. So its wrappers cost none
+   * of the seven, and leaving it is not leaving the field's component, from
+   * which only `LEVELS_OUTSIDE` more are climbed.
+   */
   let from = input;
-  let group = containerOf(input);
-  for (let i = 0, outside = 0; i < 7 && group && outside <= LEVELS_OUTSIDE; i++) {
-    if (fieldsIn(group, oneField, 2) > 1) break;
+  const putInto = new Set();
+  let group = groupDrawnAround(input, putInto);
+  for (let i = 0, outside = 0; i < 7 && group && outside <= LEVELS_OUTSIDE; ) {
+    if (fieldsDrawnIn(group, oneField, 2) > 1) break;
     const heading = group.querySelector('label,legend,th,.label,[class*="label"]');
-    if (heading && !heading.contains(from)) return clean(heading.textContent);
+    // A label a component draws round a slot says what is put in it, as in `optionLabelFor`.
+    if (heading && !heading.contains(from)) return hostOf(heading) && heading.querySelector('slot') ? drawnText(heading) : clean(heading.textContent);
     let lead = group.firstElementChild;
     while (lead?.matches(NEVER_SHOWN)) lead = lead.nextElementSibling;
-    const said = lead && !lead.contains(from) && !fieldsIn(lead, ANOTHER_FIELD, 1) ? shownText(lead) : '';
+    const said = lead && !lead.contains(from) && !fieldsDrawnIn(lead, ANOTHER_FIELD, 1) ? shownText(lead) : '';
     if (said && said.length < 300) return said;
     const leaving = group instanceof ShadowRoot;
+    const put = putInto.has(leaving ? group : group.getRootNode());
     from = leaving ? group.host : group;
     if (leaving) {
       const beside = lookBack(from);
       if (beside) return beside;
     }
-    group = containerOf(from);
-    if (leaving || outside) outside++;
+    group = groupDrawnAround(from, putInto);
+    if ((leaving && !put) || outside) outside++;
+    if (!put) i++;
   }
   return aria;
 }
@@ -7423,20 +7538,28 @@ export function isRequired(fieldId) {
    * with no label of its own looks, to `querySelectorAll`, like a wrapper
    * holding one field, and the second box took the first one's asterisk.
    */
+  /*
+   * And in through the slot the page's own box is put in, as `labelFor`
+   * climbs: an asterisk a component draws on the label round its slot is
+   * this box's when the wrapper holds no other, counting those put in the
+   * same component through its slots (`fieldsDrawnIn`). The component's
+   * wrappers cost none of the three.
+   */
   let from = field;
-  let group = containerOf(field);
+  const putInto = new Set();
+  let group = groupDrawnAround(field, putInto);
   for (let i = 0; i < 3 && group; ) {
-    if (fieldsIn(group, ANOTHER_FIELD, 2) > 1) break;
+    if (fieldsDrawnIn(group, ANOTHER_FIELD, 2) > 1) break;
     const label = group.querySelector('label,legend');
     if (label) return marked(label.textContent);
     if (group instanceof ShadowRoot) {
       if (group.host.id === OURS) break;
       from = group.host;
     } else {
+      if (!putInto.has(group.getRootNode())) i++;
       from = group;
-      i++;
     }
-    group = containerOf(from);
+    group = groupDrawnAround(from, putInto);
   }
   return false;
 }
