@@ -102,7 +102,7 @@ const STYLE = `
   box-shadow: inset 0 0 0 2px rgba(255,255,255,.55);
 }
 .head .spacer { margin-left: auto; }
-.body { padding: 12px; overflow: auto; flex: 1 1 auto; }
+.body { padding: 12px; overflow: auto; overscroll-behavior: contain; flex: 1 1 auto; }
 
 /*
  * Folded: the header, and what it is a header for.
@@ -639,6 +639,7 @@ select {
   border-radius: 8px;
   max-height: 460px;
   overflow: auto;
+  overscroll-behavior: contain;
 }
 .pdf-pages { display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .pdf-page {
@@ -791,6 +792,18 @@ export function createCard({
    * rules cannot override.
    */
   host.style.setProperty('all', 'initial', 'important');
+  /*
+   * Scroll the card, not the page. A smooth-scroll library — Lenis, on
+   * qumulo.com's careers page — takes every wheel event at the window,
+   * cancels it and scrolls the page itself, so the card never moved and the
+   * site did. Lenis leaves alone anything marked `data-lenis-prevent`; the
+   * rest never hear of a wheel or a swipe that began over the card, because
+   * it stops here. Not cancelled: the browser still scrolls the card.
+   */
+  host.setAttribute('data-lenis-prevent', '');
+  for (const type of ['wheel', 'touchstart', 'touchmove']) {
+    host.addEventListener(type, (event) => event.stopPropagation(), { passive: true });
+  }
   const root = host.attachShadow({ mode: 'open' });
   root.append(Object.assign(document.createElement('style'), { textContent: STYLE }));
 

@@ -5889,6 +5889,65 @@ async function main() {
   check('with no modal open the card stays a child of <html>', noModal.alone, JSON.stringify(noModal));
   check('and a dialog that is not modal, even one covering the window, is not moved into', noModal.beside, JSON.stringify(noModal));
 
+  console.log('\nScrolling the card on a page that scrolls itself');
+
+  /*
+   * Reported from life, on qumulo.com's careers page: scrolling over the card
+   * scrolled the website instead. The page uses Lenis, a smooth-scroll
+   * library that takes every wheel event at the window, cancels it, and
+   * scrolls the page itself — unless the event came from something marked
+   * `data-lenis-prevent`. Two page scrollers stand in for the kinds there
+   * are: one on the window that honours nothing, as Lenis would if the card
+   * were not marked, and one listening in the capture phase that honours the
+   * mark, as Lenis and the libraries built on it do.
+   */
+  for (const phase of ['bubble', 'capture']) {
+    await inPage((createCard) => {
+      document.querySelectorAll('style[data-page], #tall').forEach((el) => el.remove());
+      const tall = Object.assign(document.createElement('div'), { id: 'tall' });
+      tall.style.height = '6000px';
+      document.body.append(tall);
+      window.scrollTo(0, 0);
+      createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Platform Engineer', company: 'Acme' },
+          spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+          rationale: [],
+        },
+        resumes: [],
+        settings: {},
+        questions: Array.from({ length: 14 }, (_, i) => ({ question: `Question ${i + 1}: why us?`, answer: 'Because. '.repeat(20), confident: false })),
+        needsCoverLetter: false,
+        onAction: async () => ({}),
+      });
+    });
+    await page.evaluate((capture) => {
+      window.__smooth?.();
+      const onWheel = (e) => {
+        if (capture && e.composedPath().some((n) => n.hasAttribute?.('data-lenis-prevent'))) return;
+        e.preventDefault();
+        window.scrollBy(0, e.deltaY);
+      };
+      window.addEventListener('wheel', onWheel, { passive: false, capture });
+      window.__smooth = () => window.removeEventListener('wheel', onWheel, { capture });
+    }, phase === 'capture');
+    const box = await page.evaluate(() => {
+      const r = document.querySelector('#jobhelper-card-host').shadowRoot.querySelector('.body').getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    });
+    await page.mouse.move(box.x, box.y);
+    await page.mouse.wheel(0, 300);
+    await page.waitForTimeout(250);
+    const after = await page.evaluate(() => {
+      const body = document.querySelector('#jobhelper-card-host').shadowRoot.querySelector('.body');
+      return { card: body.scrollTop, room: body.scrollHeight - body.clientHeight, page: window.scrollY };
+    });
+    check(`a wheel over the card scrolls the card (${phase}-phase page scroller)`, after.room > 0 && after.card > 0, JSON.stringify(after));
+    check(`and not the page under it (${phase}-phase page scroller)`, after.page === 0, JSON.stringify(after));
+    await page.evaluate(() => { window.__smooth?.(); window.__smooth = null; document.querySelector('#tall')?.remove(); window.scrollTo(0, 0); });
+  }
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);
