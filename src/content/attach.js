@@ -59,7 +59,7 @@ const deepAll = (selector, root = document) =>
  *
  * Measured, with a `display:none` modal before the real box: `placed: [{where:
  * "decoy resume resume"}]`, `#decoy` holding the file and `#real` empty, under
- * a green "Attached Jianwen-Ding-Resume.pdf".
+ * a green "Attached Morgan-Testwell-Resume.pdf".
  */
 function putAwayByThePage(input) {
   for (let el = input.parentElement; el; el = el.parentElement) {
@@ -288,7 +288,7 @@ const WANTS = {
  * form with one such control and a drop zone for the real resume, the photo
  * input's surroundings included the word "Resume" — so the resume went into
  * the avatar box and the report said, in green, "Attached
- * Jianwen-Ding-Resume.pdf". Measured: `#ph` holding the resume, zero drop
+ * Morgan-Testwell-Resume.pdf". Measured: `#ph` holding the resume, zero drop
  * events at the zone.
  *
  * Read off the control's *own* name only. The text around it is the thing
@@ -385,7 +385,7 @@ function boxFor(kind, boxes, taken, file) {
  * zero-byte body is what a file still being written looks like — the folder
  * is streamed to as each document is built — and nothing downstream noticed:
  * `atob('')` makes a `File` of size 0, `putIn` sees one file in the box and
- * says so, and the card says "Attached Jianwen-Ding-Resume.pdf" over an empty
+ * says so, and the card says "Attached Morgan-Testwell-Resume.pdf" over an empty
  * PDF that an employer opens to nothing.
  */
 function fileFrom({ name, base64, type }) {
@@ -473,7 +473,7 @@ async function putIn(box, file, { alongside = false, ours } = {}) {
    * the name appearing where the box was is the widget saying so.
    *
    * Unless it is saying no. A widget that refuses a file clears the box too,
-   * and names the file while it explains: "Jianwen-Ding-Resume.pdf is larger
+   * and names the file while it explains: "Morgan-Testwell-Resume.pdf is larger
    * than the 1 MB limit", or Dropzone's preview drawn with the name and
    * marked `dz-error`. Read as a chip, that was "Attached" over an empty box
    * and a red message. A name inside something marked as an error or an

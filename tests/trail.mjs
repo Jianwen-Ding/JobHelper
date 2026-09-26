@@ -1648,7 +1648,7 @@ const REVIEW_STEP = `
   <h2>Review</h2>
   <p>Helios is an equal opportunity employer. We consider applicants without regard to race, gender, disability or veteran status.</p>
   <h3>My Information</h3>
-  <div><label>Legal Name</label><div>Jianwen Ding</div></div>
+  <div><label>Legal Name</label><div>Morgan Testwell</div></div>
   <div><label>Social Security Number</label><div>ANSWER-SSN</div></div>
   <div><div class="lbl"><span>Date of Birth</span></div><div class="val">ANSWER-DOB</div></div>
   <div><label>Place of Birth</label><div>ANSWER-BIRTHPLACE</div></div>
@@ -1687,7 +1687,7 @@ describe('the page as sent does not carry answers a review step writes out', () 
       for (const kept of [
         'Social Security Number', 'Date of Birth', 'Place of Birth', 'Medicare Number', 'Gender', 'Ethnicity', 'Veteran Status',
         'Are you Hispanic or Latino?', 'Disability Status:', 'Have you ever been convicted of a felony?',
-        'without regard to race, gender, disability or veteran status', 'Jianwen Ding',
+        'without regard to race, gender, disability or veteran status', 'Morgan Testwell',
         'Kept: Yes', 'Kept: Boston', 'Kept: we provide accommodations on request.', 'Kept: Female', 'Kept: Male',
       ]) {
         assert.ok(html.includes(kept), `"${kept}" was lost`);

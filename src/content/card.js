@@ -1552,8 +1552,8 @@ export function createCard({
        * And named for the copy that will actually be dropped.
        *
        * The two are not the same string. The archive keeps
-       * `Jianwen-Ding-Resume.pdf` and the upload folder keeps
-       * `Jianwen-Ding-Resume-Streamly.pdf` — the folder's names carry the
+       * `Morgan-Testwell-Resume.pdf` and the upload folder keeps
+       * `Morgan-Testwell-Resume-Streamly.pdf` — the folder's names carry the
        * employer, because that is the name a recruiter sees at the other
        * end. The chip is built before the folder has been asked, so it
        * starts with the name the bundle reported and corrects itself the
@@ -1604,8 +1604,8 @@ export function createCard({
        * Already warm, and the chips asking may be new ones.
        *
        * `markChips` is what corrects a chip's label from the archive's name
-       * to the folder's — `Jianwen-Ding-Resume.pdf` against
-       * `Jianwen-Ding-Resume-Streamly.pdf` — and it used to be reached only
+       * to the folder's — `Morgan-Testwell-Resume.pdf` against
+       * `Morgan-Testwell-Resume-Streamly.pdf` — and it used to be reached only
        * by the fetch completing. Once the files are warmed before Submit,
        * the panel after Submit builds its chips against a cache that has
        * already resolved, so nothing renamed them and every chip promised a
@@ -1849,8 +1849,8 @@ export function createCard({
      * By what the document is, not by what it is called.
      *
      * The bundle names the archive copy and the folder names the one that
-     * gets uploaded, and they differ: `Jianwen-Ding-Resume.pdf` against
-     * `Jianwen-Ding-Resume-Streamly.pdf`. Matching on the name carried
+     * gets uploaded, and they differ: `Morgan-Testwell-Resume.pdf` against
+     * `Morgan-Testwell-Resume-Streamly.pdf`. Matching on the name carried
      * nothing at all — measured, with the drag refusing itself because the
      * filter came back empty over two perfectly good files.
      *

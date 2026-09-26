@@ -2534,7 +2534,7 @@ async function main() {
           // clashing name is refused — the build's own stage goes through.
           if (refuse && payload?.coverLetter) {
             refuse = false;
-            throw new Error('"Cover Letter" is already called Jianwen-Ding-Resume.pdf.');
+            throw new Error('"Cover Letter" is already called Morgan-Testwell-Resume.pdf.');
           }
           return { currentDir: '/tmp/x', application: { id: 'app-1' } };
         }
@@ -4140,7 +4140,7 @@ async function main() {
       // A folder with something in it, so the drag chips have files to be.
       onAction: async (what) =>
         what === 'attachmentFiles'
-          ? { files: [{ name: 'Jianwen-Ding-Resume.pdf' }, { name: 'Jianwen-Ding-Cover-Letter.pdf' }] }
+          ? { files: [{ name: 'Morgan-Testwell-Resume.pdf' }, { name: 'Morgan-Testwell-Cover-Letter.pdf' }] }
           : {},
     });
     const root = document.querySelector('#jobhelper-card-host').shadowRoot;
@@ -4398,7 +4398,7 @@ async function main() {
       isForm: true,
       onAction: async (what) =>
         what === 'attachmentFiles'
-          ? { files: [{ name: 'Jianwen-Ding-Resume.pdf' }, { name: 'Jianwen-Ding-Cover-Letter.pdf' }] }
+          ? { files: [{ name: 'Morgan-Testwell-Resume.pdf' }, { name: 'Morgan-Testwell-Cover-Letter.pdf' }] }
           : what === 'stage'
             ? { currentDir: '/tmp/current' }
             : {},
@@ -4457,13 +4457,13 @@ async function main() {
   check('the reduced card is still the reduced card', reducedChips.small === true);
   check(
     'and it keeps the files to drag into this page',
-    reducedChips.chips.some((c) => /Jianwen-Ding-Resume\.pdf/.test(c)),
+    reducedChips.chips.some((c) => /Morgan-Testwell-Resume\.pdf/.test(c)),
     JSON.stringify(reducedChips.chips),
   );
   check('with the line saying what to do with them', /Drag any of these/.test(reducedChips.note), reducedChips.note);
   check(
     'and the whole card still has them too',
-    reducedChips.wholeChips.some((c) => /Jianwen-Ding-Resume\.pdf/.test(c)),
+    reducedChips.wholeChips.some((c) => /Morgan-Testwell-Resume\.pdf/.test(c)),
     JSON.stringify(reducedChips.wholeChips),
   );
 

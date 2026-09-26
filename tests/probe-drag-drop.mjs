@@ -23,8 +23,8 @@ await page.setContent(`<!doctype html><title>drag</title>
   const bytes = new Uint8Array([0x25,0x50,0x44,0x46,0x2d,0x31,0x2e,0x34,10,10,10]);
   document.getElementById('chip').addEventListener('dragstart', (e) => {
     e.dataTransfer.effectAllowed = 'copy';
-    e.dataTransfer.items.add(new File([bytes], 'Jianwen-Ding-Resume.pdf', { type: 'application/pdf' }));
-    e.dataTransfer.setData('text/plain', 'Jianwen-Ding-Resume.pdf');
+    e.dataTransfer.items.add(new File([bytes], 'Morgan-Testwell-Resume.pdf', { type: 'application/pdf' }));
+    e.dataTransfer.setData('text/plain', 'Morgan-Testwell-Resume.pdf');
   });
   const zone = document.getElementById('zone');
   zone.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });

@@ -592,12 +592,12 @@ async function main() {
     group('Three boxes that say what they want');
     {
       const { report, inBoxes, heard } = await run('/labelled', [
-        filed('Jianwen-Ding-Resume.pdf'),
-        filed('Jianwen-Ding-Cover-Letter.pdf'),
+        filed('Morgan-Testwell-Resume.pdf'),
+        filed('Morgan-Testwell-Cover-Letter.pdf'),
         filed('Transcript.pdf'),
       ]);
-      check('the resume goes in the resume box', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes.rs));
-      check('the letter goes in the letter box', inBoxes.cl?.[0] === 'Jianwen-Ding-Cover-Letter.pdf', JSON.stringify(inBoxes.cl));
+      check('the resume goes in the resume box', inBoxes.rs?.[0] === 'Morgan-Testwell-Resume.pdf', JSON.stringify(inBoxes.rs));
+      check('the letter goes in the letter box', inBoxes.cl?.[0] === 'Morgan-Testwell-Cover-Letter.pdf', JSON.stringify(inBoxes.cl));
       check('the transcript goes in the transcript box', inBoxes.tr?.[0] === 'Transcript.pdf', JSON.stringify(inBoxes.tr));
       check('all three are reported as placed', report.placed.length === 3, `${report.placed.length} placed`);
       /*
@@ -609,18 +609,18 @@ async function main() {
 
     group('One box and no words');
     {
-      const { report, inBoxes } = await run('/bare', [filed('Jianwen-Ding-Resume.pdf')]);
-      check('the one file goes in the one box', inBoxes.only?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes.only));
+      const { report, inBoxes } = await run('/bare', [filed('Morgan-Testwell-Resume.pdf')]);
+      check('the one file goes in the one box', inBoxes.only?.[0] === 'Morgan-Testwell-Resume.pdf', JSON.stringify(inBoxes.only));
       check('and says where it went', report.placed[0]?.where?.includes('only upload box'), report.placed[0]?.where ?? '');
     }
 
     group('A box behind a styled button, which is how they are all built');
     {
       const { inBoxes, report } = await run('/hidden', [
-        filed('Jianwen-Ding-Resume.pdf'),
-        filed('Jianwen-Ding-Cover-Letter.pdf'),
+        filed('Morgan-Testwell-Resume.pdf'),
+        filed('Morgan-Testwell-Cover-Letter.pdf'),
       ]);
-      check('display:none is not a reason to skip it', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes.rs));
+      check('display:none is not a reason to skip it', inBoxes.rs?.[0] === 'Morgan-Testwell-Resume.pdf', JSON.stringify(inBoxes.rs));
       /*
        * Nor the attribute that means the same thing. This was refused, and
        * the refusal was invisible: `closest('[hidden]')` starts at the
@@ -631,7 +631,7 @@ async function main() {
        */
       check(
         'and nor is the attribute that means the same thing',
-        inBoxes.cl?.[0] === 'Jianwen-Ding-Cover-Letter.pdf',
+        inBoxes.cl?.[0] === 'Morgan-Testwell-Cover-Letter.pdf',
         JSON.stringify(inBoxes.cl),
       );
       /*
@@ -663,10 +663,10 @@ async function main() {
     group('A file with nowhere to go');
     {
       const { report, inBoxes } = await run('/resume-only', [
-        filed('Jianwen-Ding-Resume.pdf'),
+        filed('Morgan-Testwell-Resume.pdf'),
         filed('Transcript.pdf'),
       ]);
-      check('the resume still lands', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes.rs));
+      check('the resume still lands', inBoxes.rs?.[0] === 'Morgan-Testwell-Resume.pdf', JSON.stringify(inBoxes.rs));
       check('the transcript is not put somewhere it does not belong', report.placed.length === 1, JSON.stringify(report.placed));
       check('and is named as having nowhere to go', report.unplaced[0]?.name === 'Transcript.pdf', JSON.stringify(report.unplaced));
     }
@@ -674,11 +674,11 @@ async function main() {
     group('A box that names both, with a plainer one below it');
     {
       const { inBoxes } = await run('/shared', [
-        filed('Jianwen-Ding-Resume.pdf'),
-        filed('Jianwen-Ding-Cover-Letter.pdf'),
+        filed('Morgan-Testwell-Resume.pdf'),
+        filed('Morgan-Testwell-Cover-Letter.pdf'),
       ]);
-      check('the resume takes the shared box', inBoxes.both?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes.both));
-      check('and the letter takes the one that is only its own', inBoxes.cl?.[0] === 'Jianwen-Ding-Cover-Letter.pdf', JSON.stringify(inBoxes.cl));
+      check('the resume takes the shared box', inBoxes.both?.[0] === 'Morgan-Testwell-Resume.pdf', JSON.stringify(inBoxes.both));
+      check('and the letter takes the one that is only its own', inBoxes.cl?.[0] === 'Morgan-Testwell-Cover-Letter.pdf', JSON.stringify(inBoxes.cl));
     }
 
     /*
@@ -690,8 +690,8 @@ async function main() {
      */
     group('Two unlabelled boxes, told apart by the heading above each');
     {
-      const { inBoxes } = await run('/headings', [filed('Jianwen-Ding-Resume.pdf'), filed('Transcript.pdf')]);
-      check('the resume goes under the Resume heading', inBoxes.b?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
+      const { inBoxes } = await run('/headings', [filed('Morgan-Testwell-Resume.pdf'), filed('Transcript.pdf')]);
+      check('the resume goes under the Resume heading', inBoxes.b?.[0] === 'Morgan-Testwell-Resume.pdf', JSON.stringify(inBoxes));
       check('and the transcript under the Transcript one', inBoxes.a?.[0] === 'Transcript.pdf', JSON.stringify(inBoxes));
     }
 
@@ -711,9 +711,9 @@ async function main() {
      */
     group('A page with a menu on it and nowhere to put anything');
     {
-      const { report } = await run('/menu', [filed('Jianwen-Ding-Resume.pdf')]);
+      const { report } = await run('/menu', [filed('Morgan-Testwell-Resume.pdf')]);
       check('a dropdown is not a drop area', report.placed.length === 0, JSON.stringify(report.placed));
-      check('and the file is named as having nowhere to go', report.unplaced[0]?.name === 'Jianwen-Ding-Resume.pdf', JSON.stringify(report.unplaced));
+      check('and the file is named as having nowhere to go', report.unplaced[0]?.name === 'Morgan-Testwell-Resume.pdf', JSON.stringify(report.unplaced));
     }
 
     /*
@@ -725,7 +725,7 @@ async function main() {
      */
     group('A drop area with no input behind it');
     {
-      const { report } = await run('/dropzone', [filed('Jianwen-Ding-Resume.pdf')]);
+      const { report } = await run('/dropzone', [filed('Morgan-Testwell-Resume.pdf')]);
       check('the file is offered to it', report.placed[0]?.where === 'the drop area', JSON.stringify(report.placed));
       check(
         'and it is not claimed as attached, because nothing can say it was',
@@ -741,8 +741,8 @@ async function main() {
      */
     group('A drop area that really takes the file');
     {
-      const { report, inBoxes } = await run('/dropzone-real', [filed('Jianwen-Ding-Resume.pdf')]);
-      check('the page ends up holding it', inBoxes.made?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
+      const { report, inBoxes } = await run('/dropzone-real', [filed('Morgan-Testwell-Resume.pdf')]);
+      check('the page ends up holding it', inBoxes.made?.[0] === 'Morgan-Testwell-Resume.pdf', JSON.stringify(inBoxes));
       check('and it is reported as certain', report.placed[0]?.sure === true, JSON.stringify(report.placed[0]));
     }
 
@@ -757,13 +757,13 @@ async function main() {
     group('Two drop areas, each under its own heading');
     {
       const { report, inBoxes } = await run('/two-zones', [
-        filed('Jianwen-Ding-Resume.pdf'),
-        filed('Jianwen-Ding-Cover-Letter.pdf'),
+        filed('Morgan-Testwell-Resume.pdf'),
+        filed('Morgan-Testwell-Cover-Letter.pdf'),
       ]);
       const into = (zone) =>
         Object.entries(inBoxes).filter(([id]) => id.startsWith(`${zone}-`)).flatMap(([, names]) => names);
-      check('the resume goes to the area under Resume/CV', JSON.stringify(into('cv')) === '["Jianwen-Ding-Resume.pdf"]', JSON.stringify(inBoxes));
-      check('and the letter to the one under Cover Letter', JSON.stringify(into('cl')) === '["Jianwen-Ding-Cover-Letter.pdf"]', JSON.stringify(inBoxes));
+      check('the resume goes to the area under Resume/CV', JSON.stringify(into('cv')) === '["Morgan-Testwell-Resume.pdf"]', JSON.stringify(inBoxes));
+      check('and the letter to the one under Cover Letter', JSON.stringify(into('cl')) === '["Morgan-Testwell-Cover-Letter.pdf"]', JSON.stringify(inBoxes));
       check('both said as attached, because both can be read back', report.placed.every((p) => p.sure === true), JSON.stringify(report.placed));
     }
 
@@ -774,8 +774,8 @@ async function main() {
      */
     group('One drop area, and it says Resume/CV');
     {
-      const { report } = await run('/workday', [filed('Jianwen-Ding-Resume.pdf'), filed('Transcript.pdf')]);
-      check('the resume is dropped on it', report.placed.some((p) => p.name === 'Jianwen-Ding-Resume.pdf'), JSON.stringify(report.placed));
+      const { report } = await run('/workday', [filed('Morgan-Testwell-Resume.pdf'), filed('Transcript.pdf')]);
+      check('the resume is dropped on it', report.placed.some((p) => p.name === 'Morgan-Testwell-Resume.pdf'), JSON.stringify(report.placed));
       check(
         'and the transcript is not, and is said to have nowhere to go',
         !report.placed.some((p) => p.name === 'Transcript.pdf') &&
@@ -800,9 +800,9 @@ async function main() {
     {
       const { report, inBoxes } = await run('/resume-only-labelled', [
         filed('Transcript.pdf'),
-        filed('Jianwen-Ding-Resume.pdf'),
+        filed('Morgan-Testwell-Resume.pdf'),
       ]);
-      check('the resume takes it, whatever order they came in', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
+      check('the resume takes it, whatever order they came in', inBoxes.rs?.[0] === 'Morgan-Testwell-Resume.pdf', JSON.stringify(inBoxes));
       check('and the transcript does not', report.unplaced[0]?.name === 'Transcript.pdf', JSON.stringify(report.unplaced));
     }
 
@@ -815,7 +815,7 @@ async function main() {
      */
     group('An upload box that is for a photograph');
     {
-      const { report, inBoxes } = await run('/photo-and-zone', [filed('Jianwen-Ding-Resume.pdf')]);
+      const { report, inBoxes } = await run('/photo-and-zone', [filed('Morgan-Testwell-Resume.pdf')]);
       check('the resume does not go in the photo box', (inBoxes.ph ?? []).length === 0, JSON.stringify(inBoxes));
       check('and the drop area is tried instead', report.placed[0]?.where === 'the drop area', JSON.stringify(report.placed));
     }
@@ -827,8 +827,8 @@ async function main() {
      */
     group('A hidden copy of the form, in front of the real one');
     {
-      const { inBoxes } = await run('/decoy', [filed('Jianwen-Ding-Resume.pdf')]);
-      check('the file goes in the box that is on screen', inBoxes.real?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
+      const { inBoxes } = await run('/decoy', [filed('Morgan-Testwell-Resume.pdf')]);
+      check('the file goes in the box that is on screen', inBoxes.real?.[0] === 'Morgan-Testwell-Resume.pdf', JSON.stringify(inBoxes));
       check('and not in the one the page has hidden', (inBoxes.decoy ?? []).length === 0, JSON.stringify(inBoxes));
     }
 
@@ -839,7 +839,7 @@ async function main() {
      */
     group('A box that has said what it will take');
     {
-      const { report, inBoxes } = await run('/doc-only', [filed('Jianwen-Ding-Resume.pdf')]);
+      const { report, inBoxes } = await run('/doc-only', [filed('Morgan-Testwell-Resume.pdf')]);
       check('a PDF is not forced into a .doc box', (inBoxes.rs ?? []).length === 0, JSON.stringify(inBoxes));
       check(
         'and the reason names what the form wants',
@@ -856,9 +856,9 @@ async function main() {
      */
     group('A box that says what it takes without the dots');
     {
-      const { report, inBoxes } = await run('/accept-undotted', [filed('Jianwen-Ding-Resume.pdf')]);
-      check('a PDF goes into a box that says "pdf"', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(report));
-      const doc = await run('/accept-undotted-doc', [filed('Jianwen-Ding-Resume.pdf')]);
+      const { report, inBoxes } = await run('/accept-undotted', [filed('Morgan-Testwell-Resume.pdf')]);
+      check('a PDF goes into a box that says "pdf"', inBoxes.rs?.[0] === 'Morgan-Testwell-Resume.pdf', JSON.stringify(report));
+      const doc = await run('/accept-undotted-doc', [filed('Morgan-Testwell-Resume.pdf')]);
       check('and still not into one that says only "doc,docx"', (doc.inBoxes.rs ?? []).length === 0, JSON.stringify(doc.report));
     }
 
@@ -870,12 +870,12 @@ async function main() {
     group('One box that asks for all three');
     {
       const { report, inBoxes } = await run('/all-in-one', [
-        filed('Jianwen-Ding-Resume.pdf'),
-        filed('Jianwen-Ding-Cover-Letter.pdf'),
+        filed('Morgan-Testwell-Resume.pdf'),
+        filed('Morgan-Testwell-Cover-Letter.pdf'),
         filed('Transcript.pdf'),
       ]);
       check('all three go in', (inBoxes.all ?? []).length === 3, JSON.stringify(inBoxes));
-      check('in the order they were given', inBoxes.all?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
+      check('in the order they were given', inBoxes.all?.[0] === 'Morgan-Testwell-Resume.pdf', JSON.stringify(inBoxes));
       check('and none is reported as homeless', report.unplaced.length === 0, JSON.stringify(report.unplaced));
     }
 
@@ -899,7 +899,7 @@ async function main() {
     {
       const { report, inBox } = await runOver(
         '/all-in-one',
-        [filed('Jianwen-Ding-Resume.pdf'), filed('Jianwen-Ding-Cover-Letter.pdf')],
+        [filed('Morgan-Testwell-Resume.pdf'), filed('Morgan-Testwell-Cover-Letter.pdf')],
         'My-Transcript.pdf',
       );
       check('what they attached is still there', inBox.includes('My-Transcript.pdf'), JSON.stringify(inBox));
@@ -927,7 +927,7 @@ async function main() {
         },
         {
           b: base,
-          list: [filed('Jianwen-Ding-Resume.pdf'), filed('Jianwen-Ding-Cover-Letter.pdf')],
+          list: [filed('Morgan-Testwell-Resume.pdf'), filed('Morgan-Testwell-Cover-Letter.pdf')],
           seed: 'My-Transcript.pdf',
         },
       );
@@ -943,8 +943,8 @@ async function main() {
      */
     group('A form built out of web components');
     {
-      const { report, inBoxes } = await run('/shadow', [filed('Jianwen-Ding-Resume.pdf')]);
-      check('a box inside a shadow root is still a box', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes));
+      const { report, inBoxes } = await run('/shadow', [filed('Morgan-Testwell-Resume.pdf')]);
+      check('a box inside a shadow root is still a box', inBoxes.rs?.[0] === 'Morgan-Testwell-Resume.pdf', JSON.stringify(inBoxes));
       check('and it is reported as placed', report.placed.length === 1, JSON.stringify(report));
     }
 
@@ -954,11 +954,11 @@ async function main() {
      * validation. `putIn` read `box.files` once, before dispatching the very
      * event that runs this handler, so the file was reported placed on
      * evidence about to stop being true. Measured before the fix: `placed:
-     * [{name: "Jianwen-Ding-Resume.pdf", ...}]`, `#rs` empty.
+     * [{name: "Morgan-Testwell-Resume.pdf", ...}]`, `#rs` empty.
      */
     group('A box that clears itself the moment it hears about the file');
     {
-      const { report, inBoxes } = await run('/reclaims', [filed('Jianwen-Ding-Resume.pdf')]);
+      const { report, inBoxes } = await run('/reclaims', [filed('Morgan-Testwell-Resume.pdf')]);
       check('nothing is left in the box', (inBoxes.rs ?? []).length === 0, JSON.stringify(inBoxes));
       check('and it is not claimed as attached', report.placed.length === 0, JSON.stringify(report.placed));
       check(
@@ -977,7 +977,7 @@ async function main() {
      */
     group('A widget that clears the input and keeps the file as a chip');
     {
-      const { report } = await run('/keeps-as-chip', [filed('Jianwen-Ding-Resume.pdf')]);
+      const { report } = await run('/keeps-as-chip', [filed('Morgan-Testwell-Resume.pdf')]);
       // Through the box, and sure of it — not rescued by the drop-area
       // fallback, which can only guess (`sure: false`).
       check(
@@ -989,7 +989,7 @@ async function main() {
 
     /*
      * A widget that takes the file back and says so with its name in the
-     * sentence: "Jianwen-Ding-Resume.pdf is larger than the 1 MB limit", or
+     * sentence: "Morgan-Testwell-Resume.pdf is larger than the 1 MB limit", or
      * Dropzone's preview drawn in its error state. The name near the box was
      * read as the chip `KEEPS_AS_CHIP` shows, and the card said "Attached"
      * over an empty box and a red message.
@@ -1005,11 +1005,11 @@ async function main() {
     group('Labels and buttons with no space between them');
     {
       const { report, inBoxes } = await run('/run-together', [
-        filed('Jianwen-Ding-Resume.pdf'),
-        filed('Jianwen-Ding-Cover-Letter.pdf'),
+        filed('Morgan-Testwell-Resume.pdf'),
+        filed('Morgan-Testwell-Cover-Letter.pdf'),
       ]);
-      check('the resume goes in the box under Resume', inBoxes.u1?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(report));
-      check('and the letter in the one under Cover Letter', inBoxes.u2?.[0] === 'Jianwen-Ding-Cover-Letter.pdf', JSON.stringify(report));
+      check('the resume goes in the box under Resume', inBoxes.u1?.[0] === 'Morgan-Testwell-Resume.pdf', JSON.stringify(report));
+      check('and the letter in the one under Cover Letter', inBoxes.u2?.[0] === 'Morgan-Testwell-Cover-Letter.pdf', JSON.stringify(report));
     }
 
     /*
@@ -1023,19 +1023,19 @@ async function main() {
      */
     group('Dropzone.js, with its inputs at the end of the page');
     {
-      await run('/dropzone-js', [filed('Jianwen-Ding-Resume.pdf'), filed('Jianwen-Ding-Cover-Letter.pdf')]);
+      await run('/dropzone-js', [filed('Morgan-Testwell-Resume.pdf'), filed('Morgan-Testwell-Cover-Letter.pdf')]);
       const held = await p.evaluate(() => window.held);
-      check('the resume is not given to the Cover Letter zone', !held.cover.includes('Jianwen-Ding-Resume.pdf'), JSON.stringify(held));
+      check('the resume is not given to the Cover Letter zone', !held.cover.includes('Morgan-Testwell-Resume.pdf'), JSON.stringify(held));
       check(
         'each zone ends up with its own document',
-        JSON.stringify(held.resume) === '["Jianwen-Ding-Resume.pdf"]' && JSON.stringify(held.cover) === '["Jianwen-Ding-Cover-Letter.pdf"]',
+        JSON.stringify(held.resume) === '["Morgan-Testwell-Resume.pdf"]' && JSON.stringify(held.cover) === '["Morgan-Testwell-Cover-Letter.pdf"]',
         JSON.stringify(held),
       );
     }
 
     group('A widget that names the file it is refusing');
     for (const where of ['/refuses-by-name', '/refuses-in-preview']) {
-      const { report, inBoxes } = await run(where, [filed('Jianwen-Ding-Resume.pdf')]);
+      const { report, inBoxes } = await run(where, [filed('Morgan-Testwell-Resume.pdf')]);
       check(
         `${where}: not reported as attached`,
         report.placed.length === 0 && (inBoxes.rs ?? []).length === 0,
@@ -1050,20 +1050,20 @@ async function main() {
 
     group('A box that replaces itself the moment it hears about the file');
     {
-      const { report, inBoxes } = await run('/remounts', [filed('Jianwen-Ding-Resume.pdf')]);
+      const { report, inBoxes } = await run('/remounts', [filed('Morgan-Testwell-Resume.pdf')]);
       check('the fresh box is empty', (inBoxes.rs ?? []).length === 0, JSON.stringify(inBoxes));
       check('and it is not claimed as attached', report.placed.length === 0, JSON.stringify(report.placed));
     }
 
     group('A board that uploads the file before it shows it');
     {
-      const { report } = await run('/greenhouse-board', [filed('Jianwen-Ding-Resume.pdf'), filed('Jianwen-Ding-Cover-Letter.pdf')]);
+      const { report } = await run('/greenhouse-board', [filed('Morgan-Testwell-Resume.pdf'), filed('Morgan-Testwell-Cover-Letter.pdf')]);
       const held = await p.evaluate(() => window.held);
-      check('the board kept both', held.resume === 'Jianwen-Ding-Resume.pdf' && held.cover_letter === 'Jianwen-Ding-Cover-Letter.pdf', JSON.stringify(held));
+      check('the board kept both', held.resume === 'Morgan-Testwell-Resume.pdf' && held.cover_letter === 'Morgan-Testwell-Cover-Letter.pdf', JSON.stringify(held));
       check('and both are reported as attached, not refused', report.placed.length === 2 && report.unplaced.length === 0, JSON.stringify(report));
     }
     {
-      const { report } = await run('/greenhouse-board?fail', [filed('Jianwen-Ding-Resume.pdf')]);
+      const { report } = await run('/greenhouse-board?fail', [filed('Morgan-Testwell-Resume.pdf')]);
       check(
         'while an upload that ends in an error is not claimed as attached',
         report.placed.every((f) => f.sure === false),
@@ -1075,12 +1075,12 @@ async function main() {
      * A zero-byte body is what a file still being written looks like — the
      * folder is streamed to as each document is built. Nothing noticed:
      * `atob('')` makes a File of size 0, the box holds one file, and the card
-     * said "Attached Jianwen-Ding-Resume.pdf" over an empty PDF.
+     * said "Attached Morgan-Testwell-Resume.pdf" over an empty PDF.
      */
     group('A file that comes back empty');
     {
       const { report, inBoxes } = await run('/resume-only-labelled', [
-        { name: 'Jianwen-Ding-Resume.pdf', type: 'application/pdf', base64: '' },
+        { name: 'Morgan-Testwell-Resume.pdf', type: 'application/pdf', base64: '' },
       ]);
       check('nothing is put in the box', (inBoxes.rs ?? []).length === 0, JSON.stringify(inBoxes));
       check('and it is reported as empty, not as attached', /empty/.test(report.unplaced[0]?.why ?? ''), report.unplaced[0]?.why ?? '');
@@ -1145,22 +1145,22 @@ async function main() {
      */
     group('A chip let go of over the button in front of a hidden box');
     {
-      const { inBoxes, report } = await dropAt('/hidden', 'button', [filed('Jianwen-Ding-Resume.pdf')]);
-      check('the hidden input behind it takes the file', inBoxes.rs?.[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(inBoxes.rs));
+      const { inBoxes, report } = await dropAt('/hidden', 'button', [filed('Morgan-Testwell-Resume.pdf')]);
+      check('the hidden input behind it takes the file', inBoxes.rs?.[0] === 'Morgan-Testwell-Resume.pdf', JSON.stringify(inBoxes.rs));
       check('and it is reported as placed', report.placed.length === 1, JSON.stringify(report.placed));
     }
 
     group('A chip let go of over the Attach button on a Greenhouse board');
     {
-      const { report } = await dropAt('/greenhouse-board', '#field-cover_letter button', [filed('Jianwen-Ding-Cover-Letter.pdf')]);
+      const { report } = await dropAt('/greenhouse-board', '#field-cover_letter button', [filed('Morgan-Testwell-Cover-Letter.pdf')]);
       const held = await p.evaluate(() => window.held);
-      check('the box behind that button takes it', held.cover_letter === 'Jianwen-Ding-Cover-Letter.pdf' && !held.resume, JSON.stringify(held));
+      check('the box behind that button takes it', held.cover_letter === 'Morgan-Testwell-Cover-Letter.pdf' && !held.resume, JSON.stringify(held));
       check('and the card is told it went in', report.placed.length === 1, JSON.stringify(report));
     }
 
     group('A chip let go of on a drop zone that has no input at all');
     {
-      const { report } = await dropAt('/dropzone-real', '#zone p', [filed('Jianwen-Ding-Resume.pdf')]);
+      const { report } = await dropAt('/dropzone-real', '#zone p', [filed('Morgan-Testwell-Resume.pdf')]);
       check('the zone is given the drop', report.placed.length === 1, JSON.stringify(report));
       /*
        * A zone gives nothing back to read, so what it did cannot be claimed.
@@ -1168,7 +1168,7 @@ async function main() {
        * so it can be, and the report has to be able to tell the two apart.
        */
       const landed = await p.evaluate(() => [...(document.getElementById('made')?.files ?? [])].map((f) => f.name));
-      check('and the page kept the file', landed[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(landed));
+      check('and the page kept the file', landed[0] === 'Morgan-Testwell-Resume.pdf', JSON.stringify(landed));
       check('so it is not hedged', report.placed[0]?.sure !== false, JSON.stringify(report.placed));
     }
 
@@ -1190,9 +1190,9 @@ async function main() {
      */
     group('Workday: a chip let go of on the button inside the drop zone');
     {
-      const { report } = await dropAt('/workday', '#pick', [filed('Jianwen-Ding-Resume.pdf')]);
+      const { report } = await dropAt('/workday', '#pick', [filed('Morgan-Testwell-Resume.pdf')]);
       const landed = await p.evaluate(() => [...(document.getElementById('made')?.files ?? [])].map((f) => f.name));
-      check('the zone gets the drop, from a press on the button inside it', landed[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(landed));
+      check('the zone gets the drop, from a press on the button inside it', landed[0] === 'Morgan-Testwell-Resume.pdf', JSON.stringify(landed));
       check('and it is reported as placed', report.placed.length === 1, JSON.stringify(report));
       check('with nothing left homeless', report.unplaced.length === 0, JSON.stringify(report.unplaced));
     }
@@ -1200,22 +1200,22 @@ async function main() {
     /* And on the words inside it, which is the other half of that target. */
     group('Workday: let go of on the words rather than the button');
     {
-      const { report } = await dropAt('/workday', '#zone p', [filed('Jianwen-Ding-Resume.pdf')]);
+      const { report } = await dropAt('/workday', '#zone p', [filed('Morgan-Testwell-Resume.pdf')]);
       const landed = await p.evaluate(() => [...(document.getElementById('made')?.files ?? [])].map((f) => f.name));
-      check('the zone still gets it', landed[0] === 'Jianwen-Ding-Resume.pdf', JSON.stringify(landed));
+      check('the zone still gets it', landed[0] === 'Morgan-Testwell-Resume.pdf', JSON.stringify(landed));
       check('and it is reported as placed', report.placed.length === 1, JSON.stringify(report.placed));
     }
 
     group('A chip let go of on a box that will not take it');
     {
-      const { report, inBoxes } = await dropAt('/doc-only', '#rs', [filed('Jianwen-Ding-Resume.pdf')]);
+      const { report, inBoxes } = await dropAt('/doc-only', '#rs', [filed('Morgan-Testwell-Resume.pdf')]);
       check('nothing goes in', (inBoxes.rs?.length ?? 0) === 0, JSON.stringify(inBoxes.rs));
       check('and it says what the form will take', /\.doc/.test(report.unplaced[0]?.why ?? ''), report.unplaced[0]?.why ?? '');
     }
 
     group('A chip let go of somewhere that takes nothing');
     {
-      const { report } = await dropAt('/menu', 'body', [filed('Jianwen-Ding-Resume.pdf')]);
+      const { report } = await dropAt('/menu', 'body', [filed('Morgan-Testwell-Resume.pdf')]);
       check('nothing is claimed', report.placed.length === 0, JSON.stringify(report.placed));
       check(
         'and it says so rather than going quiet',
@@ -1229,9 +1229,9 @@ async function main() {
       const kinds = await p.evaluate(async ({ b }) => {
         const m = await import(`${b}/attach.js`);
         return [
-          'Jianwen-Ding-Resume.pdf',
-          'Jianwen Ding CV.pdf',
-          'Jianwen-Ding-Cover-Letter.pdf',
+          'Morgan-Testwell-Resume.pdf',
+          'Morgan Testwell CV.pdf',
+          'Morgan-Testwell-Cover-Letter.pdf',
           'Transcript.pdf',
           'UVA Academic Record.pdf',
           'Portfolio.pdf',
@@ -1247,7 +1247,7 @@ async function main() {
            */
           'Resume_Streamly.pdf',
           'Academic_Transcript.pdf',
-          'Jianwen_Ding_Cover_Letter.pdf',
+          'Morgan_Testwell_Cover_Letter.pdf',
           // And the accented spellings, which were in the list and could never
           // match: the closing `\b` after `é` needs a word character, and a
           // full stop is not one.

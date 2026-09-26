@@ -33,8 +33,8 @@ test('the lift got describeAttach, not something that looks like it', () => {
 });
 
 test('a file that went in is said to have gone in', () => {
-  const said = describeAttach({ placed: [{ name: 'Jianwen-Ding-Resume.pdf' }], unplaced: [] });
-  assert.match(said, /^Attached Jianwen-Ding-Resume\.pdf\.$/);
+  const said = describeAttach({ placed: [{ name: 'Morgan-Testwell-Resume.pdf' }], unplaced: [] });
+  assert.match(said, /^Attached Morgan-Testwell-Resume\.pdf\.$/);
 });
 
 /*
@@ -44,7 +44,7 @@ test('a file that went in is said to have gone in', () => {
  */
 test('a drop is not claimed as an attachment', () => {
   const said = describeAttach({
-    placed: [{ name: 'Jianwen-Ding-Resume.pdf', sure: false }],
+    placed: [{ name: 'Morgan-Testwell-Resume.pdf', sure: false }],
     unplaced: [],
   });
   assert.doesNotMatch(said, /Attached/);
@@ -64,14 +64,14 @@ test('each file that had nowhere to go is given its own reason', () => {
   const said = describeAttach({
     placed: [],
     unplaced: [
-      { name: 'Jianwen-Ding-Resume.pdf', why: 'this form only takes .doc,.docx there' },
+      { name: 'Morgan-Testwell-Resume.pdf', why: 'this form only takes .doc,.docx there' },
       { name: 'Transcript.pdf', why: 'no box here asks for it' },
     ],
   });
   // Neither file is filed under the other's reason.
-  assert.match(said, /Jianwen-Ding-Resume\.pdf had nowhere to go — this form only takes \.doc,\.docx there/);
+  assert.match(said, /Morgan-Testwell-Resume\.pdf had nowhere to go — this form only takes \.doc,\.docx there/);
   assert.match(said, /Transcript\.pdf had nowhere to go — no box here asks for it/);
-  assert.doesNotMatch(said, /Transcript\.pdf and Jianwen-Ding-Resume\.pdf|Jianwen-Ding-Resume\.pdf and Transcript\.pdf/);
+  assert.doesNotMatch(said, /Transcript\.pdf and Morgan-Testwell-Resume\.pdf|Morgan-Testwell-Resume\.pdf and Transcript\.pdf/);
 });
 
 test('and files that failed for the same reason are said once, together', () => {
@@ -91,7 +91,7 @@ test('the folder is offered once however many reasons there were', () => {
   const said = describeAttach({
     placed: [],
     unplaced: [
-      { name: 'Jianwen-Ding-Resume.pdf', why: 'this form only takes .doc,.docx there' },
+      { name: 'Morgan-Testwell-Resume.pdf', why: 'this form only takes .doc,.docx there' },
       { name: 'Transcript.pdf', why: 'no box here asks for it' },
     ],
   });
@@ -100,9 +100,9 @@ test('the folder is offered once however many reasons there were', () => {
 
 test('what went in and what did not are both said in one sentence', () => {
   const said = describeAttach({
-    placed: [{ name: 'Jianwen-Ding-Resume.pdf' }],
+    placed: [{ name: 'Morgan-Testwell-Resume.pdf' }],
     unplaced: [{ name: 'Transcript.pdf', why: 'no box here asks for it' }],
   });
-  assert.match(said, /Attached Jianwen-Ding-Resume\.pdf/);
+  assert.match(said, /Attached Morgan-Testwell-Resume\.pdf/);
   assert.match(said, /Transcript\.pdf had nowhere to go/);
 });

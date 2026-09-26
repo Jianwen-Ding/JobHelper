@@ -56,7 +56,7 @@ const FIELD_PATTERNS = [
   /*
    * And one half of it, said in brackets after the name it is part of — above
    * `legal name`, which claimed the box whole. "Legal name (First)" and "Legal
-   * name (Last)" were each given "Jianwen Ding", and "Legal name (Middle)" the
+   * name (Last)" were each given "Morgan Testwell", and "Legal name (Middle)" the
    * whole name too, a middle name the profile does not hold. Only a bracket
    * holding the one word: "Full legal name (first, middle, last)" asks for
    * all of it. `middle_name` is never in a profile, so that box stays blank.
@@ -1633,7 +1633,7 @@ const asWords = (value) => clean(String(value ?? '').replace(/_+/g, ' ').replace
  * always been filled into one that never was. Measured:
  *
  *   FAIL  Lever: fills the fields it should
- *         input[name="urls[LinkedIn]"] wanted "linkedin.com/in/jianwen", got ""
+ *         input[name="urls[LinkedIn]"] wanted "linkedin.com/in/morgantestwell", got ""
  *
  * A description is a bag of words rather than a sentence, so the answer is to
  * carry both: the name as written, which every pattern was designed against,
@@ -2405,7 +2405,7 @@ function otherWaysToWrite(key, value) {
   /*
    * A link, with the scheme a `type=url` field insists on.
    *
-   * A profile stores "github.com/Jianwen-Ding", because that is what goes on
+   * A profile stores "github.com/Morgan-Testwell", because that is what goes on
    * a resume — nobody prints the https://. A `type=url` input refuses it, and
    * before this the field was filled, reported as filled, and then blocked the
    * submit. Adding the scheme does not change where the link goes.

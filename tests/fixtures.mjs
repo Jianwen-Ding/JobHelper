@@ -1567,11 +1567,11 @@ benchmarked against the Boston market, the company said.</p>
  */
 export const CODE_REVIEW = {
   name: 'code-review',
-  path: '/Jianwen-Ding/ResumeM-M/pull/16',
-  html: `<!doctype html><html><head><title>Claude/hello 06h9rf by Jianwen-Ding · Pull Request #16 · Jianwen-Ding/ResumeM-M</title><style>${CHROME}</style></head>
+  path: '/Morgan-Testwell/ResumeM-M/pull/16',
+  html: `<!doctype html><html><head><title>Claude/hello 06h9rf by Morgan-Testwell · Pull Request #16 · Morgan-Testwell/ResumeM-M</title><style>${CHROME}</style></head>
 <body><div class="wrap">
 <h1>Claude/hello 06h9rf <span>#16</span></h1>
-<div><span class="state">Merged</span> Jianwen-Ding merged 8 commits into <code>main</code> from <code>claude/hello-06h9rf</code></div>
+<div><span class="state">Merged</span> Morgan-Testwell merged 8 commits into <code>main</code> from <code>claude/hello-06h9rf</code></div>
 <nav><a href="#conversation">Conversation 0</a><a href="#commits">Commits 8</a><a href="#files">Files changed 16</a></nav>
 <div class="sidebar">
   <div><b>Reviewers</b> No reviews</div>
@@ -1581,12 +1581,12 @@ export const CODE_REVIEW = {
 </div>
 <h2 id="commits">Commits</h2>
 <ul>
-  <li><a href="/Jianwen-Ding/ResumeM-M/commit/aaa1">Say, on the posting, that this one has been applied to before</a></li>
-  <li><a href="/Jianwen-Ding/ResumeM-M/commit/aaa2">Stop an application id being a path, and a rebuild being a deletion</a></li>
-  <li><a href="/Jianwen-Ding/ResumeM-M/commit/aaa3">Give the one-page rule somewhere to go when it is broken</a></li>
-  <li><a href="/Jianwen-Ding/ResumeM-M/commit/aaa4">Render cover letters through LaTeX, like the resume</a></li>
-  <li><a href="/Jianwen-Ding/ResumeM-M/commit/aaa5">Let the AI draft a cover letter and the application answers</a></li>
-  <li><a href="/Jianwen-Ding/ResumeM-M/commit/aaa6">Search the letters and the answer bank, for the same reason as the tracker</a></li>
+  <li><a href="/Morgan-Testwell/ResumeM-M/commit/aaa1">Say, on the posting, that this one has been applied to before</a></li>
+  <li><a href="/Morgan-Testwell/ResumeM-M/commit/aaa2">Stop an application id being a path, and a rebuild being a deletion</a></li>
+  <li><a href="/Morgan-Testwell/ResumeM-M/commit/aaa3">Give the one-page rule somewhere to go when it is broken</a></li>
+  <li><a href="/Morgan-Testwell/ResumeM-M/commit/aaa4">Render cover letters through LaTeX, like the resume</a></li>
+  <li><a href="/Morgan-Testwell/ResumeM-M/commit/aaa5">Let the AI draft a cover letter and the application answers</a></li>
+  <li><a href="/Morgan-Testwell/ResumeM-M/commit/aaa6">Search the letters and the answer bank, for the same reason as the tracker</a></li>
 </ul>
 <h2 id="files">Files changed</h2>
 <ul>
@@ -1618,12 +1618,12 @@ export const CODE_REVIEW = {
  * list is written in. There is no more adversarial input available to this
  * project, and it is not contrived: it is a page its author reads every day.
  *
- * Lines are quoted from the real diff of Jianwen-Ding/ResumeM-M#16.
+ * Lines are quoted from the real diff of Morgan-Testwell/ResumeM-M#16.
  */
 export const CODE_REVIEW_DIFF = {
   name: 'code-review-diff',
-  path: '/Jianwen-Ding/ResumeM-M/pull/16/files',
-  html: `<!doctype html><html><head><title>Claude/hello 06h9rf by Jianwen-Ding · Pull Request #16 · Jianwen-Ding/ResumeM-M</title><style>${CHROME}</style></head>
+  path: '/Morgan-Testwell/ResumeM-M/pull/16/files',
+  html: `<!doctype html><html><head><title>Claude/hello 06h9rf by Morgan-Testwell · Pull Request #16 · Morgan-Testwell/ResumeM-M</title><style>${CHROME}</style></head>
 <body><div class="wrap">
 <h1>Claude/hello 06h9rf <span>#16</span></h1>
 <nav><a href="#conversation">Conversation</a><a href="#files">Files changed 16</a></nav>

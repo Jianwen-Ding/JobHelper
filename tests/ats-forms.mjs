@@ -39,14 +39,14 @@ const check = (what, ok, detail = '') => {
 };
 
 const PROFILE = {
-  first_name: 'Jianwen',
-  last_name: 'Ding',
-  full_name: 'Jianwen Ding',
-  email: 'ding.jianw@northeastern.edu',
+  first_name: 'Morgan',
+  last_name: 'Testwell',
+  full_name: 'Morgan Testwell',
+  email: 'morgan.testwell@example.com',
   phone: '555-0100',
-  linkedin: 'linkedin.com/in/jianwen',
-  github: 'github.com/jianwen',
-  website: 'jianwen.dev',
+  linkedin: 'linkedin.com/in/morgantestwell',
+  github: 'github.com/morgantestwell',
+  website: 'morgantestwell.dev',
   school: 'Northeastern University',
   /*
    * The education boxes, which the store answered with nothing until
@@ -145,11 +145,11 @@ export const SYSTEMS = [
       <label for="gpa--0">GPA</label>
       <input type="text" id="gpa--0" name="job_application[educations_attributes][0][gpa]">`,
     want: {
-      '#first_name': 'Jianwen',
-      '#last_name': 'Ding',
-      '#email': 'ding.jianw@northeastern.edu',
+      '#first_name': 'Morgan',
+      '#last_name': 'Testwell',
+      '#email': 'morgan.testwell@example.com',
       '#phone': '555-0100',
-      '#job_application_answers_attributes_0_text_value': 'linkedin.com/in/jianwen',
+      '#job_application_answers_attributes_0_text_value': 'linkedin.com/in/morgantestwell',
       '#job_application_answers_attributes_1_boolean_value': '1',
       '#job_application_answers_attributes_2_boolean_value': '0',
       // And the Education section, which used to come out empty.
@@ -230,7 +230,7 @@ export const SYSTEMS = [
           });
         }
       </script>`,
-    want: { '#fn': 'Jianwen', '#em': 'ding.jianw@northeastern.edu' },
+    want: { '#fn': 'Morgan', '#em': 'morgan.testwell@example.com' },
     aria: { '#auth': 'Yes', '#spon': 'No' },
     /*
      * The popup's options must be untouched, and said so about — and this
@@ -273,14 +273,14 @@ export const SYSTEMS = [
         <textarea name="comments"></textarea>
       </div>`,
     want: {
-      'input[name="name"]': 'Jianwen Ding',
-      'input[name="email"]': 'ding.jianw@northeastern.edu',
+      'input[name="name"]': 'Morgan Testwell',
+      'input[name="email"]': 'morgan.testwell@example.com',
       'input[name="phone"]': '555-0100',
-      'input[name="urls[LinkedIn]"]': 'linkedin.com/in/jianwen',
-      'input[name="urls[GitHub]"]': 'github.com/jianwen',
+      'input[name="urls[LinkedIn]"]': 'linkedin.com/in/morgantestwell',
+      'input[name="urls[GitHub]"]': 'github.com/morgantestwell',
       // "Current company", Lever's own field, which read as nothing at all.
       'input[name="org"]': 'Helios',
-      'input[name="urls[Portfolio]"]': 'jianwen.dev',
+      'input[name="urls[Portfolio]"]': 'morgantestwell.dev',
     },
     questions: [/what interests you about this role/i],
     wantsLetter: false,
@@ -302,10 +302,10 @@ export const SYSTEMS = [
       <label for="c_q1">Tell us about a system you designed end to end.</label>
       <textarea id="c_q1" name="c_q1"></textarea>`,
     want: {
-      '#_systemfield_name': 'Jianwen Ding',
-      '#_systemfield_email': 'ding.jianw@northeastern.edu',
+      '#_systemfield_name': 'Morgan Testwell',
+      '#_systemfield_email': 'morgan.testwell@example.com',
       '#_systemfield_phone': '555-0100',
-      '#c_linkedin': 'linkedin.com/in/jianwen',
+      '#c_linkedin': 'linkedin.com/in/morgantestwell',
     },
     questions: [/tell us about a system you designed/i],
     wantsLetter: false,
@@ -346,9 +346,9 @@ export const SYSTEMS = [
         <button id="wd-auth" aria-haspopup="listbox" aria-labelledby="lbl-auth">Select One</button>
       </div>`,
     want: {
-      '#wd-fn': 'Jianwen',
-      '#wd-ln': 'Ding',
-      '#wd-em': 'ding.jianw@northeastern.edu',
+      '#wd-fn': 'Morgan',
+      '#wd-ln': 'Testwell',
+      '#wd-em': 'morgan.testwell@example.com',
       '#wd-ph': '555-0100',
       '#wd-city': 'Boston',
     },
@@ -379,9 +379,9 @@ export const SYSTEMS = [
             <td><input type="text" id="ftlf_5" name="descriptor5.value"></td></tr>
       </tbody></table>`,
     want: {
-      '#ftlf_1': 'Jianwen',
-      '#ftlf_2': 'Ding',
-      '#ftlf_3': 'ding.jianw@northeastern.edu',
+      '#ftlf_1': 'Morgan',
+      '#ftlf_2': 'Testwell',
+      '#ftlf_3': 'morgan.testwell@example.com',
       '#ftlf_4': '555-0100',
       '#ftlf_5': 'Boston',
     },
@@ -401,11 +401,11 @@ export const SYSTEMS = [
       <label for="sr-q1">What makes you a good fit for this position?</label>
       <textarea id="sr-q1"></textarea>`,
     want: {
-      '#sr-fn': 'Jianwen',
-      '#sr-ln': 'Ding',
-      '#sr-em': 'ding.jianw@northeastern.edu',
+      '#sr-fn': 'Morgan',
+      '#sr-ln': 'Testwell',
+      '#sr-em': 'morgan.testwell@example.com',
       '#sr-ph': '555-0100',
-      '#sr-web': 'linkedin.com/in/jianwen',
+      '#sr-web': 'linkedin.com/in/morgantestwell',
     },
     questions: [/what makes you a good fit/i],
     wantsLetter: false,
@@ -424,11 +424,11 @@ export const SYSTEMS = [
       <label for="wk-q1">Do you have experience running Kubernetes in production?</label>
       <textarea id="wk-q1"></textarea>`,
     want: {
-      '#firstname': 'Jianwen',
-      '#lastname': 'Ding',
-      '#email': 'ding.jianw@northeastern.edu',
+      '#firstname': 'Morgan',
+      '#lastname': 'Testwell',
+      '#email': 'morgan.testwell@example.com',
       '#phone': '555-0100',
-      '#wk-li': 'linkedin.com/in/jianwen',
+      '#wk-li': 'linkedin.com/in/morgantestwell',
     },
     questions: [/experience running kubernetes/i],
     wantsLetter: true,
@@ -450,12 +450,12 @@ export const SYSTEMS = [
       <label for="bh-li">LinkedIn Profile URL</label>
       <input id="bh-li" name="linkedinUrl" type="text">`,
     want: {
-      '#bh-fn': 'Jianwen',
-      '#bh-ln': 'Ding',
-      '#bh-em': 'ding.jianw@northeastern.edu',
+      '#bh-fn': 'Morgan',
+      '#bh-ln': 'Testwell',
+      '#bh-em': 'morgan.testwell@example.com',
       '#bh-ph': '555-0100',
-      '#bh-web': 'jianwen.dev',
-      '#bh-li': 'linkedin.com/in/jianwen',
+      '#bh-web': 'morgantestwell.dev',
+      '#bh-li': 'linkedin.com/in/morgantestwell',
     },
     questions: [],
     wantsLetter: false,
@@ -471,9 +471,9 @@ export const SYSTEMS = [
       <label for="jz-q1">Describe your experience with distributed systems. *</label>
       <textarea id="jz-q1" name="answer_1"></textarea>`,
     want: {
-      '#jz-fn': 'Jianwen',
-      '#jz-ln': 'Ding',
-      '#jz-em': 'ding.jianw@northeastern.edu',
+      '#jz-fn': 'Morgan',
+      '#jz-ln': 'Testwell',
+      '#jz-em': 'morgan.testwell@example.com',
       '#jz-ph': '555-0100',
     },
     questions: [/describe your experience with distributed systems/i],
@@ -489,9 +489,9 @@ export const SYSTEMS = [
       <label for="jv-ph">Phone</label><input id="jv-ph" name="jvPhone" type="text">
       <label for="jv-cl">Cover Letter</label><textarea id="jv-cl" name="jvCoverLetter"></textarea>`,
     want: {
-      '#jv-fn': 'Jianwen',
-      '#jv-ln': 'Ding',
-      '#jv-em': 'ding.jianw@northeastern.edu',
+      '#jv-fn': 'Morgan',
+      '#jv-ln': 'Testwell',
+      '#jv-em': 'morgan.testwell@example.com',
       '#jv-ph': '555-0100',
     },
     questions: [],
@@ -508,10 +508,10 @@ export const SYSTEMS = [
       <label for="tt-q1">Why would you like to join us?</label>
       <textarea id="tt-q1" name="answers[1]"></textarea>`,
     want: {
-      '#tt-name': 'Jianwen Ding',
-      '#tt-em': 'ding.jianw@northeastern.edu',
+      '#tt-name': 'Morgan Testwell',
+      '#tt-em': 'morgan.testwell@example.com',
       '#tt-ph': '555-0100',
-      '#tt-li': 'linkedin.com/in/jianwen',
+      '#tt-li': 'linkedin.com/in/morgantestwell',
     },
     questions: [/why would you like to join us/i],
     wantsLetter: false,
@@ -531,9 +531,9 @@ export const SYSTEMS = [
         <option value="CAN">Canada</option>
       </select>`,
     want: {
-      '#sf-fn': 'Jianwen',
-      '#sf-ln': 'Ding',
-      '#sf-em': 'ding.jianw@northeastern.edu',
+      '#sf-fn': 'Morgan',
+      '#sf-ln': 'Testwell',
+      '#sf-em': 'morgan.testwell@example.com',
       '#sf-ph': '555-0100',
       '#sf-country': 'USA',
     },
@@ -589,8 +589,8 @@ export const SYSTEMS = [
         <label><input type="checkbox" name="consent" value="yes"> I agree</label>
       </fieldset>`,
     want: {
-      '#rb-fn': 'Jianwen',
-      '#rb-em': 'ding.jianw@northeastern.edu',
+      '#rb-fn': 'Morgan',
+      '#rb-em': 'morgan.testwell@example.com',
     },
     radios: {
       work_auth: 'Yes',
@@ -636,8 +636,8 @@ export const SYSTEMS = [
       </div>
       <input type="hidden" name="school" id="cb-school-value">`,
     want: {
-      '#cb-fn': 'Jianwen',
-      '#cb-em': 'ding.jianw@northeastern.edu',
+      '#cb-fn': 'Morgan',
+      '#cb-em': 'morgan.testwell@example.com',
       // Typing here submits nothing, so nothing is typed here.
       '#cb-country': '',
       '#cb-school': '',
@@ -681,9 +681,9 @@ export const SYSTEMS = [
       </script>`,
     shadowHost: '#host',
     want: {
-      '#sd-fn': 'Jianwen',
-      '#sd-ln': 'Ding',
-      '#sd-em': 'ding.jianw@northeastern.edu',
+      '#sd-fn': 'Morgan',
+      '#sd-ln': 'Testwell',
+      '#sd-em': 'morgan.testwell@example.com',
       '#sd-ph': '555-0100',
     },
     questions: [/why do you want to work here/i],
@@ -699,9 +699,9 @@ export const SYSTEMS = [
       <label for="ic-em">Email Address</label><input id="ic-em" name="icims_email" type="text">
       <label for="ic-ph">Phone Number</label><input id="ic-ph" name="icims_phone" type="text">`,
     want: {
-      '#ic-fn': 'Jianwen',
-      '#ic-ln': 'Ding',
-      '#ic-em': 'ding.jianw@northeastern.edu',
+      '#ic-fn': 'Morgan',
+      '#ic-ln': 'Testwell',
+      '#ic-em': 'morgan.testwell@example.com',
       '#ic-ph': '555-0100',
     },
     questions: [],
@@ -727,11 +727,11 @@ export const SYSTEMS = [
       <div class="field"><div class="label">LinkedIn</div><input name="linkedinUrl" type="text"></div>
       <div class="field"><div class="label">Why are you a good fit?</div><textarea name="q_fit"></textarea></div>`,
     want: {
-      'input[name="firstName"]': 'Jianwen',
-      'input[name="lastName"]': 'Ding',
-      'input[name="email"]': 'ding.jianw@northeastern.edu',
+      'input[name="firstName"]': 'Morgan',
+      'input[name="lastName"]': 'Testwell',
+      'input[name="email"]': 'morgan.testwell@example.com',
       'input[name="phone"]': '555-0100',
-      'input[name="linkedinUrl"]': 'linkedin.com/in/jianwen',
+      'input[name="linkedinUrl"]': 'linkedin.com/in/morgantestwell',
     },
     questions: [/why are you a good fit/i],
     wantsLetter: false,
@@ -746,8 +746,8 @@ export const SYSTEMS = [
       <label for="bz-cl">Cover Letter</label><textarea id="bz-cl" name="cover_letter"></textarea>
       <label for="bz-rs">Resume</label><input id="bz-rs" name="resume" type="file">`,
     want: {
-      '#bz-name': 'Jianwen Ding',
-      '#bz-em': 'ding.jianw@northeastern.edu',
+      '#bz-name': 'Morgan Testwell',
+      '#bz-em': 'morgan.testwell@example.com',
       '#bz-ph': '555-0100',
     },
     questions: [],
@@ -766,8 +766,8 @@ export const SYSTEMS = [
         <textarea name="open_question_1"></textarea>
       </div>`,
     want: {
-      'input[name="candidate[name]"]': 'Jianwen Ding',
-      'input[name="candidate[email]"]': 'ding.jianw@northeastern.edu',
+      'input[name="candidate[name]"]': 'Morgan Testwell',
+      'input[name="candidate[email]"]': 'morgan.testwell@example.com',
       'input[name="candidate[phone]"]': '555-0100',
     },
     questions: [/what draws you to this team/i],
@@ -799,9 +799,9 @@ export const SYSTEMS = [
         <option value="">--</option><option value="1">Yes</option><option value="0">No</option>
       </select>`,
     want: {
-      '#one-fn': 'Jianwen',
-      '#one-ln': 'Ding',
-      '#one-em': 'ding.jianw@northeastern.edu',
+      '#one-fn': 'Morgan',
+      '#one-ln': 'Testwell',
+      '#one-em': 'morgan.testwell@example.com',
       // Neither "Yes" nor "No" is a thing this profile says.
       '#one-auth': '',
     },
@@ -834,9 +834,9 @@ export const SYSTEMS = [
         <tr><td><label for="rr-ep">Emergency Contact Number</label></td><td><input id="rr-ep" name="TEXT9" type="text"></td></tr>
       </tbody></table>`,
     want: {
-      '#rr-fn': 'Jianwen',
-      '#rr-ln': 'Ding',
-      '#rr-em': 'ding.jianw@northeastern.edu',
+      '#rr-fn': 'Morgan',
+      '#rr-ln': 'Testwell',
+      '#rr-em': 'morgan.testwell@example.com',
       '#rr-ph': '555-0100',
       '#rr-rn': '',
       '#rr-re': '',
@@ -892,7 +892,7 @@ export const SYSTEMS = [
     want: {
       // The application's own fields, filled as usual — including a country
       // dropdown two lines above one that must not be.
-      '#vsi-fn': 'Jianwen',
+      '#vsi-fn': 'Morgan',
       '#vsi-ph': '555-0100',
       '#vsi-ctry': 'United States',
       '#vsi-gender': '',
@@ -915,9 +915,9 @@ export const SYSTEMS = [
         <tr><td><label for="br4">Home Phone</label></td><td><input id="br4" name="TEXT4" type="text"></td></tr>
       </table>`,
     want: {
-      '#br1': 'Jianwen',
-      '#br2': 'Ding',
-      '#br3': 'ding.jianw@northeastern.edu',
+      '#br1': 'Morgan',
+      '#br2': 'Testwell',
+      '#br3': 'morgan.testwell@example.com',
       '#br4': '555-0100',
     },
     questions: [],
@@ -993,7 +993,7 @@ const shell = (body) =>
  * holds the text happily, the card says "Filled 4 fields", and the form will
  * not go. Measured on this markup before the fix:
  *
- *   filled      : phone=(555) 555-5555, website=github.com/Jianwen-Ding
+ *   filled      : phone=(555) 555-5555, website=github.com/Morgan-Testwell
  *   skipped     : []
  *   phone field : valid false, "Please match the requested format."
  *   url field   : valid false, "Please enter a URL."
@@ -1342,11 +1342,11 @@ async function main() {
         {
           b: base,
           profile: {
-            first_name: 'Jianwen',
+            first_name: 'Morgan',
             phone: '(555) 555-5555',
-            email: 'ding.jianw@northeastern.edu',
-            website: 'github.com/Jianwen-Ding',
-            linkedin: 'linkedin.com/in/jianwen',
+            email: 'morgan.testwell@example.com',
+            website: 'github.com/Morgan-Testwell',
+            linkedin: 'linkedin.com/in/morgantestwell',
           },
         },
       );
@@ -1355,11 +1355,11 @@ async function main() {
       check('and the browser is content with it', out.tel.valid, out.tel.says);
       check(
         'a bare link is given the scheme a url field insists on',
-        out.site.value === 'https://github.com/Jianwen-Ding',
+        out.site.value === 'https://github.com/Morgan-Testwell',
         out.site.value,
       );
       check('for every link field, not just one', out.li.valid && out.li.value.startsWith('https://'), out.li.value);
-      check('an address that was already fine is left alone', out.em.value === 'ding.jianw@northeastern.edu', out.em.value);
+      check('an address that was already fine is left alone', out.em.value === 'morgan.testwell@example.com', out.em.value);
       check(
         'nothing was reported as filled that the browser will reject',
         out.rejected.length === 0,

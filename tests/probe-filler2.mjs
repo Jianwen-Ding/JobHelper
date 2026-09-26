@@ -11,8 +11,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = (label, value) => console.log(`  ${label}: ${JSON.stringify(value)}`);
 
 const PROFILE = {
-  first_name: 'Jianwen', last_name: 'Ding', full_name: 'Jianwen Ding',
-  email: 'ding.jianw@northeastern.edu', phone: '555-0100',
+  first_name: 'Morgan', last_name: 'Testwell', full_name: 'Morgan Testwell',
+  email: 'morgan.testwell@example.com', phone: '555-0100',
   address_city: 'Boston', address_state: 'MA', address_country: 'United States',
   location: 'Boston, MA',
   work_authorization: 'Authorized to work in the US', requires_sponsorship: 'No',
