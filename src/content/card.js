@@ -630,7 +630,18 @@ a { color: var(--accent); }
 
 const HOST_ID = 'jobhelper-card-host';
 
+/*
+ * The card on the page now, and how to stop what it listens to. Kept by
+ * reference because the host is not always where an id finds it: above a
+ * modal it lives inside the modal, and a modal in a shadow root is out of
+ * `getElementById`'s reach. See `reachable` in `createCard`.
+ */
+let live = null;
+
 export function removeCard() {
+  live?.stop();
+  live?.host.remove();
+  live = null;
   document.getElementById(HOST_ID)?.remove();
 }
 
@@ -746,6 +757,14 @@ export function createCard({
 
   const host = document.createElement('div');
   host.id = HOST_ID;
+  /*
+   * The host is an element of the page, so the page's rules reach it and beat
+   * `:host`. Inside a page's modal, a rule for the modal's children — a
+   * transform to animate them in — would make the host what the card's fixed
+   * position is measured from. An inline !important is the one thing those
+   * rules cannot override.
+   */
+  host.style.setProperty('all', 'initial', 'important');
   const root = host.attachShadow({ mode: 'open' });
   root.append(Object.assign(document.createElement('style'), { textContent: STYLE }));
 
@@ -753,6 +772,114 @@ export function createCard({
   card.className = 'card';
   root.append(card);
   document.documentElement.append(host);
+
+  /*
+   * Kept where it can be used, above a modal the page opens.
+   *
+   * A dialog opened with showModal() is drawn in the browser's top layer,
+   * above every z-index there is, and everything outside it goes inert.
+   * LinkedIn's Easy Apply opens one, inside a shadow root on its new jobs
+   * pages. The card sat under the backdrop, greyed out and taking no clicks,
+   * so no file could be dragged from it into the form it was there for. The
+   * only way above such a modal is to be inside it. There the card is part of
+   * what the modal lets through, and its own fixed position still places it
+   * against the window, where it was. It goes back to <html> as soon as the
+   * modal closes, because a closed dialog is display: none and would take
+   * the card with it.
+   *
+   * The modal is found by asking the page what is under the card, not by a
+   * query: a query on the document cannot see into a shadow root. What is
+   * under it is the modal itself where the backdrop covers the card, or
+   * something inside the modal where its box does.
+   */
+  let borrowed = null;
+  const shadowOf = (element) => {
+    if (element.shadowRoot) return element.shadowRoot;
+    try {
+      // Closed roots too, where the extension is asking.
+      return globalThis.chrome?.dom?.openOrClosedShadowRoot?.(element) ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const isModal = (element) => {
+    try {
+      return element.localName === 'dialog' && element.matches(':modal');
+    } catch {
+      return false;
+    }
+  };
+  const modalOver = () => {
+    const box = card.getBoundingClientRect();
+    if (!box.width || !box.height) return null;
+    const x = Math.min(Math.max(box.left + 12, 0), innerWidth - 1);
+    const y = Math.min(Math.max(box.top + 12, 0), innerHeight - 1);
+    let at = document.elementFromPoint(x, y);
+    // Down through the shadow roots, to what is really there.
+    for (let depth = 0; at && at !== host && depth < 32; depth++) {
+      const inner = shadowOf(at)?.elementFromPoint(x, y);
+      if (!inner || inner === at) break;
+      at = inner;
+    }
+    for (let node = at; node && node !== host; node = node.parentElement ?? node.getRootNode().host ?? null) {
+      if (isModal(node)) return node;
+    }
+    return null;
+  };
+  const letGo = () => {
+    borrowed?.removeEventListener('close', onModalClosed);
+    borrowed = null;
+  };
+  const giveBack = () => {
+    if (!borrowed) return;
+    letGo();
+    if (document.documentElement) document.documentElement.append(host);
+  };
+  const reachable = () => {
+    if (borrowed && (!host.isConnected || host.parentNode !== borrowed || !isModal(borrowed))) giveBack();
+    if (!host.isConnected) return;
+    const modal = modalOver();
+    if (!modal || modal === borrowed) return;
+    letGo();
+    borrowed = modal;
+    modal.addEventListener('close', onModalClosed);
+    modal.append(host);
+  };
+  // Out, and straight into the modal underneath if there is one.
+  function onModalClosed() {
+    giveBack();
+    reachable();
+  }
+  /*
+   * Opening a modal moves focus into it, so that is when to look, rather than
+   * up to a second later when the content script next calls `putBack`.
+   */
+  let lookSoon = null;
+  const onFocus = () => {
+    clearTimeout(lookSoon);
+    lookSoon = setTimeout(reachable, 0);
+  };
+  document.addEventListener('focusin', onFocus, true);
+  /*
+   * While inside a page's modal, a press on the card is kept to the card. A
+   * modal that closes on a click "outside" itself, tested by where the press
+   * landed or by which of its elements holds the target, would otherwise take
+   * a press on the card for exactly that. The content script's own listeners
+   * all capture, so they still see these.
+   */
+  const keepToCard = (event) => {
+    if (borrowed) event.stopPropagation();
+  };
+  const PRESSES = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick', 'touchstart', 'touchend'];
+  for (const type of PRESSES) host.addEventListener(type, keepToCard);
+  live = {
+    host,
+    stop: () => {
+      document.removeEventListener('focusin', onFocus, true);
+      clearTimeout(lookSoon);
+      letGo();
+    },
+  };
 
   /*
    * Taking the card off the page, and saying so.
@@ -7277,10 +7404,20 @@ export function createCard({
      * Only for a card the page removed. The × and Done go through
      * `closeCard`, whose `onClose` drops the handle, so nothing calls this on
      * a card somebody put away.
+     *
+     * The content script calls this every second, so it is also where the
+     * card is kept above a modal the page opened, and brought back out of one
+     * the page took away with the card inside. See `reachable`.
      */
     putBack() {
-      if (host.isConnected || document.getElementById(HOST_ID) || !document.documentElement) return false;
+      if (live?.host !== host) return false;
+      if (host.isConnected || document.getElementById(HOST_ID) || !document.documentElement) {
+        reachable();
+        return false;
+      }
+      letGo();
       document.documentElement.append(host);
+      reachable();
       return true;
     },
   };

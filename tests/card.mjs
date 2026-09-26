@@ -5375,6 +5375,197 @@ async function main() {
     JSON.stringify(originalAfterAi),
   );
 
+  console.log('\nAbove a modal the page opens');
+
+  /*
+   * LinkedIn's Easy Apply opens a dialog with showModal() — inside an open
+   * shadow root, `#interop-outlet`, on its new jobs pages. Such a dialog is
+   * drawn in the top layer, above any z-index, and everything outside it goes
+   * inert: the card sat greyed under the backdrop and no press reached it, so
+   * nothing could be dragged from it into the form. Pressed here with the
+   * mouse, since only a real press is refused by an inert element.
+   */
+  const underModal = async (inShadow) => {
+    const opened = await inPage((createCard, shadow) => {
+      document.querySelectorAll('dialog, #interop-outlet').forEach((el) => el.remove());
+      const handle = createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Gameplay Engineer Intern', company: 'Emberlight' },
+          spec: { id: 'job-ember', label: 'Emberlight', tier: 'temporary' },
+          rationale: [],
+        },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async () => ({}),
+      });
+      window.__handle = handle;
+      const host = document.querySelector('#jobhelper-card-host');
+      const card = host.shadowRoot.querySelector('.card');
+      const before = card.getBoundingClientRect();
+      window.__pressed = 0;
+      host.shadowRoot.addEventListener('click', () => window.__pressed++, true);
+      // The page's own "click outside closes it", as modal libraries write it.
+      window.__closedByPage = 0;
+      let where = document.body;
+      if (shadow) {
+        const outlet = Object.assign(document.createElement('div'), { id: 'interop-outlet' });
+        document.body.append(outlet);
+        where = outlet.attachShadow({ mode: 'open' });
+      }
+      const dialog = document.createElement('dialog');
+      dialog.innerHTML = '<form method="dialog"><label>First name <input name="first"></label><button>Next</button></form>';
+      where.append(dialog);
+      document.addEventListener('click', (event) => {
+        if (dialog.open && !dialog.querySelector('form').contains(event.composedPath()[0])) {
+          window.__closedByPage++;
+          dialog.close();
+        }
+      });
+      dialog.showModal();
+      window.__dialog = dialog;
+      return { left: before.left, top: before.top, right: before.right, width: before.width };
+    }, inShadow);
+    await page.waitForTimeout(80);
+    const x = opened.left + 40;
+    const y = opened.top + 20;
+    const placed = await page.evaluate(([px, py]) => {
+      const host = document.querySelector('#jobhelper-card-host') ?? window.__dialog.querySelector('#jobhelper-card-host');
+      const box = host?.shadowRoot.querySelector('.card').getBoundingClientRect();
+      const at = document.elementFromPoint(px, py);
+      return {
+        inDialog: host?.parentNode === window.__dialog,
+        top: at === host || at === window.__dialog.getRootNode().host && window.__dialog.getRootNode().elementFromPoint(px, py) === host,
+        left: box?.left,
+        width: box?.width,
+      };
+    }, [x, y]);
+    await page.mouse.click(x, y);
+    const pressed = await page.evaluate(() => ({ pressed: window.__pressed, open: window.__dialog.open, closedByPage: window.__closedByPage }));
+    await page.evaluate(() => window.__dialog.close());
+    await page.waitForTimeout(50);
+    const after = await page.evaluate(([px, py]) => {
+      const host = [document.querySelector('#jobhelper-card-host'), window.__dialog.querySelector('#jobhelper-card-host')].find(Boolean);
+      const box = host?.shadowRoot.querySelector('.card').getBoundingClientRect();
+      return { home: host?.parentNode === document.documentElement, width: box?.width ?? 0, top: document.elementFromPoint(px, py) === host };
+    }, [x, y]);
+    return { opened, placed, pressed, after };
+  };
+
+  for (const [name, inShadow] of [['a dialog in the page', false], ['a dialog inside a shadow root, as LinkedIn has it', true]]) {
+    const seen = await underModal(inShadow);
+    check(`${name}: the card goes inside the modal, on top of its backdrop`, seen.placed.inDialog && seen.placed.top, JSON.stringify(seen.placed));
+    check(
+      `${name}: and stays where it was on the screen`,
+      Math.abs(seen.placed.left - seen.opened.left) < 1 && Math.abs(seen.placed.width - seen.opened.width) < 1,
+      JSON.stringify({ was: seen.opened, now: seen.placed }),
+    );
+    check(`${name}: a press on it reaches it`, seen.pressed.pressed === 1, JSON.stringify(seen.pressed));
+    check(
+      `${name}: and is not taken by the page as a press outside its modal`,
+      seen.pressed.open && seen.pressed.closedByPage === 0,
+      JSON.stringify(seen.pressed),
+    );
+    check(`${name}: once the modal closes, the card is back on the page and in view`, seen.after.home && seen.after.width > 0 && seen.after.top, JSON.stringify(seen.after));
+  }
+
+  /*
+   * A modal the page throws away with the card inside it. The content script
+   * calls `putBack` every second; the card comes back out, rather than going
+   * wherever the modal went.
+   */
+  const thrownOut = await inPage(async (createCard) => {
+    document.querySelectorAll('dialog, #interop-outlet').forEach((el) => el.remove());
+    const handle = createCard({
+      analysis: { isJobPosting: true, job: { title: 'Platform Engineer', company: 'Acme' }, spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' }, rationale: [] },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    const host = document.querySelector('#jobhelper-card-host');
+    const dialog = document.createElement('dialog');
+    dialog.innerHTML = '<button>Next</button>';
+    document.body.append(dialog);
+    dialog.showModal();
+    handle.putBack();
+    const inside = host.parentNode === dialog;
+    dialog.remove();
+    const gone = !host.isConnected;
+    const back = handle.putBack();
+    return { inside, gone, back, home: host.parentNode === document.documentElement, width: host.shadowRoot.querySelector('.card').getBoundingClientRect().width };
+  });
+  check('a modal thrown away with the card in it: the card was inside, and went with it', thrownOut.inside && thrownOut.gone, JSON.stringify(thrownOut));
+  check('and putBack brings it back onto the page, in view', thrownOut.back === true && thrownOut.home && thrownOut.width > 0, JSON.stringify(thrownOut));
+
+  /*
+   * Taken off inside a modal in a shadow root, where `getElementById` cannot
+   * see it: the card built next is the only one, not a second beside a card
+   * nothing can remove.
+   */
+  const removedInside = await inPage(async (createCard) => {
+    document.querySelectorAll('dialog, #interop-outlet').forEach((el) => el.remove());
+    const make = () => createCard({
+      analysis: { isJobPosting: true, job: { title: 'Platform Engineer', company: 'Acme' }, spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' }, rationale: [] },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    const first = make();
+    const outlet = Object.assign(document.createElement('div'), { id: 'interop-outlet' });
+    document.body.append(outlet);
+    const shadow = outlet.attachShadow({ mode: 'open' });
+    const dialog = document.createElement('dialog');
+    dialog.innerHTML = '<button>Next</button>';
+    shadow.append(dialog);
+    dialog.showModal();
+    first.putBack();
+    const inside = shadow.querySelector('#jobhelper-card-host') !== null;
+    make();
+    const cards = [...document.querySelectorAll('#jobhelper-card-host'), ...shadow.querySelectorAll('#jobhelper-card-host')].length;
+    first.remove();
+    const left = [...document.querySelectorAll('#jobhelper-card-host'), ...shadow.querySelectorAll('#jobhelper-card-host')].length;
+    dialog.close();
+    return { inside, cards, left };
+  });
+  check('a card inside a modal in a shadow root is replaced, not joined, by the next', removedInside.inside && removedInside.cards === 1, JSON.stringify(removedInside));
+  check('and taking it off takes it off', removedInside.left === 0, JSON.stringify(removedInside));
+
+  // No modal, or one opened with show(): the card stays where it always was.
+  const noModal = await inPage(async (createCard) => {
+    document.querySelectorAll('dialog, #interop-outlet').forEach((el) => el.remove());
+    const handle = createCard({
+      analysis: { isJobPosting: true, job: { title: 'Platform Engineer', company: 'Acme' }, spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' }, rationale: [] },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    const host = document.querySelector('#jobhelper-card-host');
+    handle.putBack();
+    const alone = host.parentNode === document.documentElement;
+    const dialog = document.createElement('dialog');
+    dialog.innerHTML = '<input>';
+    dialog.style.cssText = 'position: fixed; inset: 0; width: 100vw; height: 100vh; max-width: none; max-height: none;';
+    document.body.append(dialog);
+    dialog.show();
+    dialog.querySelector('input').focus();
+    await new Promise((r) => setTimeout(r, 30));
+    handle.putBack();
+    const beside = host.parentNode === document.documentElement;
+    dialog.close();
+    handle.remove();
+    return { alone, beside };
+  });
+  check('with no modal open the card stays a child of <html>', noModal.alone, JSON.stringify(noModal));
+  check('and a dialog that is not modal, even one covering the window, is not moved into', noModal.beside, JSON.stringify(noModal));
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);
