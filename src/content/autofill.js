@@ -2353,11 +2353,57 @@ function nationalDigits(value) {
   return /^\+1\d{10}$/.test(said.replace(/[^\d+]/g, '')) ? digits.slice(1) : digits;
 }
 
+/*
+ * The boxes in `scope` in the order the page draws them, as a run of a
+ * telephone number is read from them.
+ *
+ * A component drawing one box stands for that box, where the page put the
+ * component: `(<x-input maxlength="3">) <x-input maxlength="3"> - <x-input
+ * maxlength="4">` is three boxes in a row, as the same `<input>`s are. A
+ * component drawing more than one is a thing of its own, and stands in the
+ * row as itself, which is no part of any number: its boxes are one question
+ * it asks, read inside it (see `phoneBoxes`), and never joined to a box
+ * beside it that some other component or the page draws. What is slotted
+ * into a component is where the slot is.
+ */
+function boxesDrawnIn(scope) {
+  const out = [];
+  const walk = (node) => {
+    const put = node.localName === 'slot' && hostOf(node) ? node.assignedElements() : [];
+    for (const el of put.length ? put : [...node.children]) {
+      if (el.matches(ANOTHER_FIELD)) out.push(el);
+      else if (!el.shadowRoot || el.id === OURS) walk(el);
+      else if (fieldsIn(el.shadowRoot, ANOTHER_FIELD, 2) > 1) out.push(el);
+      else walk(el.shadowRoot);
+    }
+  };
+  walk(scope);
+  return out;
+}
+
+/*
+ * And out of the component the box is drawn in.
+ *
+ * `querySelectorAll` does not reach into a component and `parentElement`
+ * stops at its root, so a number asked in boxes drawn in components was no
+ * run at all: each box, `maxlength` 3 or 4, was given the whole number, which
+ * did not fit, and was reported as refusing it. Measured, the three boxes of
+ * `(___) ___-____` each drawn in a component, an Area code and a seven-digit
+ * number each drawn in one, and one component drawing all three boxes loose
+ * in its root, were all left empty and reported three times over, where the
+ * same boxes written into the form took 555, 010 and 0199.
+ *
+ * The root is one more wrapper, and costs none of the three, which are the
+ * page's. From a root holding only this box the run is read on outside, from
+ * the component, as `labelFor` climbs; from a root holding more the run is
+ * the root's, and nothing outside is part of it (see `boxesDrawnIn`).
+ */
 function phoneBoxes(input, value) {
   const digits = nationalDigits(value);
-  let scope = input.parentElement;
-  for (let i = 0; i < 3 && scope && scope !== document.body; i++, scope = scope.parentElement) {
-    const fields = [...scope.querySelectorAll(ANOTHER_FIELD)].filter((el) => el.getClientRects().length > 0);
+  let scope = containerOf(input);
+  for (let i = 0; i < 3 && scope && scope !== document.body; ) {
+    // Only the boxes a person can see; a component stands in the row whether or not its host has a box of its own.
+    const fields = boxesDrawnIn(scope).filter((el) => !el.matches(ANOTHER_FIELD) || el.getClientRects().length > 0);
     const at = fields.indexOf(input);
     let first = at;
     let last = at;
@@ -2380,6 +2426,13 @@ function phoneBoxes(input, value) {
       return run.map((box) => [box, null]);
     }
     if (scope.localName === 'form') break;
+    if (scope instanceof ShadowRoot) {
+      if (scope.host.id === OURS || fieldsIn(scope, ANOTHER_FIELD, 2) > 1) break;
+      scope = containerOf(scope.host);
+    } else {
+      scope = containerOf(scope);
+      i++;
+    }
   }
   return null;
 }
@@ -3292,10 +3345,45 @@ function withoutTrunkZeroAfterCode(number) {
  * country, selected United Kingdom (+44)". Looked for in the box's own
  * wrapper and the two around it, never the whole form.
  */
+/*
+ * And out of the component the box is drawn in, and into the components
+ * beside it that are only a picker.
+ *
+ * `parentElement` stops at the root a box is drawn in, and
+ * `querySelectorAll` does not open a component, so a code beside a box in a
+ * component was never seen: measured, with the page's own select on +44
+ * beside a telephone box drawn in a component, with the select drawn in a
+ * component beside the page's box, and with an intl-tel-input drawn whole in
+ * one component, button and box loose in its root, a UK mobile went in as
+ * "07700 900123" behind the +44, where written without components it went
+ * in as "7700 900123".
+ *
+ * The root is one more wrapper, costing none of the three. A component
+ * beside the box is read when it draws one control and no more — a picker,
+ * standing where the page put it — or when it is the one the box is drawn
+ * in. One drawing a control and a box of its own is a telephone field of
+ * its own, and its code is its own box's, not this one's.
+ */
+const A_CODE_CONTROL = 'select, button, [role="combobox"], input';
+
+function codeControlsDrawnIn(scope, input) {
+  const out = [];
+  const walk = (node) => {
+    const put = node.localName === 'slot' && hostOf(node) ? node.assignedElements() : [];
+    for (const el of put.length ? put : [...node.children]) {
+      if (el.matches(A_CODE_CONTROL)) out.push(el);
+      if (!el.shadowRoot || el.id === OURS) walk(el);
+      else if (drawnInside(el, input) || fieldsIn(el.shadowRoot, A_CODE_CONTROL, 2) <= 1) walk(el.shadowRoot);
+    }
+  };
+  walk(scope);
+  return out;
+}
+
 function diallingCodeBeside(input) {
-  let scope = input.parentElement;
-  for (let i = 0; i < 3 && scope && scope.localName !== 'form' && scope !== document.body; i++, scope = scope.parentElement) {
-    for (const el of scope.querySelectorAll('select, button, [role="combobox"], input')) {
+  let scope = containerOf(input);
+  for (let i = 0; i < 3 && scope && scope.localName !== 'form' && scope !== document.body; ) {
+    for (const el of codeControlsDrawnIn(scope, input)) {
       if (el === input) continue;
       const shown =
         el instanceof HTMLSelectElement
@@ -3305,6 +3393,13 @@ function diallingCodeBeside(input) {
             : `${el.getAttribute('aria-label') ?? ''} ${el.textContent}`;
       const code = /(?:^|[\s(])(\+\d{1,4})(?=$|[\s)])/.exec(shown)?.[1];
       if (code) return code;
+    }
+    if (scope instanceof ShadowRoot) {
+      if (scope.host.id === OURS) break;
+      scope = containerOf(scope.host);
+    } else {
+      scope = containerOf(scope);
+      i++;
     }
   }
   return undefined;

@@ -3054,7 +3054,8 @@ const COMPONENT_DEFINITIONS = `<script>
     constructor() { super(); this.attachShadow({ mode: 'open' }).innerHTML = draw(this); }
   });
   const at = (h, name, or = '') => h.getAttribute(name) ?? or;
-  def('y-box', (h) => '<style>:host { display: block; margin: 4px 0 }</style><input part="input" name="' + at(h, 'field') + '" type="' + at(h, 'type', 'text') + '">');
+  def('y-box', (h) => '<style>:host { display: block; margin: 4px 0 }</style><input part="input" name="' + at(h, 'field') + '" type="' + at(h, 'type', 'text') + '"' +
+    (h.hasAttribute('maxlength') ? ' maxlength="' + at(h, 'maxlength') + '"' : '') + '>');
   def('y-label', (h) => '<span part="label">' + (h.hasAttribute('text') ? at(h, 'text') : '<slot></slot>') + '</span>');
   def('y-field', (h) => '<style>:host { display: grid }</style>' +
     (h.hasAttribute('drawn') ? '<y-label text="' + at(h, 'label') + '"></y-label>' : '<y-label>' + at(h, 'label') + '</y-label>') +
@@ -3074,6 +3075,16 @@ const COMPONENT_DEFINITIONS = `<script>
   def('y-section', (h) => '<style>:host { display: block }</style><section><h3>' + at(h, 'heading') + '</h3><slot></slot></section>' +
     '<div class="after"><slot name="after"></slot></div>');
   def('y-heading', (h) => '<style>:host { display: block }</style><h3 part="heading">' + at(h, 'text') + '</h3>');
+  // A telephone number's boxes: two drawn in one component, and all three loose in one root.
+  def('y-two', (h) => '<style>:host { display: inline-flex }</style><input name="' + at(h, 'field') + '" maxlength="' + at(h, 'max') + '">' +
+    '<input name="' + at(h, 'field2') + '" maxlength="' + at(h, 'max2') + '">');
+  def('y-phone3', (h) => '<style>:host { display: inline-flex }</style>(<input name="' + at(h, 'field') + '_area" maxlength="3">) ' +
+    '<input name="' + at(h, 'field') + '_prefix" maxlength="3"> - <input name="' + at(h, 'field') + '_line" maxlength="4">');
+  // A country-code picker drawn in a component, and an intl-tel-input drawn whole in one.
+  def('y-code', (h) => '<style>:host { display: inline-block }</style><select name="' + at(h, 'field') + '" aria-label="Country code">' +
+    ['+1', '+44', '+39'].map((c) => '<option value="' + c + '"' + (c === at(h, 'code') ? ' selected' : '') + '>' + c + '</option>').join('') + '</select>');
+  def('y-tel', (h) => '<style>:host { display: inline-flex }</style><button type="button" aria-label="Change country, selected (' + at(h, 'code') + ')">' +
+    at(h, 'code') + '</button><input type="tel" name="' + at(h, 'field') + '" aria-label="' + at(h, 'label') + '">');
 </script>`;
 
 const LABELLED_FROM_OUTSIDE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
@@ -3271,6 +3282,50 @@ const COMPONENT_HEADINGS = `<!doctype html><html><head><meta charset="utf-8"><ti
   </y-section>
   <y-heading text="Education"></y-heading>
   <div class="q"><label>End date year</label><input name="q_9505"></div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * A telephone number asked in boxes drawn in components: the three boxes of
+ * `(___) ___-____` each drawn in one, an Area code and a seven-digit number
+ * each drawn in one, and one component drawing all three boxes loose in its
+ * root. And the shape that is two things, not one number: an area code box
+ * drawn alone in a component beside a component drawing two boxes of its
+ * own, 3 and 4.
+ */
+const COMPONENT_PHONE_PARTS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label>Phone</label>(<y-box field="phone_area" maxlength="3"></y-box>) <y-box field="phone_prefix" maxlength="3"></y-box> -
+    <y-box field="phone_line" maxlength="4"></y-box></div>
+  <div class="q"><label>Area code</label><y-box field="mobile_area_code" maxlength="3"></y-box>
+    <label>Mobile phone number</label><y-box field="mobile_number" maxlength="7"></y-box></div>
+  <div class="q"><label>Home phone</label><y-phone3 field="home_phone"></y-phone3></div>
+  <div class="q"><label>Daytime phone</label>(<y-box field="day_phone_area" maxlength="3"></y-box>)
+    <y-two field="day_phone_prefix" max="3" field2="day_phone_line" max2="4"></y-two></div>
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * A dialling code beside a telephone box, drawn in components: the page's
+ * select on +44 beside a box drawn in a component, a select drawn in a
+ * component beside the page's box, and an intl-tel-input drawn whole in one
+ * component. And a Home phone drawn alone in a component in a row beside an
+ * Alternate phone drawn with a +44 of its own, which is not the Home
+ * phone's.
+ */
+const COMPONENT_DIALLING_CODE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="phone"><label>Country code</label><select name="cc_1"><option>+1</option><option selected>+44</option></select>
+    <label>Phone</label><y-box type="tel" field="q_9701"></y-box></div>
+  <div class="phone"><label>Country code</label><y-code field="cc_2" code="+44"></y-code>
+    <label>Mobile phone</label><input type="tel" name="q_9702"></div>
+  <div class="q"><label>Mobile phone</label><y-tel code="+44" field="q_9703" label="Mobile phone"></y-tel></div>
+  <div class="row">
+    <div class="q"><label>Home phone</label><y-box type="tel" field="q_9704"></y-box></div>
+    <div class="q"><label>Alternate phone</label><y-tel code="+44" field="q_9705" label="Alternate phone"></y-tel></div>
+  </div>
 </form>
 ${COMPONENT_DEFINITIONS}
 </body></html>`;
@@ -4536,7 +4591,7 @@ const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><tit
   });
 </script></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -8893,6 +8948,48 @@ async function main() {
       drawnHeadings.q_9502 === 'Boston' && drawnHeadings.q_9504 === '(555) 010-0199' && drawnHeadings.filled.length === 3 &&
         drawnHeadings.skipped.length === 0,
       JSON.stringify(drawnHeadings),
+    );
+
+    const drawnParts = await componentFill('/component-phone-parts', SWEEP);
+    group('A telephone number asked in boxes drawn in components');
+    check(
+      'three boxes of 3, 3 and 4, each drawn in a component, take the number a part each',
+      drawnParts.phone_area === '555' && drawnParts.phone_prefix === '010' && drawnParts.phone_line === '0199',
+      JSON.stringify(drawnParts),
+    );
+    check(
+      'an Area code and a seven-digit number, each drawn in a component, take the area code and the rest',
+      drawnParts.mobile_area_code === '555' && drawnParts.mobile_number === '0100199',
+      JSON.stringify(drawnParts),
+    );
+    check(
+      'a component drawing all three boxes loose in its root fills them a part each',
+      drawnParts.home_phone_area === '555' && drawnParts.home_phone_prefix === '010' && drawnParts.home_phone_line === '0199',
+      JSON.stringify(drawnParts),
+    );
+    check(
+      'an area code box alone in a component is not joined to the two boxes another component draws: all three are left, and reported',
+      drawnParts.day_phone_area === '' && drawnParts.day_phone_prefix === '' && drawnParts.day_phone_line === '' &&
+        drawnParts.filled.length === 3 && drawnParts.skipped.length === 2 && drawnParts.skipped.every((r) => r.startsWith('phone:')),
+      JSON.stringify(drawnParts),
+    );
+
+    const drawnCode = await componentFill('/component-dialling-code', { ...SWEEP, phone: '07700 900123', address_country: 'United Kingdom' });
+    group('A dialling code beside a telephone box, drawn in components');
+    check(
+      'a box drawn in a component beside the page\'s select on +44 is given "7700 900123"',
+      drawnCode.q_9701 === '7700 900123',
+      JSON.stringify(drawnCode),
+    );
+    check(
+      'and so is the page\'s box beside a select drawn in a component, and the box of an intl-tel-input drawn whole in one',
+      drawnCode.q_9702 === '7700 900123' && drawnCode.q_9703 === '7700 900123',
+      JSON.stringify(drawnCode),
+    );
+    check(
+      'a Home phone beside an Alternate phone drawn with a +44 of its own keeps its 0, and the Alternate phone is given "7700 900123"',
+      drawnCode.q_9704 === '07700 900123' && drawnCode.q_9705 === '7700 900123' && drawnCode.filled.length === 5 && drawnCode.skipped.length === 0,
+      JSON.stringify(drawnCode),
     );
 
     const dateParts = await page.goto(`${base}/date-in-parts`, { waitUntil: 'domcontentloaded' }).then(() =>
