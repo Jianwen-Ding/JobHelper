@@ -4057,7 +4057,7 @@ export function createCard({
     lastPrepared = whatWouldBeStaged();
     const mine = act(
       'stage',
-      { spec: state.spec, coverLetter: state.letter, answers: collectedAnswers(), naming: state.naming },
+      { spec: state.spec, coverLetter: stagedLetter(), answers: collectedAnswers(), naming: state.naming },
       (staged) => {
         if (staged) {
           state.staged = staged;
@@ -4196,9 +4196,26 @@ export function createCard({
       state.spec?.choices ?? null,
       state.spec?.sections ?? null,
       state.letter ?? '',
+      // Held back or not is a different folder: see `stagedLetter`.
+      stagedLetter(),
       collectedAnswers(),
       state.naming ?? null,
     ]);
+
+  /*
+   * The letter the folder gets without anybody asking: none, while the AI's
+   * placeholders are still in it.
+   *
+   * A draft that landed was staged a second later, typeset as "Cover Letter
+   * Acme.pdf" with "Dear [Company Name]," at the top, and offered on the drag
+   * chips and by Attach files beside the resume — as final, with the note
+   * about it back in the letter step. It goes in once they are filled in, or
+   * once somebody says to use it as it is. "Mark as applied" is asked for,
+   * and files what is in the box.
+   */
+  function stagedLetter() {
+    return letterGapsLeft().length ? '' : state.letter;
+  }
 
   function prepareSoon() {
     if (!state.spec) return;
@@ -5868,6 +5885,18 @@ export function createCard({
               (letterControls.gaps = letterGapsLeft().length
                 ? h('div', { className: 'hint warn', dataset: { note: 'letter-gaps' } }, [
                     h('span', { textContent: `${gapNote(letterGapsLeft())} ` }),
+                    h('span', { textContent: 'It stays out of the upload folder until then. ' }),
+                    // A bracket that is meant to be there is theirs to keep.
+                    h('button', {
+                      className: 'link',
+                      textContent: 'Use it as it is',
+                      onclick: () => {
+                        state.letterGaps = [];
+                        state.letterSource = state.letterSource.replace(NOT_FINISHED, '');
+                        prepareSoon();
+                        draw();
+                      },
+                    }),
                   ])
                 : null),
               !state.letter?.trim()
@@ -6793,6 +6822,14 @@ export function createCard({
               textContent:
                 'The form asks for it. Write it above and save again, or attach it yourself — nothing here will add it for you.',
             }),
+          ])
+        : null,
+      // A letter filed with the AI's placeholders in it is in the folder, and
+      // is not ready: "named and ready to attach" is not said of it unqualified.
+      letterGapsLeft().length > 0
+        ? h('div', { className: 'done-missing', dataset: { note: 'letter-gaps' } }, [
+            h('strong', { textContent: 'The cover letter is not finished.' }),
+            h('div', { textContent: gapNote(letterGapsLeft()) }),
           ])
         : null,
       /*

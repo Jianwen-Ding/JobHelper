@@ -4692,9 +4692,10 @@ async function main() {
       box().value = text;
       box().dispatchEvent(new Event('input', { bubbles: true }));
     };
+    // The sentence naming them, which the note opens with.
     const note = () => {
       const n = root.querySelector('[data-note="letter-gaps"]');
-      return n && !n.hidden ? n.textContent.trim() : null;
+      return n && !n.hidden ? n.firstChild.textContent.trim() : null;
     };
     const step = () => [...root.querySelectorAll('.step-head')].find((n) => /Cover letter/.test(n.textContent));
     const ticked = () => Boolean(step()?.querySelector('.n.done'));
@@ -4760,6 +4761,129 @@ async function main() {
     'and a letter with nothing left in it has no such note, and is ticked',
     gappy.clean.note === null && gappy.clean.ticked === true && !gappy.clean.hints.some((t) => /not finished/.test(t)),
     JSON.stringify(gappy.clean),
+  );
+
+  /*
+   * And it is not put in the upload folder as final.
+   *
+   * A letter that lands is staged a second later — typeset, and offered on
+   * the drag chips and by Attach files. With "Dear [Company Name]," in it
+   * that is a template going out as the letter. It waits until the slots are
+   * filled in, or somebody says to use it as it is; "Mark as applied" is
+   * asked for, files what is in the box, and says the letter is unfinished.
+   */
+  const gappyFolder = await inPage(async (createCard) => {
+    const sent = [];
+    const body = 'Dear [Company Name] team,\n\nI build data platforms and would like to build yours.\n\nBest,\n[Your Name]';
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme', description: 'Kafka and Go.' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: true,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'render') return { pages: 1, fits: true };
+        if (action === 'stage') return { currentDir: '/tmp/x', dir: '/tmp/x', files: ['Resume.pdf'] };
+        if (action === 'bundle') return { currentDir: '/tmp/x', dir: '/tmp/x', files: ['Resume.pdf', 'Cover Letter.pdf'] };
+        if (action === 'coverLetter') {
+          return { executed: true, body, placeholders: ['[Company Name]', '[Your Name]'], unfinished: 'This letter still has 2 placeholders in it.', priorLetters: [] };
+        }
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => new RegExp(t).test(b.textContent));
+    const box = () => root.querySelector('textarea[data-field="letter"]');
+    const type = (text) => {
+      box().value = text;
+      box().dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const lastStaged = () => {
+      const s = sent.filter((c) => c.action === 'stage').at(-1);
+      return s ? s.payload.coverLetter : undefined;
+    };
+    await wait(120);
+    byText('Build resume')?.click();
+    await wait(200);
+
+    byText('Draft a letter')?.click();
+    // The stage waits 1.2s for typing to stop: see `prepareSoon`.
+    await wait(1600);
+    const drafted = {
+      staged: lastStaged(),
+      note: root.querySelector('[data-note="letter-gaps"]')?.textContent ?? null,
+    };
+
+    const filledText = body.replace('[Company Name]', 'Acme').replace('[Your Name]', 'Morgan Testwell');
+    type(filledText);
+    await wait(1600);
+    const filled = { staged: lastStaged(), filledText };
+
+    // Back to the draft as it came, and kept on purpose.
+    type(body);
+    byText('Redraft')?.click();
+    await wait(1600);
+    const redrafted = { staged: lastStaged() };
+    byText('Use it as it is')?.click();
+    await wait(1600);
+    const kept = {
+      staged: lastStaged(),
+      note: root.querySelector('[data-note="letter-gaps"]')?.textContent ?? null,
+    };
+
+    // Redrafted again, and filed as it stands.
+    byText('Redraft')?.click();
+    await wait(200);
+    byText('Mark as applied')?.click();
+    await wait(200);
+    // Filing folds the card away; the finished screen is under the chevron.
+    [...root.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === 'Unfold JobHelper')?.click();
+    await wait(100);
+    const filed = {
+      bundled: sent.filter((c) => c.action === 'bundle').at(-1)?.payload?.coverLetter ?? null,
+      done: root.querySelector('.done-missing[data-note="letter-gaps"]')?.textContent ?? null,
+    };
+    return { body, drafted, filled, redrafted, kept, filed };
+  });
+  check(
+    'an AI letter with placeholders is not staged into the upload folder',
+    gappyFolder.drafted.staged === '',
+    JSON.stringify(gappyFolder.drafted),
+  );
+  check(
+    'and the note says it stays out until they are filled in',
+    /fill them in before sending\. It stays out of the upload folder until then\./.test(gappyFolder.drafted.note ?? ''),
+    String(gappyFolder.drafted.note),
+  );
+  check(
+    'filled in, it goes into the folder',
+    gappyFolder.filled.staged === gappyFolder.filled.filledText,
+    JSON.stringify(gappyFolder.filled.staged),
+  );
+  check('a redraft with placeholders is held back again', gappyFolder.redrafted.staged === '', JSON.stringify(gappyFolder.redrafted));
+  check(
+    '"Use it as it is" puts it in as it stands, and the note goes',
+    gappyFolder.kept.staged === gappyFolder.body && gappyFolder.kept.note === null,
+    JSON.stringify(gappyFolder.kept),
+  );
+  check(
+    'marked as applied with placeholders in it, the letter is filed as it stands',
+    gappyFolder.filed.bundled === gappyFolder.body,
+    JSON.stringify(gappyFolder.filed.bundled),
+  );
+  check(
+    'and the finished screen says it is not finished',
+    /The cover letter is not finished\..*The draft still has \[Company Name\] and \[Your Name\] in it/.test(gappyFolder.filed.done ?? ''),
+    String(gappyFolder.filed.done),
   );
 
   console.log('\nThe list of pages stays open through a repaint');
