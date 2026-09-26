@@ -6140,8 +6140,16 @@ function stillLoading(widget, openBefore) {
     .flatMap((el) => `${el.getAttribute('aria-controls') ?? ''} ${el.getAttribute('aria-owns') ?? ''}`.split(/\s+/))
     .filter(Boolean);
   const lists = ids.map((id) => widget.getRootNode().getElementById?.(id) ?? document.getElementById(id)).filter(Boolean);
-  // A list it names, or failing that the one menu its press opened.
-  const fresh = lists.length ? lists : visibleListboxes().filter((l) => l !== widget && !openBefore?.has(l));
+  /*
+   * A list it names, or failing that the one menu its press opened — never
+   * another question's, as `listsOf` never takes one. Measured on a local
+   * fixture: a City box that opens nothing on a press, on a page that opens
+   * the answered sponsorship question's menu whenever the focus moves, a
+   * menu saying "Loading..." for as long as it is open. That menu was the
+   * one that opened, and its "Loading..." held the City's first look open
+   * for the whole patience rather than `quiet`.
+   */
+  const fresh = lists.length ? lists : visibleListboxes().filter((l) => l !== widget && !openBefore?.has(l) && !anothersList(l, widget));
   return (lists.length || fresh.length === 1) &&
     fresh.some((l) => l.getAttribute('aria-busy') === 'true' || l.querySelector('[class*="notice--loading"], [class*="loadingMessage"], [aria-busy="true"]'));
 }
@@ -6250,13 +6258,7 @@ function listsOf(widget, openBefore = null) {
    * require sponsorship…?" was given to "Are you legally authorized to work in
    * the United States?", and both were reported filled.
    */
-  const theirs = (list) =>
-    (Boolean(list.id) &&
-      deepQueryAll(`[aria-controls~="${CSS.escape(list.id)}"], [aria-owns~="${CSS.escape(list.id)}"]`).some(
-        (el) => el !== widget && el !== box && !widget.contains(el),
-      )) ||
-    drawnByAnother(list, widget);
-  const showing = visibleListboxes().filter((l) => l !== widget && !theirs(l));
+  const showing = visibleListboxes().filter((l) => l !== widget && !anothersList(l, widget));
   /*
    * And, where the widget names none, the one its own press opened.
    *
@@ -6301,6 +6303,21 @@ function listsOf(widget, openBefore = null) {
   const inside = saysShut ? [] : showing.filter((l) => widget.contains(l) && !holdsOnlyChosen(l));
   const lists = fresh.length ? fresh : inside;
   return lists.length === 1 ? lists : [];
+}
+
+/**
+ * Whether a list is another question's: named by another control as its own,
+ * or drawn beside another question's widget. See `listsOf`.
+ */
+function anothersList(list, widget) {
+  const box = typingBoxOf(widget);
+  return (
+    (Boolean(list.id) &&
+      deepQueryAll(`[aria-controls~="${CSS.escape(list.id)}"], [aria-owns~="${CSS.escape(list.id)}"]`).some(
+        (el) => el !== widget && el !== box && !widget.contains(el),
+      )) ||
+    drawnByAnother(list, widget)
+  );
 }
 
 /**
