@@ -2194,8 +2194,37 @@ const EDUCATION_SECTION = /\b(education|academic\w*|schools?|degrees?)\b/i;
  */
 function educationDateKey(input, description) {
   const key = educationDatePart(description);
-  if (!key || !EDUCATION_SECTION.test(sectionOf(input))) return null;
+  if (!key || !EDUCATION_SECTION.test(sectionOf(input))) return graduationPartKey(input);
   return key;
+}
+
+/*
+ * A graduation date asked as a group of boxes, each labelled only with its
+ * part: GOV.UK's date input and the forms built like it, a `<fieldset>` whose
+ * `<legend>` asks "When did you graduate?" or "Expected graduation date" over
+ * a box or a list labelled "Month" and another labelled "Year".
+ *
+ * Every pattern here reads a field's own words, and "Month" and "Year" say
+ * nothing about which date, so both were left empty and unreported beside a
+ * profile holding the graduation. The question is the group's, and it is only
+ * read when the box's own label is nothing but a date part, so the legend is
+ * never a description of an ordinary box under it (see `surroundingWords`).
+ * The group says which date, and only a graduation is filled: a date of birth
+ * or an availability asked the same way matches no pattern. The box says
+ * which part, so "Month" under "Graduation month and year" is still the
+ * month. A "Day" box is left alone, as a guessed day is a guess.
+ */
+const DATE_PART = { month: /^(month|mm)$/i, year: /^(year|yyyy|yy)$/i };
+
+function graduationPartKey(input) {
+  const own = withoutMarkers(labelFor(input)) || clean(input.placeholder);
+  const part = Object.keys(DATE_PART).find((p) => DATE_PART[p].test(own));
+  if (!part) return null;
+  const legend = input.closest('fieldset')?.querySelector(':scope > legend');
+  const group = input.closest('[role="group"]');
+  const asked = clean(legend?.textContent) || clean(group?.getAttribute('aria-label')) || fromLabelledBy(group);
+  const found = asked ? FIELD_PATTERNS.find(([, re]) => re.test(asked))?.[0] : null;
+  return /^graduation_(month|year|date)$/.test(found ?? '') ? `graduation_${part}` : null;
 }
 
 /*

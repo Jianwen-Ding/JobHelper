@@ -3029,6 +3029,34 @@ const SLOTTED_LABELS = `<!doctype html><html><head><meta charset="utf-8"><title>
 </body></html>`;
 
 /*
+ * A date asked as a group of boxes, each labelled only with its part: the
+ * GOV.UK date input, a `<fieldset>` whose legend is the question over Day,
+ * Month and Year boxes, and the same with a Month and a Year list. Beside the
+ * graduation, a date of birth and a start date asked the same way, which are
+ * not the profile's to answer.
+ */
+const DATE_IN_PARTS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <fieldset role="group"><legend>When do you expect to graduate?</legend>
+    <label for="gov-month">Month</label><input id="gov-month" name="q7-month" inputmode="numeric" maxlength="2">
+    <label for="gov-year">Year</label><input id="gov-year" name="q7-year" inputmode="numeric" maxlength="4">
+  </fieldset>
+  <fieldset><legend>Expected graduation date</legend>
+    <select id="sel-month" name="q8m" aria-label="Month"><option value="">Month</option><option value="01">January</option><option value="05">May</option><option value="12">December</option></select>
+    <select id="sel-year" name="q8y" aria-label="Year"><option value="">Year</option><option>2025</option><option>2026</option><option>2027</option></select>
+  </fieldset>
+  <fieldset role="group"><legend>Date of birth</legend>
+    <label for="dob-day">Day</label><input id="dob-day" name="q9-day" inputmode="numeric">
+    <label for="dob-month">Month</label><input id="dob-month" name="q9-month" inputmode="numeric">
+    <label for="dob-year">Year</label><input id="dob-year" name="q9-year" inputmode="numeric">
+  </fieldset>
+  <fieldset role="group"><legend>When could you start?</legend>
+    <label for="st-month">Month</label><input id="st-month" name="q10-month" inputmode="numeric">
+    <label for="st-year">Year</label><input id="st-year" name="q10-year" inputmode="numeric">
+  </fieldset>
+</form></body></html>`;
+
+/*
  * Two dropdowns from the live sweep. Spotify's Lever form asks "What is your
  * location?" as a list of countries, and Ramp asks a 1–10 scale whose label
  * ends "(phone)"; beside them a "Phone type" list, and the phone box itself.
@@ -4224,7 +4252,7 @@ const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><tit
   });
 </script></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/date-in-parts': DATE_IN_PARTS, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
 
 const PROFILE = {
   first_name: 'Jianwen',
@@ -8308,6 +8336,33 @@ async function main() {
       'a label given as the slot\'s fallback is still read, and a question slotted in is not given anything',
       slotted.q_1004 === 'Boston' && slotted.q_1005 === '' && slotted.filled.length === 4,
       JSON.stringify(slotted),
+    );
+
+    const dateParts = await page.goto(`${base}/date-in-parts`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(fields);
+        return {
+          ...Object.fromEntries([...document.querySelectorAll('input, select')].map((el) => [el.id, el.value])),
+          filled: report.filled.map((f) => `${f.key}=${f.value}`),
+        };
+      }, { b: base, fields: { ...SWEEP, graduation_month: 'May', graduation_year: '2026', graduation_date: 'May 2026' } }),
+    );
+    group('A graduation date asked as boxes labelled Month and Year');
+    check(
+      'the GOV.UK date input under "When do you expect to graduate?" takes 05 and 2026',
+      dateParts['gov-month'] === '05' && dateParts['gov-year'] === '2026',
+      JSON.stringify(dateParts),
+    );
+    check(
+      'a Month and a Year list under "Expected graduation date" are set to May and 2026',
+      dateParts['sel-month'] === '05' && dateParts['sel-year'] === '2026',
+      JSON.stringify(dateParts),
+    );
+    check(
+      'a date of birth and a start date asked the same way are left empty, and nothing else is filled',
+      ['dob-day', 'dob-month', 'dob-year', 'st-month', 'st-year'].every((id) => dateParts[id] === '') && dateParts.filled.length === 4,
+      JSON.stringify(dateParts),
     );
 
     /*
