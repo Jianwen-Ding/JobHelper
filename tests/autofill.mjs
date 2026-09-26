@@ -3621,6 +3621,164 @@ const PAGE_LISTBOX_ASKED_AGAIN = `<!doctype html><html><head><meta charset="utf-
 </body></html>`;
 
 /*
+ * A Country listbox the fill answers, and a "Country of residence" listbox
+ * after it that ignores every click and opens no list of its own. Pressed,
+ * the second draws nothing, so the only list on screen is the Country one:
+ * it is not this question's, and nothing may be chosen in it for this one.
+ * Every click on an option is written down, with the question it is under.
+ */
+const PAGE_LISTBOX_DEAF = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="ld-country">Country</label>
+    <div role="listbox" aria-labelledby="ld-country">
+      <div role="option" tabindex="0">France</div><div role="option" tabindex="0">Germany</div>
+      <div role="option" tabindex="0">Canada</div><div role="option" tabindex="0">United States</div>
+    </div></div>
+  <div class="q"><label id="ld-res">Country of residence</label>
+    <div role="listbox" aria-labelledby="ld-res" data-deaf>
+      <div role="option" tabindex="0">Canada</div><div role="option" tabindex="0">United States</div>
+    </div></div>
+</form>
+<script>
+  window.clicked = [];
+  document.addEventListener('click', (e) => {
+    const option = e.target.closest('[role="option"]');
+    if (!option) return;
+    const list = option.closest('[role="listbox"]');
+    window.clicked.push(document.getElementById(list.getAttribute('aria-labelledby')).textContent + ' — ' + option.textContent);
+    if (!list.hasAttribute('data-deaf')) for (const o of list.querySelectorAll('[role="option"]')) o.setAttribute('aria-selected', String(o === option));
+  });
+</script>
+</body></html>`;
+
+/*
+ * Dropdowns whose lists are theirs without being inside them, beside a
+ * Country listbox on screen the whole time. A School combobox whose list is
+ * drawn at the foot of the body on a press, and named in its
+ * `aria-controls` as it opens. A Degree drawn as react-select draws one: a
+ * text box in a control, the menu drawn in the widget's container on a press
+ * or a keystroke and named nowhere, and the choice drawn as a single value
+ * with the text box emptied. And a Discipline drawn the same way whose menu
+ * opens as the box takes the focus, before any press.
+ */
+const PAGE_PORTALLED_COMBOBOX = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="pp-country">Country</label>
+    <div role="listbox" aria-labelledby="pp-country">
+      <div role="option" tabindex="0">Canada</div><div role="option" tabindex="0">United States</div>
+    </div></div>
+  <div class="q"><label id="pp-school-l">School</label>
+    <button type="button" id="pp-school" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="pp-school-l">Select One</button></div>
+  <div class="q"><label id="pp-degree-l">Degree</label>
+    <div class="select"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+      <input id="pp-degree" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="pp-degree-l" autocomplete="off"></div></div>
+      <input type="hidden" name="degree" id="pp-degree-h"></div></div>
+  <div class="q"><label id="pp-major-l">Discipline</label>
+    <div class="select"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+      <input id="pp-major" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="pp-major-l" autocomplete="off"></div></div>
+      <input type="hidden" name="major" id="pp-major-h"></div></div>
+</form>
+<script>
+  document.addEventListener('click', (e) => {
+    const option = e.target.closest('[role="option"]');
+    if (option && option.closest('form')) for (const o of option.closest('[role="listbox"]').querySelectorAll('[role="option"]')) o.setAttribute('aria-selected', String(o === option));
+  });
+
+  const school = document.getElementById('pp-school');
+  let schoolList = null;
+  const shutSchool = () => { schoolList?.remove(); schoolList = null; school.setAttribute('aria-expanded', 'false'); };
+  school.addEventListener('click', () => {
+    if (schoolList) return shutSchool();
+    schoolList = document.createElement('div');
+    schoolList.id = 'pp-school-list'; schoolList.setAttribute('role', 'listbox');
+    for (const text of ['Boston University', 'Northeastern University']) {
+      const o = document.createElement('div');
+      o.setAttribute('role', 'option'); o.textContent = text;
+      o.addEventListener('click', () => { school.textContent = text; shutSchool(); });
+      schoolList.append(o);
+    }
+    document.body.append(schoolList);
+    school.setAttribute('aria-controls', schoolList.id);
+    school.setAttribute('aria-expanded', 'true');
+  });
+  school.addEventListener('keydown', (e) => { if (e.key === 'Escape') shutSchool(); });
+
+  /*
+   * The menu is drawn in the widget's container and named nowhere. Opened on
+   * a press or a keystroke; or, with \`onFocus\`, as the box takes the focus,
+   * after which a press on the box leaves it be and a keystroke filters the
+   * same menu, as react-select's \`openMenuOnFocus\` does.
+   */
+  function reactSelect(name, options, { onFocus = false } = {}) {
+    const input = document.getElementById('pp-' + name);
+    const holder = input.closest('.select');
+    let menu = null;
+    const shut = () => { menu?.remove(); menu = null; input.setAttribute('aria-expanded', 'false'); };
+    const fill = () => {
+      const typed = input.value.toLowerCase();
+      menu.replaceChildren();
+      for (const text of options.filter((t) => t.toLowerCase().includes(typed))) {
+        const o = document.createElement('div');
+        o.setAttribute('role', 'option'); o.textContent = text;
+        o.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          document.getElementById('pp-' + name + '-h').value = text;
+          const shown = holder.querySelector('.select__placeholder, .select__single-value');
+          shown.className = 'select__single-value'; shown.textContent = text;
+          input.value = '';
+          shut();
+        });
+        menu.append(o);
+      }
+    };
+    const open = () => {
+      shut();
+      menu = document.createElement('div');
+      menu.className = 'select__menu'; menu.setAttribute('role', 'listbox');
+      fill();
+      holder.append(menu);
+      input.setAttribute('aria-expanded', 'true');
+    };
+    if (onFocus) {
+      input.addEventListener('focus', open);
+      input.addEventListener('mousedown', () => { if (!menu) open(); });
+      input.addEventListener('input', () => (menu ? fill() : open()));
+    } else {
+      input.addEventListener('mousedown', open);
+      input.addEventListener('input', open);
+    }
+    input.addEventListener('keydown', (e) => { if (e.key === 'Escape') shut(); });
+    input.addEventListener('blur', () => { input.value = ''; shut(); });
+  }
+  reactSelect('degree', ['Bachelor of Science', 'Master of Science']);
+  reactSelect('major', ['Computer Science', 'Mathematics'], { onFocus: true });
+</script>
+</body></html>`;
+
+/*
+ * A School combobox whose list, named in its `aria-controls`, is drawn inside
+ * the widget's control as a plain list of options with no listbox role, and
+ * which ignores a click on any of them. The list's words are in the control
+ * whether anything is chosen or not, so they are no sign that it took.
+ */
+const PAGE_COMBOBOX_UNROLED_LIST = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="ul-school-l">School</label>
+    <div class="picker-control">
+      <button type="button" id="ul-school" role="combobox" aria-haspopup="listbox" aria-controls="ul-school-list" aria-expanded="false" aria-labelledby="ul-school-l">Select One</button>
+      <ul id="ul-school-list" hidden><li role="option">Boston University</li><li role="option">Northeastern University</li></ul>
+    </div></div>
+</form>
+<script>
+  const school = document.getElementById('ul-school');
+  const list = document.getElementById('ul-school-list');
+  const show = (open) => { list.hidden = !open; school.setAttribute('aria-expanded', String(open)); };
+  school.addEventListener('click', () => show(list.hidden));
+  school.addEventListener('keydown', (e) => { if (e.key === 'Escape') show(false); });
+</script>
+</body></html>`;
+
+/*
  * The page's own boxes, each put into a component that draws its label round
  * the slot: in a wrapper before the slot or before a wrapper round it, loose
  * in its root, round the slot, and with the label's words slotted in too,
@@ -4989,7 +5147,7 @@ const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><tit
   });
 </script></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
 
 const PROFILE = {
   first_name: 'Morgan',
@@ -9661,6 +9819,77 @@ async function main() {
       askedAgain.select === 'United States' && askedAgain.picked === '- -' && askedAgain.filled.join() === 'address_country' &&
         askedAgain.skipped.join() === 'address_country: this one has to be picked by hand',
       JSON.stringify(askedAgain),
+    );
+
+    // Whether each option on the page is chosen: "x" when it is and "-" when not.
+    const optionsPicked = () => [...document.querySelectorAll('[role="option"]')].map((o) => (o.getAttribute('aria-selected') === 'true' ? 'x' : '-')).join(' ');
+    await page.goto(`${base}/page-listbox-deaf`, { waitUntil: 'domcontentloaded' });
+    const deafListbox = await page.evaluate(async ({ b, fields, picked }) => {
+      const m = await import(`${b}/autofill.js`);
+      const optionsPicked = new Function(`return (${picked})()`);
+      const first = m.fillForm(fields);
+      const pickedFirst = optionsPicked();
+      window.clicked = [];
+      const report = await m.fillComboboxes(fields, first, { patience: 1000 });
+      return {
+        pickedFirst, picked: optionsPicked(), clicked: window.clicked,
+        filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason} [${s.description}]`),
+      };
+    }, { b: base, fields: SWEEP, picked: optionsPicked.toString() });
+    await page.goto(`${base}/page-portalled-combobox`, { waitUntil: 'domcontentloaded' });
+    const portalled = await page.evaluate(async ({ b, fields, picked }) => {
+      const m = await import(`${b}/autofill.js`);
+      const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 1000 });
+      return {
+        school: document.getElementById('pp-school').textContent, degree: document.getElementById('pp-degree-h').value,
+        major: document.getElementById('pp-major-h').value,
+        shown: [...document.querySelectorAll('.select__single-value')].map((el) => el.textContent), picked: new Function(`return (${picked})()`)(),
+        open: document.querySelectorAll('[role="listbox"]').length,
+        filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+      };
+    }, { b: base, fields: SWEEP, picked: optionsPicked.toString() });
+    await page.goto(`${base}/page-combobox-unroled-list`, { waitUntil: 'domcontentloaded' });
+    const unroled = await page.evaluate(async ({ b, fields }) => {
+      const m = await import(`${b}/autofill.js`);
+      const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 1000 });
+      return {
+        school: document.getElementById('ul-school').textContent, open: !document.getElementById('ul-school-list').hidden,
+        filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+      };
+    }, { b: base, fields: SWEEP });
+    group("A dropdown chooses only in its own list, and is filled only once it shows the answer");
+    check(
+      'a listbox that opens no list of its own and ignores clicks, beside an answered Country listbox, is reported as one to pick by hand, not filled',
+      deafListbox.filled.join() === 'address_country' &&
+        deafListbox.skipped.join() === 'address_country: this one has to be picked by hand [Country of residence]',
+      JSON.stringify(deafListbox),
+    );
+    check(
+      'and nothing is clicked in the Country listbox for it, which is left as the fill left it',
+      deafListbox.pickedFirst === '- - - x - -' && deafListbox.picked === deafListbox.pickedFirst && !deafListbox.clicked.some((c) => c.startsWith('Country —')),
+      JSON.stringify(deafListbox),
+    );
+    check(
+      'a combobox whose list, drawn inside it and named by aria-controls, has no listbox role and ignores the click is not reported filled for the list\'s words, and is shut again',
+      unroled.school === 'Select One' && !unroled.open && !unroled.filled.includes('school') && unroled.skipped.join() === 'school: this one has to be picked by hand',
+      JSON.stringify(unroled),
+    );
+    check(
+      'a combobox whose list is drawn at the foot of the body and named by aria-controls, beside a listbox on screen, is still filled',
+      portalled.school === 'Northeastern University' && portalled.filled.includes('school') && !portalled.skipped.some((s) => s.startsWith('school:')),
+      JSON.stringify(portalled),
+    );
+    check(
+      'and a react-select whose menu is named nowhere, beside the same listbox, is still filled from the menu its press opened, the Country listbox answered once and nothing left open',
+      portalled.degree === 'Bachelor of Science' && portalled.shown[0] === 'Bachelor of Science' && portalled.filled.slice(0, 3).join() === 'address_country,school,degree' &&
+        !portalled.skipped.some((s) => s.startsWith('degree:')) && portalled.picked === '- x' && portalled.open === 1,
+      JSON.stringify(portalled),
+    );
+    check(
+      'and one whose menu opens as its box takes the focus, before any press, is filled from that menu, and nothing else is left',
+      portalled.major === 'Computer Science' && portalled.shown.join() === 'Bachelor of Science,Computer Science' &&
+        portalled.filled.join() === 'address_country,school,degree,major' && portalled.skipped.length === 0,
+      JSON.stringify(portalled),
     );
 
     const putIn = (url) => page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' }).then(() =>

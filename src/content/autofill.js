@@ -6127,15 +6127,6 @@ function typingBoxOf(widget) {
   return widget.querySelector?.('input:not([type=hidden])') ?? null;
 }
 
-/**
- * The options this widget opened — and only this widget's.
- *
- * The listbox it names through `aria-controls` or `aria-owns`, which is how an
- * accessible widget says which popup is its own. Failing that, the listbox
- * that is visible, but only if exactly one is: two open listboxes and no
- * pointer to either is a page where choosing is a guess about which one
- * answers this question, and guessing is what this does not do.
- */
 /** The listboxes showing on the page right now. */
 function visibleListboxes() {
   return deepQueryAll('[role="listbox"]').filter(
@@ -6148,23 +6139,62 @@ function visibleListboxes() {
   );
 }
 
+/**
+ * The options this widget opened — and only this widget's.
+ *
+ * The list it names through `aria-controls`, `aria-owns` or
+ * `aria-activedescendant`, which is how an accessible widget says which popup
+ * is its own. Failing that, the listbox its own press opened, or the one
+ * showing inside it, but only if exactly one is: two new listboxes and no
+ * pointer to either is a page where choosing is a guess about which one
+ * answers this question, and guessing is what this does not do. See
+ * `listsOf`.
+ */
 function optionsOf(widget, openBefore = null) {
   // What its press drew, since nothing names it. See `plainOptions`.
   if (PLAIN.has(widget)) return plainOptions(widget);
+  return listsOf(widget, openBefore)
+    .flatMap((l) => [...l.querySelectorAll('[role="option"], [role="menuitem"]')])
+    .filter((o) => !isDisabled(o) && o.getAttribute('aria-disabled') !== 'true');
+}
+
+/**
+ * The lists a widget names as its own: through `aria-controls` or
+ * `aria-owns`, the one holding the option its `aria-activedescendant` points
+ * at, or the menu a Fabric select names its own way (see `isFabricSelect`).
+ */
+function namedListsOf(widget) {
   const box = typingBoxOf(widget);
+  const byId = (id) => widget.getRootNode().getElementById?.(id) ?? document.getElementById(id);
   const ids = [widget, box]
     .filter(Boolean)
     .flatMap((el) => `${el.getAttribute('aria-controls') ?? ''} ${el.getAttribute('aria-owns') ?? ''}`.split(/\s+/))
     .filter(Boolean);
+  if (isFabricSelect(widget)) ids.push(widget.getAttribute('data-menu-id'));
+  const lists = ids.map(byId);
+  for (const el of [widget, box].filter(Boolean)) {
+    const active = el.getAttribute('aria-activedescendant');
+    const option = active ? byId(active) : null;
+    if (option) lists.push(option.closest('[role="listbox"], [role="menu"], [role="tree"], [role="grid"]') ?? option.parentElement);
+  }
   /*
    * Each list once. A react-select's typing box is the widget itself, so the
    * one `aria-controls` was read twice and every option listed twice — which
    * "the first that matches" never noticed, and "the only one that matches"
    * did: Boston, Massachusetts was two Bostons and neither was chosen.
    */
-  // And the menu a Fabric select names its own way. See `isFabricSelect`.
-  if (isFabricSelect(widget)) ids.push(widget.getAttribute('data-menu-id'));
-  const named = [...new Set(ids.map((id) => widget.getRootNode().getElementById?.(id) ?? document.getElementById(id)).filter(Boolean))];
+  return [...new Set(lists.filter((l) => l && l !== widget))];
+}
+
+/**
+ * The lists this widget opened — and only this widget's: the ones it names
+ * (`namedListsOf`), or failing that the one listbox its own press opened, or
+ * failing that the one showing inside it.
+ */
+function listsOf(widget, openBefore = null) {
+  const box = typingBoxOf(widget);
+  const named = namedListsOf(widget);
+  if (named.length) return named;
   /*
    * Never a list another control says is its own.
    *
@@ -6200,9 +6230,20 @@ function optionsOf(widget, openBefore = null) {
    * press is not what the press opened.
    */
   const fresh = openBefore ? showing.filter((l) => !openBefore.has(l)) : [];
-  const lists = named.length ? named : fresh.length ? fresh : showing;
-  if (!named.length && lists.length !== 1) return [];
-  return lists.flatMap((l) => [...l.querySelectorAll('[role="option"], [role="menuitem"]')]).filter((o) => !isDisabled(o) && o.getAttribute('aria-disabled') !== 'true');
+  /*
+   * And never merely the one listbox on screen. That was the last resort
+   * here, and a listbox can be on screen because it is another question's.
+   * Measured: a Country listbox the fill had answered, and after it a
+   * "Country of residence" listbox that ignores clicks and opens nothing.
+   * Pressed, the second drew no list, the Country one was the only listbox
+   * showing, and United States was clicked in it for "Country of
+   * residence", which was reported filled with nothing chosen in it. A
+   * list showing before the press is the widget's only when it is inside
+   * the widget.
+   */
+  const inside = showing.filter((l) => widget.contains(l));
+  const lists = fresh.length ? fresh : inside;
+  return lists.length === 1 ? lists : [];
 }
 
 /** The option that is plainly this answer, or nothing. Never the nearest. */
@@ -6308,22 +6349,45 @@ function tookIt(widget, box, option, value, hiddenBefore, chosen = option.textCo
    * is what a React widget that re-renders its options on click, choosing
    * nothing, looks like: the clicked node is gone and the menu is still open.
    */
-  const control = controlOf(widget).cloneNode(true);
-  for (const list of control.querySelectorAll('[role="listbox"]')) list.remove();
+  const text = shownBy(widget);
   /*
    * The value, or the option it was matched to. "VA" chooses "Virginia", and
    * a dropdown showing "Virginia" does not contain the letters "VA" — so a
    * state chosen correctly was read as ignored and reported as still to pick.
+   *
+   * And only once the control shows something it did not before the press:
+   * words that were in it already are not the choice arriving.
    */
-  const text = clean(control.textContent).toLowerCase();
-  const shows = [value, chosen].some((said) => clean(said) && text.includes(clean(said).toLowerCase()));
+  const changed = text !== shownBefore;
+  const shows = changed && [value, chosen].some((said) => clean(said) && text.includes(clean(said).toLowerCase()));
   /*
    * Or a part of the option it did not show before. Greenhouse's country
    * beside the phone, chosen as "United States +1", draws "+1" and nothing
    * else, so a choice that had plainly taken was reported as still to pick.
    */
-  const part = text.length >= 2 && text !== shownBefore && clean(chosen).toLowerCase().includes(text);
+  const part = text.length >= 2 && changed && clean(chosen).toLowerCase().includes(text);
   return (shows || part) && (!box || !box.value);
+}
+
+/**
+ * What a widget's control shows as its answer, lowercased: its text with its
+ * lists and their options cut out of it.
+ *
+ * Only a listbox was cut out, so a list the widget names that is drawn inside
+ * its control without that role — a plain `<ul>` of options, a `role="menu"`
+ * — lent its words to a click it ignored: a School combobox whose list sat
+ * in its control read "Northeastern University" whether or not anything was
+ * chosen, and was reported filled with "Select One" on it. The same for a
+ * listbox that is itself the question, whose options all say what could be
+ * chosen and none of them what was. An option marked chosen stays, since
+ * that is the control holding its answer.
+ */
+function shownBy(widget) {
+  const control = controlOf(widget).cloneNode(true);
+  const cut = '[role="listbox"], [role="menu"], [role="option"]:not([aria-selected="true"]), [role="menuitem"]';
+  for (const el of control.querySelectorAll(cut)) el.remove();
+  for (const list of namedListsOf(widget)) if (list.id) control.querySelector(`#${CSS.escape(list.id)}`)?.remove();
+  return clean(control.textContent).toLowerCase();
 }
 
 /**
@@ -6590,7 +6654,7 @@ async function chooseInWidget(widget, key, value, options) {
 async function chooseInThisWidget(widget, key, value, { patience, fields, asked }) {
   const box = typingBoxOf(widget);
   const hiddenBefore = hiddenPartner(widget)?.value ?? '';
-  const shownBefore = clean(controlOf(widget).textContent).toLowerCase();
+  const shownBefore = shownBy(widget);
 
   /*
    * Never a control that would send the form.
@@ -6604,8 +6668,14 @@ async function chooseInThisWidget(widget, key, value, { patience, fields, asked 
    */
   if (!box && wouldSubmit(widget)) return 'left';
 
-  widget.focus?.();
+  /*
+   * What was open before the widget is touched at all, focus included: a
+   * menu that opens as it takes the focus is one it opened, and is only
+   * found as that (see `listsOf`) now that the one listbox on screen is not
+   * taken for its own.
+   */
   const openBefore = new Set(visibleListboxes());
+  widget.focus?.();
   let option = null;
   if (box) {
     /*
