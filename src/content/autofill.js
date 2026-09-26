@@ -4802,20 +4802,63 @@ function choiceQuestionFor(group) {
    * questions' buttons, with no words of its own for either, is not both of
    * them asking the one question beside it.
    */
-  let at = containerOf(group);
+  /*
+   * And in through the slot the page's group is put in, as `labelFor`
+   * climbs (`groupDrawnAround`). A component can draw the question round the
+   * slot, `<x-question label="Are you legally authorized to work in the
+   * United States?">` round the page's radiogroup, and `parentElement` went
+   * from the group to the host and on up the page, never into the root: see
+   * `headingDrawnBefore`. Its wrappers cost none of the three, as in
+   * `labelFor`.
+   */
+  const HEADINGS = 'label, legend, h1, h2, h3, h4, h5, h6, .label';
+  const putInto = new Set();
+  let at = groupDrawnAround(group, putInto);
   for (let up = 0; at && up < 3; ) {
-    const heading = clean(at.querySelector('label, legend, h1, h2, h3, h4, h5, h6, .label')?.textContent);
+    const put = putInto.has(at instanceof ShadowRoot ? at : at.getRootNode());
+    const drawn = put && headingDrawnBefore(at, (el) => el === group, HEADINGS);
+    const heading = put ? (drawn ? shownText(drawn) : '') : clean(at.querySelector(HEADINGS)?.textContent);
     if (heading) return heading;
     if (at instanceof ShadowRoot) {
       const others = deepQueryAll(A_CHOICE_GROUP, at).filter((g) => g !== group && !drawnInside(g, group) && !drawnInside(group, g));
       if (at.host.id === OURS || others.length > 0) break;
-      at = containerOf(at.host);
+      at = groupDrawnAround(at.host, putInto);
     } else {
-      at = containerOf(at);
-      up++;
+      at = groupDrawnAround(at, putInto);
+      if (!put) up++;
     }
   }
   return '';
+}
+
+/*
+ * The question a component draws for what the page puts in its slot: the
+ * last element matching `selector` drawn in `scope` before the first thing
+ * `ours` picks out, with no field, option or choice group drawn between
+ * them, and not drawn round it.
+ *
+ * Drawn, because the page's radios put in a component's slot are in the
+ * page's tree and the question in the component's: neither
+ * `querySelectorAll` nor `compareDocumentPosition` relates the two. And
+ * only before, with nothing to answer between. A component that draws two
+ * questions, each over its own slot, is drawing each for the group put in
+ * the slot after it, and the second group is not the first's, as the
+ * page's second group under its own label is not. And a component that
+ * draws "Are you legally authorized to work in the United States? Please
+ * explain." over the slot the page puts its text box in is asking that of
+ * the box, not of the Yes and No the page puts in the slot drawn after it.
+ */
+function headingDrawnBefore(scope, ours, selector) {
+  const drawn = [...drawnWithin(scope)];
+  const first = drawn.findIndex(ours);
+  const between = `${ANOTHER_FIELD}, ${AN_ARIA_OPTION}, ${A_CHOICE_GROUP}`;
+  for (let i = first - 1; i >= 0; i--) {
+    const el = drawn[i];
+    if (drawnInside(el, drawn[first])) continue;
+    if (el.matches(between)) return null;
+    if (el.matches(selector)) return el;
+  }
+  return null;
 }
 
 /* ---------------------------- Radio groups ---------------------------- */
@@ -4905,17 +4948,33 @@ function groupLabelFor(radios) {
   const header = clean(closestAround(first, 'tr')?.querySelector('th')?.textContent);
   if (header) return header;
 
+  /*
+   * And in through the slot the page's buttons are put in, as `labelFor`
+   * climbs (`groupDrawnAround`). A component can draw the question round the
+   * slot, `<x-question label="Will you now or in the future require visa
+   * sponsorship?">` round the page's Yes and No, and `parentElement` went
+   * from the buttons to the host and on up the page, never into the root. Its
+   * wrappers cost none of the five, as in `labelFor`; a root holds the group
+   * when it draws every button, held or put in through a slot (`drawsThrough`);
+   * another field counts those put in through a slot too (`fieldsDrawnIn`);
+   * and the question is the one drawn before the buttons
+   * (`headingDrawnBefore`).
+   */
   // Where the buttons are, as seen from the tree `group` is in: the first
   // button, or the component it is drawn in.
   let from = first;
-  let group = containerOf(first);
-  const holds = (radio) =>
-    group instanceof ShadowRoot ? drawnInside(group.host, radio) && radio.getRootNode() !== rootOf(group.host) : drawnInside(group, radio);
+  const putInto = new Set();
+  let group = groupDrawnAround(first, putInto);
+  const holds = (radio) => (group instanceof ShadowRoot ? drawsThrough(group, radio) : drawnInside(group, radio));
   for (let i = 0; i < 5 && group; ) {
+    const put = putInto.has(group instanceof ShadowRoot ? group : group.getRootNode());
     if (radios.every(holds)) {
       // Another field in here means this is the form, not this question.
-      if (fieldsIn(group, 'input:not([type=radio]):not([type=hidden]), textarea, select', 1) > 0) break;
-      const headings = [...group.querySelectorAll('label,legend,.label,[class*="label"]')].filter(
+      if (fieldsDrawnIn(group, 'input:not([type=radio]):not([type=hidden]), textarea, select', 1) > 0) break;
+      // What a component draws round the slot the buttons are put in. See `headingDrawnBefore`.
+      const drawn = put && headingDrawnBefore(group, (el) => radios.includes(el), 'label,legend,.label,[class*="label"]');
+      if (drawn && shownText(drawn)) return shownText(drawn);
+      const headings = put ? [] : [...group.querySelectorAll('label,legend,.label,[class*="label"]')].filter(
         (el) => !fieldsIn(el, 'input, textarea, select', 1),
       );
       /*
@@ -4947,13 +5006,22 @@ function groupLabelFor(radios) {
     if (group instanceof ShadowRoot) {
       if (group.host.id === OURS) break;
       from = group.host;
-      group = containerOf(from);
+      group = groupDrawnAround(from, putInto);
     } else {
-      group = containerOf(group);
-      i++;
+      group = groupDrawnAround(group, putInto);
+      if (!put) i++;
     }
   }
   return '';
+}
+
+/**
+ * Whether `root` draws `node`: holds it, or draws it through a slot it is
+ * put in, however deep.
+ */
+function drawsThrough(root, node) {
+  for (let at = node; at; at = parentAround(at)) if (at.getRootNode() === root) return true;
+  return false;
 }
 
 /**

@@ -3134,6 +3134,9 @@ const COMPONENT_DEFINITIONS = `<script>
   def('y-put-deep', () => '<style>:host { display: block }</style><div class="outer"><div class="inner"><slot></slot></div></div>');
   def('y-put-named', (h) => '<style>:host { display: block }</style><div class="field"><label part="label"><slot name="label"></slot>' + star(h) + '</label>' +
     (h.hasAttribute('boxed') ? '<div class="control"><slot></slot></div>' : '<slot></slot>') + '</div>');
+  // And one drawing two questions, each over a slot of its own.
+  def('y-put-two', (h) => '<style>:host { display: block }</style><label part="label">' + at(h, 'label') + '</label><slot name="first"></slot>' +
+    '<label part="label">' + at(h, 'label2') + '</label><slot></slot>');
   def('y-aria-question', (h) => '<style>:host { display: block }</style><label id="q">' + at(h, 'label') + '</label><div role="radiogroup" aria-labelledby="q">' +
     ['Yes', 'No'].map((w) => '<div role="radio" aria-checked="false" tabindex="0">' + w + '</div>').join('') + '</div>');
   document.addEventListener('click', (e) => {
@@ -3648,6 +3651,59 @@ const SLOTTED_INTO_LABELS_GUARDS = `<!doctype html><html><head><meta charset="ut
 </form>
 ${COMPONENT_DEFINITIONS}
 </body></html>`;
+
+/*
+ * A radio question the page puts into a component that draws the question
+ * round the slot, and the same written into the page first: the sponsorship
+ * question over a wrapper holding the page's Yes and No, and the
+ * authorization question beside the page's radiogroup.
+ *
+ * Put into components: the page's Yes and No under the sponsorship question
+ * drawn before a wrapper round the slot, under the authorization question
+ * drawn loose in the root before the slot, and under the sponsorship question
+ * again, its words slotted in beside the asterisk. On a page of its own, the
+ * page's radiogroup under the authorization question drawn loose, and under
+ * the sponsorship question slotted in over a wrapper round the slot.
+ *
+ * And, on pages of their own, the ways a group takes a question that is not
+ * its own. A component drawing the sponsorship question over one slot and
+ * the authorization question over another, the page putting a group in
+ * each, as radios and as radiogroups. And, as radios and as a radiogroup,
+ * the page's Yes and No put in the slot a component draws after the one it
+ * draws "Are you legally authorized to work in the United States? Please
+ * explain." over, which the page puts its text box in. And the Yes and No
+ * put in the one slot under that question, and the text box after them,
+ * which the same written into the page leaves too.
+ */
+const yesNo = (name) => `<label><input type="radio" name="${name}" value="Yes">Yes</label><label><input type="radio" name="${name}" value="No">No</label>`;
+const ariaYesNo = '<div role="radiogroup"><div role="radio" aria-checked="false" tabindex="0">Yes</div><div role="radio" aria-checked="false" tabindex="0">No</div></div>';
+const ASKS_SPONSORSHIP = 'Will you now or in the future require visa sponsorship?';
+const ASKS_AUTHORIZATION = 'Are you legally authorized to work in the United States?';
+const slottedPage = (body) => `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+${body}
+</form>
+${COMPONENT_DEFINITIONS}
+</body></html>`;
+const PAGE_RADIOS_UNDER_QUESTIONS = slottedPage(`
+  <div class="field"><label>${ASKS_SPONSORSHIP}</label><div class="control">${yesNo('q_9631')}</div></div>
+  <div class="q"><label>${ASKS_AUTHORIZATION}</label>${ariaYesNo}</div>`);
+const SLOTTED_RADIOS = slottedPage(`
+  <y-put-boxed label="${ASKS_SPONSORSHIP}">${yesNo('q_9632')}</y-put-boxed>
+  <y-put-loose label="${ASKS_AUTHORIZATION}">${yesNo('q_9633')}</y-put-loose>
+  <y-put-named required><span slot="label">${ASKS_SPONSORSHIP}</span>${yesNo('q_9634')}</y-put-named>`);
+const SLOTTED_ARIA_RADIOS = slottedPage(`
+  <y-put-loose label="${ASKS_AUTHORIZATION}">${ariaYesNo}</y-put-loose>
+  <y-put-named boxed><span slot="label">${ASKS_SPONSORSHIP}</span>${ariaYesNo}</y-put-named>`);
+const SLOTTED_RADIOS_TWO = slottedPage(`
+  <y-put-two label="${ASKS_SPONSORSHIP}" label2="${ASKS_AUTHORIZATION}"><div slot="first">${yesNo('q_9635')}</div><div>${yesNo('q_9636')}</div></y-put-two>`);
+const SLOTTED_ARIA_TWO = slottedPage(`
+  <y-put-two label="${ASKS_SPONSORSHIP}" label2="${ASKS_AUTHORIZATION}"><div slot="first">${ariaYesNo}</div>${ariaYesNo}</y-put-two>`);
+const SLOTTED_RADIOS_EXPLAIN = slottedPage(`
+  <y-put-field label="${ASKS_AUTHORIZATION} Please explain."><input name="q_9637"><div slot="after">${yesNo('q_9638')}</div></y-put-field>
+  <y-put-field label="${ASKS_AUTHORIZATION} Please explain."><div>${yesNo('q_9639')}</div><input name="q_9640"></y-put-field>`);
+const SLOTTED_ARIA_EXPLAIN = slottedPage(`
+  <y-put-field label="${ASKS_AUTHORIZATION} Please explain."><input name="q_9641"><div slot="after">${ariaYesNo}</div></y-put-field>`);
 
 /*
  * The same components where nothing beside them is theirs, and every field on
@@ -4910,7 +4966,7 @@ const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><tit
   });
 </script></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
 
 const PROFILE = {
   first_name: 'Morgan',
@@ -9601,6 +9657,65 @@ async function main() {
       'words the page writes before its box, drawn after it in another slot, are not its label, and nothing else is filled',
       putBeside.q_9621 === '' && putBeside.filled.join() === 'address_city,last_name,email,address_city' && putBeside.skipped.length === 0,
       JSON.stringify(putBeside),
+    );
+
+    // Every radio on the page, and every ARIA radio, in the order it is written or drawn: "x" when chosen and "-" when not.
+    const choicesDrawn = () => {
+      const got = [];
+      const walk = (root) => {
+        for (const el of root.querySelectorAll('*')) {
+          if (el.matches('input[type=radio]')) got.push(el.checked ? 'x' : '-');
+          if (el.getAttribute('role') === 'radio') got.push(el.getAttribute('aria-checked') === 'true' ? 'x' : '-');
+          if (el.shadowRoot) walk(el.shadowRoot);
+        }
+      };
+      walk(document);
+      return got.join(' ');
+    };
+    const choicesOn = (url) => page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields, choicesDrawn }) => {
+        const m = await import(`${b}/autofill.js`);
+        const asked = m.choiceQuestions();
+        const report = await m.fillComboboxes(fields, m.fillForm(fields));
+        return { chosen: eval(`(${choicesDrawn})`)(), asked, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields: SWEEP, choicesDrawn: String(choicesDrawn) }),
+    );
+    const underPage = await choicesOn('/page-radios-under-questions');
+    const slottedRadios = await choicesOn('/slotted-radios');
+    const slottedAria = await choicesOn('/slotted-aria-radios');
+    const slottedTwo = await choicesOn('/slotted-radios-two');
+    const slottedAriaTwo = await choicesOn('/slotted-aria-two');
+    const slottedExplain = await choicesOn('/slotted-radios-explain');
+    const slottedAriaExplain = await choicesOn('/slotted-aria-explain');
+    group('A radio question put into a component that draws the question round the slot');
+    check(
+      'written into the page, the Yes and No under the sponsorship question and the radiogroup beside the authorization question are asked and answered',
+      underPage.chosen === '- x x -' && underPage.filled.join() === 'requires_sponsorship,work_authorization' && underPage.skipped.length === 0 &&
+        underPage.asked.join() === `${ASKS_SPONSORSHIP},${ASKS_AUTHORIZATION}`,
+      JSON.stringify(underPage),
+    );
+    check(
+      "the page's Yes and No put in, the question drawn before a wrapper round the slot, loose before it, or its words slotted in, are asked and answered",
+      slottedRadios.chosen === '- x x - - x' && slottedRadios.filled.join() === 'requires_sponsorship,work_authorization,requires_sponsorship' &&
+        slottedRadios.skipped.length === 0 && slottedRadios.asked.join() === `${ASKS_SPONSORSHIP},${ASKS_AUTHORIZATION}`,
+      JSON.stringify(slottedRadios),
+    );
+    check(
+      "the page's radiogroup put in, the question drawn loose before the slot, or its words slotted in over a wrapper round it, is asked and answered",
+      slottedAria.chosen === 'x - - x' && slottedAria.filled.join() === 'work_authorization,requires_sponsorship' && slottedAria.skipped.length === 0 &&
+        slottedAria.asked.join() === `${ASKS_AUTHORIZATION},${ASKS_SPONSORSHIP}`,
+      JSON.stringify(slottedAria),
+    );
+    check(
+      'a component drawing two questions, each over its own slot, gives each group put in the question over its slot, as radios and as radiogroups',
+      [slottedTwo, slottedAriaTwo].every((got) => got.chosen === '- x x -' && got.filled.join() === 'requires_sponsorship,work_authorization' &&
+        got.skipped.length === 0 && got.asked.join() === `${ASKS_SPONSORSHIP},${ASKS_AUTHORIZATION}`),
+      JSON.stringify({ slottedTwo, slottedAriaTwo }),
+    );
+    check(
+      "a Yes and No put in a slot after the one a text box is put in under its question, or with a text box after them in its slot, are left, as radios and as a radiogroup",
+      slottedExplain.chosen === '- - - -' && slottedAriaExplain.chosen === '- -' && slottedExplain.asked.length === 0 && slottedAriaExplain.asked.length === 0,
+      JSON.stringify({ slottedExplain, slottedAriaExplain }),
     );
 
     const dateParts = await page.goto(`${base}/date-in-parts`, { waitUntil: 'domcontentloaded' }).then(() =>
