@@ -1093,6 +1093,12 @@ export function createCard({
     letterAutoStarted: false,
     letterSaved: false,
     letterSource: '',
+    /**
+     * Template slots the AI left in the letter it drafted — "[Company Name]",
+     * "{company}", "XX years" — as ResumeM-M named them in `placeholders`.
+     * Only the ones still in the text count: see `gapsLeft`.
+     */
+    letterGaps: [],
     /** A previous letter offered as a starting point, until the user takes it. */
     letterOffer: null,
     priorLetters: [],
@@ -1112,7 +1118,7 @@ export function createCard({
      * with a sentence about what was wrong still takes the paragraph it was
      * given, and the only safe way to let it is to keep that paragraph.
      */
-    replaced: { letter: null, answers: {} },
+    replaced: { letter: null, letterGaps: [], answers: {} },
     feedback: '',
     autofillReport: null,
     /**
@@ -1296,6 +1302,9 @@ export function createCard({
       showEverything: state.showEverything,
       letter: state.letter,
       letterSource: state.letterSource,
+      // What the AI left unfilled goes with the letter, so the next page
+      // still says so.
+      letterGaps: state.letterGaps,
       letterStarted: state.letterStarted,
       letterSaved: state.letterSaved,
       letterAutoStarted: state.letterAutoStarted,
@@ -1445,6 +1454,7 @@ export function createCard({
      */
     if (work.letter?.trim()) state.letterAsked = true;
     if (work.letterSource) state.letterSource = work.letterSource;
+    if (Array.isArray(work.letterGaps) && work.letterGaps.length) state.letterGaps = work.letterGaps;
     state.letterStarted = state.letterStarted || Boolean(work.letterStarted);
     state.letterSaved = state.letterSaved || Boolean(work.letterSaved);
     state.letterAutoStarted = state.letterAutoStarted || Boolean(work.letterAutoStarted);
@@ -4536,10 +4546,25 @@ export function createCard({
    * date in place on each keystroke. Rebuilt on every draw, so these always
    * point at the buttons currently on screen rather than at detached ones.
    */
-  const letterControls = { save: null, copy: null, typeset: null, note: null, change: null, redraft: null };
+  const letterControls = { save: null, copy: null, typeset: null, note: null, change: null, redraft: null, source: null, gaps: null };
 
   function syncLetterControls() {
     const written = Boolean(state.letter?.trim());
+    /*
+     * The note about what the AI left unfilled follows the typing: each slot
+     * filled in drops out of it, and with the last one gone the note goes and
+     * the status line stops saying the letter is unfinished.
+     */
+    const left = letterGapsLeft();
+    if (letterControls.gaps) {
+      letterControls.gaps.hidden = left.length === 0;
+      if (left.length) letterControls.gaps.firstChild.textContent = `${gapNote(left)} `;
+    }
+    if (left.length === 0 && state.letterGaps.length) {
+      state.letterGaps = [];
+      state.letterSource = state.letterSource.replace(NOT_FINISHED, '');
+      if (letterControls.source) letterControls.source.textContent = state.letterSource;
+    }
     if (letterControls.save) {
       letterControls.save.disabled = busyIn('letter') || state.letterSaved || !written;
       letterControls.save.textContent = busyLabel('saveLetter', state.letterSaved ? 'Saved' : 'Save to store', 'Saving…');
@@ -4830,10 +4855,15 @@ export function createCard({
       }
       if (r.body?.trim()) {
         state.replaced.letter = mine;
+        state.replaced.letterGaps = state.letterGaps;
         state.letter = r.body;
+        state.letterGaps = placeholdersOf(r);
         state.changeLetter = '';
         state.letterSaved = false;
-        state.letterSource = change ? 'Rewritten as you asked.' : 'Redrafted from your previous letters.';
+        state.letterSource = unfinishedIf(
+          state.letterGaps,
+          change ? 'Rewritten as you asked.' : 'Redrafted from your previous letters.',
+        );
         prepareSoon();
       } else if (!r.executed) {
         state.letterSource = 'The AI is off, so the letter cannot be redrafted. It is as you left it.';
@@ -4841,6 +4871,44 @@ export function createCard({
         state.letterSource = 'The AI returned nothing, so the letter is as you left it.';
       }
     });
+  }
+
+  /*
+   * A draft with "[Company Name]" in it is not finished.
+   *
+   * ResumeM-M names the template slots it finds in an AI letter or answer in
+   * `placeholders`, and flags the draft `unfinished`. The card put that text
+   * in the box as if it were ready: "Drafted in your voice", a tick on the
+   * step, and into the upload folder a second later. The text stays as it
+   * came — it is theirs to edit — and the card says what is left in it.
+   */
+  const NOT_FINISHED = ' It is not finished yet.';
+
+  /** The slots a reply named, or none — an older store names none. */
+  function placeholdersOf(r) {
+    return Array.isArray(r?.placeholders) ? r.placeholders.filter((p) => typeof p === 'string' && p.trim()) : [];
+  }
+
+  /** Those still in the text. Filled in or taken out is done. */
+  function gapsLeft(text, gaps) {
+    const s = String(text ?? '');
+    return (gaps ?? []).filter((g) => s.includes(g));
+  }
+
+  /** "The draft still has [Company Name] and [Your Name] in it — …" */
+  function gapNote(gaps) {
+    const named = gaps.length === 1 ? gaps[0] : `${gaps.slice(0, -1).join(', ')} and ${gaps.at(-1)}`;
+    return `The draft still has ${named} in it — fill ${gaps.length === 1 ? 'it' : 'them'} in before sending.`;
+  }
+
+  /** A status line, saying so when the draft still has slots in it. */
+  function unfinishedIf(gaps, line) {
+    return gaps.length ? `${line}${NOT_FINISHED}` : line;
+  }
+
+  /** The letter's slots still in it. */
+  function letterGapsLeft() {
+    return gapsLeft(state.letter, state.letterGaps);
   }
 
   /**
@@ -4890,7 +4958,9 @@ export function createCard({
         return;
       }
       if (now.trim()) {
-        state.letterOffer = r.body?.trim() ? { title: 'the draft', body: r.body } : state.priorLetters[0] ?? null;
+        state.letterOffer = r.body?.trim()
+          ? { title: 'the draft', body: r.body, placeholders: placeholdersOf(r) }
+          : state.priorLetters[0] ?? null;
         state.letterSource = state.letterOffer
           ? 'You had already started one, so this is offered rather than used.'
           : 'You had already started one, so nothing was replaced.';
@@ -4899,7 +4969,8 @@ export function createCard({
 
       if (r.body?.trim()) {
         state.letter = r.body;
-        state.letterSource = 'Drafted in your voice from your previous letters.';
+        state.letterGaps = placeholdersOf(r);
+        state.letterSource = unfinishedIf(state.letterGaps, 'Drafted in your voice from your previous letters.');
         // Into the folder as soon as it exists, not at Submit. See `prepareSoon`.
         prepareSoon();
       } else if (state.priorLetters.length > 0) {
@@ -5773,7 +5844,8 @@ export function createCard({
      */
     if (state.letterNeeded || state.letterAsked) body.append(
       h('div', { className: 'step' }, [
-        stepHead(2, 'Cover letter', Boolean(state.letter?.trim())),
+        // Not ticked while the AI's placeholders are still in it.
+        stepHead(2, 'Cover letter', Boolean(state.letter?.trim()) && letterGapsLeft().length === 0),
         progressFor(2),
         drawVoiceFrom('letter'),
         h('div', {}, [
@@ -5786,7 +5858,18 @@ export function createCard({
                * could have typed into, and hiding the previous-letter offer
                * behind an AI run they may not want.
                */
-              state.letterSource ? h('div', { className: 'hint', textContent: state.letterSource }) : null,
+              (letterControls.source = state.letterSource
+                ? h('div', { className: 'hint', textContent: state.letterSource })
+                : null),
+              /*
+               * Beside the draft, naming what is left to fill in. Kept up to
+               * date as it is typed over: see `syncLetterControls`.
+               */
+              (letterControls.gaps = letterGapsLeft().length
+                ? h('div', { className: 'hint warn', dataset: { note: 'letter-gaps' } }, [
+                    h('span', { textContent: `${gapNote(letterGapsLeft())} ` }),
+                  ])
+                : null),
               !state.letter?.trim()
                 ? h('div', { className: 'row gap' }, [
                     aiButton(
@@ -5810,6 +5893,8 @@ export function createCard({
                     textContent: `Start from "${state.letterOffer.title}"`,
                     onclick: () => {
                       state.letter = state.letterOffer.body;
+                      // A draft offered over a letter carries what it left unfilled.
+                      state.letterGaps = state.letterOffer.placeholders ?? [];
                       prepareSoon();
                       state.letterSource = `Copied from ${state.letterOffer.title}. It is addressed to another company — read it before sending.`;
                       state.letterOffer = null;
@@ -5943,7 +6028,9 @@ export function createCard({
                           textContent: 'Put back what you had',
                           onclick: () => {
                             state.letter = state.replaced.letter;
+                            state.letterGaps = state.replaced.letterGaps ?? [];
                             state.replaced.letter = null;
+                            state.replaced.letterGaps = [];
                             state.letterSaved = false;
                             state.letterSource = 'Put back as you had it.';
                             prepareSoon();

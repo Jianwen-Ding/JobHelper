@@ -4645,6 +4645,123 @@ async function main() {
     JSON.stringify({ after: changed.letterAfter, back: changed.letterBack }),
   );
 
+  console.log('\nAn AI letter with placeholders left in it');
+
+  /*
+   * ResumeM-M names the template slots it finds in an AI draft — the reply
+   * below is the shape `/api/ai/cover-letter` returns for one — and the card
+   * used to put that letter in the box as finished: "Drafted in your voice",
+   * a tick on the step. The text stays as it came; the card says what is
+   * left in it, and stops saying so once it is filled in.
+   */
+  const gappy = await inPage(async (createCard) => {
+    const sent = [];
+    const body = 'Dear [Company Name] team,\n\nI build data platforms and would like to build yours.\n\nBest,\n[Your Name]';
+    let reply = {
+      executed: true,
+      body,
+      saved: undefined,
+      placeholders: ['[Company Name]', '[Your Name]'],
+      unfinished:
+        'This letter still has 2 placeholders in it — "[Company Name]" and "[Your Name]". It is not finished: fill them in, or take the sentence out.',
+      priorLetters: [],
+    };
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme', description: 'Kafka and Go.' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: true,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'coverLetter') return reply;
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => new RegExp(t).test(b.textContent));
+    const box = () => root.querySelector('textarea[data-field="letter"]');
+    const type = (text) => {
+      box().value = text;
+      box().dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const note = () => {
+      const n = root.querySelector('[data-note="letter-gaps"]');
+      return n && !n.hidden ? n.textContent.trim() : null;
+    };
+    const step = () => [...root.querySelectorAll('.step-head')].find((n) => /Cover letter/.test(n.textContent));
+    const ticked = () => Boolean(step()?.querySelector('.n.done'));
+    const source = () => [...root.querySelectorAll('.hint')].find((n) => /^Drafted/.test(n.textContent))?.textContent ?? null;
+    await wait(120);
+
+    byText('Draft a letter')?.click();
+    await wait(150);
+    const drafted = { text: box()?.value, note: note(), source: source(), ticked: ticked() };
+
+    type(body.replace('[Company Name]', 'Acme'));
+    const half = { note: note() };
+    type(body.replace('[Company Name]', 'Acme').replace('[Your Name]', 'Morgan Testwell'));
+    const filled = { note: note(), source: source() };
+
+    // A letter redrafted by the AI is the same: named, and then not ticked
+    // on the next draw.
+    const redrafted = await (async () => {
+      byText('Redraft')?.click();
+      await wait(150);
+      return { text: box()?.value, note: note(), source: [...root.querySelectorAll('.hint')].find((n) => /^Redrafted/.test(n.textContent))?.textContent ?? null, ticked: ticked() };
+    })();
+
+    // And one with nothing left in it says nothing about it.
+    reply = { executed: true, body: 'Dear Acme team,\n\nA finished letter.\n\nMorgan Testwell', placeholders: [], priorLetters: [] };
+    byText('Redraft')?.click();
+    await wait(150);
+    const clean = { note: note(), ticked: ticked(), hints: [...root.querySelectorAll('.hint')].map((n) => n.textContent) };
+
+    return { body, drafted, half, filled, redrafted, clean };
+  });
+  check('the AI letter goes in the box as it came', gappy.drafted.text === gappy.body, JSON.stringify(gappy.drafted.text));
+  check(
+    'with a note beside it naming what is left to fill in',
+    gappy.drafted.note === 'The draft still has [Company Name] and [Your Name] in it — fill them in before sending.',
+    String(gappy.drafted.note),
+  );
+  check(
+    'and the status line says it is not finished',
+    gappy.drafted.source === 'Drafted in your voice from your previous letters. It is not finished yet.',
+    String(gappy.drafted.source),
+  );
+  check('and the step is not ticked as done', gappy.drafted.ticked === false);
+  check(
+    'filling one in drops it from the note',
+    gappy.half.note === 'The draft still has [Your Name] in it — fill it in before sending.',
+    String(gappy.half.note),
+  );
+  check(
+    'and filling the last one takes the note away, and the status line with it',
+    gappy.filled.note === null && gappy.filled.source === 'Drafted in your voice from your previous letters.',
+    JSON.stringify(gappy.filled),
+  );
+  check(
+    'a redraft with placeholders is named the same way',
+    gappy.redrafted.text === gappy.body &&
+      /\[Company Name\] and \[Your Name\]/.test(gappy.redrafted.note ?? '') &&
+      /It is not finished yet\.$/.test(gappy.redrafted.source ?? '') &&
+      gappy.redrafted.ticked === false,
+    JSON.stringify(gappy.redrafted),
+  );
+  check(
+    'and a letter with nothing left in it has no such note, and is ticked',
+    gappy.clean.note === null && gappy.clean.ticked === true && !gappy.clean.hints.some((t) => /not finished/.test(t)),
+    JSON.stringify(gappy.clean),
+  );
+
   console.log('\nThe list of pages stays open through a repaint');
 
   /*
