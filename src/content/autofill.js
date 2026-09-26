@@ -6000,7 +6000,17 @@ function widgetChoices(fields, filled) {
      * States was reported filled and, in the same report, as one to pick by
      * hand. One left unchosen is still named here.
      */
-    if (widgetShowsAnAnswer(widget) || listboxHoldsAChoice(widget)) {
+    /*
+     * And one showing this very answer, whatever it is drawn as. A widget
+     * with a typing box is never read as showing an answer above, so one
+     * already holding it was pressed open and chosen in again. Where the
+     * answer was drawn beside an empty box, or the list stayed open after the
+     * choice, nothing that press did could be seen, and it was put back and
+     * reported as one to pick by hand: measured, a School, a Degree and a
+     * Discipline already answered were all reported that way, and the
+     * Discipline's box was emptied on the way out.
+     */
+    if (widgetShowsAnAnswer(widget) || listboxHoldsAChoice(widget) || widgetShowsThisAnswer(widget, key, String(fields[key]))) {
       if (EDUCATION_KEYS.test(key)) already.add(key);
       continue;
     }
@@ -6017,6 +6027,31 @@ function widgetChoices(fields, filled) {
 /** Whether a listbox has one of its own options, as `choiceGroupOf` counts them, marked chosen. */
 function listboxHoldsAChoice(widget) {
   return widget.getAttribute('role') === 'listbox' && ariaOptionsIn(widget).some(isMarkedChosen);
+}
+
+/**
+ * Whether a widget already shows the profile's answer: its typing box holding
+ * it, or its control drawing it (`shownBy`), and any hidden input it submits
+ * through holding something. Text typed into a box and never chosen leaves
+ * that input empty, and is no answer.
+ *
+ * The answer as a whole word or words, not a run of letters: "No" is not in
+ * "None selected". And a yes or no, which is short enough to be in anything,
+ * only as the whole of what is shown.
+ */
+function widgetShowsThisAnswer(widget, key, value) {
+  const hidden = hiddenPartner(widget);
+  if (hidden && !hidden.value) return false;
+  const answer = clean(value).toLowerCase();
+  if (!answer) return false;
+  const escaped = answer.replace(/[.*+?^$()|[\]{}\\]/g, '\\$&');
+  const whole = new RegExp(String.raw`(?:^|[^\p{L}\p{N}])${escaped}(?:$|[^\p{L}\p{N}])`, 'u');
+  return [typingBoxOf(widget)?.value, shownBy(widget)].some((shown) => {
+    const said = clean(shown).toLowerCase();
+    if (!said) return false;
+    if (said === answer || sameAnswerSpelledOtherwise(key, said, value)) return true;
+    return !YES_NO_KEYS.has(key) && whole.test(said);
+  });
 }
 
 function unfillableChoices(fields, filled) {
