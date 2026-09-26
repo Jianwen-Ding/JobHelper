@@ -798,6 +798,39 @@ async function main() {
       JSON.stringify(hung),
     );
     await inPage(async () => window.stageBack());
+
+    /*
+     * 5. "Not recorded" outlasting a failure that comes after it.
+     *
+     * With the store down, Submit says the application was not recorded — and
+     * the files being brought up to date fail next, with a sentence of their
+     * own, in the same line. That sentence replaced the notice in
+     * tests/adverse.mjs under load, and "ResumeM-M is not open" says nothing
+     * about the application that just went out. Once a send is recorded, a
+     * failure is said as it is.
+     */
+    await setUp({ letter: true });
+    await settle();
+    const failAfter = async (text) =>
+      inPage(async (text) => {
+        if (text) jh.handle.setStatus(text);
+        const before = jh.s.sent.filter((c) => c.action === 'stage').length;
+        jh.s.fail.stage = 'throw';
+        const box = jh.root.querySelector('textarea[data-field="letter"]');
+        box.value = `Dear Acme, ${before}`;
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+        await until(() => jh.s.sent.filter((c) => c.action === 'stage').length > before, 8000);
+        await until(() => /did not answer/.test(jh.root.querySelector('.err')?.textContent ?? ''), 4000);
+        return jh.root.querySelector('.err')?.textContent ?? '';
+      }, text);
+    const unrecorded = await failAfter('Not recorded — ResumeM-M could not be reached.');
+    check(
+      'a failure after an unrecorded send still says the application was not recorded',
+      /^Not recorded — /.test(unrecorded) && /did not answer/.test(unrecorded),
+      unrecorded,
+    );
+    const recorded = await failAfter('Recorded as sent.');
+    check('and once a send is recorded, a failure is said as it is', /^The store did not answer/.test(recorded), recorded);
     const released = await settle();
     check('and once the rebuild lands, the chips come back', released.grey === 0, JSON.stringify(released));
   }

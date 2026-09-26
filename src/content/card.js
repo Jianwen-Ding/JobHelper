@@ -2462,6 +2462,25 @@ export function createCard({
    * Only the clearing is skipped. A staging failure still reports: a folder
    * that is a build behind is worth knowing about.
    */
+  /*
+   * A Submit that went out and was not recorded, said until one is.
+   *
+   * The card said "Not recorded — ResumeM-M could not be reached." and then
+   * lost it: every action that fails puts its own sentence in the same line,
+   * and with the store down the ones that run on their own — bringing the
+   * files up to date after a change — fail too, and said "ResumeM-M is not
+   * open". True, and it drops the one thing worth knowing, that the
+   * application just sent is not in the tracker. Measured in
+   * tests/adverse.mjs, where under load the file refresh landed after the
+   * notice and replaced it. So until a send is recorded, a store error said
+   * meanwhile keeps "Not recorded" in front of it.
+   */
+  let unrecorded = false;
+  function stillNotRecorded(said) {
+    const text = String(said ?? '');
+    return unrecorded && text && !/^(Not recorded|Recorded as sent)/.test(text) ? `Not recorded — ${text}` : said;
+  }
+
   async function act(action, payload, apply, { quiet = false } = {}) {
     running.add(action);
     if (!startedAt.has(action)) startedAt.set(action, Date.now());
@@ -2489,7 +2508,7 @@ export function createCard({
        * are going back to.
        */
       if (err.jobhelper?.stopped) return null;
-      state.error = err.message;
+      state.error = stillNotRecorded(err.message);
       // Some failures have a way out. Keep it, so the card can offer it.
       state.errorFix = err.jobhelper ?? null;
       // This button's failure, not the page's. See `drawError`.
@@ -7516,7 +7535,9 @@ export function createCard({
     },
 
     setStatus(text, fix = null) {
-      state.error = text;
+      if (/^Recorded as sent/.test(String(text ?? ''))) unrecorded = false;
+      else if (/^Not recorded/.test(String(text ?? ''))) unrecorded = true;
+      state.error = stillNotRecorded(text);
       // The first pass failing is the commonest way to meet this, and the
       // commonest reason is that ResumeM-M is not running.
       state.errorFix = fix;
