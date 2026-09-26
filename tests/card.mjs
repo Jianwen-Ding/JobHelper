@@ -5553,13 +5553,13 @@ async function main() {
   /*
    * A page that hides, or toggles, every popover it has.
    *
-   * Above a modal the card's host is a popover, and a page's own code can
-   * reach it: `document.querySelectorAll('[popover]')` finds it beside the
-   * page's popovers. Measured with the dialog centred by translate: hiding
-   * every one of them took the card out of the top layer, back to the
-   * dialog's corner and cut to the dialog's box, and it stayed there, since
-   * the card found the modal it already had and did nothing. The page's own
-   * popovers have to do what the page asked all the same.
+   * Above a modal the card is a popover. When that was its host, a page's
+   * own code could reach it: `document.querySelectorAll('[popover]')` found
+   * it beside the page's popovers. Measured with the dialog centred by
+   * translate: hiding every one of them took the card out of the top layer,
+   * back to the dialog's corner and cut to the dialog's box, and it stayed
+   * there, since the card found the modal it already had and did nothing.
+   * The page's own popovers have to do what the page asked all the same.
    */
   const hidesEveryPopover = await inPage(async (createCard) => {
     document.querySelectorAll('dialog, #interop-outlet, [popover]').forEach((el) => el.remove());
@@ -5601,7 +5601,8 @@ async function main() {
       return {
         label,
         inDialog: host.parentNode === dialog,
-        up: host.matches(':popover-open'),
+        // In the top layer, whichever of its elements is the popover: see `raise` in card.js.
+        up: host.matches(':popover-open') || Boolean(host.shadowRoot.querySelector(':popover-open')),
         inPlace: ['left', 'top', 'width', 'height'].every((key) => Math.abs(now[key] - was[key]) < 1),
         whole: at(now.left + 8, now.top + now.height - 8) === host && at(now.left + now.width - 8, now.top + now.height - 8) === host,
         field: at(input.left + input.width / 2, input.top + input.height / 2)?.localName ?? null,
@@ -5627,7 +5628,11 @@ async function main() {
     const toggled = where('toggled');
     dialog.close();
     await new Promise((r) => setTimeout(r, 30));
-    const closed = { home: host.parentNode === document.documentElement, attribute: host.getAttribute('popover'), width: box().width };
+    const closed = {
+      home: host.parentNode === document.documentElement,
+      attribute: host.getAttribute('popover') ?? host.shadowRoot.querySelector('[popover]')?.getAttribute('popover') ?? null,
+      width: box().width,
+    };
     tip.remove();
     return { raised, hideThrew, hidden, toggleThrew, toggled, closed };
   });
@@ -5649,6 +5654,145 @@ async function main() {
     check('and the card stays above the modal, where it was, all of it', toggled.inDialog && toggled.up && toggled.inPlace && toggled.whole, JSON.stringify(toggled));
     check('once that modal closes, the card is on the page again, not a popover, and in view', closed.home && closed.attribute === null && closed.width > 0, JSON.stringify(closed));
   }
+
+  /*
+   * A page that closes its popover the short way.
+   *
+   * `document.querySelector(':popover-open')?.hidePopover()` is the first
+   * open popover in the document, and a page that only ever has one open
+   * writes it so. With the card's host the popover, the host was inside the
+   * modal, and the modal comes before a popover the page adds at the end of
+   * <body>, so the page closed the card instead. Measured in Chromium over a
+   * dialog centred by translate, and over one with no transform, with a
+   * manual popover of the page's and with an auto one: the card went back
+   * up, and the page's popover stayed open.
+   */
+  for (const [name, kind, style] of [
+    ['a manual popover over a dialog centred by translate', 'manual', 'top: 50%; left: 50%; margin: 0; transform: translate(-50%, -50%);'],
+    ['an auto popover over a dialog centred by translate', 'auto', 'top: 50%; left: 50%; margin: 0; transform: translate(-50%, -50%);'],
+    ['a manual popover over a dialog with no transform', 'manual', ''],
+  ]) {
+    const seen = await inPage(async (createCard, { kind, style }) => {
+      document.querySelectorAll('dialog, #interop-outlet, [popover]').forEach((el) => el.remove());
+      createCard({
+        analysis: { isJobPosting: true, job: { title: 'Platform Engineer', company: 'Acme' }, spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' }, rationale: [] },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async () => ({}),
+      });
+      const host = document.querySelector('#jobhelper-card-host');
+      const card = host.shadowRoot.querySelector('.card');
+      const box = () => {
+        const r = card.getBoundingClientRect();
+        return { left: r.left, top: r.top, width: r.width, height: r.height };
+      };
+      const was = box();
+      const dialog = document.createElement('dialog');
+      dialog.innerHTML = '<form method="dialog"><label>First name <input name="first"></label><button>Next</button></form>';
+      dialog.style.cssText = style;
+      document.body.append(dialog);
+      dialog.showModal();
+      await new Promise((r) => setTimeout(r, 80));
+      // The page's own, added after its modal, at the end of <body>.
+      const tip = document.createElement('div');
+      tip.popover = kind;
+      tip.textContent = 'A popover of the page\'s own';
+      document.body.append(tip);
+      tip.showPopover();
+      const first = document.querySelector(':popover-open');
+      const found = [...document.querySelectorAll('[popover]')].map((el) => (el === tip ? 'page' : el === host ? 'card' : el.localName));
+      let threw = null;
+      try {
+        document.querySelector(':popover-open')?.hidePopover();
+      } catch (err) {
+        threw = String(err);
+      }
+      // A task later, as the card's `toggle` would come.
+      await new Promise((r) => setTimeout(r, 30));
+      const now = box();
+      const at = (x, y) => document.elementFromPoint(x, y);
+      const input = dialog.querySelector('input').getBoundingClientRect();
+      const result = {
+        firstIsPage: first === tip,
+        found,
+        threw,
+        tipOpen: tip.matches(':popover-open'),
+        inDialog: host.parentNode === dialog,
+        up: host.matches(':popover-open') || Boolean(host.shadowRoot.querySelector(':popover-open')),
+        inPlace: ['left', 'top', 'width', 'height'].every((key) => Math.abs(now[key] - was[key]) < 1),
+        whole: at(now.left + 8, now.top + now.height - 8) === host && at(now.left + now.width - 8, now.top + now.height - 8) === host,
+        field: at(input.left + input.width / 2, input.top + input.height / 2)?.localName ?? null,
+      };
+      // What is in the top layer for the card, which ought to be a box of nothing.
+      const raised = host.matches(':popover-open') ? host : host.shadowRoot.querySelector(':popover-open');
+      const drawn = raised?.getBoundingClientRect();
+      result.covers = drawn ? Math.round(drawn.width * drawn.height) : null;
+      dialog.close();
+      tip.remove();
+      return result;
+    }, { kind, style });
+    check(
+      `${name}: the page's first open popover is its own, not the card`,
+      seen.firstIsPage && seen.found.join() === 'page',
+      JSON.stringify(seen),
+    );
+    check(`${name}: closing it closes it, and nothing throws`, !seen.tipOpen && seen.threw === null, JSON.stringify(seen));
+    check(
+      `${name}: and the card is above the modal where it was, all of it, off the form's field`,
+      seen.inDialog && seen.up && seen.inPlace && seen.whole && seen.field === 'input',
+      JSON.stringify(seen),
+    );
+    check(`${name}: and what is raised with the card covers nothing of the page`, seen.covers === 0, JSON.stringify(seen));
+  }
+
+  /*
+   * A modal that moves the card among its own children.
+   *
+   * Taking an element out of the document, even to put it straight back,
+   * hides any popover in it, and with no `toggle` to say so. A page that
+   * reorders what is in its modal, as `dialog.prepend(host)`, leaves the
+   * card in the modal but out of the top layer, moved to the dialog's corner
+   * and cut to its box. The content script's `putBack`, every second, is
+   * what puts it back up.
+   */
+  const reordered = await inPage(async (createCard) => {
+    document.querySelectorAll('dialog, #interop-outlet, [popover]').forEach((el) => el.remove());
+    const handle = createCard({
+      analysis: { isJobPosting: true, job: { title: 'Platform Engineer', company: 'Acme' }, spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' }, rationale: [] },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    const host = document.querySelector('#jobhelper-card-host');
+    const card = host.shadowRoot.querySelector('.card');
+    const box = () => {
+      const r = card.getBoundingClientRect();
+      return { left: r.left, top: r.top, width: r.width, height: r.height };
+    };
+    const was = box();
+    const dialog = document.createElement('dialog');
+    dialog.innerHTML = '<form method="dialog"><label>First name <input name="first"></label><button>Next</button></form>';
+    dialog.style.cssText = 'top: 50%; left: 50%; margin: 0; transform: translate(-50%, -50%);';
+    document.body.append(dialog);
+    dialog.showModal();
+    await new Promise((r) => setTimeout(r, 80));
+    dialog.prepend(host);
+    await new Promise((r) => setTimeout(r, 30));
+    handle.putBack();
+    const now = box();
+    const result = {
+      inDialog: host.parentNode === dialog,
+      up: host.matches(':popover-open') || Boolean(host.shadowRoot.querySelector(':popover-open')),
+      inPlace: ['left', 'top', 'width', 'height'].every((key) => Math.abs(now[key] - was[key]) < 1),
+    };
+    dialog.close();
+    return result;
+  });
+  check('a modal that moves the card among its children: the card is back above it, where it was', reordered.inDialog && reordered.up && reordered.inPlace, JSON.stringify(reordered));
 
   /*
    * A modal the page throws away with the card inside it. The content script

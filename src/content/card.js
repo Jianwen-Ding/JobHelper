@@ -16,12 +16,31 @@ const STYLE = `
  */
 :host { all: initial; }
 /*
- * Above a page's modal the host is a popover in the top layer (see \`raise\` in
- * \`createCard\`), and everything there gets a ::backdrop. A page that dims
- * every ::backdrop, not only its dialog's, would have dimmed its own form a
- * second time under the card. Important here outranks important in the page.
+ * What goes into the top layer above a page's modal (see \`raise\` in
+ * \`createCard\`). Elsewhere it is no box at all, and the card is laid out as
+ * if it were not there. Raised, it is a box of nothing at the window's
+ * corner: the card inside is fixed, and in the top layer fixed is measured
+ * from the window whatever the modal does. So the browser's own rules for a
+ * popover, a box in the middle of the window with a border and a background,
+ * are put back to nothing. Its ::backdrop, which everything in the top layer
+ * gets, needs nothing: the browser draws a popover's clear, and a page that
+ * dims every ::backdrop does it with rules that cannot reach into here. When
+ * the host was the popover, such a page dimmed its own form a second time
+ * under the card, and the host needed a rule of its own against it.
  */
-:host::backdrop { display: none !important; }
+.layer { display: contents; }
+.layer:popover-open {
+  display: block;
+  position: fixed;
+  inset: 0 auto auto 0;
+  width: 0;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  overflow: visible;
+}
 * { box-sizing: border-box; }
 
 .card {
@@ -777,7 +796,11 @@ export function createCard({
 
   const card = document.createElement('div');
   card.className = 'card';
-  root.append(card);
+  // What is raised above a page's modal; see `raise`.
+  const layer = document.createElement('div');
+  layer.className = 'layer';
+  layer.append(card);
+  root.append(layer);
   document.documentElement.append(host);
 
   /*
@@ -799,7 +822,7 @@ export function createCard({
    * under it is the modal itself where the backdrop covers the card, or
    * something inside the modal where its box does.
    *
-   * Inside the modal, the host is also shown as a manual popover, which puts
+   * Inside the modal, the card is also shown as a manual popover, which puts
    * it in the top layer just above the modal (`raise`). Being a child of the
    * modal is only enough while the modal leaves fixed positions alone. A
    * dialog with a transform — the usual way to centre one, or to animate it
@@ -856,39 +879,55 @@ export function createCard({
    * the field the modal focused keeps it. Where the browser has no popovers,
    * the card stays what it was before, a child of the modal, which is right
    * for any modal that does not move fixed positions.
+   *
+   * The popover is `layer`, inside the shadow root, not the host. The host
+   * was the popover at first, and the host is an element of the page, in
+   * the modal, so the page's own code found it. A page closing its popover
+   * the short way, `document.querySelector(':popover-open')?.hidePopover()`,
+   * got the card instead: the modal comes before a popover added at the end
+   * of <body>, so the card is first in the document. Measured in Chromium
+   * over a dialog centred by translate, and over one with no transform: the
+   * card went back up, as below, and the page's popover, manual or auto,
+   * stayed open. Nothing in the document can match what is in a shadow
+   * root: not `:popover-open`, not `[popover]`, and not the `toggle` that
+   * comes of it. It is still inside the modal as the browser counts it, so
+   * still not inert, and the top layer places it as it placed the host.
    */
   const raise = () => {
     try {
-      host.setAttribute('popover', 'manual');
-      host.showPopover();
+      layer.setAttribute('popover', 'manual');
+      layer.showPopover();
     } catch {
-      host.removeAttribute('popover');
+      layer.removeAttribute('popover');
     }
   };
   /*
    * Out of the top layer again. Taking the host out of the modal hides the
-   * popover anyway; the attribute goes too, so that back at <html> the host
+   * popover anyway; the attribute goes too, so that back at <html> the card
    * is what it always was there. A popover that is not showing is
-   * `display: none` in the browser's own sheet, and only the host's inline
-   * `all: initial` would be keeping the card in view.
+   * `display: none` in the browser's own sheet, which would take the card
+   * out of view with it.
    */
   const lower = () => {
-    if (host.hasAttribute('popover')) host.removeAttribute('popover');
+    if (layer.hasAttribute('popover')) layer.removeAttribute('popover');
   };
   /*
-   * Whether the page has put the card out of the top layer while it is still
-   * inside the modal.
+   * Whether something has put the card out of the top layer while it is
+   * still inside the modal.
    *
-   * The host is a `[popover]` on the page, and the page's own code can reach
-   * it. A page that hides or toggles every popover it has, as
+   * When the host was the popover, a page that hides or toggles every
+   * popover it has, as
    * `document.querySelectorAll('[popover]').forEach((p) => p.hidePopover())`,
-   * hides the card with its own. Measured with a dialog centred by
+   * hid the card with its own. Measured with a dialog centred by
    * `translate(-50%, -50%)`: nothing threw and the page's popovers closed as
-   * they should, but the card fell out of the top layer. The inline
-   * `all: initial` kept it on screen, so it was back where `raise` was
-   * written to keep it from, moved from the window's corner to the dialog's
-   * and cut to the dialog's box. Nothing put it back: `reachable` found the
-   * same modal it already had and did nothing, every second.
+   * they should, but the card fell out of the top layer, back where `raise`
+   * was written to keep it from, moved from the window's corner to the
+   * dialog's and cut to the dialog's box. Nothing put it back: `reachable`
+   * found the same modal it already had and did nothing, every second. Such
+   * a page no longer finds it (see `raise`), but a page can still reach into
+   * an open shadow root; and a popover is also hidden, with no `toggle`, by
+   * anything that takes the host out of the document for a moment, as a
+   * modal reordering its children does.
    *
    * Hiding cannot be refused, since `beforetoggle` can only stop an opening.
    * So the card goes back up once it has gone: on its `toggle` event, which
@@ -898,13 +937,13 @@ export function createCard({
    */
   const outOfTopLayer = () => {
     try {
-      return host.hasAttribute('popover') && !host.matches(':popover-open');
+      return layer.hasAttribute('popover') && !layer.matches(':popover-open');
     } catch {
       return false;
     }
   };
   const stillBorrowed = () => borrowed !== null && host.parentNode === borrowed && isModal(borrowed);
-  host.addEventListener('toggle', (event) => {
+  layer.addEventListener('toggle', (event) => {
     if (event.newState === 'closed' && stillBorrowed() && outOfTopLayer()) raise();
   });
   const letGo = () => {
