@@ -4108,6 +4108,98 @@ const PAGE_TYPED_BEFORE = `<!doctype html><html><head><meta charset="utf-8"><tit
 </body></html>`;
 
 /*
+ * Angular's ng-select, drawn as it renders: a Country and a Discipline
+ * (multiple) with nothing chosen, and a Degree already holding "Bachelor of
+ * Science", each drawing what it holds as `.ng-value > .ng-value-label` in
+ * its `.ng-value-container`, its panel an `ng-dropdown-panel` inside it
+ * that the box names while open. With `?deaf`, a click on an option shuts
+ * the panel and chooses nothing.
+ */
+const PAGE_NG_SELECT = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title>
+<style>.ng-has-value .ng-placeholder { display: none; }</style></head><body>
+<form>
+  <div class="q"><label for="ngs-country">Country</label>
+    <ng-select class="ng-select ng-select-single ng-select-searchable" data-options="Canada|United States"><div class="ng-select-container"><div class="ng-value-container">
+      <div class="ng-placeholder">Select a country</div>
+      <div class="ng-input" role="combobox" aria-haspopup="listbox" aria-expanded="false"><input id="ngs-country" type="text" aria-autocomplete="list" autocomplete="off"></div>
+    </div><span class="ng-arrow-wrapper"><span class="ng-arrow"></span></span></div></ng-select></div>
+  <div class="q"><label for="ngs-major">Discipline</label>
+    <ng-select class="ng-select ng-select-multiple ng-select-searchable" data-options="Biology|Computer Science"><div class="ng-select-container"><div class="ng-value-container">
+      <div class="ng-placeholder">Select disciplines</div>
+      <div class="ng-input" role="combobox" aria-haspopup="listbox" aria-expanded="false"><input id="ngs-major" type="text" aria-autocomplete="list" autocomplete="off"></div>
+    </div><span class="ng-arrow-wrapper"><span class="ng-arrow"></span></span></div></ng-select></div>
+  <div class="q"><label for="ngs-degree">Degree</label>
+    <ng-select class="ng-select ng-select-single ng-select-searchable" data-options="Bachelor of Science|Master of Science" data-value="Bachelor of Science"><div class="ng-select-container"><div class="ng-value-container">
+      <div class="ng-placeholder">Select a degree</div>
+      <div class="ng-input" role="combobox" aria-haspopup="listbox" aria-expanded="false"><input id="ngs-degree" type="text" aria-autocomplete="list" autocomplete="off"></div>
+    </div><span class="ng-arrow-wrapper"><span class="ng-arrow"></span></span></div></ng-select></div>
+</form>
+<script>
+  window.log = [];
+  let ids = 0;
+  // Angular ng-select as it renders: the chosen drawn as .ng-value > .ng-value-label in .ng-value-container,
+  // its panel an ng-dropdown-panel role="listbox" inside it, named by the box's aria-controls while open.
+  for (const host of document.querySelectorAll('ng-select')) {
+    const multiple = host.classList.contains('ng-select-multiple');
+    const container = host.querySelector('.ng-select-container'), values = host.querySelector('.ng-value-container');
+    const combo = host.querySelector('.ng-input'), input = combo.querySelector('input');
+    const options = host.dataset.options.split('|');
+    const dropdownId = 'a' + (++ids) + 'f3c9';
+    let chosen = host.dataset.value ? [host.dataset.value] : [];
+    let panel = null;
+    const render = () => {
+      values.querySelectorAll('.ng-value').forEach((v) => v.remove());
+      for (const label of chosen) {
+        const v = document.createElement('div'); v.className = 'ng-value';
+        v.innerHTML = '<span class="ng-value-icon left" aria-hidden="true">×</span><span class="ng-value-label"></span>';
+        v.querySelector('.ng-value-label').textContent = label;
+        v.querySelector('.ng-value-icon').addEventListener('click', () => { chosen = chosen.filter((c) => c !== label); window.log.push('removed ' + label); render(); });
+        values.insertBefore(v, combo);
+      }
+      container.classList.toggle('ng-has-value', chosen.length > 0);
+    };
+    const close = () => {
+      panel?.remove(); panel = null; input.value = '';
+      combo.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-controls'); input.removeAttribute('aria-activedescendant');
+    };
+    const draw = () => {
+      const term = input.value.toLowerCase();
+      panel.querySelector('.ng-dropdown-panel-items').replaceChildren(...options.filter((o) => o.toLowerCase().includes(term)).map((label, i) => {
+        const o = document.createElement('div'); o.className = 'ng-option'; o.setAttribute('role', 'option');
+        o.id = dropdownId + '-' + options.indexOf(label); o.setAttribute('aria-selected', String(chosen.includes(label)));
+        o.innerHTML = '<span class="ng-option-label"></span>'; o.firstChild.textContent = label;
+        o.addEventListener('click', () => {
+          // With ?deaf, a click shuts the panel and chooses nothing.
+          if (location.search.includes('deaf')) { window.log.push(input.id + ' ignored ' + label); close(); return; }
+          chosen = multiple ? [...new Set([...chosen, label])] : [label];
+          window.log.push(input.id + ' chose ' + label); render(); close();
+        });
+        return o;
+      }));
+    };
+    const open = () => {
+      if (panel) return;
+      panel = document.createElement('ng-dropdown-panel'); panel.className = 'ng-dropdown-panel'; panel.id = dropdownId;
+      panel.setAttribute('role', 'listbox'); panel.setAttribute('aria-label', 'Options list');
+      panel.innerHTML = '<div class="ng-dropdown-panel-items scroll-host"><div></div></div>';
+      panel.firstChild.replaceChildren(document.createElement('div'));
+      panel.firstChild.firstChild.className = 'ng-dropdown-panel-items';
+      panel.addEventListener('mousedown', (e) => e.preventDefault());
+      host.append(panel); draw();
+      combo.setAttribute('aria-expanded', 'true'); input.setAttribute('aria-controls', dropdownId);
+    };
+    container.addEventListener('mousedown', (e) => { if (e.target.tagName !== 'INPUT') e.preventDefault(); input.focus(); open(); });
+    input.addEventListener('input', () => { window.log.push(input.id + ' typed ' + input.value); open(); draw(); });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+    input.addEventListener('blur', close);
+    render();
+  }
+  const shown = (id) => [...document.getElementById(id).closest('ng-select').querySelectorAll('.ng-value-label')].map((v) => v.textContent);
+  window.state = () => ({ country: shown('ngs-country'), major: shown('ngs-major'), degree: shown('ngs-degree'), boxes: [...document.querySelectorAll('ng-select input')].map((i) => i.value), open: document.querySelectorAll('ng-dropdown-panel').length });
+</script>
+</body></html>`;
+
+/*
  * The page's own boxes, each put into a component that draws its label round
  * the slot: in a wrapper before the slot or before a wrapper round it, loose
  * in its root, round the slot, and with the label's words slotted in too,
@@ -5476,7 +5568,7 @@ const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><tit
   });
 </script></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
 
 const PROFILE = {
   first_name: 'Morgan',
@@ -10326,6 +10418,31 @@ async function main() {
       typedBefore.city.join() === 'Bost,' && typedBefore.school.join() === 'Northea,' && typedBefore.open === 0 && typedBefore.log.length === 0 &&
         typedBefore.filled.length === 0 && typedBefore.skipped.join() === 'address_city: this one has to be picked by hand,school: this one has to be picked by hand',
       JSON.stringify(typedBefore),
+    );
+
+    const ngSelect = async (query) => {
+      await page.goto(`${base}/page-ng-select${query}`, { waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 1000 });
+        return { ...window.state(), log: window.log, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields: SWEEP });
+    };
+    const ngChosen = await ngSelect('');
+    const ngDeaf = await ngSelect('?deaf');
+    group('Angular ng-select: a choice drawn as its value label is seen');
+    check(
+      'a Country and a Discipline chosen in ng-select, drawn as .ng-value-label, are reported filled, once each, and not as ones to pick by hand; the Degree already holding the answer is left untouched',
+      ngChosen.country.join() === 'United States' && ngChosen.major.join() === 'Computer Science' && ngChosen.degree.join() === 'Bachelor of Science' &&
+        ngChosen.log.join() === 'ngs-country chose United States,ngs-major chose Computer Science' && ngChosen.boxes.join() === ',,' && ngChosen.open === 0 &&
+        ngChosen.filled.join() === 'address_country,major' && ngChosen.skipped.length === 0,
+      JSON.stringify(ngChosen),
+    );
+    check(
+      'but ng-selects whose panel shuts on a click without choosing are reported as ones to pick by hand, not filled',
+      ngDeaf.country.length === 0 && ngDeaf.major.length === 0 && ngDeaf.open === 0 && ngDeaf.filled.length === 0 &&
+        ngDeaf.skipped.join() === 'address_country: this one has to be picked by hand,major: this one has to be picked by hand',
+      JSON.stringify(ngDeaf),
     );
 
     const putIn = (url) => page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' }).then(() =>

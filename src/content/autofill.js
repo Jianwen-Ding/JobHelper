@@ -6488,8 +6488,15 @@ function shownBy(widget) {
  * its single value or its chips, `''` where it draws none yet — only its
  * placeholder, or nothing — and `undefined` for a widget that is not drawn
  * this way at all, which `tookIt` then reads as it always has.
+ *
+ * Angular's ng-select draws its value, single or each chip, as a
+ * `.ng-value-label` in its `.ng-value-container` — which says
+ * "value-container", so it was read as drawn this way, and with no value
+ * of its own found, as drawing none. Measured on a local fixture shaped
+ * as ng-select renders: a Country and a Discipline chosen, drawn, and
+ * reported as ones to pick by hand.
  */
-const DRAWN_VALUE = '[class*="single-value"], [class*="singleValue"], [class*="multi-value__label"], [class*="multiValueLabel"], [data-automation-id="selectedItem"]';
+const DRAWN_VALUE = '[class*="single-value"], [class*="singleValue"], [class*="multi-value__label"], [class*="multiValueLabel"], .ng-value-label, [data-automation-id="selectedItem"]';
 const DRAWS_ITS_VALUE = `${DRAWN_VALUE}, [class*="value-container"], [class*="ValueContainer"], [class*="__placeholder"], [data-automation-id="multiselectInputContainer"]`;
 
 function drawnValue(control) {
