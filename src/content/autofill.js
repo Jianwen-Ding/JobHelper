@@ -1028,11 +1028,27 @@ const ANOTHER_FIELD = 'input:not([type=hidden]), textarea, select';
  * word boundary. A label that is nothing but hidden text keeps it, rather than
  * becoming no label at all.
  */
+/*
+ * And the words a `<slot>` shows, which are not its children.
+ *
+ * A web component's label is very often a slot: Shoelace's `<sl-input>`
+ * draws `<label for="input"><slot name="label">` beside its own `<input
+ * id="input">` in its shadow root, and the page writes the words in its own
+ * markup, `<sl-input><span slot="label">First name</span></sl-input>`. What
+ * the slot shows is its assigned nodes, which live in the page, and what it
+ * holds is only the fallback for when nothing is assigned — so the label was
+ * read as empty, and every box drawn this way was described by its `name`
+ * alone. On a form whose names are `q_1001` that is no description at all:
+ * measured, First name, Last name and Email came out empty and unreported.
+ * The assigned nodes when there are any, flattened through a slot passed on
+ * into another component, and the fallback otherwise, as the browser draws it.
+ */
 function labelWords(el) {
   if (!el) return '';
   const parts = [];
   const walk = (node) => {
-    for (const child of node.childNodes) {
+    const shown = node.localName === 'slot' ? node.assignedNodes({ flatten: true }) : [];
+    for (const child of shown.length ? shown : node.childNodes) {
       if (child.nodeType === Node.TEXT_NODE) parts.push(child.nodeValue);
       else if (child.nodeType === Node.ELEMENT_NODE && child.getAttribute('aria-hidden') !== 'true') {
         parts.push(' ');
