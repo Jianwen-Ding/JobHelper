@@ -6287,8 +6287,18 @@ function listsOf(widget, openBefore = null) {
    * chosen chips, holding "United States" and opening nothing on a press:
    * the chip was the option pressed, and pressing a chip takes it out, so
    * the country it held was lost and it was reported as one to pick by hand.
+   *
+   * Nor any list showing inside a widget that says it is shut. The same
+   * chips need not be marked chosen: drawn as options with no
+   * `aria-selected` at all, under a dropdown saying `aria-expanded="false"`,
+   * the United States chip was pressed and taken out just the same. A list
+   * always open inside its control says so with `aria-expanded="true"`, or
+   * says nothing, and is still taken; a list the press opens is found as
+   * what it opened, above, whatever the widget says.
    */
-  const inside = showing.filter((l) => widget.contains(l) && !holdsOnlyChosen(l));
+  const said = [widget, box].filter(Boolean).map((el) => el.getAttribute('aria-expanded')).filter((it) => it !== null);
+  const saysShut = said.length > 0 && said.every((it) => it === 'false');
+  const inside = saysShut ? [] : showing.filter((l) => widget.contains(l) && !holdsOnlyChosen(l));
   const lists = fresh.length ? fresh : inside;
   return lists.length === 1 ? lists : [];
 }

@@ -4028,7 +4028,9 @@ const PAGE_FOCUS_OPENS_ANOTHER = `<!doctype html><html><head><meta charset="utf-
  * States". Pressing a chip takes it out, and the dropdown itself opens only
  * on the keyboard. And a School whose list is always open inside it, its
  * first option highlighted (`aria-selected`) as MUI's `autoHighlight` leaves
- * it, a click choosing and drawing the choice over the list.
+ * it, a click choosing and drawing the choice over the list. With
+ * `?unmarked`, the chips carry no `aria-selected` at all, and the School
+ * says nothing of being expanded.
  */
 const PAGE_CHOSEN_CHIPS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
 <form>
@@ -4047,6 +4049,10 @@ const PAGE_CHOSEN_CHIPS = `<!doctype html><html><head><meta charset="utf-8"><tit
 </form>
 <script>
   window.log = [];
+  if (location.search.includes('unmarked')) {
+    for (const chip of document.querySelectorAll('.chip')) chip.removeAttribute('aria-selected');
+    document.getElementById('c-school').removeAttribute('aria-expanded');
+  }
   // Pressing a chip takes it out; the dropdown itself opens only on the keyboard.
   document.querySelector('.chips').addEventListener('click', (e) => {
     const chip = e.target.closest('.chip'); if (!chip) return;
@@ -10387,12 +10393,16 @@ async function main() {
       JSON.stringify(unnudged),
     );
 
-    await page.goto(`${base}/page-chosen-chips`, { waitUntil: 'domcontentloaded' });
-    const chips = await page.evaluate(async ({ b, fields }) => {
-      const m = await import(`${b}/autofill.js`);
-      const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 1000 });
-      return { ...window.state(), log: window.log, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
-    }, { b: base, fields: SWEEP });
+    const chipsOn = async (query) => {
+      await page.goto(`${base}/page-chosen-chips${query}`, { waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 1000 });
+        return { ...window.state(), log: window.log, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields: SWEEP });
+    };
+    const chips = await chipsOn('');
+    const unmarkedChips = await chipsOn('?unmarked');
     group('The chips a dropdown holds are not a list to choose from');
     check(
       'a multi-select whose chosen chips are a listbox inside it, opening nothing on a press, has no chip pressed for its answer: United States is kept',
@@ -10404,6 +10414,17 @@ async function main() {
       'but a dropdown whose list, one option highlighted, is always open inside it is still chosen in from that list',
       chips.school === 'Northeastern University' && chips.log.includes('chose Northeastern University') && chips.filled.includes('school'),
       JSON.stringify(chips),
+    );
+    check(
+      'and chips drawn as options with no aria-selected, under a dropdown saying it is shut, are not pressed either: United States is kept',
+      unmarkedChips.chips.join() === 'United States' && !unmarkedChips.log.some((l) => l.startsWith('removed')) && !unmarkedChips.filled.includes('address_country') &&
+        unmarkedChips.skipped.join() === 'address_country: this one has to be picked by hand',
+      JSON.stringify(unmarkedChips),
+    );
+    check(
+      'while the School whose list is always open inside it, saying nothing of being expanded, is still chosen in from that list',
+      unmarkedChips.school === 'Northeastern University' && unmarkedChips.log.includes('chose Northeastern University') && unmarkedChips.filled.includes('school'),
+      JSON.stringify(unmarkedChips),
     );
 
     await page.goto(`${base}/page-typed-before`, { waitUntil: 'domcontentloaded' });
