@@ -1016,6 +1016,34 @@ function closestAround(node, selector) {
   return null;
 }
 
+/** Whether `node` is drawn inside `box`, climbing as `parentAround` does. */
+function drawnInside(box, node) {
+  for (let at = node; at; at = parentAround(at)) {
+    if (at === box) return true;
+  }
+  return false;
+}
+
+/**
+ * Every element drawn inside `scope`, in the order the page draws them: a
+ * component's root in place of what is written between its tags, and a slot
+ * as what the page put in it. The same tree `parentAround` climbs, walked the
+ * other way. Never the card's own.
+ */
+function* drawnWithin(scope) {
+  const put = scope.localName === 'slot' && hostOf(scope) ? scope.assignedElements() : [];
+  const from = put.length ? put : (scope.shadowRoot && scope.id !== OURS ? scope.shadowRoot : scope).children;
+  for (const child of [...from]) {
+    yield child;
+    yield* drawnWithin(child);
+  }
+}
+
+const drawsAny = (scope, selector) => {
+  for (const el of drawnWithin(scope)) if (el.matches(selector)) return true;
+  return false;
+};
+
 /**
  * Find the label that belongs to a field.
  *
@@ -2403,13 +2431,20 @@ const rankOf = (heading) =>
  * section whose boxes are all components holds none that `querySelector`
  * can see, so its heading's wrapper was never found, the climb ran on to the
  * form, and the heading was nobody's bound.
+ *
+ * And as the page draws it (see `drawnWithin`): the heading may be drawn in
+ * a component — `<x-heading>` whose root is an `<h3>`, or `<x-section>`
+ * whose root is `<section><h3>…</h3><slot></slot></section>` round the
+ * page's own fields — and its wrapper is then found by climbing out of the
+ * component, or is the component's `<section>` holding what is slotted in.
  */
 function sectionBoxOf(heading) {
-  let box = heading.parentElement;
-  while (box && !fieldsIn(box, A_CONTROL, 1)) box = box.parentElement;
+  let box = parentAround(heading);
+  while (box && !drawsAny(box, A_CONTROL)) box = parentAround(box);
   if (!box || box.localName === 'form' || box.localName === 'body' || box.localName === 'html') return null;
   const rank = rankOf(heading);
-  for (const other of box.querySelectorAll(HEADING)) {
+  for (const other of drawnWithin(box)) {
+    if (!other.matches(HEADING)) continue;
     if (other === heading || other.localName === 'legend') continue;
     if (rankOf(other) <= rank) return null;
   }
@@ -2433,24 +2468,34 @@ function sectionBoxOf(heading) {
  * under a bounded "Work Experience" heading were given the applicant's own
  * home and number, where the same boxes written straight into the form were
  * left for the person as a past job's.
+ *
+ * And the headings a component draws. `querySelectorAll` from the form sees
+ * none drawn in a component's root — `<x-heading text="Work Experience">`
+ * whose root is the `<h3>`, or `<x-section heading="Work Experience">` whose
+ * root is `<section><h3>…</h3><slot></slot></section>` round the page's own
+ * boxes — and a box slotted into a component is before or after nothing
+ * there either. Measured, a City under either was given the applicant's
+ * home, where under the same `<h3>` written into the form it was left for
+ * the person as a past job's; and an "End date year" after an Education
+ * heading drawn in a component was left empty, where after the page's own
+ * `<h3>Education</h3>` it was the graduation year. So the form is walked as
+ * it is drawn (see `drawnWithin`), up to the field, and "inside" is where
+ * the field is drawn (see `drawnInside`). In a form without components that
+ * is the same walk, in the same order, as before.
  */
 function headingOver(input) {
-  let at = input;
-  let scope = at.closest?.('form') ?? null;
-  while (!scope && hostOf(at)) {
-    at = hostOf(at);
-    scope = at.closest('form');
-  }
+  const scope = closestAround(input, 'form');
   if (!scope) return null;
   let found = null;
-  for (const heading of scope.querySelectorAll(HEADING)) {
-    if (!(heading.compareDocumentPosition(at) & Node.DOCUMENT_POSITION_FOLLOWING)) break;
+  for (const heading of drawnWithin(scope)) {
+    if (heading === input) break;
+    if (!heading.matches(HEADING)) continue;
     if (heading.localName === 'legend') {
-      if (heading.parentElement?.contains(at)) found = { heading, bounded: false };
+      if (heading.parentElement && drawnInside(heading.parentElement, input)) found = { heading, bounded: false };
       continue;
     }
     const box = sectionBoxOf(heading);
-    if (box && !box.contains(at)) continue;
+    if (box && !drawnInside(box, input)) continue;
     found = { heading, bounded: Boolean(box) };
   }
   return found;
