@@ -4470,15 +4470,38 @@ const AN_ARIA_OPTION = '[role="radio"], [role="option"]';
  * question asked that way were neither answered nor mentioned, where the
  * same buttons written into the group were answered.
  *
- * An option drawn in a component is this group's only when no group of its
- * own is drawn between them. A component drawing a whole yes/no radiogroup
- * of its own, put inside the page's `role="group"`, is found as that group,
- * and its buttons are not also the page's group's.
+ * An option is this group's only when no group of its own is drawn between
+ * them (`choiceGroupOf`). A component drawing a whole yes/no radiogroup of
+ * its own, put inside the page's `role="group"`, is found as that group, and
+ * its buttons are not also the page's group's. And the same for the page's
+ * own: `group.contains` reaches into a nested group, so a section's
+ * `role="group"` labelled "Work authorization", written round the
+ * sponsorship and authorization questions each with its own label and
+ * radiogroup, took all four buttons as its own. Measured, it was offered to
+ * the bank as a question, "Work authorization", and reported as having no
+ * matching option, though both questions in it were answered.
  */
 function ariaOptionsIn(group) {
-  return [...drawnWithin(group)].filter(
-    (el) => el.matches(AN_ARIA_OPTION) && (group.contains(el) || closestAround(parentAround(el), A_CHOICE_GROUP) === group),
-  );
+  return [...drawnWithin(group)].filter((el) => el.matches(AN_ARIA_OPTION) && choiceGroupOf(el) === group);
+}
+
+/*
+ * The ARIA group an option is one of: the nearest drawn round it, out through
+ * each component (`closestAround`). But a `role="group"` in a listbox is not
+ * a question of its own. It is how ARIA heads some of a list's options —
+ * "Europe" over France and Germany, "North America" over Canada and the
+ * United States — and the options are still the listbox's. Taking the
+ * nearest alone, a country list written that way would have no options, and
+ * "North America" would be asked as a question.
+ */
+function choiceGroupOf(option) {
+  let group = closestAround(parentAround(option), A_CHOICE_GROUP);
+  while (group?.getAttribute('role') === 'group') {
+    const outer = closestAround(parentAround(group), A_CHOICE_GROUP);
+    if (outer?.getAttribute('role') !== 'listbox') break;
+    group = outer;
+  }
+  return group;
 }
 
 /*
