@@ -959,8 +959,33 @@ const hostOf = (node) => {
   return root instanceof ShadowRoot && root.host.id !== OURS ? root.host : null;
 };
 
-/** The element around this one: its parent, or the component it is drawn in. */
-const parentAround = (node) => node.parentElement ?? (node.parentNode instanceof ShadowRoot ? hostOf(node) : null);
+/**
+ * The slot the page's own markup is drawn through, where it is put inside a
+ * component — never one of the card's own.
+ */
+const slotOf = (node) => {
+  const slot = node.assignedSlot;
+  return slot && hostOf(slot) ? slot : null;
+};
+
+/**
+ * The element around this one as the page draws it: the slot it is drawn
+ * through, its parent, or the component it is drawn in.
+ *
+ * The slot first. A component can draw the fieldset, or the group, and put
+ * the page's own fields in it through a `<slot>`: `<x-fieldset
+ * legend="Emergency contact">` whose root is `<fieldset><legend>Emergency
+ * contact</legend><slot></slot></fieldset>`, and the Phone and Email written
+ * in the page between its tags. Those fields are in the page's tree and the
+ * fieldset is in the component's, so neither `closest` nor climbing out
+ * through hosts reached it: measured, an Emergency contact's Phone and Email
+ * slotted that way were given the applicant's own, and a Reference's Email
+ * in a group drawn the same way the applicant's address, where the same form
+ * written without components left all three alone. Through the slot is where
+ * the field is drawn — a field put in a slot outside the component's
+ * fieldset is not in it, as it is not on the screen.
+ */
+const parentAround = (node) => slotOf(node) ?? node.parentElement ?? (node.parentNode instanceof ShadowRoot ? hostOf(node) : null);
 
 /**
  * `closest`, carried on out of each component the node is drawn in.
@@ -980,11 +1005,13 @@ const parentAround = (node) => node.parentElement ?? (node.parentNode instanceof
  * care: a fieldset around a component is around everything the component
  * draws, and its legend is as much the context of each box in it as of a box
  * written straight into the fieldset.
+ *
+ * And in through the slot a field is drawn through, as `parentAround` climbs:
+ * `closest` stops at a host whose root draws the fieldset round its slot.
  */
 function closestAround(node, selector) {
-  for (let at = node; at; at = hostOf(at)) {
-    const found = at.closest?.(selector);
-    if (found) return found;
+  for (let at = node; at; at = parentAround(at)) {
+    if (at.matches?.(selector)) return at;
   }
   return null;
 }
