@@ -1138,20 +1138,10 @@ async function holdASpace(trail, tabId) {
   // The write already in flight, handed to whoever else asks — a send waiting
   // on its save has to wait on this, not on a call that returned at once.
   if (holding.has(key)) return holding.get(key);
-  const run = holdTheSpace(key, save, company, role, trail, work, tabId);
+  const run = filingOut(tabId, holdTheSpace(key, save, company, role, trail, work, tabId));
   holding.set(key, run);
-  // Waited on by `keptCopy`: the copy is written long before the reply comes.
-  if (tabId !== undefined) {
-    keeping.set(tabId, run);
-    run.catch(() => undefined).finally(() => {
-      if (keeping.get(tabId) === run) keeping.delete(tabId);
-    });
-  }
   return run;
 }
-
-/** Each tab's keeper write still out. See `keptCopy`. */
-const keeping = new Map();
 
 /**
  * This worker, as against the one before it.
@@ -1178,11 +1168,62 @@ const THIS_WORKER = `${Date.now()}-${Math.random()}`;
  */
 function filingRefused(err) {
   if (err?.conflict) return { conflict: err.conflict, error: err.message };
+  /*
+   * And a stage refused because the application has gone out: nothing was
+   * written, and nothing is wrong, so the card is told rather than shown an
+   * error. See `AlreadySent` in ResumeM-M.
+   */
+  if (err?.kind === 'already-sent') return { alreadySent: true, error: err.message };
   throw err;
 }
 
-/** Where `holdTheSpace` notes what it filed of a tab's copy. */
-const keptKey = (tabId) => `keptCopy:${tabId}`;
+/*
+ * The writes of its copy this tab's cards have made, and those still out.
+ *
+ * A card files its copy based on the write it knows of, and is refused over
+ * any other — including a write of its own it never heard back about: the
+ * keeper's, which answers nobody, and a stage the card on the page before
+ * sent just before the tab moved on, answered to a card that no longer
+ * exists. Measured in tests/carrying.mjs: the form page's card, carrying the
+ * posting page's knowledge from before that page's stage came back, was
+ * refused over it, took its own copy for an edit made in ResumeM-M, compiled
+ * and staged again — and that stage landed after Submit. So every filing is
+ * noted here, per tab, as the write it was based on and the write it made,
+ * and `ownWrite` follows them from the card's to the one it was refused over.
+ */
+const filedKey = (tabId) => `filedCopies:${tabId}`;
+const FILINGS_KEPT = 30;
+const filingsOut = new Map();
+function filingOut(tabId, run) {
+  if (tabId === undefined) return run;
+  const out = filingsOut.get(tabId) ?? new Set();
+  out.add(run);
+  filingsOut.set(tabId, out);
+  run.catch(() => undefined).finally(() => {
+    out.delete(run);
+    if (out.size === 0 && filingsOut.get(tabId) === out) filingsOut.delete(tabId);
+  });
+  return run;
+}
+async function noteFiled(tabId, id, basedOn, version) {
+  if (tabId === undefined || !id || version === undefined || basedOn === undefined) return;
+  const key = filedKey(tabId);
+  const list = (await session().get(key).catch(() => ({})))[key] ?? [];
+  list.push({ id, basedOn, version });
+  await session().set({ [key]: list.slice(-FILINGS_KEPT) }).catch(() => undefined);
+}
+/** A filing of the copy, noted and tracked. See `filingOut`. */
+function filing(tab, payload, run) {
+  return filingOut(
+    tab?.id,
+    run.then(async (reply) => {
+      if (reply && !reply.conflict && !reply.alreadySent) {
+        await noteFiled(tab?.id, reply.draft?.resumeId ?? payload?.spec?.id, payload?.basedOn, reply.resumeVersion);
+      }
+      return reply;
+    }),
+  );
+}
 
 /** The write `holdASpace` guards: one per key at a time. */
 async function holdTheSpace(key, save, company, role, trail, work, tabId) {
@@ -1259,13 +1300,9 @@ async function holdTheSpace(key, save, company, role, trail, work, tabId) {
        * And what it filed, for the card: its next filing is based on the
        * write before this one, is refused over this one, and has to be able
        * to tell this write — its own copy — from an edit made in ResumeM-M.
-       * See `keptCopy`.
+       * See `ownWrite`.
        */
-      if (reply?.resumeVersion !== undefined && body.spec && tabId !== undefined) {
-        await session()
-          .set({ [keptKey(tabId)]: { id: reply.draft?.resumeId ?? body.spec.id, basedOn: body.basedOn, version: reply.resumeVersion } })
-          .catch(() => undefined);
-      }
+      if (reply && body.spec) await noteFiled(tabId, reply.draft?.resumeId ?? body.spec.id, body.basedOn, reply.resumeVersion);
       await settled();
     } catch (err) {
       /*
@@ -2513,39 +2550,51 @@ const handlers = {
    * That is the only difference and it is the point of having two names.
    */
   async stage(payload, tab) {
-    return serverFetch('/api/applications/bundle', {
-      method: 'POST',
-      timeoutMs: SLOW_TIMEOUT_MS,
-      save: await saveOrRefuse(tab?.id),
-      body: JSON.stringify({ ...payload, status: 'applying' }),
-    }).catch(filingRefused);
+    const save = await saveOrRefuse(tab?.id);
+    return filing(
+      tab,
+      payload,
+      serverFetch('/api/applications/bundle', {
+        method: 'POST',
+        timeoutMs: SLOW_TIMEOUT_MS,
+        save,
+        body: JSON.stringify({ ...payload, status: 'applying' }),
+      }).catch(filingRefused),
+    );
   },
 
   async bundle(payload, tab) {
-    return serverFetch('/api/applications/bundle', {
-      method: 'POST',
-      timeoutMs: SLOW_TIMEOUT_MS,
-      save: await saveOrRefuse(tab?.id),
-      body: JSON.stringify(payload),
-    }).catch(filingRefused);
+    const save = await saveOrRefuse(tab?.id);
+    return filing(
+      tab,
+      payload,
+      serverFetch('/api/applications/bundle', {
+        method: 'POST',
+        timeoutMs: SLOW_TIMEOUT_MS,
+        save,
+        body: JSON.stringify(payload),
+      }).catch(filingRefused),
+    );
   },
 
   /**
-   * What the keeper filed of the copy for this tab, if it did: see
-   * `holdTheSpace`. Asked by a card whose filing was refused, to tell the
-   * keeper's write from an edit made in ResumeM-M.
+   * Whether the write of the copy a card was refused over is this tab's own:
+   * reached from the write the card built on (`from`) through filings this
+   * tab made (`to`). See `filedKey`. After any filing still out, since the
+   * store writes the copy well before the reply to it comes back.
    */
-  async keptCopy({ id }, tab) {
-    /*
-     * After the keeper's write still out, if there is one. The store writes
-     * the copy and then commits the workspace, so a filing refused over the
-     * keeper's copy can be answered well before the keeper hears back and
-     * notes it — and the card took its own copy for an edit made elsewhere.
-     */
-    await keeping.get(tab?.id)?.catch(() => undefined);
-    const key = keptKey(tab?.id);
-    const kept = (await session().get(key).catch(() => ({})))[key];
-    return kept && kept.id === id ? kept : null;
+  async ownWrite({ id, from, to }, tab) {
+    const out = [...(filingsOut.get(tab?.id) ?? [])];
+    if (out.length) await Promise.race([Promise.allSettled(out), new Promise((r) => setTimeout(r, SLOW_TIMEOUT_MS))]);
+    const key = filedKey(tab?.id);
+    const list = ((await session().get(key).catch(() => ({})))[key] ?? []).filter((f) => f.id === id);
+    let at = from ?? null;
+    for (let step = 0; step <= list.length && at !== to; step++) {
+      const next = list.find((f) => f.basedOn === at);
+      if (!next) break;
+      at = next.version;
+    }
+    return { own: at === to };
   },
 
   /**
@@ -2938,15 +2987,17 @@ const handlers = {
    * paragraphs; this is the door between the two.
    */
   async openWorkspace(payload, tab) {
-    const result = await serverFetch('/api/workspace', {
-      method: 'POST',
-      timeoutMs: SLOW_TIMEOUT_MS,
-      // The same rule as `bundle`: this writes a space, a tracker row and a
-      // tailored resume into a save, and it has to be the save the proposal
-      // was built from.
-      save: await saveOrRefuse(tab?.id),
-      body: JSON.stringify(payload),
-    }).catch(filingRefused);
+    // The same rule as `bundle`: this writes a space, a tracker row and a
+    // tailored resume into a save, and it has to be the save the proposal
+    // was built from.
+    const save = await saveOrRefuse(tab?.id);
+    const result = await filing(
+      tab,
+      payload,
+      serverFetch('/api/workspace', { method: 'POST', timeoutMs: SLOW_TIMEOUT_MS, save, body: JSON.stringify(payload) }).catch(
+        filingRefused,
+      ),
+    );
     if (result.conflict) return result;
     const { serverUrl } = await getSettings();
     return { ...result, absoluteUrl: `${serverUrl.replace(/\/$/, '')}${result.url}` };

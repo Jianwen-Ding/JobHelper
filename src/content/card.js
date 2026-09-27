@@ -1328,6 +1328,11 @@ export function createCard({
      * it holds. Every filing of the copy is based on it. See `fileTheCopy`.
      */
     filed: null,
+    /**
+     * Whether this application has gone out: Submit recorded on the page, or
+     * "Mark as applied". From then on nothing stages — see `stagingStopped`.
+     */
+    sent: false,
   };
 
   /**
@@ -1374,6 +1379,8 @@ export function createCard({
       // Which write of the store's copy it is built on: the keeper files it
       // only over that one, and the next page's card goes on from it.
       filed: state.filed,
+      // Gone out: the next page's card does not stage it either.
+      sent: state.sent,
       builtWith: state.builtWith,
       /*
        * What the AI chose and why, for the page that cannot work it out.
@@ -1459,6 +1466,7 @@ export function createCard({
     if (work.baseResumeId) state.baseChosen = work.baseResumeId;
     // What the store's copy was when the last page's card left it. See `fileTheCopy`.
     if (work.filed?.id && !state.filed) state.filed = work.filed;
+    if (work.sent) state.sent = true;
     /*
      * What was carried is a starting point, not a correction.
      *
@@ -2718,8 +2726,9 @@ export function createCard({
    * write was written away; and a copy the card had filed earlier, made
    * again in ResumeM-M, read as the card's own and was written over. The
    * store now refuses a filing based on a write it does not hold, and says
-   * what it holds. That is the keeper's write when the keeper noted it (the
-   * card's own, filed with the workspace: filed over as it is), and
+   * what it holds. That is this tab's own write when the worker can follow
+   * its filings there from the card's base (the keeper's, or a stage the
+   * card on the page before made: filed over as it is — see `ownWrite`), and
    * otherwise an edit made elsewhere: the card's own changes since its base
    * go on top of it where they do not touch the same thing, and where they
    * do, the store's copy is taken as it is, and said. Either way that is the
@@ -2732,8 +2741,14 @@ export function createCard({
       if (state.filed?.id !== spec.id) await learnFiled(spec);
       const on = state.filed?.id === spec.id ? state.filed : null;
       const basedOn = on && on.version !== undefined ? on.version : undefined;
+      // Asked again as it goes: this stage was decided on before any send.
+      if (action === 'stage' && stagingStopped()) return { alreadySent: true };
       sentOut(spec);
       const result = await onAction(action, { ...payload, spec, ...(basedOn !== undefined ? { basedOn } : {}) });
+      if (result?.alreadySent) {
+        state.sent = true;
+        return result;
+      }
       if (!result?.conflict) {
         if (result && result.resumeVersion !== undefined) state.filed = { id: spec.id, version: result.resumeVersion, copy: spec };
         if (said) tookOver(payload.spec, spec, said);
@@ -2743,14 +2758,19 @@ export function createCard({
         throw new Error('ResumeM-M kept changing this resume while the card was filing it, so nothing was filed. Try again in a moment.');
       }
       const { current, version } = result.conflict;
-      const kept = await Promise.resolve(onAction('keptCopy', { id: spec.id })).catch(() => null);
+      /*
+       * This tab's own write — the keeper's, or a stage made by the card on
+       * the page before — reached from the one this card built on: filed
+       * over as it stands, with nothing taken and nothing said.
+       */
+      const mine = await Promise.resolve(onAction('ownWrite', { id: spec.id, from: basedOn ?? null, to: version })).catch(() => null);
       state.filed = { id: spec.id, version, copy: current };
-      // The keeper's write of this card's copy, over the same base: its own.
-      if (kept && kept.version === version && kept.basedOn === (basedOn ?? null)) continue;
-      if (!current) continue;
+      if (mine?.own || !current) continue;
       const { merged, clashes } = on?.copy ? mergeCopy(on.copy, spec, current) : { merged: current, clashes: ['(no base)'] };
-      spec = clashes.length ? current : merged;
-      if (said !== ADOPTED_NOTE) said = clashes.length ? ADOPTED_NOTE : MERGED_NOTE;
+      const next = clashes.length ? current : merged;
+      // Only an edit that changes the copy is one to take and say.
+      if (!sameValue(next, spec) && said !== ADOPTED_NOTE) said = clashes.length ? ADOPTED_NOTE : MERGED_NOTE;
+      spec = next;
     }
   }
 
@@ -4320,7 +4340,23 @@ export function createCard({
     return state.staged?.currentDir ?? analysis?.currentDir ?? null;
   }
 
+  /**
+   * Staging stopped because the application has gone out.
+   *
+   * A stage files the copy and rebuilds the application's files, asking for
+   * `applying`, and nothing about the card stopped once the form was sent: a
+   * compile finishing, a store change, a retry, a switch all ended in one
+   * more stage, and one leaving around Submit landed after the send and
+   * rebuilt the files of an application that had gone out — its history's
+   * last word "Files rebuilt" instead of the send (tests/carrying.mjs, in
+   * full gate runs and alone). Asked at every door and again the moment a stage is sent,
+   * since a queued or retried one was decided on before the send. The store
+   * refuses one that gets there anyway.
+   */
+  const stagingStopped = () => state.sent;
+
   async function stageFiles() {
+    if (stagingStopped()) return;
     if (!state.spec) return;
     /*
      * Not while every page of this application is a list of jobs.
@@ -4367,7 +4403,7 @@ export function createCard({
       'stage',
       { spec: state.spec, coverLetter: stagedLetter(), answers: collectedAnswers(), naming: state.naming },
       (staged) => {
-        if (staged) {
+        if (staged && !staged.alreadySent) {
           state.staged = staged;
           // The folder has changed underneath the chips, so the names they are
           // drawn from have to be asked for again. See `askWhatIsStaged`.
@@ -4386,7 +4422,9 @@ export function createCard({
     markChips();
     const staged = await mine;
     if (stagingNow === mine) stagingNow = null;
-    if (!staged) {
+    if (staged?.alreadySent) {
+      // Gone out: nothing was staged, and nothing is wrong.
+    } else if (!staged) {
       lastPrepared = null;
       // Remembered, so the retry waits longer each time and the panel can say
       // why the chips are faded. See `healSoon`.
@@ -4428,6 +4466,7 @@ export function createCard({
   let healing = null;
   const healedAt = [];
   function healSoon() {
+    if (stagingStopped()) return;
     if (healing || preparing || stagingNow || !state.spec || stageTrouble.gaveUp) return;
     const now = Date.now();
     while (healedAt.length && now - healedAt[0] > 60_000) healedAt.shift();
@@ -4435,7 +4474,7 @@ export function createCard({
     const wait = 1500 * 2 ** stageTrouble.count;
     healing = setTimeout(() => {
       healing = null;
-      if (!folderBehind() || stagingNow || preparing) return;
+      if (!folderBehind() || stagingNow || preparing || stagingStopped()) return;
       healedAt.push(Date.now());
       stageFiles();
     }, wait);
@@ -4526,12 +4565,12 @@ export function createCard({
   }
 
   function prepareSoon() {
-    if (!state.spec) return;
+    if (!state.spec || stagingStopped()) return;
     if (whatWouldBeStaged() === lastPrepared) return;
     clearTimeout(preparing);
     preparing = setTimeout(() => {
       preparing = null;
-      if (whatWouldBeStaged() === lastPrepared) return;
+      if (whatWouldBeStaged() === lastPrepared || stagingStopped()) return;
       stageFiles();
     }, 1200);
   }
@@ -6558,6 +6597,8 @@ export function createCard({
                 (bundle) => {
                   if (bundle) {
                     state.bundle = bundle;
+                    // Filed as sent: nothing stages over it from here.
+                    state.sent = true;
                     state.view = 'done';
                     /*
                      * And out of the way, because the application is over.
@@ -7389,6 +7430,8 @@ export function createCard({
               { id: b.application.id, status: 'applying', note: 'Prepared, then not sent' },
               () => {
                 state.unsent = true;
+                // Being worked on again, so its folder follows the card again.
+                state.sent = false;
               },
             ),
         }),
@@ -8247,6 +8290,21 @@ export function createCard({
       const was = state.autofillReport ?? { filled: [], skipped: [] };
       state.autofillReport = { ...was, refilled: [...new Set([...(was.refilled ?? []), ...list])] };
       draw();
+    },
+
+    /**
+     * The form was submitted on the page (true), or its send was not recorded
+     * after all (false). Sent, nothing stages: see `stagingStopped`. Told at
+     * the moment Submit is taken, before the send is on its way, and a stage
+     * already waiting to go is dropped with it.
+     */
+    markSent(on) {
+      state.sent = Boolean(on);
+      if (!state.sent) return;
+      clearTimeout(preparing);
+      preparing = null;
+      clearTimeout(healing);
+      healing = null;
     },
 
     setStatus(text, fix = null) {

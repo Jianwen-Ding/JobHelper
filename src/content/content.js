@@ -1117,9 +1117,9 @@
       case 'fresh':
         return send('fresh', { spec: payload.spec });
 
-      // What the keeper filed of the copy, for a card whose filing was refused.
-      case 'keptCopy':
-        return send('keptCopy', { id: payload.id });
+      // Whether a write the card's filing was refused over is this tab's own.
+      case 'ownWrite':
+        return send('ownWrite', { id: payload.id, from: payload.from, to: payload.to });
 
       case 'attachFiles': {
         // Pressed, so this application takes the plain names in the folder.
@@ -2376,6 +2376,15 @@
        */
 
       /*
+       * And the card stops staging, from this moment: a stage leaving now
+       * reaches the store after the send and rebuilt the files of an
+       * application that had gone out. See `markSent` in the card. Given back
+       * if the send is not recorded. Before the flush below, so the work it
+       * saves says so too.
+       */
+      cardHandle?.markSent?.(true);
+
+      /*
        * Flushed here, not left to the keeper.
        *
        * `holdASpace` — the thing that opens the Workspace draft — only runs
@@ -2408,6 +2417,7 @@
       })
         .then((reply) => {
           if (reply?.ok === false) {
+            cardHandle?.markSent?.(false);
             cardHandle?.setStatus?.('Not recorded — ResumeM-M could not be reached.');
             return false;
           }
@@ -2415,6 +2425,7 @@
           return true;
         })
         .catch(() => {
+          cardHandle?.markSent?.(false);
           cardHandle?.setStatus?.('Not recorded — ResumeM-M could not be reached.');
           return false;
         });

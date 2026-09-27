@@ -37,6 +37,7 @@ import {
   serveFixtures,
   requireOpenSave,
   pointExtensionAt,
+  serveSlowProxy,
 } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -321,16 +322,80 @@ async function main() {
      * the tab is already on a confirmation page. This form's Submit is a
      * `type=button` that never fires a submit event, which is the ordinary
      * case rather than the exception.
+     *
+     * Pressed with one of the card's stages on its way to the store, held in
+     * a slow proxy until the send has been recorded. The card stages the
+     * folder a moment after anything reaching a file changes, and a stage
+     * leaving around Submit landed after the send: it rebuilt the files of an
+     * application that had gone out, and its history's last word was "Files
+     * rebuilt" rather than the send, now and then, by timing alone.
+     * Here the timing is fixed: a word added to the letter and its stage
+     * held, another word added, Submit pressed while that one's stage waits
+     * to go, and the held stage let go.
      */
-    group('Pressing Submit on the form');
+    group('Pressing Submit on the form, with a stage of the card\'s on its way');
     {
-      await page.getByRole('button', { name: 'Submit Application' }).click();
-      await page.waitForTimeout(2500);
-      const { application, draft } = await filed('Helios');
-      check('the tracker says it went out', application?.status === 'applied', application?.status ?? '(none)');
-      check('and says why it thinks so', /pressed|submitted/i.test(application?.history?.at(-1)?.note ?? ''),
-        application?.history?.at(-1)?.note ?? '');
-      check('the draft stops looking like something to finish', draft?.status === 'submitted', draft?.status ?? '(none)');
+      const bundlePath = /^\/api\/applications\/bundle(\?|$)/;
+      let holdNext = false;
+      let held = null;
+      const heldNow = new Promise((go) => (held = go));
+      let submittedAt = 0;
+      const stagesAfterSubmit = [];
+      let heldOne = false;
+      const slow = await serveSlowProxy(SERVER, {
+        slowRoute: {
+          test: (url) => {
+            if (!bundlePath.test(url) || !holdNext) return false;
+            holdNext = false;
+            heldOne = true;
+            held();
+            return true;
+          },
+        },
+        ms: 5000,
+        // Once per request, on its way on: every stage but the held one.
+        respondInstead: (url) => {
+          if (!bundlePath.test(url)) return null;
+          if (heldOne) heldOne = false;
+          // A stage the card sent after Submit, which nothing should send.
+          else if (submittedAt) stagesAfterSubmit.push(Date.now() - submittedAt);
+          return null;
+        },
+      });
+      let released = false;
+      try {
+        await pointExtensionAt(context, worker, slow.base);
+        holdNext = true;
+        const letter = cardOf(page).locator('textarea.tall').first();
+        await letter.click();
+        await letter.press('End');
+        await letter.pressSequentially(' Truly.', { delay: 8 });
+        const holding = await Promise.race([heldNow.then(() => true), page.waitForTimeout(30_000).then(() => false)]);
+        // And one more word, whose stage is still waiting out its pause when
+        // Submit is pressed.
+        await letter.pressSequentially(' Really.', { delay: 8 });
+        submittedAt = Date.now();
+        await page.getByRole('button', { name: 'Submit Application' }).click();
+        // The held stage goes on five seconds after it arrived; past that, and
+        // past anything the card would do after it.
+        await page.waitForTimeout(9000);
+        released = true;
+        check('(a stage of the card\'s was held in the proxy when Submit was pressed)', holding);
+        const { application, draft } = await filed('Helios');
+        check('the tracker says it went out', application?.status === 'applied', application?.status ?? '(none)');
+        check('and says why it thinks so', /pressed|submitted/i.test(application?.history?.at(-1)?.note ?? ''),
+          application?.history?.at(-1)?.note ?? '');
+        check('the draft stops looking like something to finish', draft?.status === 'submitted', draft?.status ?? '(none)');
+        check(
+          'and the card sends no stage of its own once Submit is pressed',
+          stagesAfterSubmit.length === 0,
+          stagesAfterSubmit.map((ms) => `+${ms}ms`).join(', '),
+        );
+      } finally {
+        if (!released) await page.waitForTimeout(6000);
+        await pointExtensionAt(context, worker, SERVER);
+        slow.close();
+      }
     }
 
     /*
