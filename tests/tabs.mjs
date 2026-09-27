@@ -47,6 +47,7 @@ import {
   pointExtensionAt,
   requireOpenSave,
   serveFixtures,
+  serveSlowProxy,
 } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -910,6 +911,121 @@ async function main() {
         await worker.evaluate(() => chrome.storage.sync.remove('baseResumeId')).catch(() => undefined);
         await fetch(`${SERVER}/api/resumes/${SENT_ELSEWHERE}`, { method: 'DELETE' }).catch(() => undefined);
         await fetch(`${SERVER}/api/resumes/${SUMMER}`, { method: 'DELETE' }).catch(() => undefined);
+      }
+    }
+
+    /*
+     * Every switch in every tab survives the card's own writes coming back.
+     *
+     * Each switch on a card that has built restages its folder, and staging
+     * files the copy; the keeper files it too, with the application's
+     * workspace. None of those says to the card what it wrote. The card
+     * looked at the store before staging for an edit made in ResumeM-M, and
+     * found its own earlier copy there, older than the switches made since —
+     * and took it, switching those off again. One in tab 2 and one in tab 3
+     * went that way, in two runs of four. Here the store's answer to "what
+     * do you hold?" is slowed, which is what the load did, so a switch is
+     * always made while the card is still asking about the last one.
+     */
+    group('Switching in every tab while each card\'s own writes come back');
+    {
+      for (const tab of TABS) await tab.page.close().catch(() => undefined);
+      // And the copies the steps above filed, which `cleanStore` only takes
+      // with an application.
+      const slugOfCompany = (company) => company.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const dropCopies = async () => {
+        await cleanStore(SERVER, MINE);
+        const list = await (await fetch(`${SERVER}/api/resumes`)).json();
+        for (const r of list.resumes ?? list) {
+          if (TABS.some((t) => r.id.startsWith(`job-${slugOfCompany(t.company)}`))) {
+            await fetch(`${SERVER}/api/resumes/${encodeURIComponent(r.id)}`, { method: 'DELETE' });
+          }
+        }
+      };
+      await dropCopies();
+      const slow = await serveSlowProxy(SERVER, { slowRoute: /\/api\/extension\/fresh/, ms: 5000 });
+      try {
+        await pointExtensionAt(context, worker, slow.base);
+        const open = [];
+        for (const tab of TABS) {
+          const page = await context.newPage();
+          // An address of its own: the tabs closed above left their work to
+          // be claimed by the next tab on theirs, suggestions switched on.
+          await page.goto(`${fixtures.urlFor(tab.role)}?switching`, { waitUntil: 'domcontentloaded' });
+          await settled(page);
+          open.push({ tab, page, card: cardOf(page) });
+        }
+        const copyOf = async (company) => {
+          const list = await (await fetch(`${SERVER}/api/resumes`)).json();
+          return JSON.stringify((list.resumes ?? list).find((r) => r.id.startsWith(`job-${slugOfCompany(company)}`)) ?? null);
+        };
+        /** Until the store's copy for this tab has stayed the same for twelve seconds: the card has looked at it since. */
+        const quietFor = async ({ tab, page }) => {
+          await page.bringToFront();
+          let was = await copyOf(tab.company);
+          for (let quiet = 0, w = 0; quiet < 12 && w < 90; w++) {
+            await page.waitForTimeout(1000);
+            const now = await copyOf(tab.company);
+            quiet = now === was ? quiet + 1 : 0;
+            was = now;
+          }
+        };
+        for (const { page, card } of open) {
+          await page.bringToFront();
+          await suggestionsOn(card);
+          await card.getByRole('button', { name: /^(Build resume|Recompile)$/ }).first().click();
+          await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 180_000 });
+        }
+        // Built and filed, and the card has taken the store's copy as its own.
+        for (const one of open) await quietFor(one);
+        /*
+         * Each tab's switches in turn, the next made as soon as the store has
+         * the copy the last one staged — so it is made while the card is
+         * still asking the store what it holds, with every tab's card open
+         * and filing its own.
+         */
+        const offered = [];
+        const switched = [];
+        for (const { tab, page, card } of open) {
+          await page.bringToFront();
+          const rows = await pickableIn(card).count();
+          offered.push(rows);
+          switched.push(0);
+          for (let i = 0; i < rows; i++) {
+            const row = pickableIn(card).nth(i);
+            // Only a row that is off is a switch to make.
+            if (!(await row.getAttribute('class'))?.includes('off')) continue;
+            switched[switched.length - 1]++;
+            const box = row.locator('.pick input');
+            for (let w = 0; w < 800 && !(await box.isEnabled().catch(() => false)); w++) await page.waitForTimeout(100);
+            const filed = await copyOf(tab.company);
+            await row.locator('.pick').click();
+            for (let w = 0; w < 800 && (await row.getAttribute('class'))?.includes('off'); w++) await page.waitForTimeout(100);
+            // Staged: the store's copy is this switch's.
+            for (let w = 0; w < 300 && (await copyOf(tab.company)) === filed; w++) await page.waitForTimeout(100);
+          }
+        }
+        // Settled: each card's stage of its last switch has gone and been
+        // asked about, and the store has stopped changing under it.
+        for (const one of open) await quietFor(one);
+        for (const [n, { tab, card }] of open.entries()) {
+          const off = await offFlags(card);
+          const count = (await card.locator('.diff-head .count').innerText().catch(() => '')).trim();
+          check(
+            `tab ${tab.n}: every one of its ${offered[n]} switches is still on after its own writes came back`,
+            offered[n] > 0 &&
+              switched[n] === offered[n] &&
+              off.length === offered[n] &&
+              off.every((x) => !x) &&
+              count === `${offered[n]} changes`,
+            `${switched[n]} switched · ${off.filter((x) => !x).length}/${off.length} on · ${count}`,
+          );
+        }
+        for (const { page } of open) await page.close().catch(() => undefined);
+      } finally {
+        await pointExtensionAt(context, worker, SERVER);
+        slow.close();
+        await dropCopies().catch(() => undefined);
       }
     }
   } finally {

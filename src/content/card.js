@@ -1361,6 +1361,8 @@ export function createCard({
   }
 
   function takeWork() {
+    // The keeper files this spec with the application's workspace. See `sentOut`.
+    sentOut(state.spec);
     return {
       spec: state.spec,
       builtWith: state.builtWith,
@@ -2617,7 +2619,38 @@ export function createCard({
     return unrecorded && text && !/^(Not recorded|Recorded as sent)/.test(text) ? `Not recorded — ${text}` : said;
   }
 
+  /*
+   * Every version of the copy this card has let out to be filed: staged,
+   * sent, handed to the editor, or given to the keeper, which files it with
+   * the application's workspace. Written without a word back to the card —
+   * the keeper's never answers it at all — so a store holding one of them,
+   * older than what is on screen, is not an edit made elsewhere, however
+   * long ago the card last looked. Taking it for one put an older copy over
+   * the switches made since: tests/tabs.mjs lost one in each of two tabs.
+   * By content, keys sorted, so the store's own ordering does not matter.
+   */
+  const SENT_KEEP = 60;
+  const sent = [];
+  const specKey = (spec) =>
+    JSON.stringify(spec, (_k, v) =>
+      v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, v[k]])) : v,
+    );
+  function sentOut(spec) {
+    if (!spec?.id) return;
+    const key = specKey(spec);
+    if (sent.at(-1) === key) return;
+    const at = sent.indexOf(key);
+    if (at >= 0) sent.splice(at, 1);
+    sent.push(key);
+    if (sent.length > SENT_KEEP) sent.shift();
+  }
+  const ownVersion = (stored) => sent.includes(specKey(stored));
+
+  /** What files the copy it is given: see `sentOut`. */
+  const FILES_THE_COPY = new Set(['stage', 'bundle', 'openWorkspace']);
+
   async function act(action, payload, apply, { quiet = false } = {}) {
+    if (FILES_THE_COPY.has(action)) sentOut(payload?.spec);
     running.add(action);
     if (!startedAt.has(action)) startedAt.set(action, Date.now());
     state.busy = action;
@@ -4056,8 +4089,10 @@ export function createCard({
   function noteStored(of, { filed = false } = {}) {
     Promise.resolve(onAction('fresh', { spec: of }))
       .then((got) => {
-        if (!got || state.spec !== of) return;
-        if (filed || !state.storedPrint) state.storedPrint = got.storedPrint ?? null;
+        if (!got) return;
+        // Filed, what the store holds is the card's own whatever has been
+        // switched since; after a compile, only for the copy it was about.
+        if (filed || (state.spec === of && !state.storedPrint)) state.storedPrint = got.storedPrint ?? null;
       })
       .catch(() => undefined);
   }
@@ -4065,6 +4100,7 @@ export function createCard({
   /**
    * Whether the store's copy was edited somewhere else since the card last
    * took or filed it — news, to be taken before anything is filed over it.
+   * Not the card's own copy, current or one it let out earlier.
    */
   async function editedElsewhere() {
     if (!state.spec?.id || !state.storedPrint) return false;
@@ -4072,7 +4108,8 @@ export function createCard({
     return Boolean(
       reply?.stored &&
         reply.storedPrint !== state.storedPrint &&
-        JSON.stringify(reply.stored) !== JSON.stringify(state.spec),
+        specKey(reply.stored) !== specKey(state.spec) &&
+        !ownVersion(reply.stored),
     );
   }
 
@@ -7863,7 +7900,13 @@ export function createCard({
       // A copy first filed after the last compile is the card's own staging,
       // so `seen` being empty is not taken as news either.
       const editedThere =
-        reply.stored && seen && reply.storedPrint !== seen && JSON.stringify(reply.stored) !== JSON.stringify(of);
+        reply.stored &&
+        seen &&
+        reply.storedPrint !== seen &&
+        specKey(reply.stored) !== specKey(of) &&
+        // One the card filed itself, older than what it holds now: its own
+        // switches since are newer. See `sentOut`.
+        !ownVersion(reply.stored);
 
       /*
        * Every time the store says so, not once per base.
