@@ -94,10 +94,11 @@ const drawnPages = (page) =>
 /*
  * The same, once drawing has had a chance to finish. A bare read straight
  * after typing raced the draw on a loaded machine and failed a full run with
- * "0 pages" that passed alone. The bug these checks guard left the page
+ * "0 pages" that passed alone — twice, with 15 seconds allowed, while other
+ * browsers were running beside it. The bug these checks guard left the page
  * detached for good, so waiting for it still fails on that.
  */
-async function drawnWithin(page, ms = 15_000) {
+async function drawnWithin(page, ms = 60_000) {
   const until = Date.now() + ms;
   for (;;) {
     const drawn = await drawnPages(page);
