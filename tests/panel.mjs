@@ -196,10 +196,62 @@ async function main() {
     };
 
     const editorOf = (page) => page.frames().find((f) => f.url().startsWith(SERVER) || f.url().startsWith(`http://127.0.0.1:${OTHER_PORT}`));
+    /*
+     * The side panel's editor, asked of the browser rather than of
+     * Playwright's frames.
+     *
+     * Every time the panel points its frame somewhere, the frame goes to
+     * about:blank — in the panel's own process — and then out to the server,
+     * in another. The connection this drives the panel through sometimes
+     * misses the second move under load, and from then on `frames()` has the
+     * editor at about:blank while the browser's own list of targets has it on
+     * the server, answering: seen as the editor "not loading" for the whole
+     * wait when the panel opened, and after the server address changed, where
+     * it went unsaid until the next group, "the copy deleted", failed on it
+     * with the panel saying the right thing. (A second connection made to
+     * read the frames afresh tripped an assertion inside Playwright on the
+     * same swap.) So what the panel's editor shows is read here from its
+     * target — the iframe whose parent is the panel — through a session of
+     * its own.
+     */
+    const browserCdp = await cdp.newBrowserCDPSession();
+    const sideId = (await (await side.context().newCDPSession(side)).send('Target.getTargetInfo')).targetInfo.targetId;
+    let asked = 0;
+    const sideEditor = async (expression = null) => {
+      const { targetInfos } = await browserCdp.send('Target.getTargets');
+      const target = targetInfos.find((t) => t.type === 'iframe' && t.parentFrameId === sideId);
+      if (!target || !expression) return { url: target?.url ?? null, value: null };
+      const { sessionId } = await browserCdp.send('Target.attachToTarget', { targetId: target.targetId, flatten: false });
+      const id = ++asked;
+      let heard;
+      const answered = new Promise((resolve) => {
+        heard = (e) => {
+          if (e.sessionId !== sessionId) return;
+          const reply = JSON.parse(e.message);
+          if (reply.id === id) resolve(reply.result?.result?.value ?? null);
+        };
+        browserCdp.on('Target.receivedMessageFromTarget', heard);
+      });
+      try {
+        await browserCdp.send('Target.sendMessageToTarget', {
+          sessionId,
+          message: JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true } }),
+        });
+        return { url: target.url, value: await Promise.race([answered, sleep(3000).then(() => null)]) };
+      } finally {
+        browserCdp.off('Target.receivedMessageFromTarget', heard);
+        await browserCdp.send('Target.detachFromTarget', { sessionId }).catch(() => undefined);
+      }
+    };
     const onScreen = async (page) => {
+      if (page === side) {
+        return (await sideEditor("document.querySelector('#resume-select')?.value ?? null").catch(() => ({ value: null }))).value;
+      }
       const f = editorOf(page);
       return f ? f.evaluate(() => (document.querySelector('#resume-select')?.value ?? null)).catch(() => null) : null;
     };
+    /** The panel's editor as Playwright's frame, for clicking and typing in: waited for, see `sideEditor`. */
+    const editorIn = (page) => until(() => editorOf(page));
     /** The bar's name for the resume: its picker once the editor is up, its label before. */
     const barLabel = async (page) =>
       (await page.locator('#picker').isVisible())
@@ -232,7 +284,7 @@ async function main() {
     );
     check(
       'the side panel frames the editor from the server, and it loads',
-      Boolean(await editorOf(side)?.evaluate(() => Boolean(document.querySelector('#resume-select'))).catch(() => false)),
+      (await sideEditor("Boolean(document.querySelector('#resume-select'))").catch(() => ({}))).value === true,
     );
 
     {
@@ -262,7 +314,7 @@ async function main() {
 
     group('Compact: the resume starts near the top of the panel');
     {
-      const editor = editorOf(side);
+      const editor = await editorIn(side);
       await editor.waitForSelector('#editor .section-heading');
       const first = await side.evaluate(() => Math.round(document.querySelector('#editor').getBoundingClientRect().top));
       const inner = await editor.evaluate(() => Math.round(document.querySelector('#editor .section-heading').getBoundingClientRect().top));
@@ -365,7 +417,7 @@ async function main() {
 
     group('An edit in the panel reaches the card');
     {
-      const editor = editorOf(side);
+      const editor = await editorIn(side);
       const before = (await getJson(`${SERVER}/api/resumes`)).find((r) => r.id === target.copyId);
       // Wait for the card to have compiled what it built, so there is a
       // preview to be brought up to date.
@@ -428,7 +480,7 @@ async function main() {
 
     group('Nothing typed is lost to a tab switch');
     {
-      const editor = editorOf(side);
+      const editor = await editorIn(side);
       const store = await getJson(`${SERVER}/api/store`);
       const resume = (await getJson(`${SERVER}/api/resumes`)).find((r) => r.id === target.copyId);
       const line = editor.locator('#editor .entry[data-drag-id] .bullet .text.editable').first();
@@ -450,17 +502,46 @@ async function main() {
       check('the half-typed line was saved before it moved', Boolean(kept));
       void resume;
 
-      // And a switch while a toggle's save is still waiting to go out.
+      /*
+       * And a switch while a toggle's save is still waiting to go out.
+       *
+       * One line, by its id, and whether the save has it the way the click
+       * left it, rather than "the copy changed": any other write passes that,
+       * and it failed two ways. The card's stage filed its own copy over the
+       * save in the same second, before the first look (see `editedElsewhere`
+       * in the card). And the editor's copy of the store was put back to one
+       * from before an earlier save (ResumeM-M's `readStoreUncrossed`), so a
+       * line switched off on disk was drawn on, the click switched it off
+       * again, and the save wrote what was already there. So the screen is
+       * held to the save first, and said apart.
+       */
       await worker.evaluate((id) => chrome.tabs.update(id, { active: true }), harbourTab.id);
       await until(async () => (await onScreen(side)) === target.copyId);
-      const before = JSON.stringify((await getJson(`${SERVER}/api/resumes`)).find((r) => r.id === target.copyId));
-      await editorOf(side).locator('#editor .entry[data-drag-id] .bullet input[type=checkbox]').nth(1).click();
+      const lineShown = (spec, entry, bullet) => {
+        for (const section of spec?.sections ?? []) {
+          const picked = section.bullets?.[entry];
+          if (picked) return picked.includes(bullet);
+        }
+        // Nothing picked for the entry: every line in it is shown.
+        return true;
+      };
+      const storedCopy = async () => (await getJson(`${SERVER}/api/resumes`)).find((r) => r.id === target.copyId);
+      const box = (await editorIn(side)).locator('#editor .entry[data-drag-id] .bullet[data-drag-id] > .bullet-head input[type=checkbox]').nth(1);
+      const switched = await box.evaluate((b) => ({
+        bullet: b.closest('.bullet[data-drag-id]').dataset.dragId,
+        entry: b.closest('.entry[data-drag-id]').dataset.dragId,
+        on: b.checked,
+      }));
+      check(
+        'the line about to be switched is drawn the way the save has it',
+        lineShown(await storedCopy(), switched.entry, switched.bullet) === switched.on,
+        JSON.stringify(switched),
+      );
+      await box.click();
       await worker.evaluate((id) => chrome.tabs.update(id, { active: true }), marigoldTab.id);
       await until(async () => (await onScreen(side)) === marigoldTarget.baseId);
-      const landed = await until(async () =>
-        JSON.stringify((await getJson(`${SERVER}/api/resumes`)).find((r) => r.id === target.copyId)) !== before,
-      );
-      check('a switched line waiting on its save was written before the move', Boolean(landed));
+      const landed = await until(async () => lineShown(await storedCopy(), switched.entry, switched.bullet) === !switched.on);
+      check('a switched line waiting on its save was written before the move', Boolean(landed), JSON.stringify(switched));
       await worker.evaluate((id) => chrome.tabs.update(id, { active: true }), harbourTab.id);
       await until(async () => (await onScreen(side)) === target.copyId);
     }
@@ -469,9 +550,10 @@ async function main() {
 
     group('Folding it away and back');
     {
-      const editor = editorOf(side);
+      const editor = await editorIn(side);
       const line = editor.locator('#editor .entry[data-drag-id] .bullet .text.editable').nth(2);
       const entryId = await line.evaluate((n) => n.closest('.entry[data-drag-id]').dataset.dragId);
+      const bulletId = await line.evaluate((n) => n.closest('.bullet[data-drag-id]').dataset.dragId);
       const store = await getJson(`${SERVER}/api/store`);
       if (!restoreEntries.some((e) => e.id === entryId)) restoreEntries.push(store.entries.find((e) => e.id === entryId));
       await line.dblclick();
@@ -482,12 +564,21 @@ async function main() {
        * it scrolls the editor). On screen rather than `scrollY`: the line's
        * save redraws the page and the browser's scroll anchoring moves
        * `scrollY` to keep the line still, which is the thing a person sees.
+       *
+       * That line by its ids, not the third on the page: a line above it
+       * switched on or off makes "the third" another line, and it read as the
+       * page having jumped 255px (see "drawn the way the save has it" above).
        */
       const where = () =>
-        editor.evaluate(() => {
-          const lines = [...document.querySelectorAll('#editor .entry[data-drag-id] .bullet .text.editable')];
-          return { top: Math.round(lines[2].getBoundingClientRect().top), y: Math.round(window.scrollY) };
-        });
+        editor.evaluate(
+          ({ entryId, bulletId }) => {
+            const entry = [...document.querySelectorAll('#editor .entry[data-drag-id]')].find((e) => e.dataset.dragId === entryId);
+            const row = [...(entry?.querySelectorAll('.bullet[data-drag-id]') ?? [])].find((b) => b.dataset.dragId === bulletId);
+            const text = row?.querySelector('.text.editable');
+            return { top: text ? Math.round(text.getBoundingClientRect().top) : null, y: Math.round(window.scrollY) };
+          },
+          { entryId, bulletId },
+        );
       const scrolled = await where();
       check('(the editor is scrolled some way down)', scrolled.y > 200, JSON.stringify(scrolled));
 
@@ -500,15 +591,18 @@ async function main() {
       await side.locator('#fold').click();
       await sleep(400);
       check('unfolded: the same resume', (await onScreen(side)) === target.copyId);
-      await sleep(1500);
+      // Measured once the line's save has landed and the editor has drawn
+      // what came back, which is the redraw that could move it.
+      const saved = await until(
+        async () =>
+          JSON.stringify((await getJson(`${SERVER}/api/store`)).entries.find((e) => e.id === entryId)).includes('still being written') &&
+          (await editor.evaluate(() => document.querySelector('#save-state')?.classList.contains('saved'))),
+      );
       const after = await where();
       check('at the same place in it', Math.abs(after.top - scrolled.top) < 4, `${JSON.stringify(scrolled)} → ${JSON.stringify(after)}`);
       const text = await editor.evaluate(() => document.querySelector('#editor').textContent.includes('still being written'));
       check('with the line being written still there', text);
       await sideShot('unfolded');
-      const saved = await until(async () =>
-        JSON.stringify((await getJson(`${SERVER}/api/store`)).entries.find((e) => e.id === entryId)).includes('still being written'),
-      );
       check('and it reaches the save', Boolean(saved));
 
       // Folded, and reopened: it comes back folded.
@@ -894,8 +988,8 @@ async function main() {
     check('the address changed to a server with another save: said, not edited', Boolean(refused), await side.locator('#message').textContent());
     await atWidths(wide, 'other-save');
     await side.locator('#message button', { hasText: 'Edit anyway' }).click();
-    const anyway = await until(async () => editorOf(side)?.url().startsWith(OTHER) && (await onScreen(side)) === target.copyId);
-    check('"Edit anyway" opens the editor from that server', Boolean(anyway), editorOf(side)?.url());
+    const anyway = await until(async () => (await sideEditor()).url?.startsWith(OTHER) && (await onScreen(side)) === target.copyId);
+    check('"Edit anyway" opens the editor from that server', Boolean(anyway), (await sideEditor()).url);
 
     group('The server stopping while the editor is open');
     other.kill();
@@ -904,7 +998,8 @@ async function main() {
     check('said, over the editor, which is kept with what is in it', Boolean(stopped) && (await side.locator('#stage').isVisible()));
     await sideShot('server-stopped');
     await setServer(SERVER);
-    await until(async () => (await onScreen(side)) === target.copyId && editorOf(side)?.url().startsWith(SERVER));
+    const home = await until(async () => (await onScreen(side)) === target.copyId && (await sideEditor()).url?.startsWith(SERVER));
+    check('pointed back at its own server, the editor is on the copy again', Boolean(home), (await sideEditor()).url);
 
     /* ---------------- Deleted in the meantime ---------------- */
 
