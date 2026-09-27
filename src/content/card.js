@@ -897,6 +897,36 @@ export function createCard({
   }
   const root = host.attachShadow({ mode: 'open' });
   root.append(Object.assign(document.createElement('style'), { textContent: STYLE }));
+  /*
+   * Somebody working on the card again after the application went out.
+   *
+   * Once it is sent the card stops staging (see `stagingStopped`), because a
+   * stage nobody asked for — one queued at Submit, one a store change set
+   * off — would rebuild the files that went out. But going back to the card
+   * afterwards to take a letter, rename a file or switch a line is asking
+   * for exactly that: "I spotted a typo, do that again". So a change made on
+   * the card after the send starts it staging again, and says so to the
+   * store (`evenIfSent`). Looking is not a change: folding, unfolding, Back
+   * and Done do not count. Heard before the control's own handler, so the
+   * stage that control asks for goes.
+   */
+  const NOT_A_CHANGE = /^(Unfold|Fold|Back|Done|Close)/i;
+  for (const type of ['input', 'change', 'click']) {
+    root.addEventListener(
+      type,
+      (event) => {
+        if (!state.sent || state.reopened) return;
+        if (type === 'click') {
+          const button = event.composedPath().find((n) => n instanceof HTMLElement && n.tagName === 'BUTTON');
+          if (!button) return;
+          const said = (button.getAttribute('aria-label') || button.title || button.textContent || '').trim();
+          if (NOT_A_CHANGE.test(said)) return;
+        }
+        state.reopened = true;
+      },
+      true,
+    );
+  }
 
   const card = document.createElement('div');
   card.className = 'card';
@@ -1333,6 +1363,8 @@ export function createCard({
      * "Mark as applied". From then on nothing stages — see `stagingStopped`.
      */
     sent: false,
+    /** And worked on again on the card since: see `NOT_A_CHANGE`. */
+    reopened: false,
   };
 
   /**
@@ -2744,7 +2776,9 @@ export function createCard({
       // Asked again as it goes: this stage was decided on before any send.
       if (action === 'stage' && stagingStopped()) return { alreadySent: true };
       sentOut(spec);
-      const result = await onAction(action, { ...payload, spec, ...(basedOn !== undefined ? { basedOn } : {}) });
+      // Asked for on the card after the send: see `NOT_A_CHANGE`.
+      const evenIfSent = action === 'stage' && state.sent && state.reopened ? { evenIfSent: true } : {};
+      const result = await onAction(action, { ...payload, spec, ...(basedOn !== undefined ? { basedOn } : {}), ...evenIfSent });
       if (result?.alreadySent) {
         state.sent = true;
         return result;
@@ -4353,7 +4387,7 @@ export function createCard({
    * since a queued or retried one was decided on before the send. The store
    * refuses one that gets there anyway.
    */
-  const stagingStopped = () => state.sent;
+  const stagingStopped = () => state.sent && !state.reopened;
 
   async function stageFiles() {
     if (stagingStopped()) return;
@@ -4494,6 +4528,11 @@ export function createCard({
   let stagingNow = null;
   async function folderCaughtUp() {
     if (!state.staged) return;
+    // Gone out: the folder holds what went, and is not built again.
+    if (stagingStopped()) {
+      if (stagingNow) await stagingNow;
+      return;
+    }
     if (whatWouldBeStaged() !== lastPrepared) {
       clearTimeout(preparing);
       await stageFiles();
@@ -4510,6 +4549,8 @@ export function createCard({
    * are marked as updating and refuse the drag until it is over.
    */
   function folderBehind() {
+    // Gone out, and so not going to change: its files are the ones to hand over.
+    if (stagingStopped()) return Boolean(stagingNow);
     return Boolean(state.staged) && (whatWouldBeStaged() !== lastPrepared || Boolean(stagingNow));
   }
 
@@ -6599,6 +6640,7 @@ export function createCard({
                     state.bundle = bundle;
                     // Filed as sent: nothing stages over it from here.
                     state.sent = true;
+                    state.reopened = false;
                     state.view = 'done';
                     /*
                      * And out of the way, because the application is over.
@@ -7432,6 +7474,7 @@ export function createCard({
                 state.unsent = true;
                 // Being worked on again, so its folder follows the card again.
                 state.sent = false;
+                state.reopened = false;
               },
             ),
         }),
@@ -8300,6 +8343,7 @@ export function createCard({
      */
     markSent(on) {
       state.sent = Boolean(on);
+      state.reopened = false;
       if (!state.sent) return;
       clearTimeout(preparing);
       preparing = null;

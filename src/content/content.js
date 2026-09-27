@@ -1298,6 +1298,8 @@
           resumeId: payload.spec.id,
           // The write of the copy it was built on. See `fileTheCopy` in the card.
           basedOn: payload.basedOn,
+          // Asked for on the card after the application went out.
+          evenIfSent: payload.evenIfSent || undefined,
           ...filedAs(),
           url: location.href,
           source: new URL(location.href).hostname,
