@@ -5994,7 +5994,100 @@ const ACKNOWLEDGEMENTS = `<!doctype html><html><head><meta charset="utf-8"><titl
   });
 </script></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE, '/acknowledgements': ACKNOWLEDGEMENTS };
+/*
+ * Statements about a sponsorship or right-to-work policy that ask only to be
+ * acknowledged, beside the real questions about the applicant. A No from the
+ * sponsorship answer on "I understand that this position does not offer visa
+ * sponsorship" reads as "I do not understand". Radios, a select, a lone
+ * required checkbox and Workday's dropdown on one page; Ashby's Yes and No, and an ARIA group, each
+ * on a page of its own with the real question after it, because a key is
+ * pressed once on a page and the statement first would take it.
+ */
+const ashbyYesNo = (path, words) => `<div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="${path}"><label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="${path}">${words}</label><div class="_container_1svni_28 _yesno_1e3gg_148 ashby-application-form-input-yesno"><button class="_option_1svni_32 ashby-application-form-input-yesno-option" aria-pressed="false" data-option="yes">Yes</button><button class="_option_1svni_32 ashby-application-form-input-yesno-option" aria-pressed="false" data-option="no">No</button><input type="checkbox" class="_input_1svni_78" tabindex="-1" name="${path}"></div></div>`;
+const POLICY_SCRIPT = `<script>
+  for (const group of document.querySelectorAll('.ashby-application-form-input-yesno')) {
+    const buttons = [...group.querySelectorAll('button')];
+    const check = group.querySelector('input[type=checkbox]');
+    let value;
+    const draw = () => {
+      for (const b of buttons) b.setAttribute('aria-pressed', String(value === (b.dataset.option === 'yes')));
+      check.checked = value === true;
+    };
+    buttons[0].addEventListener('click', () => queueMicrotask(() => { value = value === true ? undefined : true; draw(); }));
+    buttons[1].addEventListener('click', () => queueMicrotask(() => { value = value === false ? undefined : false; draw(); }));
+  }
+  for (const el of document.querySelectorAll('[role="radio"]')) {
+    el.addEventListener('click', () => {
+      for (const sib of el.parentElement.querySelectorAll('[role="radio"]')) sib.setAttribute('aria-checked', 'false');
+      el.setAttribute('aria-checked', 'true');
+    });
+  }
+  // Workday's dropdown: a button that opens a listbox of Yes and No.
+  const widget = document.getElementById('w-ack-widget');
+  widget?.addEventListener('click', () => {
+    if (document.getElementById('lb-ack-widget')) return;
+    const list = document.createElement('ul');
+    list.id = 'lb-ack-widget'; list.setAttribute('role', 'listbox');
+    for (const text of ['Yes', 'No']) {
+      const o = document.createElement('li');
+      o.setAttribute('role', 'option'); o.textContent = text;
+      o.addEventListener('click', () => { widget.textContent = text; document.getElementById('h-ack-widget').value = text; list.remove(); });
+      list.append(o);
+    }
+    widget.after(list);
+  });
+  const picked = (sel) => document.querySelector(sel)?.value ?? null;
+  window.__state = () => ({
+    buttons: Object.fromEntries([...document.querySelectorAll('[data-field-path]')].map((f) => [f.dataset.fieldPath, f.querySelector('[aria-pressed=true]')?.textContent ?? null])),
+    aria: document.querySelector('[role=radio][aria-checked=true]')?.textContent ?? null,
+    radios: picked('input[name=ack-radios]:checked'),
+    select: picked('#ack-select'),
+    box: document.getElementById('ack-box')?.checked ?? null,
+    available: picked('#ack-available'),
+    authPolicy: picked('input[name=ack-auth]:checked'),
+    widget: picked('#h-ack-widget'),
+    sponsorship: picked('#sp'),
+    authorized: picked('input[name=auth]:checked'),
+  });
+</script>`;
+const POLICY_HEAD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Test</title>
+<style>._input_1svni_78 { display: none; }</style></head><body>`;
+const SPONSORSHIP_POLICIES = `${POLICY_HEAD}
+<form>
+  <fieldset><legend>I acknowledge that the company will not sponsor employment visas for this role. *</legend>
+    <label><input type="radio" name="ack-radios" value="Yes" required> Yes</label><label><input type="radio" name="ack-radios" value="No"> No</label></fieldset>
+  <label for="ack-select">I understand this role is not eligible for visa sponsorship. *</label>
+  <select id="ack-select" required><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <div><input type="checkbox" id="ack-box" required><label for="ack-box">Please confirm you understand we cannot sponsor work visas for this position. *</label></div>
+  <label for="ack-available">I understand sponsorship is available for this role if needed. *</label>
+  <select id="ack-available" required><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <fieldset><legend>I acknowledge that candidates must be legally authorized to work in the United States. *</legend>
+    <label><input type="radio" name="ack-auth" value="Yes" required> Yes</label><label><input type="radio" name="ack-auth" value="No"> No</label></fieldset>
+  <label id="l-ack-widget">I acknowledge that this company does not sponsor H-1B visas.</label>
+  <div><button type="button" id="w-ack-widget" aria-haspopup="listbox" aria-controls="lb-ack-widget" aria-labelledby="l-ack-widget">Select One</button>
+    <input type="hidden" id="h-ack-widget"></div>
+
+  <label for="sp">Will you now or in the future require sponsorship?</label>
+  <select id="sp"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <fieldset><legend>Are you authorized to work in the United States?</legend>
+    <label><input type="radio" name="auth" value="Yes"> Yes</label><label><input type="radio" name="auth" value="No"> No</label></fieldset>
+</form>
+${POLICY_SCRIPT}</body></html>`;
+const SPONSORSHIP_POLICY_PRESSED = `${POLICY_HEAD}
+<div class="ashby-application-form-container">
+${ashbyYesNo('ack-visa', 'I understand that this position does not offer visa sponsorship.')}
+${ashbyYesNo('ask-visa', 'Do you need visa sponsorship?')}
+</div>
+${POLICY_SCRIPT}</body></html>`;
+const SPONSORSHIP_POLICY_ARIA = `${POLICY_HEAD}
+<div role="radiogroup" aria-required="true" aria-label="I understand that we are unable to provide visa sponsorship now or in the future.">
+  <div role="radio" aria-checked="false" tabindex="0">Yes</div><div role="radio" aria-checked="false" tabindex="0">No</div></div>
+<div class="ashby-application-form-container">
+${ashbyYesNo('ask-visa', 'Do you need visa sponsorship?')}
+</div>
+${POLICY_SCRIPT}</body></html>`;
+
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE, '/acknowledgements': ACKNOWLEDGEMENTS, '/sponsorship-policies': SPONSORSHIP_POLICIES, '/sponsorship-policy-pressed': SPONSORSHIP_POLICY_PRESSED, '/sponsorship-policy-aria': SPONSORSHIP_POLICY_ARIA };
 
 const PROFILE = {
   first_name: 'Morgan',
@@ -11771,6 +11864,63 @@ async function main() {
       ackedBefore.pressed[ACK] === 'No' && !ackedBefore.acknowledged.includes(COORDINATION) &&
         ackedFromBank.pressed[ACK] === 'No' && !ackedFromBank.acknowledged.includes(COORDINATION),
       JSON.stringify({ before: ackedBefore.pressed, bank: ackedFromBank.pressed }),
+    );
+
+    /* ------ Sponsorship and right-to-work policies, only acknowledged ------ */
+    const fillPolicies = (where) =>
+      page.goto(`${base}${where}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, fields }) => {
+          const m = await import(`${b}/autofill.js`);
+          await new Promise((r) => setTimeout(r, 50));
+          const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 800 });
+          await new Promise((r) => setTimeout(r, 100));
+          return {
+            ...window.__state(),
+            acknowledged: report.filled.filter((f) => f.acknowledged).map((f) => f.question),
+            filled: report.filled.map((f) => `${f.key}: ${f.value}`),
+            skipped: report.skipped.map((s) => ({ key: s.key, reason: s.reason, description: s.description })),
+          };
+        }, { b: base, fields: { full_name: 'Morgan Testwell', email: 'morgan.testwell@example.com', phone: '(555) 010-0199', work_authorization: 'Yes', requires_sponsorship: 'No' } }),
+      );
+    const policies = await fillPolicies('/sponsorship-policies');
+    const policyPressed = await fillPolicies('/sponsorship-policy-pressed');
+    const policyAria = await fillPolicies('/sponsorship-policy-aria');
+    // Listed for the person: skipped for a reason other than "already filled", which the card counts as still theirs.
+    const leftFor = (r, words) => r.skipped.some((s) => s.reason !== 'already filled' && words.startsWith(String(s.description).slice(0, 40)));
+    group('Sponsorship and right-to-work policies a form asks only to be acknowledged');
+    check(
+      'the questions about the applicant still follow the profile: sponsorship No as a select and as Ashby buttons, authorised Yes as radios',
+      policies.sponsorship === 'No' && policies.authorized === 'Yes' && policyPressed.buttons['ask-visa'] === 'No' && policyAria.buttons['ask-visa'] === 'No',
+      JSON.stringify({ policies, pressed: policyPressed.buttons, aria: policyAria.buttons }),
+    );
+    check(
+      '"I understand ... not eligible for visa sponsorship" and its kind as radios, a select, a lone required box and Workday\'s dropdown: none answered, none said Yes to',
+      policies.radios === null && policies.select === '' && policies.box === false && policies.widget === '' && policies.acknowledged.length === 0,
+      JSON.stringify(policies),
+    );
+    check(
+      'nor the reverse wording, "I understand sponsorship is available", nor a right-to-work policy',
+      policies.available === '' && policies.authPolicy === null,
+      JSON.stringify(policies),
+    );
+    check(
+      'nor "I understand that this position does not offer visa sponsorship" as Ashby\'s Yes and No, nor its kind as an ARIA group',
+      policyPressed.buttons['ack-visa'] === null && policyPressed.acknowledged.length === 0 && policyAria.aria === null && policyAria.acknowledged.length === 0,
+      JSON.stringify({ pressed: policyPressed, aria: policyAria }),
+    );
+    check(
+      'each is listed as left for the person',
+      [
+        'I acknowledge that the company will not sponsor employment visas for this role.',
+        'I understand this role is not eligible for visa sponsorship.',
+        'Please confirm you understand we cannot sponsor work visas for this position.',
+        'I understand sponsorship is available for this role if needed.',
+        'I acknowledge that candidates must be legally authorized to work in the United States.',
+        'I acknowledge that this company does not sponsor H-1B visas.',
+      ].every((words) => leftFor(policies, words)) &&
+        leftFor(policyPressed, 'I understand that this position does not offer visa sponsorship.') &&
+        leftFor(policyAria, 'I understand that we are unable to provide visa sponsorship now or in the future.'),
+      JSON.stringify({ policies: policies.skipped, pressed: policyPressed.skipped, aria: policyAria.skipped }),
     );
   } finally {
     await browser.close();

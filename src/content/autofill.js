@@ -752,6 +752,14 @@ const asksBothAtOnce = (description) =>
  */
 const TWO_AT_ONCE = 'this one asks two things at once';
 const handBack = (description, skipped) => {
+  /*
+   * And a sponsorship or right-to-work policy the person is only asked to
+   * acknowledge, which is no question about them at all — see
+   * `acknowledgesWorkRights`. Claimed by nothing, and said nothing about
+   * here: `answerAcknowledgements` lists it for the person, once, where it
+   * is still unanswered.
+   */
+  if (acknowledgesWorkRights(description)) return true;
   if (!asksBothAtOnce(description)) return false;
   skipped.push({
     key: 'work_authorization',
@@ -5451,13 +5459,13 @@ function answerFromMemory(remembered) {
  * Only a statement in the first person that says it is understood, read or
  * acknowledged — "I understand", "I acknowledge", "I have read and
  * understand", "I confirm that I have read", "I agree to be available",
- * "By checking this box I acknowledge" — and never one about any of
- * `NOT_ACKNOWLEDGED`. Answered Yes, or ticked, only where nothing else has
- * answered it: the profile and the bank go first, and a statement already
- * answered either way is the person's.
+ * "By checking this box I acknowledge", "Please confirm you understand" —
+ * and never one about any of `NOT_ACKNOWLEDGED`. Answered Yes, or ticked,
+ * only where nothing else has answered it: the profile and the bank go
+ * first, and a statement already answered either way is the person's.
  */
 const ACKNOWLEDGEMENT =
-  /^(?:by\s+(?:checking|ticking|selecting|clicking)\s+(?:this|the)\s+(?:box|button)\s*,?\s*)?i\s+(?:hereby\s+)?(?:understand|acknowledge|have\s+read\s+and\s+(?:understand|acknowledge|agree)|confirm\s+that\s+i\s+have\s+read|agree\s+to\s+be\s+available)\b/i;
+  /^(?:(?:by\s+(?:checking|ticking|selecting|clicking)\s+(?:this|the)\s+(?:box|button)\s*,?\s*)?i\s+(?:hereby\s+)?(?:understand|acknowledge|have\s+read\s+and\s+(?:understand|acknowledge|agree)|confirm\s+that\s+i\s+have\s+read|agree\s+to\s+be\s+available)|please\s+confirm\s+(?:that\s+)?you\s+(?:have\s+read\s+and\s+)?(?:understand|acknowledge))\b/i;
 
 /*
  * What is never acknowledged for somebody, however it is worded: what may be
@@ -5466,19 +5474,57 @@ const ACKNOWLEDGEMENT =
  * is true — which is theirs to sign. These still follow the profile where it
  * answers them, or are left as they were.
  */
+const WORK_RIGHTS = /\b(sponsor\w*|visas?|work\s+authori[sz]\w*|authori[sz]ed\s+to\s+work|eligib\w*|right\s+to\s+work|immigration|citizen\w*)\b/i;
 const NOT_ACKNOWLEDGED = [
   /\b(marketing|newsletters?|mailing[\s-]?lists?|promotion\w*|sms|text[\s-]?messag\w*|texts?|texting|whatsapp|subscri\w*|unsubscribe|opt[\s-]?(?:in|out))\b|\bconsent\s+to\s+(?:receiv\w*|be\s+contacted)\b|\breceiv\w*\s+(?:\w+\s+){0,3}(?:updates|communications?|messages|e-?mails|calls|alerts|offers)\b|\bcommunications?\s+(?:consent|preferences?)\b/i,
-  /\b(sponsor\w*|visas?|work\s+authori[sz]\w*|authori[sz]ed\s+to\s+work|eligib\w*|right\s+to\s+work|immigration|citizen\w*|relocat\w*)\b/i,
+  WORK_RIGHTS,
+  /\b(relocat\w*)\b/i,
   /\b(salary|salaries|compensation|wages?|pay|remuneration|bonus)\b/i,
   /\b(?:background|drug|credit|reference)\s+(?:check|screen|test|investigation)\w*|\bconsumer\s+reports?\b|\bfingerprint\w*|\b(criminal|convict\w*|felon\w*|arrest\w*|misdemeanou?r)\b/i,
   /\b(gender|race|racial|ethnic\w*|veterans?|disabilit\w*|disabled|eeoc?|self[\s-]?identif\w*|sexual\s+orientation|pronouns|demographic\w*|equal\s+(?:employment|opportunity))\b/i,
   /\b(certify|attest\w*|to\s+the\s+best\s+of\s+my\s+knowledge|falsif\w*|misrepresent\w*|omissions?|grounds\s+for|at[\s-]will|signature|e-?sign\w*)\b|\btrue\s*(?:,|and)?\s*(?:complete|correct|accurate)\b|\b(?:complete|correct|accurate)\s+and\s+(?:true|complete|correct|accurate)\b/i,
 ];
 
+const statementOf = (statement) => clean(statement).replace(/^[*\s]+/, '');
+const soundsAcknowledged = (said) => said.length >= 20 && ACKNOWLEDGEMENT.test(said);
+
 function isAcknowledgement(statement) {
-  const said = clean(statement).replace(/^[*\s]+/, '');
-  return said.length >= 20 && ACKNOWLEDGEMENT.test(said) && !NOT_ACKNOWLEDGED.some((re) => re.test(said));
+  const said = statementOf(statement);
+  return soundsAcknowledged(said) && !NOT_ACKNOWLEDGED.some((re) => re.test(said));
 }
+
+/*
+ * A policy on sponsorship or the right to work, put to the person only to be
+ * acknowledged: "I understand that this position does not offer visa
+ * sponsorship", "I acknowledge that the company will not sponsor…", "Please
+ * confirm you understand we cannot sponsor…", "I understand sponsorship is
+ * available…". `requires_sponsorship` matched the word and answered it with
+ * the person's No — which, said to a statement, is "I do not understand",
+ * and can end an application — and `work_authorization` answered "I
+ * acknowledge that candidates must be authorized to work…" the same way from
+ * the right to work.
+ *
+ * The same shape `isAcknowledgement` reads, about what `WORK_RIGHTS` or
+ * either declaration's own pattern names. Never answered from the profile —
+ * see `handBack`, and `widgetChoices` — and never said Yes to either, since
+ * `NOT_ACKNOWLEDGED` keeps the right to work out of that: left as it is, and
+ * listed as the person's. A question asking about them — "Will you require
+ * sponsorship?", "Are you authorized to work…?" — is no statement, and is
+ * answered as it always was.
+ */
+function acknowledgesWorkRights(statement) {
+  const said = statementOf(statement);
+  return soundsAcknowledged(said) && [WORK_RIGHTS, AUTHORIZATION, SPONSORSHIP].some((re) => re.test(said));
+}
+const FOR_YOU_TO_ACKNOWLEDGE = 'a statement about sponsorship or the right to work — acknowledge it yourself';
+// Its own key: not one of the statements `answerAcknowledgements` says Yes to.
+const WORK_RIGHTS_POLICY = 'work_rights_policy';
+const leftToAcknowledge = (description, question) => ({
+  key: WORK_RIGHTS_POLICY,
+  reason: FOR_YOU_TO_ACKNOWLEDGE,
+  description: description.slice(0, 60),
+  question,
+});
 
 /**
  * Answer Yes to the statements on this page that ask only to be acknowledged
@@ -5490,7 +5536,13 @@ function answerAcknowledgements() {
   const filled = [];
   const skipped = [];
   for (const choice of rememberableChoices()) {
-    if (choice.answered() || !isAcknowledgement(choice.question)) continue;
+    if (choice.answered()) continue;
+    // Left, and listed for the person. See `acknowledgesWorkRights`.
+    if (acknowledgesWorkRights(choice.question)) {
+      skipped.push(leftToAcknowledge(choice.description, choice.question));
+      continue;
+    }
+    if (!isAcknowledgement(choice.question)) continue;
     // Only an option that says Yes and nothing else: see `chooseInSelect` and the rest.
     const took = choice.choose('Yes');
     if (!took) continue;
@@ -5514,7 +5566,12 @@ function answerAcknowledgements() {
     if (deepQueryAll('input[type=checkbox]').some(alongside)) continue;
     const said = labelFor(box);
     const required = box.required || box.getAttribute('aria-required') === 'true' || /\*|\brequired\b/i.test(said);
-    if (!required || !isAcknowledgement(withoutMarkers(said) || said)) continue;
+    if (!required) continue;
+    if (acknowledgesWorkRights(withoutMarkers(said) || said)) {
+      skipped.push(leftToAcknowledge(describeField(box), withoutMarkers(said) || said));
+      continue;
+    }
+    if (!isAcknowledgement(withoutMarkers(said) || said)) continue;
     box.click();
     if (!box.checked) continue;
     filled.push({ key: 'acknowledged', value: 'Yes', description: describeField(box).slice(0, 60), question: withoutMarkers(said) || said, acknowledged: true });
@@ -6062,6 +6119,20 @@ function widgetChoices(fields, filled) {
     const description = describeField(widget);
     if (!description) continue;
     /*
+     * A sponsorship or right-to-work policy only to be acknowledged, as
+     * `handBack` leaves it everywhere else: never driven, and named for the
+     * person while it shows no answer. A listbox is answered as an ARIA
+     * group, and `answerAcknowledgements` names it there.
+     */
+    if (acknowledgesWorkRights(description)) {
+      if (seen.some((other) => other.contains(widget) || widget.contains(other))) continue;
+      seen.push(widget);
+      if (widget.getAttribute('role') !== 'listbox' && !widgetShowsAnAnswer(widget)) {
+        found.push({ key: WORK_RIGHTS_POLICY, description: description.slice(0, 60), el: widget, policy: true });
+      }
+      continue;
+    }
+    /*
      * Handed back here too, as `handBack` hands it back everywhere else.
      *
      * Workday asks every yes/no as one of these, and this was the one path
@@ -6177,9 +6248,9 @@ function widgetShowsThisAnswer(widget, key, value) {
 }
 
 function unfillableChoices(fields, filled) {
-  return widgetChoices(fields, filled).map(({ key, description, both, elsewhere }) => ({
+  return widgetChoices(fields, filled).map(({ key, description, both, elsewhere, policy }) => ({
     key,
-    reason: both ? TWO_AT_ONCE : elsewhere ? ANOTHER_COUNTRY : PICK_BY_HAND,
+    reason: policy ? FOR_YOU_TO_ACKNOWLEDGE : both ? TWO_AT_ONCE : elsewhere ? ANOTHER_COUNTRY : PICK_BY_HAND,
     description,
   }));
 }
@@ -6867,8 +6938,8 @@ export async function fillComboboxes(fields, report, { patience = 4000, history 
   const done = [];
   // Which question each choice answered: a key can now be asked twice.
   const chose = new Set();
-  for (const { key, el: widget, both, elsewhere, asked, description } of widgetChoices(fields, report.filled)) {
-    if (both || elsewhere || !pending.has(key)) continue;
+  for (const { key, el: widget, both, elsewhere, policy, asked, description } of widgetChoices(fields, report.filled)) {
+    if (both || elsewhere || policy || !pending.has(key)) continue;
     const value = String(fields[key]);
     const how = await chooseInWidget(widget, key, value, { patience, fields, asked });
     // Looked for in a list that opened, and not in it. See `NOT_LISTED`.
