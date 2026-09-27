@@ -475,6 +475,29 @@ select {
  * colour that means finished.
  */
 .ok-note.warn { color: var(--warn); }
+/*
+ * And what that sentence counts, by name, under it. Quiet, in ink rather than
+ * amber: the sentence is the warning and this is the list to work through.
+ * Each name is a way to the field, so it is underlined standing still, as the
+ * links in an amber hint are.
+ */
+.left-list { margin-top: 4px; font-size: 12px; line-height: 1.5; color: var(--ink-soft); }
+.left-list .left-why { color: var(--muted); font-size: 11px; margin-top: 4px; }
+.left-list .left-row { display: flex; align-items: baseline; gap: 5px; min-width: 0; }
+/* Under a heading once grouped, so the names read as that heading's. */
+.left-list .left-why ~ .left-row { padding-left: 10px; }
+.left-list .left-row .why { color: var(--muted); white-space: nowrap; flex: none; }
+button.left-name {
+  border: 0; border-radius: 0; background: none; padding: 1px 0; min-width: 0;
+  font-size: 12px; font-weight: 400; color: var(--ink-soft); text-align: left;
+  overflow: hidden; text-overflow: ellipsis;
+  text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 2px;
+}
+button.left-name:hover { background: none; color: var(--accent); text-decoration-color: currentColor; }
+button.left-name.gone, button.left-name.gone:hover { color: var(--faint); text-decoration: line-through; cursor: default; }
+span.left-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.left-list button.link { padding: 1px 0; margin-top: 2px; }
+.left-list button.link:hover { background: none; text-decoration: underline; }
 
 .done-box {
   background: var(--good-bg); border: 1px solid var(--good-line); border-radius: 8px; padding: 11px;
@@ -7279,15 +7302,121 @@ export function createCard({
    * how a green note comes to sit over an unfinished form.
    */
   function drawAutofillNote() {
-    return (
-      state.autofillReport
-        ? h('div', {
-            // Green only when nothing is left. See `.ok-note.warn`.
-            className: `ok-note${autofillLeftWork(state.autofillReport) ? ' warn' : ''}`,
-            textContent: describeAutofill(state.autofillReport),
-          })
-        : null
-    );
+    if (!state.autofillReport) return null;
+    const note = h('div', {
+      // Green only when nothing is left. See `.ok-note.warn`.
+      className: `ok-note${autofillLeftWork(state.autofillReport) ? ' warn' : ''}`,
+      textContent: describeAutofill(state.autofillReport),
+    });
+    const left = drawLeftList(state.autofillReport);
+    return left ? h('div', { className: 'autofill-note' }, [note, left]) : note;
+  }
+
+  /*
+   * The fields the note counts as still for you, named.
+   *
+   * "3 fields still for you to answer" sent somebody back through a long form
+   * to find three boxes, with nothing to go on but that the report had seen
+   * them. So each is named by its label or its question, as the form words it
+   * — cut short, since a question can run to a paragraph — with why it was
+   * left where that is known, and pressing a name takes the page to the field
+   * and puts the caret in it.
+   *
+   * The first few, and the rest behind "and N more": the note sits in the
+   * card's main panel, and a form with twelve questions nobody could answer
+   * for you would otherwise push everything under it off the card. Past a
+   * handful they are grouped by why, so "yours to answer" is said once over
+   * the questions it covers rather than after every one.
+   *
+   * Names and reasons only. A row can carry the answer it came from the bank
+   * with, and a reason can quote what the form was given; neither is drawn
+   * here — the reason is said in this card's own few words, never passed
+   * through — so what somebody has on file for a sensitive question is not
+   * written out over the form it belongs to.
+   */
+  const LEFT_SHOWN = 4;
+  /** The `skipped` list whose names are all showing. Another run starts shut. */
+  let leftOpenFor = null;
+
+  const WHY_LEFT = [
+    [/two things at once|acknowledge it yourself/, 'yours to answer'],
+    [/not one of the options|no matching option/, 'no matching option'],
+    [/by hand/, 'pick by hand'],
+    [/would not (?:take|accept)/, 'the field would not take it'],
+    [/another country/, 'asks about another country'],
+    [/not on the resume|lists no schools|does not list|at the level/, 'not on the resume sent'],
+    [/would not add another/, 'the form would not add another'],
+  ];
+  const whyLeft = (reason) => WHY_LEFT.find(([re]) => re.test(String(reason ?? '')))?.[1] ?? '';
+
+  function drawLeftList(r) {
+    const left = (r.skipped ?? []).filter((s) => s.reason !== 'already filled');
+    if (!left.length) return null;
+    const open = leftOpenFor === r.skipped;
+    const grouped = left.length > 3;
+
+    // In the order the page asks them, a reason's rows together once grouped.
+    const byWhy = new Map();
+    for (const s of left) byWhy.set(whyLeft(s.reason), [...(byWhy.get(whyLeft(s.reason)) ?? []), s]);
+    const ordered = grouped ? [...byWhy.values()].flat() : left;
+    const shown = open ? ordered : ordered.slice(0, LEFT_SHOWN);
+
+    // As long as the card's other quoted questions, cut at a word where there
+    // is one late enough: "…does not offe…" reads as a typo.
+    const cut = (n) => {
+      if (n.length <= 60) return n;
+      const head = n.slice(0, 58);
+      const word = head.lastIndexOf(' ');
+      return `${(word > 40 ? head.slice(0, word) : head).replace(/[\s,;:—–-]+$/, '')}…`;
+    };
+    const nameOf = (s) => {
+      const said = String(s.label || s.description || '').replace(/\s+/g, ' ').trim() || 'A field with no label';
+      if (!s.fieldId) return h('span', { className: 'left-name', textContent: cut(said), title: said });
+      const go = h('button', {
+        className: 'left-name',
+        textContent: cut(said),
+        title: `Go to “${said}”`,
+        onclick: async () => {
+          const there = await onAction('showLeft', { fieldId: s.fieldId }).catch(() => false);
+          if (there) return;
+          go.classList.add('gone');
+          go.title = 'That field is not on the page any more';
+        },
+      });
+      return go;
+    };
+
+    const rows = [];
+    let heading = null;
+    for (const s of shown) {
+      const why = whyLeft(s.reason);
+      if (grouped && why !== heading) {
+        heading = why;
+        rows.push(h('div', { className: 'left-why', textContent: why ? `${why[0].toUpperCase()}${why.slice(1)}` : 'Other' }));
+      }
+      rows.push(
+        h('div', { className: 'left-row' }, [
+          nameOf(s),
+          !grouped && why ? h('span', { className: 'why', textContent: `— ${why}` }) : null,
+        ]),
+      );
+    }
+    if (ordered.length > LEFT_SHOWN) {
+      rows.push(
+        h('button', {
+          className: 'link',
+          textContent: open ? 'Show fewer' : `and ${ordered.length - LEFT_SHOWN} more`,
+          ariaExpanded: String(open),
+          onclick: () => {
+            leftOpenFor = open ? null : r.skipped;
+            draw();
+            // The note is often the last thing in the panel, so what opened is under its edge.
+            card.querySelector('.left-list')?.scrollIntoView({ block: 'nearest' });
+          },
+        }),
+      );
+    }
+    return h('div', { className: 'left-list' }, rows);
   }
 
   /**

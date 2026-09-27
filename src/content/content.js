@@ -668,7 +668,11 @@
     const { frames } = await send('fillFrames', { fields: data.fields, history, education }).catch(() => ({ frames: [] }));
     return {
       filled: [...here.filled, ...frames.flatMap((f) => f.filled ?? [])],
-      skipped: [...here.skipped, ...frames.flatMap((f) => f.skipped ?? [])],
+      // A frame's marks carry the frame, as a question's do. See `inFrameId`.
+      skipped: [
+        ...here.skipped,
+        ...frames.flatMap((f) => (f.skipped ?? []).map((s) => (s.fieldId ? { ...s, fieldId: inFrameId(f.frameId, s.fieldId) } : s))),
+      ],
     };
   }
 
@@ -688,7 +692,7 @@
    * the behaviour this had before the bank existed.
    */
   async function fillThisDocument(fields, history = [], education = []) {
-    const { fillForm, fillComboboxes, fillEducation, choiceQuestions, typedQuestions, answerWidgetsFromMemory, watchForEmptied } =
+    const { fillForm, fillComboboxes, fillEducation, choiceQuestions, typedQuestions, answerWidgetsFromMemory, watchForEmptied, pointAtLeft } =
       await imports.autofill();
     const company = companyHere();
     // And the short boxes typed into last time. See `typedQuestions`.
@@ -717,7 +721,8 @@
       if (window.top === window) cardHandle?.refilled(names);
       else send('refilledInFrame', { names }).catch(() => undefined);
     });
-    return done;
+    // Each row left for the person marked, so the card can take them to it. See `pointAtLeft`.
+    return pointAtLeft(done);
   }
 
   /**
@@ -1176,6 +1181,17 @@
         }
         const { insertAnswer } = await imports.autofill();
         return insertAnswer(payload.fieldId, payload.text, payload.question);
+      }
+
+      /*
+       * A field the Autofill note names, pressed there: brought into view and
+       * given the caret, in whichever document it is in.
+       */
+      case 'showLeft': {
+        const inFrame = IN_FRAME_ID.exec(payload.fieldId ?? '');
+        if (inFrame) return send('showInFrame', { frameId: Number(inFrame[1]), fieldId: inFrame[2] });
+        const { showField } = await imports.autofill();
+        return showField(payload.fieldId);
       }
 
       /*
@@ -2808,6 +2824,10 @@
                 insertAnswer(message.payload?.fieldId, message.payload?.text, message.payload?.question),
               ),
           );
+          return true;
+
+        case 'jh-frame-show':
+          answer(imports.autofill().then(({ showField }) => showField(message.payload?.fieldId)));
           return true;
 
         default:

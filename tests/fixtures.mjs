@@ -95,6 +95,62 @@ export const NORTHWIND = {
 </body></html>`,
 };
 
+/*
+ * A form that leaves several things for the person, below a long posting.
+ *
+ * Five statements about the right to work that are only to be acknowledged,
+ * each a required box on its own — Autofill never ticks one, whatever the
+ * profile or the bank holds, so every run leaves all five and says why — a
+ * School list with no school anybody has, which is left as having no
+ * matching option wherever the profile has a school, and a list e2e puts an
+ * answer in the bank for that is not one of its options. The form starts well
+ * below the window, so going to a field is a scroll and not a coincidence.
+ * Not in `ALL`: e2e serves it on its own.
+ */
+export const QUARRY = {
+  name: 'quarry',
+  path: '/quarry/jobs/77',
+  company: 'Quarry',
+  title: 'Backend Engineer Intern',
+  html: `<!doctype html>
+<html><head><title>Backend Engineer Intern at Quarry</title>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"JobPosting",
+ "title":"Backend Engineer Intern",
+ "hiringOrganization":{"@type":"Organization","name":"Quarry"},
+ "jobLocation":{"@type":"Place","address":{"addressLocality":"Denver","addressRegion":"CO"}},
+ "description":"<p>Build the services behind our search product in Go and PostgreSQL, with Kafka between them and Kubernetes under them.</p><ul><li>Pursuing a BS in Computer Science</li><li>Experience with SQL and distributed systems</li></ul>"}
+</script>
+<style>${CHROME} input[type=checkbox] { width: auto; } .ack { margin: 14px 0; } .ack label { display: inline; margin: 0 0 0 6px; }</style></head>
+<body>
+  <div class="hdr"><h1>Quarry</h1><div>Backend Engineer Intern · Denver, CO</div></div>
+  <div class="wrap">
+    <h2>About the role</h2>
+    <p>Build the services behind our search product in Go and PostgreSQL, with Kafka between them
+       and Kubernetes under them. You will write SQL every day and own a service end to end.</p>
+    <h2>Minimum qualifications</h2>
+    <ul><li>Pursuing a BS in Computer Science</li><li>Experience with SQL and distributed systems</li></ul>
+    <div style="height: 1300px"><h2>Benefits</h2><p>Housing stipend, mentorship, and a team lunch every Friday.</p></div>
+    <h2>Apply now</h2>
+    <form>
+      <label for="fn">First Name</label><input id="fn" name="first_name">
+      <label for="ln">Last Name</label><input id="ln" name="last_name">
+      <label for="em">Email</label><input id="em" name="email" type="email">
+      <label for="school">School</label>
+      <select id="school" name="school"><option value="">Select…</option><option>Example Institute of Testing</option><option>Sample State College</option></select>
+      <label for="oncall">Which on-call rotation length would you prefer?</label>
+      <select id="oncall" name="oncall"><option value="">Select…</option><option>One week</option><option>Two weeks</option></select>
+      <div class="ack"><input type="checkbox" id="ack1" name="ack_sponsorship" required><label for="ack1">I understand that this position does not offer visa sponsorship.</label></div>
+      <div class="ack"><input type="checkbox" id="ack2" name="ack_visas" required><label for="ack2">I acknowledge that Quarry will not sponsor employment visas for this role.</label></div>
+      <div class="ack"><input type="checkbox" id="ack3" name="ack_authorized" required><label for="ack3">I understand that candidates must be authorized to work in the United States.</label></div>
+      <div class="ack"><input type="checkbox" id="ack4" name="ack_immigration" required><label for="ack4">Please confirm you understand that we cannot support immigration applications.</label></div>
+      <div class="ack"><input type="checkbox" id="ack5" name="ack_eligibility" required><label for="ack5">I understand that proof of eligibility to work will be asked for before any start date, once an offer has been accepted.</label></div>
+      <button type="button">Submit Application</button>
+    </form>
+  </div>
+</body></html>`,
+};
+
 /** Not a job posting. The extension must stay silent here. */
 export const BLOG = {
   name: 'blog',

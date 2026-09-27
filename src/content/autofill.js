@@ -733,6 +733,28 @@ const WITHOUT_SPONSORSHIP = /\bwithout\b[\s\S]{0,30}\bsponsor\w*/i;
 const asksBothAtOnce = (description) =>
   (AUTHORIZATION.test(description) || WITHOUT_SPONSORSHIP.test(description)) && SPONSORSHIP.test(description);
 
+/*
+ * Which field each row of `skipped` is about, and what that field is called.
+ *
+ * The card said "3 fields still for you to answer" and nothing else, so the
+ * person was sent back to hunt through a long form for three boxes the report
+ * had been standing on when it counted them. Each row is now tied to its
+ * control where it is made, and `pointAtLeft` turns that into a mark the card
+ * can send back and a name it can show.
+ *
+ * Keyed by the row, as `UNSEEN` is, so nothing that is not a plain value goes
+ * into the report: a frame's report crosses a message boundary. The name is
+ * taken now, while the control is the one that was looked at — a widget's
+ * label is often gone by the time the report is drawn. A group of options is
+ * named by its question, which is what the page shows above it; one control,
+ * by its label. Never by what is in it.
+ */
+const LEFT_AT = new WeakMap();
+const leftAt = (el, row, label) => {
+  if (el) LEFT_AT.set(row, { el, label: label ?? labelFor(el) });
+  return row;
+};
+
 /**
  * Handing it back, wherever it turns up.
  *
@@ -751,7 +773,7 @@ const asksBothAtOnce = (description) =>
  * right to work is theirs however it is phrased.
  */
 const TWO_AT_ONCE = 'this one asks two things at once';
-const handBack = (description, skipped) => {
+const handBack = (description, skipped, el, label) => {
   /*
    * And a sponsorship or right-to-work policy the person is only asked to
    * acknowledge, which is no question about them at all — see
@@ -761,11 +783,17 @@ const handBack = (description, skipped) => {
    */
   if (acknowledgesWorkRights(description)) return true;
   if (!asksBothAtOnce(description)) return false;
-  skipped.push({
-    key: 'work_authorization',
-    reason: TWO_AT_ONCE,
-    description: description.slice(0, 60),
-  });
+  skipped.push(
+    leftAt(
+      el,
+      {
+        key: 'work_authorization',
+        reason: TWO_AT_ONCE,
+        description: description.slice(0, 60),
+      },
+      label,
+    ),
+  );
   return true;
 };
 
@@ -3808,7 +3836,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     // do about it, and naming it would imply the field is theirs to fill.
     // Before the exclusions, which say nothing, and before the match, which
     // this question does not need. See `handBack`.
-    if (handBack(description, skipped)) continue;
+    if (handBack(description, skipped, input)) continue;
     if (isNotAboutYou(description, clean(labelFor(input)), surroundingWords(input), boundedSection(input))) continue;
     // A name is not writing, even asked in a paragraph box as a question:
     // Zoox's "What is your preferred first name and last name?" is a textarea.
@@ -3866,7 +3894,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
           !(LINKS.has(key) && onlyTheStartOfAnAddress(input.value)) &&
           !(key === 'phone' && ONLY_A_DIALLING_CODE.test(input.value));
     if (answered && !overwrite) {
-      skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
+      skipped.push(leftAt(input, { key, reason: 'already filled', description: description.slice(0, 60) }));
       continue;
     }
     // The dialling code the form put there stays, in front of a number that
@@ -3901,7 +3929,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
      * Kingdom?". See `aboutAnotherCountry`.
      */
     if (aboutAnotherCountry(key, value, description, fields.address_country)) {
-      skipped.push({ key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) });
+      skipped.push(leftAt(input, { key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) }));
       continue;
     }
 
@@ -3988,7 +4016,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
          * country…", and the card says it filled it.
          */
         if (input.selectedOptions[0] !== option) {
-          skipped.push({ key, reason: 'the field would not take it', description: description.slice(0, 60) });
+          skipped.push(leftAt(input, { key, reason: 'the field would not take it', description: description.slice(0, 60) }));
           continue;
         }
         // Both, because choosing from a list fires both. `change` alone is
@@ -3997,14 +4025,14 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
         input.dispatchEvent(ours(new Event('change', { bubbles: true })));
         // And drawn by whatever stands in for it. See `chosenOf`.
         if (!standInTookIt(input, was)) {
-          skipped.push({ key, reason: PICK_BY_HAND, description: description.slice(0, 60) });
+          skipped.push(leftAt(input, { key, reason: PICK_BY_HAND, description: description.slice(0, 60) }));
           continue;
         }
         keepTyped(input, option.textContent, 'select');
         filled.push({ key, value });
       } else {
         const reason = aboutAnotherCountry(key, value, description) ? ANOTHER_COUNTRY : 'no matching option';
-        skipped.push({ key, reason, description: description.slice(0, 60) });
+        skipped.push(leftAt(input, { key, reason, description: description.slice(0, 60) }));
       }
       continue;
     }
@@ -4042,20 +4070,20 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
         if (!busy && !unsure) for (const [box, part] of parts) setValue(box, part);
         for (const [box] of parts) numberBoxes.add(box);
         if (unsure) {
-          skipped.push({ key, reason: 'the field would not accept it in that form', description: description.slice(0, 60) });
+          skipped.push(leftAt(input, { key, reason: 'the field would not accept it in that form', description: description.slice(0, 60) }));
         } else if (busy) {
-          skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
+          skipped.push(leftAt(input, { key, reason: 'already filled', description: description.slice(0, 60) }));
         } else if (parts.every(([box, part]) => box.value === part)) {
           for (const [box, part] of parts) keepTyped(box, part);
           filled.push({ key, value: parts.map(([, part]) => part).join(' ') });
         } else {
           parts.forEach(([box], n) => setValue(box, was[n]));
-          skipped.push({ key, reason: 'the field would not take it', description: description.slice(0, 60) });
+          skipped.push(leftAt(input, { key, reason: 'the field would not take it', description: description.slice(0, 60) }));
         }
         continue;
       }
       if (shorter === undefined) {
-        skipped.push({ key, reason: 'the field would not accept it in that form', description: description.slice(0, 60) });
+        skipped.push(leftAt(input, { key, reason: 'the field would not accept it in that form', description: description.slice(0, 60) }));
         continue;
       }
       value = shorter;
@@ -4096,7 +4124,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     // And a date picker that wrote the date back its own way. See `sameMonthWritten`.
     const sameDate = /^(graduation|education_start)_date$/.test(key) && sameMonthWritten(input.value, String(value));
     if (input.value !== String(value) && !sameNumber && !sameDate) {
-      skipped.push({ key, reason: 'the field would not take it', description: description.slice(0, 60) });
+      skipped.push(leftAt(input, { key, reason: 'the field would not take it', description: description.slice(0, 60) }));
       continue;
     }
 
@@ -4115,11 +4143,13 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
       });
       if (took === undefined) {
         setValue(input, before);
-        skipped.push({
-          key,
-          reason: 'the field would not accept it in that form',
-          description: description.slice(0, 60),
-        });
+        skipped.push(
+          leftAt(input, {
+            key,
+            reason: 'the field would not accept it in that form',
+            description: description.slice(0, 60),
+          }),
+        );
         continue;
       }
       keepTyped(input, took);
@@ -4375,7 +4405,14 @@ function jobBlocks(history, skipped = []) {
             : flat(job.title) === typedTitle),
       );
       if (index < 0) {
-        skipped.push({ key: 'work_history', reason: 'this job is not on the resume', description: clean(b.get('company')?.value || b.get('title')?.value).slice(0, 60) });
+        // Named as the block, not by the employer typed in it. See `LEFT_AT`.
+        skipped.push(
+          leftAt(
+            b.get('company') ?? b.get('title') ?? [...b.values()][0],
+            { key: 'work_history', reason: 'this job is not on the resume', description: clean(b.get('company')?.value || b.get('title')?.value).slice(0, 60) },
+            'A job in the work history',
+          ),
+        );
         continue;
       }
     } else {
@@ -4422,7 +4459,7 @@ function fillJob(block, job, overwrite, filled, skipped) {
      */
     const took = input.value === written || (/\.month$/.test(slot) && /^\d+$/.test(input.value) && Number(input.value) === Number(written));
     if (took) filled.push({ key, value: written.slice(0, 80) });
-    else skipped.push({ key, reason: 'the field would not take it', description: clean(labelFor(input)).slice(0, 60) });
+    else skipped.push(leftAt(input, { key, reason: 'the field would not take it', description: clean(labelFor(input)).slice(0, 60) }));
   };
   put('title', 'job_title', job.title);
   put('company', 'job_company', job.company);
@@ -4709,7 +4746,7 @@ function answerChoiceButtons(fields, overwrite, already) {
   for (const { group, options, question, description, chosen, toggles } of ariaChoiceGroups()) {
     // The same three gates, in the same order, as `fillForm` and
     // `answerRadioGroups`. See `handBack`.
-    if (handBack(description, skipped)) continue;
+    if (handBack(description, skipped, group, question)) continue;
     if (isNotAboutYou(description, clean(question), surroundingWords(group), boundedSection(group))) continue;
 
     // Only the keys that are a choice between options, as in
@@ -4722,13 +4759,13 @@ function answerChoiceButtons(fields, overwrite, already) {
     const value = fields[key];
 
     if (options.some(chosen) && !overwrite) {
-      skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
+      skipped.push(leftAt(group, { key, reason: 'already filled', description: description.slice(0, 60) }, question));
       continue;
     }
 
     // Before any option is matched, as in `fillForm`.
     if (aboutAnotherCountry(key, value, description, fields.address_country)) {
-      skipped.push({ key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) });
+      skipped.push(leftAt(group, { key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) }, question));
       continue;
     }
     // Pressed buttons as they always were read; ARIA options as they are drawn.
@@ -4741,7 +4778,7 @@ function answerChoiceButtons(fields, overwrite, already) {
       yesNoOption(key, value, options.map((el) => ({ label: labelOf(el), el })), description)?.el;
     if (!wanted) {
       const reason = aboutAnotherCountry(key, value, description) ? ANOTHER_COUNTRY : 'no matching option';
-      skipped.push({ key, reason, description: description.slice(0, 60) });
+      skipped.push(leftAt(group, { key, reason, description: description.slice(0, 60) }, question));
       continue;
     }
 
@@ -4773,7 +4810,7 @@ function answerChoiceButtons(fields, overwrite, already) {
       else {
         const row = { key, reason: 'the page did not take it — pick this one by hand', description: description.slice(0, 60) };
         if (got) UNSEEN.set(row, { ...got, row: { key, value } });
-        skipped.push(row);
+        skipped.push(leftAt(group, row, question));
       }
       continue;
     }
@@ -4783,11 +4820,17 @@ function answerChoiceButtons(fields, overwrite, already) {
       filled.push({ key, value });
       taken.add(key);
     } else {
-      skipped.push({
-        key,
-        reason: 'the page did not take it — pick this one by hand',
-        description: description.slice(0, 60),
-      });
+      skipped.push(
+        leftAt(
+          group,
+          {
+            key,
+            reason: 'the page did not take it — pick this one by hand',
+            description: description.slice(0, 60),
+          },
+          question,
+        ),
+      );
       taken.add(key);
     }
   }
@@ -5211,7 +5254,7 @@ function answerRadioGroups(fields, overwrite) {
     // Before the exclusions and before the match, as in `fillForm`. Radios
     // are the commoner shape for this question: Workable and Teamtailor ask
     // "legally authorized to work without sponsorship" as a pair of buttons.
-    if (handBack(description, skipped)) continue;
+    if (handBack(description, skipped, radios[0], groupLabelFor(radios))) continue;
     // The group's own words, on the same terms as `fillForm`.
     if (isNotAboutYou(description, clean(groupLabelFor(radios)), surroundingWords(radios[0]), boundedSection(radios[0]))) continue;
 
@@ -5233,13 +5276,13 @@ function answerRadioGroups(fields, overwrite) {
     const value = fields[key];
 
     if (radios.some((radio) => radio.checked) && !overwrite) {
-      skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
+      skipped.push(leftAt(radios[0], { key, reason: 'already filled', description: description.slice(0, 60) }, groupLabelFor(radios)));
       continue;
     }
 
     // Before any option is matched, as in `fillForm`.
     if (aboutAnotherCountry(key, value, description, fields.address_country)) {
-      skipped.push({ key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) });
+      skipped.push(leftAt(radios[0], { key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) }, groupLabelFor(radios)));
       continue;
     }
     const wanted =
@@ -5263,7 +5306,7 @@ function answerRadioGroups(fields, overwrite) {
       )?.el;
     if (!wanted) {
       const reason = aboutAnotherCountry(key, value, description) ? ANOTHER_COUNTRY : 'no matching option';
-      skipped.push({ key, reason, description: description.slice(0, 60) });
+      skipped.push(leftAt(radios[0], { key, reason, description: description.slice(0, 60) }, groupLabelFor(radios)));
       continue;
     }
 
@@ -5441,8 +5484,8 @@ function answerFromMemory(remembered) {
       // Pressed, and read back by `seePresses` once the page has drawn it.
       const waiting = { ...row, reason: 'the page did not take it — pick this one by hand' };
       UNSEEN.set(waiting, { ...took, row: { ...row, question: choice.question, remembered: true } });
-      skipped.push(waiting);
-    } else skipped.push({ ...row, reason: 'the answer you gave before is not one of the options here' });
+      skipped.push(leftAt(choice.el, waiting, choice.question));
+    } else skipped.push(leftAt(choice.el, { ...row, reason: 'the answer you gave before is not one of the options here' }, choice.question));
   }
   return { filled, skipped };
 }
@@ -5539,7 +5582,7 @@ function answerAcknowledgements() {
     if (choice.answered()) continue;
     // Left, and listed for the person. See `acknowledgesWorkRights`.
     if (acknowledgesWorkRights(choice.question)) {
-      skipped.push(leftToAcknowledge(choice.description, choice.question));
+      skipped.push(leftAt(choice.el, leftToAcknowledge(choice.description, choice.question), choice.question));
       continue;
     }
     if (!isAcknowledgement(choice.question)) continue;
@@ -5554,7 +5597,7 @@ function answerAcknowledgements() {
       // Pressed, and read back by `seePresses` once the page has drawn it.
       const waiting = { ...row, reason: 'the page did not take it — pick this one by hand' };
       UNSEEN.set(waiting, { ...took, row: done });
-      skipped.push(waiting);
+      skipped.push(leftAt(choice.el, waiting, choice.question));
     }
   }
   for (const box of deepQueryAll('input[type=checkbox]')) {
@@ -5568,7 +5611,7 @@ function answerAcknowledgements() {
     const required = box.required || box.getAttribute('aria-required') === 'true' || /\*|\brequired\b/i.test(said);
     if (!required) continue;
     if (acknowledgesWorkRights(withoutMarkers(said) || said)) {
-      skipped.push(leftToAcknowledge(describeField(box), withoutMarkers(said) || said));
+      skipped.push(leftAt(box, leftToAcknowledge(describeField(box), withoutMarkers(said) || said), withoutMarkers(said) || said));
       continue;
     }
     if (!isAcknowledgement(withoutMarkers(said) || said)) continue;
@@ -5728,7 +5771,7 @@ function answerTypedFromMemory(remembered, fields, company) {
     setValue(box.el, kept.answer);
     if (box.el.value !== kept.answer || browserWouldRefuse(box.el)) {
       setValue(box.el, '');
-      skipped.push({ ...row, reason: 'the box would not take the answer you gave before' });
+      skipped.push(leftAt(box.el, { ...row, reason: 'the box would not take the answer you gave before' }, box.question));
       continue;
     }
     if (kept.itemId) FROM_BANK.set(box.el, kept.itemId);
@@ -6248,11 +6291,13 @@ function widgetShowsThisAnswer(widget, key, value) {
 }
 
 function unfillableChoices(fields, filled) {
-  return widgetChoices(fields, filled).map(({ key, description, both, elsewhere, policy }) => ({
-    key,
-    reason: policy ? FOR_YOU_TO_ACKNOWLEDGE : both ? TWO_AT_ONCE : elsewhere ? ANOTHER_COUNTRY : PICK_BY_HAND,
-    description,
-  }));
+  return widgetChoices(fields, filled).map(({ key, description, both, elsewhere, policy, el }) =>
+    leftAt(el, {
+      key,
+      reason: policy ? FOR_YOU_TO_ACKNOWLEDGE : both ? TWO_AT_ONCE : elsewhere ? ANOTHER_COUNTRY : PICK_BY_HAND,
+      description,
+    }),
+  );
 }
 
 /* ---------------------------------------------------------------------- *
@@ -7281,7 +7326,7 @@ async function fillEducationPart(control, key, value, f, patience) {
       keepWidget(control, key, value, { fields: f, asked: description });
       return { key, value, widget: true };
     }
-    return { key, reason: how === 'unlisted' ? 'no matching option' : PICK_BY_HAND, description: description.slice(0, 60) };
+    return leftAt(control, { key, reason: how === 'unlisted' ? 'no matching option' : PICK_BY_HAND, description: description.slice(0, 60) });
   }
   if (control instanceof HTMLSelectElement) {
     const choosable = [...control.options].filter((o) => !isDisabled(o));
@@ -7289,13 +7334,13 @@ async function fillEducationPart(control, key, value, f, patience) {
       choosable.find((o) => sameOption(o.textContent, value) || sameOption(o.value, value)) ??
       (key === 'gpa' ? gpaOption(choosable, value) : null) ??
       choosable.find((o) => sameAnswerSpelledOtherwise(key, o.textContent, value) || sameAnswerSpelledOtherwise(key, o.value, value));
-    if (!option) return { key, reason: 'no matching option', description: description.slice(0, 60) };
+    if (!option) return leftAt(control, { key, reason: 'no matching option', description: description.slice(0, 60) });
     const was = control.value;
     nativeSet(control, 'value', option.value);
-    if (control.selectedOptions[0] !== option) return { key, reason: 'the field would not take it', description: description.slice(0, 60) };
+    if (control.selectedOptions[0] !== option) return leftAt(control, { key, reason: 'the field would not take it', description: description.slice(0, 60) });
     control.dispatchEvent(ours(new Event('input', { bubbles: true })));
     control.dispatchEvent(ours(new Event('change', { bubbles: true })));
-    if (!standInTookIt(control, was)) return { key, reason: PICK_BY_HAND, description: description.slice(0, 60) };
+    if (!standInTookIt(control, was)) return leftAt(control, { key, reason: PICK_BY_HAND, description: description.slice(0, 60) });
     return { key, value };
   }
   // A box: the date written the way it wants it, as `fillForm` writes one.
@@ -7308,7 +7353,7 @@ async function fillEducationPart(control, key, value, f, patience) {
   setValue(control, written);
   if (control.value !== written || browserWouldRefuse(control)) {
     setValue(control, before);
-    return { key, reason: 'the field would not take it', description: description.slice(0, 60) };
+    return leftAt(control, { key, reason: 'the field would not take it', description: description.slice(0, 60) });
   }
   return { key, value: written };
 }
@@ -7364,7 +7409,7 @@ export async function fillEducation(education, fields, report, { patience = 4000
    */
   const leaving = (reason) => ({
     ...report,
-    skipped: [...report.skipped, { key: 'education_start_date', reason, description: 'Education' }],
+    skipped: [...report.skipped, leftAt(section.box, { key: 'education_start_date', reason, description: 'Education' }, 'Education')],
   });
   if (schools.length === 0) return leaving('the resume sent lists no schools, so the dates and any others were left');
   const onlyOne = schools.length === 1;
@@ -7394,7 +7439,7 @@ export async function fillEducation(education, fields, report, { patience = 4000
       if (!waiting() || blocks.length >= schools.length) break;
       const grown = await addAnother(section, blocks.length);
       if (!grown) {
-        skipped.push({ key: 'school', reason: 'the form would not add another', description: 'Education' });
+        skipped.push(leftAt(section.button, { key: 'school', reason: 'the form would not add another', description: 'Education' }, 'Education'));
         break;
       }
       ({ section, blocks } = grown);
@@ -7410,7 +7455,14 @@ export async function fillEducation(education, fields, report, { patience = 4000
     if (shown) {
       index = schools.findIndex((e, i) => !used.has(i) && sameSchool(e.school, shown));
       if (index < 0) {
-        skipped.push({ key: 'school', reason: 'this school is not on the resume', description: shown.slice(0, 60) });
+        // Named as the block, not by the school shown in it. See `LEFT_AT`.
+        skipped.push(
+          leftAt(
+            block.get('school') ?? [...block.values()][0],
+            { key: 'school', reason: 'this school is not on the resume', description: shown.slice(0, 60) },
+            'A school in the education section',
+          ),
+        );
         continue;
       }
     } else if (n === 0 && owner >= 0) {
@@ -7430,7 +7482,13 @@ export async function fillEducation(education, fields, report, { patience = 4000
          */
         if (waiting()) {
           const asked = describeField(block.get('school') ?? [...block.values()][0]);
-          skipped.push({ key: 'school', reason: 'no school left on the resume is at the level this one asks about', description: asked.slice(0, 60) });
+          skipped.push(
+            leftAt(block.get('school') ?? [...block.values()][0], {
+              key: 'school',
+              reason: 'no school left on the resume is at the level this one asks about',
+              description: asked.slice(0, 60),
+            }),
+          );
         }
         if (added) break;
         continue;
@@ -8208,6 +8266,87 @@ function markedField(fieldId) {
   return kept?.isConnected ? kept : undefined;
 }
 
+/** The mark a field already has, or a new one. */
+function markField(field) {
+  let id = field.getAttribute(FIELD_KEY);
+  if (!id) {
+    id = `jh-${++fieldCounter}`;
+    field.setAttribute(FIELD_KEY, id);
+  }
+  markedAs.set(id, new WeakRef(field));
+  return id;
+}
+
+/**
+ * Each row left for the person, with a mark on its field and a name to show.
+ *
+ * Run once a document's filling is over, on the rows `leftAt` tied to a
+ * control. The name is the label or the question, trimmed of the markers a
+ * form puts round it, and nothing else: never the value in the box, and never
+ * the answer a row may carry from the bank, which stays where it was and is
+ * not the card's to draw. A row with no control keeps what it had, and the
+ * card names it as it can.
+ */
+export function pointAtLeft(report) {
+  return {
+    ...report,
+    skipped: report.skipped.map((row) => {
+      const at = LEFT_AT.get(row);
+      if (!at) return row;
+      const label = cleanQuestion(withoutMarkers(at.label ?? ''));
+      return {
+        ...row,
+        ...(at.el.isConnected ? { fieldId: markField(at.el) } : {}),
+        ...(label ? { label } : {}),
+      };
+    }),
+  };
+}
+
+/*
+ * What to put the caret in, for a field the card names.
+ *
+ * A row is tied to whatever the pass looked at, and that is not always
+ * something that takes focus: a group of buttons is tied to the box around
+ * them, a native select a widget stands in for is hidden behind it, and the
+ * Education section is a section. So: the field itself if a person could put
+ * the caret there, otherwise the first thing inside it that can, otherwise
+ * the first shown thing around it that holds one.
+ */
+const TAKES_FOCUS =
+  'input:not([type=hidden]), select, textarea, button, [contenteditable="true"], [role="combobox"], [role="radio"], [role="option"], [tabindex]:not([tabindex="-1"])';
+const canTakeFocus = (el) => el.matches?.(TAKES_FOCUS) && !isDisabled(el) && el.getClientRects().length > 0;
+
+function focusTargetFor(field) {
+  if (canTakeFocus(field)) return field;
+  for (let around = field; around; around = around.parentElement ?? around.getRootNode?.().host) {
+    // Never the whole page, whose first box is somebody's first name.
+    if (around === around.ownerDocument?.body) break;
+    const inside = deepQueryAll(TAKES_FOCUS, around).find(canTakeFocus);
+    if (inside) return inside;
+    // No further than the first shown box: past it are other questions.
+    if (around.getClientRects?.().length > 0) break;
+  }
+  return null;
+}
+
+/**
+ * Bring a field the card named into view and put the caret in it.
+ *
+ * Scrolled to the middle of the window, as an inserted answer is, so the card
+ * at the top right does not sit over it. True when there was something to go
+ * to; false when the form has dropped the field since, which the card says.
+ */
+export function showField(fieldId) {
+  const field = markedField(fieldId);
+  if (!field) return false;
+  const target = focusTargetFor(field);
+  (target ?? field).scrollIntoView({ behavior: 'smooth', block: 'center' });
+  // Without its own scroll, or the smooth one above is cut short.
+  target?.focus({ preventScroll: true });
+  return true;
+}
+
 /**
  * Find the free-text questions on the page — the boxes that want a paragraph,
  * not a phone number. Returned rather than filled: a long-form answer is
@@ -8279,12 +8418,7 @@ export function findQuestions() {
     if (!question) continue;
     if (question.length < 12 && !question.endsWith('?')) continue;
 
-    let id = field.getAttribute(FIELD_KEY);
-    if (!id) {
-      id = `jh-${++fieldCounter}`;
-      field.setAttribute(FIELD_KEY, id);
-    }
-    markedAs.set(id, new WeakRef(field));
+    const id = markField(field);
     found.push({
       fieldId: id,
       question,

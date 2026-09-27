@@ -123,7 +123,9 @@ the label somewhere different. It:
 
 - **never overwrites** anything already typed,
 - **never guesses on a dropdown** — an option has to plainly match,
-- **reports what it skipped**, so "done" is distinguishable from "done wrong".
+- **reports what it skipped**, so "done" is distinguishable from "done wrong" —
+  each field it left for you named on the card, with why where it knows, and
+  a click away. Names only: never what you have saved for it.
 
 Long-form questions are *offered*, not injected: a matching saved answer appears
 as a placeholder and is inserted when you focus the box, because an essay answer

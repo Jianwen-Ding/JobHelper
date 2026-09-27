@@ -1611,6 +1611,15 @@ const handlers = {
     return Boolean(reply?.ok && reply.data);
   },
 
+  /** Bring a field the Autofill note names into view, in the frame it lives in. */
+  async showInFrame({ frameId, fieldId }, tab) {
+    if (tab?.id === undefined) return false;
+    const reply = await chrome.tabs
+      .sendMessage(tab.id, { type: 'jh-frame-show', payload: { fieldId } }, { frameId })
+      .catch(() => null);
+    return Boolean(reply?.ok && reply.data);
+  },
+
   /**
    * The application this tab is on.
    *
