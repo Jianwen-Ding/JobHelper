@@ -16,6 +16,11 @@
  * letter and three answers to an accidental close. It had never been run.
  *
  *   RMM_SERVER=http://127.0.0.1:4788 node tests/adverse.mjs
+ *
+ * It also starts ResumeM-M servers of its own over the same save, from
+ * RMM_CHECKOUT (the sibling ../ResumeM-M by default), each with its own list
+ * of saves under JH_TMP (the system's temp folder by default), never the real
+ * one. Their folders are removed afterwards.
  */
 
 import { spawn } from 'node:child_process';
@@ -44,6 +49,14 @@ import {
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
+/**
+ * The ResumeM-M this suite starts its own server from, as `panel.mjs` does:
+ * RMM_CHECKOUT when set, the sibling checkout otherwise. It should be the one
+ * the pool's servers run, or the build check in `ownServer` stops the run.
+ */
+const RMM_CHECKOUT = process.env.RMM_CHECKOUT ?? path.resolve(extensionRoot, '..', 'ResumeM-M');
+/** Where this suite's temporary folders go: JH_TMP, as in `panel.mjs`, or the system's. */
+const TMP = process.env.JH_TMP ?? os.tmpdir();
 const HOST = '#jobhelper-card-host';
 
 /**
@@ -155,24 +168,44 @@ const freePort = () =>
  */
 async function ownServer(dataDir, poolBuild) {
   const port = await freePort();
+  // Said by name: a missing folder otherwise surfaces as "spawn npx ENOENT".
+  if (!fs.existsSync(path.join(RMM_CHECKOUT, 'src', 'server', 'index.ts'))) {
+    console.error(`No ResumeM-M checkout at ${RMM_CHECKOUT}. Set RMM_CHECKOUT to the one the pool runs.`);
+    process.exit(2);
+  }
+  /*
+   * With a list of saves of its own. This server switches saves (see the
+   * swap check below), and switching writes the list of saves recently open
+   * — which, with nothing set, is the one in the home directory of whoever
+   * runs the suite: their own ResumeM-M's list, rewritten by a test.
+   *
+   * Always set, and always to a folder made here: not inherited from the
+   * environment, because a list someone else set (the gate's, say) is read
+   * by other servers, and ResumeM-M treats an empty value as unset and falls
+   * back to the real one. It goes under the same scratch folder as the rest
+   * of this suite's leftovers, and goes when the server does.
+   */
+  const listDir = fs.mkdtempSync(path.join(TMP, 'jh-adverse-projects-'));
   const child = spawn('npx', ['tsx', 'src/server/index.ts'], {
-    cwd: path.resolve(extensionRoot, '..', 'ResumeM-M'),
+    cwd: RMM_CHECKOUT,
     detached: true,
-    /*
-     * With a list of saves of its own. This server switches saves (see the
-     * swap check below), and switching writes the list of saves recently
-     * open — which, with nothing set, is the one in the home directory of
-     * whoever runs the suite: their own ResumeM-M's list, rewritten by a test.
-     */
     env: {
       ...process.env,
       RMM_DATA: dataDir,
       PORT: String(port),
       RMM_AUTOCOMMIT: '0',
-      RMM_PROJECTS_FILE: path.join(os.tmpdir(), `rmm-adverse-projects-${port}.json`),
+      RMM_PROJECTS_FILE: path.join(listDir, 'projects.json'),
     },
     stdio: 'ignore',
   });
+  const stop = () => {
+    try {
+      process.kill(-child.pid);
+    } catch {
+      child.kill();
+    }
+    fs.rmSync(listDir, { recursive: true, force: true });
+  };
   const url = `http://127.0.0.1:${port}`;
   let mine;
   for (let attempt = 0; attempt < 60; attempt++) {
@@ -211,31 +244,20 @@ async function ownServer(dataDir, poolBuild) {
         'This suite started a ResumeM-M from source and it is a different build',
         'from the one the pool is serving:',
         `  pool    ${poolBuild}`,
-        `  ours    ${mine.build}`,
+        `  ours    ${mine.build}   (from ${RMM_CHECKOUT})`,
         '',
         'Both are pointed at the same save, so whichever answers gets a say in',
-        'what the other is looking at. The usual cause is a source file edited',
-        'after the run began. Let the run finish, then start it again.',
+        'what the other is looking at. The usual causes are a source file edited',
+        'after the run began, or RMM_CHECKOUT naming a different checkout from',
+        "the one the pool's servers were started from. Set RMM_CHECKOUT to that",
+        'checkout, or let the run finish and start it again.',
       ].join('\n'),
     );
-    try {
-      process.kill(-child.pid);
-    } catch {
-      child.kill();
-    }
+    stop();
     process.exit(2);
   }
 
-  return {
-    url,
-    kill: () => {
-      try {
-        process.kill(-child.pid);
-      } catch {
-        child.kill();
-      }
-    },
-  };
+  return { url, kill: stop };
 }
 
 async function main() {
@@ -243,7 +265,7 @@ async function main() {
   await cleanStore(SERVER, MINE);
 
   const fixtures = await serveFixtures();
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-adverse-'));
+  const userDataDir = fs.mkdtempSync(path.join(TMP, 'jh-adverse-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     executablePath: findChromium(),
     headless: true,
@@ -948,7 +970,7 @@ async function main() {
       // suite running beside this.
       const mine = await (await fetch(`${SERVER}/health`)).json();
       const own = await ownServer(mine.dataDir, mine.build);
-      const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'rmm-other-save-'));
+      const elsewhere = fs.mkdtempSync(path.join(TMP, 'rmm-other-save-'));
       try {
         await pointExtensionAt(context, context.serviceWorkers()[0], own.url);
 
@@ -1081,7 +1103,7 @@ async function main() {
        */
       const mine = await (await fetch(`${SERVER}/health`)).json();
       const own = await ownServer(mine.dataDir, mine.build);
-      const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'rmm-other-save-'));
+      const elsewhere = fs.mkdtempSync(path.join(TMP, 'rmm-other-save-'));
       try {
         /*
          * The group above left its application staged in this save — building
