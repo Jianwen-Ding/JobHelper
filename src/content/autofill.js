@@ -3014,7 +3014,16 @@ function sameAnswerSpelledOtherwise(key, option, value) {
     const said = clean(option).replace(/^(?:college|university)\s*[-–—:]\s+/i, '');
     if (said !== clean(option) && sameOption(said, value)) return true;
     const level = degreeLevel(value);
-    return Boolean(level) && LEVEL_ONLY.test(said.replace(/[’]/g, "'")) && degreeLevel(said) === level;
+    if (!level) return false;
+    const plain = said.replace(/[’]/g, "'");
+    if (LEVEL_ONLY.test(plain)) return degreeLevel(plain) === level;
+    /*
+     * Or the level with its degrees named after it: "Master's Degree (MS/MA)",
+     * "Doctorate (PhD)". Only where what is named is this level too — an
+     * M.S. is not "Master's Degree (MBA)".
+     */
+    const aside = /^(.*?)\s*\(([^()]+)\)$/.exec(plain);
+    return Boolean(aside) && LEVEL_ONLY.test(aside[1]) && degreeLevel(aside[1]) === level && degreeLevel(aside[2]) === level;
   }
   if (key === 'graduation_month' || key === 'education_start_month') {
     const month = monthOf(value);
@@ -4716,6 +4725,8 @@ function answerChoiceButtons(fields, overwrite, already) {
     const labelOf = toggles ? (el) => clean(el.getAttribute('aria-label') || el.textContent) : ariaOptionWords;
     const wanted =
       options.find((el) => sameOption(labelOf(el), value)) ??
+      // The same answer spelled the options' way, as a radio's is.
+      options.find((el) => sameAnswerSpelledOtherwise(key, labelOf(el), value)) ??
       // And a yes/no pair against a phrase, on the same terms as a radio's.
       yesNoOption(key, value, options.map((el) => ({ label: labelOf(el), el })), description)?.el;
     if (!wanted) {
@@ -5225,6 +5236,14 @@ function answerRadioGroups(fields, overwrite) {
       radios.find(
         (radio) => sameOption(optionLabelFor(radio), value) || sameOption(radio.value, value),
       ) ??
+      /*
+       * The same answer spelled the options' way, as a `<select>` takes it —
+       * see `sameAnswerSpelledOtherwise`. Only after no option said it
+       * exactly. Quora's Ashby form asks the degree as radios, "Associate
+       * Degree", "Bachelor's Degree", "Master's Degree", "Phd", "Other", and
+       * "Bachelor of Science" was reported as having no matching option.
+       */
+      radios.find((radio) => sameAnswerSpelledOtherwise(key, optionLabelFor(radio), value)) ??
       // And, failing that, a yes/no pair against a phrase. See `yesNoOption`.
       yesNoOption(
         key,

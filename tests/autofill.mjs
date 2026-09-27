@@ -5807,7 +5807,125 @@ const RESET_ON_FILE = `<!doctype html><html><head><meta charset="utf-8"><title>A
   document.getElementById('rr').addEventListener('change', () => setTimeout(() => document.getElementById('f').reset(), 300));
 </script></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE };
+/*
+ * Ashby's search-and-pick box, as its fixtures draw it: an
+ * `ashby-application-form-input-autocomplete` combobox whose list opens on a
+ * press, filters on what is typed — a search only answers once something is,
+ * and a moment late — and whose pick is what the box then says. Let go of
+ * without a pick, the box goes back to the last one. `onPick` hears each pick.
+ */
+const ASHBY_AUTOCOMPLETE = `<script>
+  window.__autocomplete = (input, choices, { search = false, onPick = () => {} } = {}) => {
+    const own = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+    let picked = '';
+    let list = null;
+    let timer = null;
+    const close = () => {
+      list?.remove();
+      list = null;
+      input.setAttribute('aria-expanded', 'false');
+      input.removeAttribute('aria-controls');
+    };
+    const draw = () => {
+      close();
+      const typed = own.get.call(input).toLowerCase();
+      if (search && !typed) return;
+      list = document.createElement('div');
+      list.setAttribute('role', 'listbox');
+      list.id = 'list-' + Math.random().toString(36).slice(2);
+      for (const choice of choices.filter((c) => c.toLowerCase().includes(typed))) {
+        const option = document.createElement('div');
+        option.setAttribute('role', 'option');
+        option.textContent = choice;
+        option.addEventListener('mousedown', (e) => e.preventDefault());
+        option.addEventListener('click', () => {
+          picked = choice;
+          own.set.call(input, choice);
+          close();
+          onPick(choice);
+        });
+        list.append(option);
+      }
+      input.parentElement.append(list);
+      input.setAttribute('aria-expanded', 'true');
+      input.setAttribute('aria-controls', list.id);
+    };
+    const later = () => { clearTimeout(timer); timer = setTimeout(draw, search ? 150 : 0); };
+    input.addEventListener('mousedown', later);
+    input.addEventListener('input', later);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+    input.addEventListener('blur', () => { clearTimeout(timer); close(); own.set.call(input, picked); });
+    input.__reset = (v = '') => { picked = v; own.set.call(input, v); close(); };
+    input.__picked = () => picked;
+  };
+</script>`;
+
+/*
+ * Quora's Ashby form asks the degree as radios — the markup below is the live
+ * page's — with "Associate Degree", "Bachelor's Degree", "Master's Degree",
+ * "Phd" and "Other", and a profile's "Bachelor of Science" was reported as
+ * having no matching option. `?shape=` draws the same question as a
+ * `<select>`, as an ARIA radiogroup and as Ashby's search-and-pick box, and
+ * `?options=` gives it other options, as a JSON list.
+ */
+const ASHBY_DEGREE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Quora</title></head><body>
+<div id="form-root" class="ashby-application-form-container"></div>
+${ASHBY_AUTOCOMPLETE}
+<template id="radios"><div data-field-path="2ea59dee-9288-462d-8d23-14d1ec333b73" data-field-entry-id="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73"><fieldset class="_container_1258i_28 _fieldEntry_1e3gg_28 ashby-application-form-input-radio-group"><label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title" for="2ea59dee-9288-462d-8d23-14d1ec333b73">Degree</label><div class="_description_1e3gg_48 ashby-application-form-question-description"><p><em><strong>For most recent or in progress degree.</strong></em></p></div><div class="_option_1258i_34 false ashby-application-form-input-radio-group-option"><span class="_container_132c8_28" data-disabled="false"><span class="_circle_132c8_77"></span><input type="radio" id="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73-labeled-radio-0" name="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73" class="ashby-application-form-input-radio-group-option-radio"></span><label for="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73-labeled-radio-0" class="_label_1258i_42  ashby-application-form-input-radio-group-option-label">Associate Degree</label></div><div class="_option_1258i_34 false ashby-application-form-input-radio-group-option"><span class="_container_132c8_28" data-disabled="false"><span class="_circle_132c8_77"></span><input type="radio" id="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73-labeled-radio-1" name="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73" class="ashby-application-form-input-radio-group-option-radio"></span><label for="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73-labeled-radio-1" class="_label_1258i_42  ashby-application-form-input-radio-group-option-label">Bachelor's Degree</label></div><div class="_option_1258i_34 false ashby-application-form-input-radio-group-option"><span class="_container_132c8_28" data-disabled="false"><span class="_circle_132c8_77"></span><input type="radio" id="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73-labeled-radio-2" name="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73" class="ashby-application-form-input-radio-group-option-radio"></span><label for="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73-labeled-radio-2" class="_label_1258i_42  ashby-application-form-input-radio-group-option-label">Master's Degree</label></div><div class="_option_1258i_34 false ashby-application-form-input-radio-group-option"><span class="_container_132c8_28" data-disabled="false"><span class="_circle_132c8_77"></span><input type="radio" id="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73-labeled-radio-3" name="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73" class="ashby-application-form-input-radio-group-option-radio"></span><label for="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73-labeled-radio-3" class="_label_1258i_42  ashby-application-form-input-radio-group-option-label">Phd</label></div><div class="_option_1258i_34 false ashby-application-form-input-radio-group-option"><span class="_container_132c8_28" data-disabled="false"><span class="_circle_132c8_77"></span><input type="radio" id="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73-labeled-radio-4" name="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73" class="ashby-application-form-input-radio-group-option-radio"></span><label for="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73-labeled-radio-4" class="_label_1258i_42  ashby-application-form-input-radio-group-option-label">Other</label></div></fieldset></div></template>
+<script>
+  const query = new URLSearchParams(location.search);
+  const shape = query.get('shape') || 'radios';
+  const root = document.getElementById('form-root');
+  const options = query.has('options') ? JSON.parse(query.get('options')) : null;
+  if (shape === 'radios') {
+    root.append(document.getElementById('radios').content.cloneNode(true));
+    if (options) {
+      const rows = [...root.querySelectorAll('.ashby-application-form-input-radio-group-option')];
+      rows.slice(1).forEach((row) => row.remove());
+      options.forEach((label, i) => {
+        const row = i === 0 ? rows[0] : rows[0].cloneNode(true);
+        const radio = row.querySelector('input');
+        radio.id = radio.name + '-labeled-radio-' + i;
+        row.querySelector('label').htmlFor = radio.id;
+        row.querySelector('label').textContent = label;
+        if (i) root.querySelector('fieldset').append(row);
+      });
+    }
+  } else {
+    const labels = options ?? ['Associate Degree', "Bachelor's Degree", "Master's Degree", 'Phd', 'Other'];
+    if (shape === 'select') {
+      root.innerHTML = '<label for="deg">Degree</label><select id="deg"><option value="">Select...</option>' + labels.map((l) => '<option></option>').join('') + '</select>';
+      labels.forEach((l, i) => { root.querySelector('select').options[i + 1].textContent = l; });
+    } else if (shape === 'aria') {
+      root.innerHTML = '<p id="deg-q">Degree</p><div role="radiogroup" aria-labelledby="deg-q"></div>';
+      for (const l of labels) {
+        const radio = document.createElement('div');
+        radio.setAttribute('role', 'radio');
+        radio.setAttribute('aria-checked', 'false');
+        radio.tabIndex = 0;
+        radio.textContent = l;
+        radio.addEventListener('click', () => {
+          for (const other of root.querySelectorAll('[role=radio]')) other.setAttribute('aria-checked', String(other === radio));
+        });
+        root.querySelector('[role=radiogroup]').append(radio);
+      }
+    } else {
+      root.innerHTML = '<div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry"><label class="ashby-application-form-question-title" for="deg">Degree</label><div class="_inputContainer_d7ago_28"><input class="_input_d7ago_28 ashby-application-form-input-autocomplete" placeholder="Start typing..." aria-autocomplete="list" aria-expanded="false" aria-haspopup="listbox" role="combobox" value=""></div></div>';
+      window.__autocomplete(root.querySelector('input'), labels);
+    }
+  }
+  window.__chosen = () => {
+    const radio = root.querySelector('input[type=radio]:checked');
+    if (radio) return root.querySelector('label[for="' + CSS.escape(radio.id) + '"]').textContent;
+    const select = root.querySelector('select');
+    if (select) return select.value ? select.selectedOptions[0].textContent : null;
+    const aria = root.querySelector('[role=radio][aria-checked=true]');
+    if (aria) return aria.textContent;
+    return root.querySelector('input[role=combobox]')?.value || null;
+  };
+</script></body></html>`;
+
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE };
 
 const PROFILE = {
   first_name: 'Morgan',
@@ -7261,6 +7379,71 @@ async function main() {
     );
     check('but never a different specific degree', degrees.notArts === '', `"${degrees.notArts}"`);
     check('and an MBA is left for the person rather than guessed a master’s', degrees.notMba === '', `"${degrees.notMba}"`);
+
+    /*
+     * The same levels asked as radios, which is how Quora's Ashby form asks:
+     * "Bachelor of Science" was reported as having no matching option. And
+     * as a `<select>`, an ARIA radiogroup and Ashby's search-and-pick box,
+     * with the same options, so the four shapes cannot drift apart.
+     */
+    const degreeAt = async (degree, { shape = 'radios', options } = {}) => {
+      const query = new URLSearchParams({ shape, ...(options ? { options: JSON.stringify(options) } : {}) });
+      await page.goto(`${base}/ashby-degree?${query}`, { waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b, degree }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { full_name: 'Morgan Testwell', degree };
+        const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 800 });
+        await new Promise((r) => setTimeout(r, 100));
+        return { chosen: window.__chosen(), filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, degree });
+    };
+    const SPELLED = {
+      'Bachelor of Science': "Bachelor's Degree", 'B.S.': "Bachelor's Degree", 'BS in Computer Science': "Bachelor's Degree", BSc: "Bachelor's Degree",
+      'Bachelor of Arts': "Bachelor's Degree", 'B.Eng': "Bachelor's Degree", 'M.S.': "Master's Degree", 'Master of Science': "Master's Degree",
+      MEng: "Master's Degree", PhD: 'Phd', 'Ph.D.': 'Phd', 'Associate of Arts': 'Associate Degree',
+    };
+    const onAshbyRadios = {};
+    for (const degree of Object.keys(SPELLED)) onAshbyRadios[degree] = (await degreeAt(degree)).chosen;
+    const shapes = {};
+    for (const shape of ['select', 'aria', 'combobox']) {
+      shapes[shape] = {
+        bs: await degreeAt('Bachelor of Science', { shape }),
+        ms: await degreeAt('M.S.', { shape }),
+        phd: await degreeAt('Ph.D.', { shape }),
+        mba: await degreeAt('Master of Business Administration', { shape }),
+      };
+    }
+    const exactFirst = await degreeAt('Bachelor of Science', { options: ["Bachelor's Degree", 'Bachelor of Science', 'Other'] });
+    const exactFirstListed = await degreeAt('Bachelor of Science', { shape: 'combobox', options: ["Bachelor's Degree", 'Bachelor of Science', 'Other'] });
+    const noMastersOption = await degreeAt('Master of Science', { options: ['Associate Degree', "Bachelor's Degree", 'Other'] });
+    const namedAfter = await degreeAt('M.S.', { options: ["Bachelor's Degree (BA/BS)", "Master's Degree (MBA)", "Master's Degree (MS/MA)", 'Other'] });
+    const onlyMba = await degreeAt('Master of Science', { shape: 'select', options: ["Bachelor's Degree (BA/BS)", "Master's Degree (MBA)", 'Other'] });
+    group("A degree against a list of levels, on Quora's Ashby form and in every shape");
+    check(
+      'Ashby\'s Degree radios take the level of every spelling of a degree',
+      Object.entries(SPELLED).every(([degree, level]) => onAshbyRadios[degree] === level),
+      JSON.stringify(onAshbyRadios),
+    );
+    check(
+      'and so do a select, an ARIA radiogroup and a search-and-pick box, each reported filled',
+      Object.values(shapes).every((s) => s.bs.chosen === "Bachelor's Degree" && s.ms.chosen === "Master's Degree" && s.phd.chosen === 'Phd' && s.bs.filled.includes('degree')),
+      JSON.stringify(shapes),
+    );
+    check(
+      'an MBA is never a master\'s, "Other" is never taken for a known level, and a master\'s is never a bachelor\'s',
+      Object.values(shapes).every((s) => s.mba.chosen === null) && noMastersOption.chosen === null && noMastersOption.skipped.includes('degree: no matching option'),
+      JSON.stringify({ mba: Object.fromEntries(Object.entries(shapes).map(([k, s]) => [k, s.mba])), noMastersOption }),
+    );
+    check(
+      'the option that says the degree itself wins over its level',
+      exactFirst.chosen === 'Bachelor of Science' && exactFirstListed.chosen === 'Bachelor of Science',
+      JSON.stringify({ exactFirst, exactFirstListed }),
+    );
+    check(
+      'a level with its degrees named after it is taken only when they are the same level',
+      namedAfter.chosen === "Master's Degree (MS/MA)" && onlyMba.chosen === null,
+      JSON.stringify({ namedAfter, onlyMba }),
+    );
 
     /*
      * A GPA dropdown lists bands — "3.50 - 3.74", "3.75 - 4.00" — or
