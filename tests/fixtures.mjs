@@ -2210,13 +2210,19 @@ export function serveSlowProxy(target, { slowRoute = /analyze/, ms = 4000, skip 
         // Nothing to answer if the client has already gone; writing to a
         // closed socket throws and would be reported as a 502 the browser is
         // not there to read.
+        /*
+         * The body before the head. Reading it after `writeHead` meant an
+         * upstream that failed mid-body landed in the catch below with the
+         * head already sent, and its `writeHead(502)` threw
+         * ERR_HTTP_HEADERS_SENT out of the suite.
+         */
+        const body = Buffer.from(await upstream.arrayBuffer());
         if (res.writableEnded || res.destroyed) return;
         answered = true;
         res.writeHead(upstream.status, {
           'content-type': upstream.headers.get('content-type') ?? 'application/json',
           'access-control-allow-origin': '*',
         });
-        const body = Buffer.from(await upstream.arrayBuffer());
         if (slowRoute.test(req.url) && /json/.test(upstream.headers.get('content-type') ?? '')) {
           try {
             lastReply = JSON.parse(body.toString());
@@ -2229,6 +2235,8 @@ export function serveSlowProxy(target, { slowRoute = /analyze/, ms = 4000, skip 
       forward().catch((err) => {
         if (res.writableEnded || res.destroyed) return;
         answered = true;
+        // Too late for a status line: all that is left is to hang up.
+        if (res.headersSent) return void res.destroy();
         res.writeHead(502);
         res.end(String(err));
       });
