@@ -668,7 +668,11 @@
     const { frames } = await send('fillFrames', { fields: data.fields, history, education }).catch(() => ({ frames: [] }));
     return {
       filled: [...here.filled, ...frames.flatMap((f) => f.filled ?? [])],
-      skipped: [...here.skipped, ...frames.flatMap((f) => f.skipped ?? [])],
+      // A frame's marks carry the frame, as a question's do. See `inFrameId`.
+      skipped: [
+        ...here.skipped,
+        ...frames.flatMap((f) => (f.skipped ?? []).map((s) => (s.fieldId ? { ...s, fieldId: inFrameId(f.frameId, s.fieldId) } : s))),
+      ],
     };
   }
 
@@ -688,7 +692,7 @@
    * the behaviour this had before the bank existed.
    */
   async function fillThisDocument(fields, history = [], education = []) {
-    const { fillForm, fillComboboxes, fillEducation, choiceQuestions, typedQuestions, answerWidgetsFromMemory } =
+    const { fillForm, fillComboboxes, fillEducation, choiceQuestions, typedQuestions, answerWidgetsFromMemory, watchForEmptied, pointAtLeft } =
       await imports.autofill();
     const company = companyHere();
     // And the short boxes typed into last time. See `typedQuestions`.
@@ -706,7 +710,19 @@
     // `fillEducation`: a resume with one gets only its dates, in the first block.
     const schooled = await fillEducation(education, fields, report);
     // Last, the react-selects answered on the last form. See `answerWidgetsFromMemory`.
-    return answerWidgetsFromMemory(remembered, schooled);
+    const done = await answerWidgetsFromMemory(remembered, schooled);
+    /*
+     * And kept, on a page that empties it afterwards: Ashby's "Autofill from
+     * resume" mounts its form again from the resume's parse, with nothing
+     * but the name and the email in it. See `watchForEmptied`. Said on the
+     * card, which is in the top frame.
+     */
+    watchForEmptied((names) => {
+      if (window.top === window) cardHandle?.refilled(names);
+      else send('refilledInFrame', { names }).catch(() => undefined);
+    });
+    // Each row left for the person marked, so the card can take them to it. See `pointAtLeft`.
+    return pointAtLeft(done);
   }
 
   /**
@@ -1063,7 +1079,7 @@
       }
 
       case 'attachmentFiles': {
-        const got = await send('attachments', { application: payload.application ?? null });
+        const got = await send('attachments', { application: payload.application ?? null, claim: Boolean(payload.claim) });
         return {
           files: got?.files ?? [],
           missing: (got?.missing ?? []).map((m) => ({ name: m.name, why: m.why })),
@@ -1102,7 +1118,8 @@
         return send('fresh', { spec: payload.spec });
 
       case 'attachFiles': {
-        const got = await send('attachments', { application: payload.application ?? null });
+        // Pressed, so this application takes the plain names in the folder.
+        const got = await send('attachments', { application: payload.application ?? null, claim: true });
         const files = got?.files ?? [];
         /*
          * The ones the store listed and could not hand over. They are not
@@ -1164,6 +1181,17 @@
         }
         const { insertAnswer } = await imports.autofill();
         return insertAnswer(payload.fieldId, payload.text, payload.question);
+      }
+
+      /*
+       * A field the Autofill note names, pressed there: brought into view and
+       * given the caret, in whichever document it is in.
+       */
+      case 'showLeft': {
+        const inFrame = IN_FRAME_ID.exec(payload.fieldId ?? '');
+        if (inFrame) return send('showInFrame', { frameId: Number(inFrame[1]), fieldId: inFrame[2] });
+        const { showField } = await imports.autofill();
+        return showField(payload.fieldId);
       }
 
       /*
@@ -1375,6 +1403,18 @@
       /** Send the user to ResumeM-M, when that is what the card is offering. */
       case 'openTab':
         return send('openTab', { url: payload.url });
+
+      /*
+       * The editor beside the page. Sent straight away, with nothing awaited
+       * first: the side panel only opens in answer to the click, and the
+       * click is only still an answer while this message is.
+       */
+      case 'openPanel':
+        return send('openPanel', {});
+
+      /** Which resume the card is working with, for the side panel to show. */
+      case 'panelTarget':
+        return send('panelTarget', payload);
 
       // Turning ResumeM-M's own AI switch on, from the chip that reports it
       // being off. The switch that needs flipping should be under the hand
@@ -2753,11 +2793,19 @@
          * down, so without it the page is analysed as the empty shell it looks
          * like from outside.
          */
+        /*
+         * A form, or a posting. An embed is often the whole posting — its
+         * heading and its JobPosting data — around a form that is not there
+         * yet, or not any more: Qumulo's Ashby embed after the application
+         * went in says "Thank you" where the form was, and the card, reading
+         * only the shell, called the job "This posting" at "Job openings".
+         * `decisiveSignal` is the strict test: declared, or titled as a role.
+         */
         case 'jh-frame-html':
           answer(
             Promise.all([imports.autofill(), imports.trail()]).then(
               ([{ looksLikeApplicationForm }, { trimForStorage, pageHtml }]) =>
-                looksLikeApplicationForm()
+                looksLikeApplicationForm() || decisiveSignal()
                   ? {
                       url: location.href,
                       title: document.title,
@@ -2776,6 +2824,10 @@
                 insertAnswer(message.payload?.fieldId, message.payload?.text, message.payload?.question),
               ),
           );
+          return true;
+
+        case 'jh-frame-show':
+          answer(imports.autofill().then(({ showField }) => showField(message.payload?.fieldId)));
           return true;
 
         default:
@@ -2836,6 +2888,12 @@
      */
     if (message?.type === 'jh-frame-dropped') {
       cardHandle?.dropped(message.payload?.report);
+      sendResponse({ ok: true });
+      return false;
+    }
+    // And what a frame's page emptied after Autofill, and was filled in again. See `watchForEmptied`.
+    if (message?.type === 'jh-frame-refilled') {
+      cardHandle?.refilled(message.payload?.names ?? []);
       sendResponse({ ok: true });
       return false;
     }

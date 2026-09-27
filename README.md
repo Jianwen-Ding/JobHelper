@@ -55,6 +55,13 @@ machine.
    application later".
 9. **Fills the form.** Autofill from your stored profile, and saved answers
    offered on questions it recognises.
+10. **Edits beside the page.** "Open beside" on the card (or "Edit resume
+    beside this page" in the toolbar popup) opens the real ResumeM-M editor
+    in Chrome's side panel, on the copy made for this posting — or, before
+    that exists, the resume it starts from, said as such. It follows the tab
+    you are on, waits for an edit to save before it moves, says so when
+    ResumeM-M is not running or has a different save open, and folds away to
+    a slim bar that keeps your place.
 
 ---
 
@@ -116,7 +123,9 @@ the label somewhere different. It:
 
 - **never overwrites** anything already typed,
 - **never guesses on a dropdown** — an option has to plainly match,
-- **reports what it skipped**, so "done" is distinguishable from "done wrong".
+- **reports what it skipped**, so "done" is distinguishable from "done wrong" —
+  each field it left for you named on the card, with why where it knows, and
+  a click away. Names only: never what you have saved for it.
 
 Long-form questions are *offered*, not injected: a matching saved answer appears
 as a placeholder and is inserted when you focus the box, because an essay answer

@@ -15,6 +15,7 @@
     "test:carrying": "node tests/carrying.mjs",
     "test:autofill": "node tests/autofill.mjs",
     "test:card": "node tests/card.mjs",
+    "test:panel": "node tests/panel.mjs",
     "test:worker": "node tests/worker.mjs",
     "test:csp": "node tests/csp.mjs",
     "test:quiet": "node tests/quiet.mjs",

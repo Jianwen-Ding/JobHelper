@@ -79,6 +79,8 @@ const SUITES = [
   { name: 'adverse', file: 'adverse.mjs', cost: 135 },
   { name: 'nav', file: 'navigation.mjs', cost: 121 },
   { name: 'ats-journey', file: 'ats-journey.mjs', cost: 106 },
+  // Starts a second server of its own, on RMM_OTHER_PORT; see its header.
+  { name: 'panel', file: 'panel.mjs', cost: 100 },
   { name: 'carrying', file: 'carrying.mjs', cost: 84 },
   { name: 'controls', file: 'controls.mjs', cost: 82 },
   { name: 'quiet', file: 'quiet.mjs', cost: 46 },

@@ -2188,6 +2188,265 @@ const GREENHOUSE_MORE_EDUCATION = `<!doctype html><html><head><meta charset="utf
 </script>
 </body></html>`;
 
+/*
+ * Greenhouse's education block as its React form keeps it, and the School
+ * list as the board spells it (task #188). Read off the live boards, nothing
+ * typed and nothing sent (job-boards.greenhouse.io: Twitch, SpaceX, Discord,
+ * Affirm, Robinhood, Stripe's embed):
+ *
+ * - School, Degree and Discipline are react-select comboboxes, `school--0`
+ *   and so on, `aria-labelledby` their label, `aria-controls` naming
+ *   `react-select-school--0-listbox` once open. Nothing is offered until the
+ *   control is pressed; the menu then says "Loading..." while the board's API
+ *   is asked (`/education/schools?page=1`, `/degrees`, `/disciplines`), and
+ *   an option is chosen by a click on it. The school list opens on the first
+ *   hundred of about 2,500 names, alphabetically; what is typed is searched as
+ *   a run of letters anywhere in a name, a hundred to a page.
+ * - The board's names are its own: a campus after a dash ("University of
+ *   Example - Eastfield" is how it writes every such school), "and" written
+ *   out, "St." for Saint. So the resume's name is often not in the list
+ *   letter for letter, and a search for the whole of it finds nothing.
+ * - Degree is ten levels ("Bachelor's Degree"), Discipline about seventy
+ *   subjects ("Computer Science").
+ * - The dates are "Start date month" / "Start date year" and "End date
+ *   month" / "End date year". On today's boards the month is a react-select
+ *   of month names and the year a `type=number` box (`?month-lists`); the MM
+ *   and YYYY text boxes the older boards.greenhouse.io form asked with — two
+ *   and four characters, digits only — are the default here. Every
+ *   boards.greenhouse.io address now redirects to job-boards, so that form
+ *   could not be read live; its boxes are drawn as a React form would draw
+ *   them.
+ *
+ * What makes it React is what makes a fill fail there: each box is
+ * controlled — a value written behind React's back is put back on the next
+ * render, and the whole form renders again on every change — and a select
+ * shows what is in its state, not what was drawn into it. `__form()` is what
+ * the form would send, `__invalid()` what it would refuse, `__rerender()` a
+ * render with nothing changed.
+ */
+const GREENHOUSE_REACT_EDUCATION = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Example Co</title></head><body>
+<div id="root"><form id="application-form" novalidate>
+  <div class="text-input-wrapper"><div class="input-wrapper"><label id="first_name-label" for="first_name" class="label">First Name</label>
+    <input id="first_name" class="input input__single-line" type="text" aria-label="First Name"></div></div>
+  <div class="education--container" id="education"><button class="add-another-button" type="button" id="education-add">Add another</button></div>
+</form></div>
+<script>
+  /*
+   * What React does to a box it controls, and nothing more: it notes each
+   * value written through the box's own setter, and on an input event it
+   * calls onChange only when the box holds something other than what it
+   * noted. After every event, and on every render, the box is given back the
+   * value in state. So a value written behind React's back is undone the
+   * next time anything renders, as it is on the live board.
+   */
+  const PROTO = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+  function track(node) {
+    let noted = PROTO.get.call(node);
+    Object.defineProperty(node, 'value', {
+      configurable: true,
+      get() { return PROTO.get.call(this); },
+      set(v) { noted = String(v); PROTO.set.call(this, v); },
+    });
+    return {
+      changed() { const now = PROTO.get.call(node); if (now === noted) return false; noted = now; return true; },
+      put(v) { if (PROTO.get.call(node) !== v) PROTO.set.call(node, v); noted = v; },
+    };
+  }
+  const query = new URLSearchParams(location.search);
+  const DELAY = Number(query.get('delay') || 450);
+  const components = [];
+  window.__renders = 0;
+  // The whole form rendering again from its state, as a Formik-style form does on every change.
+  const renderAll = () => { window.__renders++; components.forEach((c) => c.render()); };
+  window.__rerender = renderAll;
+
+  /* ---------- react-select, as Greenhouse's AsyncPaginate draws and drives it ---------- */
+  function reactSelect(host, id, label, load, required) {
+    host.insertAdjacentHTML('beforeend',
+      '<div class="select"><div class="select__container"><label id="' + id + '-label" for="' + id + '" class="label select__label">' + label + (required ? '<span aria-hidden="true">*</span>' : '') + '</label>' +
+      '<div class="select-shell"><span id="react-select-' + id + '-live-region" class="a11y"></span><div><div class="select__control"><div class="select__value-container">' +
+      '<div class="select__input-container" data-value=""><input class="select__input" autocapitalize="none" autocomplete="off" autocorrect="off" id="' + id + '" spellcheck="false" tabindex="0" type="text" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="' + id + '-label" aria-required="' + Boolean(required) + '" role="combobox" aria-activedescendant="" value=""></div></div>' +
+      '<div class="select__indicators"><button type="button" class="icon-button icon-button--sm" aria-label="Toggle flyout" tabindex="-1">v</button></div></div></div>' +
+      (required ? '<input required tabindex="-1" aria-hidden="true" class="requiredInput" value="">' : '') + '</div></div></div>');
+    const input = document.getElementById(id);
+    const control = input.closest('.select__control');
+    const shell = control.closest('.select-shell');
+    const tracker = track(input);
+    const s = { value: null, inputValue: '', open: false, focused: false, loading: false, options: [], asked: 0, afterFocus: false, cache: {} };
+    const fetchFor = (term) => {
+      const mine = ++s.asked;
+      if (s.cache[term]) { s.loading = false; s.options = s.cache[term]; return; }
+      s.loading = true;
+      setTimeout(() => {
+        if (mine !== s.asked) return;
+        s.cache[term] = load(term);
+        s.options = s.cache[term];
+        s.loading = false;
+        renderAll();
+      }, DELAY);
+    };
+    const openMenu = () => { s.open = true; fetchFor(s.inputValue); };
+    const choose = (option) => { s.value = option; s.inputValue = ''; s.open = false; s.asked++; s.loading = false; renderAll(); };
+    const c = {
+      id, s, choose,
+      render() {
+        const values = control.querySelector('.select__value-container');
+        let placeholder = values.querySelector('.select__placeholder');
+        let single = values.querySelector('.select__single-value');
+        if (s.value) {
+          placeholder?.remove();
+          if (!single) { single = document.createElement('div'); single.className = 'select__single-value'; values.prepend(single); }
+          if (single.textContent !== s.value.label) single.textContent = s.value.label;
+        } else {
+          single?.remove();
+          if (!placeholder) { placeholder = document.createElement('div'); placeholder.className = 'select__placeholder'; placeholder.id = 'react-select-' + id + '-placeholder'; placeholder.textContent = 'Select...'; values.prepend(placeholder); }
+        }
+        tracker.put(s.inputValue);
+        control.parentElement.parentElement.querySelector('.requiredInput')?.setAttribute('value', s.value ? String(s.value.id) : '');
+        const busy = control.querySelector('.select__loading-indicator');
+        if (s.open && s.loading && !busy) control.querySelector('.select__indicators').insertAdjacentHTML('afterbegin', '<div class="select__loading-indicator" aria-hidden="true">...</div>');
+        if (!(s.open && s.loading)) busy?.remove();
+        input.setAttribute('aria-expanded', String(s.open));
+        let menu = shell.querySelector('.select__menu');
+        if (!s.open) { menu?.remove(); input.removeAttribute('aria-controls'); return; }
+        if (!menu) {
+          menu = document.createElement('div');
+          menu.className = 'select__menu';
+          menu.innerHTML = '<div class="select__menu-list" role="listbox" aria-multiselectable="false" id="react-select-' + id + '-listbox"></div>';
+          menu.addEventListener('mousedown', (e) => e.preventDefault());
+          shell.append(menu);
+        }
+        input.setAttribute('aria-controls', 'react-select-' + id + '-listbox');
+        const list = menu.firstElementChild;
+        const key = s.loading ? 'loading' : s.options.map((o) => o.id).join(',');
+        if (list.dataset.key === key) return;
+        list.dataset.key = key;
+        list.replaceChildren();
+        if (s.loading) { list.innerHTML = '<div class="select__menu-notice select__menu-notice--loading">Loading...</div>'; return; }
+        if (!s.options.length) { list.innerHTML = '<div class="select__menu-notice select__menu-notice--no-options">No options</div>'; return; }
+        s.options.forEach((option, i) => {
+          const o = document.createElement('div');
+          o.className = 'select__option';
+          o.id = 'react-select-' + id + '-option-' + i;
+          o.setAttribute('role', 'option');
+          o.setAttribute('aria-selected', String(s.value?.id === option.id));
+          o.setAttribute('aria-disabled', 'false');
+          o.tabIndex = -1;
+          o.textContent = option.label;
+          // react-select chooses on click; the menu's mousedown only keeps the focus.
+          o.addEventListener('click', () => choose(option));
+          list.append(o);
+        });
+      },
+    };
+    control.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      const onBox = e.target.tagName === 'INPUT';
+      if (!s.focused) { s.afterFocus = true; input.focus(); }
+      else if (!s.open) { openMenu(); renderAll(); }
+      else if (!onBox) { s.open = false; renderAll(); }
+      if (!onBox) e.preventDefault();
+    });
+    input.addEventListener('focus', () => { s.focused = true; if (s.afterFocus) openMenu(); s.afterFocus = false; renderAll(); });
+    input.addEventListener('blur', () => { s.focused = false; s.inputValue = ''; s.open = false; s.asked++; s.loading = false; renderAll(); });
+    input.addEventListener('input', () => {
+      if (tracker.changed()) { s.inputValue = PROTO.get.call(input); s.open = true; fetchFor(s.inputValue); }
+      renderAll();
+    });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Escape') { s.open = false; renderAll(); } });
+    components.push(c);
+    return c;
+  }
+
+  /* ---------- a text box React controls, which takes only what its onChange lets through ---------- */
+  function textBox(host, id, label, { type = 'text', placeholder = '', maxLength = 0, accept = (v) => v }) {
+    host.insertAdjacentHTML('beforeend',
+      '<div class="text-input-wrapper"><div class="input-wrapper"><label id="' + id + '-label" for="' + id + '" class="label">' + label + '</label>' +
+      '<input id="' + id + '" class="input input__single-line" aria-label="' + label + '" type="' + type + '"' + (placeholder ? ' placeholder="' + placeholder + '"' : '') + (maxLength ? ' maxlength="' + maxLength + '"' : '') + '></div></div>');
+    const input = document.getElementById(id);
+    const tracker = track(input);
+    const s = { value: '' };
+    const c = { id, s, render() { tracker.put(s.value); } };
+    input.addEventListener('input', () => {
+      if (tracker.changed()) s.value = accept(PROTO.get.call(input));
+      renderAll();
+    });
+    components.push(c);
+    return c;
+  }
+
+  /* ---------- the board's lists ---------- */
+  const SCHOOLS = [];
+  for (const a of ['Al', 'Ar', 'Bel', 'Bro', 'Car', 'Col', 'Dal', 'Dun']) for (const b of ['bury', 'dale', 'field', 'ford', 'mont', 'ton', 'wick']) for (const k of ['College', 'State University', 'University']) SCHOOLS.push(a + b + ' ' + k);
+  for (const a of ['Fair', 'Glen', 'Har', 'Lake', 'Mar', 'Oak', 'Pine', 'Red', 'Stone', 'West']) for (const b of ['brook', 'haven', 'wood']) for (const k of ['College', 'University']) SCHOOLS.push(a + b + ' ' + k);
+  // The school spelled the board's way, and the ones a loose match would take for it.
+  SCHOOLS.push('Example State Univ.', 'Example State College', 'Example State Technical College', 'Northern Example State University', 'Example University',
+    'University of Example - Eastfield', 'University of Example - Westfield', 'Examplia State University', 'Saint Example College');
+  SCHOOLS.sort((x, y) => x.localeCompare(y));
+  const DEGREES = ["Associate's Degree", "Bachelor's Degree", 'Doctor of Medicine (M.D.)', 'Doctor of Philosophy (Ph.D.)', "Engineer's Degree", 'High School', 'Juris Doctor (J.D.)', 'Master of Business Administration (M.B.A.)', "Master's Degree", 'Other'];
+  const DISCIPLINES = ['Accounting', 'African Studies', 'Agriculture', 'Anthropology', 'Architecture', 'Art', 'Biology', 'Business', 'Business Administration', 'Chemistry', 'Communications & Film', 'Computer Science', 'Economics', 'Education', 'Electronics', 'Engineering', 'English Studies', 'Environmental Studies', 'Finance', 'History', 'Mathematics', 'Mechanical Engineering', 'Philosophy', 'Physics', 'Political Science', 'Psychology', 'Sociology'];
+  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const withIds = (names, base) => names.map((label, i) => ({ id: base + i, label }));
+  const school = withIds(SCHOOLS, 1000);
+  const degree = withIds(DEGREES, 2000);
+  const discipline = withIds(DISCIPLINES, 3000);
+  const month = withIds(MONTHS, 1);
+  // The board's search: the first page of a hundred, of every name holding what is typed.
+  const search = (all) => (term) => all.filter((o) => o.label.toLowerCase().includes(term.trim().toLowerCase())).slice(0, 100);
+
+  /* ---------- the Education section ---------- */
+  const blocks = [];
+  const monthLists = query.has('month-lists');
+  function addBlock() {
+    const n = blocks.length;
+    const form = document.createElement('div');
+    form.className = 'education--form';
+    form.innerHTML = '<hr><div class="education--header"><p class="body body--medium">Education</p></div>';
+    document.getElementById('education-add').before(form);
+    const b = {
+      school: reactSelect(form, 'school--' + n, 'School', search(school), true),
+      degree: reactSelect(form, 'degree--' + n, 'Degree', search(degree), false),
+      discipline: reactSelect(form, 'discipline--' + n, 'Discipline', search(discipline), false),
+    };
+    for (const end of ['start', 'end']) {
+      const dates = document.createElement('div');
+      dates.className = 'education--date-container';
+      form.append(dates);
+      const words = end === 'start' ? 'Start date' : 'End date';
+      b[end + 'Month'] = monthLists
+        ? reactSelect(dates, end + '-month--' + n, words + ' month', search(month), false)
+        : textBox(dates, end + '-month--' + n, words + ' month', { placeholder: 'MM', maxLength: 2, accept: (v) => v.replace(/[^0-9]/g, '').slice(0, 2) });
+      b[end + 'Year'] = monthLists
+        ? textBox(dates, end + '-year--' + n, words + ' year', { type: 'number' })
+        : textBox(dates, end + '-year--' + n, words + ' year', { placeholder: 'YYYY', maxLength: 4, accept: (v) => v.replace(/[^0-9]/g, '').slice(0, 4) });
+    }
+    blocks.push(b);
+    renderAll();
+    return b;
+  }
+  window.__pressed = 0;
+  document.getElementById('education-add').addEventListener('click', () => { window.__pressed++; setTimeout(addBlock, 120); });
+  addBlock();
+
+  /* ---------- what the form would send, and whether it would let it go ---------- */
+  const said = (c) => (c.s.value && typeof c.s.value === 'object' ? c.s.value.label : c.s.value || '');
+  window.__form = () => blocks.map((b) => Object.fromEntries(Object.entries(b).map(([k, c]) => [k, said(c)])));
+  window.__invalid = () => blocks.flatMap((b, i) => {
+    const bad = [];
+    if (!b.school.s.value) bad.push('school--' + i);
+    for (const k of ['startMonth', 'endMonth']) {
+      const v = said(b[k]);
+      if (v && !monthLists && !/^(0[1-9]|1[0-2])$/.test(v)) bad.push(k + '--' + i);
+    }
+    for (const k of ['startYear', 'endYear']) {
+      const v = said(b[k]);
+      if (v && !/^[0-9]{4}$/.test(v)) bad.push(k + '--' + i);
+    }
+    return bad;
+  });
+</script>
+</body></html>`;
+
 const WORKDAY_MY_INFO = `<!doctype html><html><head><meta charset="utf-8"><title>My Information</title></head><body>
 <div data-automation-id="applyFlowMyInfoPage">
 <div data-automation-id="formField-country"><label for="country--country">Country<abbr>*</abbr></label>
@@ -3779,6 +4038,494 @@ const PAGE_COMBOBOX_UNROLED_LIST = `<!doctype html><html><head><meta charset="ut
 </body></html>`;
 
 /*
+ * Dropdowns whose options are highlighted — marked `aria-selected`, as ARIA
+ * 1.2's combobox, Downshift and MUI's Autocomplete mark the option under the
+ * pointer — as the pointer goes down on them or over them, and chosen only on
+ * Enter: a School button and a Country box, each list drawn at the foot of the
+ * body on a press and named in `aria-controls`. And a Degree button that
+ * shows nothing of its own, whose choice is drawn beside it and marked chosen
+ * in its list, which stays mounted and hidden once shut.
+ */
+const PAGE_HIGHLIGHT_ONLY = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="hl-school-l">School</label>
+    <button type="button" id="hl-school" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="hl-school-l">Select One</button></div>
+  <div class="q"><label id="hl-country-l" for="hl-country">Country</label>
+    <div class="ac"><input id="hl-country" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="hl-country-l" autocomplete="off"></div></div>
+  <div class="q"><label id="hl-degree-l">Degree</label>
+    <span id="hl-degree-v"></span><button type="button" id="hl-degree" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="hl-degree-l" aria-controls="hl-degree-list" class="chevron"></button>
+    <ul id="hl-degree-list" role="listbox" style="display:none"><li role="option" aria-selected="false">Bachelor of Science</li><li role="option" aria-selected="false">Master of Science</li></ul></div>
+</form>
+<script>
+  window.log = [];
+  // Options are highlighted (aria-selected) as the pointer goes down on them or over them; only Enter commits.
+  function widget(el, box, options, commit) {
+    let list = null;
+    const shut = () => { list?.remove(); list = null; el.setAttribute('aria-expanded', 'false'); el.removeAttribute('aria-activedescendant'); };
+    const open = () => {
+      if (list) return;
+      list = document.createElement('ul');
+      list.id = el.id + '-list'; list.setAttribute('role', 'listbox');
+      options.forEach((text, i) => {
+        const o = document.createElement('li');
+        o.setAttribute('role', 'option'); o.id = el.id + '-o' + i; o.textContent = text; o.setAttribute('aria-selected', 'false');
+        const hl = () => { for (const x of list.children) x.setAttribute('aria-selected', String(x === o)); el.setAttribute('aria-activedescendant', o.id); window.log.push('highlight ' + text); };
+        o.addEventListener('pointerdown', hl); o.addEventListener('mouseover', hl);
+        o.addEventListener('mousedown', (e) => e.preventDefault());
+        list.append(o);
+      });
+      document.body.append(list);
+      el.setAttribute('aria-controls', list.id); el.setAttribute('aria-expanded', 'true');
+    };
+    el.addEventListener(box ? 'mousedown' : 'click', () => (list && !box ? shut() : open()));
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') shut();
+      if (e.key === 'Enter' && list) {
+        const o = list.querySelector('[aria-selected="true"]');
+        if (o) { commit(o.textContent); window.log.push('commit ' + o.textContent); }
+        shut();
+      }
+    });
+  }
+  const school = document.getElementById('hl-school');
+  widget(school, false, ['Boston University', 'Northeastern University'], (t) => { school.textContent = t; });
+  const country = document.getElementById('hl-country');
+  widget(country, true, ['Canada', 'United States'], (t) => { country.value = t; });
+  // An icon-only Degree whose choice is drawn beside it, and marked in its list, which stays mounted and hidden.
+  const degree = document.getElementById('hl-degree'), dlist = document.getElementById('hl-degree-list');
+  const dshow = (open) => { dlist.style.display = open ? '' : 'none'; degree.setAttribute('aria-expanded', String(open)); };
+  degree.addEventListener('click', () => dshow(dlist.style.display === 'none'));
+  degree.addEventListener('keydown', (e) => { if (e.key === 'Escape') dshow(false); });
+  for (const o of dlist.children) o.addEventListener('click', () => {
+    for (const x of dlist.children) x.setAttribute('aria-selected', String(x === o));
+    document.getElementById('hl-degree-v').textContent = o.textContent; window.log.push('commit ' + o.textContent); dshow(false);
+  });
+  window.state = () => ({ degree: document.getElementById('hl-degree-v').textContent, school: school.textContent, country: country.value, open: [...document.querySelectorAll('[role=listbox]')].filter((l) => l.getClientRects().length).length });
+</script>
+</body></html>`;
+
+/*
+ * Dropdowns already showing the profile's answer before the fill: a Country
+ * box holding "United States"; a School and a Degree drawing theirs beside an
+ * empty search box, the School with the hidden input it submits holding its
+ * value; and a Discipline box holding "Computer Science" whose list stays
+ * open after a choice, as MUI's `disableCloseOnSelect` leaves it. Each list,
+ * drawn on a press, marks the option held, and choosing it again changes
+ * nothing that can be seen. Every commit and keystroke is written down.
+ */
+const PAGE_ALREADY_ANSWERED = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="a-country-l">Country</label>
+    <div class="ac-control"><input id="a-country" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="a-country-l" autocomplete="off" value="United States"></div></div>
+  <div class="q"><label id="a-school-l">School</label>
+    <div class="pick"><div class="picker-control"><span class="shown">Northeastern University</span>
+      <input id="a-school" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="a-school-l" autocomplete="off"></div>
+      <input type="hidden" name="school" id="a-school-h" value="neu"></div></div>
+  <div class="q"><label id="a-degree-l">Degree</label>
+    <div class="pick"><div class="picker-control"><span class="shown">Bachelor of Science</span>
+      <input id="a-degree" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="a-degree-l" autocomplete="off"></div></div></div>
+  <div class="q"><label id="a-major-l">Discipline</label>
+    <div class="ac-control"><input id="a-major" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="a-major-l" autocomplete="off" value="Computer Science"></div></div>
+</form>
+<script>
+  window.log = [];
+  // keepOpen: the list stays open after a choice (MUI's disableCloseOnSelect). Current value's option is aria-selected.
+  function widget(id, options, { current, commit, keepOpen = false }) {
+    const box = document.getElementById(id);
+    let list = null;
+    const shut = () => { list?.remove(); list = null; box.setAttribute('aria-expanded', 'false'); };
+    const draw = () => {
+      list.replaceChildren();
+      for (const text of options) {
+        const o = document.createElement('li');
+        o.setAttribute('role', 'option'); o.textContent = text; o.setAttribute('aria-selected', String(text === current()));
+        o.addEventListener('mousedown', (e) => e.preventDefault());
+        o.addEventListener('click', () => { commit(text); window.log.push(id + ' commit ' + text); if (keepOpen) draw(); else shut(); });
+        list.append(o);
+      }
+    };
+    const open = () => {
+      if (list) return;
+      list = document.createElement('ul'); list.id = id + '-list'; list.setAttribute('role', 'listbox');
+      draw(); document.body.append(list);
+      box.setAttribute('aria-controls', list.id); box.setAttribute('aria-expanded', 'true');
+    };
+    box.addEventListener('mousedown', open);
+    box.addEventListener('input', () => { window.log.push(id + ' typed ' + box.value); open(); });
+    box.addEventListener('keydown', (e) => { if (e.key === 'Escape') shut(); });
+    box.addEventListener('blur', shut);
+  }
+  const $ = (id) => document.getElementById(id);
+  let country = 'United States', school = 'Northeastern University', degree = 'Bachelor of Science', major = 'Computer Science';
+  widget('a-country', ['Canada', 'United States'], { current: () => country, commit: (t) => { country = t; $('a-country').value = t; } });
+  widget('a-school', ['Boston University', 'Northeastern University'], { current: () => school, commit: (t) => { school = t; $('a-school').parentElement.querySelector('.shown').textContent = t; $('a-school-h').value = t === 'Northeastern University' ? 'neu' : 'bu'; } });
+  widget('a-degree', ['Bachelor of Science', 'Master of Science'], { current: () => degree, commit: (t) => { degree = t; $('a-degree').parentElement.querySelector('.shown').textContent = t; } });
+  widget('a-major', ['Computer Science', 'Mathematics'], { current: () => major, commit: (t) => { major = t; $('a-major').value = t; }, keepOpen: true });
+  window.state = () => ({ country: $('a-country').value, school: [$('a-school').parentElement.querySelector('.shown').textContent, $('a-school').value, $('a-school-h').value], degree: [$('a-degree').parentElement.querySelector('.shown').textContent, $('a-degree').value], major: $('a-major').value, open: document.querySelectorAll('[role=listbox]').length });
+</script>
+</body></html>`;
+
+/*
+ * And two that look answered and are not: a City box holding "Boston" as
+ * typed, with the hidden input only a choice fills still empty; and a
+ * sponsorship question drawing "None selected" beside its search box, which
+ * holds the letters of "No" and not the word.
+ */
+const PAGE_ANSWERED_LOOKALIKES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="g-city-l">City</label>
+    <div class="pick"><div class="picker-control"><input id="g-city" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="g-city-l" autocomplete="off" value="Boston"></div>
+      <input type="hidden" name="city" id="g-city-h" value=""></div></div>
+  <div class="q"><label id="g-spon-l">Will you now or in the future require visa sponsorship?</label>
+    <div class="pick"><div class="picker-control"><span class="shown">None selected</span>
+      <input id="g-spon" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="g-spon-l" autocomplete="off"></div>
+    </div></div>
+</form>
+<script>
+  window.log = [];
+  function widget(id, options, commit) {
+    const box = document.getElementById(id);
+    let list = null;
+    const shut = () => { list?.remove(); list = null; box.setAttribute('aria-expanded', 'false'); };
+    const open = () => {
+      if (list) return;
+      list = document.createElement('ul'); list.id = id + '-list'; list.setAttribute('role', 'listbox');
+      for (const text of options) {
+        const o = document.createElement('li'); o.setAttribute('role', 'option'); o.textContent = text;
+        o.addEventListener('mousedown', (e) => e.preventDefault());
+        o.addEventListener('click', () => { commit(text); window.log.push(id + ' commit ' + text); shut(); });
+        list.append(o);
+      }
+      document.body.append(list);
+      box.setAttribute('aria-controls', list.id); box.setAttribute('aria-expanded', 'true');
+    };
+    box.addEventListener('mousedown', open);
+    box.addEventListener('input', open);
+    box.addEventListener('keydown', (e) => { if (e.key === 'Escape') shut(); });
+    box.addEventListener('blur', shut);
+  }
+  const $ = (id) => document.getElementById(id);
+  // Typed into and never chosen: the hidden input is empty until an option is.
+  widget('g-city', ['Boston', 'Cambridge'], (t) => { $('g-city').value = t; $('g-city-h').value = t; });
+  widget('g-spon', ['Yes', 'No'], (t) => { $('g-spon').closest('.pick').querySelector('.shown').textContent = t; });
+  window.state = () => ({ city: [$('g-city').value, $('g-city-h').value], spon: $('g-spon').closest('.pick').querySelector('.shown').textContent, open: document.querySelectorAll('[role=listbox]').length });
+</script>
+</body></html>`;
+
+/*
+ * A sponsorship question drawn as react-select draws one — its menu in its
+ * own container on a press, named nowhere — and an authorization question
+ * after it. The page opens the sponsorship menu whenever the focus moves
+ * anywhere else, and the authorization question ignores every press. With
+ * `?quiet`, no such nudge, and the authorization question draws its own list
+ * at the foot of the body on a press, named nowhere too.
+ */
+const PAGE_FOCUS_OPENS_ANOTHER = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="f-spon-l">Will you now or in the future require visa sponsorship?</label>
+    <div class="select"><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div>
+      <input id="f-spon" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="f-spon-l" autocomplete="off"></div></div>
+      <input type="hidden" name="spon" id="f-spon-h"></div></div>
+  <div class="q"><label id="f-auth-l">Are you legally authorized to work in the United States?</label>
+    <button type="button" id="f-auth" role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="f-auth-l">Select One</button></div>
+</form>
+<script>
+  window.log = [];
+  // The sponsorship question, drawn as react-select draws one: the menu in its container, named nowhere.
+  const input = document.getElementById('f-spon');
+  const holder = input.closest('.select');
+  let menu = null;
+  const shut = () => { menu?.remove(); menu = null; input.setAttribute('aria-expanded', 'false'); };
+  const open = () => {
+    if (menu) return;
+    menu = document.createElement('div'); menu.className = 'select__menu'; menu.setAttribute('role', 'listbox');
+    for (const text of ['Yes', 'No']) {
+      const o = document.createElement('div'); o.setAttribute('role', 'option'); o.textContent = text;
+      o.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        document.getElementById('f-spon-h').value = text;
+        const shown = holder.querySelector('.select__placeholder, .select__single-value');
+        shown.className = 'select__single-value'; shown.textContent = text;
+        window.log.push('sponsorship ' + text);
+        shut();
+      });
+      menu.append(o);
+    }
+    holder.append(menu); input.setAttribute('aria-expanded', 'true');
+  };
+  input.addEventListener('mousedown', open);
+  input.addEventListener('input', open);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Escape') shut(); });
+  input.addEventListener('blur', () => { input.value = ''; shut(); });
+  const auth = document.getElementById('f-auth');
+  if (!location.search.includes('quiet')) {
+    // The page opens the sponsorship menu whenever the focus moves anywhere else, and the authorization question ignores every press.
+    document.addEventListener('focusin', (e) => { if (e.target !== input) open(); });
+  } else {
+    // No nudge, and the authorization question draws its list at the foot of the body on a press, named nowhere.
+    let list = null;
+    const shutAuth = () => { list?.remove(); list = null; auth.setAttribute('aria-expanded', 'false'); };
+    auth.addEventListener('click', () => {
+      if (list) return shutAuth();
+      list = document.createElement('div'); list.setAttribute('role', 'listbox');
+      for (const text of ['Yes', 'No']) {
+        const o = document.createElement('div'); o.setAttribute('role', 'option'); o.textContent = text;
+        o.addEventListener('click', () => { auth.textContent = text; window.log.push('authorization ' + text); shutAuth(); });
+        list.append(o);
+      }
+      document.body.append(list); auth.setAttribute('aria-expanded', 'true');
+    });
+    auth.addEventListener('keydown', (e) => { if (e.key === 'Escape') shutAuth(); });
+  }
+  window.state = () => ({ spon: document.getElementById('f-spon-h').value, sponShown: holder.querySelector('.select__placeholder, .select__single-value').textContent, auth: auth.textContent, open: document.querySelectorAll('[role=listbox]').length });
+</script>
+</body></html>`;
+
+/*
+ * A Country multi-select saying "Select countries" over a `role="listbox"`
+ * of the chips it holds, each an option marked chosen, holding "United
+ * States". Pressing a chip takes it out, and the dropdown itself opens only
+ * on the keyboard. And a School whose list is always open inside it, its
+ * first option highlighted (`aria-selected`) as MUI's `autoHighlight` leaves
+ * it, a click choosing and drawing the choice over the list. With
+ * `?unmarked`, the chips carry no `aria-selected` at all, and the School
+ * says nothing of being expanded.
+ */
+const PAGE_CHOSEN_CHIPS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="c-country-l">Country</label>
+    <div id="c-country" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="c-country-l">
+      <span class="prompt">Select countries</span>
+      <div role="listbox" aria-label="Chosen" aria-multiselectable="true" class="chips">
+        <span role="option" aria-selected="true" class="chip">United States</span>
+      </div>
+    </div></div>
+  <div class="q"><label id="c-school-l">School</label>
+    <div id="c-school" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="true" aria-labelledby="c-school-l">
+      <span class="prompt">Select…</span>
+      <div role="listbox" class="always"><div role="option" aria-selected="true">Boston University</div><div role="option" aria-selected="false">Northeastern University</div></div>
+    </div></div>
+</form>
+<script>
+  window.log = [];
+  if (location.search.includes('unmarked')) {
+    for (const chip of document.querySelectorAll('.chip')) chip.removeAttribute('aria-selected');
+    document.getElementById('c-school').removeAttribute('aria-expanded');
+  }
+  // Pressing a chip takes it out; the dropdown itself opens only on the keyboard.
+  document.querySelector('.chips').addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip'); if (!chip) return;
+    window.log.push('removed ' + chip.textContent); chip.remove();
+  });
+  // A School whose list is always open inside it; a click chooses, and the choice is drawn over the list.
+  for (const o of document.querySelectorAll('.always [role=option]')) o.addEventListener('click', () => {
+    for (const x of document.querySelectorAll('.always [role=option]')) x.setAttribute('aria-selected', String(x === o));
+    document.querySelector('#c-school .prompt').textContent = o.textContent; window.log.push('chose ' + o.textContent);
+  });
+  window.state = () => ({ school: document.querySelector('#c-school .prompt').textContent, chips: [...document.querySelectorAll('.chip')].map((c) => c.textContent), open: document.querySelectorAll('[role=listbox]').length });
+</script>
+</body></html>`;
+
+/*
+ * Two dropdowns whose boxes hold what a person typed before Autofill: a City
+ * saying "Bost", whose list has Boston and ignores the click, and a School
+ * saying "Northea", whose list lacks Northeastern University.
+ */
+const PAGE_TYPED_BEFORE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="t-city-l">City</label>
+    <div class="pick"><div class="picker-control"><input id="t-city" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="t-city-l" autocomplete="off"></div>
+      <input type="hidden" name="city" id="t-city-h" value=""></div></div>
+  <div class="q"><label id="t-school-l">School</label>
+    <div class="pick"><div class="picker-control"><input id="t-school" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="t-school-l" autocomplete="off"></div>
+      <input type="hidden" name="school" id="t-school-h" value=""></div></div>
+</form>
+<script>
+  window.log = [];
+  function widget(id, options, commit) {
+    const box = document.getElementById(id);
+    let list = null;
+    const shut = () => { list?.remove(); list = null; box.setAttribute('aria-expanded', 'false'); };
+    const open = () => {
+      if (list) return;
+      list = document.createElement('ul'); list.id = id + '-list'; list.setAttribute('role', 'listbox');
+      for (const text of options) {
+        const o = document.createElement('li'); o.setAttribute('role', 'option'); o.textContent = text;
+        o.addEventListener('mousedown', (e) => e.preventDefault());
+        o.addEventListener('click', () => { if (commit) { commit(text); window.log.push(id + ' commit ' + text); } shut(); });
+        list.append(o);
+      }
+      document.body.append(list);
+      box.setAttribute('aria-controls', list.id); box.setAttribute('aria-expanded', 'true');
+    };
+    box.addEventListener('mousedown', open);
+    box.addEventListener('input', open);
+    box.addEventListener('keydown', (e) => { if (e.key === 'Escape') shut(); });
+  }
+  const $ = (id) => document.getElementById(id);
+  // A City whose list ignores the click; a School whose list lacks the answer.
+  widget('t-city', ['Boston', 'Cambridge'], null);
+  widget('t-school', ['Boston University', 'Tufts University'], (t) => { $('t-school').value = t; $('t-school-h').value = t; });
+  // What the person typed before autofill ran.
+  $('t-city').value = 'Bost'; $('t-school').value = 'Northea';
+  window.state = () => ({ city: [$('t-city').value, $('t-city-h').value], school: [$('t-school').value, $('t-school-h').value], open: document.querySelectorAll('[role=listbox]').length });
+</script>
+</body></html>`;
+
+/*
+ * Angular's ng-select, drawn as it renders: a Country and a Discipline
+ * (multiple) with nothing chosen, and a Degree already holding "Bachelor of
+ * Science", each drawing what it holds as `.ng-value > .ng-value-label` in
+ * its `.ng-value-container`, its panel an `ng-dropdown-panel` inside it
+ * that the box names while open. With `?deaf`, a click on an option shuts
+ * the panel and chooses nothing.
+ */
+const PAGE_NG_SELECT = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title>
+<style>.ng-has-value .ng-placeholder { display: none; }</style></head><body>
+<form>
+  <div class="q"><label for="ngs-country">Country</label>
+    <ng-select class="ng-select ng-select-single ng-select-searchable" data-options="Canada|United States"><div class="ng-select-container"><div class="ng-value-container">
+      <div class="ng-placeholder">Select a country</div>
+      <div class="ng-input" role="combobox" aria-haspopup="listbox" aria-expanded="false"><input id="ngs-country" type="text" aria-autocomplete="list" autocomplete="off"></div>
+    </div><span class="ng-arrow-wrapper"><span class="ng-arrow"></span></span></div></ng-select></div>
+  <div class="q"><label for="ngs-major">Discipline</label>
+    <ng-select class="ng-select ng-select-multiple ng-select-searchable" data-options="Biology|Computer Science"><div class="ng-select-container"><div class="ng-value-container">
+      <div class="ng-placeholder">Select disciplines</div>
+      <div class="ng-input" role="combobox" aria-haspopup="listbox" aria-expanded="false"><input id="ngs-major" type="text" aria-autocomplete="list" autocomplete="off"></div>
+    </div><span class="ng-arrow-wrapper"><span class="ng-arrow"></span></span></div></ng-select></div>
+  <div class="q"><label for="ngs-degree">Degree</label>
+    <ng-select class="ng-select ng-select-single ng-select-searchable" data-options="Bachelor of Science|Master of Science" data-value="Bachelor of Science"><div class="ng-select-container"><div class="ng-value-container">
+      <div class="ng-placeholder">Select a degree</div>
+      <div class="ng-input" role="combobox" aria-haspopup="listbox" aria-expanded="false"><input id="ngs-degree" type="text" aria-autocomplete="list" autocomplete="off"></div>
+    </div><span class="ng-arrow-wrapper"><span class="ng-arrow"></span></span></div></ng-select></div>
+</form>
+<script>
+  window.log = [];
+  let ids = 0;
+  // Angular ng-select as it renders: the chosen drawn as .ng-value > .ng-value-label in .ng-value-container,
+  // its panel an ng-dropdown-panel role="listbox" inside it, named by the box's aria-controls while open.
+  for (const host of document.querySelectorAll('ng-select')) {
+    const multiple = host.classList.contains('ng-select-multiple');
+    const container = host.querySelector('.ng-select-container'), values = host.querySelector('.ng-value-container');
+    const combo = host.querySelector('.ng-input'), input = combo.querySelector('input');
+    const options = host.dataset.options.split('|');
+    const dropdownId = 'a' + (++ids) + 'f3c9';
+    let chosen = host.dataset.value ? [host.dataset.value] : [];
+    let panel = null;
+    const render = () => {
+      values.querySelectorAll('.ng-value').forEach((v) => v.remove());
+      for (const label of chosen) {
+        const v = document.createElement('div'); v.className = 'ng-value';
+        v.innerHTML = '<span class="ng-value-icon left" aria-hidden="true">×</span><span class="ng-value-label"></span>';
+        v.querySelector('.ng-value-label').textContent = label;
+        v.querySelector('.ng-value-icon').addEventListener('click', () => { chosen = chosen.filter((c) => c !== label); window.log.push('removed ' + label); render(); });
+        values.insertBefore(v, combo);
+      }
+      container.classList.toggle('ng-has-value', chosen.length > 0);
+    };
+    const close = () => {
+      panel?.remove(); panel = null; input.value = '';
+      combo.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-controls'); input.removeAttribute('aria-activedescendant');
+    };
+    const draw = () => {
+      const term = input.value.toLowerCase();
+      panel.querySelector('.ng-dropdown-panel-items').replaceChildren(...options.filter((o) => o.toLowerCase().includes(term)).map((label, i) => {
+        const o = document.createElement('div'); o.className = 'ng-option'; o.setAttribute('role', 'option');
+        o.id = dropdownId + '-' + options.indexOf(label); o.setAttribute('aria-selected', String(chosen.includes(label)));
+        o.innerHTML = '<span class="ng-option-label"></span>'; o.firstChild.textContent = label;
+        o.addEventListener('click', () => {
+          // With ?deaf, a click shuts the panel and chooses nothing.
+          if (location.search.includes('deaf')) { window.log.push(input.id + ' ignored ' + label); close(); return; }
+          chosen = multiple ? [...new Set([...chosen, label])] : [label];
+          window.log.push(input.id + ' chose ' + label); render(); close();
+        });
+        return o;
+      }));
+    };
+    const open = () => {
+      if (panel) return;
+      panel = document.createElement('ng-dropdown-panel'); panel.className = 'ng-dropdown-panel'; panel.id = dropdownId;
+      panel.setAttribute('role', 'listbox'); panel.setAttribute('aria-label', 'Options list');
+      panel.innerHTML = '<div class="ng-dropdown-panel-items scroll-host"><div></div></div>';
+      panel.firstChild.replaceChildren(document.createElement('div'));
+      panel.firstChild.firstChild.className = 'ng-dropdown-panel-items';
+      panel.addEventListener('mousedown', (e) => e.preventDefault());
+      host.append(panel); draw();
+      combo.setAttribute('aria-expanded', 'true'); input.setAttribute('aria-controls', dropdownId);
+    };
+    container.addEventListener('mousedown', (e) => { if (e.target.tagName !== 'INPUT') e.preventDefault(); input.focus(); open(); });
+    input.addEventListener('input', () => { window.log.push(input.id + ' typed ' + input.value); open(); draw(); });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+    input.addEventListener('blur', close);
+    render();
+  }
+  const shown = (id) => [...document.getElementById(id).closest('ng-select').querySelectorAll('.ng-value-label')].map((v) => v.textContent);
+  window.state = () => ({ country: shown('ngs-country'), major: shown('ngs-major'), degree: shown('ngs-degree'), boxes: [...document.querySelectorAll('ng-select input')].map((i) => i.value), open: document.querySelectorAll('ng-dropdown-panel').length });
+</script>
+</body></html>`;
+
+/*
+ * An answered sponsorship question drawn as react-select draws one, its menu
+ * in its own container, named nowhere, saying "Loading..." for as long as it
+ * is open, which the page opens whenever the focus moves anywhere else; and
+ * a City box that opens nothing on a press. With `?own`, no such nudge, and
+ * the City's press opens its own menu at the foot of the body, named
+ * nowhere, saying "Loading..." for 1200ms before Boston and Cambridge.
+ */
+const PAGE_LOADING_ELSEWHERE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="l-spon-l">Will you now or in the future require visa sponsorship?</label>
+    <div class="select"><div class="select__control"><div class="select__value-container"><div class="select__single-value">No</div>
+      <input id="l-spon" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="l-spon-l" autocomplete="off"></div></div>
+      <input type="hidden" name="spon" id="l-spon-h" value="No"></div></div>
+  <div class="q"><label id="l-city-l">City</label>
+    <div class="pick"><div class="picker-control"><input id="l-city" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="l-city-l" autocomplete="off"></div>
+      <input type="hidden" name="city" id="l-city-h" value=""></div></div>
+</form>
+<script>
+  window.log = [];
+  // The sponsorship question, answered, drawn as react-select draws one: its menu in its container, named nowhere,
+  // saying "Loading..." for as long as it is open. The page opens it whenever the focus moves anywhere else.
+  const spon = document.getElementById('l-spon');
+  const holder = spon.closest('.select');
+  let menu = null;
+  const open = () => {
+    if (menu) return;
+    menu = document.createElement('div'); menu.className = 'select__menu'; menu.setAttribute('role', 'listbox');
+    menu.innerHTML = '<div class="select__menu-notice select__menu-notice--loading">Loading...</div>';
+    holder.append(menu); spon.setAttribute('aria-expanded', 'true'); window.log.push('sponsorship menu opened');
+  };
+  const own = location.search.includes('own');
+  if (!own) document.addEventListener('focusin', (e) => { if (e.target !== spon) open(); });
+  // The City opens nothing on a press, and takes what is typed as typed.
+  const city = document.getElementById('l-city');
+  city.addEventListener('input', () => window.log.push('city typed ' + city.value));
+  // With ?own, no nudge, and the City's press opens its own menu at the foot of the body, named nowhere,
+  // saying "Loading..." for 1200ms before its options arrive.
+  let list = null;
+  if (own) city.addEventListener('mousedown', () => {
+    if (list) return;
+    list = document.createElement('div'); list.setAttribute('role', 'listbox');
+    list.innerHTML = '<div class="select__menu-notice select__menu-notice--loading">Loading...</div>';
+    document.body.append(list); city.setAttribute('aria-expanded', 'true');
+    setTimeout(() => {
+      if (!list) return;
+      list.replaceChildren(...['Boston', 'Cambridge'].map((text) => {
+        const o = document.createElement('div'); o.setAttribute('role', 'option'); o.textContent = text;
+        o.addEventListener('mousedown', (e) => e.preventDefault());
+        o.addEventListener('click', () => {
+          city.value = text; document.getElementById('l-city-h').value = text; window.log.push('city chose ' + text);
+          list.remove(); list = null; city.setAttribute('aria-expanded', 'false');
+        });
+        return o;
+      }));
+    }, 1200);
+  });
+  window.state = () => ({ spon: document.getElementById('l-spon-h').value, city: [city.value, document.getElementById('l-city-h').value], open: document.querySelectorAll('[role=listbox]').length });
+</script>
+</body></html>`;
+
+/*
  * The page's own boxes, each put into a component that draws its label round
  * the slot: in a wrapper before the slot or before a wrapper round it, loose
  * in its root, round the slot, and with the label's words slotted in too,
@@ -5147,7 +5894,459 @@ const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><tit
   });
 </script></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+/*
+ * Ashby's search-and-pick box, as its fixtures draw it: an
+ * `ashby-application-form-input-autocomplete` combobox whose list opens on a
+ * press, filters on what is typed — a search only answers once something is,
+ * and a moment late — and whose pick is what the box then says. Let go of
+ * without a pick, the box goes back to the last one. `onPick` hears each pick.
+ */
+const ASHBY_AUTOCOMPLETE = `<script>
+  window.__autocomplete = (input, choices, { search = false, onPick = () => {} } = {}) => {
+    const own = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+    let picked = '';
+    let list = null;
+    let timer = null;
+    const close = () => {
+      list?.remove();
+      list = null;
+      input.setAttribute('aria-expanded', 'false');
+      input.removeAttribute('aria-controls');
+    };
+    const draw = () => {
+      close();
+      const typed = own.get.call(input).toLowerCase();
+      if (search && !typed) return;
+      list = document.createElement('div');
+      list.setAttribute('role', 'listbox');
+      list.id = 'list-' + Math.random().toString(36).slice(2);
+      for (const choice of choices.filter((c) => c.toLowerCase().includes(typed))) {
+        const option = document.createElement('div');
+        option.setAttribute('role', 'option');
+        option.textContent = choice;
+        option.addEventListener('mousedown', (e) => e.preventDefault());
+        option.addEventListener('click', () => {
+          picked = choice;
+          own.set.call(input, choice);
+          close();
+          onPick(choice);
+        });
+        list.append(option);
+      }
+      input.parentElement.append(list);
+      input.setAttribute('aria-expanded', 'true');
+      input.setAttribute('aria-controls', list.id);
+    };
+    const later = () => { clearTimeout(timer); timer = setTimeout(draw, search ? 150 : 0); };
+    input.addEventListener('mousedown', later);
+    // Emptied, it holds nothing: the pick is let go of too.
+    input.addEventListener('input', () => { if (!own.get.call(input) && picked) { picked = ''; onPick(''); } later(); });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+    input.addEventListener('blur', () => { clearTimeout(timer); close(); own.set.call(input, picked); });
+    input.__reset = (v = '') => { picked = v; own.set.call(input, v); close(); };
+    input.__picked = () => picked;
+  };
+</script>`;
+
+/*
+ * Quora's Ashby application, and its "Autofill from resume".
+ *
+ * The markup is the live page's, cut down to the fields a user found empty
+ * when the form refused to go ("Missing entry for required field: Phone /
+ * Discipline/Field of Study / Graduation Date or Anticipated Graduation Date /
+ * I understand that … coordination hours / Will you now or in the future
+ * require sponsorship"), plus the two it did not flag, Full Name and Email.
+ *
+ * What the page does, read off Ashby's own bundle: every field keeps its own
+ * state, seeded from the saved value when it mounts; text goes to the server
+ * 500ms after the last change, the date and the yes/no as soon as they change;
+ * and the form is checked on the server, against what was saved. A resume
+ * put into the autofill box is parsed ("Parsing your resume. Autofilling key
+ * fields...") and the form render comes back with what the parse found, under
+ * a new key, so every field mounts again from it — Name and Email from the
+ * resume, and nothing in the rest. The date is react-datepicker with its
+ * default "MM/dd/yyyy" and loose parsing, which falls back to `new Date` and
+ * shows the date it took in its own format; picking the day it already holds
+ * lets go of it. `?inplace` keeps the elements and empties them in place;
+ * `?parsed-phone` has the resume carry a telephone number of its own.
+ * `?comboboxes` adds the page's Location and School Name, Ashby's
+ * search-and-pick boxes (see `ASHBY_AUTOCOMPLETE`), saved as they are picked;
+ * `?parsed-location` has the resume carry a location of its own.
+ */
+const ASHBY_RESUME_AUTOFILL = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Quora</title>
+<style>._input_1svni_78 { display: none; } [data-state="hidden"] { display: none; }</style></head><body>
+<div class="_autofillPane_5yu8i_448 ashby-application-form-autofill-pane"><div role="presentation" class="_root_xd2v0_1 ashby-application-form-autofill-input-root" data-state="default">
+  <input id="autofill-box" accept="application/pdf,.pdf,application/msword,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" type="file" tabindex="-1" style="border: 0px; clip: rect(0px, 0px, 0px, 0px); clip-path: inset(50%); height: 1px; margin: 0px -1px -1px 0px; overflow: hidden; padding: 0px; position: absolute; width: 1px; white-space: nowrap;">
+  <div class="_base_xd2v0_31 ashby-application-form-autofill-input-base-layer"><h3 class="_title_xd2v0_64 ashby-application-form-autofill-input-title">Autofill from resume</h3><p class="_description_xd2v0_76 ashby-application-form-autofill-input-description">Upload your resume here to autofill key application fields.</p><button class="_button_zyh3g_28 _ctaButton_xd2v0_94">Upload file</button></div>
+  <div class="_pending_xd2v0_121 ashby-application-form-autofill-input-pending-layer" data-state="hidden"><span aria-label="Loading..." role="progressbar"></span><span>Parsing your resume. Autofilling key fields...</span></div>
+</div></div>
+<div id="form-root"></div>
+${ASHBY_AUTOCOMPLETE}
+<template id="comboboxes"><div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="_systemfield_location" data-field-entry-id="b6511a02-1ab4-47d1-9d4e-49780cb9869a__systemfield_location"><label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title" for="_systemfield_location">Location</label><div class="_description_1e3gg_48 ashby-application-form-question-description"><p>City, State, and Country</p></div><div class="_inputContainer_d7ago_28"><input class="_input_d7ago_28 ashby-application-form-input-autocomplete" placeholder="Start typing..." aria-autocomplete="list" aria-expanded="false" aria-haspopup="listbox" role="combobox" value=""><button class="_container_pjyt6_1 _toggleButton_d7ago_32"><svg viewBox="0 0 640 640" fill="none" height="1em"><path d="M303.5 473C312.9 482.4 328.1 482.4 337.4 473L537.4 273C546.8 263.6 546.8 248.4 537.4 239.1C528 229.8 512.8 229.7 503.5 239.1L320.5 422.1L137.5 239.1C128.1 229.7 112.9 229.7 103.6 239.1C94.3 248.5 94.2 263.7 103.6 273L303.6 473z"></path></svg></button></div></div><div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="_systemfield_education_history" data-field-entry-id="b6511a02-1ab4-47d1-9d4e-49780cb9869a__systemfield_education_history"><label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title" for="_systemfield_education_history">School Name</label><div class="_description_1e3gg_48 ashby-application-form-question-description"><p><em><strong>For most recent or in progress degree.</strong></em></p></div><div class="_stack_b7xpf_1 _vertical_b7xpf_4 _gapNormal_b7xpf_19"><div class="_stack_b7xpf_1 _vertical_b7xpf_4"><label class="_heading_f7cvd_52 _required_f7cvd_91 _educationLabel_1e3gg_162 ashby-application-form-question-title" for="_systemfield_education_history-school">School</label><div class="_inputContainer_d7ago_28"><input class="_input_d7ago_28 ashby-application-form-input-autocomplete" placeholder="Search schools..." aria-autocomplete="list" aria-expanded="false" aria-haspopup="listbox" role="combobox" value=""><button class="_container_pjyt6_1 _toggleButton_d7ago_32"><svg viewBox="0 0 640 640" fill="none" height="1em"><path d="M303.5 473C312.9 482.4 328.1 482.4 337.4 473L537.4 273C546.8 263.6 546.8 248.4 537.4 239.1C528 229.8 512.8 229.7 503.5 239.1L320.5 422.1L137.5 239.1C128.1 229.7 112.9 229.7 103.6 239.1C94.3 248.5 94.2 263.7 103.6 273L303.6 473z"></path></svg></button></div></div><div class="_stack_b7xpf_1 _horizontal_b7xpf_7 _gapSmall_b7xpf_16 _wrap_b7xpf_34"></div></div></div></template>
+<template id="form"><div class="_jobPostingForm_5yu8i_402 ashby-application-form-container"><div class="_section_5yu8i_86 ashby-application-form-section-container">
+  <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="_systemfield_name"><label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="_systemfield_name">Full Name</label><div><input placeholder="Type here..." name="_systemfield_name" required="" id="_systemfield_name" type="text" class="_input_80epu_28 ashby-application-form-input-text" value=""></div></div>
+  <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="_systemfield_email"><label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="_systemfield_email">Email</label><div><input placeholder="hello@example.com..." name="_systemfield_email" required="" id="_systemfield_email" type="email" class="_input_80epu_28 ashby-application-form-input-text" value=""></div></div>
+  <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="ac061e86-2644-429c-9f9f-58ecfe59b7e5"><label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="ac061e86-2644-429c-9f9f-58ecfe59b7e5">Phone</label><input placeholder="1-415-555-1234..." name="ac061e86-2644-429c-9f9f-58ecfe59b7e5" required="" id="ac061e86-2644-429c-9f9f-58ecfe59b7e5" type="tel" class="_input_80epu_28 ashby-application-form-input-text" value="">
+    <div class="_phoneNumberConsentLegalText_q1pga_1 ashby-application-form-texting-consent-description"><div class="_consentBody_q1pga_8"><p>Check <strong>Yes</strong> or <strong>No</strong> to indicate your agreement to receive text message updates from the employer regarding your job application.</p></div>
+      <div class="_container_1rwuy_1 _consentRadioGroup_q1pga_13"><label class="_label_1rwuy_6"><input class="_radio_1rwuy_12" type="radio" name="communicationConsent" value="given"><div><p><strong>Yes</strong> - I consent to receiving text messages</p></div></label><label class="_label_1rwuy_6"><input class="_radio_1rwuy_12" type="radio" name="communicationConsent" value="notGiven"><div><p><strong>No</strong> - I do not consent to receiving text messages</p></div></label></div></div></div>
+  <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="842bb240-06cd-4b26-8c17-aa094b1c9dab"><label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="842bb240-06cd-4b26-8c17-aa094b1c9dab">Discipline/Field of Study</label><div class="_description_1e3gg_48 ashby-application-form-question-description"><p><em><strong>For most recent or in progress degree.</strong></em></p></div><div><input placeholder="Type here..." name="842bb240-06cd-4b26-8c17-aa094b1c9dab" required="" id="842bb240-06cd-4b26-8c17-aa094b1c9dab" type="text" class="_input_80epu_28 ashby-application-form-input-text" value=""></div></div>
+  <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="751b69d2-5b38-4552-b010-e3bdd1e891f2"><label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="751b69d2-5b38-4552-b010-e3bdd1e891f2">Graduation Date or Anticipated Graduation Date</label><div class="_description_1e3gg_48 ashby-application-form-question-description"><p><em><strong>For most recent or in progress degree.</strong></em></p></div><div class="react-datepicker-wrapper"><div class="react-datepicker__input-container"><input type="text" placeholder="Pick date..." class="_input_gc9ve_28 _greedy_gc9ve_61 ashby-application-form-input-date" required="" value=""></div></div></div>
+  <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="_systemfield_resume"><label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="_systemfield_resume">Resume</label><div role="presentation" class="_container_10xk4_70 ashby-application-form-input-file"><input type="file" tabindex="-1" id="_systemfield_resume" required="" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0px, 0px, 0px, 0px);"><div class="ashby-application-form-input-file-dropzone"><button class="ashby-application-form-input-file-dropzone-upload"><span>Upload File</span></button><p>or drag and drop here</p></div></div></div>
+</div><div class="_section_5yu8i_86 ashby-application-form-section-container">
+  <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="003d89f3-1128-4fef-a9ac-40e88a4ba7e4"><label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="003d89f3-1128-4fef-a9ac-40e88a4ba7e4">I understand that all employees for this position will be expected to be available for meetings and impromptu communication during Quora's “coordination hours” (Mon-Fri, 9am-3pm Pacific Time).</label><div class="_container_1svni_28 _yesno_1e3gg_148 ashby-application-form-input-yesno"><button class="_container_pjyt6_1 _option_1svni_32 ashby-application-form-input-yesno-option" aria-pressed="false" data-option="yes">Yes</button><button class="_container_pjyt6_1 _option_1svni_32 ashby-application-form-input-yesno-option" aria-pressed="false" data-option="no">No</button><input type="checkbox" class="_input_1svni_78" tabindex="-1" name="003d89f3-1128-4fef-a9ac-40e88a4ba7e4"></div></div>
+  <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="3710353f-ee10-43fa-b7a9-e747deb6ff04"><label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="3710353f-ee10-43fa-b7a9-e747deb6ff04">Will you now or in the future require sponsorship for employment visa status?</label><div class="_container_1svni_28 _yesno_1e3gg_148 ashby-application-form-input-yesno"><button class="_container_pjyt6_1 _option_1svni_32 ashby-application-form-input-yesno-option" aria-pressed="false" data-option="yes">Yes</button><button class="_container_pjyt6_1 _option_1svni_32 ashby-application-form-input-yesno-option" aria-pressed="false" data-option="no">No</button><input type="checkbox" class="_input_1svni_78" tabindex="-1" name="3710353f-ee10-43fa-b7a9-e747deb6ff04"></div></div>
+</div><button class="_button_zyh3g_28 _primary_zyh3g_97 ashby-application-form-submit-button"><span>Submit Application</span></button></div></template>
+<script>
+  const query = new URLSearchParams(location.search);
+  const DATE = '751b69d2-5b38-4552-b010-e3bdd1e891f2';
+  // What the server holds, which is what the form is checked against.
+  const server = {};
+  window.__server = () => ({ ...server });
+  window.__mounts = 0;
+  const day = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const shown = (d) => String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0') + '/' + d.getFullYear();
+  // react-datepicker's loose parse: its format, then whatever \`new Date\` makes of it.
+  const parse = (v) => {
+    const m = /^(\\d{2})\\/(\\d{2})\\/(\\d{4})$/.exec(v);
+    const d = m ? new Date(Number(m[3]), Number(m[1]) - 1, Number(m[2])) : new Date(v);
+    return isNaN(d) || d.getFullYear() < 1000 ? null : d;
+  };
+  // React's value tracker: an event whose value it has already seen is no change.
+  const tracked = (el) => {
+    const own = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+    let seen = own.get.call(el);
+    Object.defineProperty(el, 'value', { configurable: true, get() { return own.get.call(this); }, set(v) { seen = String(v); own.set.call(this, v); } });
+    return { changed: () => { const now = own.get.call(el); if (now === seen) return null; seen = now; return now; } };
+  };
+  let clearing = [];
+  function mount(saved) {
+    for (const stop of clearing) stop();
+    clearing = [];
+    window.__mounts++;
+    const root = document.getElementById('form-root');
+    root.replaceChildren(document.getElementById('form').content.cloneNode(true));
+    if (query.has('comboboxes')) root.querySelector('[data-field-path="ac061e86-2644-429c-9f9f-58ecfe59b7e5"]').after(document.getElementById('comboboxes').content.cloneNode(true));
+    wire(root, saved);
+  }
+  function wire(root, saved) {
+    for (const input of root.querySelectorAll('input.ashby-application-form-input-text')) {
+      const path = input.name;
+      let value = saved[path] ?? '';
+      let timer = null;
+      const t = tracked(input);
+      input.value = value;
+      const save = () => { clearTimeout(timer); if ((server[path] ?? '') !== value) server[path] = value; };
+      const onChange = () => {
+        const now = t.changed();
+        if (now === null) return;
+        value = now;
+        clearTimeout(timer);
+        timer = setTimeout(save, 500);
+      };
+      input.addEventListener('input', onChange);
+      input.addEventListener('change', onChange);
+      input.addEventListener('blur', save);
+      clearing.push(() => clearTimeout(timer));
+      input.__reset = (v) => { value = v ?? ''; input.value = value; };
+    }
+    const PLACES = ['Boston, Massachusetts, United States', 'Boston, England, United Kingdom', 'Boston, New York, United States', 'Toronto, Ontario, Canada'];
+    const SCHOOLS = ['Northeastern University', 'Northeastern Illinois University', 'Boston University'];
+    for (const input of root.querySelectorAll('input.ashby-application-form-input-autocomplete')) {
+      const path = input.closest('[data-field-path]').dataset.fieldPath;
+      window.__autocomplete(input, path === '_systemfield_location' ? PLACES : SCHOOLS, { search: true, onPick: (choice) => { server[path] = choice; } });
+      input.__reset(saved[path] ?? '');
+    }
+    const box = root.querySelector('.ashby-application-form-input-date');
+    let selected = saved[DATE] ? new Date(saved[DATE] + 'T00:00') : null;
+    const t = tracked(box);
+    box.value = selected ? shown(selected) : '';
+    const pick = (d) => {
+      if (d && selected && d.getTime() === selected.getTime()) return;
+      selected = d && selected && day(d) === day(selected) ? null : d;
+      if (selected) server[DATE] = day(selected);
+      box.value = selected ? shown(selected) : box.value;
+    };
+    const onDate = () => {
+      const now = t.changed();
+      if (now === null) return;
+      const d = parse(now);
+      if (d) pick(d);
+      else if (!now) { selected = null; }
+    };
+    box.addEventListener('input', onDate);
+    box.addEventListener('change', onDate);
+    box.__reset = () => { selected = null; box.value = ''; };
+    window.__picked = () => (selected ? day(selected) : null);
+    for (const group of root.querySelectorAll('.ashby-application-form-input-yesno')) {
+      const buttons = [...group.querySelectorAll('button')];
+      const check = group.querySelector('input[type=checkbox]');
+      const path = check.name;
+      let value = saved[path];
+      const draw = () => {
+        for (const b of buttons) b.setAttribute('aria-pressed', String(value === (b.dataset.option === 'yes')));
+        check.checked = value === true;
+      };
+      const set = (v) => queueMicrotask(() => { value = v; if (v !== undefined) server[path] = v; draw(); });
+      buttons[0].addEventListener('click', () => set(value === true ? undefined : true));
+      buttons[1].addEventListener('click', () => set(value === false ? undefined : false));
+      check.addEventListener('change', () => set(check.checked));
+      group.__reset = () => { value = undefined; draw(); };
+      draw();
+    }
+  }
+  mount({});
+  // The autofill box: the resume is parsed, and the form comes back from what the parse found.
+  const pending = document.querySelector('.ashby-application-form-autofill-input-pending-layer');
+  document.getElementById('autofill-box').addEventListener('change', (e) => {
+    if (!e.target.files.length) return;
+    setTimeout(() => { pending.dataset.state = 'active'; }, 150);
+    setTimeout(() => {
+      const found = { _systemfield_name: 'Morgan Testwell', _systemfield_email: 'morgan.testwell@example.com' };
+      if (query.has('parsed-phone')) found['ac061e86-2644-429c-9f9f-58ecfe59b7e5'] = '555-010-0123';
+      if (query.has('parsed-location')) found._systemfield_location = 'Toronto, Ontario, Canada';
+      for (const key of Object.keys(server)) delete server[key];
+      Object.assign(server, found);
+      if (query.has('inplace')) {
+        for (const input of document.querySelectorAll('input.ashby-application-form-input-text')) input.__reset(found[input.name]);
+        for (const input of document.querySelectorAll('input.ashby-application-form-input-autocomplete')) input.__reset(found[input.closest('[data-field-path]').dataset.fieldPath]);
+        document.querySelector('.ashby-application-form-input-date').__reset();
+        for (const group of document.querySelectorAll('.ashby-application-form-input-yesno')) group.__reset();
+      } else mount(found);
+      pending.dataset.state = 'hidden';
+    }, 900);
+  });
+</script></body></html>`;
+
+/*
+ * A plain form that puts itself back to nothing when a file goes in — a
+ * dropdown, a pair of radios and a box, emptied by `form.reset()`, which
+ * fires nothing a script would hear.
+ */
+const RESET_ON_FILE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="f">
+  <label for="rc">Country</label>
+  <select id="rc" name="country"><option value="">Select...</option><option value="CA">Canada</option><option value="US">United States</option></select>
+  <fieldset><legend>Are you legally authorized to work in the United States?</legend>
+    <label><input type="radio" name="rauth" value="yes"> Yes</label><label><input type="radio" name="rauth" value="no"> No</label></fieldset>
+  <label for="rp">Phone</label><input id="rp" name="phone" type="tel">
+  <label for="rr">Resume</label><input id="rr" name="resume" type="file">
+</form>
+<script>
+  document.getElementById('rr').addEventListener('change', () => setTimeout(() => document.getElementById('f').reset(), 300));
+</script></body></html>`;
+
+/*
+ * Quora's Ashby form asks the degree as radios — the markup below is the live
+ * page's — with "Associate Degree", "Bachelor's Degree", "Master's Degree",
+ * "Phd" and "Other", and a profile's "Bachelor of Science" was reported as
+ * having no matching option. `?shape=` draws the same question as a
+ * `<select>`, as an ARIA radiogroup and as Ashby's search-and-pick box, and
+ * `?options=` gives it other options, as a JSON list.
+ */
+const ASHBY_DEGREE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Quora</title></head><body>
+<div id="form-root" class="ashby-application-form-container"></div>
+${ASHBY_AUTOCOMPLETE}
+<template id="radios"><div data-field-path="2ea59dee-9288-462d-8d23-14d1ec333b73" data-field-entry-id="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73"><fieldset class="_container_1258i_28 _fieldEntry_1e3gg_28 ashby-application-form-input-radio-group"><label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title" for="2ea59dee-9288-462d-8d23-14d1ec333b73">Degree</label><div class="_description_1e3gg_48 ashby-application-form-question-description"><p><em><strong>For most recent or in progress degree.</strong></em></p></div><div class="_option_1258i_34 false ashby-application-form-input-radio-group-option"><span class="_container_132c8_28" data-disabled="false"><span class="_circle_132c8_77"></span><input type="radio" id="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73-labeled-radio-0" name="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73" class="ashby-application-form-input-radio-group-option-radio"></span><label for="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73-labeled-radio-0" class="_label_1258i_42  ashby-application-form-input-radio-group-option-label">Associate Degree</label></div><div class="_option_1258i_34 false ashby-application-form-input-radio-group-option"><span class="_container_132c8_28" data-disabled="false"><span class="_circle_132c8_77"></span><input type="radio" id="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73-labeled-radio-1" name="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73" class="ashby-application-form-input-radio-group-option-radio"></span><label for="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73-labeled-radio-1" class="_label_1258i_42  ashby-application-form-input-radio-group-option-label">Bachelor's Degree</label></div><div class="_option_1258i_34 false ashby-application-form-input-radio-group-option"><span class="_container_132c8_28" data-disabled="false"><span class="_circle_132c8_77"></span><input type="radio" id="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73-labeled-radio-2" name="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73" class="ashby-application-form-input-radio-group-option-radio"></span><label for="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73-labeled-radio-2" class="_label_1258i_42  ashby-application-form-input-radio-group-option-label">Master's Degree</label></div><div class="_option_1258i_34 false ashby-application-form-input-radio-group-option"><span class="_container_132c8_28" data-disabled="false"><span class="_circle_132c8_77"></span><input type="radio" id="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73-labeled-radio-3" name="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73" class="ashby-application-form-input-radio-group-option-radio"></span><label for="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73-labeled-radio-3" class="_label_1258i_42  ashby-application-form-input-radio-group-option-label">Phd</label></div><div class="_option_1258i_34 false ashby-application-form-input-radio-group-option"><span class="_container_132c8_28" data-disabled="false"><span class="_circle_132c8_77"></span><input type="radio" id="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73-labeled-radio-4" name="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73" class="ashby-application-form-input-radio-group-option-radio"></span><label for="b6511a02-1ab4-47d1-9d4e-49780cb9869a_2ea59dee-9288-462d-8d23-14d1ec333b73-labeled-radio-4" class="_label_1258i_42  ashby-application-form-input-radio-group-option-label">Other</label></div></fieldset></div></template>
+<script>
+  const query = new URLSearchParams(location.search);
+  const shape = query.get('shape') || 'radios';
+  const root = document.getElementById('form-root');
+  const options = query.has('options') ? JSON.parse(query.get('options')) : null;
+  if (shape === 'radios') {
+    root.append(document.getElementById('radios').content.cloneNode(true));
+    if (options) {
+      const rows = [...root.querySelectorAll('.ashby-application-form-input-radio-group-option')];
+      rows.slice(1).forEach((row) => row.remove());
+      options.forEach((label, i) => {
+        const row = i === 0 ? rows[0] : rows[0].cloneNode(true);
+        const radio = row.querySelector('input');
+        radio.id = radio.name + '-labeled-radio-' + i;
+        row.querySelector('label').htmlFor = radio.id;
+        row.querySelector('label').textContent = label;
+        if (i) root.querySelector('fieldset').append(row);
+      });
+    }
+  } else {
+    const labels = options ?? ['Associate Degree', "Bachelor's Degree", "Master's Degree", 'Phd', 'Other'];
+    if (shape === 'select') {
+      root.innerHTML = '<label for="deg">Degree</label><select id="deg"><option value="">Select...</option>' + labels.map((l) => '<option></option>').join('') + '</select>';
+      labels.forEach((l, i) => { root.querySelector('select').options[i + 1].textContent = l; });
+    } else if (shape === 'aria') {
+      root.innerHTML = '<p id="deg-q">Degree</p><div role="radiogroup" aria-labelledby="deg-q"></div>';
+      for (const l of labels) {
+        const radio = document.createElement('div');
+        radio.setAttribute('role', 'radio');
+        radio.setAttribute('aria-checked', 'false');
+        radio.tabIndex = 0;
+        radio.textContent = l;
+        radio.addEventListener('click', () => {
+          for (const other of root.querySelectorAll('[role=radio]')) other.setAttribute('aria-checked', String(other === radio));
+        });
+        root.querySelector('[role=radiogroup]').append(radio);
+      }
+    } else {
+      root.innerHTML = '<div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry"><label class="ashby-application-form-question-title" for="deg">Degree</label><div class="_inputContainer_d7ago_28"><input class="_input_d7ago_28 ashby-application-form-input-autocomplete" placeholder="Start typing..." aria-autocomplete="list" aria-expanded="false" aria-haspopup="listbox" role="combobox" value=""></div></div>';
+      window.__autocomplete(root.querySelector('input'), labels);
+    }
+  }
+  window.__chosen = () => {
+    const radio = root.querySelector('input[type=radio]:checked');
+    if (radio) return root.querySelector('label[for="' + CSS.escape(radio.id) + '"]').textContent;
+    const select = root.querySelector('select');
+    if (select) return select.value ? select.selectedOptions[0].textContent : null;
+    const aria = root.querySelector('[role=radio][aria-checked=true]');
+    if (aria) return aria.textContent;
+    return root.querySelector('input[role=combobox]')?.value || null;
+  };
+</script></body></html>`;
+
+/*
+ * Statements a form asks only to be acknowledged, and ones that look like
+ * them and are not. The first is Quora's, as its Ashby form draws it — a
+ * required Yes and No over a hidden checkbox — and so is the texting consent
+ * under the phone; the rest are the same markup with other words, and the
+ * shapes other forms ask in: a lone required checkbox, a pair of radios, a
+ * select. `?answered` has the person press No on Quora's first.
+ */
+const ACKNOWLEDGEMENTS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Quora</title>
+<style>._input_1svni_78 { display: none; }</style></head><body>
+<div class="ashby-application-form-container">
+<div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="003d89f3-1128-4fef-a9ac-40e88a4ba7e4" data-field-entry-id="b6511a02-1ab4-47d1-9d4e-49780cb9869a_003d89f3-1128-4fef-a9ac-40e88a4ba7e4"><label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title" for="003d89f3-1128-4fef-a9ac-40e88a4ba7e4">I understand that all employees for this position will be expected to be available for meetings and impromptu communication during Quora's “coordination hours” (Mon-Fri, 9am-3pm Pacific Time).</label><div class="_container_1svni_28 _yesno_1e3gg_148  ashby-application-form-input-yesno"><button class="_container_pjyt6_1 _option_1svni_32  ashby-application-form-input-yesno-option" aria-pressed="false" data-option="yes">Yes</button><button class="_container_pjyt6_1 _option_1svni_32  ashby-application-form-input-yesno-option" aria-pressed="false" data-option="no">No</button><input type="checkbox" class="_input_1svni_78" tabindex="-1" name="003d89f3-1128-4fef-a9ac-40e88a4ba7e4"></div></div>
+<div class="_phoneNumberConsentLegalText_q1pga_1 ashby-application-form-texting-consent-description"><div class="_consentBody_q1pga_8"><div class="   _editor_1n5m7_37"><div contenteditable="false" translate="no" class="tiptap ProseMirror"><p>Check <strong>Yes</strong> or <strong>No</strong> to indicate your agreement to receive text message updates from Quora, Inc. regarding your job application. Frequency may vary. Message and data rates may apply. Reply STOP to opt out of future messaging.</p><p>View our privacy policy here: <a target="_blank" rel="noopener noreferrer" href="https://www.careers.quora.com/pages/quora-global-job-applicant-privacy-notice">Privacy Policy</a></p></div></div></div><div class="_container_1rwuy_1 _consentRadioGroup_q1pga_13"><label class="_label_1rwuy_6"><input class="_radio_1rwuy_12" type="radio" name="communicationConsent" value="given"><div class="_consentRadioLabel_q1pga_38"><div class="   _editor_1n5m7_37"><div contenteditable="false" translate="no" class="tiptap ProseMirror"><p><strong>Yes</strong> - I consent to receiving text messages</p></div></div></div></label><label class="_label_1rwuy_6"><input class="_radio_1rwuy_12" type="radio" name="communicationConsent" value="notGiven"><div class="_consentRadioLabel_q1pga_38"><div class="   _editor_1n5m7_37"><div contenteditable="false" translate="no" class="tiptap ProseMirror"><p><strong>No</strong> - I do not consent to receiving text messages</p></div></div></div></label></div></div>
+<div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="ack-texting" data-field-entry-id="b6511a02-1ab4-47d1-9d4e-49780cb9869a_ack-texting"><label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title" for="ack-texting">I understand that by giving my phone number I agree to receive text messages from the recruiting team about my application.</label><div class="_container_1svni_28 _yesno_1e3gg_148  ashby-application-form-input-yesno"><button class="_container_pjyt6_1 _option_1svni_32  ashby-application-form-input-yesno-option" aria-pressed="false" data-option="yes">Yes</button><button class="_container_pjyt6_1 _option_1svni_32  ashby-application-form-input-yesno-option" aria-pressed="false" data-option="no">No</button><input type="checkbox" class="_input_1svni_78" tabindex="-1" name="ack-texting"></div></div>
+<div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="ack-background" data-field-entry-id="b6511a02-1ab4-47d1-9d4e-49780cb9869a_ack-background"><label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title" for="ack-background">I acknowledge that any offer of employment is contingent on passing a background check.</label><div class="_container_1svni_28 _yesno_1e3gg_148  ashby-application-form-input-yesno"><button class="_container_pjyt6_1 _option_1svni_32  ashby-application-form-input-yesno-option" aria-pressed="false" data-option="yes">Yes</button><button class="_container_pjyt6_1 _option_1svni_32  ashby-application-form-input-yesno-option" aria-pressed="false" data-option="no">No</button><input type="checkbox" class="_input_1svni_78" tabindex="-1" name="ack-background"></div></div>
+<div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="ack-visa" data-field-entry-id="b6511a02-1ab4-47d1-9d4e-49780cb9869a_ack-visa"><label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title" for="ack-visa">I understand that this position does not offer visa sponsorship.</label><div class="_container_1svni_28 _yesno_1e3gg_148  ashby-application-form-input-yesno"><button class="_container_pjyt6_1 _option_1svni_32  ashby-application-form-input-yesno-option" aria-pressed="false" data-option="yes">Yes</button><button class="_container_pjyt6_1 _option_1svni_32  ashby-application-form-input-yesno-option" aria-pressed="false" data-option="no">No</button><input type="checkbox" class="_input_1svni_78" tabindex="-1" name="ack-visa"></div></div>
+
+<div><input type="checkbox" id="ack-privacy" required><label for="ack-privacy">I have read and understand the Candidate Privacy Notice. *</label></div>
+<div><input type="checkbox" id="ack-certify" required><label for="ack-certify">I understand and certify that the information I have provided in this application is true and complete. *</label></div>
+<div><input type="checkbox" id="ack-optional"><label for="ack-optional">I understand that I can withdraw my application at any time.</label></div>
+<fieldset><legend>I acknowledge that this role requires working from the office three days a week.</legend>
+  <label><input type="radio" name="ack-office" value="yes"> Yes</label><label><input type="radio" name="ack-office" value="no"> No</label></fieldset>
+<label for="ack-read">I confirm that I have read the job description.</label>
+<select id="ack-read"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+<fieldset><legend>By checking this box I acknowledge that I may be contacted about marketing events and newsletters.</legend>
+  <label><input type="checkbox" name="ack-marketing"> Yes</label></fieldset>
+</div>
+<script>
+  // Ashby's yes/no: a press takes a microtask to draw, and a second press of the pressed one lets it go.
+  for (const group of document.querySelectorAll('.ashby-application-form-input-yesno')) {
+    const buttons = [...group.querySelectorAll('button')];
+    const check = group.querySelector('input[type=checkbox]');
+    let value;
+    const draw = () => {
+      for (const b of buttons) b.setAttribute('aria-pressed', String(value === (b.dataset.option === 'yes')));
+      check.checked = value === true;
+    };
+    buttons[0].addEventListener('click', () => queueMicrotask(() => { value = value === true ? undefined : true; draw(); }));
+    buttons[1].addEventListener('click', () => queueMicrotask(() => { value = value === false ? undefined : false; draw(); }));
+  }
+  if (location.search.includes('answered')) document.querySelector('[data-field-path="003d89f3-1128-4fef-a9ac-40e88a4ba7e4"] [data-option=no]').click();
+  window.__state = () => ({
+    pressed: Object.fromEntries([...document.querySelectorAll('[data-field-path]')].map((f) => [f.dataset.fieldPath, f.querySelector('[aria-pressed=true]')?.textContent ?? null])),
+    texting: document.querySelector('input[name=communicationConsent]:checked')?.value ?? null,
+    privacy: document.getElementById('ack-privacy').checked,
+    certify: document.getElementById('ack-certify').checked,
+    optional: document.getElementById('ack-optional').checked,
+    office: document.querySelector('input[name=ack-office]:checked')?.value ?? null,
+    read: document.getElementById('ack-read').value,
+    marketing: document.querySelector('input[name=ack-marketing]').checked,
+  });
+</script></body></html>`;
+
+/*
+ * Statements about a sponsorship or right-to-work policy that ask only to be
+ * acknowledged, beside the real questions about the applicant. A No from the
+ * sponsorship answer on "I understand that this position does not offer visa
+ * sponsorship" reads as "I do not understand". Radios, a select, a lone
+ * required checkbox and Workday's dropdown on one page; Ashby's Yes and No, and an ARIA group, each
+ * on a page of its own with the real question after it, because a key is
+ * pressed once on a page and the statement first would take it.
+ */
+const ashbyYesNo = (path, words) => `<div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="${path}"><label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="${path}">${words}</label><div class="_container_1svni_28 _yesno_1e3gg_148 ashby-application-form-input-yesno"><button class="_option_1svni_32 ashby-application-form-input-yesno-option" aria-pressed="false" data-option="yes">Yes</button><button class="_option_1svni_32 ashby-application-form-input-yesno-option" aria-pressed="false" data-option="no">No</button><input type="checkbox" class="_input_1svni_78" tabindex="-1" name="${path}"></div></div>`;
+const POLICY_SCRIPT = `<script>
+  for (const group of document.querySelectorAll('.ashby-application-form-input-yesno')) {
+    const buttons = [...group.querySelectorAll('button')];
+    const check = group.querySelector('input[type=checkbox]');
+    let value;
+    const draw = () => {
+      for (const b of buttons) b.setAttribute('aria-pressed', String(value === (b.dataset.option === 'yes')));
+      check.checked = value === true;
+    };
+    buttons[0].addEventListener('click', () => queueMicrotask(() => { value = value === true ? undefined : true; draw(); }));
+    buttons[1].addEventListener('click', () => queueMicrotask(() => { value = value === false ? undefined : false; draw(); }));
+  }
+  for (const el of document.querySelectorAll('[role="radio"]')) {
+    el.addEventListener('click', () => {
+      for (const sib of el.parentElement.querySelectorAll('[role="radio"]')) sib.setAttribute('aria-checked', 'false');
+      el.setAttribute('aria-checked', 'true');
+    });
+  }
+  // Workday's dropdown: a button that opens a listbox of Yes and No.
+  const widget = document.getElementById('w-ack-widget');
+  widget?.addEventListener('click', () => {
+    if (document.getElementById('lb-ack-widget')) return;
+    const list = document.createElement('ul');
+    list.id = 'lb-ack-widget'; list.setAttribute('role', 'listbox');
+    for (const text of ['Yes', 'No']) {
+      const o = document.createElement('li');
+      o.setAttribute('role', 'option'); o.textContent = text;
+      o.addEventListener('click', () => { widget.textContent = text; document.getElementById('h-ack-widget').value = text; list.remove(); });
+      list.append(o);
+    }
+    widget.after(list);
+  });
+  const picked = (sel) => document.querySelector(sel)?.value ?? null;
+  window.__state = () => ({
+    buttons: Object.fromEntries([...document.querySelectorAll('[data-field-path]')].map((f) => [f.dataset.fieldPath, f.querySelector('[aria-pressed=true]')?.textContent ?? null])),
+    aria: document.querySelector('[role=radio][aria-checked=true]')?.textContent ?? null,
+    radios: picked('input[name=ack-radios]:checked'),
+    select: picked('#ack-select'),
+    box: document.getElementById('ack-box')?.checked ?? null,
+    available: picked('#ack-available'),
+    authPolicy: picked('input[name=ack-auth]:checked'),
+    widget: picked('#h-ack-widget'),
+    sponsorship: picked('#sp'),
+    authorized: picked('input[name=auth]:checked'),
+  });
+</script>`;
+const POLICY_HEAD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Test</title>
+<style>._input_1svni_78 { display: none; }</style></head><body>`;
+const SPONSORSHIP_POLICIES = `${POLICY_HEAD}
+<form>
+  <fieldset><legend>I acknowledge that the company will not sponsor employment visas for this role. *</legend>
+    <label><input type="radio" name="ack-radios" value="Yes" required> Yes</label><label><input type="radio" name="ack-radios" value="No"> No</label></fieldset>
+  <label for="ack-select">I understand this role is not eligible for visa sponsorship. *</label>
+  <select id="ack-select" required><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <div><input type="checkbox" id="ack-box" required><label for="ack-box">Please confirm you understand we cannot sponsor work visas for this position. *</label></div>
+  <label for="ack-available">I understand sponsorship is available for this role if needed. *</label>
+  <select id="ack-available" required><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <fieldset><legend>I acknowledge that candidates must be legally authorized to work in the United States. *</legend>
+    <label><input type="radio" name="ack-auth" value="Yes" required> Yes</label><label><input type="radio" name="ack-auth" value="No"> No</label></fieldset>
+  <label id="l-ack-widget">I acknowledge that this company does not sponsor H-1B visas.</label>
+  <div><button type="button" id="w-ack-widget" aria-haspopup="listbox" aria-controls="lb-ack-widget" aria-labelledby="l-ack-widget">Select One</button>
+    <input type="hidden" id="h-ack-widget"></div>
+
+  <label for="sp">Will you now or in the future require sponsorship?</label>
+  <select id="sp"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <fieldset><legend>Are you authorized to work in the United States?</legend>
+    <label><input type="radio" name="auth" value="Yes"> Yes</label><label><input type="radio" name="auth" value="No"> No</label></fieldset>
+</form>
+${POLICY_SCRIPT}</body></html>`;
+const SPONSORSHIP_POLICY_PRESSED = `${POLICY_HEAD}
+<div class="ashby-application-form-container">
+${ashbyYesNo('ack-visa', 'I understand that this position does not offer visa sponsorship.')}
+${ashbyYesNo('ask-visa', 'Do you need visa sponsorship?')}
+</div>
+${POLICY_SCRIPT}</body></html>`;
+const SPONSORSHIP_POLICY_ARIA = `${POLICY_HEAD}
+<div role="radiogroup" aria-required="true" aria-label="I understand that we are unable to provide visa sponsorship now or in the future.">
+  <div role="radio" aria-checked="false" tabindex="0">Yes</div><div role="radio" aria-checked="false" tabindex="0">No</div></div>
+<div class="ashby-application-form-container">
+${ashbyYesNo('ask-visa', 'Do you need visa sponsorship?')}
+</div>
+${POLICY_SCRIPT}</body></html>`;
+
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/greenhouse-react-education': GREENHOUSE_REACT_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE, '/acknowledgements': ACKNOWLEDGEMENTS, '/sponsorship-policies': SPONSORSHIP_POLICIES, '/sponsorship-policy-pressed': SPONSORSHIP_POLICY_PRESSED, '/sponsorship-policy-aria': SPONSORSHIP_POLICY_ARIA };
 
 const PROFILE = {
   first_name: 'Morgan',
@@ -6601,6 +7800,71 @@ async function main() {
     );
     check('but never a different specific degree', degrees.notArts === '', `"${degrees.notArts}"`);
     check('and an MBA is left for the person rather than guessed a master’s', degrees.notMba === '', `"${degrees.notMba}"`);
+
+    /*
+     * The same levels asked as radios, which is how Quora's Ashby form asks:
+     * "Bachelor of Science" was reported as having no matching option. And
+     * as a `<select>`, an ARIA radiogroup and Ashby's search-and-pick box,
+     * with the same options, so the four shapes cannot drift apart.
+     */
+    const degreeAt = async (degree, { shape = 'radios', options } = {}) => {
+      const query = new URLSearchParams({ shape, ...(options ? { options: JSON.stringify(options) } : {}) });
+      await page.goto(`${base}/ashby-degree?${query}`, { waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b, degree }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { full_name: 'Morgan Testwell', degree };
+        const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 800 });
+        await new Promise((r) => setTimeout(r, 100));
+        return { chosen: window.__chosen(), filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, degree });
+    };
+    const SPELLED = {
+      'Bachelor of Science': "Bachelor's Degree", 'B.S.': "Bachelor's Degree", 'BS in Computer Science': "Bachelor's Degree", BSc: "Bachelor's Degree",
+      'Bachelor of Arts': "Bachelor's Degree", 'B.Eng': "Bachelor's Degree", 'M.S.': "Master's Degree", 'Master of Science': "Master's Degree",
+      MEng: "Master's Degree", PhD: 'Phd', 'Ph.D.': 'Phd', 'Associate of Arts': 'Associate Degree',
+    };
+    const onAshbyRadios = {};
+    for (const degree of Object.keys(SPELLED)) onAshbyRadios[degree] = (await degreeAt(degree)).chosen;
+    const shapes = {};
+    for (const shape of ['select', 'aria', 'combobox']) {
+      shapes[shape] = {
+        bs: await degreeAt('Bachelor of Science', { shape }),
+        ms: await degreeAt('M.S.', { shape }),
+        phd: await degreeAt('Ph.D.', { shape }),
+        mba: await degreeAt('Master of Business Administration', { shape }),
+      };
+    }
+    const exactFirst = await degreeAt('Bachelor of Science', { options: ["Bachelor's Degree", 'Bachelor of Science', 'Other'] });
+    const exactFirstListed = await degreeAt('Bachelor of Science', { shape: 'combobox', options: ["Bachelor's Degree", 'Bachelor of Science', 'Other'] });
+    const noMastersOption = await degreeAt('Master of Science', { options: ['Associate Degree', "Bachelor's Degree", 'Other'] });
+    const namedAfter = await degreeAt('M.S.', { options: ["Bachelor's Degree (BA/BS)", "Master's Degree (MBA)", "Master's Degree (MS/MA)", 'Other'] });
+    const onlyMba = await degreeAt('Master of Science', { shape: 'select', options: ["Bachelor's Degree (BA/BS)", "Master's Degree (MBA)", 'Other'] });
+    group("A degree against a list of levels, on Quora's Ashby form and in every shape");
+    check(
+      'Ashby\'s Degree radios take the level of every spelling of a degree',
+      Object.entries(SPELLED).every(([degree, level]) => onAshbyRadios[degree] === level),
+      JSON.stringify(onAshbyRadios),
+    );
+    check(
+      'and so do a select, an ARIA radiogroup and a search-and-pick box, each reported filled',
+      Object.values(shapes).every((s) => s.bs.chosen === "Bachelor's Degree" && s.ms.chosen === "Master's Degree" && s.phd.chosen === 'Phd' && s.bs.filled.includes('degree')),
+      JSON.stringify(shapes),
+    );
+    check(
+      'an MBA is never a master\'s, "Other" is never taken for a known level, and a master\'s is never a bachelor\'s',
+      Object.values(shapes).every((s) => s.mba.chosen === null) && noMastersOption.chosen === null && noMastersOption.skipped.includes('degree: no matching option'),
+      JSON.stringify({ mba: Object.fromEntries(Object.entries(shapes).map(([k, s]) => [k, s.mba])), noMastersOption }),
+    );
+    check(
+      'the option that says the degree itself wins over its level',
+      exactFirst.chosen === 'Bachelor of Science' && exactFirstListed.chosen === 'Bachelor of Science',
+      JSON.stringify({ exactFirst, exactFirstListed }),
+    );
+    check(
+      'a level with its degrees named after it is taken only when they are the same level',
+      namedAfter.chosen === "Master's Degree (MS/MA)" && onlyMba.chosen === null,
+      JSON.stringify({ namedAfter, onlyMba }),
+    );
 
     /*
      * A GPA dropdown lists bands — "3.50 - 3.74", "3.75 - 4.00" — or
@@ -8446,6 +9710,124 @@ async function main() {
       JSON.stringify(unlistedFirst),
     );
 
+    /* ---------------- Greenhouse: the education block, as React keeps it ---------------- */
+    /*
+     * Reported (#188): on Greenhouse's education block the School, Degree,
+     * Discipline and the dates "weren't filled correctly". Filled as content.js
+     * fills a document, then blurred and rendered again, and read back from
+     * what the form would send as well as from what each field shows.
+     */
+    {
+      const reactEducation = (fields, education, query = '') =>
+        page.goto(`${base}/greenhouse-react-education${query}`, { waitUntil: 'domcontentloaded' }).then(() =>
+          page.evaluate(async ({ b, fields, education }) => {
+            const m = await import(`${b}/autofill.js`);
+            const first = await m.fillComboboxes(fields, m.fillForm(fields));
+            const report = await m.fillEducation(education, fields, first);
+            document.activeElement?.blur?.();
+            await new Promise((r) => setTimeout(r, 300));
+            window.__rerender();
+            const shows = [...document.querySelectorAll('.education--form')].map((form) =>
+              Object.fromEntries([...form.querySelectorAll('input[id]')].map((el) => {
+                const control = el.closest('.select__control');
+                return [el.id.replace(/--\d+$/, ''), control ? control.querySelector('.select__single-value, .select__placeholder')?.textContent ?? '' : el.value];
+              })),
+            );
+            return {
+              sent: window.__form(),
+              invalid: window.__invalid(),
+              shows,
+              required: document.querySelector('.requiredInput')?.value ?? '',
+              pressed: window.__pressed,
+              filled: report.filled.map((x) => x.key),
+              left: report.skipped.map((x) => `${x.key}: ${x.reason} [${x.description ?? ''}]`),
+            };
+          }, { b: base, fields, education }),
+        );
+      // Morgan Testwell's one education, as the store sends it: the profile's fields and the resume's entry.
+      const ESU = { school: 'Example State University', degree: 'Bachelor of Science', major: 'Computer Science', start: { year: 2021, month: 9 }, end: { year: 2025, month: 5 } };
+      const ESU_FIELDS = {
+        first_name: 'Morgan', school: 'Example State University', degree: 'Bachelor of Science', major: 'Computer Science',
+        education_start_month: 'September', education_start_year: '2021', education_start_date: 'September 2021',
+        graduation_month: 'May', graduation_year: '2025', graduation_date: 'May 2025',
+      };
+      const at = (school) => [{ ...ESU_FIELDS, school }, [{ ...ESU, school }]];
+      const boxes = await reactEducation(ESU_FIELDS, [ESU]);
+      const lists = await reactEducation(ESU_FIELDS, [ESU], '?month-lists&delay=250');
+      const campus = await reactEducation(...at('University of Example at Eastfield'), '?delay=250');
+      const saint = await reactEducation(...at('St. Example College'), '?delay=250');
+      const onlyCampuses = await reactEducation(...at('University of Example'), '?delay=250');
+      const lookalikes = await reactEducation(...at('Example State Polytechnic'), '?delay=250');
+      const second = await reactEducation(ESU_FIELDS, [ESU, { school: 'Example University', degree: 'Associate of Arts', major: 'Mathematics', start: { year: 2019, month: 8 }, end: { year: 2021, month: 6 } }], '?delay=250');
+      group('Greenhouse: the education block as React keeps it, with the school spelled the board\'s way');
+      check(
+        'the school is chosen under the board\'s spelling ("Example State Univ." for "Example State University"), found by searching as the list is searched, with either kind of date box',
+        [boxes, lists].every((r) => r.sent[0]?.school === 'Example State Univ.' && r.shows[0]?.school === 'Example State Univ.' && r.filled.includes('school') &&
+          !r.left.some((x) => x.startsWith('school')) && !r.invalid.includes('school--0')) && boxes.required !== '',
+        JSON.stringify({ sent: boxes.sent[0], left: boxes.left, required: boxes.required, lists: lists.sent[0] }),
+      );
+      check(
+        'the degree by its level and the discipline, still shown after the form renders again, and in what it would send',
+        boxes.sent[0]?.degree === "Bachelor's Degree" && boxes.shows[0]?.degree === "Bachelor's Degree" &&
+          boxes.sent[0]?.discipline === 'Computer Science' && boxes.shows[0]?.discipline === 'Computer Science',
+        JSON.stringify({ sent: boxes.sent[0], shows: boxes.shows[0] }),
+      );
+      check(
+        'the start and end go into the MM and YYYY boxes as 09/2021 and 05/2025, and the form sees nothing wrong with any of it',
+        boxes.sent[0]?.startMonth === '09' && boxes.sent[0]?.startYear === '2021' && boxes.sent[0]?.endMonth === '05' && boxes.sent[0]?.endYear === '2025' &&
+          boxes.shows[0]?.['start-month'] === '09' && boxes.shows[0]?.['end-year'] === '2025' && !boxes.invalid.some((x) => /Month|Year/.test(x)),
+        JSON.stringify({ sent: boxes.sent[0], shows: boxes.shows[0], invalid: boxes.invalid }),
+      );
+      check(
+        'where the months are lists of names and the years number boxes, as on today\'s boards, the dates go in as names and numbers',
+        lists.sent[0]?.startMonth === 'September' && lists.sent[0]?.startYear === '2021' && lists.sent[0]?.endMonth === 'May' && lists.sent[0]?.endYear === '2025' &&
+          lists.shows[0]?.['end-month'] === 'May' && lists.sent[0]?.degree === "Bachelor's Degree" && !lists.invalid.some((x) => /Month|Year/.test(x)),
+        JSON.stringify({ sent: lists.sent[0], left: lists.left }),
+      );
+      check(
+        'a campus written "at Eastfield" is the board\'s "- Eastfield", and its block gets its dates',
+        campus.sent[0]?.school === 'University of Example - Eastfield' && campus.sent[0]?.endYear === '2025' && campus.sent[0]?.startMonth === '09',
+        JSON.stringify({ sent: campus.sent[0], left: campus.left }),
+      );
+      check('"St." is the board\'s "Saint"', saint.sent[0]?.school === 'Saint Example College', JSON.stringify({ sent: saint.sent[0], left: saint.left }));
+      check(
+        'a school the list has only campuses of, or only lookalikes of, is left on "Select..." and named as the person\'s to pick',
+        [onlyCampuses, lookalikes].every((r) => r.sent[0]?.school === '' && r.shows[0]?.school === 'Select...' && r.left.some((x) => /^school: .*\[School/.test(x)) && !r.filled.includes('school')),
+        JSON.stringify([onlyCampuses, lookalikes].map((r) => ({ sent: r.sent[0]?.school, left: r.left }))),
+      );
+      check(
+        'and the rest of that block is still filled',
+        [onlyCampuses, lookalikes].every((r) => r.sent[0]?.degree === "Bachelor's Degree" && r.sent[0]?.endYear === '2025'),
+        JSON.stringify([onlyCampuses, lookalikes].map((r) => r.sent[0])),
+      );
+      check(
+        'a second school gets the block "Add another" adds, and the first keeps the board\'s spelling of its own',
+        second.pressed === 1 && second.sent.length === 2 && second.sent[0]?.school === 'Example State Univ.' && second.sent[0]?.endYear === '2025' &&
+          second.sent[1]?.school === 'Example University' && second.sent[1]?.degree === "Associate's Degree" && second.sent[1]?.startMonth === '08' && second.invalid.length === 0,
+        JSON.stringify({ sent: second.sent, left: second.left }),
+      );
+
+      // The same names in a plain <select>, as a form posting to Greenhouse's API lists them.
+      const schoolSelect = (names, school) =>
+        page.goto(`${base}/greenhouse-react-education`, { waitUntil: 'domcontentloaded' }).then(() =>
+          page.evaluate(async ({ b, names, school }) => {
+            const m = await import(`${b}/autofill.js`);
+            document.getElementById('education').remove();
+            document.getElementById('application-form').insertAdjacentHTML(
+              'beforeend',
+              `<label for="school_name_id">School</label><select id="school_name_id" name="job_application[educations_attributes][0][school_name_id]"><option value="">--</option>${names.map((n, i) => `<option value="${i + 1}">${n}</option>`).join('')}</select>`,
+            );
+            const report = m.fillForm({ school });
+            const select = document.getElementById('school_name_id');
+            return { chosen: select.value ? select.selectedOptions[0].textContent : '', filled: report.filled.map((x) => x.key) };
+          }, { b: base, names, school }),
+        );
+      const selectSpelled = await schoolSelect(['Example State College', 'Example State Univ.', 'Northern Example State University'], 'Example State University');
+      const selectTwo = await schoolSelect(['Saint Example College', 'St. Example College', 'Example College'], 'St Example College');
+      check('a plain list takes the school under its spelling too', selectSpelled.chosen === 'Example State Univ.' && selectSpelled.filled.includes('school'), JSON.stringify(selectSpelled));
+      check('but not where two different options would both be it', selectTwo.chosen === '' && !selectTwo.filled.includes('school'), JSON.stringify(selectTwo));
+    }
+
     /* ---------------- Workday's My Experience: a work history ---------------- */
     /*
      * Reported: the Role Description "should be filled with resume stuff".
@@ -9892,6 +11274,178 @@ async function main() {
       JSON.stringify(portalled),
     );
 
+    await page.goto(`${base}/page-highlight-only`, { waitUntil: 'domcontentloaded' });
+    const highlighted = await page.evaluate(async ({ b, fields }) => {
+      const m = await import(`${b}/autofill.js`);
+      const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 1000 });
+      return { ...window.state(), log: window.log, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+    }, { b: base, fields: SWEEP });
+    group('A dropdown whose options are only highlighted by the press is not filled');
+    check(
+      'a combobox and a typing box whose press only highlights the option (aria-selected), choosing on Enter, are reported as ones to pick by hand, not filled, and their lists are shut again',
+      highlighted.school === 'Select One' && highlighted.country === '' && highlighted.open === 0 &&
+        !highlighted.filled.includes('school') && !highlighted.filled.includes('address_country') &&
+        highlighted.skipped.includes('school: this one has to be picked by hand') && highlighted.skipped.includes('address_country: this one has to be picked by hand'),
+      JSON.stringify(highlighted),
+    );
+    check(
+      'and a combobox showing nothing of its own, whose choice is marked in its list as that list shuts, is still filled',
+      highlighted.degree === 'Bachelor of Science' && highlighted.filled.includes('degree') && !highlighted.skipped.some((s) => s.startsWith('degree:')),
+      JSON.stringify(highlighted),
+    );
+
+    await page.goto(`${base}/page-already-answered`, { waitUntil: 'domcontentloaded' });
+    const alreadyAnswered = await page.evaluate(async ({ b, fields }) => {
+      const m = await import(`${b}/autofill.js`);
+      const first = m.fillForm(fields);
+      const before = window.state();
+      const report = await m.fillComboboxes(fields, first, { patience: 1000 });
+      return {
+        before, after: window.state(), log: window.log, firstSkipped: first.skipped.map((s) => `${s.key}: ${s.reason}`),
+        filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+      };
+    }, { b: base, fields: SWEEP });
+    await page.goto(`${base}/page-answered-lookalikes`, { waitUntil: 'domcontentloaded' });
+    const lookalikes = await page.evaluate(async ({ b, fields }) => {
+      const m = await import(`${b}/autofill.js`);
+      const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 1000 });
+      return { ...window.state(), log: window.log, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+    }, { b: base, fields: SWEEP });
+    group('A dropdown already showing the answer is answered');
+    check(
+      'dropdowns already showing the answer, in their box or drawn beside it, are neither reported as ones to pick by hand nor filled, nor pressed, typed into or emptied',
+      JSON.stringify(alreadyAnswered.after) === JSON.stringify(alreadyAnswered.before) && alreadyAnswered.after.major === 'Computer Science' &&
+        alreadyAnswered.log.length === 0 && alreadyAnswered.firstSkipped.length === 0 && alreadyAnswered.skipped.length === 0 && alreadyAnswered.filled.length === 0,
+      JSON.stringify(alreadyAnswered),
+    );
+    check(
+      'but a box holding the answer typed and never chosen, and a question showing "None selected", are still chosen in and filled',
+      lookalikes.city.join() === 'Boston,Boston' && lookalikes.spon === 'No' && lookalikes.filled.join() === 'address_city,requires_sponsorship' && lookalikes.skipped.length === 0,
+      JSON.stringify(lookalikes),
+    );
+
+    const focusOpens = async (url) => {
+      await page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 1000 });
+        return { ...window.state(), log: window.log, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields: SWEEP });
+    };
+    const nudged = await focusOpens('/page-focus-opens-another');
+    const unnudged = await focusOpens('/page-focus-opens-another?quiet');
+    group('A list another question opens as a dropdown is pressed is not that dropdown\'s');
+    check(
+      'a sponsorship menu the page opens as the next question takes the focus is not chosen in for that question: sponsorship keeps its No, and the question that opened nothing is one to pick by hand',
+      nudged.spon === 'No' && nudged.sponShown === 'No' && nudged.log.join() === 'sponsorship No' && nudged.auth === 'Select One' &&
+        nudged.filled.join() === 'requires_sponsorship' && nudged.skipped.join() === 'work_authorization: this one has to be picked by hand',
+      JSON.stringify(nudged),
+    );
+    check(
+      'but a list named nowhere, drawn at the foot of the body by the question\'s own press, is still its own, beside a menu drawn in its question\'s container',
+      unnudged.spon === 'No' && unnudged.auth === 'Yes' && unnudged.log.join() === 'sponsorship No,authorization Yes' &&
+        unnudged.filled.join() === 'requires_sponsorship,work_authorization' && unnudged.skipped.length === 0,
+      JSON.stringify(unnudged),
+    );
+
+    const chipsOn = async (query) => {
+      await page.goto(`${base}/page-chosen-chips${query}`, { waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 1000 });
+        return { ...window.state(), log: window.log, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields: SWEEP });
+    };
+    const chips = await chipsOn('');
+    const unmarkedChips = await chipsOn('?unmarked');
+    group('The chips a dropdown holds are not a list to choose from');
+    check(
+      'a multi-select whose chosen chips are a listbox inside it, opening nothing on a press, has no chip pressed for its answer: United States is kept',
+      chips.chips.join() === 'United States' && !chips.log.some((l) => l.startsWith('removed')) && !chips.filled.includes('address_country') &&
+        chips.skipped.join() === 'address_country: this one has to be picked by hand',
+      JSON.stringify(chips),
+    );
+    check(
+      'but a dropdown whose list, one option highlighted, is always open inside it is still chosen in from that list',
+      chips.school === 'Northeastern University' && chips.log.includes('chose Northeastern University') && chips.filled.includes('school'),
+      JSON.stringify(chips),
+    );
+    check(
+      'and chips drawn as options with no aria-selected, under a dropdown saying it is shut, are not pressed either: United States is kept',
+      unmarkedChips.chips.join() === 'United States' && !unmarkedChips.log.some((l) => l.startsWith('removed')) && !unmarkedChips.filled.includes('address_country') &&
+        unmarkedChips.skipped.join() === 'address_country: this one has to be picked by hand',
+      JSON.stringify(unmarkedChips),
+    );
+    check(
+      'while the School whose list is always open inside it, saying nothing of being expanded, is still chosen in from that list',
+      unmarkedChips.school === 'Northeastern University' && unmarkedChips.log.includes('chose Northeastern University') && unmarkedChips.filled.includes('school'),
+      JSON.stringify(unmarkedChips),
+    );
+
+    await page.goto(`${base}/page-typed-before`, { waitUntil: 'domcontentloaded' });
+    const typedBefore = await page.evaluate(async ({ b, fields }) => {
+      const m = await import(`${b}/autofill.js`);
+      const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 1000 });
+      return { ...window.state(), log: window.log, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+    }, { b: base, fields: SWEEP });
+    group('What a person typed in a dropdown\'s box is put back, not emptied');
+    check(
+      'a City box saying "Bost" whose list ignores the click, and a School box saying "Northea" whose list lacks the answer, hold what was typed again, are shut, and are reported as ones to pick by hand',
+      typedBefore.city.join() === 'Bost,' && typedBefore.school.join() === 'Northea,' && typedBefore.open === 0 && typedBefore.log.length === 0 &&
+        typedBefore.filled.length === 0 && typedBefore.skipped.join() === 'address_city: this one has to be picked by hand,school: this one has to be picked by hand',
+      JSON.stringify(typedBefore),
+    );
+
+    const ngSelect = async (query) => {
+      await page.goto(`${base}/page-ng-select${query}`, { waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 1000 });
+        return { ...window.state(), log: window.log, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields: SWEEP });
+    };
+    const ngChosen = await ngSelect('');
+    const ngDeaf = await ngSelect('?deaf');
+    group('Angular ng-select: a choice drawn as its value label is seen');
+    check(
+      'a Country and a Discipline chosen in ng-select, drawn as .ng-value-label, are reported filled, once each, and not as ones to pick by hand; the Degree already holding the answer is left untouched',
+      ngChosen.country.join() === 'United States' && ngChosen.major.join() === 'Computer Science' && ngChosen.degree.join() === 'Bachelor of Science' &&
+        ngChosen.log.join() === 'ngs-country chose United States,ngs-major chose Computer Science' && ngChosen.boxes.join() === ',,' && ngChosen.open === 0 &&
+        ngChosen.filled.join() === 'address_country,major' && ngChosen.skipped.length === 0,
+      JSON.stringify(ngChosen),
+    );
+    check(
+      'but ng-selects whose panel shuts on a click without choosing are reported as ones to pick by hand, not filled',
+      ngDeaf.country.length === 0 && ngDeaf.major.length === 0 && ngDeaf.open === 0 && ngDeaf.filled.length === 0 &&
+        ngDeaf.skipped.join() === 'address_country: this one has to be picked by hand,major: this one has to be picked by hand',
+      JSON.stringify(ngDeaf),
+    );
+
+    const loadingOn = async (query) => {
+      await page.goto(`${base}/page-loading-elsewhere${query}`, { waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const began = performance.now();
+        const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 2000 });
+        const ms = Math.round(performance.now() - began);
+        return { ms, ...window.state(), log: window.log, filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+      }, { b: base, fields: SWEEP });
+    };
+    const loadingElsewhere = await loadingOn('');
+    const loadingOwn = await loadingOn('?own');
+    group('Another question\'s loading list does not hold a dropdown\'s first look open');
+    check(
+      'a City box that opens nothing, on a page that opens the sponsorship question\'s "Loading..." menu as the focus moves, is given up on after its quiet and then its patience (under 3.2s of a 2s patience), not twice its patience, and is left to pick by hand with sponsorship kept',
+      loadingElsewhere.ms < 3200 && loadingElsewhere.city.join() === ',' && loadingElsewhere.spon === 'No' &&
+        loadingElsewhere.filled.length === 0 && loadingElsewhere.skipped.join() === 'address_city: this one has to be picked by hand',
+      JSON.stringify(loadingElsewhere),
+    );
+    check(
+      'but a City whose own menu, named nowhere at the foot of the body, says "Loading..." past its quiet is waited for, not typed over, and Boston chosen in it',
+      loadingOwn.city.join() === 'Boston,Boston' && loadingOwn.log.join() === 'city chose Boston' && loadingOwn.filled.join() === 'address_city' && loadingOwn.skipped.length === 0,
+      JSON.stringify(loadingOwn),
+    );
+
     const putIn = (url) => page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' }).then(() =>
       page.evaluate(async ({ b, fields }) => {
         const m = await import(`${b}/autofill.js`);
@@ -10444,6 +11998,306 @@ async function main() {
         nearMisses.shown.every((row) => /Select( ▾)?$/.test(row)) &&
         nearMisses.skipped.includes('school: this one has to be picked by hand') && nearMisses.skipped.includes('major: this one has to be picked by hand'),
       JSON.stringify(nearMisses),
+    );
+    /* ------------- Ashby's "Autofill from resume", after the fill ------------- */
+    /*
+     * Reported on Quora's Ashby form: filled, then the resume went into the
+     * autofill box, and Submit answered "Missing entry for required field"
+     * for the telephone, the discipline, the graduation date and both yes/no
+     * questions — every one of them filled, and emptied when the form came
+     * back from the parse with only the name and the email in it.
+     */
+    const QUORA = {
+      ...PROFILE, phone: '(555) 010-0199', major: 'Computer Science', graduation_date: 'May 2027', requires_sponsorship: 'No',
+    };
+    const COORDINATION = 'I understand that all employees for this position will be expected to be available for meetings and impromptu communication during Quora\'s “coordination hours” (Mon-Fri, 9am-3pm Pacific Time).';
+    const resumeAutofill = (query = '', { clearDiscipline = false, clearLocation = false, upload = true, fields = QUORA } = {}) =>
+      page.goto(`${base}/ashby-resume-autofill${query}`, { waitUntil: 'domcontentloaded' }).then(async () => {
+        const filled = await page.evaluate(async ({ b, fields, asked }) => {
+          const m = await import(`${b}/autofill.js`);
+          window.__told = [];
+          const report = await m.fillComboboxes(fields, m.fillForm(fields, { remembered: [{ question: asked, answer: 'Yes' }] }), { patience: 1500 });
+          m.watchForEmptied?.((names) => window.__told.push(names));
+          await new Promise((r) => setTimeout(r, 700));
+          return {
+            server: window.__server(), filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+            picked: Object.fromEntries([...document.querySelectorAll('#form-root input.ashby-application-form-input-autocomplete')].map((i) => [i.closest('[data-field-path]').dataset.fieldPath, i.value])),
+          };
+        }, { b: base, fields, asked: COORDINATION });
+        // Somebody taking one of them out again, by hand.
+        if (clearDiscipline) await page.fill('[id="842bb240-06cd-4b26-8c17-aa094b1c9dab"]', '');
+        if (clearLocation) {
+          await page.fill('[data-field-path="_systemfield_location"] input', '');
+          await page.locator('body').click({ position: { x: 5, y: 5 } });
+        }
+        if (upload) {
+          // The resume into the autofill box, the way the card's Attach or a dropped chip puts it in any box.
+          await page.evaluate(() => {
+            const box = document.getElementById('autofill-box');
+            const carrier = new DataTransfer();
+            carrier.items.add(new File(['%PDF-1.4'], 'Morgan-Testwell-Resume.pdf', { type: 'application/pdf' }));
+            box.files = carrier.files;
+            box.dispatchEvent(new Event('input', { bubbles: true }));
+            box.dispatchEvent(new Event('change', { bubbles: true }));
+          });
+        }
+        await page.waitForTimeout(4000);
+        return page.evaluate((before) => ({
+          before,
+          server: window.__server(),
+          mounts: window.__mounts,
+          told: window.__told,
+          shown: Object.fromEntries([...document.querySelectorAll('#form-root input[type=text], #form-root input[type=tel], #form-root input[type=email]')].map((i) => [i.name || i.placeholder, i.value])),
+          pressed: [...document.querySelectorAll('#form-root [aria-pressed="true"]')].map((b) => b.textContent),
+          picked: Object.fromEntries([...document.querySelectorAll('#form-root input.ashby-application-form-input-autocomplete')].map((i) => [i.closest('[data-field-path]').dataset.fieldPath, i.value])),
+        }), filled);
+      });
+    const PHONE = 'ac061e86-2644-429c-9f9f-58ecfe59b7e5';
+    const DISCIPLINE = '842bb240-06cd-4b26-8c17-aa094b1c9dab';
+    const GRADUATION = '751b69d2-5b38-4552-b010-e3bdd1e891f2';
+    const ACK = '003d89f3-1128-4fef-a9ac-40e88a4ba7e4';
+    const SPONSOR = '3710353f-ee10-43fa-b7a9-e747deb6ff04';
+    const wiped = await resumeAutofill();
+    const wipedInPlace = await resumeAutofill('?inplace');
+    const parsedPhone = await resumeAutofill('?parsed-phone');
+    const clearedByHand = await resumeAutofill('', { clearDiscipline: true });
+    const neverWiped = await resumeAutofill('', { upload: false });
+    group('Ashby\'s "Autofill from resume" emptying what was filled');
+    const allBack = (r) =>
+      r.server[PHONE] === '(555) 010-0199' && r.server[DISCIPLINE] === 'Computer Science' && r.server[GRADUATION] === '2027-05-01' &&
+      r.server[ACK] === true && r.server[SPONSOR] === false;
+    check(
+      'filled first: the telephone, the discipline, the date, sponsorship No and the remembered Yes all reach the page',
+      allBack(wiped.before) && wiped.before.server._systemfield_name === 'Morgan Testwell',
+      JSON.stringify(wiped.before),
+    );
+    check(
+      'after the form mounts again from the parse, each is filled in again and saved, and the name and email are the page\'s',
+      wiped.mounts === 2 && allBack(wiped) && wiped.shown[GRADUATION] === undefined && wiped.shown['Pick date...'] === '05/01/2027' &&
+        wiped.server._systemfield_email === 'morgan.testwell@example.com' && wiped.pressed.join() === 'Yes,No',
+      JSON.stringify(wiped),
+    );
+    check(
+      'and the card is told which, once',
+      wiped.told.length === 1 && wiped.told[0].length === 5 && wiped.told[0].includes('Phone') && wiped.told[0].includes('Discipline/Field of Study') &&
+        wiped.told[0].some((n) => /^Graduation Date/.test(n)) && wiped.told[0].some((n) => /coordination hours/.test(n)) && wiped.told[0].some((n) => /sponsorship/.test(n)),
+      JSON.stringify(wiped.told),
+    );
+    check('the same when the page empties the same boxes where they stand', wipedInPlace.mounts === 1 && allBack(wipedInPlace) && wipedInPlace.told.length === 1, JSON.stringify(wipedInPlace));
+    check(
+      'a telephone number the parse put there is the page\'s, and stays',
+      parsedPhone.server[PHONE] === '555-010-0123' && parsedPhone.shown[PHONE] === '555-010-0123' && parsedPhone.server[DISCIPLINE] === 'Computer Science' &&
+        parsedPhone.told.length === 1 && !parsedPhone.told[0].includes('Phone'),
+      JSON.stringify(parsedPhone),
+    );
+    check(
+      'a box the person emptied by hand is not filled in again, the rest are',
+      clearedByHand.shown[DISCIPLINE] === '' && !clearedByHand.server[DISCIPLINE] && clearedByHand.server[PHONE] === '(555) 010-0199' &&
+        !clearedByHand.told.flat().includes('Discipline/Field of Study'),
+      JSON.stringify(clearedByHand),
+    );
+    check('and a form nothing empties is left alone', neverWiped.told.length === 0 && allBack(neverWiped) && neverWiped.mounts === 1, JSON.stringify(neverWiped));
+    /*
+     * And the page's two search-and-pick boxes, Location and School Name,
+     * chosen by Autofill and emptied by the parse like the rest.
+     */
+    const PICKED = { ...QUORA, address_state: 'MA', location: 'Boston, MA', school: 'Northeastern University' };
+    const LOCATION = '_systemfield_location';
+    const SCHOOL = '_systemfield_education_history';
+    const pickedAgain = await resumeAutofill('?comboboxes', { fields: PICKED });
+    const pickedInPlace = await resumeAutofill('?comboboxes&inplace', { fields: PICKED });
+    const parsedLocation = await resumeAutofill('?comboboxes&parsed-location', { fields: PICKED });
+    const locationByHand = await resumeAutofill('?comboboxes', { fields: PICKED, clearLocation: true });
+    const pickedNeverWiped = await resumeAutofill('?comboboxes', { fields: PICKED, upload: false });
+    const bothPicked = (r) =>
+      r.server[LOCATION] === 'Boston, Massachusetts, United States' && r.server[SCHOOL] === 'Northeastern University' &&
+      r.picked[LOCATION] === 'Boston, Massachusetts, United States' && r.picked[SCHOOL] === 'Northeastern University';
+    group('Ashby\'s search-and-pick boxes emptied by "Autofill from resume"');
+    check(
+      'chosen first: the Location and the School are picked and saved',
+      bothPicked(pickedAgain.before) && pickedAgain.before.filled.includes('location') && pickedAgain.before.filled.includes('school'),
+      JSON.stringify(pickedAgain.before),
+    );
+    check(
+      'after the form mounts again from the parse, both are chosen again and saved, with the rest',
+      pickedAgain.mounts === 2 && bothPicked(pickedAgain) && allBack(pickedAgain),
+      JSON.stringify(pickedAgain),
+    );
+    check(
+      'and the card is told of them, once, with the rest',
+      pickedAgain.told.length === 1 && pickedAgain.told[0].length === 7 && pickedAgain.told[0].includes('Location') &&
+        pickedAgain.told[0].some((n) => /School/.test(n)),
+      JSON.stringify(pickedAgain.told),
+    );
+    check('the same when the page empties them where they stand', pickedInPlace.mounts === 1 && bothPicked(pickedInPlace) && pickedInPlace.told.length === 1, JSON.stringify(pickedInPlace));
+    check(
+      'a location the parse put there is the page\'s, and stays',
+      parsedLocation.server[LOCATION] === 'Toronto, Ontario, Canada' && parsedLocation.picked[LOCATION] === 'Toronto, Ontario, Canada' &&
+        parsedLocation.server[SCHOOL] === 'Northeastern University' && !parsedLocation.told.flat().includes('Location'),
+      JSON.stringify(parsedLocation),
+    );
+    check(
+      'a box the person emptied by hand is not chosen again, the School is',
+      locationByHand.picked[LOCATION] === '' && locationByHand.picked[SCHOOL] === 'Northeastern University' && !locationByHand.told.flat().includes('Location'),
+      JSON.stringify(locationByHand),
+    );
+    check('and boxes nothing empties are left alone', pickedNeverWiped.told.length === 0 && bothPicked(pickedNeverWiped) && pickedNeverWiped.mounts === 1, JSON.stringify(pickedNeverWiped));
+    // A react-select, which draws its pick beside an empty box: the page puts "Select..." back over two of them.
+    const reactSelect = await page.goto(`${base}/greenhouse-stripe`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const told = [];
+        await m.fillComboboxes(fields, m.fillForm(fields));
+        m.watchForEmptied?.((names) => told.push(names));
+        document.activeElement?.blur?.();
+        const shown = (id) => document.getElementById(id).closest('.select__control').querySelector('.select__single-value')?.textContent ?? '';
+        const before = { school: shown('school--0'), degree: shown('degree--0'), discipline: shown('discipline--0') };
+        for (const id of ['school--0', 'degree--0']) {
+          const control = document.getElementById(id).closest('.select__control');
+          control.querySelector('.select__single-value').remove();
+          control.querySelector('.select__value-container').insertAdjacentHTML('afterbegin', '<div class="select__placeholder">Select...</div>');
+        }
+        const began = Date.now();
+        while (!told.length && Date.now() - began < 8000) await new Promise((r) => setTimeout(r, 100));
+        return { before, told, took: Date.now() - began, school: shown('school--0'), degree: shown('degree--0'), discipline: shown('discipline--0'), open: document.querySelectorAll('[role=listbox]').length };
+      }, { b: base, fields: { school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science' } }),
+    );
+    check(
+      'a react-select the page puts back to "Select..." is chosen again, and only the ones it emptied',
+      reactSelect.before.school === 'Northeastern University' && reactSelect.school === 'Northeastern University' && reactSelect.degree === "Bachelor's Degree" &&
+        reactSelect.discipline === 'Computer Science' && reactSelect.open === 0 && reactSelect.told.length === 1 && reactSelect.told[0].length === 2,
+      JSON.stringify(reactSelect),
+    );
+    const reset = await page.goto(`${base}/reset-on-file`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const told = [];
+        const report = m.fillForm(fields);
+        m.watchForEmptied?.((names) => told.push(names));
+        const box = document.getElementById('rr');
+        const carrier = new DataTransfer();
+        carrier.items.add(new File(['%PDF-1.4'], 'Morgan-Testwell-Resume.pdf', { type: 'application/pdf' }));
+        box.files = carrier.files;
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 2500));
+        return {
+          filled: report.filled.map((f) => f.key), told,
+          country: document.getElementById('rc').value, phone: document.getElementById('rp').value,
+          auth: document.querySelector('input[name=rauth]:checked')?.value ?? null,
+        };
+      }, { b: base, fields: { ...PROFILE, phone: '(555) 010-0199', work_authorization: 'Yes' } }),
+    );
+    check(
+      'a dropdown, a pair of radios and a box a form reset empties are filled in again too',
+      reset.country === 'US' && reset.auth === 'yes' && reset.phone === '(555) 010-0199' && reset.told.length === 1 && reset.told[0].length === 3,
+      JSON.stringify(reset),
+    );
+
+    /* ------------- Statements asked only to be acknowledged ------------- */
+    const acknowledge = (query = '', remembered = []) =>
+      page.goto(`${base}/acknowledgements${query}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, fields, remembered }) => {
+          const m = await import(`${b}/autofill.js`);
+          await new Promise((r) => setTimeout(r, 50));
+          const report = await m.fillComboboxes(fields, m.fillForm(fields, { remembered }), { patience: 800 });
+          await new Promise((r) => setTimeout(r, 100));
+          return {
+            ...window.__state(),
+            acknowledged: report.filled.filter((f) => f.acknowledged).map((f) => f.question),
+            filled: report.filled.map((f) => f.key),
+            skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+          };
+        // Nothing about the right to work, so that nothing but the statement itself decides those.
+        }, { b: base, fields: { full_name: 'Morgan Testwell', email: 'morgan.testwell@example.com', phone: '(555) 010-0199' }, remembered }),
+      );
+    const acked = await acknowledge();
+    const ackedBefore = await acknowledge('?answered');
+    const ackedFromBank = await acknowledge('', [{ question: COORDINATION, answer: 'No' }]);
+    group('Statements a form asks only to be acknowledged');
+    check(
+      'Quora\'s "I understand ... coordination hours" is answered Yes, pressed as Ashby draws it, and reported as acknowledged',
+      acked.pressed[ACK] === 'Yes' && acked.acknowledged.includes(COORDINATION) && !acked.skipped.some((s) => s.startsWith('acknowledged:')),
+      JSON.stringify(acked),
+    );
+    check(
+      'so is a lone required checkbox, a pair of radios and a select, each saying one',
+      acked.privacy === true && acked.office === 'yes' && acked.read === 'Yes' && acked.acknowledged.length === 4 &&
+        acked.acknowledged.includes('I have read and understand the Candidate Privacy Notice.'),
+      JSON.stringify(acked),
+    );
+    check(
+      'a statement about texting, a background check, visa sponsorship or marketing is never answered, nor Quora\'s texting consent',
+      acked.pressed['ack-texting'] === null && acked.pressed['ack-background'] === null && acked.pressed['ack-visa'] === null &&
+        acked.texting === null && acked.marketing === false,
+      JSON.stringify(acked),
+    );
+    check(
+      'nor is the statement that everything is true, or a box nobody has to tick',
+      acked.certify === false && acked.optional === false,
+      JSON.stringify(acked),
+    );
+    check(
+      'a statement the person has already answered No stays No, and the bank\'s No is given before any Yes',
+      ackedBefore.pressed[ACK] === 'No' && !ackedBefore.acknowledged.includes(COORDINATION) &&
+        ackedFromBank.pressed[ACK] === 'No' && !ackedFromBank.acknowledged.includes(COORDINATION),
+      JSON.stringify({ before: ackedBefore.pressed, bank: ackedFromBank.pressed }),
+    );
+
+    /* ------ Sponsorship and right-to-work policies, only acknowledged ------ */
+    const fillPolicies = (where) =>
+      page.goto(`${base}${where}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, fields }) => {
+          const m = await import(`${b}/autofill.js`);
+          await new Promise((r) => setTimeout(r, 50));
+          const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 800 });
+          await new Promise((r) => setTimeout(r, 100));
+          return {
+            ...window.__state(),
+            acknowledged: report.filled.filter((f) => f.acknowledged).map((f) => f.question),
+            filled: report.filled.map((f) => `${f.key}: ${f.value}`),
+            skipped: report.skipped.map((s) => ({ key: s.key, reason: s.reason, description: s.description })),
+          };
+        }, { b: base, fields: { full_name: 'Morgan Testwell', email: 'morgan.testwell@example.com', phone: '(555) 010-0199', work_authorization: 'Yes', requires_sponsorship: 'No' } }),
+      );
+    const policies = await fillPolicies('/sponsorship-policies');
+    const policyPressed = await fillPolicies('/sponsorship-policy-pressed');
+    const policyAria = await fillPolicies('/sponsorship-policy-aria');
+    // Listed for the person: skipped for a reason other than "already filled", which the card counts as still theirs.
+    const leftFor = (r, words) => r.skipped.some((s) => s.reason !== 'already filled' && words.startsWith(String(s.description).slice(0, 40)));
+    group('Sponsorship and right-to-work policies a form asks only to be acknowledged');
+    check(
+      'the questions about the applicant still follow the profile: sponsorship No as a select and as Ashby buttons, authorised Yes as radios',
+      policies.sponsorship === 'No' && policies.authorized === 'Yes' && policyPressed.buttons['ask-visa'] === 'No' && policyAria.buttons['ask-visa'] === 'No',
+      JSON.stringify({ policies, pressed: policyPressed.buttons, aria: policyAria.buttons }),
+    );
+    check(
+      '"I understand ... not eligible for visa sponsorship" and its kind as radios, a select, a lone required box and Workday\'s dropdown: none answered, none said Yes to',
+      policies.radios === null && policies.select === '' && policies.box === false && policies.widget === '' && policies.acknowledged.length === 0,
+      JSON.stringify(policies),
+    );
+    check(
+      'nor the reverse wording, "I understand sponsorship is available", nor a right-to-work policy',
+      policies.available === '' && policies.authPolicy === null,
+      JSON.stringify(policies),
+    );
+    check(
+      'nor "I understand that this position does not offer visa sponsorship" as Ashby\'s Yes and No, nor its kind as an ARIA group',
+      policyPressed.buttons['ack-visa'] === null && policyPressed.acknowledged.length === 0 && policyAria.aria === null && policyAria.acknowledged.length === 0,
+      JSON.stringify({ pressed: policyPressed, aria: policyAria }),
+    );
+    check(
+      'each is listed as left for the person',
+      [
+        'I acknowledge that the company will not sponsor employment visas for this role.',
+        'I understand this role is not eligible for visa sponsorship.',
+        'Please confirm you understand we cannot sponsor work visas for this position.',
+        'I understand sponsorship is available for this role if needed.',
+        'I acknowledge that candidates must be legally authorized to work in the United States.',
+        'I acknowledge that this company does not sponsor H-1B visas.',
+      ].every((words) => leftFor(policies, words)) &&
+        leftFor(policyPressed, 'I understand that this position does not offer visa sponsorship.') &&
+        leftFor(policyAria, 'I understand that we are unable to provide visa sponsorship now or in the future.'),
+      JSON.stringify({ policies: policies.skipped, pressed: policyPressed.skipped, aria: policyAria.skipped }),
     );
   } finally {
     await browser.close();

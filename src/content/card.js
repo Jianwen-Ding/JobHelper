@@ -71,8 +71,23 @@ const STYLE = `
   position: fixed;
   top: 14px;
   right: 14px;
+  /*
+   * 420px, and never wider than the window. It was a fixed 420, so in a
+   * half-screen window or a zoomed page its left edge went off the screen and
+   * took the start of every line with it. Narrower than 448px it gives up the
+   * width and keeps the margin (and closer in still, see the rule for narrow
+   * windows below).
+   *
+   * Measured against the window twice over. The percentage is the window less
+   * its scrollbars, which is what the fixed position is measured from too;
+   * 100vw counts the scrollbar, so a card sized by that alone would sit under
+   * it on a machine that draws one. The vw/vh bound is for a page that puts a
+   * filter or transform on <html>, where a percentage would be the page's
+   * own box.
+   */
   width: 420px;
-  max-height: calc(100vh - 28px);
+  max-width: min(calc(100% - 28px), calc(100vw - 28px));
+  max-height: min(calc(100% - 28px), calc(100vh - 28px));
   display: flex;
   flex-direction: column;
   background: #fff;
@@ -102,7 +117,7 @@ const STYLE = `
   box-shadow: inset 0 0 0 2px rgba(255,255,255,.55);
 }
 .head .spacer { margin-left: auto; }
-.body { padding: 12px; overflow: auto; flex: 1 1 auto; }
+.body { padding: 12px; overflow: auto; overscroll-behavior: contain; flex: 1 1 auto; }
 
 /*
  * Folded: the header, and what it is a header for.
@@ -178,6 +193,7 @@ button.mode.on:hover { background: #d2e3fc; }
 /* The way out to the builder, quiet and on its own line: it is not a third
    way to build, and it used to look like one. */
 .to-builder { padding: 2px 0; font-size: 12px; }
+.to-panel { padding: 2px 0; font-size: 12px; margin-left: 14px; }
 
 /*
  * Pressing one of these costs minutes and, depending on the command, money;
@@ -474,6 +490,29 @@ select {
  * colour that means finished.
  */
 .ok-note.warn { color: var(--warn); }
+/*
+ * And what that sentence counts, by name, under it. Quiet, in ink rather than
+ * amber: the sentence is the warning and this is the list to work through.
+ * Each name is a way to the field, so it is underlined standing still, as the
+ * links in an amber hint are.
+ */
+.left-list { margin-top: 4px; font-size: 12px; line-height: 1.5; color: var(--ink-soft); }
+.left-list .left-why { color: var(--muted); font-size: 11px; margin-top: 4px; }
+.left-list .left-row { display: flex; align-items: baseline; gap: 5px; min-width: 0; }
+/* Under a heading once grouped, so the names read as that heading's. */
+.left-list .left-why ~ .left-row { padding-left: 10px; }
+.left-list .left-row .why { color: var(--muted); white-space: nowrap; flex: none; }
+button.left-name {
+  border: 0; border-radius: 0; background: none; padding: 1px 0; min-width: 0;
+  font-size: 12px; font-weight: 400; color: var(--ink-soft); text-align: left;
+  overflow: hidden; text-overflow: ellipsis;
+  text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 2px;
+}
+button.left-name:hover { background: none; color: var(--accent); text-decoration-color: currentColor; }
+button.left-name.gone, button.left-name.gone:hover { color: var(--faint); text-decoration: line-through; cursor: default; }
+span.left-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.left-list button.link { padding: 1px 0; margin-top: 2px; }
+.left-list button.link:hover { background: none; text-decoration: underline; }
 
 .done-box {
   background: var(--good-bg); border: 1px solid var(--good-line); border-radius: 8px; padding: 11px;
@@ -637,8 +676,17 @@ select {
   padding: 8px;
   background: var(--line-soft);
   border-radius: 8px;
-  max-height: 460px;
+  /*
+   * 460px, or less in a short window. The pane scrolls on its own and keeps
+   * the wheel to itself, so where it was as tall as the card's whole body — a
+   * 500px window — a wheel anywhere over it moved the resume and never the
+   * card, and nothing below it could be reached without finding the sliver of
+   * card beside it. At 60% of the window there is always card around it.
+   * Unchanged in any window 767px tall or taller.
+   */
+  max-height: min(460px, 60vh);
   overflow: auto;
+  overscroll-behavior: contain;
 }
 .pdf-pages { display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .pdf-page {
@@ -652,6 +700,48 @@ select {
 /* What the page did not ask for, kept out of the way until it is wanted. */
 .missed { border-top: 1px solid var(--line-soft); margin-top: 12px; padding-top: 8px; gap: 2px; }
 a { color: var(--accent); }
+
+/*
+ * A narrow window: a half-screen laptop window, or a page zoomed in.
+ *
+ * Below 448px the card is narrower than 420 (see \`.card\`), and 14px each side
+ * is room the card needs more than the page does, so the margin comes in to
+ * 10px: a 320px window keeps a 300px card. Everything inside is then laid out
+ * for a narrower box than it was drawn for, and what would not fit is let
+ * wrap rather than run off the side. At 420 none of this applies, so a normal
+ * window is drawn exactly as it was.
+ */
+@media (max-width: 447px) {
+  .card {
+    top: 10px;
+    right: 10px;
+    max-width: min(calc(100% - 20px), calc(100vw - 20px));
+    max-height: min(calc(100% - 20px), calc(100vh - 20px));
+  }
+  /* A word longer than the line goes onto the next one, not past the edge. */
+  .body { overflow-wrap: break-word; }
+  /*
+   * "New grad → this posting · 1 of 6 changes · Undo all" as a row that
+   * wraps, rather than one squeezed so hard each part stood a word per line.
+   */
+  .diff-head { flex-wrap: wrap; row-gap: 0; }
+  /*
+   * A button says what it does on one line where it can, and on two where it
+   * cannot: "Start from" carries a letter's title, "Start from what you told"
+   * a company's name, and either can be wider than a 300px card. Kept on one
+   * line, it ran out of the card. Not a glyph, whose one line is the point.
+   */
+  button { white-space: normal; max-width: 100%; }
+  button.icon, button.fold-changes { white-space: nowrap; }
+  /*
+   * The names of the fields Autofill left, likewise. They are already cut to
+   * sixty characters at a word; the ellipsis on top of that, at this width,
+   * cut them again to "I understand that this position does not offer
+   * vis…", and five boxes that all start "I understand that" are told apart
+   * by the end that was cut off.
+   */
+  button.left-name, span.left-name { white-space: normal; }
+}
 `;
 
 const HOST_ID = 'jobhelper-card-host';
@@ -780,6 +870,8 @@ export function createCard({
   onClose,
 }) {
   removeCard();
+  /** What the side panel was last told. See `publishPanelTarget`. */
+  let panelSaid = null;
 
   const host = document.createElement('div');
   host.id = HOST_ID;
@@ -791,6 +883,18 @@ export function createCard({
    * rules cannot override.
    */
   host.style.setProperty('all', 'initial', 'important');
+  /*
+   * Scroll the card, not the page. A smooth-scroll library — Lenis, on
+   * qumulo.com's careers page — takes every wheel event at the window,
+   * cancels it and scrolls the page itself, so the card never moved and the
+   * site did. Lenis leaves alone anything marked `data-lenis-prevent`; the
+   * rest never hear of a wheel or a swipe that began over the card, because
+   * it stops here. Not cancelled: the browser still scrolls the card.
+   */
+  host.setAttribute('data-lenis-prevent', '');
+  for (const type of ['wheel', 'touchstart', 'touchmove']) {
+    host.addEventListener(type, (event) => event.stopPropagation(), { passive: true });
+  }
   const root = host.attachShadow({ mode: 'open' });
   root.append(Object.assign(document.createElement('style'), { textContent: STYLE }));
 
@@ -1080,11 +1184,19 @@ export function createCard({
     letterAutoStarted: false,
     letterSaved: false,
     letterSource: '',
+    /**
+     * Template slots the AI left in the letter it drafted — "[Company Name]",
+     * "{company}", "XX years" — as ResumeM-M named them in `placeholders`.
+     * Only the ones still in the text count: see `gapsLeft`.
+     */
+    letterGaps: [],
     /** A previous letter offered as a starting point, until the user takes it. */
     letterOffer: null,
     priorLetters: [],
     questions,
     answers: {},
+    /** The same as `letterGaps`, for each AI answer, by question. */
+    answerGaps: {},
     /** Questions whose last "Insert into form" put nothing in, by question. */
     insertMissed: {},
     /**
@@ -1099,7 +1211,7 @@ export function createCard({
      * with a sentence about what was wrong still takes the paragraph it was
      * given, and the only safe way to let it is to keep that paragraph.
      */
-    replaced: { letter: null, answers: {} },
+    replaced: { letter: null, letterGaps: [], answers: {}, answerGaps: {} },
     feedback: '',
     autofillReport: null,
     /**
@@ -1249,6 +1361,8 @@ export function createCard({
   }
 
   function takeWork() {
+    // The keeper files this spec with the application's workspace. See `sentOut`.
+    sentOut(state.spec);
     return {
       spec: state.spec,
       builtWith: state.builtWith,
@@ -1283,6 +1397,9 @@ export function createCard({
       showEverything: state.showEverything,
       letter: state.letter,
       letterSource: state.letterSource,
+      // What the AI left unfilled goes with the letter, so the next page
+      // still says so.
+      letterGaps: state.letterGaps,
       letterStarted: state.letterStarted,
       letterSaved: state.letterSaved,
       letterAutoStarted: state.letterAutoStarted,
@@ -1298,6 +1415,7 @@ export function createCard({
           .map((q) => [q.question, answerShown(q)])
           .filter(([, a]) => a?.trim()),
       ),
+      answerGaps: state.answerGaps,
     };
   }
 
@@ -1432,11 +1550,13 @@ export function createCard({
      */
     if (work.letter?.trim()) state.letterAsked = true;
     if (work.letterSource) state.letterSource = work.letterSource;
+    if (Array.isArray(work.letterGaps) && work.letterGaps.length) state.letterGaps = work.letterGaps;
     state.letterStarted = state.letterStarted || Boolean(work.letterStarted);
     state.letterSaved = state.letterSaved || Boolean(work.letterSaved);
     state.letterAutoStarted = state.letterAutoStarted || Boolean(work.letterAutoStarted);
     if (work.priorLetters?.length) state.priorLetters = work.priorLetters;
     state.carriedOver = work.answersByQuestion ?? {};
+    if (work.answerGaps && typeof work.answerGaps === 'object') state.answerGaps = { ...work.answerGaps, ...state.answerGaps };
     applyCarriedAnswers();
     maybeAutoDraft();
     /*
@@ -1598,8 +1718,25 @@ export function createCard({
     return short ? `${short} ${how}` : how;
   }
 
-  function warmFiles(application) {
-    if (carried?.application === application && (carried.files || carried.waiting)) {
+  /**
+   * Take the plain names in the shared folder back for this application.
+   *
+   * Whichever application asked last holds `First-Last-Resume.pdf` there —
+   * the one in hand always gets the plain name, as asked. A chip carries its
+   * own bytes, so a drag is right whoever holds the name; a path pasted into
+   * an upload dialog is not, and with three tabs open the file under the name
+   * this card shows could be another tab's. So copying or opening the folder
+   * asks for this application's files first, which gives the names back to
+   * it, and the folder holds this job's files at the moment they are picked.
+   */
+  function claimFolder(of) {
+    const application = of ?? carried?.application;
+    if (!application) return Promise.resolve();
+    return Promise.resolve(warmFiles(application, { claim: true })).catch(() => undefined);
+  }
+
+  function warmFiles(application, { claim = false } = {}) {
+    if (!claim && carried?.application === application && (carried.files || carried.waiting)) {
       /*
        * Already warm, and the chips asking may be new ones.
        *
@@ -1616,7 +1753,7 @@ export function createCard({
     }
     carried = { application, files: null, waiting: null };
     const mine = carried;
-    mine.waiting = onAction('attachmentFiles', { application })
+    mine.waiting = onAction('attachmentFiles', { application, claim })
       .then((got) => {
         if (carried !== mine) return;
         mine.files = got?.files ?? [];
@@ -1839,7 +1976,8 @@ export function createCard({
           title: `Open ${name} in a tab`,
           onclick: (event) => {
             event.stopPropagation();
-            onAction('openTab', { url: `/current/${encodeURIComponent(name)}` });
+            // This job's copy under that name, not another tab's: see `claimFolder`.
+            claimFolder(application).then(() => onAction('openTab', { url: `/current/${encodeURIComponent(name)}` }));
           },
         }),
         renameMenu(kind, name),
@@ -2481,7 +2619,38 @@ export function createCard({
     return unrecorded && text && !/^(Not recorded|Recorded as sent)/.test(text) ? `Not recorded — ${text}` : said;
   }
 
+  /*
+   * Every version of the copy this card has let out to be filed: staged,
+   * sent, handed to the editor, or given to the keeper, which files it with
+   * the application's workspace. Written without a word back to the card —
+   * the keeper's never answers it at all — so a store holding one of them,
+   * older than what is on screen, is not an edit made elsewhere, however
+   * long ago the card last looked. Taking it for one put an older copy over
+   * the switches made since: tests/tabs.mjs lost one in each of two tabs.
+   * By content, keys sorted, so the store's own ordering does not matter.
+   */
+  const SENT_KEEP = 60;
+  const sent = [];
+  const specKey = (spec) =>
+    JSON.stringify(spec, (_k, v) =>
+      v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, v[k]])) : v,
+    );
+  function sentOut(spec) {
+    if (!spec?.id) return;
+    const key = specKey(spec);
+    if (sent.at(-1) === key) return;
+    const at = sent.indexOf(key);
+    if (at >= 0) sent.splice(at, 1);
+    sent.push(key);
+    if (sent.length > SENT_KEEP) sent.shift();
+  }
+  const ownVersion = (stored) => sent.includes(specKey(stored));
+
+  /** What files the copy it is given: see `sentOut`. */
+  const FILES_THE_COPY = new Set(['stage', 'bundle', 'openWorkspace']);
+
   async function act(action, payload, apply, { quiet = false } = {}) {
+    if (FILES_THE_COPY.has(action)) sentOut(payload?.spec);
     running.add(action);
     if (!startedAt.has(action)) startedAt.set(action, Date.now());
     state.busy = action;
@@ -3905,13 +4074,43 @@ export function createCard({
     ]);
   }
 
-  /** Remember the store's copy as it stands. See `checkFresh`. */
-  function noteStored(of) {
+  /**
+   * Remember the store's copy as it stands. See `checkFresh`.
+   *
+   * `filed` when the card has just written it itself, which makes what is
+   * there now the card's own. Otherwise — after a compile — only when there
+   * is nothing remembered yet. A compile takes seconds, and an edit made to
+   * the copy in ResumeM-M in those seconds was remembered here as already
+   * seen: never taken, and written away by the next stage, which files the
+   * card's copy whole. Measured from JobHelper's side panel: a line switched
+   * off there while the card was compiling a reworded line was switched
+   * back on in the store a second later.
+   */
+  function noteStored(of, { filed = false } = {}) {
     Promise.resolve(onAction('fresh', { spec: of }))
       .then((got) => {
-        if (got && state.spec === of) state.storedPrint = got.storedPrint ?? null;
+        if (!got) return;
+        // Filed, what the store holds is the card's own whatever has been
+        // switched since; after a compile, only for the copy it was about.
+        if (filed || (state.spec === of && !state.storedPrint)) state.storedPrint = got.storedPrint ?? null;
       })
       .catch(() => undefined);
+  }
+
+  /**
+   * Whether the store's copy was edited somewhere else since the card last
+   * took or filed it — news, to be taken before anything is filed over it.
+   * Not the card's own copy, current or one it let out earlier.
+   */
+  async function editedElsewhere() {
+    if (!state.spec?.id || !state.storedPrint) return false;
+    const reply = await Promise.resolve(onAction('fresh', { spec: state.spec })).catch(() => null);
+    return Boolean(
+      reply?.stored &&
+        reply.storedPrint !== state.storedPrint &&
+        specKey(reply.stored) !== specKey(state.spec) &&
+        !ownVersion(reply.stored),
+    );
   }
 
   async function compile() {
@@ -4000,6 +4199,17 @@ export function createCard({
     const pages = analysis?.pages ?? [];
     if (pages.length > 0 && pages.every((p) => p?.kind === 'listing')) return;
     /*
+     * Not over an edit made to the copy in ResumeM-M that the card has not
+     * taken yet. Staging files the card's copy whole, so it put back every
+     * line the person had switched there since. Taken instead — which
+     * compiles it and, the folder being behind, stages that.
+     */
+    if (await editedElsewhere()) {
+      lastPrepared = null;
+      await handle.checkFresh({ now: true });
+      return;
+    }
+    /*
      * Recorded before the call, so a second change landing while this one is
      * in flight does not start a second compile of the same thing — and
      * given back if it fails.
@@ -4016,7 +4226,7 @@ export function createCard({
     lastPrepared = whatWouldBeStaged();
     const mine = act(
       'stage',
-      { spec: state.spec, coverLetter: state.letter, answers: collectedAnswers(), naming: state.naming },
+      { spec: state.spec, coverLetter: stagedLetter(), answers: collectedAnswers(), naming: state.naming },
       (staged) => {
         if (staged) {
           state.staged = staged;
@@ -4025,7 +4235,7 @@ export function createCard({
           askedWhatIsStaged = null;
           carried = null;
           // Staging files the copy, so the store's copy is this one now.
-          noteStored(state.spec);
+          noteStored(state.spec, { filed: true });
         }
       },
       // Nobody pressed this, so it does not get to clear what the card is
@@ -4155,9 +4365,26 @@ export function createCard({
       state.spec?.choices ?? null,
       state.spec?.sections ?? null,
       state.letter ?? '',
+      // Held back or not is a different folder: see `stagedLetter`.
+      stagedLetter(),
       collectedAnswers(),
       state.naming ?? null,
     ]);
+
+  /*
+   * The letter the folder gets without anybody asking: none, while the AI's
+   * placeholders are still in it.
+   *
+   * A draft that landed was staged a second later, typeset as "Cover Letter
+   * Acme.pdf" with "Dear [Company Name]," at the top, and offered on the drag
+   * chips and by Attach files beside the resume — as final, with the note
+   * about it back in the letter step. It goes in once they are filled in, or
+   * once somebody says to use it as it is. "Mark as applied" is asked for,
+   * and files what is in the box.
+   */
+  function stagedLetter() {
+    return letterGapsLeft().length ? '' : state.letter;
+  }
 
   function prepareSoon() {
     if (!state.spec) return;
@@ -4505,10 +4732,25 @@ export function createCard({
    * date in place on each keystroke. Rebuilt on every draw, so these always
    * point at the buttons currently on screen rather than at detached ones.
    */
-  const letterControls = { save: null, copy: null, typeset: null, note: null, change: null, redraft: null };
+  const letterControls = { save: null, copy: null, typeset: null, note: null, change: null, redraft: null, source: null, gaps: null };
 
   function syncLetterControls() {
     const written = Boolean(state.letter?.trim());
+    /*
+     * The note about what the AI left unfilled follows the typing: each slot
+     * filled in drops out of it, and with the last one gone the note goes and
+     * the status line stops saying the letter is unfinished.
+     */
+    const left = letterGapsLeft();
+    if (letterControls.gaps) {
+      letterControls.gaps.hidden = left.length === 0;
+      if (left.length) letterControls.gaps.firstChild.textContent = `${gapNote(left)} `;
+    }
+    if (left.length === 0 && state.letterGaps.length) {
+      state.letterGaps = [];
+      state.letterSource = state.letterSource.replace(NOT_FINISHED, '');
+      if (letterControls.source) letterControls.source.textContent = state.letterSource;
+    }
     if (letterControls.save) {
       letterControls.save.disabled = busyIn('letter') || state.letterSaved || !written;
       letterControls.save.textContent = busyLabel('saveLetter', state.letterSaved ? 'Saved' : 'Save to store', 'Saving…');
@@ -4799,10 +5041,15 @@ export function createCard({
       }
       if (r.body?.trim()) {
         state.replaced.letter = mine;
+        state.replaced.letterGaps = state.letterGaps;
         state.letter = r.body;
+        state.letterGaps = placeholdersOf(r);
         state.changeLetter = '';
         state.letterSaved = false;
-        state.letterSource = change ? 'Rewritten as you asked.' : 'Redrafted from your previous letters.';
+        state.letterSource = unfinishedIf(
+          state.letterGaps,
+          change ? 'Rewritten as you asked.' : 'Redrafted from your previous letters.',
+        );
         prepareSoon();
       } else if (!r.executed) {
         state.letterSource = 'The AI is off, so the letter cannot be redrafted. It is as you left it.';
@@ -4810,6 +5057,44 @@ export function createCard({
         state.letterSource = 'The AI returned nothing, so the letter is as you left it.';
       }
     });
+  }
+
+  /*
+   * A draft with "[Company Name]" in it is not finished.
+   *
+   * ResumeM-M names the template slots it finds in an AI letter or answer in
+   * `placeholders`, and flags the draft `unfinished`. The card put that text
+   * in the box as if it were ready: "Drafted in your voice", a tick on the
+   * step, and into the upload folder a second later. The text stays as it
+   * came — it is theirs to edit — and the card says what is left in it.
+   */
+  const NOT_FINISHED = ' It is not finished yet.';
+
+  /** The slots a reply named, or none — an older store names none. */
+  function placeholdersOf(r) {
+    return Array.isArray(r?.placeholders) ? r.placeholders.filter((p) => typeof p === 'string' && p.trim()) : [];
+  }
+
+  /** Those still in the text. Filled in or taken out is done. */
+  function gapsLeft(text, gaps) {
+    const s = String(text ?? '');
+    return (gaps ?? []).filter((g) => s.includes(g));
+  }
+
+  /** "The draft still has [Company Name] and [Your Name] in it — …" */
+  function gapNote(gaps) {
+    const named = gaps.length === 1 ? gaps[0] : `${gaps.slice(0, -1).join(', ')} and ${gaps.at(-1)}`;
+    return `The draft still has ${named} in it — fill ${gaps.length === 1 ? 'it' : 'them'} in before sending.`;
+  }
+
+  /** A status line, saying so when the draft still has slots in it. */
+  function unfinishedIf(gaps, line) {
+    return gaps.length ? `${line}${NOT_FINISHED}` : line;
+  }
+
+  /** The letter's slots still in it. */
+  function letterGapsLeft() {
+    return gapsLeft(state.letter, state.letterGaps);
   }
 
   /**
@@ -4859,7 +5144,9 @@ export function createCard({
         return;
       }
       if (now.trim()) {
-        state.letterOffer = r.body?.trim() ? { title: 'the draft', body: r.body } : state.priorLetters[0] ?? null;
+        state.letterOffer = r.body?.trim()
+          ? { title: 'the draft', body: r.body, placeholders: placeholdersOf(r) }
+          : state.priorLetters[0] ?? null;
         state.letterSource = state.letterOffer
           ? 'You had already started one, so this is offered rather than used.'
           : 'You had already started one, so nothing was replaced.';
@@ -4868,7 +5155,8 @@ export function createCard({
 
       if (r.body?.trim()) {
         state.letter = r.body;
-        state.letterSource = 'Drafted in your voice from your previous letters.';
+        state.letterGaps = placeholdersOf(r);
+        state.letterSource = unfinishedIf(state.letterGaps, 'Drafted in your voice from your previous letters.');
         // Into the folder as soon as it exists, not at Submit. See `prepareSoon`.
         prepareSoon();
       } else if (state.priorLetters.length > 0) {
@@ -4968,7 +5256,7 @@ export function createCard({
           for (const slot of slots) {
             const before = state.answers[slot.question] ?? slot.before;
             await act(`answer:${slot.question}`, { question: slot.question, force: true, limit: slot.limit, spec: state.spec }, (one) => {
-              if (one?.executed && one.output) applyAnswer(slot.question, before, one.output);
+              if (one?.executed && one.output) applyAnswer(slot.question, before, one.output, placeholdersOf(one));
             });
           }
           return;
@@ -4993,7 +5281,7 @@ export function createCard({
    *
    * @param before what was in the box when the run was asked for
    */
-  function applyAnswer(question, before, text) {
+  function applyAnswer(question, before, text, gaps = []) {
     if (!text?.trim()) return false;
     /*
      * Nothing in `state.answers` is nobody having written anything.
@@ -5019,7 +5307,15 @@ export function createCard({
       return false;
     }
     state.answers[question] = text;
+    // What the AI left unfilled in it, named beside the box. See `gapNote`.
+    if (gaps.length) state.answerGaps[question] = gaps;
+    else delete state.answerGaps[question];
     return true;
+  }
+
+  /** An answer's slots still in it. */
+  function answerGapsLeft(question) {
+    return gapsLeft(state.answers[question], state.answerGaps[question]);
   }
 
   /*
@@ -5540,6 +5836,26 @@ export function createCard({
               onAction('openTab', { url: `/#resumes/${encodeURIComponent(target)}` });
             },
           }),
+          /*
+           * The same editor, beside this page rather than instead of it.
+           *
+           * A new tab is the right door for twenty minutes of writing and the
+           * wrong one for switching a bullet on while reading the posting it
+           * is for: the posting is behind the tab you are typing in. The side
+           * panel shows the resume this card is working with and follows the
+           * tab. On the same line and at the same weight as the link beside
+           * it, so the card grows by nothing.
+           */
+          h('button', {
+            className: 'link to-panel',
+            textContent: 'Open beside',
+            title: 'Edit this resume in a side panel, next to the posting',
+            disabled: !state.spec?.id,
+            onclick: () => {
+              publishPanelTarget({ force: true });
+              return Promise.resolve(onAction('openPanel', {})).catch(() => undefined);
+            },
+          }),
         ]),
         /*
          * You went to the builder because this posting wanted a bullet the
@@ -5742,7 +6058,8 @@ export function createCard({
      */
     if (state.letterNeeded || state.letterAsked) body.append(
       h('div', { className: 'step' }, [
-        stepHead(2, 'Cover letter', Boolean(state.letter?.trim())),
+        // Not ticked while the AI's placeholders are still in it.
+        stepHead(2, 'Cover letter', Boolean(state.letter?.trim()) && letterGapsLeft().length === 0),
         progressFor(2),
         drawVoiceFrom('letter'),
         h('div', {}, [
@@ -5755,7 +6072,30 @@ export function createCard({
                * could have typed into, and hiding the previous-letter offer
                * behind an AI run they may not want.
                */
-              state.letterSource ? h('div', { className: 'hint', textContent: state.letterSource }) : null,
+              (letterControls.source = state.letterSource
+                ? h('div', { className: 'hint', textContent: state.letterSource })
+                : null),
+              /*
+               * Beside the draft, naming what is left to fill in. Kept up to
+               * date as it is typed over: see `syncLetterControls`.
+               */
+              (letterControls.gaps = letterGapsLeft().length
+                ? h('div', { className: 'hint warn', dataset: { note: 'letter-gaps' } }, [
+                    h('span', { textContent: `${gapNote(letterGapsLeft())} ` }),
+                    h('span', { textContent: 'It stays out of the upload folder until then. ' }),
+                    // A bracket that is meant to be there is theirs to keep.
+                    h('button', {
+                      className: 'link',
+                      textContent: 'Use it as it is',
+                      onclick: () => {
+                        state.letterGaps = [];
+                        state.letterSource = state.letterSource.replace(NOT_FINISHED, '');
+                        prepareSoon();
+                        draw();
+                      },
+                    }),
+                  ])
+                : null),
               !state.letter?.trim()
                 ? h('div', { className: 'row gap' }, [
                     aiButton(
@@ -5779,6 +6119,8 @@ export function createCard({
                     textContent: `Start from "${state.letterOffer.title}"`,
                     onclick: () => {
                       state.letter = state.letterOffer.body;
+                      // A draft offered over a letter carries what it left unfilled.
+                      state.letterGaps = state.letterOffer.placeholders ?? [];
                       prepareSoon();
                       state.letterSource = `Copied from ${state.letterOffer.title}. It is addressed to another company — read it before sending.`;
                       state.letterOffer = null;
@@ -5912,7 +6254,9 @@ export function createCard({
                           textContent: 'Put back what you had',
                           onclick: () => {
                             state.letter = state.replaced.letter;
+                            state.letterGaps = state.replaced.letterGaps ?? [];
                             state.replaced.letter = null;
+                            state.replaced.letterGaps = [];
                             state.letterSaved = false;
                             state.letterSource = 'Put back as you had it.';
                             prepareSoon();
@@ -6007,13 +6351,16 @@ export function createCard({
                   className: 'tiny',
                   textContent: 'Copy folder path',
                   title: 'Paste it into the upload dialog',
-                  onclick: () => navigator.clipboard?.writeText(uploadFolder()),
+                  onclick: () => {
+                    navigator.clipboard?.writeText(uploadFolder()).catch(() => undefined);
+                    claimFolder();
+                  },
                 }),
                 h('button', {
                   className: 'tiny',
                   textContent: 'Open the folder',
                   title: 'See the files in a tab, and open any of them',
-                  onclick: () => onAction('openTab', { url: '/current' }),
+                  onclick: () => claimFolder().then(() => onAction('openTab', { url: '/current' })),
                 }),
               ]),
               /*
@@ -6284,7 +6631,32 @@ export function createCard({
     const yours = r.skipped.length - done;
     if (done) parts.push(`left ${plural(done, 'field')} that already had a value`);
     if (yours) parts.push(`${plural(yours, 'field')} still for you to answer`);
-    return `${parts.join(', ')}.`;
+    const said = r.filled.length || r.skipped.length || !r.refilled?.length ? `${parts.join(', ')}.` : '';
+    return [said, describeAcknowledged(r.filled), describeRefilled(r.refilled)].filter(Boolean).join(' ');
+  }
+
+  /*
+   * The statements Autofill said Yes to on the person's behalf — "I
+   * understand that ..." — named, since that is a thing said in their name
+   * and they should see which.
+   */
+  function describeAcknowledged(filled) {
+    const said = [...new Set(filled.filter((f) => f.acknowledged).map((f) => String(f.question ?? '').replace(/\s+/g, ' ').trim()).filter(Boolean))];
+    if (!said.length) return '';
+    const cut = (n) => (n.length > 60 ? `${n.slice(0, 57).trimEnd()}…` : n);
+    return `Acknowledged: ${said.map((n) => `“${cut(n)}”`).join(', ')} — check you agree before sending.`;
+  }
+
+  /*
+   * The answers the page emptied after they were filled, named — a few by
+   * name, since a question can run to a paragraph, and the rest counted.
+   */
+  function describeRefilled(names) {
+    if (!names?.length) return '';
+    const cut = (n) => (n.length > 60 ? `${n.slice(0, 57).trimEnd()}…` : n);
+    const shown = names.slice(0, 3).map((n) => `“${cut(n)}”`);
+    const which = names.length > 3 ? `${shown.join(', ')} and ${names.length - 3} more` : shown.join(names.length === 2 ? ' and ' : ', ');
+    return `The page emptied ${which} after ${names.length === 1 ? 'it was' : 'they were'} filled, and ${names.length === 1 ? 'it has' : 'they have'} been filled in again — check before sending.`;
   }
 
   /**
@@ -6342,7 +6714,12 @@ export function createCard({
     if (!writingNeeded) return null;
 
     const step = h('div', { className: 'step' }, [
-      stepHead(3, 'Application questions', Object.keys(state.answers).length > 0),
+      // Not ticked while an AI answer still has placeholders in it.
+      stepHead(
+        3,
+        'Application questions',
+        Object.keys(state.answers).length > 0 && Object.keys(state.answers).every((q) => answerGapsLeft(q).length === 0),
+      ),
       progressFor(3),
       drawVoiceFrom('answer'),
       /*
@@ -6414,6 +6791,13 @@ export function createCard({
        * the form is sent, so it is counted here while it can still be cut.
        */
       const counter = q.limit ? h('div', { className: 'count faint' }) : null;
+      /*
+       * What the AI left unfilled in this answer, beside it — so a draft with
+       * "[Company Name]" in it is not taken for one to paste into the form.
+       */
+      const gaps = answerGapsLeft(q.question).length
+        ? h('div', { className: 'hint warn', dataset: { note: 'answer-gaps' }, textContent: gapNote(answerGapsLeft(q.question)) })
+        : null;
       countAgainst(counter, value, q.limit);
       const wordLimit = statedWordLimit(q.question);
       const words = h('div', { className: 'wordcount faint' });
@@ -6447,8 +6831,15 @@ export function createCard({
             state.answers[q.question] = e.target.value;
             countAgainst(counter, e.target.value, q.limit);
             countWords(words, e.target.value, wordLimit);
+            // The note follows the typing, as the letter's does.
+            if (gaps) {
+              const left = answerGapsLeft(q.question);
+              gaps.hidden = left.length === 0;
+              if (left.length) gaps.textContent = gapNote(left);
+            }
           },
         }),
+        gaps,
         words,
         counter,
         h('div', { className: 'row gap' }, [
@@ -6527,9 +6918,13 @@ export function createCard({
                    * it here, and this no longer reaches for it either.
                    */
                   if (r?.executed && r.output) {
+                    const gapsBefore = state.answerGaps[q.question] ?? [];
                     // Kept, so it can be put back — see `state.replaced`.
-                    if (applyAnswer(q.question, typedBefore, r.output)) {
-                      if (typedBefore.trim()) state.replaced.answers[q.question] = typedBefore;
+                    if (applyAnswer(q.question, typedBefore, r.output, placeholdersOf(r))) {
+                      if (typedBefore.trim()) {
+                        state.replaced.answers[q.question] = typedBefore;
+                        state.replaced.answerGaps[q.question] = gapsBefore;
+                      }
                       state.changeAnswer[q.question] = '';
                     }
                   } else if (r && !r.executed) {
@@ -6599,7 +6994,9 @@ export function createCard({
                     textContent: 'Put back what you had',
                     onclick: () => {
                       state.answers[q.question] = state.replaced.answers[q.question];
+                      state.answerGaps[q.question] = state.replaced.answerGaps[q.question] ?? [];
                       delete state.replaced.answers[q.question];
+                      delete state.replaced.answerGaps[q.question];
                       draw();
                     },
                   })
@@ -6672,6 +7069,14 @@ export function createCard({
               textContent:
                 'The form asks for it. Write it above and save again, or attach it yourself — nothing here will add it for you.',
             }),
+          ])
+        : null,
+      // A letter filed with the AI's placeholders in it is in the folder, and
+      // is not ready: "named and ready to attach" is not said of it unqualified.
+      letterGapsLeft().length > 0
+        ? h('div', { className: 'done-missing', dataset: { note: 'letter-gaps' } }, [
+            h('strong', { textContent: 'The cover letter is not finished.' }),
+            h('div', { textContent: gapNote(letterGapsLeft()) }),
           ])
         : null,
       /*
@@ -6761,13 +7166,16 @@ export function createCard({
             className: 'tiny',
             textContent: 'Open the folder',
             title: 'See the files in a tab, and open any of them',
-            onclick: () => onAction('openTab', { url: '/current' }),
+            onclick: () => claimFolder().then(() => onAction('openTab', { url: '/current' })),
           }),
           h('button', {
             className: 'tiny',
             textContent: 'Copy folder path',
             title: 'Paste it into the upload dialog',
-            onclick: () => navigator.clipboard?.writeText(b.currentDir ?? b.dir),
+            onclick: () => {
+              navigator.clipboard?.writeText(b.currentDir ?? b.dir).catch(() => undefined);
+              claimFolder();
+            },
           }),
           // Not claimed when it is not true — see `missing` above.
           b.currentDir
@@ -6887,7 +7295,34 @@ export function createCard({
    * caret comes back to the same answer even if a question has appeared above
    * it in the meantime.
    */
+  /**
+   * Which resume this card is working with, told to the side panel.
+   *
+   * The panel is a page of the extension and cannot ask the card, so the card
+   * says — whenever it draws and what it would say has changed. Both the copy
+   * made for this posting and the resume it is made from: the copy is only
+   * in the store once it has been built or filed, and until then the panel
+   * shows the base and says so (see src/panel/panel.js).
+   */
+  function publishPanelTarget({ force = false } = {}) {
+    if (!analysis) return;
+    const baseId = state.switchingTo ?? analysis.baseResumeId ?? state.spec?.copiedFrom ?? null;
+    const target = {
+      copyId: state.spec?.id ?? null,
+      copyLabel: state.spec?.label ?? null,
+      baseId,
+      baseLabel: resumes.find((r) => r?.id === baseId)?.label ?? analysis.baseLabel ?? null,
+      company: analysis.job?.company ?? null,
+      role: analysis.job?.title ?? null,
+    };
+    const said = JSON.stringify(target);
+    if (said === panelSaid && !force) return;
+    panelSaid = said;
+    Promise.resolve(onAction('panelTarget', target)).catch(() => undefined);
+  }
+
   function draw() {
+    publishPanelTarget();
     /*
      * The list of pages as it stands on screen, whatever its events have said
      * so far: `toggle` arrives a task after the click, and a repaint in that
@@ -7006,15 +7441,121 @@ export function createCard({
    * how a green note comes to sit over an unfinished form.
    */
   function drawAutofillNote() {
-    return (
-      state.autofillReport
-        ? h('div', {
-            // Green only when nothing is left. See `.ok-note.warn`.
-            className: `ok-note${autofillLeftWork(state.autofillReport) ? ' warn' : ''}`,
-            textContent: describeAutofill(state.autofillReport),
-          })
-        : null
-    );
+    if (!state.autofillReport) return null;
+    const note = h('div', {
+      // Green only when nothing is left. See `.ok-note.warn`.
+      className: `ok-note${autofillLeftWork(state.autofillReport) ? ' warn' : ''}`,
+      textContent: describeAutofill(state.autofillReport),
+    });
+    const left = drawLeftList(state.autofillReport);
+    return left ? h('div', { className: 'autofill-note' }, [note, left]) : note;
+  }
+
+  /*
+   * The fields the note counts as still for you, named.
+   *
+   * "3 fields still for you to answer" sent somebody back through a long form
+   * to find three boxes, with nothing to go on but that the report had seen
+   * them. So each is named by its label or its question, as the form words it
+   * — cut short, since a question can run to a paragraph — with why it was
+   * left where that is known, and pressing a name takes the page to the field
+   * and puts the caret in it.
+   *
+   * The first few, and the rest behind "and N more": the note sits in the
+   * card's main panel, and a form with twelve questions nobody could answer
+   * for you would otherwise push everything under it off the card. Past a
+   * handful they are grouped by why, so "yours to answer" is said once over
+   * the questions it covers rather than after every one.
+   *
+   * Names and reasons only. A row can carry the answer it came from the bank
+   * with, and a reason can quote what the form was given; neither is drawn
+   * here — the reason is said in this card's own few words, never passed
+   * through — so what somebody has on file for a sensitive question is not
+   * written out over the form it belongs to.
+   */
+  const LEFT_SHOWN = 4;
+  /** The `skipped` list whose names are all showing. Another run starts shut. */
+  let leftOpenFor = null;
+
+  const WHY_LEFT = [
+    [/two things at once|acknowledge it yourself/, 'yours to answer'],
+    [/not one of the options|no matching option/, 'no matching option'],
+    [/by hand/, 'pick by hand'],
+    [/would not (?:take|accept)/, 'the field would not take it'],
+    [/another country/, 'asks about another country'],
+    [/not on the resume|lists no schools|does not list|at the level/, 'not on the resume sent'],
+    [/would not add another/, 'the form would not add another'],
+  ];
+  const whyLeft = (reason) => WHY_LEFT.find(([re]) => re.test(String(reason ?? '')))?.[1] ?? '';
+
+  function drawLeftList(r) {
+    const left = (r.skipped ?? []).filter((s) => s.reason !== 'already filled');
+    if (!left.length) return null;
+    const open = leftOpenFor === r.skipped;
+    const grouped = left.length > 3;
+
+    // In the order the page asks them, a reason's rows together once grouped.
+    const byWhy = new Map();
+    for (const s of left) byWhy.set(whyLeft(s.reason), [...(byWhy.get(whyLeft(s.reason)) ?? []), s]);
+    const ordered = grouped ? [...byWhy.values()].flat() : left;
+    const shown = open ? ordered : ordered.slice(0, LEFT_SHOWN);
+
+    // As long as the card's other quoted questions, cut at a word where there
+    // is one late enough: "…does not offe…" reads as a typo.
+    const cut = (n) => {
+      if (n.length <= 60) return n;
+      const head = n.slice(0, 58);
+      const word = head.lastIndexOf(' ');
+      return `${(word > 40 ? head.slice(0, word) : head).replace(/[\s,;:—–-]+$/, '')}…`;
+    };
+    const nameOf = (s) => {
+      const said = String(s.label || s.description || '').replace(/\s+/g, ' ').trim() || 'A field with no label';
+      if (!s.fieldId) return h('span', { className: 'left-name', textContent: cut(said), title: said });
+      const go = h('button', {
+        className: 'left-name',
+        textContent: cut(said),
+        title: `Go to “${said}”`,
+        onclick: async () => {
+          const there = await onAction('showLeft', { fieldId: s.fieldId }).catch(() => false);
+          if (there) return;
+          go.classList.add('gone');
+          go.title = 'That field is not on the page any more';
+        },
+      });
+      return go;
+    };
+
+    const rows = [];
+    let heading = null;
+    for (const s of shown) {
+      const why = whyLeft(s.reason);
+      if (grouped && why !== heading) {
+        heading = why;
+        rows.push(h('div', { className: 'left-why', textContent: why ? `${why[0].toUpperCase()}${why.slice(1)}` : 'Other' }));
+      }
+      rows.push(
+        h('div', { className: 'left-row' }, [
+          nameOf(s),
+          !grouped && why ? h('span', { className: 'why', textContent: `— ${why}` }) : null,
+        ]),
+      );
+    }
+    if (ordered.length > LEFT_SHOWN) {
+      rows.push(
+        h('button', {
+          className: 'link',
+          textContent: open ? 'Show fewer' : `and ${ordered.length - LEFT_SHOWN} more`,
+          ariaExpanded: String(open),
+          onclick: () => {
+            leftOpenFor = open ? null : r.skipped;
+            draw();
+            // The note is often the last thing in the panel, so what opened is under its edge.
+            card.querySelector('.left-list')?.scrollIntoView({ block: 'nearest' });
+          },
+        }),
+      );
+    }
+    return h('div', { className: 'left-list' }, rows);
   }
 
   /**
@@ -7359,7 +7900,13 @@ export function createCard({
       // A copy first filed after the last compile is the card's own staging,
       // so `seen` being empty is not taken as news either.
       const editedThere =
-        reply.stored && seen && reply.storedPrint !== seen && JSON.stringify(reply.stored) !== JSON.stringify(of);
+        reply.stored &&
+        seen &&
+        reply.storedPrint !== seen &&
+        specKey(reply.stored) !== specKey(of) &&
+        // One the card filed itself, older than what it holds now: its own
+        // switches since are newer. See `sentOut`.
+        !ownVersion(reply.stored);
 
       /*
        * Every time the store says so, not once per base.
@@ -7531,6 +8078,22 @@ export function createCard({
      */
     dropped(report) {
       state.attachReport = report;
+      draw();
+    },
+
+    /*
+     * What the page emptied after Autofill filled it, and was filled in again.
+     *
+     * Said beside what Autofill did, because it is the same answers: Ashby's
+     * "Autofill from resume" mounts the form again from the resume's parse,
+     * and without a word here the first sign of it was the server refusing
+     * the form at Submit. See `watchForEmptied` in autofill.js.
+     */
+    refilled(names) {
+      const list = (Array.isArray(names) ? names : []).map((n) => String(n ?? '').trim()).filter(Boolean);
+      if (list.length === 0) return;
+      const was = state.autofillReport ?? { filled: [], skipped: [] };
+      state.autofillReport = { ...was, refilled: [...new Set([...(was.refilled ?? []), ...list])] };
       draw();
     },
 

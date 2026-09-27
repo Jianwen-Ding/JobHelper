@@ -12,12 +12,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BLOG, HELIOS_ROLE, NORTHWIND, STREAMLY, cleanStore, findChromium, pointExtensionAt, requireOpenSave, serveFixtures } from './fixtures.mjs';
+import { extensionWorker, BLOG, HELIOS_ROLE, NORTHWIND, QUARRY, STREAMLY, cleanStore, findChromium, pointExtensionAt, requireOpenSave, serveFixtures } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
 /** What this suite files under; cleared before it starts as well as after. */
-const MINE = ['Streamly', 'Northwind'];
+const MINE = ['Streamly', 'Northwind', 'Quarry'];
 
 const results = [];
 function check(name, ok, detail = '') {
@@ -52,8 +52,7 @@ async function main() {
 
   try {
     group('Extension loads');
-    let worker = context.serviceWorkers()[0];
-    if (!worker) worker = await context.waitForEvent('serviceworker', { timeout: 15_000 });
+    const worker = await extensionWorker(context);
     check('service worker started', Boolean(worker));
     await pointExtensionAt(context, worker, SERVER);
 
@@ -1394,6 +1393,155 @@ async function main() {
     );
     await trailPage.close();
 
+    /* ---------------- What Autofill left, by name ---------------- */
+
+    /*
+     * "6 fields still for you to answer", and then nothing to say which six,
+     * on a form long enough that finding them was the work. The note names
+     * them now, and each name goes to its field.
+     *
+     * The bank is given one answer for the on-call list that is not among its
+     * options, so the list has a row carrying a saved answer — which must be
+     * named and never shown. Put back whatever happens.
+     */
+    group('Quarry — what Autofill left, named');
+    {
+      const bankOf = async () => (await (await fetch(`${SERVER}/api/store`)).json()).answers ?? [];
+      const bankBefore = await bankOf();
+      const saved = 'Three days, weekdays only';
+      await fetch(`${SERVER}/api/answers`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify([
+          ...bankBefore,
+          {
+            id: 'a_e2e_oncall',
+            question: 'Which on-call rotation length would you prefer?',
+            default: 'v_e2e_oncall',
+            variants: [{ id: 'v_e2e_oncall', label: 'Default', text: saved }],
+          },
+        ]),
+      });
+      const site = await serveFixtures([QUARRY]);
+      const quarry = await context.newPage();
+      try {
+        const errorsQ = [];
+        quarry.on('pageerror', (e) => errorsQ.push(e.message));
+        await quarry.goto(site.urlFor(QUARRY), { waitUntil: 'domcontentloaded' });
+        const q = cardOf(quarry).card;
+        await quarry.locator('#jobhelper-card-host').waitFor({ state: 'attached', timeout: 25_000 });
+        await quarry.waitForFunction(
+          () => !document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelector('.card.loading'),
+          null,
+          { timeout: 30_000 },
+        );
+        await q.getByRole('button', { name: 'Autofill this form' }).click();
+        await q.locator('.ok-note.warn').waitFor({ timeout: 20_000 });
+        const said = (await q.locator('.ok-note').first().innerText()).trim();
+        const counted = Number(/(\d+) fields? still for you to answer/.exec(said)?.[1] ?? 0);
+        const names = q.locator('.left-list .left-name');
+        await names.first().waitFor({ timeout: 5_000 }).catch(() => undefined);
+
+        // How each starts, short of where a long one is cut.
+        const ACKS = [
+          'I understand that this position',
+          'I acknowledge that Quarry',
+          'I understand that candidates',
+          'Please confirm you understand',
+          'I understand that proof of eligibility',
+        ];
+        const more = q.locator('.left-list button.link', { hasText: /^and \d+ more$/ });
+        check(
+          'only the first few left are named, with the rest counted',
+          (await names.count()) === 4 && (await more.count()) === 1 && (await more.innerText()) === `and ${counted - 4} more`,
+          `${await names.count()} named, “${(await more.count()) ? await more.innerText() : 'no more'}”, of ${counted}`,
+        );
+        if (await more.count()) await more.click();
+        const shownNames = await names.allInnerTexts();
+        check(
+          'and N more names the rest, as many as the note counts',
+          shownNames.length === counted && (await q.locator('.left-list button.link', { hasText: 'Show fewer' }).count()) === 1,
+          `${shownNames.length} named of ${counted}`,
+        );
+        check(
+          'each statement left to acknowledge is named by its words',
+          ACKS.every((a) => shownNames.some((n) => n.startsWith(a))),
+          ACKS.filter((a) => !shownNames.some((n) => n.startsWith(a))).join('; ') || 'all five',
+        );
+        check(
+          'and the list with the saved answer that fits none of its options, by its question',
+          shownNames.some((n) => n.startsWith('Which on-call rotation length')),
+          shownNames.join(' | '),
+        );
+        const whys = await q.locator('.left-list .left-why').allInnerTexts();
+        check(
+          'grouped by why, each reason said once',
+          whys.includes('Yours to answer') && whys.includes('No matching option') && new Set(whys).size === whys.length,
+          whys.join(', '),
+        );
+        const long = q.locator('.left-list .left-name', { hasText: 'proof of eligibility' });
+        const longText = (await long.count()) ? await long.innerText() : '';
+        check(
+          'a long question is cut short, and whole in its tooltip',
+          longText.length > 0 &&
+            longText.length <= 60 &&
+            longText.endsWith('…') &&
+            /once an offer has been accepted/.test((await long.getAttribute('title')) ?? ''),
+          longText,
+        );
+
+        /*
+         * Not a value anywhere in it: not the answer the bank holds for the
+         * on-call list, and not anything the profile holds — only what this
+         * page itself says, which a label may repeat. Counted, never printed:
+         * the profile is somebody's.
+         */
+        const listText = (await q.locator('.left-list').count()) ? await q.locator('.left-list').innerText() : '';
+        const pageSays = await quarry.evaluate(() => document.body.innerText);
+        const profile = await (await fetch(`${SERVER}/api/autofill`)).json().then((r) => r.fields ?? {});
+        const secrets = [saved, ...Object.values(profile).map((v) => String(v).trim())].filter(
+          (v) => v.length >= 3 && !pageSays.includes(v),
+        );
+        const leaked = secrets.filter((v) => listText.includes(v)).length;
+        check('no saved answer or profile value is shown', listText.length > 0 && leaked === 0, `${leaked} shown`);
+
+        await q.locator('.left-list button.link', { hasText: 'Show fewer' }).click().catch(() => undefined);
+        check('and it folds back to the first few', (await names.count()) === 4, `${await names.count()} named`);
+
+        // Pressing a name: the page goes to the field, and the caret is in it.
+        await quarry.evaluate(() => window.scrollTo(0, 0));
+        const target = q.locator('.left-list .left-name', { hasText: 'I acknowledge that Quarry' });
+        if (await target.count()) await target.click();
+        await quarry.waitForTimeout(1200);
+        const landed = await quarry.evaluate(() => {
+          const box = document.querySelector('#ack2').getBoundingClientRect();
+          return { focused: document.activeElement?.id ?? '', inView: box.top >= 0 && box.bottom <= window.innerHeight };
+        });
+        check(
+          'pressing a name scrolls its field into view and focuses it',
+          landed.focused === 'ack2' && landed.inView,
+          `focused #${landed.focused || '(nothing)'}, ${landed.inView ? 'in view' : 'out of view'}`,
+        );
+        if (profile.school) {
+          await quarry.evaluate(() => window.scrollTo(0, 0));
+          const school = q.locator('.left-list .left-name', { hasText: /^School$/ });
+          if (await school.count()) await school.click();
+          await quarry.waitForTimeout(1200);
+          const at = await quarry.evaluate(() => document.activeElement?.id ?? '');
+          check('and a list left without a match is focused as itself', at === 'school', `focused #${at || '(nothing)'}`);
+        }
+        check('no page errors on the Quarry form', errorsQ.length === 0, errorsQ.join('; '));
+      } finally {
+        await quarry.close();
+        site.close();
+        await fetch(`${SERVER}/api/answers`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(bankBefore),
+        });
+      }
+    }
+
     /* ---------------- Quiet where it should be ---------------- */
 
     group('Restraint');
@@ -1413,7 +1561,7 @@ async function main() {
     const after = await (await fetch(`${SERVER}/api/applications`)).json();
     check(
       'left the store as it was found',
-      !after.applications.some((a) => ['Streamly', 'Northwind'].includes(a.company)),
+      !after.applications.some((a) => MINE.includes(a.company)),
     );
   } finally {
     await context.close();

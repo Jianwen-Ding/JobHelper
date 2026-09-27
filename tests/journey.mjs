@@ -18,6 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import {
+  extensionWorker,
   ASHBY_FORM,
   ASHBY_ROLE,
   CROWDED_PAGE,
@@ -130,7 +131,7 @@ async function main() {
   });
 
   try {
-    const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+    const worker = await extensionWorker(context);
     await pointExtensionAt(context, worker, SERVER);
 
     /* ------------------------------------------------------------------ *

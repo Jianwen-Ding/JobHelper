@@ -28,8 +28,40 @@ import { HELIOS_ROLE, cleanStore, findChromium, serveFixtures, requireOpenSave, 
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
-/** What this suite files under; cleared before it starts as well as after. */
-const MINE = ['Helios Robotics'];
+/**
+ * What this suite files under; cleared before it starts as well as after.
+ *
+ * Taken from the fixture rather than written out. It used to say "Helios
+ * Robotics" while the posting is from plain "Helios", and `cleanStore` matches
+ * the whole name — so this suite never cleared its own application, draft or
+ * resume, before or after, and every run left one behind for the next.
+ */
+const MINE = [HELIOS_ROLE.company];
+
+/**
+ * The application this run filed, by the whole company name and the role.
+ *
+ * Not "the first resume whose id mentions helios". A shared store holds other
+ * people's Helios: a "Backend Engineer — Helios Energy" application, filed by
+ * some other suite and never cleared, sits in the gate's third store, and its
+ * resume id sorts ahead of this one's. The old lookup took that resume, which
+ * prints the neutral phrasing of the pipeline bullet, and reported the round
+ * trip broken while the resume this run filed carried the wording perfectly.
+ * It passed in the gate only because the runner schedules the costliest
+ * suites first, so this one always landed on the first or second server of
+ * the pool, whose stores have no other "helios" resume, and never on the
+ * third, whose store has one. Fresh copies of that third store failed every
+ * time, on first run, second run and after a restart.
+ * `carrying.mjs` met the same "Helios Energy" and made the same fix.
+ */
+async function filedApplication() {
+  const { applications } = await (await fetch(`${SERVER}/api/applications`)).json();
+  return (applications ?? []).find(
+    (a) =>
+      (a.company ?? '').trim().toLowerCase() === HELIOS_ROLE.company.toLowerCase() &&
+      (a.role ?? '').trim().toLowerCase() === HELIOS_ROLE.title.toLowerCase(),
+  );
+}
 
 let passed = 0;
 let failed = 0;
@@ -477,10 +509,20 @@ async function main() {
        * was handed; the question is whether the thing that was typeset carries
        * the sentence, and only the resolver knows that.
        */
+      /*
+       * Through the application this run filed, not a search of the resume
+       * list: see `filedApplication`. The store was cleared of this suite's
+       * company before the run, so the one found here is the one just filed.
+       */
+      const application = await filedApplication();
       const list = await (await fetch(`${SERVER}/api/resumes`)).json();
       const resumes = list.resumes ?? list;
-      const mine = resumes.find((r) => /helios/i.test(r.id) || /helios/i.test(r.label ?? ''));
-      check('the application has a resume of its own in the store', Boolean(mine), mine?.label ?? 'none');
+      const mine = application?.resumeId ? resumes.find((r) => r.id === application.resumeId) : undefined;
+      check(
+        'the application has a resume of its own in the store',
+        Boolean(mine),
+        mine?.label ?? (application ? `application ${application.id} names ${application.resumeId ?? 'no resume'}` : 'no application'),
+      );
 
       if (mine) {
         const r = await resolved(mine.id);

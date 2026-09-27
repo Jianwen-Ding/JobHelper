@@ -22,7 +22,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { SYSTEMS } from './ats-forms.mjs';
-import { cleanStore, findChromium, pointExtensionAt, requireOpenSave } from './fixtures.mjs';
+import { extensionWorker, cleanStore, findChromium, pointExtensionAt, requireOpenSave } from './fixtures.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
@@ -103,7 +103,7 @@ async function main() {
 
   const timings = [];
   try {
-    const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+    const worker = await extensionWorker(context);
     await pointExtensionAt(context, worker, SERVER);
 
     for (const system of SYSTEMS) {

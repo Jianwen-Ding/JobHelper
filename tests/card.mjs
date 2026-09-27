@@ -4645,6 +4645,320 @@ async function main() {
     JSON.stringify({ after: changed.letterAfter, back: changed.letterBack }),
   );
 
+  console.log('\nAn AI letter with placeholders left in it');
+
+  /*
+   * ResumeM-M names the template slots it finds in an AI draft — the reply
+   * below is the shape `/api/ai/cover-letter` returns for one — and the card
+   * used to put that letter in the box as finished: "Drafted in your voice",
+   * a tick on the step. The text stays as it came; the card says what is
+   * left in it, and stops saying so once it is filled in.
+   */
+  const gappy = await inPage(async (createCard) => {
+    const sent = [];
+    const body = 'Dear [Company Name] team,\n\nI build data platforms and would like to build yours.\n\nBest,\n[Your Name]';
+    let reply = {
+      executed: true,
+      body,
+      saved: undefined,
+      placeholders: ['[Company Name]', '[Your Name]'],
+      unfinished:
+        'This letter still has 2 placeholders in it — "[Company Name]" and "[Your Name]". It is not finished: fill them in, or take the sentence out.',
+      priorLetters: [],
+    };
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme', description: 'Kafka and Go.' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: true,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'coverLetter') return reply;
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => new RegExp(t).test(b.textContent));
+    const box = () => root.querySelector('textarea[data-field="letter"]');
+    const type = (text) => {
+      box().value = text;
+      box().dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    // The sentence naming them, which the note opens with.
+    const note = () => {
+      const n = root.querySelector('[data-note="letter-gaps"]');
+      return n && !n.hidden ? n.firstChild.textContent.trim() : null;
+    };
+    const step = () => [...root.querySelectorAll('.step-head')].find((n) => /Cover letter/.test(n.textContent));
+    const ticked = () => Boolean(step()?.querySelector('.n.done'));
+    const source = () => [...root.querySelectorAll('.hint')].find((n) => /^Drafted/.test(n.textContent))?.textContent ?? null;
+    await wait(120);
+
+    byText('Draft a letter')?.click();
+    await wait(150);
+    const drafted = { text: box()?.value, note: note(), source: source(), ticked: ticked() };
+
+    type(body.replace('[Company Name]', 'Acme'));
+    const half = { note: note() };
+    type(body.replace('[Company Name]', 'Acme').replace('[Your Name]', 'Morgan Testwell'));
+    const filled = { note: note(), source: source() };
+
+    // A letter redrafted by the AI is the same: named, and then not ticked
+    // on the next draw.
+    const redrafted = await (async () => {
+      byText('Redraft')?.click();
+      await wait(150);
+      return { text: box()?.value, note: note(), source: [...root.querySelectorAll('.hint')].find((n) => /^Redrafted/.test(n.textContent))?.textContent ?? null, ticked: ticked() };
+    })();
+
+    // And one with nothing left in it says nothing about it.
+    reply = { executed: true, body: 'Dear Acme team,\n\nA finished letter.\n\nMorgan Testwell', placeholders: [], priorLetters: [] };
+    byText('Redraft')?.click();
+    await wait(150);
+    const clean = { note: note(), ticked: ticked(), hints: [...root.querySelectorAll('.hint')].map((n) => n.textContent) };
+
+    return { body, drafted, half, filled, redrafted, clean };
+  });
+  check('the AI letter goes in the box as it came', gappy.drafted.text === gappy.body, JSON.stringify(gappy.drafted.text));
+  check(
+    'with a note beside it naming what is left to fill in',
+    gappy.drafted.note === 'The draft still has [Company Name] and [Your Name] in it — fill them in before sending.',
+    String(gappy.drafted.note),
+  );
+  check(
+    'and the status line says it is not finished',
+    gappy.drafted.source === 'Drafted in your voice from your previous letters. It is not finished yet.',
+    String(gappy.drafted.source),
+  );
+  check('and the step is not ticked as done', gappy.drafted.ticked === false);
+  check(
+    'filling one in drops it from the note',
+    gappy.half.note === 'The draft still has [Your Name] in it — fill it in before sending.',
+    String(gappy.half.note),
+  );
+  check(
+    'and filling the last one takes the note away, and the status line with it',
+    gappy.filled.note === null && gappy.filled.source === 'Drafted in your voice from your previous letters.',
+    JSON.stringify(gappy.filled),
+  );
+  check(
+    'a redraft with placeholders is named the same way',
+    gappy.redrafted.text === gappy.body &&
+      /\[Company Name\] and \[Your Name\]/.test(gappy.redrafted.note ?? '') &&
+      /It is not finished yet\.$/.test(gappy.redrafted.source ?? '') &&
+      gappy.redrafted.ticked === false,
+    JSON.stringify(gappy.redrafted),
+  );
+  check(
+    'and a letter with nothing left in it has no such note, and is ticked',
+    gappy.clean.note === null && gappy.clean.ticked === true && !gappy.clean.hints.some((t) => /not finished/.test(t)),
+    JSON.stringify(gappy.clean),
+  );
+
+  /*
+   * And it is not put in the upload folder as final.
+   *
+   * A letter that lands is staged a second later — typeset, and offered on
+   * the drag chips and by Attach files. With "Dear [Company Name]," in it
+   * that is a template going out as the letter. It waits until the slots are
+   * filled in, or somebody says to use it as it is; "Mark as applied" is
+   * asked for, files what is in the box, and says the letter is unfinished.
+   */
+  const gappyFolder = await inPage(async (createCard) => {
+    const sent = [];
+    const body = 'Dear [Company Name] team,\n\nI build data platforms and would like to build yours.\n\nBest,\n[Your Name]';
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme', description: 'Kafka and Go.' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: true,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'render') return { pages: 1, fits: true };
+        if (action === 'stage') return { currentDir: '/tmp/x', dir: '/tmp/x', files: ['Resume.pdf'] };
+        if (action === 'bundle') return { currentDir: '/tmp/x', dir: '/tmp/x', files: ['Resume.pdf', 'Cover Letter.pdf'] };
+        if (action === 'coverLetter') {
+          return { executed: true, body, placeholders: ['[Company Name]', '[Your Name]'], unfinished: 'This letter still has 2 placeholders in it.', priorLetters: [] };
+        }
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => new RegExp(t).test(b.textContent));
+    const box = () => root.querySelector('textarea[data-field="letter"]');
+    const type = (text) => {
+      box().value = text;
+      box().dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const lastStaged = () => {
+      const s = sent.filter((c) => c.action === 'stage').at(-1);
+      return s ? s.payload.coverLetter : undefined;
+    };
+    await wait(120);
+    byText('Build resume')?.click();
+    await wait(200);
+
+    byText('Draft a letter')?.click();
+    // The stage waits 1.2s for typing to stop: see `prepareSoon`.
+    await wait(1600);
+    const drafted = {
+      staged: lastStaged(),
+      note: root.querySelector('[data-note="letter-gaps"]')?.textContent ?? null,
+    };
+
+    const filledText = body.replace('[Company Name]', 'Acme').replace('[Your Name]', 'Morgan Testwell');
+    type(filledText);
+    await wait(1600);
+    const filled = { staged: lastStaged(), filledText };
+
+    // Back to the draft as it came, and kept on purpose.
+    type(body);
+    byText('Redraft')?.click();
+    await wait(1600);
+    const redrafted = { staged: lastStaged() };
+    byText('Use it as it is')?.click();
+    await wait(1600);
+    const kept = {
+      staged: lastStaged(),
+      note: root.querySelector('[data-note="letter-gaps"]')?.textContent ?? null,
+    };
+
+    // Redrafted again, and filed as it stands.
+    byText('Redraft')?.click();
+    await wait(200);
+    byText('Mark as applied')?.click();
+    await wait(200);
+    // Filing folds the card away; the finished screen is under the chevron.
+    [...root.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === 'Unfold JobHelper')?.click();
+    await wait(100);
+    const filed = {
+      bundled: sent.filter((c) => c.action === 'bundle').at(-1)?.payload?.coverLetter ?? null,
+      done: root.querySelector('.done-missing[data-note="letter-gaps"]')?.textContent ?? null,
+    };
+    return { body, drafted, filled, redrafted, kept, filed };
+  });
+  check(
+    'an AI letter with placeholders is not staged into the upload folder',
+    gappyFolder.drafted.staged === '',
+    JSON.stringify(gappyFolder.drafted),
+  );
+  check(
+    'and the note says it stays out until they are filled in',
+    /fill them in before sending\. It stays out of the upload folder until then\./.test(gappyFolder.drafted.note ?? ''),
+    String(gappyFolder.drafted.note),
+  );
+  check(
+    'filled in, it goes into the folder',
+    gappyFolder.filled.staged === gappyFolder.filled.filledText,
+    JSON.stringify(gappyFolder.filled.staged),
+  );
+  check('a redraft with placeholders is held back again', gappyFolder.redrafted.staged === '', JSON.stringify(gappyFolder.redrafted));
+  check(
+    '"Use it as it is" puts it in as it stands, and the note goes',
+    gappyFolder.kept.staged === gappyFolder.body && gappyFolder.kept.note === null,
+    JSON.stringify(gappyFolder.kept),
+  );
+  check(
+    'marked as applied with placeholders in it, the letter is filed as it stands',
+    gappyFolder.filed.bundled === gappyFolder.body,
+    JSON.stringify(gappyFolder.filed.bundled),
+  );
+  check(
+    'and the finished screen says it is not finished',
+    /The cover letter is not finished\..*The draft still has \[Company Name\] and \[Your Name\] in it/.test(gappyFolder.filed.done ?? ''),
+    String(gappyFolder.filed.done),
+  );
+
+  console.log('\nAn AI answer with placeholders left in it');
+
+  /*
+   * The same for an answer: `/api/ai/answer` names the slots, and the card
+   * put the draft in its box as one to paste into the form.
+   */
+  const gappyAnswer = await inPage(async (createCard) => {
+    const output = 'I want to work at [Company Name] because the platform team ships weekly.';
+    let reply = {
+      executed: true,
+      source: 'ai',
+      output,
+      match: { confident: false },
+      placeholders: ['[Company Name]'],
+      unfinished: 'This answer still has a placeholder in it — "[Company Name]". It is not finished: fill it in, or take the sentence out.',
+    };
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme', description: 'Kafka and Go.' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [{ question: 'Why us?', answer: '', confident: false, fieldId: 'jh-1' }],
+      needsCoverLetter: false,
+      onAction: async (action) => {
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'answer:Why us?') return reply;
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const byText = (t) => [...root.querySelectorAll('.q button')].find((b) => new RegExp(t).test(b.textContent));
+    const box = () => root.querySelector('textarea[data-field="answer:Why us?"]');
+    const note = () => {
+      const n = root.querySelector('.q [data-note="answer-gaps"]');
+      return n && !n.hidden ? n.textContent : null;
+    };
+    const ticked = () =>
+      Boolean([...root.querySelectorAll('.step-head')].find((n) => /Application questions/.test(n.textContent))?.querySelector('.n.done'));
+    await wait(120);
+
+    byText('Draft an answer')?.click();
+    await wait(150);
+    const drafted = { text: box()?.value, note: note(), ticked: ticked() };
+
+    box().value = output.replace('[Company Name]', 'Acme');
+    box().dispatchEvent(new Event('input', { bubbles: true }));
+    const filled = { note: note() };
+
+    reply = { executed: true, source: 'ai', output: 'Acme ships weekly, and so do I.', match: { confident: false }, placeholders: [] };
+    byText('Rewrite for this role|Draft an answer')?.click();
+    await wait(150);
+    const clean = { text: box()?.value, note: note(), ticked: ticked() };
+    return { output, drafted, filled, clean };
+  });
+  check('the AI answer goes in its box as it came', gappyAnswer.drafted.text === gappyAnswer.output, JSON.stringify(gappyAnswer.drafted.text));
+  check(
+    'with a note beside it naming what is left to fill in',
+    gappyAnswer.drafted.note === 'The draft still has [Company Name] in it — fill it in before sending.',
+    String(gappyAnswer.drafted.note),
+  );
+  check('and the step is not ticked as done', gappyAnswer.drafted.ticked === false);
+  check('filled in, the note goes', gappyAnswer.filled.note === null, String(gappyAnswer.filled.note));
+  check(
+    'and an answer with nothing left in it has no such note, and is ticked',
+    gappyAnswer.clean.text === 'Acme ships weekly, and so do I.' && gappyAnswer.clean.note === null && gappyAnswer.clean.ticked === true,
+    JSON.stringify(gappyAnswer.clean),
+  );
+
   console.log('\nThe list of pages stays open through a repaint');
 
   /*
@@ -5236,6 +5550,113 @@ async function main() {
     JSON.stringify({ after: keeping.after, told: keeping.told }),
   );
   check('with nothing to keep, nothing is said about it', keeping.gone, String(keeping.gone));
+
+  /*
+   * What the page emptied after Autofill, filled in again, said beside what
+   * Autofill did. Ashby's "Autofill from resume" mounts its form again from
+   * the resume's parse with only the name and the email, and nothing said so
+   * until Submit came back "Missing entry for required field".
+   */
+  const refilling = await inPage(async (createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary', sections: [] },
+        tailor: 'none',
+        diff: [],
+        rationale: [],
+        skillChanges: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      isForm: true,
+      onAction: (action) => {
+        if (action === 'autofill') return Promise.resolve({ filled: [{ key: 'phone', value: '(555) 010-0199' }, { key: 'major', value: 'Computer Science' }], skipped: [] });
+        if (action === 'aiStatus') return Promise.resolve({ state: 'off', active: false, serverEnabled: false });
+        return Promise.resolve({});
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const note = () => root.querySelector('.ok-note')?.textContent ?? '';
+    handle.refilled?.(['Phone']);
+    await new Promise((r) => setTimeout(r, 20));
+    const beforeAutofill = note();
+    [...root.querySelectorAll('button')].find((b) => /^Autofill this form/.test(b.textContent))?.click();
+    await new Promise((r) => setTimeout(r, 50));
+    const filled = note();
+    handle.refilled?.(['Phone', 'Discipline/Field of Study']);
+    await new Promise((r) => setTimeout(r, 20));
+    const two = note();
+    handle.refilled?.(['Graduation Date or Anticipated Graduation Date', 'Will you now or in the future require sponsorship for employment visa status?', '']);
+    await new Promise((r) => setTimeout(r, 20));
+    return { beforeAutofill, filled, two, four: note() };
+  });
+  check(
+    'fields the page emptied and Autofill filled in again are named beside what Autofill did',
+    refilling.filled === 'Filled 2 fields.' &&
+      refilling.two === 'Filled 2 fields. The page emptied “Phone” and “Discipline/Field of Study” after they were filled, and they have been filled in again — check before sending.',
+    JSON.stringify(refilling),
+  );
+  check(
+    'more than three are counted after the first three, and one said before any press of Autofill is said alone',
+    /^Filled 2 fields\. The page emptied “Phone”, “Discipline\/Field of Study”, “Graduation Date or Anticipated Graduation Date” and 1 more after they were filled/.test(refilling.four) &&
+      refilling.beforeAutofill === 'The page emptied “Phone” after it was filled, and it has been filled in again — check before sending.',
+    JSON.stringify(refilling),
+  );
+
+  /*
+   * A statement Autofill said Yes to in the person's name — Quora's "I
+   * understand that all employees ... coordination hours" — is named, so they
+   * can see what was said for them.
+   */
+  const acknowledging = await inPage(async (createCard) => {
+    const COORDINATION = 'I understand that all employees for this position will be expected to be available for meetings and impromptu communication during Quora\'s “coordination hours” (Mon-Fri, 9am-3pm Pacific Time).';
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary', sections: [] },
+        tailor: 'none',
+        diff: [],
+        rationale: [],
+        skillChanges: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      isForm: true,
+      onAction: (action) => {
+        if (action === 'autofill') {
+          return Promise.resolve({
+            filled: [
+              { key: 'phone', value: '(555) 010-0199' },
+              { key: 'acknowledged', value: 'Yes', question: COORDINATION, acknowledged: true },
+              { key: 'acknowledged', value: 'Yes', question: 'I confirm that I have read the job description.', acknowledged: true },
+            ],
+            skipped: [],
+          });
+        }
+        if (action === 'aiStatus') return Promise.resolve({ state: 'off', active: false, serverEnabled: false });
+        return Promise.resolve({});
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    [...root.querySelectorAll('button')].find((b) => /^Autofill this form/.test(b.textContent))?.click();
+    await new Promise((r) => setTimeout(r, 50));
+    return root.querySelector('.ok-note')?.textContent ?? '';
+  });
+  check(
+    'statements acknowledged for the person are named beside what Autofill did',
+    acknowledging ===
+      'Filled 3 fields. Acknowledged: “I understand that all employees for this position will be…”, “I confirm that I have read the job description.” — check you agree before sending.',
+    JSON.stringify(acknowledging),
+  );
 
   /*
    * The role the card shows while the posting is still being read, which is
@@ -5888,6 +6309,278 @@ async function main() {
   });
   check('with no modal open the card stays a child of <html>', noModal.alone, JSON.stringify(noModal));
   check('and a dialog that is not modal, even one covering the window, is not moved into', noModal.beside, JSON.stringify(noModal));
+
+  console.log('\nScrolling the card on a page that scrolls itself');
+
+  /*
+   * Reported from life, on qumulo.com's careers page: scrolling over the card
+   * scrolled the website instead. The page uses Lenis, a smooth-scroll
+   * library that takes every wheel event at the window, cancels it, and
+   * scrolls the page itself — unless the event came from something marked
+   * `data-lenis-prevent`. Two page scrollers stand in for the kinds there
+   * are: one on the window that honours nothing, as Lenis would if the card
+   * were not marked, and one listening in the capture phase that honours the
+   * mark, as Lenis and the libraries built on it do.
+   */
+  for (const phase of ['bubble', 'capture']) {
+    await inPage((createCard) => {
+      document.querySelectorAll('style[data-page], #tall').forEach((el) => el.remove());
+      const tall = Object.assign(document.createElement('div'), { id: 'tall' });
+      tall.style.height = '6000px';
+      document.body.append(tall);
+      window.scrollTo(0, 0);
+      createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Platform Engineer', company: 'Acme' },
+          spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+          rationale: [],
+        },
+        resumes: [],
+        settings: {},
+        questions: Array.from({ length: 14 }, (_, i) => ({ question: `Question ${i + 1}: why us?`, answer: 'Because. '.repeat(20), confident: false })),
+        needsCoverLetter: false,
+        onAction: async () => ({}),
+      });
+    });
+    await page.evaluate((capture) => {
+      window.__smooth?.();
+      const onWheel = (e) => {
+        if (capture && e.composedPath().some((n) => n.hasAttribute?.('data-lenis-prevent'))) return;
+        e.preventDefault();
+        window.scrollBy(0, e.deltaY);
+      };
+      window.addEventListener('wheel', onWheel, { passive: false, capture });
+      window.__smooth = () => window.removeEventListener('wheel', onWheel, { capture });
+    }, phase === 'capture');
+    const box = await page.evaluate(() => {
+      const r = document.querySelector('#jobhelper-card-host').shadowRoot.querySelector('.body').getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    });
+    await page.mouse.move(box.x, box.y);
+    await page.mouse.wheel(0, 300);
+    await page.waitForTimeout(250);
+    const after = await page.evaluate(() => {
+      const body = document.querySelector('#jobhelper-card-host').shadowRoot.querySelector('.body');
+      return { card: body.scrollTop, room: body.scrollHeight - body.clientHeight, page: window.scrollY };
+    });
+    check(`a wheel over the card scrolls the card (${phase}-phase page scroller)`, after.room > 0 && after.card > 0, JSON.stringify(after));
+    check(`and not the page under it (${phase}-phase page scroller)`, after.page === 0, JSON.stringify(after));
+    await page.evaluate(() => { window.__smooth?.(); window.__smooth = null; document.querySelector('#tall')?.remove(); window.scrollTo(0, 0); });
+  }
+
+  console.log('\nA card in a narrow window, and a short one');
+
+  /*
+   * The card was a fixed 420px wide, top right. In a window narrower than
+   * about 450px — half a laptop screen, or a page zoomed in — its left edge
+   * was off the screen, and the start of every line in it with it, with no
+   * way to scroll to them. It gives up width now, down to 300px in a 320px
+   * window, and what is inside it wraps to fit rather than running out of it.
+   *
+   * One card with everything that is wide on it: the resume drawn, a letter
+   * box, a question borrowed from another company (its button carries the
+   * company's name), the files to drag, and a list of fields Autofill left,
+   * opened out. The resume is drawn by the card's own pdfview.js and pdf.js,
+   * handed to it where the extension would, since a canvas squeezed to fit
+   * is one of the things being looked at.
+   */
+  const ONE_PAGE_PDF = Buffer.from(
+    [
+      '%PDF-1.4',
+      '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj',
+      '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj',
+      '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>endobj',
+      'trailer<</Size 4/Root 1 0 R>>',
+      '%%EOF',
+      '',
+    ].join('\n'),
+    'utf8',
+  ).toString('base64');
+  const extensionFile = (p) => fs.readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.evaluate((files) => {
+    const urls = Object.fromEntries(
+      Object.entries(files).map(([p, code]) => [p, URL.createObjectURL(new Blob([code], { type: 'text/javascript' }))]),
+    );
+    window.chrome = Object.assign(window.chrome ?? {}, { runtime: { getURL: (p) => urls[p] ?? p } });
+  }, Object.fromEntries(['src/content/pdfview.js', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs'].map((p) => [p, extensionFile(p)])));
+
+  const narrowSetUp = await inPage(async (createCard, pdf) => {
+    const skipped = [
+      { label: 'School', fieldId: 'f-school', reason: 'no matching option' },
+      ...[
+        'I understand that this position does not offer visa sponsorship.',
+        'I acknowledge that Northwind will not sponsor employment visas for this role.',
+        'I understand that candidates must be authorized to work in the United States.',
+        'Please confirm you understand that we cannot support immigration applications.',
+        'I understand that proof of eligibility to work will be asked for before any start date.',
+      ].map((label, i) => ({ label, fieldId: `f-ack${i}`, reason: 'it says two things at once, so acknowledge it yourself' })),
+    ];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Software Engineer Intern, Data Platform', company: 'Northwind', location: 'Boston, MA' },
+        spec: { id: 'job-northwind', label: 'Northwind', tier: 'temporary' },
+        baseLabel: 'New grad',
+        tailor: 'match',
+        diff: [{ kind: 'changed', where: 'Example Co.', from: 'Built a pipeline', to: 'Built a Kafka pipeline' }],
+        rationale: [{ key: 'b1', from: 'v_a', to: 'v_b', toText: 'Built a Kafka pipeline', because: ['kafka'] }],
+        currentDir: '/tmp/morgan-testwell/out/current',
+      },
+      resumes: [{ id: 'newgrad', label: 'New grad', base: true }],
+      settings: {},
+      questions: [
+        { question: 'Why do you want to work here?', answer: 'Because Harbourview Logistics Group asked.', confident: true, namesAnother: 'Harbourview Logistics Group' },
+        { question: 'Describe a technical project you are proud of.', answer: '', confident: false },
+      ],
+      needsCoverLetter: true,
+      isForm: true,
+      onAction: async (action) => {
+        if (action === 'render') return { pages: 1, fits: true, pdfUrl: '/files/Morgan-Testwell-Resume.pdf', absolutePdfUrl: 'about:blank' };
+        if (action === 'pdfBytes') return { base64: pdf };
+        if (action === 'attachmentFiles') return { files: [{ name: 'Morgan-Testwell-Resume.pdf' }, { name: 'Morgan-Testwell-Answers.md' }] };
+        if (action === 'wantedDocuments') return { kinds: ['resume', 'letter'] };
+        if (action === 'autofill') return { filled: [{ key: 'first_name', value: 'Morgan' }, { key: 'email', value: 'morgan@example.com' }], skipped };
+        if (action === 'aiStatus') return { state: 'off', active: false, serverEnabled: false };
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const button = (re) => [...root.querySelectorAll('button')].find((b) => re.test(b.textContent));
+    const until = async (test, ms = 15_000) => {
+      for (const end = Date.now() + ms; Date.now() < end && !test();) await new Promise((r) => setTimeout(r, 50));
+      return Boolean(test());
+    };
+    await new Promise((r) => setTimeout(r, 100));
+    button(/^Build resume/)?.click();
+    const drawn = await until(() => root.querySelector('.pdf-pane canvas.pdf-page'));
+    button(/^Autofill this form/)?.click();
+    await until(() => root.querySelector('.left-list'));
+    button(/^and \d+ more$/)?.click();
+    await new Promise((r) => setTimeout(r, 100));
+    return {
+      drawn,
+      letter: Boolean(root.querySelector('textarea.tall')),
+      borrowed: Boolean(button(/^Start from what you told Harbourview/)),
+      chips: root.querySelectorAll('.file.liftable').length,
+      left: root.querySelectorAll('.left-list .left-name').length,
+    };
+  }, ONE_PAGE_PDF);
+  check(
+    'the card being measured has the wide things on it',
+    narrowSetUp.drawn && narrowSetUp.letter && narrowSetUp.borrowed && narrowSetUp.chips >= 2 && narrowSetUp.left === 6,
+    JSON.stringify(narrowSetUp),
+  );
+
+  /** Where the card is, and whether anything in it runs past its sides. */
+  const cardLayout = () => page.evaluate(() => {
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const card = root.querySelector('.card');
+    const body = root.querySelector('.body');
+    const r = card.getBoundingClientRect();
+    const out = [...card.querySelectorAll('*')]
+      .filter((el) => {
+        const b = el.getBoundingClientRect();
+        return b.width > 0 && (b.right > r.right + 0.5 || b.left < r.left - 0.5);
+      })
+      .map((el) => `${el.localName}.${el.className} ${(el.textContent ?? '').trim().slice(0, 30)}`);
+    const canvas = root.querySelector('.pdf-pane canvas');
+    const pane = root.querySelector('.pdf-pane');
+    const c = canvas?.getBoundingClientRect();
+    const p = pane?.getBoundingClientRect();
+    return {
+      vw: document.documentElement.clientWidth,
+      vh: document.documentElement.clientHeight,
+      left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width,
+      scrollWidth: body?.scrollWidth, clientWidth: body?.clientWidth,
+      scrollHeight: body?.scrollHeight, clientHeight: body?.clientHeight,
+      out: out.slice(0, 5),
+      canvas: c && p ? {
+        inPane: c.left >= p.left - 0.5 && c.right <= p.right + 0.5,
+        shown: +(c.height / c.width).toFixed(3),
+        page: +(canvas.height / canvas.width).toFixed(3),
+      } : null,
+      pane: p ? Math.round(p.height) : null,
+    };
+  });
+  const inWindow = (m) => m.left >= 0 && m.top >= 0 && m.right <= m.vw && m.bottom <= m.vh;
+  const box = (m) => `${Math.round(m.left)}..${Math.round(m.right)} × ${Math.round(m.top)}..${Math.round(m.bottom)} in ${m.vw}×${m.vh}`;
+
+  for (const width of [400, 320]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.waitForTimeout(100);
+    const m = await cardLayout();
+    check(`at ${width}px wide the whole card is inside the window`, inWindow(m), box(m));
+    check(
+      `and nothing in it runs past its sides (${width}px)`,
+      m.scrollWidth <= m.clientWidth && m.out.length === 0,
+      `body ${m.scrollWidth} in ${m.clientWidth}; ${m.out.join(' | ')}`,
+    );
+    check(
+      `and the resume is drawn to fit, the shape of the page (${width}px)`,
+      m.canvas?.inPane === true && Math.abs(m.canvas.shown - m.canvas.page) < 0.02,
+      JSON.stringify(m.canvas),
+    );
+  }
+  // 300px in a 320px window: narrower than that is not a card worth having.
+  {
+    const m = await cardLayout();
+    check('in a 320px window the card is 300px wide', Math.round(m.width) === 300, String(m.width));
+  }
+
+  /*
+   * Folded, it is the same box with less in it, and it stays in the window
+   * too. There is no dragging the card about, so where it can be is where the
+   * window's corner puts it: shrinking the window brings it along.
+   */
+  await page.evaluate(() => document.querySelector('#jobhelper-card-host').shadowRoot.querySelector('button[aria-label^="Fold JobHelper"]')?.click());
+  await page.waitForTimeout(100);
+  {
+    const m = await cardLayout();
+    check('folded at 320px, the card is inside the window as well', inWindow(m) && m.width <= 300, box(m));
+  }
+  await page.evaluate(() => document.querySelector('#jobhelper-card-host').shadowRoot.querySelector('button[aria-label^="Unfold JobHelper"]')?.click());
+  await page.waitForTimeout(100);
+
+  /*
+   * A short window: the card stops at the bottom edge and scrolls inside
+   * itself, and the drawn resume, which scrolls on its own and keeps the
+   * wheel, is kept to part of it — where it was as tall as the card's body,
+   * a wheel anywhere over the card moved the resume and never the card.
+   */
+  for (const width of [400, 1280]) {
+    await page.setViewportSize({ width, height: 500 });
+    await page.waitForTimeout(100);
+    const m = await cardLayout();
+    check(`in a window 500px high the card fits (${width}px wide)`, inWindow(m), box(m));
+    check(
+      `and scrolls inside itself (${width}px wide)`,
+      m.scrollHeight > m.clientHeight && m.scrollWidth <= m.clientWidth,
+      `body ${m.scrollHeight} in ${m.clientHeight}`,
+    );
+    check(
+      `with the drawn resume taking only part of it (${width}px wide)`,
+      m.pane !== null && m.pane <= m.clientHeight * 0.75,
+      `pane ${m.pane} in a body ${m.clientHeight} high`,
+    );
+  }
+
+  // And a normal window is drawn as it always was: 420px, 14px from the corner.
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.waitForTimeout(100);
+  {
+    const m = await cardLayout();
+    check(
+      'at 1280px wide the card is 420px, where it always was',
+      m.width === 420 && m.right === m.vw - 14 && m.top === 14,
+      `${m.width}px wide, ${m.vw - m.right}px from the right, ${m.top}px down`,
+    );
+  }
+  await page.evaluate(() => {
+    document.querySelector('#jobhelper-card-host')?.remove();
+    delete window.chrome.runtime;
+  });
 
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);

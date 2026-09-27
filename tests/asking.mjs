@@ -23,6 +23,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import {
+  extensionWorker,
   FORUM_THREAD,
   HELIOS_ROLE,
   findChromium,
@@ -124,7 +125,7 @@ async function main() {
   });
 
   try {
-    const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+    const worker = await extensionWorker(context);
     await pointExtensionAt(context, worker, SERVER);
 
     const forumUrl = fixtures.urlFor(FORUM_THREAD);

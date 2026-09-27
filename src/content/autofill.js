@@ -733,6 +733,28 @@ const WITHOUT_SPONSORSHIP = /\bwithout\b[\s\S]{0,30}\bsponsor\w*/i;
 const asksBothAtOnce = (description) =>
   (AUTHORIZATION.test(description) || WITHOUT_SPONSORSHIP.test(description)) && SPONSORSHIP.test(description);
 
+/*
+ * Which field each row of `skipped` is about, and what that field is called.
+ *
+ * The card said "3 fields still for you to answer" and nothing else, so the
+ * person was sent back to hunt through a long form for three boxes the report
+ * had been standing on when it counted them. Each row is now tied to its
+ * control where it is made, and `pointAtLeft` turns that into a mark the card
+ * can send back and a name it can show.
+ *
+ * Keyed by the row, as `UNSEEN` is, so nothing that is not a plain value goes
+ * into the report: a frame's report crosses a message boundary. The name is
+ * taken now, while the control is the one that was looked at — a widget's
+ * label is often gone by the time the report is drawn. A group of options is
+ * named by its question, which is what the page shows above it; one control,
+ * by its label. Never by what is in it.
+ */
+const LEFT_AT = new WeakMap();
+const leftAt = (el, row, label) => {
+  if (el) LEFT_AT.set(row, { el, label: label ?? labelFor(el) });
+  return row;
+};
+
 /**
  * Handing it back, wherever it turns up.
  *
@@ -751,13 +773,27 @@ const asksBothAtOnce = (description) =>
  * right to work is theirs however it is phrased.
  */
 const TWO_AT_ONCE = 'this one asks two things at once';
-const handBack = (description, skipped) => {
+const handBack = (description, skipped, el, label) => {
+  /*
+   * And a sponsorship or right-to-work policy the person is only asked to
+   * acknowledge, which is no question about them at all — see
+   * `acknowledgesWorkRights`. Claimed by nothing, and said nothing about
+   * here: `answerAcknowledgements` lists it for the person, once, where it
+   * is still unanswered.
+   */
+  if (acknowledgesWorkRights(description)) return true;
   if (!asksBothAtOnce(description)) return false;
-  skipped.push({
-    key: 'work_authorization',
-    reason: TWO_AT_ONCE,
-    description: description.slice(0, 60),
-  });
+  skipped.push(
+    leftAt(
+      el,
+      {
+        key: 'work_authorization',
+        reason: TWO_AT_ONCE,
+        description: description.slice(0, 60),
+      },
+      label,
+    ),
+  );
   return true;
 };
 
@@ -2975,6 +3011,89 @@ function degreeLevel(text) {
 const LEVEL_ONLY =
   /^(?:associate|bachelor|master|doctorate|doctoral|ph\.?\s?d\.?|undergraduate)(?:'?s)?(?:\s+degree)?$/i;
 
+/*
+ * A school's name, written so that two lists spelling the same name their own
+ * way agree — and only the same name.
+ *
+ * Greenhouse's School list is its own: read off the board's school search on
+ * Twitch's board (the same list every board serves), a campus follows a dash —
+ * "University of Texas - Austin", "University of California - Los Angeles",
+ * "University of Massachusetts - Amherst" — "and" is written out ("College of
+ * William and Mary") and Saint is "St." ("St. John's University"). A resume
+ * says "University of Texas at Austin", "University of California, Los
+ * Angeles", "William & Mary", "Saint John's University", and an abbreviated
+ * "Univ." goes either way. None of those was ever the option "exactly", so the
+ * School was left on "Select..." for most people whose school is on the list.
+ *
+ * So the words are compared, in order, with the punctuation between them, a
+ * leading or linking "the", "at" and "in", and the case gone, and a handful of
+ * abbreviations written out. Nothing else: "of" and the order stay, so the
+ * University of Washington is not Washington University; no word may be
+ * missing or extra, so "Texas A&M University" is not "Texas A&M University -
+ * Commerce", "Example State University" is not "Northern Example State
+ * University", and a school the list keeps only campuses of ("University of
+ * Michigan - Ann Arbor", "- Dearborn", "- Flint") is not guessed at. "St." is
+ * Saint and never State, so a St. Cloud is never a state school.
+ */
+const SCHOOL_WORDS = { univ: 'university', coll: 'college', inst: 'institute', st: 'saint', ste: 'sainte', mt: 'mount', ft: 'fort', intl: 'international', natl: 'national' };
+const SCHOOL_LINKS = new Set(['the', 'at', 'in']);
+
+function schoolKey(text) {
+  return clean(text)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/['’`]/g, '')
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .map((word) => SCHOOL_WORDS[word] ?? word)
+    .filter((word) => !SCHOOL_LINKS.has(word))
+    .join(' ');
+}
+
+/**
+ * The one option that is this school under the list's spelling, or nothing —
+ * nothing too where two different options would both do.
+ */
+function schoolOption(options, value, textOf = (o) => o.textContent) {
+  const hits = options.filter((o) => sameAnswerSpelledOtherwise('school', textOf(o), value));
+  return new Set(hits.map((o) => clean(textOf(o)).toLowerCase())).size === 1 ? hits[0] : null;
+}
+
+/*
+ * What else to type into a school search that did not find the school under
+ * its whole name.
+ *
+ * The board's search is the list's names holding what is typed — measured on
+ * Twitch's board: "Northeastern Univ" finds Northeastern University,
+ * "Northeastern Univ." finds nothing, and "University of Texas at Austin"
+ * finds nothing, since the list says "University of Texas - Austin". So a
+ * name that is spelled the list's way only in part has to be asked for by
+ * that part: the name before its campus or place ("University of Texas"), and
+ * then its most particular word, the longest that is not a word every school
+ * has ("Example" for "Example State University", which the list calls
+ * "Example State Univ."). What comes back is held to `schoolKey`, so a
+ * shorter search only finds more to choose from, never a looser choice.
+ */
+const SCHOOL_COMMON_WORD = /^(?:university|univ|college|coll|institute|inst|school|state|the|of|and|at|in|for|community|technical|technology|saint|st|academy|polytechnic|campus|main)$/i;
+
+function schoolSearches(value) {
+  const whole = clean(value);
+  const terms = [];
+  const add = (term) => {
+    const t = clean(term);
+    if (t.length >= 3 && !sameOption(t, whole) && !terms.some((x) => sameOption(x, t))) terms.push(t);
+  };
+  add(whole.split(/\s+(?:at|in)\s+|\s*[,(–—]\s*|\s+-\s+/i)[0]);
+  const particular = whole
+    .split(/[\s,.()&/]+/)
+    .filter((word) => word && !SCHOOL_COMMON_WORD.test(word.replace(/['’]s$/i, '')))
+    .sort((a, b) => b.length - a.length)[0];
+  if (particular) add(particular);
+  return terms;
+}
+
 /**
  * Whether an option is this answer under a different spelling — for the
  * fields where a spelling table exists, and only those. Consulted after an
@@ -3014,7 +3133,21 @@ function sameAnswerSpelledOtherwise(key, option, value) {
     const said = clean(option).replace(/^(?:college|university)\s*[-–—:]\s+/i, '');
     if (said !== clean(option) && sameOption(said, value)) return true;
     const level = degreeLevel(value);
-    return Boolean(level) && LEVEL_ONLY.test(said.replace(/[’]/g, "'")) && degreeLevel(said) === level;
+    if (!level) return false;
+    const plain = said.replace(/[’]/g, "'");
+    if (LEVEL_ONLY.test(plain)) return degreeLevel(plain) === level;
+    /*
+     * Or the level with its degrees named after it: "Master's Degree (MS/MA)",
+     * "Doctorate (PhD)". Only where what is named is this level too — an
+     * M.S. is not "Master's Degree (MBA)".
+     */
+    const aside = /^(.*?)\s*\(([^()]+)\)$/.exec(plain);
+    return Boolean(aside) && LEVEL_ONLY.test(aside[1]) && degreeLevel(aside[1]) === level && degreeLevel(aside[2]) === level;
+  }
+  // A school under the list's spelling of its name. See `schoolKey`.
+  if (key === 'school') {
+    const wanted = schoolKey(value);
+    return Boolean(wanted) && wanted === schoolKey(option);
   }
   if (key === 'graduation_month' || key === 'education_start_month') {
     const month = monthOf(value);
@@ -3791,7 +3924,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     // do about it, and naming it would imply the field is theirs to fill.
     // Before the exclusions, which say nothing, and before the match, which
     // this question does not need. See `handBack`.
-    if (handBack(description, skipped)) continue;
+    if (handBack(description, skipped, input)) continue;
     if (isNotAboutYou(description, clean(labelFor(input)), surroundingWords(input), boundedSection(input))) continue;
     // A name is not writing, even asked in a paragraph box as a question:
     // Zoox's "What is your preferred first name and last name?" is a textarea.
@@ -3849,7 +3982,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
           !(LINKS.has(key) && onlyTheStartOfAnAddress(input.value)) &&
           !(key === 'phone' && ONLY_A_DIALLING_CODE.test(input.value));
     if (answered && !overwrite) {
-      skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
+      skipped.push(leftAt(input, { key, reason: 'already filled', description: description.slice(0, 60) }));
       continue;
     }
     // The dialling code the form put there stays, in front of a number that
@@ -3884,7 +4017,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
      * Kingdom?". See `aboutAnotherCountry`.
      */
     if (aboutAnotherCountry(key, value, description, fields.address_country)) {
-      skipped.push({ key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) });
+      skipped.push(leftAt(input, { key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) }));
       continue;
     }
 
@@ -3930,9 +4063,11 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
          * those fields — "12" is a perfectly good option in plenty of other
          * lists — and only after the exact match has failed.
          */
-        choosable.find(
-          (o) => sameAnswerSpelledOtherwise(key, o.textContent, value) || sameAnswerSpelledOtherwise(key, o.value, value),
-        ) ??
+        (key === 'school'
+          ? schoolOption(choosable, value)
+          : choosable.find(
+              (o) => sameAnswerSpelledOtherwise(key, o.textContent, value) || sameAnswerSpelledOtherwise(key, o.value, value),
+            )) ??
         /*
          * And, failing that, a yes/no pair against a phrase. See
          * `yesNoOption`, which wants a pair and nothing else — so the prompt
@@ -3971,7 +4106,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
          * country…", and the card says it filled it.
          */
         if (input.selectedOptions[0] !== option) {
-          skipped.push({ key, reason: 'the field would not take it', description: description.slice(0, 60) });
+          skipped.push(leftAt(input, { key, reason: 'the field would not take it', description: description.slice(0, 60) }));
           continue;
         }
         // Both, because choosing from a list fires both. `change` alone is
@@ -3980,13 +4115,14 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
         input.dispatchEvent(ours(new Event('change', { bubbles: true })));
         // And drawn by whatever stands in for it. See `chosenOf`.
         if (!standInTookIt(input, was)) {
-          skipped.push({ key, reason: PICK_BY_HAND, description: description.slice(0, 60) });
+          skipped.push(leftAt(input, { key, reason: PICK_BY_HAND, description: description.slice(0, 60) }));
           continue;
         }
+        keepTyped(input, option.textContent, 'select');
         filled.push({ key, value });
       } else {
         const reason = aboutAnotherCountry(key, value, description) ? ANOTHER_COUNTRY : 'no matching option';
-        skipped.push({ key, reason, description: description.slice(0, 60) });
+        skipped.push(leftAt(input, { key, reason, description: description.slice(0, 60) }));
       }
       continue;
     }
@@ -4024,19 +4160,20 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
         if (!busy && !unsure) for (const [box, part] of parts) setValue(box, part);
         for (const [box] of parts) numberBoxes.add(box);
         if (unsure) {
-          skipped.push({ key, reason: 'the field would not accept it in that form', description: description.slice(0, 60) });
+          skipped.push(leftAt(input, { key, reason: 'the field would not accept it in that form', description: description.slice(0, 60) }));
         } else if (busy) {
-          skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
+          skipped.push(leftAt(input, { key, reason: 'already filled', description: description.slice(0, 60) }));
         } else if (parts.every(([box, part]) => box.value === part)) {
+          for (const [box, part] of parts) keepTyped(box, part);
           filled.push({ key, value: parts.map(([, part]) => part).join(' ') });
         } else {
           parts.forEach(([box], n) => setValue(box, was[n]));
-          skipped.push({ key, reason: 'the field would not take it', description: description.slice(0, 60) });
+          skipped.push(leftAt(input, { key, reason: 'the field would not take it', description: description.slice(0, 60) }));
         }
         continue;
       }
       if (shorter === undefined) {
-        skipped.push({ key, reason: 'the field would not accept it in that form', description: description.slice(0, 60) });
+        skipped.push(leftAt(input, { key, reason: 'the field would not accept it in that form', description: description.slice(0, 60) }));
         continue;
       }
       value = shorter;
@@ -4077,7 +4214,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     // And a date picker that wrote the date back its own way. See `sameMonthWritten`.
     const sameDate = /^(graduation|education_start)_date$/.test(key) && sameMonthWritten(input.value, String(value));
     if (input.value !== String(value) && !sameNumber && !sameDate) {
-      skipped.push({ key, reason: 'the field would not take it', description: description.slice(0, 60) });
+      skipped.push(leftAt(input, { key, reason: 'the field would not take it', description: description.slice(0, 60) }));
       continue;
     }
 
@@ -4096,16 +4233,20 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
       });
       if (took === undefined) {
         setValue(input, before);
-        skipped.push({
-          key,
-          reason: 'the field would not accept it in that form',
-          description: description.slice(0, 60),
-        });
+        skipped.push(
+          leftAt(input, {
+            key,
+            reason: 'the field would not accept it in that form',
+            description: description.slice(0, 60),
+          }),
+        );
         continue;
       }
+      keepTyped(input, took);
       filled.push({ key, value: took });
       continue;
     }
+    keepTyped(input, value);
     filled.push({ key, value });
   }
 
@@ -4118,11 +4259,13 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
    * person applying knows — which is the only kind the bank holds.
    */
   const memory = answerFromMemory(remembered);
+  // And the statements that only ask to be acknowledged, once nothing else has answered them.
+  const acknowledged = answerAcknowledgements();
   // And what was typed, into the short boxes the profile had nothing for.
   const typed = answerTypedFromMemory(remembered, fields, company);
   // And the jobs on the resume, into the blocks a work history is asked in.
   const work = fillWorkHistory(history, { overwrite });
-  const done = [...filled, ...radios.filled, ...buttons.filled, ...memory.filled, ...typed.filled, ...work.filled];
+  const done = [...filled, ...radios.filled, ...buttons.filled, ...memory.filled, ...acknowledged.filled, ...typed.filled, ...work.filled];
 
   /*
    * A control the memory pass answered is not still waiting, whatever an
@@ -4139,7 +4282,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
 
   return {
     filled: done,
-    skipped: [...waiting, ...memory.skipped, ...typed.skipped, ...work.skipped, ...unfillableChoices(fields, done)],
+    skipped: [...waiting, ...memory.skipped, ...acknowledged.skipped, ...typed.skipped, ...work.skipped, ...unfillableChoices(fields, done)],
   };
 }
 
@@ -4352,7 +4495,14 @@ function jobBlocks(history, skipped = []) {
             : flat(job.title) === typedTitle),
       );
       if (index < 0) {
-        skipped.push({ key: 'work_history', reason: 'this job is not on the resume', description: clean(b.get('company')?.value || b.get('title')?.value).slice(0, 60) });
+        // Named as the block, not by the employer typed in it. See `LEFT_AT`.
+        skipped.push(
+          leftAt(
+            b.get('company') ?? b.get('title') ?? [...b.values()][0],
+            { key: 'work_history', reason: 'this job is not on the resume', description: clean(b.get('company')?.value || b.get('title')?.value).slice(0, 60) },
+            'A job in the work history',
+          ),
+        );
         continue;
       }
     } else {
@@ -4399,7 +4549,7 @@ function fillJob(block, job, overwrite, filled, skipped) {
      */
     const took = input.value === written || (/\.month$/.test(slot) && /^\d+$/.test(input.value) && Number(input.value) === Number(written));
     if (took) filled.push({ key, value: written.slice(0, 80) });
-    else skipped.push({ key, reason: 'the field would not take it', description: clean(labelFor(input)).slice(0, 60) });
+    else skipped.push(leftAt(input, { key, reason: 'the field would not take it', description: clean(labelFor(input)).slice(0, 60) }));
   };
   put('title', 'job_title', job.title);
   put('company', 'job_company', job.company);
@@ -4686,7 +4836,7 @@ function answerChoiceButtons(fields, overwrite, already) {
   for (const { group, options, question, description, chosen, toggles } of ariaChoiceGroups()) {
     // The same three gates, in the same order, as `fillForm` and
     // `answerRadioGroups`. See `handBack`.
-    if (handBack(description, skipped)) continue;
+    if (handBack(description, skipped, group, question)) continue;
     if (isNotAboutYou(description, clean(question), surroundingWords(group), boundedSection(group))) continue;
 
     // Only the keys that are a choice between options, as in
@@ -4699,24 +4849,26 @@ function answerChoiceButtons(fields, overwrite, already) {
     const value = fields[key];
 
     if (options.some(chosen) && !overwrite) {
-      skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
+      skipped.push(leftAt(group, { key, reason: 'already filled', description: description.slice(0, 60) }, question));
       continue;
     }
 
     // Before any option is matched, as in `fillForm`.
     if (aboutAnotherCountry(key, value, description, fields.address_country)) {
-      skipped.push({ key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) });
+      skipped.push(leftAt(group, { key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) }, question));
       continue;
     }
     // Pressed buttons as they always were read; ARIA options as they are drawn.
     const labelOf = toggles ? (el) => clean(el.getAttribute('aria-label') || el.textContent) : ariaOptionWords;
     const wanted =
       options.find((el) => sameOption(labelOf(el), value)) ??
+      // The same answer spelled the options' way, as a radio's is.
+      options.find((el) => sameAnswerSpelledOtherwise(key, labelOf(el), value)) ??
       // And a yes/no pair against a phrase, on the same terms as a radio's.
       yesNoOption(key, value, options.map((el) => ({ label: labelOf(el), el })), description)?.el;
     if (!wanted) {
       const reason = aboutAnotherCountry(key, value, description) ? ANOTHER_COUNTRY : 'no matching option';
-      skipped.push({ key, reason, description: description.slice(0, 60) });
+      skipped.push(leftAt(group, { key, reason, description: description.slice(0, 60) }, question));
       continue;
     }
 
@@ -4742,25 +4894,33 @@ function answerChoiceButtons(fields, overwrite, already) {
      */
     if (toggles) {
       const got = pressChoice(group, options, wanted);
+      if (got !== false) keepChosen(group, labelOf(wanted));
       taken.add(key);
       if (got === true) filled.push({ key, value });
       else {
         const row = { key, reason: 'the page did not take it — pick this one by hand', description: description.slice(0, 60) };
         if (got) UNSEEN.set(row, { ...got, row: { key, value } });
-        skipped.push(row);
+        skipped.push(leftAt(group, row, question));
       }
       continue;
     }
     wanted.click();
     if (chosen(wanted)) {
+      keepChosen(group, labelOf(wanted));
       filled.push({ key, value });
       taken.add(key);
     } else {
-      skipped.push({
-        key,
-        reason: 'the page did not take it — pick this one by hand',
-        description: description.slice(0, 60),
-      });
+      skipped.push(
+        leftAt(
+          group,
+          {
+            key,
+            reason: 'the page did not take it — pick this one by hand',
+            description: description.slice(0, 60),
+          },
+          question,
+        ),
+      );
       taken.add(key);
     }
   }
@@ -5184,7 +5344,7 @@ function answerRadioGroups(fields, overwrite) {
     // Before the exclusions and before the match, as in `fillForm`. Radios
     // are the commoner shape for this question: Workable and Teamtailor ask
     // "legally authorized to work without sponsorship" as a pair of buttons.
-    if (handBack(description, skipped)) continue;
+    if (handBack(description, skipped, radios[0], groupLabelFor(radios))) continue;
     // The group's own words, on the same terms as `fillForm`.
     if (isNotAboutYou(description, clean(groupLabelFor(radios)), surroundingWords(radios[0]), boundedSection(radios[0]))) continue;
 
@@ -5206,19 +5366,27 @@ function answerRadioGroups(fields, overwrite) {
     const value = fields[key];
 
     if (radios.some((radio) => radio.checked) && !overwrite) {
-      skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
+      skipped.push(leftAt(radios[0], { key, reason: 'already filled', description: description.slice(0, 60) }, groupLabelFor(radios)));
       continue;
     }
 
     // Before any option is matched, as in `fillForm`.
     if (aboutAnotherCountry(key, value, description, fields.address_country)) {
-      skipped.push({ key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) });
+      skipped.push(leftAt(radios[0], { key, reason: ANOTHER_COUNTRY, description: description.slice(0, 60) }, groupLabelFor(radios)));
       continue;
     }
     const wanted =
       radios.find(
         (radio) => sameOption(optionLabelFor(radio), value) || sameOption(radio.value, value),
       ) ??
+      /*
+       * The same answer spelled the options' way, as a `<select>` takes it —
+       * see `sameAnswerSpelledOtherwise`. Only after no option said it
+       * exactly. Quora's Ashby form asks the degree as radios, "Associate
+       * Degree", "Bachelor's Degree", "Master's Degree", "Phd", "Other", and
+       * "Bachelor of Science" was reported as having no matching option.
+       */
+      radios.find((radio) => sameAnswerSpelledOtherwise(key, optionLabelFor(radio), value)) ??
       // And, failing that, a yes/no pair against a phrase. See `yesNoOption`.
       yesNoOption(
         key,
@@ -5228,7 +5396,7 @@ function answerRadioGroups(fields, overwrite) {
       )?.el;
     if (!wanted) {
       const reason = aboutAnotherCountry(key, value, description) ? ANOTHER_COUNTRY : 'no matching option';
-      skipped.push({ key, reason, description: description.slice(0, 60) });
+      skipped.push(leftAt(radios[0], { key, reason, description: description.slice(0, 60) }, groupLabelFor(radios)));
       continue;
     }
 
@@ -5255,6 +5423,7 @@ function answerRadioGroups(fields, overwrite) {
       wanted.dispatchEvent(ours(new Event('input', { bubbles: true })));
       wanted.dispatchEvent(ours(new Event('change', { bubbles: true })));
     }
+    keepChosen(radios[0], optionLabelFor(wanted) || wanted.value);
     filled.push({ key, value: fields[key] });
   }
 
@@ -5278,14 +5447,15 @@ function answerRadioGroups(fields, overwrite) {
  * "have you previously been employed by acme prev_emp_q3 q3" is matching
  * against noise. The bank is keyed on what a person reads.
  */
-function rememberableChoices() {
+function rememberableChoices({ short = false } = {}) {
   const found = [];
-  const add = (question, description, el, answered, choose) => {
+  const add = (question, description, el, answered, choose, shows = answered) => {
     const asked = clean(question);
     // Too short to recognise on the next form. The same bar the bank itself
-    // applies on the way in — see `worthRemembering`.
-    if (asked.length < 8) return;
-    found.push({ question: asked, description, el, answered, choose });
+    // applies on the way in — see `worthRemembering`. Not a bar for finding
+    // this page's own question again, which is what `watchForEmptied` asks.
+    if (asked.length < 8 && !short) return;
+    found.push({ question: asked, description, el, answered, choose, shows });
   };
 
   for (const select of deepQueryAll('select')) {
@@ -5321,6 +5491,8 @@ function rememberableChoices() {
       // Pressed on this pass and not drawn yet is answered. See `pressedNow`.
       () => options.some(chosen) || (toggles && pressedNow.has(group)),
       (answer) => (toggles ? pressInGroup(group, options, answer) : chooseInAria(options, answer)),
+      // What the page itself shows, pressed on this pass or not. See `watchForEmptied`.
+      () => options.some(chosen),
     );
   }
 
@@ -5395,14 +5567,147 @@ function answerFromMemory(remembered) {
     if (!answer || !worthRemembering({ question: choice.question, answer }).keep) continue;
 
     const took = choice.choose(answer);
+    if (took) keepChosen(choice.el, answer);
     const row = { key: 'remembered', value: answer, description: choice.description.slice(0, 60) };
     if (took === true) filled.push({ ...row, question: choice.question, remembered: true });
     else if (took) {
       // Pressed, and read back by `seePresses` once the page has drawn it.
       const waiting = { ...row, reason: 'the page did not take it — pick this one by hand' };
       UNSEEN.set(waiting, { ...took, row: { ...row, question: choice.question, remembered: true } });
-      skipped.push(waiting);
-    } else skipped.push({ ...row, reason: 'the answer you gave before is not one of the options here' });
+      skipped.push(leftAt(choice.el, waiting, choice.question));
+    } else skipped.push(leftAt(choice.el, { ...row, reason: 'the answer you gave before is not one of the options here' }, choice.question));
+  }
+  return { filled, skipped };
+}
+
+/* ---------------------- Statements to acknowledge ---------------------- */
+
+/*
+ * A statement the person is asked to say they have read: "I understand that
+ * all employees for this position will be expected to be available for
+ * meetings ... during Quora's “coordination hours”", a required Yes and No on
+ * Quora's Ashby form. Nothing in the profile answers it, so it was left for
+ * the person on every form that asked, and it is the same Yes each time.
+ *
+ * Only a statement in the first person that says it is understood, read or
+ * acknowledged — "I understand", "I acknowledge", "I have read and
+ * understand", "I confirm that I have read", "I agree to be available",
+ * "By checking this box I acknowledge", "Please confirm you understand" —
+ * and never one about any of `NOT_ACKNOWLEDGED`. Answered Yes, or ticked,
+ * only where nothing else has answered it: the profile and the bank go
+ * first, and a statement already answered either way is the person's.
+ */
+const ACKNOWLEDGEMENT =
+  /^(?:(?:by\s+(?:checking|ticking|selecting|clicking)\s+(?:this|the)\s+(?:box|button)\s*,?\s*)?i\s+(?:hereby\s+)?(?:understand|acknowledge|have\s+read\s+and\s+(?:understand|acknowledge|agree)|confirm\s+that\s+i\s+have\s+read|agree\s+to\s+be\s+available)|please\s+confirm\s+(?:that\s+)?you\s+(?:have\s+read\s+and\s+)?(?:understand|acknowledge))\b/i;
+
+/*
+ * What is never acknowledged for somebody, however it is worded: what may be
+ * sent to them, their right to work or a move, their pay, a check on them,
+ * who they are, and the statement that ends an application — that all of it
+ * is true — which is theirs to sign. These still follow the profile where it
+ * answers them, or are left as they were.
+ */
+const WORK_RIGHTS = /\b(sponsor\w*|visas?|work\s+authori[sz]\w*|authori[sz]ed\s+to\s+work|eligib\w*|right\s+to\s+work|immigration|citizen\w*)\b/i;
+const NOT_ACKNOWLEDGED = [
+  /\b(marketing|newsletters?|mailing[\s-]?lists?|promotion\w*|sms|text[\s-]?messag\w*|texts?|texting|whatsapp|subscri\w*|unsubscribe|opt[\s-]?(?:in|out))\b|\bconsent\s+to\s+(?:receiv\w*|be\s+contacted)\b|\breceiv\w*\s+(?:\w+\s+){0,3}(?:updates|communications?|messages|e-?mails|calls|alerts|offers)\b|\bcommunications?\s+(?:consent|preferences?)\b/i,
+  WORK_RIGHTS,
+  /\b(relocat\w*)\b/i,
+  /\b(salary|salaries|compensation|wages?|pay|remuneration|bonus)\b/i,
+  /\b(?:background|drug|credit|reference)\s+(?:check|screen|test|investigation)\w*|\bconsumer\s+reports?\b|\bfingerprint\w*|\b(criminal|convict\w*|felon\w*|arrest\w*|misdemeanou?r)\b/i,
+  /\b(gender|race|racial|ethnic\w*|veterans?|disabilit\w*|disabled|eeoc?|self[\s-]?identif\w*|sexual\s+orientation|pronouns|demographic\w*|equal\s+(?:employment|opportunity))\b/i,
+  /\b(certify|attest\w*|to\s+the\s+best\s+of\s+my\s+knowledge|falsif\w*|misrepresent\w*|omissions?|grounds\s+for|at[\s-]will|signature|e-?sign\w*)\b|\btrue\s*(?:,|and)?\s*(?:complete|correct|accurate)\b|\b(?:complete|correct|accurate)\s+and\s+(?:true|complete|correct|accurate)\b/i,
+];
+
+const statementOf = (statement) => clean(statement).replace(/^[*\s]+/, '');
+const soundsAcknowledged = (said) => said.length >= 20 && ACKNOWLEDGEMENT.test(said);
+
+function isAcknowledgement(statement) {
+  const said = statementOf(statement);
+  return soundsAcknowledged(said) && !NOT_ACKNOWLEDGED.some((re) => re.test(said));
+}
+
+/*
+ * A policy on sponsorship or the right to work, put to the person only to be
+ * acknowledged: "I understand that this position does not offer visa
+ * sponsorship", "I acknowledge that the company will not sponsor…", "Please
+ * confirm you understand we cannot sponsor…", "I understand sponsorship is
+ * available…". `requires_sponsorship` matched the word and answered it with
+ * the person's No — which, said to a statement, is "I do not understand",
+ * and can end an application — and `work_authorization` answered "I
+ * acknowledge that candidates must be authorized to work…" the same way from
+ * the right to work.
+ *
+ * The same shape `isAcknowledgement` reads, about what `WORK_RIGHTS` or
+ * either declaration's own pattern names. Never answered from the profile —
+ * see `handBack`, and `widgetChoices` — and never said Yes to either, since
+ * `NOT_ACKNOWLEDGED` keeps the right to work out of that: left as it is, and
+ * listed as the person's. A question asking about them — "Will you require
+ * sponsorship?", "Are you authorized to work…?" — is no statement, and is
+ * answered as it always was.
+ */
+function acknowledgesWorkRights(statement) {
+  const said = statementOf(statement);
+  return soundsAcknowledged(said) && [WORK_RIGHTS, AUTHORIZATION, SPONSORSHIP].some((re) => re.test(said));
+}
+const FOR_YOU_TO_ACKNOWLEDGE = 'a statement about sponsorship or the right to work — acknowledge it yourself';
+// Its own key: not one of the statements `answerAcknowledgements` says Yes to.
+const WORK_RIGHTS_POLICY = 'work_rights_policy';
+const leftToAcknowledge = (description, question) => ({
+  key: WORK_RIGHTS_POLICY,
+  reason: FOR_YOU_TO_ACKNOWLEDGE,
+  description: description.slice(0, 60),
+  question,
+});
+
+/**
+ * Answer Yes to the statements on this page that ask only to be acknowledged
+ * — a Yes and No pressed, chosen or ticked, as the page asks it — and tick a
+ * single required box that says one. Each is reported `acknowledged`, so the
+ * card can name it.
+ */
+function answerAcknowledgements() {
+  const filled = [];
+  const skipped = [];
+  for (const choice of rememberableChoices()) {
+    if (choice.answered()) continue;
+    // Left, and listed for the person. See `acknowledgesWorkRights`.
+    if (acknowledgesWorkRights(choice.question)) {
+      skipped.push(leftAt(choice.el, leftToAcknowledge(choice.description, choice.question), choice.question));
+      continue;
+    }
+    if (!isAcknowledgement(choice.question)) continue;
+    // Only an option that says Yes and nothing else: see `chooseInSelect` and the rest.
+    const took = choice.choose('Yes');
+    if (!took) continue;
+    keepChosen(choice.el, 'Yes');
+    const row = { key: 'acknowledged', value: 'Yes', description: choice.description.slice(0, 60) };
+    const done = { ...row, question: choice.question, acknowledged: true };
+    if (took === true) filled.push(done);
+    else {
+      // Pressed, and read back by `seePresses` once the page has drawn it.
+      const waiting = { ...row, reason: 'the page did not take it — pick this one by hand' };
+      UNSEEN.set(waiting, { ...took, row: done });
+      skipped.push(leftAt(choice.el, waiting, choice.question));
+    }
+  }
+  for (const box of deepQueryAll('input[type=checkbox]')) {
+    if (box.checked || isDisabled(box) || box.getClientRects().length === 0) continue;
+    // One box on its own, not one of a list to pick from: no other under its name, or in its fieldset.
+    const fieldset = closestAround(box, 'fieldset');
+    const alongside = (other) =>
+      other !== box && ((box.name && other.name === box.name && other.form === box.form) || (fieldset && closestAround(other, 'fieldset') === fieldset));
+    if (deepQueryAll('input[type=checkbox]').some(alongside)) continue;
+    const said = labelFor(box);
+    const required = box.required || box.getAttribute('aria-required') === 'true' || /\*|\brequired\b/i.test(said);
+    if (!required) continue;
+    if (acknowledgesWorkRights(withoutMarkers(said) || said)) {
+      skipped.push(leftAt(box, leftToAcknowledge(describeField(box), withoutMarkers(said) || said), withoutMarkers(said) || said));
+      continue;
+    }
+    if (!isAcknowledgement(withoutMarkers(said) || said)) continue;
+    box.click();
+    if (!box.checked) continue;
+    filled.push({ key: 'acknowledged', value: 'Yes', description: describeField(box).slice(0, 60), question: withoutMarkers(said) || said, acknowledged: true });
   }
   return { filled, skipped };
 }
@@ -5556,10 +5861,11 @@ function answerTypedFromMemory(remembered, fields, company) {
     setValue(box.el, kept.answer);
     if (box.el.value !== kept.answer || browserWouldRefuse(box.el)) {
       setValue(box.el, '');
-      skipped.push({ ...row, reason: 'the box would not take the answer you gave before' });
+      skipped.push(leftAt(box.el, { ...row, reason: 'the box would not take the answer you gave before' }, box.question));
       continue;
     }
     if (kept.itemId) FROM_BANK.set(box.el, kept.itemId);
+    keepTyped(box.el, kept.answer);
     filled.push({ ...row, question: box.question, remembered: true, typed: true });
   }
   return { filled, skipped };
@@ -5817,6 +6123,7 @@ export async function answerWidgetsFromMemory(remembered, report, { patience = 4
     if (!answer || !worthRemembering({ question, answer }).keep) continue;
     const how = await chooseInWidget(el, 'remembered', answer, { patience, fields: {}, asked: question });
     if (how === 'chose') {
+      keepWidget(el, 'remembered', answer, { asked: question });
       filled.push({ key: 'remembered', value: answer, description: description.slice(0, 60), question, remembered: true, widget: true });
     }
   }
@@ -5924,21 +6231,40 @@ const PICK_BY_HAND = 'this one has to be picked by hand';
  * And a widget inside another — a combobox `<div>` around its own text box —
  * is the same question once.
  */
+/** Everything on the page that might be a widget asking something, in page order. */
+function widgetCandidates() {
+  return withPlainDropdowns(
+    deepQueryAll(
+      `[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"], [data-uxi-widget-type="selectinput"], ${FABRIC_SELECT}`,
+    ),
+  );
+}
+
 function widgetChoices(fields, filled) {
   const already = new Set(filled.map((f) => f.key).filter((key) => EDUCATION_KEYS.test(key)));
   const found = [];
   const seen = [];
 
-  for (const widget of withPlainDropdowns(
-    deepQueryAll(
-      `[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"], [data-uxi-widget-type="selectinput"], ${FABRIC_SELECT}`,
-    ),
-  )) {
+  for (const widget of widgetCandidates()) {
     if (!isWidgetChoice(widget)) continue;
     if (widget.getClientRects().length === 0) continue;
 
     const description = describeField(widget);
     if (!description) continue;
+    /*
+     * A sponsorship or right-to-work policy only to be acknowledged, as
+     * `handBack` leaves it everywhere else: never driven, and named for the
+     * person while it shows no answer. A listbox is answered as an ARIA
+     * group, and `answerAcknowledgements` names it there.
+     */
+    if (acknowledgesWorkRights(description)) {
+      if (seen.some((other) => other.contains(widget) || widget.contains(other))) continue;
+      seen.push(widget);
+      if (widget.getAttribute('role') !== 'listbox' && !widgetShowsAnAnswer(widget)) {
+        found.push({ key: WORK_RIGHTS_POLICY, description: description.slice(0, 60), el: widget, policy: true });
+      }
+      continue;
+    }
     /*
      * Handed back here too, as `handBack` hands it back everywhere else.
      *
@@ -6000,7 +6326,17 @@ function widgetChoices(fields, filled) {
      * States was reported filled and, in the same report, as one to pick by
      * hand. One left unchosen is still named here.
      */
-    if (widgetShowsAnAnswer(widget) || listboxHoldsAChoice(widget)) {
+    /*
+     * And one showing this very answer, whatever it is drawn as. A widget
+     * with a typing box is never read as showing an answer above, so one
+     * already holding it was pressed open and chosen in again. Where the
+     * answer was drawn beside an empty box, or the list stayed open after the
+     * choice, nothing that press did could be seen, and it was put back and
+     * reported as one to pick by hand: measured, a School, a Degree and a
+     * Discipline already answered were all reported that way, and the
+     * Discipline's box was emptied on the way out.
+     */
+    if (widgetShowsAnAnswer(widget) || listboxHoldsAChoice(widget) || widgetShowsThisAnswer(widget, key, String(fields[key]))) {
       if (EDUCATION_KEYS.test(key)) already.add(key);
       continue;
     }
@@ -6019,12 +6355,39 @@ function listboxHoldsAChoice(widget) {
   return widget.getAttribute('role') === 'listbox' && ariaOptionsIn(widget).some(isMarkedChosen);
 }
 
+/**
+ * Whether a widget already shows the profile's answer: its typing box holding
+ * it, or its control drawing it (`shownBy`), and any hidden input it submits
+ * through holding something. Text typed into a box and never chosen leaves
+ * that input empty, and is no answer.
+ *
+ * The answer as a whole word or words, not a run of letters: "No" is not in
+ * "None selected". And a yes or no, which is short enough to be in anything,
+ * only as the whole of what is shown.
+ */
+function widgetShowsThisAnswer(widget, key, value) {
+  const hidden = hiddenPartner(widget);
+  if (hidden && !hidden.value) return false;
+  const answer = clean(value).toLowerCase();
+  if (!answer) return false;
+  const escaped = answer.replace(/[.*+?^$()|[\]{}\\]/g, '\\$&');
+  const whole = new RegExp(String.raw`(?:^|[^\p{L}\p{N}])${escaped}(?:$|[^\p{L}\p{N}])`, 'u');
+  return [typingBoxOf(widget)?.value, shownBy(widget)].some((shown) => {
+    const said = clean(shown).toLowerCase();
+    if (!said) return false;
+    if (said === answer || sameAnswerSpelledOtherwise(key, said, value)) return true;
+    return !YES_NO_KEYS.has(key) && whole.test(said);
+  });
+}
+
 function unfillableChoices(fields, filled) {
-  return widgetChoices(fields, filled).map(({ key, description, both, elsewhere }) => ({
-    key,
-    reason: both ? TWO_AT_ONCE : elsewhere ? ANOTHER_COUNTRY : PICK_BY_HAND,
-    description,
-  }));
+  return widgetChoices(fields, filled).map(({ key, description, both, elsewhere, policy, el }) =>
+    leftAt(el, {
+      key,
+      reason: policy ? FOR_YOU_TO_ACKNOWLEDGE : both ? TWO_AT_ONCE : elsewhere ? ANOTHER_COUNTRY : PICK_BY_HAND,
+      description,
+    }),
+  );
 }
 
 /* ---------------------------------------------------------------------- *
@@ -6105,8 +6468,16 @@ function stillLoading(widget, openBefore) {
     .flatMap((el) => `${el.getAttribute('aria-controls') ?? ''} ${el.getAttribute('aria-owns') ?? ''}`.split(/\s+/))
     .filter(Boolean);
   const lists = ids.map((id) => widget.getRootNode().getElementById?.(id) ?? document.getElementById(id)).filter(Boolean);
-  // A list it names, or failing that the one menu its press opened.
-  const fresh = lists.length ? lists : visibleListboxes().filter((l) => l !== widget && !openBefore?.has(l));
+  /*
+   * A list it names, or failing that the one menu its press opened — never
+   * another question's, as `listsOf` never takes one. Measured on a local
+   * fixture: a City box that opens nothing on a press, on a page that opens
+   * the answered sponsorship question's menu whenever the focus moves, a
+   * menu saying "Loading..." for as long as it is open. That menu was the
+   * one that opened, and its "Loading..." held the City's first look open
+   * for the whole patience rather than `quiet`.
+   */
+  const fresh = lists.length ? lists : visibleListboxes().filter((l) => l !== widget && !openBefore?.has(l) && !anothersList(l, widget));
   return (lists.length || fresh.length === 1) &&
     fresh.some((l) => l.getAttribute('aria-busy') === 'true' || l.querySelector('[class*="notice--loading"], [class*="loadingMessage"], [aria-busy="true"]'));
 }
@@ -6129,14 +6500,17 @@ function typingBoxOf(widget) {
 
 /** The listboxes showing on the page right now. */
 function visibleListboxes() {
-  return deepQueryAll('[role="listbox"]').filter(
-    /*
-     * `visibility: hidden` keeps a box, so a closed menu that an exit
-     * transition leaves mounted counted as open — and as a second listbox
-     * it refused every unlinked widget on the page.
-     */
-    (l) => l.getClientRects().length > 0 && getComputedStyle(l).visibility !== 'hidden',
-  );
+  return deepQueryAll('[role="listbox"]').filter(isShowing);
+}
+
+/*
+ * Whether an element is drawn where it can be seen. `visibility: hidden`
+ * keeps a box, so a closed menu that an exit transition leaves mounted
+ * counted as open — and as a second listbox it refused every unlinked widget
+ * on the page.
+ */
+function isShowing(el) {
+  return el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
 }
 
 /**
@@ -6212,12 +6586,7 @@ function listsOf(widget, openBefore = null) {
    * require sponsorship…?" was given to "Are you legally authorized to work in
    * the United States?", and both were reported filled.
    */
-  const theirs = (list) =>
-    Boolean(list.id) &&
-    deepQueryAll(`[aria-controls~="${CSS.escape(list.id)}"], [aria-owns~="${CSS.escape(list.id)}"]`).some(
-      (el) => el !== widget && el !== box && !widget.contains(el),
-    );
-  const showing = visibleListboxes().filter((l) => l !== widget && !theirs(l));
+  const showing = visibleListboxes().filter((l) => l !== widget && !anothersList(l, widget));
   /*
    * And, where the widget names none, the one its own press opened.
    *
@@ -6241,9 +6610,77 @@ function listsOf(widget, openBefore = null) {
    * list showing before the press is the widget's only when it is inside
    * the widget.
    */
-  const inside = showing.filter((l) => widget.contains(l));
+  /*
+   * Nor one whose every option is marked chosen: that is what the widget
+   * holds, drawn as chips, not a list to choose from. Measured, a Country
+   * multi-select saying "Select countries" over a `role="listbox"` of its
+   * chosen chips, holding "United States" and opening nothing on a press:
+   * the chip was the option pressed, and pressing a chip takes it out, so
+   * the country it held was lost and it was reported as one to pick by hand.
+   *
+   * Nor any list showing inside a widget that says it is shut. The same
+   * chips need not be marked chosen: drawn as options with no
+   * `aria-selected` at all, under a dropdown saying `aria-expanded="false"`,
+   * the United States chip was pressed and taken out just the same. A list
+   * always open inside its control says so with `aria-expanded="true"`, or
+   * says nothing, and is still taken; a list the press opens is found as
+   * what it opened, above, whatever the widget says.
+   */
+  const said = [widget, box].filter(Boolean).map((el) => el.getAttribute('aria-expanded')).filter((it) => it !== null);
+  const saysShut = said.length > 0 && said.every((it) => it === 'false');
+  const inside = saysShut ? [] : showing.filter((l) => widget.contains(l) && !holdsOnlyChosen(l));
   const lists = fresh.length ? fresh : inside;
   return lists.length === 1 ? lists : [];
+}
+
+/**
+ * Whether a list is another question's: named by another control as its own,
+ * or drawn beside another question's widget. See `listsOf`.
+ */
+function anothersList(list, widget) {
+  const box = typingBoxOf(widget);
+  return (
+    (Boolean(list.id) &&
+      deepQueryAll(`[aria-controls~="${CSS.escape(list.id)}"], [aria-owns~="${CSS.escape(list.id)}"]`).some(
+        (el) => el !== widget && el !== box && !widget.contains(el),
+      )) ||
+    drawnByAnother(list, widget)
+  );
+}
+
+/**
+ * Whether a list is drawn beside another question's widget rather than this
+ * one's: the nearest thing around it holding a widget holds another and not
+ * this one.
+ *
+ * A list that names no widget is taken as this one's when it is the one
+ * that opened as this one was pressed. But a page can open another
+ * question's then too. Measured, a sponsorship question drawn as
+ * react-select draws one — its menu in its own container, named nowhere —
+ * on a page that opens that menu whenever the focus moves: it was answered
+ * No, then the authorization question after it was focused and pressed,
+ * the sponsorship menu was the one list that opened, and "Yes" was chosen
+ * in it. Sponsorship was reported filled with No and showed Yes. A menu
+ * drawn at the foot of the body, or in the container round this widget, is
+ * still this one's.
+ */
+const A_WIDGET = `[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"], [data-uxi-widget-type="selectinput"], ${FABRIC_SELECT}, select`;
+
+function drawnByAnother(list, widget) {
+  for (let at = parentAround(list); at; at = parentAround(at)) {
+    if (drawnInside(at, widget)) return false;
+    const others = [...(at.querySelectorAll?.(A_WIDGET) ?? [])].filter(
+      (el) => !list.contains(el) && !el.contains(list) && !isWidgetPartner(el) && isShowing(el),
+    );
+    if (others.length) return true;
+  }
+  return false;
+}
+
+/** Whether a list has options and every one of them is marked chosen. */
+function holdsOnlyChosen(list) {
+  const options = [...list.querySelectorAll('[role="option"], [role="menuitem"]')];
+  return options.length > 0 && options.every(isMarkedChosen);
 }
 
 /** The option that is plainly this answer, or nothing. Never the nearest. */
@@ -6270,7 +6707,8 @@ function exactOption(options, key, value, fields = {}, asked = '') {
           asked,
         )?.el
       : null) ??
-    options.find((o) => sameAnswerSpelledOtherwise(key, o.textContent, value)) ??
+    // A school only where one option is it. See `schoolKey`.
+    (key === 'school' ? schoolOption(options, value) : options.find((o) => sameAnswerSpelledOtherwise(key, o.textContent, value))) ??
     null
   );
 }
@@ -6330,7 +6768,18 @@ function tookIt(widget, box, option, value, hiddenBefore, chosen = option.textCo
       (said.length >= 2 && clean(chosen).toLowerCase().includes(said))
     );
   }
-  if (option.isConnected && option.getAttribute('aria-selected') === 'true') return true;
+  /*
+   * The option marked chosen — once its list has shut. In a combobox's popup
+   * `aria-selected` is where the highlight is, and it moves with the pointer
+   * and the arrow keys: ARIA 1.2's pattern, Downshift and MUI's Autocomplete
+   * all mark the option under the pointer that way. Measured, a School and a
+   * Country whose options are highlighted as the pointer goes down on them
+   * and chosen only on Enter were reported filled on "Select One" and an
+   * empty box, both lists left open. A list still showing after the press is
+   * one the press did not close, and its mark is the highlight; a choice
+   * shows in the control, which is read below.
+   */
+  if (option.isConnected && option.getAttribute('aria-selected') === 'true' && !isShowing(option)) return true;
   /*
    * An autocomplete that writes the choice into its own box — MUI, Downshift,
    * Ant Design — with no hidden input and the option gone once the menu
@@ -6395,8 +6844,15 @@ function shownBy(widget) {
  * its single value or its chips, `''` where it draws none yet — only its
  * placeholder, or nothing — and `undefined` for a widget that is not drawn
  * this way at all, which `tookIt` then reads as it always has.
+ *
+ * Angular's ng-select draws its value, single or each chip, as a
+ * `.ng-value-label` in its `.ng-value-container` — which says
+ * "value-container", so it was read as drawn this way, and with no value
+ * of its own found, as drawing none. Measured on a local fixture shaped
+ * as ng-select renders: a Country and a Discipline chosen, drawn, and
+ * reported as ones to pick by hand.
  */
-const DRAWN_VALUE = '[class*="single-value"], [class*="singleValue"], [class*="multi-value__label"], [class*="multiValueLabel"], [data-automation-id="selectedItem"]';
+const DRAWN_VALUE = '[class*="single-value"], [class*="singleValue"], [class*="multi-value__label"], [class*="multiValueLabel"], .ng-value-label, [data-automation-id="selectedItem"]';
 const DRAWS_ITS_VALUE = `${DRAWN_VALUE}, [class*="value-container"], [class*="ValueContainer"], [class*="__placeholder"], [data-automation-id="multiselectInputContainer"]`;
 
 function drawnValue(control) {
@@ -6491,7 +6947,14 @@ function wouldSubmit(el) {
 }
 
 /**
- * Put the widget back as it was: nothing typed, nothing open.
+ * Put the widget back as it was: its box holding what it held before the
+ * fill touched it, nothing open.
+ *
+ * Not an empty box. A box can hold what a person typed before pressing
+ * Autofill — a City box saying "Bost", a School box saying "Northea" — and
+ * the fill types over it when the list lacks the answer. Measured, both put
+ * back empty after a list without the answer and a list that ignored the
+ * click: the words the person typed were gone, with nothing to say so.
  *
  * Escape is pressed where a person's Escape goes, which is wherever the focus
  * is — and a menu that takes the focus as it opens hears it there and not on
@@ -6503,8 +6966,8 @@ function wouldSubmit(el) {
  * opened it with a press is pressed once more, which is how a person shuts a
  * dropdown that answers no key at all.
  */
-function undoWidget(widget, box, openBefore = null) {
-  if (box) setValue(box, '');
+function undoWidget(widget, box, openBefore = null, typedBefore = '') {
+  if (box) setValue(box, typedBefore);
   const escape = (el) =>
     el.dispatchEvent(ours(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true })));
   escape(box ?? widget);
@@ -6611,13 +7074,14 @@ export async function fillComboboxes(fields, report, { patience = 4000, history 
   const done = [];
   // Which question each choice answered: a key can now be asked twice.
   const chose = new Set();
-  for (const { key, el: widget, both, elsewhere, asked, description } of widgetChoices(fields, report.filled)) {
-    if (both || elsewhere || !pending.has(key)) continue;
+  for (const { key, el: widget, both, elsewhere, policy, asked, description } of widgetChoices(fields, report.filled)) {
+    if (both || elsewhere || policy || !pending.has(key)) continue;
     const value = String(fields[key]);
     const how = await chooseInWidget(widget, key, value, { patience, fields, asked });
     // Looked for in a list that opened, and not in it. See `NOT_LISTED`.
     if (how === 'unlisted') unlisted.add(key);
     if (how === 'chose') {
+      keepWidget(widget, key, value, { fields, asked });
       done.push({ key, value, widget: true });
       chose.add(`${key}\u0000${description}`);
     }
@@ -6655,6 +7119,8 @@ async function chooseInThisWidget(widget, key, value, { patience, fields, asked 
   const box = typingBoxOf(widget);
   const hiddenBefore = hiddenPartner(widget)?.value ?? '';
   const shownBefore = shownBy(widget);
+  // What its box held before anything here touched it. See `undoWidget`.
+  const typedBefore = box?.value ?? '';
 
   /*
    * Never a control that would send the form.
@@ -6700,16 +7166,33 @@ async function chooseInThisWidget(widget, key, value, { patience, fields, asked 
     press(box);
     option = await waitForOption(widget, key, value, openBefore, { patience, quiet: 400, fields, asked });
     if (!option) {
-      setValue(box, value);
       /*
        * A Workday prompt searches when Enter is let go: its keydown notes the
        * key held and its keyup runs the search. Typed into and left, its list
        * said "No Items." for as long as it was watched.
        */
-      if (isWorkdayPrompt(box)) {
-        for (const type of ['keydown', 'keyup']) box.dispatchEvent(ours(new KeyboardEvent(type, { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true })));
-      }
+      const search = (term) => {
+        setValue(box, term);
+        if (isWorkdayPrompt(box)) {
+          for (const type of ['keydown', 'keyup']) box.dispatchEvent(ours(new KeyboardEvent(type, { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true })));
+        }
+      };
+      search(value);
       option = await waitForOption(widget, key, value, openBefore, { patience, fields, asked });
+      /*
+       * A school the search has under a spelling of its own finds nothing
+       * under the resume's: asked again by the parts of its name the list
+       * will hold. See `schoolSearches`. Each answer is held to the same
+       * rule, so a wider search is more to choose from and no looser a
+       * choice. A search that has answered nothing is given up sooner than
+       * the whole patience, or a school the list lacks would cost it twice
+       * more.
+       */
+      for (const term of option || key !== 'school' ? [] : schoolSearches(value)) {
+        search(term);
+        option = await waitForOption(widget, key, value, openBefore, { patience, quiet: 1500, fields, asked });
+        if (option) break;
+      }
     }
   } else {
     press(pressPoint(widget));
@@ -6717,7 +7200,7 @@ async function chooseInThisWidget(widget, key, value, { patience, fields, asked 
   }
   if (!option) {
     const opened = menuIsOpen(widget, box, openBefore);
-    undoWidget(widget, box, openBefore);
+    undoWidget(widget, box, openBefore, typedBefore);
     return opened ? 'unlisted' : 'missed';
   }
   // Read before the press: a menu that closes takes its options with it.
@@ -6725,7 +7208,7 @@ async function chooseInThisWidget(widget, key, value, { patience, fields, asked 
   press(wordsOf(option));
   await pause(60);
   if (!tookIt(widget, box, option, value, hiddenBefore, chosen, shownBefore)) {
-    undoWidget(widget, box, openBefore);
+    undoWidget(widget, box, openBefore, typedBefore);
     return 'ignored';
   }
   return 'chose';
@@ -6898,12 +7381,17 @@ function educationSection() {
   return found.length === 1 ? found[0] : null;
 }
 
-/** The same school, however much of its name each side writes. */
+/**
+ * The same school, however much of its name each side writes — or as the
+ * board's list spells it, which is what a block shows once it is chosen:
+ * "University of Texas - Austin" is the resume's "University of Texas at
+ * Austin", and its dates are that education's. See `schoolKey`.
+ */
 function sameSchool(a, b) {
   const flat = (text) => String(text ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
   const x = flat(a);
   const y = flat(b);
-  return Boolean(x && y) && (x === y || x.includes(y) || y.includes(x));
+  return Boolean(x && y) && (x === y || x.includes(y) || y.includes(x) || schoolKey(a) === schoolKey(b));
 }
 
 /** Whether a control already holds an answer, by what it shows. */
@@ -6947,22 +7435,27 @@ async function fillEducationPart(control, key, value, f, patience) {
   const description = describeField(control);
   if (isWidgetChoice(control)) {
     const how = await chooseInWidget(control, key, value, { patience, fields: f, asked: description });
-    if (how === 'chose') return { key, value, widget: true };
-    return { key, reason: how === 'unlisted' ? 'no matching option' : PICK_BY_HAND, description: description.slice(0, 60) };
+    if (how === 'chose') {
+      keepWidget(control, key, value, { fields: f, asked: description });
+      return { key, value, widget: true };
+    }
+    return leftAt(control, { key, reason: how === 'unlisted' ? 'no matching option' : PICK_BY_HAND, description: description.slice(0, 60) });
   }
   if (control instanceof HTMLSelectElement) {
     const choosable = [...control.options].filter((o) => !isDisabled(o));
     const option =
       choosable.find((o) => sameOption(o.textContent, value) || sameOption(o.value, value)) ??
       (key === 'gpa' ? gpaOption(choosable, value) : null) ??
-      choosable.find((o) => sameAnswerSpelledOtherwise(key, o.textContent, value) || sameAnswerSpelledOtherwise(key, o.value, value));
-    if (!option) return { key, reason: 'no matching option', description: description.slice(0, 60) };
+      (key === 'school'
+        ? schoolOption(choosable, value)
+        : choosable.find((o) => sameAnswerSpelledOtherwise(key, o.textContent, value) || sameAnswerSpelledOtherwise(key, o.value, value)));
+    if (!option) return leftAt(control, { key, reason: 'no matching option', description: description.slice(0, 60) });
     const was = control.value;
     nativeSet(control, 'value', option.value);
-    if (control.selectedOptions[0] !== option) return { key, reason: 'the field would not take it', description: description.slice(0, 60) };
+    if (control.selectedOptions[0] !== option) return leftAt(control, { key, reason: 'the field would not take it', description: description.slice(0, 60) });
     control.dispatchEvent(ours(new Event('input', { bubbles: true })));
     control.dispatchEvent(ours(new Event('change', { bubbles: true })));
-    if (!standInTookIt(control, was)) return { key, reason: PICK_BY_HAND, description: description.slice(0, 60) };
+    if (!standInTookIt(control, was)) return leftAt(control, { key, reason: PICK_BY_HAND, description: description.slice(0, 60) });
     return { key, value };
   }
   // A box: the date written the way it wants it, as `fillForm` writes one.
@@ -6975,7 +7468,7 @@ async function fillEducationPart(control, key, value, f, patience) {
   setValue(control, written);
   if (control.value !== written || browserWouldRefuse(control)) {
     setValue(control, before);
-    return { key, reason: 'the field would not take it', description: description.slice(0, 60) };
+    return leftAt(control, { key, reason: 'the field would not take it', description: description.slice(0, 60) });
   }
   return { key, value: written };
 }
@@ -7031,7 +7524,7 @@ export async function fillEducation(education, fields, report, { patience = 4000
    */
   const leaving = (reason) => ({
     ...report,
-    skipped: [...report.skipped, { key: 'education_start_date', reason, description: 'Education' }],
+    skipped: [...report.skipped, leftAt(section.box, { key: 'education_start_date', reason, description: 'Education' }, 'Education')],
   });
   if (schools.length === 0) return leaving('the resume sent lists no schools, so the dates and any others were left');
   const onlyOne = schools.length === 1;
@@ -7061,7 +7554,7 @@ export async function fillEducation(education, fields, report, { patience = 4000
       if (!waiting() || blocks.length >= schools.length) break;
       const grown = await addAnother(section, blocks.length);
       if (!grown) {
-        skipped.push({ key: 'school', reason: 'the form would not add another', description: 'Education' });
+        skipped.push(leftAt(section.button, { key: 'school', reason: 'the form would not add another', description: 'Education' }, 'Education'));
         break;
       }
       ({ section, blocks } = grown);
@@ -7077,7 +7570,14 @@ export async function fillEducation(education, fields, report, { patience = 4000
     if (shown) {
       index = schools.findIndex((e, i) => !used.has(i) && sameSchool(e.school, shown));
       if (index < 0) {
-        skipped.push({ key: 'school', reason: 'this school is not on the resume', description: shown.slice(0, 60) });
+        // Named as the block, not by the school shown in it. See `LEFT_AT`.
+        skipped.push(
+          leftAt(
+            block.get('school') ?? [...block.values()][0],
+            { key: 'school', reason: 'this school is not on the resume', description: shown.slice(0, 60) },
+            'A school in the education section',
+          ),
+        );
         continue;
       }
     } else if (n === 0 && owner >= 0) {
@@ -7097,7 +7597,13 @@ export async function fillEducation(education, fields, report, { patience = 4000
          */
         if (waiting()) {
           const asked = describeField(block.get('school') ?? [...block.values()][0]);
-          skipped.push({ key: 'school', reason: 'no school left on the resume is at the level this one asks about', description: asked.slice(0, 60) });
+          skipped.push(
+            leftAt(block.get('school') ?? [...block.values()][0], {
+              key: 'school',
+              reason: 'no school left on the resume is at the level this one asks about',
+              description: asked.slice(0, 60),
+            }),
+          );
         }
         if (added) break;
         continue;
@@ -7354,6 +7860,367 @@ export function watchChoices(tell) {
   };
 }
 
+/* ------------- What was filled, for a page that empties it ------------- */
+
+/*
+ * Every box and choice Autofill wrote and saw take, with what it wrote.
+ *
+ * Reported on Quora's Ashby form. The form was filled, then the resume went
+ * into Ashby's "Autofill from resume" box, and Submit answered "Missing entry
+ * for required field" for the telephone, the discipline, the graduation date
+ * and both yes/no questions. Read off Ashby's bundle: each field keeps its own
+ * state, seeded from the saved value when it mounts, and the resume's parse
+ * sends the form back under a new key — so every field mounts again from what
+ * the parse found, which is the name and the email and nothing else. What the
+ * page emptied was what Autofill had put there, and nothing said so; the
+ * person found out from the server, after pressing Submit, and typed it all
+ * again.
+ *
+ * So what was written is kept, and `watchForEmptied` writes it again where
+ * the page has since emptied it: only there, and never over anything — a
+ * value the parse put in is the page's. A box or a choice the person has
+ * touched since is theirs, and is let go of (see `byThePerson`).
+ */
+const given = [];
+
+/** A box this pass typed into and saw hold what was written — or a dropdown, and the option chosen. */
+function keepTyped(el, written, kind = 'typed') {
+  forgetGiven(el);
+  given.push({ kind, el, written: String(written) });
+}
+const isBox = (entry) => entry.kind === 'typed' || entry.kind === 'select';
+
+/** A choice this pass made, as the answer `rememberableChoices` can make again. */
+function keepChosen(el, answer) {
+  if (!clean(answer)) return;
+  forgetGiven(el);
+  given.push({ kind: 'choice', el, answer: clean(answer) });
+}
+
+/*
+ * A search-and-pick box this pass chose in and saw take, with what it was
+ * chosen for — chosen again the same way, by `chooseInWidget`.
+ *
+ * Quora's Ashby form draws its Location and School Name as these, and the
+ * parse emptied them with everything else; they were the two left empty
+ * once the rest had been filled in again.
+ */
+function keepWidget(el, key, value, { fields = {}, asked = '' } = {}) {
+  forgetGiven(el);
+  given.push({ kind: 'widget', el, key, value: String(value), fields, asked });
+}
+
+function forgetGiven(el) {
+  for (let i = given.length - 1; i >= 0; i--) if (given[i].el === el) given.splice(i, 1);
+}
+
+/*
+ * Which box or choice a kept entry is now.
+ *
+ * The same element while the page keeps it. A page that mounts its form
+ * again draws new elements for the same questions, so they are found again
+ * the way they were found the first time: the same description — label, name,
+ * id and placeholder — and, among the boxes that share one, the same place.
+ * A choice by the question it asks, as the answer bank finds it.
+ */
+function whereNow(entry, page) {
+  if (isBox(entry)) {
+    if (entry.el.isConnected) return isFillable(entry.el) ? entry.el : null;
+    const alike = page.boxes().filter(([el, said]) => el.localName === entry.tag && said === entry.description);
+    return alike[entry.nth]?.[0] ?? null;
+  }
+  // A search-and-pick box as a box is found again: by what describes it, and its place among those alike.
+  if (entry.kind === 'widget') {
+    if (entry.el.isConnected) return entry.el.getClientRects().length > 0 ? entry.el : null;
+    return widgetsAlike(page.widgets(), entry.description)[entry.nth] ?? null;
+  }
+  // The page is not read again every few hundred milliseconds for a choice it still holds.
+  if (entry.el.isConnected) return entry.choice;
+  entry.choice = page.choices().filter((c) => c.question === entry.question && c.description === entry.description)[entry.nth] ?? null;
+  return entry.choice;
+}
+
+/** The page as `whereNow` reads it, each part read once and only if asked. */
+function pageNow() {
+  let boxes = null;
+  let choices = null;
+  let widgets = null;
+  return {
+    boxes: () => (boxes ??= deepQueryAll('input, textarea, select').filter(isFillable).map((el) => [el, describeField(el)])),
+    choices: () => (choices ??= rememberableChoices({ short: true })),
+    widgets: () =>
+      (widgets ??= widgetCandidates()
+        .filter((el) => isWidgetChoice(el) && el.getClientRects().length > 0)
+        .map((el) => [el, describeField(el)])),
+  };
+}
+
+/** The widgets described this way, one for each question — a combobox around its own box is one. */
+function widgetsAlike(widgets, description) {
+  const alike = [];
+  for (const [el, said] of widgets) {
+    if (said !== description || alike.some((other) => other.contains(el) || el.contains(other))) continue;
+    alike.push(el);
+  }
+  return alike;
+}
+
+/** What each kept entry is, written down while it can still be read. */
+function settleGiven() {
+  const page = pageNow();
+  for (const entry of given) {
+    if (entry.name || entry.gone) continue;
+    if (!entry.el.isConnected) {
+      entry.gone = true;
+      continue;
+    }
+    if (isBox(entry)) {
+      // Refused or emptied already, before this could look: nothing to keep.
+      if (emptiedAt(entry, entry.el)) {
+        entry.gone = true;
+        continue;
+      }
+      entry.tag = entry.el.localName;
+      entry.description = describeField(entry.el);
+      entry.nth = Math.max(0, page.boxes().filter(([el, said]) => el.localName === entry.tag && said === entry.description).findIndex(([el]) => el === entry.el));
+      entry.name = withoutMarkers(labelFor(entry.el)) || entry.description.slice(0, 60);
+    } else if (entry.kind === 'widget') {
+      if (emptiedAt(entry, entry.el)) {
+        entry.gone = true;
+        continue;
+      }
+      entry.description = describeField(entry.el);
+      entry.nth = Math.max(0, widgetsAlike(page.widgets(), entry.description).indexOf(entry.el));
+      entry.name = withoutMarkers(labelFor(entry.el)) || entry.description.slice(0, 60);
+    } else {
+      const choice = page.choices().find((c) => c.el === entry.el);
+      // And a press the page never showed is not an answer to give it again.
+      if (!choice || !choice.shows()) {
+        entry.gone = true;
+        continue;
+      }
+      entry.choice = choice;
+      entry.question = choice.question;
+      entry.description = choice.description;
+      entry.nth = Math.max(0, page.choices().filter((c) => c.question === choice.question && c.description === choice.description).indexOf(choice));
+      entry.name = choice.question;
+    }
+    entry.refills = 0;
+  }
+}
+
+/** Whether the page shows nothing where this entry was written. */
+const emptiedAt = (entry, now) =>
+  entry.kind === 'typed'
+    ? !clean(now.value)
+    : entry.kind === 'select'
+      ? !selectIsAnswered(now)
+      : entry.kind === 'widget'
+        ? widgetShowsNothing(now)
+        : !now.shows();
+
+/*
+ * Whether a search-and-pick box shows nothing at all: no words in its box,
+ * nothing drawn as its value, nothing in the field it submits through, no
+ * option marked chosen. Anything there — the page's pick, or words somebody
+ * is typing — is not emptied.
+ */
+function widgetShowsNothing(widget) {
+  if (clean(typingBoxOf(widget)?.value)) return false;
+  if (hiddenPartner(widget)?.value) return false;
+  if (listboxHoldsAChoice(widget)) return false;
+  const drawn = drawnValue(controlOf(widget));
+  if (drawn !== undefined) return !drawn;
+  return !widgetShowsAnAnswer(widget);
+}
+
+/*
+ * A box or a choice the person has put their own hand to since.
+ *
+ * `isTrusted`, because what Autofill writes fires the same events. Emptied by
+ * hand is emptied on purpose, and changed by hand is theirs; either way it is
+ * never written again from here. A box by what is typed or chosen in it, not
+ * by a click, which is only somebody looking; a radio by its group's name, so
+ * a click on its label — which the browser passes on to the radio — counts.
+ */
+function byThePerson(event) {
+  if (!event.isTrusted || given.length === 0) return;
+  const path = event.composedPath?.() ?? [event.target];
+  for (const entry of given) {
+    if (entry.theirs || (event.type === 'click' && isBox(entry))) continue;
+    const radio = entry.el instanceof HTMLInputElement && entry.el.type === 'radio' ? entry.el.name : null;
+    // A search-and-pick box by anything in its control — its clear button too — and a click counts: it opens it.
+    const at = entry.kind === 'widget' ? [entry.el, controlOf(entry.el)] : [entry.el];
+    if (radio ? path.some((n) => n instanceof HTMLInputElement && n.type === 'radio' && n.name === radio) : at.some((el) => path.includes(el))) {
+      entry.theirs = true;
+    }
+  }
+}
+
+let refilledTell = null;
+let watchingForEmptied = false;
+let armedUntil = 0;
+let arms = 0;
+let ticking = null;
+let drawing = null;
+let lastDrawn = 0;
+let emptiedSince = 0;
+// Choosing in a search-and-pick box again takes its time, and nothing else is looked for meanwhile.
+let choosingAgain = false;
+const CHOOSE_AGAIN_PATIENCE = 4000;
+
+/*
+ * How long to keep looking, and when.
+ *
+ * Right after Autofill, for a page that was still busy with something when
+ * it was pressed — a resume dropped into the autofill box a moment before
+ * comes back after the fill and empties it. And after any file goes into the
+ * page, whoever put it there: the card's Attach, a chip let go of over the
+ * form, the person's own file dialog or a drag from their desktop. Ashby's
+ * parse took seconds; a minute is long past it, and the looking stops.
+ */
+const AFTER_FILL = 15_000;
+const AFTER_FILE = 60_000;
+// Quiet for this long is the page done drawing — but not waited on for ever.
+const SETTLED = 600;
+const SETTLE_AT_MOST = 4000;
+// Put back at most once for each file, and three times in all: a page that
+// empties a box again and again is refusing it, not losing it.
+const MOST_REFILLS = 3;
+
+/**
+ * Fill in again what the page empties after Autofill filled it.
+ *
+ * Called once Autofill has run in this document; `tell` hears the names of
+ * whatever was written again and took. Looks for a short while after the
+ * fill and again after each file put into the page — see `AFTER_FILE` — and
+ * then stops: nothing is watched while nothing is expected.
+ */
+export function watchForEmptied(tell) {
+  refilledTell = tell;
+  settleGiven();
+  if (!watchingForEmptied) {
+    watchingForEmptied = true;
+    const onFile = (event) => {
+      const target = event.composedPath?.()[0] ?? event.target;
+      if (event.type === 'drop' || (target instanceof HTMLInputElement && target.type === 'file')) armRefill(AFTER_FILE);
+    };
+    document.addEventListener('change', onFile, true);
+    document.addEventListener('drop', onFile, true);
+    for (const type of ['input', 'change', 'click']) document.addEventListener(type, byThePerson, true);
+  }
+  armRefill(AFTER_FILL);
+}
+
+function armRefill(ms) {
+  if (!given.length) return;
+  armedUntil = Math.max(armedUntil, Date.now() + ms);
+  arms++;
+  if (ticking) return;
+  lastDrawn = Date.now();
+  drawing = new MutationObserver(() => {
+    lastDrawn = Date.now();
+  });
+  drawing.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+  ticking = setInterval(lookForEmptied, 400);
+}
+
+function stopLooking() {
+  clearInterval(ticking);
+  ticking = null;
+  drawing?.disconnect();
+  drawing = null;
+  emptiedSince = 0;
+}
+
+function lookForEmptied() {
+  const now = Date.now();
+  if (now > armedUntil) return stopLooking();
+  if (choosingAgain) return;
+  const page = pageNow();
+  const emptied = [];
+  for (const entry of given) {
+    if (!entry.name || entry.gone || entry.theirs || entry.refills >= MOST_REFILLS || entry.arm === arms) continue;
+    const at = whereNow(entry, page);
+    if (!at) continue;
+    // Followed to where it is now, so a hand put to the new one is seen.
+    entry.el = entry.kind === 'choice' ? at.el : at;
+    if (emptiedAt(entry, at)) emptied.push([entry, at]);
+  }
+  if (emptied.length === 0) {
+    emptiedSince = 0;
+    return;
+  }
+  emptiedSince ||= now;
+  // Still being drawn: the rest of what it empties, or fills, is on its way.
+  if (now - lastDrawn < SETTLED && now - emptiedSince < SETTLE_AT_MOST) return;
+  emptiedSince = 0;
+
+  const written = [];
+  const toPick = [];
+  // Choosing in one takes the focus, so not while somebody is typing somewhere; it waits for a later look.
+  const typing = typingElsewhere();
+  for (const [entry, at] of emptied) {
+    if (entry.kind === 'widget' && typing) continue;
+    entry.arm = arms;
+    entry.refills++;
+    if (entry.kind === 'widget') {
+      toPick.push([entry, at]);
+      continue;
+    }
+    if (entry.kind === 'typed') setValue(at, entry.written);
+    else if (entry.kind === 'select' ? !chooseInSelect(at, entry.written) : at.choose(entry.answer) === false) continue;
+    written.push(entry);
+  }
+  if (toPick.length === 0) return readBackRefilled(written);
+  /*
+   * One at a time, the way it was chosen the first time, and on the same
+   * terms — see `chooseInWidget`: exactly the answer, seen to take, and
+   * everything typed taken back out where it did not. The focus is given back.
+   */
+  choosingAgain = true;
+  const had = deepActiveElement();
+  (async () => {
+    try {
+      for (const [entry, at] of toPick) {
+        if (!widgetShowsNothing(at)) continue;
+        const how = await chooseInWidget(at, entry.key, entry.value, { patience: CHOOSE_AGAIN_PATIENCE, fields: entry.fields, asked: entry.asked });
+        if (how === 'chose') written.push(entry);
+      }
+    } finally {
+      choosingAgain = false;
+      if (had && had !== document.body && had.isConnected) had.focus?.();
+      else deepActiveElement()?.blur?.();
+    }
+    readBackRefilled(written);
+  })();
+}
+
+/*
+ * Whether the focus is in somewhere to type that is not one of the boxes
+ * chosen in — a person part way through writing something.
+ */
+function typingElsewhere() {
+  const at = deepActiveElement();
+  if (!at || at === document.body) return false;
+  if (given.some((entry) => entry.kind === 'widget' && (entry.el === at || typingBoxOf(entry.el) === at))) return false;
+  if (at.isContentEditable || at instanceof HTMLTextAreaElement) return true;
+  return at instanceof HTMLInputElement && !['button', 'checkbox', 'file', 'hidden', 'image', 'radio', 'reset', 'submit'].includes(at.type);
+}
+
+function readBackRefilled(written) {
+  if (written.length === 0) return;
+  // Read back once the page has drawn it: a pressed button shows a moment late.
+  setTimeout(() => {
+    const page = pageNow();
+    const took = written.filter((entry) => {
+      const at = whereNow(entry, page);
+      return at && !emptiedAt(entry, at);
+    });
+    if (took.length) refilledTell?.(took.map((entry) => entry.name));
+  }, 500);
+}
+
 /**
  * A person's pick in a Chosen or select2 list, read off the select it stands
  * in for.
@@ -7514,6 +8381,87 @@ function markedField(fieldId) {
   return kept?.isConnected ? kept : undefined;
 }
 
+/** The mark a field already has, or a new one. */
+function markField(field) {
+  let id = field.getAttribute(FIELD_KEY);
+  if (!id) {
+    id = `jh-${++fieldCounter}`;
+    field.setAttribute(FIELD_KEY, id);
+  }
+  markedAs.set(id, new WeakRef(field));
+  return id;
+}
+
+/**
+ * Each row left for the person, with a mark on its field and a name to show.
+ *
+ * Run once a document's filling is over, on the rows `leftAt` tied to a
+ * control. The name is the label or the question, trimmed of the markers a
+ * form puts round it, and nothing else: never the value in the box, and never
+ * the answer a row may carry from the bank, which stays where it was and is
+ * not the card's to draw. A row with no control keeps what it had, and the
+ * card names it as it can.
+ */
+export function pointAtLeft(report) {
+  return {
+    ...report,
+    skipped: report.skipped.map((row) => {
+      const at = LEFT_AT.get(row);
+      if (!at) return row;
+      const label = cleanQuestion(withoutMarkers(at.label ?? ''));
+      return {
+        ...row,
+        ...(at.el.isConnected ? { fieldId: markField(at.el) } : {}),
+        ...(label ? { label } : {}),
+      };
+    }),
+  };
+}
+
+/*
+ * What to put the caret in, for a field the card names.
+ *
+ * A row is tied to whatever the pass looked at, and that is not always
+ * something that takes focus: a group of buttons is tied to the box around
+ * them, a native select a widget stands in for is hidden behind it, and the
+ * Education section is a section. So: the field itself if a person could put
+ * the caret there, otherwise the first thing inside it that can, otherwise
+ * the first shown thing around it that holds one.
+ */
+const TAKES_FOCUS =
+  'input:not([type=hidden]), select, textarea, button, [contenteditable="true"], [role="combobox"], [role="radio"], [role="option"], [tabindex]:not([tabindex="-1"])';
+const canTakeFocus = (el) => el.matches?.(TAKES_FOCUS) && !isDisabled(el) && el.getClientRects().length > 0;
+
+function focusTargetFor(field) {
+  if (canTakeFocus(field)) return field;
+  for (let around = field; around; around = around.parentElement ?? around.getRootNode?.().host) {
+    // Never the whole page, whose first box is somebody's first name.
+    if (around === around.ownerDocument?.body) break;
+    const inside = deepQueryAll(TAKES_FOCUS, around).find(canTakeFocus);
+    if (inside) return inside;
+    // No further than the first shown box: past it are other questions.
+    if (around.getClientRects?.().length > 0) break;
+  }
+  return null;
+}
+
+/**
+ * Bring a field the card named into view and put the caret in it.
+ *
+ * Scrolled to the middle of the window, as an inserted answer is, so the card
+ * at the top right does not sit over it. True when there was something to go
+ * to; false when the form has dropped the field since, which the card says.
+ */
+export function showField(fieldId) {
+  const field = markedField(fieldId);
+  if (!field) return false;
+  const target = focusTargetFor(field);
+  (target ?? field).scrollIntoView({ behavior: 'smooth', block: 'center' });
+  // Without its own scroll, or the smooth one above is cut short.
+  target?.focus({ preventScroll: true });
+  return true;
+}
+
 /**
  * Find the free-text questions on the page — the boxes that want a paragraph,
  * not a phone number. Returned rather than filled: a long-form answer is
@@ -7585,12 +8533,7 @@ export function findQuestions() {
     if (!question) continue;
     if (question.length < 12 && !question.endsWith('?')) continue;
 
-    let id = field.getAttribute(FIELD_KEY);
-    if (!id) {
-      id = `jh-${++fieldCounter}`;
-      field.setAttribute(FIELD_KEY, id);
-    }
-    markedAs.set(id, new WeakRef(field));
+    const id = markField(field);
     found.push({
       fieldId: id,
       question,

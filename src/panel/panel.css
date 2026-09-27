@@ -1,0 +1,214 @@
+/* The side panel: the editor's own look, as little of it as there can be. */
+:root {
+  --accent: #1a73e8;
+  --accent-soft: #e8f0fe;
+  --ink: #202124;
+  --muted: #5f6368;
+  --faint: #80868b;
+  --line: #dadce0;
+  --line-soft: #f1f3f4;
+  --bg: #f8f9fa;
+  --bad: #d93025;
+  --bad-bg: #fce8e6;
+  --warn: #b06000;
+  --warn-bg: #fef7e0;
+  --state-hover: rgba(60, 64, 67, .08);
+  --bar: 40px;
+}
+* { box-sizing: border-box; }
+/* Several of these have a display of their own, which would beat the
+   attribute: the "Opening the editor…" spinner stayed up over a loaded one. */
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font: 13px/1.5 "Google Sans Text", "Google Sans", Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+.sr {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+/* The bar: which resume, and three buttons. It is all that is left folded. */
+.bar {
+  flex: none;
+  height: var(--bar);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px 0 2px;
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+.who { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px; }
+.label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  font-size: 13px;
+}
+/* The resume, switchable: a quiet select that reads as the bar's title. */
+.picker {
+  min-width: 0;
+  flex: 0 1 auto;
+  max-width: 100%;
+  font: inherit;
+  font-weight: 500;
+  color: var(--ink);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  padding: 4px 4px;
+  min-height: 32px;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.picker:hover { background: var(--state-hover); }
+.picker:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.kind {
+  flex: none;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--line-soft);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.kind.copy { background: var(--accent-soft); color: #174ea6; }
+.saving { flex: none; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.saving.failed { color: var(--bad); font-weight: 500; }
+
+button {
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--accent);
+  padding: 6px 14px;
+  min-height: 32px;
+}
+button:hover { background: rgba(26, 115, 232, .06); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:disabled { opacity: .38; cursor: default; }
+button.primary { background: var(--accent); color: #fff; border-color: transparent; }
+button.primary:hover { background: #1967d2; }
+button.icon {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  display: inline-grid;
+  place-items: center;
+}
+button.icon:hover { background: var(--state-hover); color: var(--ink); }
+button.icon svg { width: 20px; height: 20px; }
+#fold svg { transition: transform .18s ease; }
+body.collapsed #fold svg { transform: rotate(-90deg); }
+
+/*
+ * Everything under the bar. Folding hides it without taking it out of the
+ * layout: the frame keeps its size, so the editor inside is not laid out
+ * again, keeps its scroll, and keeps whatever was being typed.
+ */
+.main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  transition: opacity .16s ease;
+}
+body.collapsed .main {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity .16s ease, visibility 0s linear .16s;
+}
+.folded {
+  position: absolute;
+  top: calc(var(--bar) + 10px);
+  left: 12px;
+  right: 12px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.note {
+  flex: none;
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  background: #fff;
+  border-bottom: 1px solid var(--line-soft);
+  overflow-wrap: anywhere;
+}
+.note.warn { background: var(--warn-bg); color: var(--warn); }
+.note.bad { background: var(--bad-bg); color: #b31412; }
+.note button { min-height: 24px; padding: 0 6px; border: 0; background: none; font-size: 12px; text-decoration: underline; }
+
+.well { position: relative; flex: 1 1 auto; min-height: 0; }
+.stage { position: absolute; inset: 0; }
+.stage iframe { width: 100%; height: 100%; border: 0; display: block; background: var(--bg); }
+.stage[inert] { visibility: hidden; }
+
+.loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  color: var(--muted);
+}
+.spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 3px solid var(--accent-soft);
+  border-top-color: var(--accent);
+  animation: spin .9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 3s; }
+  #fold svg, .main { transition: none; }
+}
+
+.message {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: 18px 16px;
+  background: var(--bg);
+}
+.message h2 { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
+.message p { margin: 0 0 10px; color: var(--muted); overflow-wrap: anywhere; }
+.message pre {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.message .more { font-size: 12px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }

@@ -95,6 +95,62 @@ export const NORTHWIND = {
 </body></html>`,
 };
 
+/*
+ * A form that leaves several things for the person, below a long posting.
+ *
+ * Five statements about the right to work that are only to be acknowledged,
+ * each a required box on its own — Autofill never ticks one, whatever the
+ * profile or the bank holds, so every run leaves all five and says why — a
+ * School list with no school anybody has, which is left as having no
+ * matching option wherever the profile has a school, and a list e2e puts an
+ * answer in the bank for that is not one of its options. The form starts well
+ * below the window, so going to a field is a scroll and not a coincidence.
+ * Not in `ALL`: e2e serves it on its own.
+ */
+export const QUARRY = {
+  name: 'quarry',
+  path: '/quarry/jobs/77',
+  company: 'Quarry',
+  title: 'Backend Engineer Intern',
+  html: `<!doctype html>
+<html><head><title>Backend Engineer Intern at Quarry</title>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"JobPosting",
+ "title":"Backend Engineer Intern",
+ "hiringOrganization":{"@type":"Organization","name":"Quarry"},
+ "jobLocation":{"@type":"Place","address":{"addressLocality":"Denver","addressRegion":"CO"}},
+ "description":"<p>Build the services behind our search product in Go and PostgreSQL, with Kafka between them and Kubernetes under them.</p><ul><li>Pursuing a BS in Computer Science</li><li>Experience with SQL and distributed systems</li></ul>"}
+</script>
+<style>${CHROME} input[type=checkbox] { width: auto; } .ack { margin: 14px 0; } .ack label { display: inline; margin: 0 0 0 6px; }</style></head>
+<body>
+  <div class="hdr"><h1>Quarry</h1><div>Backend Engineer Intern · Denver, CO</div></div>
+  <div class="wrap">
+    <h2>About the role</h2>
+    <p>Build the services behind our search product in Go and PostgreSQL, with Kafka between them
+       and Kubernetes under them. You will write SQL every day and own a service end to end.</p>
+    <h2>Minimum qualifications</h2>
+    <ul><li>Pursuing a BS in Computer Science</li><li>Experience with SQL and distributed systems</li></ul>
+    <div style="height: 1300px"><h2>Benefits</h2><p>Housing stipend, mentorship, and a team lunch every Friday.</p></div>
+    <h2>Apply now</h2>
+    <form>
+      <label for="fn">First Name</label><input id="fn" name="first_name">
+      <label for="ln">Last Name</label><input id="ln" name="last_name">
+      <label for="em">Email</label><input id="em" name="email" type="email">
+      <label for="school">School</label>
+      <select id="school" name="school"><option value="">Select…</option><option>Example Institute of Testing</option><option>Sample State College</option></select>
+      <label for="oncall">Which on-call rotation length would you prefer?</label>
+      <select id="oncall" name="oncall"><option value="">Select…</option><option>One week</option><option>Two weeks</option></select>
+      <div class="ack"><input type="checkbox" id="ack1" name="ack_sponsorship" required><label for="ack1">I understand that this position does not offer visa sponsorship.</label></div>
+      <div class="ack"><input type="checkbox" id="ack2" name="ack_visas" required><label for="ack2">I acknowledge that Quarry will not sponsor employment visas for this role.</label></div>
+      <div class="ack"><input type="checkbox" id="ack3" name="ack_authorized" required><label for="ack3">I understand that candidates must be authorized to work in the United States.</label></div>
+      <div class="ack"><input type="checkbox" id="ack4" name="ack_immigration" required><label for="ack4">Please confirm you understand that we cannot support immigration applications.</label></div>
+      <div class="ack"><input type="checkbox" id="ack5" name="ack_eligibility" required><label for="ack5">I understand that proof of eligibility to work will be asked for before any start date, once an offer has been accepted.</label></div>
+      <button type="button">Submit Application</button>
+    </form>
+  </div>
+</body></html>`,
+};
+
 /** Not a job posting. The extension must stay silent here. */
 export const BLOG = {
   name: 'blog',
@@ -814,6 +870,51 @@ export const EMBEDDED_BOARD_FRAME = {
     <label for="q1">Why do you want to work here?</label><textarea id="q1"></textarea>
     <button type="button">Submit Application</button>
   </form>
+</div></body></html>`,
+};
+
+/**
+ * A careers page that embeds one posting, after the application went in.
+ *
+ * Reported from life on qumulo.com: the page is "Job openings" around an
+ * Ashby embed, and the embed is the posting — its heading, its JobPosting
+ * data — with a "Thank you, your application was submitted" in place of the
+ * form. Only frames holding a form were read, so the card had the shell and
+ * nothing else: "This posting", from "Job openings".
+ */
+export const EMBEDDED_POSTING = {
+  name: 'embedded-posting',
+  path: '/tern/job-openings',
+  company: 'Tern',
+  title: 'Software Development Engineer - Internship 2027',
+  html: `<!doctype html>
+<html><head><title>Job openings</title><style>${CHROME}</style></head>
+<body>
+  <div class="hdr"><h1>Job openings</h1><p>Discover the open positions at Tern.</p></div>
+  <div class="wrap">
+    <iframe id="ashby_embed_iframe" title="Ashby Job Board"
+            src="/tern/embed/posting?ashby_jid=7a2c"
+            style="width:100%;height:600px;border:0"></iframe>
+  </div>
+</body></html>`,
+};
+
+export const EMBEDDED_POSTING_FRAME = {
+  name: 'embedded-posting-frame',
+  path: '/tern/embed/posting',
+  html: `<!doctype html>
+<html><head><meta charset="utf-8"><title>Software Development Engineer - Internship 2027 @ Tern</title>
+<script type="application/ld+json">${JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'JobPosting',
+    title: 'Software Development Engineer - Internship 2027',
+    hiringOrganization: { '@type': 'Organization', name: 'Tern' },
+    description: 'Build storage software in C++ and Python.',
+  })}</script><style>${CHROME}</style></head>
+<body><div class="wrap">
+  <h1>Software Development Engineer - Internship 2027</h1>
+  <div role="status"><strong>Success</strong> Thank you for your interest in Tern! Your application was successfully submitted.</div>
+  ${ROLE_BODY}
 </div></body></html>`,
 };
 
@@ -1936,7 +2037,7 @@ export const EA_FORM = {
 export const NAVIGATION = [
   EA_ROLE, EA_METHODS, EA_FORM,
   CYGNUS_BOARD, CYGNUS_ROLE_A, CYGNUS_ROLE_B, FRAMED_ROLE, FRAMED_FORM, ADVERT_FRAME, ADVERT_CONTENT,
-  EMBEDDED_BOARD, EMBEDDED_BOARD_FRAME, BLOG_WITH_FORM, BLOG_ENQUIRY_FRAME, LATE_RENDER,
+  EMBEDDED_BOARD, EMBEDDED_BOARD_FRAME, EMBEDDED_POSTING, EMBEDDED_POSTING_FRAME, BLOG_WITH_FORM, BLOG_ENQUIRY_FRAME, LATE_RENDER,
   CROWDED_PAGE, CROWDED_PAGE_FORM,
   LEVER_ROLE, LEVER_FORM, ASHBY_ROLE, ASHBY_FORM, WORKDAY, ORACLE_CE, WORKDAY_STEPS,
   OWN_SITE, ATS_FORM, ATS_FORM_UNANSWERABLE, NEW_TAB_ROLE, NEW_TAB_FORM, NEW_TAB_ASIDE, NEW_TAB_BENEFITS, STEP_ONE, STEP_TWO, STEP_TWO_FORM, SPA_BOARD,
@@ -2109,13 +2210,19 @@ export function serveSlowProxy(target, { slowRoute = /analyze/, ms = 4000, skip 
         // Nothing to answer if the client has already gone; writing to a
         // closed socket throws and would be reported as a 502 the browser is
         // not there to read.
+        /*
+         * The body before the head. Reading it after `writeHead` meant an
+         * upstream that failed mid-body landed in the catch below with the
+         * head already sent, and its `writeHead(502)` threw
+         * ERR_HTTP_HEADERS_SENT out of the suite.
+         */
+        const body = Buffer.from(await upstream.arrayBuffer());
         if (res.writableEnded || res.destroyed) return;
         answered = true;
         res.writeHead(upstream.status, {
           'content-type': upstream.headers.get('content-type') ?? 'application/json',
           'access-control-allow-origin': '*',
         });
-        const body = Buffer.from(await upstream.arrayBuffer());
         if (slowRoute.test(req.url) && /json/.test(upstream.headers.get('content-type') ?? '')) {
           try {
             lastReply = JSON.parse(body.toString());
@@ -2128,6 +2235,8 @@ export function serveSlowProxy(target, { slowRoute = /analyze/, ms = 4000, skip 
       forward().catch((err) => {
         if (res.writableEnded || res.destroyed) return;
         answered = true;
+        // Too late for a status line: all that is left is to hang up.
+        if (res.headersSent) return void res.destroy();
         res.writeHead(502);
         res.end(String(err));
       });
@@ -2145,7 +2254,7 @@ export function serveSlowProxy(target, { slowRoute = /analyze/, ms = 4000, skip 
 
 /** Point the extension at a different server, from a page that has `chrome`. */
 export async function useServer(context, serverUrl) {
-  const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+  const worker = await extensionWorker(context);
   const page = await context.newPage();
   await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
   await page.evaluate((url) => chrome.storage.sync.set({ serverUrl: url }), serverUrl);

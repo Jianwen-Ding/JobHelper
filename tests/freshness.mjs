@@ -17,7 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { cleanStore, findChromium, serveFixtures, requireOpenSave, pointExtensionAt } from './fixtures.mjs';
+import { extensionWorker, cleanStore, findChromium, serveFixtures, serveSlowProxy, requireOpenSave, pointExtensionAt } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
@@ -133,9 +133,21 @@ async function main() {
   /** The store's AI settings before this suite switched its stand-in on. */
   let configWas = null;
   const aiDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-fresh-ai-'));
+  /*
+   * The extension talks to the store through this, which slows the card's
+   * compiles while `slowCompiles` is on (see "while the card compiles"):
+   * the store's compile cache answers a compile it has done before at once,
+   * and on a save this suite has run against before, the phone number it
+   * changes to has been compiled before.
+   */
+  let slowCompiles = false;
+  const proxy = await serveSlowProxy(SERVER, {
+    slowRoute: { test: (url) => slowCompiles && /^\/api\/render(\?|$)/.test(url) },
+    ms: 4000,
+  });
   try {
-    const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
-    await pointExtensionAt(context, worker, SERVER);
+    const worker = await extensionWorker(context);
+    await pointExtensionAt(context, worker, proxy.base);
     const page = await context.newPage();
     await page.goto(fixtures.urlFor(POSTING), { waitUntil: 'domcontentloaded' });
     const card = page.locator(`${HOST} .card`);
@@ -199,6 +211,51 @@ async function main() {
         Boolean(before) && Boolean(after) && after !== before,
         `${before?.slice(0, 8) ?? '(none)'} → ${after?.slice(0, 8) ?? '(none)'}`,
       );
+    }
+
+    /*
+     * The copy edited there while the card is compiling a change to what it
+     * prints. The compile is followed by a stage, which files the card's copy
+     * whole; the card remembered the store's copy as seen once the compile
+     * was back, edit and all, so it never took the edit and the stage wrote
+     * it away. Measured from the side panel (tests/panel.mjs): a line
+     * switched off there came back on a second later, in the store.
+     */
+    group('The copy edited in ResumeM-M while the card compiles');
+    {
+      const copyNow = async () => {
+        const list = await api('/resumes');
+        return (list.resumes ?? list).find((r) => r.id === copy.id) ?? null;
+      };
+      let before = await folderResume();
+      for (let i = 0; i < 20; i++) {
+        await page.waitForTimeout(3000);
+        const now = await folderResume();
+        if (now === before) break;
+        before = now;
+      }
+      // Noticed on its own, from the store's revision, within a few seconds.
+      slowCompiles = true;
+      await put('/profile', { ...profile, phone: '555-0177' });
+      const compiling = await page
+        .waitForFunction(() => /Compiling/.test(document.querySelector('#jobhelper-card-host')?.shadowRoot?.textContent ?? ''), undefined, {
+          timeout: 30_000,
+          polling: 50,
+        })
+        .then(() => true)
+        .catch(() => false);
+      const renamed = `${copy.label} (renamed while the card compiled)`;
+      await put(`/resumes/${encodeURIComponent(copy.id)}`, { ...(await copyNow()), label: renamed });
+      // The stage that follows the compile, landed: the folder has the new phone number.
+      let after = before;
+      for (const until = Date.now() + 60_000; Date.now() < until && after === before; ) {
+        await page.waitForTimeout(1000);
+        after = await folderResume();
+      }
+      slowCompiles = false;
+      check('(the card was compiling when the copy was edited, and staged after)', compiling && after !== before, `${compiling}, ${before?.slice(0, 8)} → ${after?.slice(0, 8)}`);
+      check('the edit is still in the store after the card has staged', (await copyNow())?.label === renamed, (await copyNow())?.label);
+      check('and the card takes it, and says so', await says(/this copy was edited there/));
     }
 
     group('The resume the copy was made from, changed in ResumeM-M');
@@ -409,6 +466,7 @@ async function main() {
     await cleanStore(SERVER, [COMPANY]).catch(() => undefined);
     await context.close();
     await fixtures.close();
+    proxy.close();
     fs.rmSync(userDataDir, { recursive: true, force: true });
   }
   console.log(`\n${passed}/${passed + failed} checks passed`);

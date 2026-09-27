@@ -96,7 +96,15 @@ export async function drawPdf(container, base64, { width } = {}) {
       canvas.width = Math.floor(viewport.width);
       canvas.height = Math.floor(viewport.height);
       canvas.style.width = `${Math.floor(unscaled.width * scale)}px`;
-      canvas.style.height = `${Math.floor(unscaled.height * scale)}px`;
+      /*
+       * The height follows the width rather than being fixed beside it. The
+       * page is drawn at `width` and shown at up to that, and `.pdf-page`'s
+       * max-width brings it in when the card is narrower — in a narrow window.
+       * With a fixed height as well, a page brought in to 250px wide stayed
+       * 480px tall: the resume drawn squeezed, every letter too tall. `auto`
+       * takes the ratio from the bitmap, which is the page's own.
+       */
+      canvas.style.height = 'auto';
       canvas.className = 'pdf-page';
       await page.render({ canvasContext: canvas.getContext('2d', { alpha: false }), viewport }).promise;
       canvases.push(canvas);
