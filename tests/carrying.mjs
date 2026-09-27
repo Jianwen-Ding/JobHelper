@@ -91,6 +91,21 @@ const drawnPages = (page) =>
       document.querySelector('#jobhelper-card-host')?.shadowRoot?.querySelector('.pdf-pages')?.childElementCount ?? 0,
   );
 
+/*
+ * The same, once drawing has had a chance to finish. A bare read straight
+ * after typing raced the draw on a loaded machine and failed a full run with
+ * "0 pages" that passed alone. The bug these checks guard left the page
+ * detached for good, so waiting for it still fails on that.
+ */
+async function drawnWithin(page, ms = 15_000) {
+  const until = Date.now() + ms;
+  for (;;) {
+    const drawn = await drawnPages(page);
+    if (drawn > 0 || Date.now() > until) return drawn;
+    await page.waitForTimeout(250);
+  }
+}
+
 /** And how tall the pane holding them is, since an empty one is not zero. */
 const paneHeight = (page) =>
   page.evaluate(
@@ -255,7 +270,7 @@ async function main() {
        * the most ordinary step there is — left a sixteen pixel grey strip
        * where the resume had been, with nothing to say why.
        */
-      const drawn = await drawnPages(page);
+      const drawn = await drawnWithin(page);
       check('and the resume you built is still drawn, not an empty strip', drawn > 0, `${drawn} pages`);
       check('the pane is a page tall, not a sliver', (await paneHeight(page)) > 100, `${await paneHeight(page)}px`);
 
