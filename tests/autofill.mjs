@@ -2188,6 +2188,265 @@ const GREENHOUSE_MORE_EDUCATION = `<!doctype html><html><head><meta charset="utf
 </script>
 </body></html>`;
 
+/*
+ * Greenhouse's education block as its React form keeps it, and the School
+ * list as the board spells it (task #188). Read off the live boards, nothing
+ * typed and nothing sent (job-boards.greenhouse.io: Twitch, SpaceX, Discord,
+ * Affirm, Robinhood, Stripe's embed):
+ *
+ * - School, Degree and Discipline are react-select comboboxes, `school--0`
+ *   and so on, `aria-labelledby` their label, `aria-controls` naming
+ *   `react-select-school--0-listbox` once open. Nothing is offered until the
+ *   control is pressed; the menu then says "Loading..." while the board's API
+ *   is asked (`/education/schools?page=1`, `/degrees`, `/disciplines`), and
+ *   an option is chosen by a click on it. The school list opens on the first
+ *   hundred of about 2,500 names, alphabetically; what is typed is searched as
+ *   a run of letters anywhere in a name, a hundred to a page.
+ * - The board's names are its own: a campus after a dash ("University of
+ *   Example - Eastfield" is how it writes every such school), "and" written
+ *   out, "St." for Saint. So the resume's name is often not in the list
+ *   letter for letter, and a search for the whole of it finds nothing.
+ * - Degree is ten levels ("Bachelor's Degree"), Discipline about seventy
+ *   subjects ("Computer Science").
+ * - The dates are "Start date month" / "Start date year" and "End date
+ *   month" / "End date year". On today's boards the month is a react-select
+ *   of month names and the year a `type=number` box (`?month-lists`); the MM
+ *   and YYYY text boxes the older boards.greenhouse.io form asked with — two
+ *   and four characters, digits only — are the default here. Every
+ *   boards.greenhouse.io address now redirects to job-boards, so that form
+ *   could not be read live; its boxes are drawn as a React form would draw
+ *   them.
+ *
+ * What makes it React is what makes a fill fail there: each box is
+ * controlled — a value written behind React's back is put back on the next
+ * render, and the whole form renders again on every change — and a select
+ * shows what is in its state, not what was drawn into it. `__form()` is what
+ * the form would send, `__invalid()` what it would refuse, `__rerender()` a
+ * render with nothing changed.
+ */
+const GREENHOUSE_REACT_EDUCATION = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Example Co</title></head><body>
+<div id="root"><form id="application-form" novalidate>
+  <div class="text-input-wrapper"><div class="input-wrapper"><label id="first_name-label" for="first_name" class="label">First Name</label>
+    <input id="first_name" class="input input__single-line" type="text" aria-label="First Name"></div></div>
+  <div class="education--container" id="education"><button class="add-another-button" type="button" id="education-add">Add another</button></div>
+</form></div>
+<script>
+  /*
+   * What React does to a box it controls, and nothing more: it notes each
+   * value written through the box's own setter, and on an input event it
+   * calls onChange only when the box holds something other than what it
+   * noted. After every event, and on every render, the box is given back the
+   * value in state. So a value written behind React's back is undone the
+   * next time anything renders, as it is on the live board.
+   */
+  const PROTO = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+  function track(node) {
+    let noted = PROTO.get.call(node);
+    Object.defineProperty(node, 'value', {
+      configurable: true,
+      get() { return PROTO.get.call(this); },
+      set(v) { noted = String(v); PROTO.set.call(this, v); },
+    });
+    return {
+      changed() { const now = PROTO.get.call(node); if (now === noted) return false; noted = now; return true; },
+      put(v) { if (PROTO.get.call(node) !== v) PROTO.set.call(node, v); noted = v; },
+    };
+  }
+  const query = new URLSearchParams(location.search);
+  const DELAY = Number(query.get('delay') || 450);
+  const components = [];
+  window.__renders = 0;
+  // The whole form rendering again from its state, as a Formik-style form does on every change.
+  const renderAll = () => { window.__renders++; components.forEach((c) => c.render()); };
+  window.__rerender = renderAll;
+
+  /* ---------- react-select, as Greenhouse's AsyncPaginate draws and drives it ---------- */
+  function reactSelect(host, id, label, load, required) {
+    host.insertAdjacentHTML('beforeend',
+      '<div class="select"><div class="select__container"><label id="' + id + '-label" for="' + id + '" class="label select__label">' + label + (required ? '<span aria-hidden="true">*</span>' : '') + '</label>' +
+      '<div class="select-shell"><span id="react-select-' + id + '-live-region" class="a11y"></span><div><div class="select__control"><div class="select__value-container">' +
+      '<div class="select__input-container" data-value=""><input class="select__input" autocapitalize="none" autocomplete="off" autocorrect="off" id="' + id + '" spellcheck="false" tabindex="0" type="text" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="' + id + '-label" aria-required="' + Boolean(required) + '" role="combobox" aria-activedescendant="" value=""></div></div>' +
+      '<div class="select__indicators"><button type="button" class="icon-button icon-button--sm" aria-label="Toggle flyout" tabindex="-1">v</button></div></div></div>' +
+      (required ? '<input required tabindex="-1" aria-hidden="true" class="requiredInput" value="">' : '') + '</div></div></div>');
+    const input = document.getElementById(id);
+    const control = input.closest('.select__control');
+    const shell = control.closest('.select-shell');
+    const tracker = track(input);
+    const s = { value: null, inputValue: '', open: false, focused: false, loading: false, options: [], asked: 0, afterFocus: false, cache: {} };
+    const fetchFor = (term) => {
+      const mine = ++s.asked;
+      if (s.cache[term]) { s.loading = false; s.options = s.cache[term]; return; }
+      s.loading = true;
+      setTimeout(() => {
+        if (mine !== s.asked) return;
+        s.cache[term] = load(term);
+        s.options = s.cache[term];
+        s.loading = false;
+        renderAll();
+      }, DELAY);
+    };
+    const openMenu = () => { s.open = true; fetchFor(s.inputValue); };
+    const choose = (option) => { s.value = option; s.inputValue = ''; s.open = false; s.asked++; s.loading = false; renderAll(); };
+    const c = {
+      id, s, choose,
+      render() {
+        const values = control.querySelector('.select__value-container');
+        let placeholder = values.querySelector('.select__placeholder');
+        let single = values.querySelector('.select__single-value');
+        if (s.value) {
+          placeholder?.remove();
+          if (!single) { single = document.createElement('div'); single.className = 'select__single-value'; values.prepend(single); }
+          if (single.textContent !== s.value.label) single.textContent = s.value.label;
+        } else {
+          single?.remove();
+          if (!placeholder) { placeholder = document.createElement('div'); placeholder.className = 'select__placeholder'; placeholder.id = 'react-select-' + id + '-placeholder'; placeholder.textContent = 'Select...'; values.prepend(placeholder); }
+        }
+        tracker.put(s.inputValue);
+        control.parentElement.parentElement.querySelector('.requiredInput')?.setAttribute('value', s.value ? String(s.value.id) : '');
+        const busy = control.querySelector('.select__loading-indicator');
+        if (s.open && s.loading && !busy) control.querySelector('.select__indicators').insertAdjacentHTML('afterbegin', '<div class="select__loading-indicator" aria-hidden="true">...</div>');
+        if (!(s.open && s.loading)) busy?.remove();
+        input.setAttribute('aria-expanded', String(s.open));
+        let menu = shell.querySelector('.select__menu');
+        if (!s.open) { menu?.remove(); input.removeAttribute('aria-controls'); return; }
+        if (!menu) {
+          menu = document.createElement('div');
+          menu.className = 'select__menu';
+          menu.innerHTML = '<div class="select__menu-list" role="listbox" aria-multiselectable="false" id="react-select-' + id + '-listbox"></div>';
+          menu.addEventListener('mousedown', (e) => e.preventDefault());
+          shell.append(menu);
+        }
+        input.setAttribute('aria-controls', 'react-select-' + id + '-listbox');
+        const list = menu.firstElementChild;
+        const key = s.loading ? 'loading' : s.options.map((o) => o.id).join(',');
+        if (list.dataset.key === key) return;
+        list.dataset.key = key;
+        list.replaceChildren();
+        if (s.loading) { list.innerHTML = '<div class="select__menu-notice select__menu-notice--loading">Loading...</div>'; return; }
+        if (!s.options.length) { list.innerHTML = '<div class="select__menu-notice select__menu-notice--no-options">No options</div>'; return; }
+        s.options.forEach((option, i) => {
+          const o = document.createElement('div');
+          o.className = 'select__option';
+          o.id = 'react-select-' + id + '-option-' + i;
+          o.setAttribute('role', 'option');
+          o.setAttribute('aria-selected', String(s.value?.id === option.id));
+          o.setAttribute('aria-disabled', 'false');
+          o.tabIndex = -1;
+          o.textContent = option.label;
+          // react-select chooses on click; the menu's mousedown only keeps the focus.
+          o.addEventListener('click', () => choose(option));
+          list.append(o);
+        });
+      },
+    };
+    control.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      const onBox = e.target.tagName === 'INPUT';
+      if (!s.focused) { s.afterFocus = true; input.focus(); }
+      else if (!s.open) { openMenu(); renderAll(); }
+      else if (!onBox) { s.open = false; renderAll(); }
+      if (!onBox) e.preventDefault();
+    });
+    input.addEventListener('focus', () => { s.focused = true; if (s.afterFocus) openMenu(); s.afterFocus = false; renderAll(); });
+    input.addEventListener('blur', () => { s.focused = false; s.inputValue = ''; s.open = false; s.asked++; s.loading = false; renderAll(); });
+    input.addEventListener('input', () => {
+      if (tracker.changed()) { s.inputValue = PROTO.get.call(input); s.open = true; fetchFor(s.inputValue); }
+      renderAll();
+    });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Escape') { s.open = false; renderAll(); } });
+    components.push(c);
+    return c;
+  }
+
+  /* ---------- a text box React controls, which takes only what its onChange lets through ---------- */
+  function textBox(host, id, label, { type = 'text', placeholder = '', maxLength = 0, accept = (v) => v }) {
+    host.insertAdjacentHTML('beforeend',
+      '<div class="text-input-wrapper"><div class="input-wrapper"><label id="' + id + '-label" for="' + id + '" class="label">' + label + '</label>' +
+      '<input id="' + id + '" class="input input__single-line" aria-label="' + label + '" type="' + type + '"' + (placeholder ? ' placeholder="' + placeholder + '"' : '') + (maxLength ? ' maxlength="' + maxLength + '"' : '') + '></div></div>');
+    const input = document.getElementById(id);
+    const tracker = track(input);
+    const s = { value: '' };
+    const c = { id, s, render() { tracker.put(s.value); } };
+    input.addEventListener('input', () => {
+      if (tracker.changed()) s.value = accept(PROTO.get.call(input));
+      renderAll();
+    });
+    components.push(c);
+    return c;
+  }
+
+  /* ---------- the board's lists ---------- */
+  const SCHOOLS = [];
+  for (const a of ['Al', 'Ar', 'Bel', 'Bro', 'Car', 'Col', 'Dal', 'Dun']) for (const b of ['bury', 'dale', 'field', 'ford', 'mont', 'ton', 'wick']) for (const k of ['College', 'State University', 'University']) SCHOOLS.push(a + b + ' ' + k);
+  for (const a of ['Fair', 'Glen', 'Har', 'Lake', 'Mar', 'Oak', 'Pine', 'Red', 'Stone', 'West']) for (const b of ['brook', 'haven', 'wood']) for (const k of ['College', 'University']) SCHOOLS.push(a + b + ' ' + k);
+  // The school spelled the board's way, and the ones a loose match would take for it.
+  SCHOOLS.push('Example State Univ.', 'Example State College', 'Example State Technical College', 'Northern Example State University', 'Example University',
+    'University of Example - Eastfield', 'University of Example - Westfield', 'Examplia State University', 'Saint Example College');
+  SCHOOLS.sort((x, y) => x.localeCompare(y));
+  const DEGREES = ["Associate's Degree", "Bachelor's Degree", 'Doctor of Medicine (M.D.)', 'Doctor of Philosophy (Ph.D.)', "Engineer's Degree", 'High School', 'Juris Doctor (J.D.)', 'Master of Business Administration (M.B.A.)', "Master's Degree", 'Other'];
+  const DISCIPLINES = ['Accounting', 'African Studies', 'Agriculture', 'Anthropology', 'Architecture', 'Art', 'Biology', 'Business', 'Business Administration', 'Chemistry', 'Communications & Film', 'Computer Science', 'Economics', 'Education', 'Electronics', 'Engineering', 'English Studies', 'Environmental Studies', 'Finance', 'History', 'Mathematics', 'Mechanical Engineering', 'Philosophy', 'Physics', 'Political Science', 'Psychology', 'Sociology'];
+  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const withIds = (names, base) => names.map((label, i) => ({ id: base + i, label }));
+  const school = withIds(SCHOOLS, 1000);
+  const degree = withIds(DEGREES, 2000);
+  const discipline = withIds(DISCIPLINES, 3000);
+  const month = withIds(MONTHS, 1);
+  // The board's search: the first page of a hundred, of every name holding what is typed.
+  const search = (all) => (term) => all.filter((o) => o.label.toLowerCase().includes(term.trim().toLowerCase())).slice(0, 100);
+
+  /* ---------- the Education section ---------- */
+  const blocks = [];
+  const monthLists = query.has('month-lists');
+  function addBlock() {
+    const n = blocks.length;
+    const form = document.createElement('div');
+    form.className = 'education--form';
+    form.innerHTML = '<hr><div class="education--header"><p class="body body--medium">Education</p></div>';
+    document.getElementById('education-add').before(form);
+    const b = {
+      school: reactSelect(form, 'school--' + n, 'School', search(school), true),
+      degree: reactSelect(form, 'degree--' + n, 'Degree', search(degree), false),
+      discipline: reactSelect(form, 'discipline--' + n, 'Discipline', search(discipline), false),
+    };
+    for (const end of ['start', 'end']) {
+      const dates = document.createElement('div');
+      dates.className = 'education--date-container';
+      form.append(dates);
+      const words = end === 'start' ? 'Start date' : 'End date';
+      b[end + 'Month'] = monthLists
+        ? reactSelect(dates, end + '-month--' + n, words + ' month', search(month), false)
+        : textBox(dates, end + '-month--' + n, words + ' month', { placeholder: 'MM', maxLength: 2, accept: (v) => v.replace(/[^0-9]/g, '').slice(0, 2) });
+      b[end + 'Year'] = monthLists
+        ? textBox(dates, end + '-year--' + n, words + ' year', { type: 'number' })
+        : textBox(dates, end + '-year--' + n, words + ' year', { placeholder: 'YYYY', maxLength: 4, accept: (v) => v.replace(/[^0-9]/g, '').slice(0, 4) });
+    }
+    blocks.push(b);
+    renderAll();
+    return b;
+  }
+  window.__pressed = 0;
+  document.getElementById('education-add').addEventListener('click', () => { window.__pressed++; setTimeout(addBlock, 120); });
+  addBlock();
+
+  /* ---------- what the form would send, and whether it would let it go ---------- */
+  const said = (c) => (c.s.value && typeof c.s.value === 'object' ? c.s.value.label : c.s.value || '');
+  window.__form = () => blocks.map((b) => Object.fromEntries(Object.entries(b).map(([k, c]) => [k, said(c)])));
+  window.__invalid = () => blocks.flatMap((b, i) => {
+    const bad = [];
+    if (!b.school.s.value) bad.push('school--' + i);
+    for (const k of ['startMonth', 'endMonth']) {
+      const v = said(b[k]);
+      if (v && !monthLists && !/^(0[1-9]|1[0-2])$/.test(v)) bad.push(k + '--' + i);
+    }
+    for (const k of ['startYear', 'endYear']) {
+      const v = said(b[k]);
+      if (v && !/^[0-9]{4}$/.test(v)) bad.push(k + '--' + i);
+    }
+    return bad;
+  });
+</script>
+</body></html>`;
+
 const WORKDAY_MY_INFO = `<!doctype html><html><head><meta charset="utf-8"><title>My Information</title></head><body>
 <div data-automation-id="applyFlowMyInfoPage">
 <div data-automation-id="formField-country"><label for="country--country">Country<abbr>*</abbr></label>
@@ -6087,7 +6346,7 @@ ${ashbyYesNo('ask-visa', 'Do you need visa sponsorship?')}
 </div>
 ${POLICY_SCRIPT}</body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE, '/acknowledgements': ACKNOWLEDGEMENTS, '/sponsorship-policies': SPONSORSHIP_POLICIES, '/sponsorship-policy-pressed': SPONSORSHIP_POLICY_PRESSED, '/sponsorship-policy-aria': SPONSORSHIP_POLICY_ARIA };
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/greenhouse-react-education': GREENHOUSE_REACT_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE, '/acknowledgements': ACKNOWLEDGEMENTS, '/sponsorship-policies': SPONSORSHIP_POLICIES, '/sponsorship-policy-pressed': SPONSORSHIP_POLICY_PRESSED, '/sponsorship-policy-aria': SPONSORSHIP_POLICY_ARIA };
 
 const PROFILE = {
   first_name: 'Morgan',
@@ -9450,6 +9709,124 @@ async function main() {
         unlistedFirst.blocks[1]?.school === 'Northeastern University',
       JSON.stringify(unlistedFirst),
     );
+
+    /* ---------------- Greenhouse: the education block, as React keeps it ---------------- */
+    /*
+     * Reported (#188): on Greenhouse's education block the School, Degree,
+     * Discipline and the dates "weren't filled correctly". Filled as content.js
+     * fills a document, then blurred and rendered again, and read back from
+     * what the form would send as well as from what each field shows.
+     */
+    {
+      const reactEducation = (fields, education, query = '') =>
+        page.goto(`${base}/greenhouse-react-education${query}`, { waitUntil: 'domcontentloaded' }).then(() =>
+          page.evaluate(async ({ b, fields, education }) => {
+            const m = await import(`${b}/autofill.js`);
+            const first = await m.fillComboboxes(fields, m.fillForm(fields));
+            const report = await m.fillEducation(education, fields, first);
+            document.activeElement?.blur?.();
+            await new Promise((r) => setTimeout(r, 300));
+            window.__rerender();
+            const shows = [...document.querySelectorAll('.education--form')].map((form) =>
+              Object.fromEntries([...form.querySelectorAll('input[id]')].map((el) => {
+                const control = el.closest('.select__control');
+                return [el.id.replace(/--\d+$/, ''), control ? control.querySelector('.select__single-value, .select__placeholder')?.textContent ?? '' : el.value];
+              })),
+            );
+            return {
+              sent: window.__form(),
+              invalid: window.__invalid(),
+              shows,
+              required: document.querySelector('.requiredInput')?.value ?? '',
+              pressed: window.__pressed,
+              filled: report.filled.map((x) => x.key),
+              left: report.skipped.map((x) => `${x.key}: ${x.reason} [${x.description ?? ''}]`),
+            };
+          }, { b: base, fields, education }),
+        );
+      // Morgan Testwell's one education, as the store sends it: the profile's fields and the resume's entry.
+      const ESU = { school: 'Example State University', degree: 'Bachelor of Science', major: 'Computer Science', start: { year: 2021, month: 9 }, end: { year: 2025, month: 5 } };
+      const ESU_FIELDS = {
+        first_name: 'Morgan', school: 'Example State University', degree: 'Bachelor of Science', major: 'Computer Science',
+        education_start_month: 'September', education_start_year: '2021', education_start_date: 'September 2021',
+        graduation_month: 'May', graduation_year: '2025', graduation_date: 'May 2025',
+      };
+      const at = (school) => [{ ...ESU_FIELDS, school }, [{ ...ESU, school }]];
+      const boxes = await reactEducation(ESU_FIELDS, [ESU]);
+      const lists = await reactEducation(ESU_FIELDS, [ESU], '?month-lists&delay=250');
+      const campus = await reactEducation(...at('University of Example at Eastfield'), '?delay=250');
+      const saint = await reactEducation(...at('St. Example College'), '?delay=250');
+      const onlyCampuses = await reactEducation(...at('University of Example'), '?delay=250');
+      const lookalikes = await reactEducation(...at('Example State Polytechnic'), '?delay=250');
+      const second = await reactEducation(ESU_FIELDS, [ESU, { school: 'Example University', degree: 'Associate of Arts', major: 'Mathematics', start: { year: 2019, month: 8 }, end: { year: 2021, month: 6 } }], '?delay=250');
+      group('Greenhouse: the education block as React keeps it, with the school spelled the board\'s way');
+      check(
+        'the school is chosen under the board\'s spelling ("Example State Univ." for "Example State University"), found by searching as the list is searched, with either kind of date box',
+        [boxes, lists].every((r) => r.sent[0]?.school === 'Example State Univ.' && r.shows[0]?.school === 'Example State Univ.' && r.filled.includes('school') &&
+          !r.left.some((x) => x.startsWith('school')) && !r.invalid.includes('school--0')) && boxes.required !== '',
+        JSON.stringify({ sent: boxes.sent[0], left: boxes.left, required: boxes.required, lists: lists.sent[0] }),
+      );
+      check(
+        'the degree by its level and the discipline, still shown after the form renders again, and in what it would send',
+        boxes.sent[0]?.degree === "Bachelor's Degree" && boxes.shows[0]?.degree === "Bachelor's Degree" &&
+          boxes.sent[0]?.discipline === 'Computer Science' && boxes.shows[0]?.discipline === 'Computer Science',
+        JSON.stringify({ sent: boxes.sent[0], shows: boxes.shows[0] }),
+      );
+      check(
+        'the start and end go into the MM and YYYY boxes as 09/2021 and 05/2025, and the form sees nothing wrong with any of it',
+        boxes.sent[0]?.startMonth === '09' && boxes.sent[0]?.startYear === '2021' && boxes.sent[0]?.endMonth === '05' && boxes.sent[0]?.endYear === '2025' &&
+          boxes.shows[0]?.['start-month'] === '09' && boxes.shows[0]?.['end-year'] === '2025' && !boxes.invalid.some((x) => /Month|Year/.test(x)),
+        JSON.stringify({ sent: boxes.sent[0], shows: boxes.shows[0], invalid: boxes.invalid }),
+      );
+      check(
+        'where the months are lists of names and the years number boxes, as on today\'s boards, the dates go in as names and numbers',
+        lists.sent[0]?.startMonth === 'September' && lists.sent[0]?.startYear === '2021' && lists.sent[0]?.endMonth === 'May' && lists.sent[0]?.endYear === '2025' &&
+          lists.shows[0]?.['end-month'] === 'May' && lists.sent[0]?.degree === "Bachelor's Degree" && !lists.invalid.some((x) => /Month|Year/.test(x)),
+        JSON.stringify({ sent: lists.sent[0], left: lists.left }),
+      );
+      check(
+        'a campus written "at Eastfield" is the board\'s "- Eastfield", and its block gets its dates',
+        campus.sent[0]?.school === 'University of Example - Eastfield' && campus.sent[0]?.endYear === '2025' && campus.sent[0]?.startMonth === '09',
+        JSON.stringify({ sent: campus.sent[0], left: campus.left }),
+      );
+      check('"St." is the board\'s "Saint"', saint.sent[0]?.school === 'Saint Example College', JSON.stringify({ sent: saint.sent[0], left: saint.left }));
+      check(
+        'a school the list has only campuses of, or only lookalikes of, is left on "Select..." and named as the person\'s to pick',
+        [onlyCampuses, lookalikes].every((r) => r.sent[0]?.school === '' && r.shows[0]?.school === 'Select...' && r.left.some((x) => /^school: .*\[School/.test(x)) && !r.filled.includes('school')),
+        JSON.stringify([onlyCampuses, lookalikes].map((r) => ({ sent: r.sent[0]?.school, left: r.left }))),
+      );
+      check(
+        'and the rest of that block is still filled',
+        [onlyCampuses, lookalikes].every((r) => r.sent[0]?.degree === "Bachelor's Degree" && r.sent[0]?.endYear === '2025'),
+        JSON.stringify([onlyCampuses, lookalikes].map((r) => r.sent[0])),
+      );
+      check(
+        'a second school gets the block "Add another" adds, and the first keeps the board\'s spelling of its own',
+        second.pressed === 1 && second.sent.length === 2 && second.sent[0]?.school === 'Example State Univ.' && second.sent[0]?.endYear === '2025' &&
+          second.sent[1]?.school === 'Example University' && second.sent[1]?.degree === "Associate's Degree" && second.sent[1]?.startMonth === '08' && second.invalid.length === 0,
+        JSON.stringify({ sent: second.sent, left: second.left }),
+      );
+
+      // The same names in a plain <select>, as a form posting to Greenhouse's API lists them.
+      const schoolSelect = (names, school) =>
+        page.goto(`${base}/greenhouse-react-education`, { waitUntil: 'domcontentloaded' }).then(() =>
+          page.evaluate(async ({ b, names, school }) => {
+            const m = await import(`${b}/autofill.js`);
+            document.getElementById('education').remove();
+            document.getElementById('application-form').insertAdjacentHTML(
+              'beforeend',
+              `<label for="school_name_id">School</label><select id="school_name_id" name="job_application[educations_attributes][0][school_name_id]"><option value="">--</option>${names.map((n, i) => `<option value="${i + 1}">${n}</option>`).join('')}</select>`,
+            );
+            const report = m.fillForm({ school });
+            const select = document.getElementById('school_name_id');
+            return { chosen: select.value ? select.selectedOptions[0].textContent : '', filled: report.filled.map((x) => x.key) };
+          }, { b: base, names, school }),
+        );
+      const selectSpelled = await schoolSelect(['Example State College', 'Example State Univ.', 'Northern Example State University'], 'Example State University');
+      const selectTwo = await schoolSelect(['Saint Example College', 'St. Example College', 'Example College'], 'St Example College');
+      check('a plain list takes the school under its spelling too', selectSpelled.chosen === 'Example State Univ.' && selectSpelled.filled.includes('school'), JSON.stringify(selectSpelled));
+      check('but not where two different options would both be it', selectTwo.chosen === '' && !selectTwo.filled.includes('school'), JSON.stringify(selectTwo));
+    }
 
     /* ---------------- Workday's My Experience: a work history ---------------- */
     /*

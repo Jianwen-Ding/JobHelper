@@ -3011,6 +3011,89 @@ function degreeLevel(text) {
 const LEVEL_ONLY =
   /^(?:associate|bachelor|master|doctorate|doctoral|ph\.?\s?d\.?|undergraduate)(?:'?s)?(?:\s+degree)?$/i;
 
+/*
+ * A school's name, written so that two lists spelling the same name their own
+ * way agree — and only the same name.
+ *
+ * Greenhouse's School list is its own: read off the board's school search on
+ * Twitch's board (the same list every board serves), a campus follows a dash —
+ * "University of Texas - Austin", "University of California - Los Angeles",
+ * "University of Massachusetts - Amherst" — "and" is written out ("College of
+ * William and Mary") and Saint is "St." ("St. John's University"). A resume
+ * says "University of Texas at Austin", "University of California, Los
+ * Angeles", "William & Mary", "Saint John's University", and an abbreviated
+ * "Univ." goes either way. None of those was ever the option "exactly", so the
+ * School was left on "Select..." for most people whose school is on the list.
+ *
+ * So the words are compared, in order, with the punctuation between them, a
+ * leading or linking "the", "at" and "in", and the case gone, and a handful of
+ * abbreviations written out. Nothing else: "of" and the order stay, so the
+ * University of Washington is not Washington University; no word may be
+ * missing or extra, so "Texas A&M University" is not "Texas A&M University -
+ * Commerce", "Example State University" is not "Northern Example State
+ * University", and a school the list keeps only campuses of ("University of
+ * Michigan - Ann Arbor", "- Dearborn", "- Flint") is not guessed at. "St." is
+ * Saint and never State, so a St. Cloud is never a state school.
+ */
+const SCHOOL_WORDS = { univ: 'university', coll: 'college', inst: 'institute', st: 'saint', ste: 'sainte', mt: 'mount', ft: 'fort', intl: 'international', natl: 'national' };
+const SCHOOL_LINKS = new Set(['the', 'at', 'in']);
+
+function schoolKey(text) {
+  return clean(text)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/['’`]/g, '')
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .map((word) => SCHOOL_WORDS[word] ?? word)
+    .filter((word) => !SCHOOL_LINKS.has(word))
+    .join(' ');
+}
+
+/**
+ * The one option that is this school under the list's spelling, or nothing —
+ * nothing too where two different options would both do.
+ */
+function schoolOption(options, value, textOf = (o) => o.textContent) {
+  const hits = options.filter((o) => sameAnswerSpelledOtherwise('school', textOf(o), value));
+  return new Set(hits.map((o) => clean(textOf(o)).toLowerCase())).size === 1 ? hits[0] : null;
+}
+
+/*
+ * What else to type into a school search that did not find the school under
+ * its whole name.
+ *
+ * The board's search is the list's names holding what is typed — measured on
+ * Twitch's board: "Northeastern Univ" finds Northeastern University,
+ * "Northeastern Univ." finds nothing, and "University of Texas at Austin"
+ * finds nothing, since the list says "University of Texas - Austin". So a
+ * name that is spelled the list's way only in part has to be asked for by
+ * that part: the name before its campus or place ("University of Texas"), and
+ * then its most particular word, the longest that is not a word every school
+ * has ("Example" for "Example State University", which the list calls
+ * "Example State Univ."). What comes back is held to `schoolKey`, so a
+ * shorter search only finds more to choose from, never a looser choice.
+ */
+const SCHOOL_COMMON_WORD = /^(?:university|univ|college|coll|institute|inst|school|state|the|of|and|at|in|for|community|technical|technology|saint|st|academy|polytechnic|campus|main)$/i;
+
+function schoolSearches(value) {
+  const whole = clean(value);
+  const terms = [];
+  const add = (term) => {
+    const t = clean(term);
+    if (t.length >= 3 && !sameOption(t, whole) && !terms.some((x) => sameOption(x, t))) terms.push(t);
+  };
+  add(whole.split(/\s+(?:at|in)\s+|\s*[,(–—]\s*|\s+-\s+/i)[0]);
+  const particular = whole
+    .split(/[\s,.()&/]+/)
+    .filter((word) => word && !SCHOOL_COMMON_WORD.test(word.replace(/['’]s$/i, '')))
+    .sort((a, b) => b.length - a.length)[0];
+  if (particular) add(particular);
+  return terms;
+}
+
 /**
  * Whether an option is this answer under a different spelling — for the
  * fields where a spelling table exists, and only those. Consulted after an
@@ -3060,6 +3143,11 @@ function sameAnswerSpelledOtherwise(key, option, value) {
      */
     const aside = /^(.*?)\s*\(([^()]+)\)$/.exec(plain);
     return Boolean(aside) && LEVEL_ONLY.test(aside[1]) && degreeLevel(aside[1]) === level && degreeLevel(aside[2]) === level;
+  }
+  // A school under the list's spelling of its name. See `schoolKey`.
+  if (key === 'school') {
+    const wanted = schoolKey(value);
+    return Boolean(wanted) && wanted === schoolKey(option);
   }
   if (key === 'graduation_month' || key === 'education_start_month') {
     const month = monthOf(value);
@@ -3975,9 +4063,11 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
          * those fields — "12" is a perfectly good option in plenty of other
          * lists — and only after the exact match has failed.
          */
-        choosable.find(
-          (o) => sameAnswerSpelledOtherwise(key, o.textContent, value) || sameAnswerSpelledOtherwise(key, o.value, value),
-        ) ??
+        (key === 'school'
+          ? schoolOption(choosable, value)
+          : choosable.find(
+              (o) => sameAnswerSpelledOtherwise(key, o.textContent, value) || sameAnswerSpelledOtherwise(key, o.value, value),
+            )) ??
         /*
          * And, failing that, a yes/no pair against a phrase. See
          * `yesNoOption`, which wants a pair and nothing else — so the prompt
@@ -6617,7 +6707,8 @@ function exactOption(options, key, value, fields = {}, asked = '') {
           asked,
         )?.el
       : null) ??
-    options.find((o) => sameAnswerSpelledOtherwise(key, o.textContent, value)) ??
+    // A school only where one option is it. See `schoolKey`.
+    (key === 'school' ? schoolOption(options, value) : options.find((o) => sameAnswerSpelledOtherwise(key, o.textContent, value))) ??
     null
   );
 }
@@ -7075,16 +7166,33 @@ async function chooseInThisWidget(widget, key, value, { patience, fields, asked 
     press(box);
     option = await waitForOption(widget, key, value, openBefore, { patience, quiet: 400, fields, asked });
     if (!option) {
-      setValue(box, value);
       /*
        * A Workday prompt searches when Enter is let go: its keydown notes the
        * key held and its keyup runs the search. Typed into and left, its list
        * said "No Items." for as long as it was watched.
        */
-      if (isWorkdayPrompt(box)) {
-        for (const type of ['keydown', 'keyup']) box.dispatchEvent(ours(new KeyboardEvent(type, { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true })));
-      }
+      const search = (term) => {
+        setValue(box, term);
+        if (isWorkdayPrompt(box)) {
+          for (const type of ['keydown', 'keyup']) box.dispatchEvent(ours(new KeyboardEvent(type, { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true })));
+        }
+      };
+      search(value);
       option = await waitForOption(widget, key, value, openBefore, { patience, fields, asked });
+      /*
+       * A school the search has under a spelling of its own finds nothing
+       * under the resume's: asked again by the parts of its name the list
+       * will hold. See `schoolSearches`. Each answer is held to the same
+       * rule, so a wider search is more to choose from and no looser a
+       * choice. A search that has answered nothing is given up sooner than
+       * the whole patience, or a school the list lacks would cost it twice
+       * more.
+       */
+      for (const term of option || key !== 'school' ? [] : schoolSearches(value)) {
+        search(term);
+        option = await waitForOption(widget, key, value, openBefore, { patience, quiet: 1500, fields, asked });
+        if (option) break;
+      }
     }
   } else {
     press(pressPoint(widget));
@@ -7273,12 +7381,17 @@ function educationSection() {
   return found.length === 1 ? found[0] : null;
 }
 
-/** The same school, however much of its name each side writes. */
+/**
+ * The same school, however much of its name each side writes — or as the
+ * board's list spells it, which is what a block shows once it is chosen:
+ * "University of Texas - Austin" is the resume's "University of Texas at
+ * Austin", and its dates are that education's. See `schoolKey`.
+ */
 function sameSchool(a, b) {
   const flat = (text) => String(text ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
   const x = flat(a);
   const y = flat(b);
-  return Boolean(x && y) && (x === y || x.includes(y) || y.includes(x));
+  return Boolean(x && y) && (x === y || x.includes(y) || y.includes(x) || schoolKey(a) === schoolKey(b));
 }
 
 /** Whether a control already holds an answer, by what it shows. */
@@ -7333,7 +7446,9 @@ async function fillEducationPart(control, key, value, f, patience) {
     const option =
       choosable.find((o) => sameOption(o.textContent, value) || sameOption(o.value, value)) ??
       (key === 'gpa' ? gpaOption(choosable, value) : null) ??
-      choosable.find((o) => sameAnswerSpelledOtherwise(key, o.textContent, value) || sameAnswerSpelledOtherwise(key, o.value, value));
+      (key === 'school'
+        ? schoolOption(choosable, value)
+        : choosable.find((o) => sameAnswerSpelledOtherwise(key, o.textContent, value) || sameAnswerSpelledOtherwise(key, o.value, value)));
     if (!option) return leftAt(control, { key, reason: 'no matching option', description: description.slice(0, 60) });
     const was = control.value;
     nativeSet(control, 'value', option.value);
