@@ -205,6 +205,12 @@ async function main() {
       (await page.locator('#picker').isVisible())
         ? page.locator('#picker').evaluate((p) => p.selectedOptions[0]?.textContent ?? '')
         : page.locator('#label').textContent();
+    /** Press a button in the editor's More menu, opening the menu first if it is shut. */
+    const pressInMore = async (frame, sel) => {
+      if (!(await frame.locator(sel).isVisible())) await frame.locator('#btn-more').click();
+      await frame.locator(sel).click();
+    };
+    const shutMore = (frame) => frame.evaluate(() => document.querySelector('#btn-more[aria-expanded=true]')?.click());
     const noteText = async (page) => ((await page.locator('#note').isVisible()) ? page.locator('#note').textContent() : '');
 
     const shown = await until(async () => (await onScreen(side)) === target.baseId);
@@ -283,12 +289,12 @@ async function main() {
         return Math.round(Math.max(...tops) - Math.min(...tops));
       });
       check('its toolbar is one row', oneRow < 16, `centres ${oneRow}px apart`);
-      await editor.locator('#btn-more').click();
-      await editor.locator('#btn-tips').click();
+      // Choosing it closes More's menu, so More is opened again to put it away.
+      await pressInMore(editor, '#btn-tips');
       const tipsShown = await editor.evaluate(() => getComputedStyle(document.querySelector('#resume-view-note')).display !== 'none');
-      await editor.locator('#btn-tips').click();
-      await editor.locator('#btn-more').click();
-      check('the how-to is behind "?" under More, and "?" opens it', tipsHidden && tipsShown);
+      await pressInMore(editor, '#btn-tips');
+      await shutMore(editor);
+      check('the how-to is behind "How it works" under More, and it opens it', tipsHidden && tipsShown);
       const fitLine = await editor.evaluate(() => {
         const fit = document.querySelector('#fit');
         const squeezed = fit.querySelector('.squeezed');
@@ -336,12 +342,12 @@ async function main() {
       await side.locator('#note button', { hasText: 'Show it' }).click();
       check('which goes back', Boolean(await until(async () => (await onScreen(side)) === target.copyId)));
       await sideShot('compact-copy');
-      await editor.locator('#btn-more').click();
-      await editor.locator('#btn-tips').click();
+      await pressInMore(editor, '#btn-tips');
       await editor.locator('#fit').click();
+      if ((await editor.locator('#btn-more').getAttribute('aria-expanded')) !== 'true') await editor.locator('#btn-more').click();
       await sideShot('compact-more-tips-and-fit-open');
-      await editor.locator('#btn-tips').click();
-      await editor.locator('#btn-more').click();
+      await pressInMore(editor, '#btn-tips');
+      await shutMore(editor);
       await editor.locator('#fit').click();
 
       // Everything else is one press away: "Open in a tab".
@@ -578,6 +584,101 @@ async function main() {
         await sleep(200);
       });
       await ed().evaluate(() => document.querySelector('#btn-more[aria-expanded=true]')?.click());
+
+      /*
+       * More, at 320px: a menu floating over the resume. Opened, its buttons
+       * had been rows of their own that wrapped the bar and pushed the
+       * resume down by 150px, a fifth of the panel.
+       */
+      await wide.setViewportSize({ width: 320, height: 900 });
+      await sleep(700);
+      await ed().evaluate(() => window.scrollTo(0, 0));
+      const moreOpen = () => ed().evaluate(() => document.querySelector('#btn-more').getAttribute('aria-expanded') === 'true');
+      const menuShown = () => ed().evaluate(() => getComputedStyle(document.querySelector('#toolbar-more')).display !== 'none');
+      /** Where the resume starts, in the panel: the frame's top plus the editor's top inside it. */
+      const editorTop = async () =>
+        (await wide.evaluate(() => document.querySelector('#editor').getBoundingClientRect().top)) +
+        (await ed().evaluate(() => document.querySelector('#editor').getBoundingClientRect().top));
+      /** The bar's own controls, not the menu's: centres, and how far apart the lowest and highest are. */
+      const barSpread = () =>
+        ed().evaluate(() => {
+          const menu = document.querySelector('#toolbar-more');
+          const mids = [...document.querySelectorAll('#tab-resumes .sticky-toolbar > *')]
+            .filter((e) => e !== menu && getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().width > 0)
+            .map((e) => (e.getBoundingClientRect().top + e.getBoundingClientRect().bottom) / 2);
+          return Math.round(Math.max(...mids) - Math.min(...mids));
+        });
+      const topClosed = await editorTop();
+      await ed().locator('#btn-more').click();
+      const opened = (await moreOpen()) && (await menuShown());
+      const spread = await barSpread();
+      const topOpen = await editorTop();
+      if (SHOTS) await wide.screenshot({ path: path.join(SHOTS, 'panel-more-menu-320.png') });
+      check('More at 320px: the bar stays one row with its menu open', opened && spread < 16, `opened ${opened}, centres ${spread}px apart`);
+      check(
+        'More at 320px: opening its menu does not move the resume',
+        opened && Math.abs(topOpen - topClosed) < 1,
+        `editor top ${Math.round(topClosed)} → ${Math.round(topOpen)}px`,
+      );
+      const inside = await ed().evaluate(() => {
+        const r = document.querySelector('#toolbar-more').getBoundingClientRect();
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, w: innerWidth, h: innerHeight };
+      });
+      const frameBox = await wide.evaluate(() => {
+        const r = document.querySelector('#editor').getBoundingClientRect();
+        return { left: r.left, right: r.right, w: innerWidth };
+      });
+      check(
+        'More at 320px: its menu is inside the panel',
+        opened && inside.right > inside.left && inside.left >= 0 && inside.right <= inside.w + 0.5 && inside.top >= 0 && inside.bottom <= inside.h + 0.5 &&
+          frameBox.left >= 0 && frameBox.right <= frameBox.w + 0.5,
+        JSON.stringify(inside),
+      );
+      // Escape, from inside the menu: closed, and focus back on More.
+      await ed().locator('#btn-rename-resume').focus();
+      await wide.keyboard.press('Escape');
+      const escaped = await ed().evaluate(() => ({
+        expanded: document.querySelector('#btn-more').getAttribute('aria-expanded'),
+        shown: getComputedStyle(document.querySelector('#toolbar-more')).display !== 'none',
+        focus: document.activeElement?.id,
+      }));
+      check('More: Escape closes its menu and puts focus back on More', opened && escaped.expanded === 'false' && !escaped.shown && escaped.focus === 'btn-more', JSON.stringify(escaped));
+      // And from the keyboard alone: Enter on More, the arrow keys into it.
+      await shutMore(ed());
+      await ed().locator('#btn-more').focus();
+      await wide.keyboard.press('Enter');
+      await wide.keyboard.press('ArrowDown');
+      const keyed = await ed().evaluate(() => ({
+        open: document.querySelector('#btn-more').getAttribute('aria-expanded') === 'true',
+        inMenu: document.querySelector('#toolbar-more').contains(document.activeElement),
+      }));
+      await wide.keyboard.press('Escape');
+      check('More: opened from the keyboard, the arrow keys go into its menu', keyed.open && keyed.inMenu, JSON.stringify(keyed));
+      // A click anywhere else in the editor, and one on the panel's own bar, around the frame.
+      await shutMore(ed());
+      await ed().locator('#btn-more').click();
+      const reopened = await moreOpen();
+      await ed().locator('#editor .section-heading').first().click({ position: { x: 4, y: 4 } });
+      const afterInside = await moreOpen();
+      await shutMore(ed());
+      await ed().locator('#btn-more').click();
+      const reopened2 = await moreOpen();
+      await wide.locator('#bar').click({ position: { x: 150, y: 2 } });
+      await sleep(150);
+      const afterBar = await moreOpen();
+      check(
+        'More: a click outside its menu closes it, in the editor or on the panel’s bar',
+        reopened && !afterInside && reopened2 && !afterBar,
+        JSON.stringify({ reopened, afterInside, reopened2, afterBar }),
+      );
+      // Choosing something in it closes it.
+      await shutMore(ed());
+      await ed().locator('#btn-more').click();
+      await ed().locator('#btn-tips').click();
+      const chose = { open: await moreOpen(), tips: await ed().evaluate(() => document.body.classList.contains('tips-open')) };
+      check('More: choosing something in its menu does it, and closes the menu', !chose.open && chose.tips, JSON.stringify(chose));
+      await pressInMore(ed(), '#btn-tips');
+      await shutMore(ed());
       const dialogFits = () =>
         ed().evaluate(() => {
           const r = document.querySelector('.modal-body').getBoundingClientRect();
@@ -681,15 +782,17 @@ async function main() {
         check('a line switched or stepped far down the page stays where it was', moved.length === 0, moved.join('; '));
       }
       await note('more-and-tips-open', async () => {
+        // The how-to first: choosing it closes More's menu.
         await ed().evaluate(() => {
-          if (document.querySelector('#btn-more').getAttribute('aria-expanded') !== 'true') document.querySelector('#btn-more').click();
           if (document.querySelector('#btn-tips').getAttribute('aria-expanded') !== 'true') document.querySelector('#btn-tips').click();
+          if (document.querySelector('#btn-more').getAttribute('aria-expanded') !== 'true') document.querySelector('#btn-more').click();
         });
         await sleep(300);
       });
       await ed().evaluate(() => {
+        // Choosing it closes the menu too.
         document.querySelector('#btn-tips').click();
-        document.querySelector('#btn-more').click();
+        document.querySelector('#btn-more[aria-expanded=true]')?.click();
       });
       await note('fit-open', async () => {
         await ed().evaluate(() => document.body.classList.contains('fit-open') || document.querySelector('#fit').click());
