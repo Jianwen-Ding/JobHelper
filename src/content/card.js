@@ -1322,6 +1322,12 @@ export function createCard({
     baseChosen: null,
     /** The resume a switch still in flight is going to. See `switchBaseTo`. */
     switchingTo: null,
+    /**
+     * The store's copy that the card's own is built on: its id, which write
+     * of it the store holds (`version`, null for "none there yet"), and what
+     * it holds. Every filing of the copy is based on it. See `fileTheCopy`.
+     */
+    filed: null,
   };
 
   /**
@@ -1365,6 +1371,9 @@ export function createCard({
     sentOut(state.spec);
     return {
       spec: state.spec,
+      // Which write of the store's copy it is built on: the keeper files it
+      // only over that one, and the next page's card goes on from it.
+      filed: state.filed,
       builtWith: state.builtWith,
       /*
        * What the AI chose and why, for the page that cannot work it out.
@@ -1448,6 +1457,8 @@ export function createCard({
     }
     // The page's own reading was already made from it; see `heldBase`.
     if (work.baseResumeId) state.baseChosen = work.baseResumeId;
+    // What the store's copy was when the last page's card left it. See `fileTheCopy`.
+    if (work.filed?.id && !state.filed) state.filed = work.filed;
     /*
      * What was carried is a starting point, not a correction.
      *
@@ -2649,6 +2660,128 @@ export function createCard({
   /** What files the copy it is given: see `sentOut`. */
   const FILES_THE_COPY = new Set(['stage', 'bundle', 'openWorkspace']);
 
+  /**
+   * Three copies of the resume made one: `ours` and `theirs` both made from
+   * `base`, each change kept where only one side made it. Where both changed
+   * the same thing differently it cannot be told which is meant, so theirs
+   * is kept there and the place is named in `clashes`. Lists of sections go
+   * place by place while nobody added or removed one; any other list is one
+   * value.
+   */
+  const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  const sameValue = (a, b) => specKey(a) === specKey(b);
+  function mergeCopy(base, ours, theirs) {
+    const clashes = [];
+    const walk = (b, o, t, at) => {
+      if (sameValue(o, t)) return o;
+      if (sameValue(b, o)) return t;
+      if (sameValue(b, t)) return o;
+      if (isPlain(o) && isPlain(t)) {
+        const out = {};
+        for (const k of new Set([...Object.keys(o), ...Object.keys(t)])) {
+          const v = walk(isPlain(b) ? b[k] : undefined, o[k], t[k], `${at}.${k}`);
+          if (v !== undefined) out[k] = v;
+        }
+        return out;
+      }
+      const inPlace = [b, o, t].every((l) => Array.isArray(l) && l.length === b.length && l.every(isPlain));
+      if (inPlace) return o.map((x, i) => walk(b[i], x, t[i], `${at}[${i}]`));
+      clashes.push(at || '(all of it)');
+      return t;
+    };
+    return { merged: walk(base, ours, theirs, ''), clashes };
+  }
+
+  /*
+   * One filing of the copy at a time, each based on the write the one before
+   * it made. Two out at once are based on the same write, and the second is
+   * refused over the first: the card's own copy.
+   */
+  let filing = Promise.resolve();
+  function fileTheCopy(action, payload) {
+    const turn = filing.then(() => fileNow(action, payload));
+    filing = turn.catch(() => undefined);
+    return turn;
+  }
+
+  const MERGED_NOTE =
+    'This copy was edited in ResumeM-M while the card was filing it. The card kept that edit and put its own changes back on top.';
+  const ADOPTED_NOTE =
+    'This copy was edited in ResumeM-M while the card was filing it, in the same places the card had changed, so the card took the copy as it is there. Switch them again here if you still want them.';
+
+  /**
+   * File the copy — staged, sent, or handed to the editor — only over the
+   * write of it the card's own was built on.
+   *
+   * The card looks at the store before staging (`editedElsewhere`) and files
+   * its copy whole, so an edit made in ResumeM-M between the look and the
+   * write was written away; and a copy the card had filed earlier, made
+   * again in ResumeM-M, read as the card's own and was written over. The
+   * store now refuses a filing based on a write it does not hold, and says
+   * what it holds. That is the keeper's write when the keeper noted it (the
+   * card's own, filed with the workspace: filed over as it is), and
+   * otherwise an edit made elsewhere: the card's own changes since its base
+   * go on top of it where they do not touch the same thing, and where they
+   * do, the store's copy is taken as it is, and said. Either way that is the
+   * copy filed, and then the card's.
+   */
+  async function fileNow(action, payload) {
+    let spec = payload.spec;
+    let said = null;
+    for (let refused = 0; ; refused++) {
+      if (state.filed?.id !== spec.id) await learnFiled(spec);
+      const on = state.filed?.id === spec.id ? state.filed : null;
+      const basedOn = on && on.version !== undefined ? on.version : undefined;
+      sentOut(spec);
+      const result = await onAction(action, { ...payload, spec, ...(basedOn !== undefined ? { basedOn } : {}) });
+      if (!result?.conflict) {
+        if (result && result.resumeVersion !== undefined) state.filed = { id: spec.id, version: result.resumeVersion, copy: spec };
+        if (said) tookOver(payload.spec, spec, said);
+        return result;
+      }
+      if (refused >= 2) {
+        throw new Error('ResumeM-M kept changing this resume while the card was filing it, so nothing was filed. Try again in a moment.');
+      }
+      const { current, version } = result.conflict;
+      const kept = await Promise.resolve(onAction('keptCopy', { id: spec.id })).catch(() => null);
+      state.filed = { id: spec.id, version, copy: current };
+      // The keeper's write of this card's copy, over the same base: its own.
+      if (kept && kept.version === version && kept.basedOn === (basedOn ?? null)) continue;
+      if (!current) continue;
+      const { merged, clashes } = on?.copy ? mergeCopy(on.copy, spec, current) : { merged: current, clashes: ['(no base)'] };
+      spec = clashes.length ? current : merged;
+      if (said !== ADOPTED_NOTE) said = clashes.length ? ADOPTED_NOTE : MERGED_NOTE;
+    }
+  }
+
+  /** The store's copy as it stands, taken as the base when the card knows of none. */
+  async function learnFiled(spec) {
+    const got = await Promise.resolve(onAction('fresh', { spec })).catch(() => null);
+    // A store that says no version is not asked again: nothing is based on one.
+    if (got && state.filed?.id !== spec.id) {
+      state.filed = { id: spec.id, version: 'version' in got ? (got.version ?? null) : undefined, copy: got.stored ?? null };
+    }
+  }
+
+  /**
+   * The copy the card filed after a refusal is the card's copy now, with
+   * whatever was switched here while it was being filed put on top again.
+   */
+  function tookOver(sent, filed, said) {
+    const now = state.spec;
+    if (!now || now.id !== filed.id) return;
+    if (now === sent) state.spec = filed;
+    else {
+      const again = mergeCopy(sent, now, filed);
+      state.spec = again.clashes.length ? filed : again.merged;
+    }
+    const shown = state.showing && state.offers[state.showing];
+    if (shown) shown.spec = state.spec;
+    state.note = said;
+    state.render = null;
+    setTimeout(() => void compile());
+  }
+
   async function act(action, payload, apply, { quiet = false } = {}) {
     if (FILES_THE_COPY.has(action)) sentOut(payload?.spec);
     running.add(action);
@@ -2661,7 +2794,8 @@ export function createCard({
     }
     draw();
     try {
-      const result = await onAction(action, payload);
+      const result =
+        FILES_THE_COPY.has(action) && payload?.spec?.id ? await fileTheCopy(action, payload) : await onAction(action, payload);
       apply?.(result);
       return result;
     } catch (err) {
@@ -4093,6 +4227,11 @@ export function createCard({
         // Filed, what the store holds is the card's own whatever has been
         // switched since; after a compile, only for the copy it was about.
         if (filed || (state.spec === of && !state.storedPrint)) state.storedPrint = got.storedPrint ?? null;
+        // And the copy there, as the base of the first filing, when the card
+        // knows of none yet. A filing sets its own. See `fileTheCopy`.
+        if (!filed && of?.id && 'version' in got && state.filed?.id !== of.id) {
+          state.filed = { id: of.id, version: got.version ?? null, copy: got.stored ?? null };
+        }
       })
       .catch(() => undefined);
   }
@@ -7825,6 +7964,9 @@ export function createCard({
       const stored = (Array.isArray(list) ? list : list?.resumes ?? []).find((r) => r?.id === id);
       if (!stored || state.spec?.id !== id || JSON.stringify(stored) === JSON.stringify(state.spec)) return;
       state.spec = stored;
+      // Which write this is goes unsaid in the list: asked again before the
+      // next filing. See `fileTheCopy`.
+      state.filed = null;
       state.render = null;
       await compile();
     },
@@ -7923,9 +8065,19 @@ export function createCard({
       if (reply.base?.changed) state.baseChanged = { id: reply.base.id, label: reply.base.label };
 
       if (editedThere) {
-        state.spec = reply.stored;
+        /*
+         * With the card's own changes since the copy it last filed or took
+         * put back on top, where they do not touch what was edited there —
+         * as a refused filing does (see `fileTheCopy`). Where they do, the
+         * copy as it was left there.
+         */
+        const on = state.filed?.id === of.id && state.filed.copy ? state.filed : null;
+        const again = on ? mergeCopy(on.copy, of, reply.stored) : null;
+        const kept = Boolean(again && !again.clashes.length && !sameValue(again.merged, reply.stored));
+        state.spec = kept ? again.merged : reply.stored;
+        if ('version' in reply) state.filed = { id: of.id, version: reply.version ?? null, copy: reply.stored };
         state.render = null;
-        state.note = 'Updated from ResumeM-M: this copy was edited there.';
+        state.note = `Updated from ResumeM-M: this copy was edited there.${kept ? ' Your changes here since were kept on top.' : ''}`;
         await compile();
         return;
       }

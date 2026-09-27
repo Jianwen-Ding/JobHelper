@@ -1117,6 +1117,10 @@
       case 'fresh':
         return send('fresh', { spec: payload.spec });
 
+      // What the keeper filed of the copy, for a card whose filing was refused.
+      case 'keptCopy':
+        return send('keptCopy', { id: payload.id });
+
       case 'attachFiles': {
         // Pressed, so this application takes the plain names in the folder.
         const got = await send('attachments', { application: payload.application ?? null, claim: true });
@@ -1230,6 +1234,8 @@
           source: new URL(location.href).hostname,
           jobDescription: analysis.job.description ?? '',
           spec: payload.spec,
+          // The write of the copy it was built on. See `fileTheCopy` in the card.
+          basedOn: payload.basedOn,
           // Including a letter box that is in a frame rather than this page.
           coverLetterRequired: wantsCoverLetter() || letterInFrame,
           /*
@@ -1250,6 +1256,8 @@
             limit: q.limit || undefined,
           })),
         });
+        // Refused over an edit made in ResumeM-M: the card takes it, and asks again.
+        if (result?.conflict) return result;
         await send('openTab', { url: result.absoluteUrl });
         return result;
       }
@@ -1288,6 +1296,8 @@
         return send('stage', {
           spec: payload.spec,
           resumeId: payload.spec.id,
+          // The write of the copy it was built on. See `fileTheCopy` in the card.
+          basedOn: payload.basedOn,
           ...filedAs(),
           url: location.href,
           source: new URL(location.href).hostname,
@@ -1305,6 +1315,7 @@
         return send('bundle', {
           spec: payload.spec,
           resumeId: payload.spec.id,
+          basedOn: payload.basedOn,
           ...filedAs(),
           url: location.href,
           source: new URL(location.href).hostname,
