@@ -56,6 +56,24 @@ body {
   font-weight: 500;
   font-size: 13px;
 }
+/* The resume, switchable: a quiet select that reads as the bar's title. */
+.picker {
+  min-width: 0;
+  flex: 0 1 auto;
+  max-width: 100%;
+  font: inherit;
+  font-weight: 500;
+  color: var(--ink);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  padding: 4px 4px;
+  min-height: 32px;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.picker:hover { background: var(--state-hover); }
+.picker:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .kind {
   flex: none;
   font-size: 11px;

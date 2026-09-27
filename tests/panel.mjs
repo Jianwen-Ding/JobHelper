@@ -45,6 +45,8 @@ const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
 const OTHER_PORT = Number(process.env.RMM_OTHER_PORT ?? 4931);
 const DEAD = `http://127.0.0.1:${process.env.RMM_DEAD_PORT ?? 4939}`;
 const SHOTS = process.env.JH_SHOTS ?? null;
+/** Longer than the panel's own look at the store, so a poll has happened. */
+const POLL_WAIT = 5000;
 const WIDTHS = [320, 400, 500, 1000];
 const MINE = [HARBOUR_ROLE.company, MARIGOLD_ROLE.company];
 
@@ -198,7 +200,11 @@ async function main() {
       const f = editorOf(page);
       return f ? f.evaluate(() => (document.querySelector('#resume-select')?.value ?? null)).catch(() => null) : null;
     };
-    const barLabel = (page) => page.locator('#label').textContent();
+    /** The bar's name for the resume: its picker once the editor is up, its label before. */
+    const barLabel = async (page) =>
+      (await page.locator('#picker').isVisible())
+        ? page.locator('#picker').evaluate((p) => p.selectedOptions[0]?.textContent ?? '')
+        : page.locator('#label').textContent();
     const noteText = async (page) => ((await page.locator('#note').isVisible()) ? page.locator('#note').textContent() : '');
 
     const shown = await until(async () => (await onScreen(side)) === target.baseId);
@@ -245,6 +251,109 @@ async function main() {
     check('the panel moves onto the copy by itself', Boolean(onCopy), String(await onScreen(side)));
     check('and marks it as the one for this posting', (await side.locator('#kind').textContent()) === 'For this posting');
     await sideShot('copy');
+
+    /* ---------------- Compact ---------------- */
+
+    group('Compact: the resume starts near the top of the panel');
+    {
+      const editor = editorOf(side);
+      await editor.waitForSelector('#editor .section-heading');
+      const first = await side.evaluate(() => Math.round(document.querySelector('#editor').getBoundingClientRect().top));
+      const inner = await editor.evaluate(() => Math.round(document.querySelector('#editor .section-heading').getBoundingClientRect().top));
+      const width = await side.evaluate(() => innerWidth);
+      check(
+        `the first of the resume is within 200px of the top of the ${width}px side panel`,
+        first + inner <= 200,
+        `${first + inner}px`,
+      );
+      const hidden = await editor.evaluate(() =>
+        ['header h1', '#tabs', '#project-chip', '#ai-peek-chip', '#resume-select'].filter(
+          (q) => getComputedStyle(document.querySelector(q)).display !== 'none',
+        ),
+      );
+      check('the editor’s header, tabs, save and AI chips and its own picker are left out of the panel', hidden.length === 0, hidden.join(', '));
+      const tipsHidden = await editor.evaluate(() => getComputedStyle(document.querySelector('#resume-view-note')).display === 'none');
+      const oneRow = await editor.evaluate(() => {
+        const tops = [...document.querySelectorAll('#tab-resumes .sticky-toolbar > *, #toolbar-more > *')]
+          .filter((e) => getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().width > 0 && getComputedStyle(e).display !== 'contents')
+          .map((e) => {
+            const r = e.getBoundingClientRect();
+            return (r.top + r.bottom) / 2;
+          });
+        return Math.round(Math.max(...tops) - Math.min(...tops));
+      });
+      check('its toolbar is one row', oneRow < 16, `centres ${oneRow}px apart`);
+      await editor.locator('#btn-more').click();
+      await editor.locator('#btn-tips').click();
+      const tipsShown = await editor.evaluate(() => getComputedStyle(document.querySelector('#resume-view-note')).display !== 'none');
+      await editor.locator('#btn-tips').click();
+      await editor.locator('#btn-more').click();
+      check('the how-to is behind "?" under More, and "?" opens it', tipsHidden && tipsShown);
+      const fitLine = await editor.evaluate(() => {
+        const fit = document.querySelector('#fit');
+        const squeezed = fit.querySelector('.squeezed');
+        const passive = [...document.querySelectorAll('#warnings > div')].filter(
+          (w) => !w.querySelector('button') && getComputedStyle(w).display !== 'none',
+        ).length;
+        return { h: fit.getBoundingClientRect().height, squeezed: squeezed ? getComputedStyle(squeezed).display : null, passive };
+      });
+      await editor.locator('#fit').click();
+      const fitOpen = await editor.evaluate(() => document.querySelector('#fit').getBoundingClientRect().height);
+      await editor.locator('#fit').click();
+      check(
+        'how it fits, and the notes that ask for nothing, are one line that opens when tapped',
+        fitLine.h <= 40 && fitLine.passive === 0 && (fitLine.squeezed ?? 'none') === 'none' && fitOpen >= fitLine.h,
+        `${JSON.stringify(fitLine)} → ${fitOpen}px`,
+      );
+
+      // In its own tab the editor is drawn whole.
+      const own = await context.newPage();
+      await own.setViewportSize({ width: 1280, height: 900 });
+      await own.goto(`${SERVER}/#resumes/${encodeURIComponent(target.copyId)}`);
+      await own.waitForSelector('#editor .section-heading');
+      const drawn = await own.evaluate(() =>
+        ['header h1', '#tabs', '#project-chip', '#ai-peek-chip', '#resume-select', '#resume-view-note'].filter(
+          (q) => getComputedStyle(document.querySelector(q)).display === 'none',
+        ),
+      );
+      check('the editor in its own tab still has every one of them', drawn.length === 0, drawn.join(', '));
+      await own.close();
+      const backToHarbour = async () => {
+        await worker.evaluate((id) => chrome.tabs.update(id, { active: true }), harbourTab.id);
+        await until(async () => (await onScreen(side)) === target.copyId);
+      };
+      await backToHarbour();
+
+      // The bar's picker switches resume, and is not pulled back by the panel.
+      const other = (await getJson(`${SERVER}/api/resumes`)).find((r) => r.id !== target.copyId && r.tier !== 'temporary')?.id;
+      const hasPicker = await side.locator('#picker').isVisible();
+      check('the bar has a resume picker, on the resume shown', hasPicker && (await side.locator('#picker').inputValue()) === target.copyId);
+      if (hasPicker) await side.locator('#picker').selectOption(other);
+      const switched = await until(async () => (await onScreen(side)) === other);
+      await sleep(POLL_WAIT);
+      check('the resume picker in the bar switches the editor', Boolean(switched) && (await onScreen(side)) === other, String(await onScreen(side)));
+      check('and says this tab uses another, with the way back', /This tab is using/.test(await noteText(side)));
+      await side.locator('#note button', { hasText: 'Show it' }).click();
+      check('which goes back', Boolean(await until(async () => (await onScreen(side)) === target.copyId)));
+      await sideShot('compact-copy');
+      await editor.locator('#btn-more').click();
+      await editor.locator('#btn-tips').click();
+      await editor.locator('#fit').click();
+      await sideShot('compact-more-tips-and-fit-open');
+      await editor.locator('#btn-tips').click();
+      await editor.locator('#btn-more').click();
+      await editor.locator('#fit').click();
+
+      // Everything else is one press away: "Open in a tab".
+      const opened = context.waitForEvent('page', { timeout: 10_000 }).catch(() => null);
+      await side.locator('#newtab').click();
+      const tab = await opened;
+      await tab?.waitForSelector('#tabs button[data-tab="applications"]', { timeout: 15_000 }).catch(() => undefined);
+      const tabs = await tab?.evaluate(() => getComputedStyle(document.querySelector('#tabs')).display !== 'none').catch(() => false);
+      check('"Open in a tab" opens the whole editor, tabs and all, on this resume', Boolean(tabs) && tab.url().includes(encodeURIComponent(target.copyId)), tab?.url());
+      await tab?.close();
+      await backToHarbour();
+    }
 
     /* ---------------- An edit in the panel reaches the card ---------------- */
 
@@ -571,29 +680,62 @@ async function main() {
         }
         check('a line switched or stepped far down the page stays where it was', moved.length === 0, moved.join('; '));
       }
-      await note('long-master', async () => {
-        await ed().locator('#resume-select').selectOption('__master__');
-        await sleep(1200);
-        await ed().evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2));
+      await note('more-and-tips-open', async () => {
+        await ed().evaluate(() => {
+          if (document.querySelector('#btn-more').getAttribute('aria-expanded') !== 'true') document.querySelector('#btn-more').click();
+          if (document.querySelector('#btn-tips').getAttribute('aria-expanded') !== 'true') document.querySelector('#btn-tips').click();
+        });
         await sleep(300);
       });
-      await ed().locator('#resume-select').selectOption(target.copyId);
-      await sleep(1000);
-      await note('ai-activity', async () => {
-        await ed().locator('#ai-peek-chip').click();
-        await sleep(600);
+      await ed().evaluate(() => {
+        document.querySelector('#btn-tips').click();
+        document.querySelector('#btn-more').click();
       });
-      await ed().evaluate(() => document.querySelector('#modal-cancel')?.click());
+      await note('fit-open', async () => {
+        await ed().evaluate(() => document.body.classList.contains('fit-open') || document.querySelector('#fit').click());
+        await sleep(300);
+      });
+      await ed().locator('#fit').click();
+
+      /*
+       * The rest of the editor — the master, the other tabs, the AI's
+       * activity — is not drawn inside the panel; "Open in a tab" is the way
+       * to it. Checked here at a panel's width all the same, in a tab of its
+       * own, since a narrow window is the same case.
+       */
+      const alone = await context.newPage();
+      await alone.goto(`${SERVER}/#resumes/${encodeURIComponent(target.copyId)}`);
+      await alone.waitForSelector('#editor .entry');
+      const noteAlone = async (name, run) => {
+        const over = [];
+        for (const width of [320, 400]) {
+          await alone.setViewportSize({ width, height: 900 });
+          await sleep(300);
+          await run();
+          await sleep(900);
+          const h = await alone.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+          if (h > 1) over.push(`${width}px by ${h}`);
+          if (SHOTS) await alone.screenshot({ path: path.join(SHOTS, `tab-narrow-${name}-${width}.png`) });
+        }
+        if (over.length) problems.push(`${name}: ${over.join(', ')}`);
+      };
+      await noteAlone('long-master', async () => {
+        await alone.locator('#resume-select').selectOption('__master__');
+        await alone.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2));
+      });
+      await alone.locator('#resume-select').selectOption(target.copyId);
+      await noteAlone('ai-activity', async () => {
+        await alone.evaluate(() => document.querySelector('#modal-cancel')?.click());
+        await alone.locator('#ai-peek-chip').click();
+      });
+      await alone.evaluate(() => document.querySelector('#modal-cancel')?.click());
       for (const tab of ['save', 'workspace', 'applications', 'letters', 'history', 'voice']) {
-        await note(`tab-${tab}`, async () => {
-          await ed().evaluate((t) => document.querySelector(`#tabs button[data-tab="${t}"]`).click(), tab);
-          await sleep(1200);
-        });
+        await noteAlone(`tab-${tab}`, () => alone.evaluate((t) => document.querySelector(`#tabs button[data-tab="${t}"]`).click(), tab));
       }
-      await ed().evaluate(() => document.querySelector('#tabs button[data-tab="resumes"]').click());
+      await alone.close();
       await wide.setViewportSize({ width: 400, height: 900 });
       await sleep(800);
-      check('toggling, undoing, editing, stepping phrasings, reordering, the master and every tab: no sideways scroll at 320 and 400px', problems.length === 0, problems.join('; '));
+      check('toggling, undoing, editing, stepping phrasings, reordering, tips, the fit line, the master and every tab: no sideways scroll at 320 and 400px', problems.length === 0, problems.join('; '));
     }
 
     /* ---------------- No application on the tab ---------------- */

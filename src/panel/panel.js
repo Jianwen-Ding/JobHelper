@@ -466,6 +466,8 @@ function paint() {
     note(...contextNote(plan, onScreen));
   }
 
+  drawPicker(cover ? null : onScreen);
+
   // Covered, the bar names what the message is about rather than whatever
   // the hidden editor last had open.
   if (cover) {
@@ -491,6 +493,68 @@ function paint() {
   $('#fold .sr').textContent = model.prefs.collapsed ? 'Unfold the editor' : 'Fold the editor';
 }
 
+/**
+ * The resume picker in the bar, in place of the editor's own.
+ *
+ * The editor's picker is not drawn inside the panel (see ResumeM-M's
+ * style.css, `.embedded`): it repeated the name this bar already shows, on a
+ * row of its own. Switching resume from here goes through the same door as
+ * following a tab — `openInstead` — so an edit still saving holds it.
+ */
+let pickerSaid = '';
+const TIERS = [
+  ['base', 'Bases'],
+  ['extended', 'Kept'],
+  ['temporary', 'Made for a posting'],
+];
+function drawPicker(onScreen) {
+  const picker = $('#picker');
+  const show = Boolean(onScreen) && model.resumes.some((r) => r.id === onScreen);
+  picker.hidden = !show;
+  $('#label').hidden = show;
+  if (!show) return;
+  const said = JSON.stringify(model.resumes.map((r) => [r.id, r.label, r.tier]));
+  if (said !== pickerSaid) {
+    pickerSaid = said;
+    const option = (r) => {
+      const o = document.createElement('option');
+      o.value = r.id;
+      o.textContent = r.label ?? r.id;
+      return o;
+    };
+    const groups = TIERS.map(([tier, label]) => [label, model.resumes.filter((r) => (r.tier ?? 'extended') === tier)]).filter(
+      ([, list]) => list.length,
+    );
+    const known = new Set(TIERS.map(([t]) => t));
+    const rest = model.resumes.filter((r) => r.tier && !known.has(r.tier));
+    picker.replaceChildren(
+      ...groups.map(([label, list]) => {
+        const g = document.createElement('optgroup');
+        g.label = label;
+        g.append(...list.map(option));
+        return g;
+      }),
+      ...rest.map(option),
+    );
+  }
+  if (picker.value !== onScreen && document.activeElement !== picker) picker.value = onScreen;
+  picker.title = `${picker.selectedOptions[0]?.textContent ?? ''} — switch the resume shown here`;
+}
+
+$('#picker').addEventListener('change', async (ev) => {
+  const id = ev.target.value;
+  /*
+   * Not recorded as what the panel wants: that stays the tab's resume, so
+   * the next look at the store does not move the editor back, and the note
+   * under the bar offers the way back to the tab's.
+   */
+  await ask({ rmm: 'open', id }, 10_000);
+  paint();
+  // Refused (an edit still saving): the picker goes back to what is shown.
+  if (model.editor?.resumeId && model.editor.resumeId !== id) ev.target.value = model.editor.resumeId;
+  ev.target.blur();
+});
+
 /** The line under the bar: what this resume is to the tab beside it. */
 function contextNote(plan, onScreen) {
   if (Date.now() - model.refusedAt < 1400) {
@@ -513,11 +577,11 @@ function contextNote(plan, onScreen) {
   if (plan.why === 'copy') return ['', ''];
   if (plan.why === 'base-for-copy') {
     const base = labelOf(plan.id) ?? plan.id;
-    return [`The copy for this posting is not built yet, so edits here change ${base} itself.`, 'warn'];
+    return [`Copy for this posting not built yet — edits here change ${base} itself.`, 'warn'];
   }
   if (plan.why === 'base-after-delete') {
     const base = labelOf(plan.id) ?? plan.id;
-    return [`The copy for this posting was deleted in ResumeM-M. Showing ${base}, the resume it was made from.`, 'warn'];
+    return [`Copy for this posting was deleted in ResumeM-M — showing ${base}, which it was made from.`, 'warn'];
   }
   if (plan.why === 'no-application') {
     const named = labelOf(plan.id) ?? plan.id;
@@ -525,7 +589,7 @@ function contextNote(plan, onScreen) {
       plan.preferred && plan.preferred !== plan.id
         ? ` (JobHelper’s setting names “${plan.preferred}”, which is not in this save.)`
         : '';
-    return [`No application on this tab. Showing ${named}, the resume JobHelper starts from.${note}`, ''];
+    return [`No application on this tab. Showing ${named}, your base resume.${note}`, ''];
   }
   return ['', ''];
 }
