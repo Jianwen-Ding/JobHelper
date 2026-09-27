@@ -22,6 +22,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  extensionWorker,
   ASHBY_ROLE,
   ADVERT_FRAME,
   ATS_FORM,
@@ -246,7 +247,7 @@ async function main() {
   });
 
   try {
-    const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+    const worker = await extensionWorker(context);
     await pointExtensionAt(context, worker, SERVER);
 
     /* ---- A path suffix on the same host: Lever's shape ---- */

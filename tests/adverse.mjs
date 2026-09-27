@@ -26,6 +26,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import {
+  extensionWorker,
   BARE_ROLE,
   HEAVY_POSTING,
   HELIOS_FORM,
@@ -252,7 +253,7 @@ async function main() {
 
   let doomed = null;
   try {
-    const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+    const worker = await extensionWorker(context);
     await pointExtensionAt(context, worker, SERVER);
 
     /* ---------------------------------------------------------------- *

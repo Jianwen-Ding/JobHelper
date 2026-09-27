@@ -2246,7 +2246,7 @@ export function serveSlowProxy(target, { slowRoute = /analyze/, ms = 4000, skip 
 
 /** Point the extension at a different server, from a page that has `chrome`. */
 export async function useServer(context, serverUrl) {
-  const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+  const worker = await extensionWorker(context);
   const page = await context.newPage();
   await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
   await page.evaluate((url) => chrome.storage.sync.set({ serverUrl: url }), serverUrl);

@@ -17,7 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { cleanStore, findChromium, serveFixtures, requireOpenSave, pointExtensionAt } from './fixtures.mjs';
+import { extensionWorker, cleanStore, findChromium, serveFixtures, requireOpenSave, pointExtensionAt } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
@@ -134,7 +134,7 @@ async function main() {
   let configWas = null;
   const aiDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-fresh-ai-'));
   try {
-    const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+    const worker = await extensionWorker(context);
     await pointExtensionAt(context, worker, SERVER);
     const page = await context.newPage();
     await page.goto(fixtures.urlFor(POSTING), { waitUntil: 'domcontentloaded' });

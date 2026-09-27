@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BLOG, HELIOS_ROLE, NORTHWIND, QUARRY, STREAMLY, cleanStore, findChromium, pointExtensionAt, requireOpenSave, serveFixtures } from './fixtures.mjs';
+import { extensionWorker, BLOG, HELIOS_ROLE, NORTHWIND, QUARRY, STREAMLY, cleanStore, findChromium, pointExtensionAt, requireOpenSave, serveFixtures } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
@@ -52,8 +52,7 @@ async function main() {
 
   try {
     group('Extension loads');
-    let worker = context.serviceWorkers()[0];
-    if (!worker) worker = await context.waitForEvent('serviceworker', { timeout: 15_000 });
+    const worker = await extensionWorker(context);
     check('service worker started', Boolean(worker));
     await pointExtensionAt(context, worker, SERVER);
 

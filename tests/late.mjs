@@ -27,7 +27,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { HELIOS_ROLE, findChromium, pointExtensionAt, requireOpenSave, serveFixtures, serveSlowProxy } from './fixtures.mjs';
+import { extensionWorker, HELIOS_ROLE, findChromium, pointExtensionAt, requireOpenSave, serveFixtures, serveSlowProxy } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
@@ -100,7 +100,7 @@ async function main() {
   });
 
   try {
-    const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+    const worker = await extensionWorker(context);
     await pointExtensionAt(context, worker, slow.base);
     const settings = await context.newPage();
     await settings.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);

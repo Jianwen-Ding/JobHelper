@@ -23,6 +23,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  extensionWorker,
   ATS_FORM,
   ATS_FORM_UNANSWERABLE,
   BLOG,
@@ -192,7 +193,7 @@ async function main() {
   });
 
   try {
-    const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+    const worker = await extensionWorker(context);
     await pointExtensionAt(context, worker, SERVER);
 
     const page = await context.newPage();
