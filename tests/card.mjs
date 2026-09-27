@@ -5609,6 +5609,56 @@ async function main() {
   );
 
   /*
+   * A statement Autofill said Yes to in the person's name — Quora's "I
+   * understand that all employees ... coordination hours" — is named, so they
+   * can see what was said for them.
+   */
+  const acknowledging = await inPage(async (createCard) => {
+    const COORDINATION = 'I understand that all employees for this position will be expected to be available for meetings and impromptu communication during Quora\'s “coordination hours” (Mon-Fri, 9am-3pm Pacific Time).';
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary', sections: [] },
+        tailor: 'none',
+        diff: [],
+        rationale: [],
+        skillChanges: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      isForm: true,
+      onAction: (action) => {
+        if (action === 'autofill') {
+          return Promise.resolve({
+            filled: [
+              { key: 'phone', value: '(555) 010-0199' },
+              { key: 'acknowledged', value: 'Yes', question: COORDINATION, acknowledged: true },
+              { key: 'acknowledged', value: 'Yes', question: 'I confirm that I have read the job description.', acknowledged: true },
+            ],
+            skipped: [],
+          });
+        }
+        if (action === 'aiStatus') return Promise.resolve({ state: 'off', active: false, serverEnabled: false });
+        return Promise.resolve({});
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    [...root.querySelectorAll('button')].find((b) => /^Autofill this form/.test(b.textContent))?.click();
+    await new Promise((r) => setTimeout(r, 50));
+    return root.querySelector('.ok-note')?.textContent ?? '';
+  });
+  check(
+    'statements acknowledged for the person are named beside what Autofill did',
+    acknowledging ===
+      'Filled 3 fields. Acknowledged: “I understand that all employees for this position will be…”, “I confirm that I have read the job description.” — check you agree before sending.',
+    JSON.stringify(acknowledging),
+  );
+
+  /*
    * The role the card shows while the posting is still being read, which is
    * the page's own title. iCIMS's sign-in page is titled "Login | Careers
    * Markon", and the card said the role was that; a SmartRecruiters title

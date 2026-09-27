@@ -4131,11 +4131,13 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
    * person applying knows — which is the only kind the bank holds.
    */
   const memory = answerFromMemory(remembered);
+  // And the statements that only ask to be acknowledged, once nothing else has answered them.
+  const acknowledged = answerAcknowledgements();
   // And what was typed, into the short boxes the profile had nothing for.
   const typed = answerTypedFromMemory(remembered, fields, company);
   // And the jobs on the resume, into the blocks a work history is asked in.
   const work = fillWorkHistory(history, { overwrite });
-  const done = [...filled, ...radios.filled, ...buttons.filled, ...memory.filled, ...typed.filled, ...work.filled];
+  const done = [...filled, ...radios.filled, ...buttons.filled, ...memory.filled, ...acknowledged.filled, ...typed.filled, ...work.filled];
 
   /*
    * A control the memory pass answered is not still waiting, whatever an
@@ -4152,7 +4154,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
 
   return {
     filled: done,
-    skipped: [...waiting, ...memory.skipped, ...typed.skipped, ...work.skipped, ...unfillableChoices(fields, done)],
+    skipped: [...waiting, ...memory.skipped, ...acknowledged.skipped, ...typed.skipped, ...work.skipped, ...unfillableChoices(fields, done)],
   };
 }
 
@@ -5433,6 +5435,89 @@ function answerFromMemory(remembered) {
       UNSEEN.set(waiting, { ...took, row: { ...row, question: choice.question, remembered: true } });
       skipped.push(waiting);
     } else skipped.push({ ...row, reason: 'the answer you gave before is not one of the options here' });
+  }
+  return { filled, skipped };
+}
+
+/* ---------------------- Statements to acknowledge ---------------------- */
+
+/*
+ * A statement the person is asked to say they have read: "I understand that
+ * all employees for this position will be expected to be available for
+ * meetings ... during Quora's “coordination hours”", a required Yes and No on
+ * Quora's Ashby form. Nothing in the profile answers it, so it was left for
+ * the person on every form that asked, and it is the same Yes each time.
+ *
+ * Only a statement in the first person that says it is understood, read or
+ * acknowledged — "I understand", "I acknowledge", "I have read and
+ * understand", "I confirm that I have read", "I agree to be available",
+ * "By checking this box I acknowledge" — and never one about any of
+ * `NOT_ACKNOWLEDGED`. Answered Yes, or ticked, only where nothing else has
+ * answered it: the profile and the bank go first, and a statement already
+ * answered either way is the person's.
+ */
+const ACKNOWLEDGEMENT =
+  /^(?:by\s+(?:checking|ticking|selecting|clicking)\s+(?:this|the)\s+(?:box|button)\s*,?\s*)?i\s+(?:hereby\s+)?(?:understand|acknowledge|have\s+read\s+and\s+(?:understand|acknowledge|agree)|confirm\s+that\s+i\s+have\s+read|agree\s+to\s+be\s+available)\b/i;
+
+/*
+ * What is never acknowledged for somebody, however it is worded: what may be
+ * sent to them, their right to work or a move, their pay, a check on them,
+ * who they are, and the statement that ends an application — that all of it
+ * is true — which is theirs to sign. These still follow the profile where it
+ * answers them, or are left as they were.
+ */
+const NOT_ACKNOWLEDGED = [
+  /\b(marketing|newsletters?|mailing[\s-]?lists?|promotion\w*|sms|text[\s-]?messag\w*|texts?|texting|whatsapp|subscri\w*|unsubscribe|opt[\s-]?(?:in|out))\b|\bconsent\s+to\s+(?:receiv\w*|be\s+contacted)\b|\breceiv\w*\s+(?:\w+\s+){0,3}(?:updates|communications?|messages|e-?mails|calls|alerts|offers)\b|\bcommunications?\s+(?:consent|preferences?)\b/i,
+  /\b(sponsor\w*|visas?|work\s+authori[sz]\w*|authori[sz]ed\s+to\s+work|eligib\w*|right\s+to\s+work|immigration|citizen\w*|relocat\w*)\b/i,
+  /\b(salary|salaries|compensation|wages?|pay|remuneration|bonus)\b/i,
+  /\b(?:background|drug|credit|reference)\s+(?:check|screen|test|investigation)\w*|\bconsumer\s+reports?\b|\bfingerprint\w*|\b(criminal|convict\w*|felon\w*|arrest\w*|misdemeanou?r)\b/i,
+  /\b(gender|race|racial|ethnic\w*|veterans?|disabilit\w*|disabled|eeoc?|self[\s-]?identif\w*|sexual\s+orientation|pronouns|demographic\w*|equal\s+(?:employment|opportunity))\b/i,
+  /\b(certify|attest\w*|to\s+the\s+best\s+of\s+my\s+knowledge|falsif\w*|misrepresent\w*|omissions?|grounds\s+for|at[\s-]will|signature|e-?sign\w*)\b|\btrue\s*(?:,|and)?\s*(?:complete|correct|accurate)\b|\b(?:complete|correct|accurate)\s+and\s+(?:true|complete|correct|accurate)\b/i,
+];
+
+function isAcknowledgement(statement) {
+  const said = clean(statement).replace(/^[*\s]+/, '');
+  return said.length >= 20 && ACKNOWLEDGEMENT.test(said) && !NOT_ACKNOWLEDGED.some((re) => re.test(said));
+}
+
+/**
+ * Answer Yes to the statements on this page that ask only to be acknowledged
+ * — a Yes and No pressed, chosen or ticked, as the page asks it — and tick a
+ * single required box that says one. Each is reported `acknowledged`, so the
+ * card can name it.
+ */
+function answerAcknowledgements() {
+  const filled = [];
+  const skipped = [];
+  for (const choice of rememberableChoices()) {
+    if (choice.answered() || !isAcknowledgement(choice.question)) continue;
+    // Only an option that says Yes and nothing else: see `chooseInSelect` and the rest.
+    const took = choice.choose('Yes');
+    if (!took) continue;
+    keepChosen(choice.el, 'Yes');
+    const row = { key: 'acknowledged', value: 'Yes', description: choice.description.slice(0, 60) };
+    const done = { ...row, question: choice.question, acknowledged: true };
+    if (took === true) filled.push(done);
+    else {
+      // Pressed, and read back by `seePresses` once the page has drawn it.
+      const waiting = { ...row, reason: 'the page did not take it — pick this one by hand' };
+      UNSEEN.set(waiting, { ...took, row: done });
+      skipped.push(waiting);
+    }
+  }
+  for (const box of deepQueryAll('input[type=checkbox]')) {
+    if (box.checked || isDisabled(box) || box.getClientRects().length === 0) continue;
+    // One box on its own, not one of a list to pick from: no other under its name, or in its fieldset.
+    const fieldset = closestAround(box, 'fieldset');
+    const alongside = (other) =>
+      other !== box && ((box.name && other.name === box.name && other.form === box.form) || (fieldset && closestAround(other, 'fieldset') === fieldset));
+    if (deepQueryAll('input[type=checkbox]').some(alongside)) continue;
+    const said = labelFor(box);
+    const required = box.required || box.getAttribute('aria-required') === 'true' || /\*|\brequired\b/i.test(said);
+    if (!required || !isAcknowledgement(withoutMarkers(said) || said)) continue;
+    box.click();
+    if (!box.checked) continue;
+    filled.push({ key: 'acknowledged', value: 'Yes', description: describeField(box).slice(0, 60), question: withoutMarkers(said) || said, acknowledged: true });
   }
   return { filled, skipped };
 }

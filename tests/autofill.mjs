@@ -5941,7 +5941,60 @@ ${ASHBY_AUTOCOMPLETE}
   };
 </script></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE };
+/*
+ * Statements a form asks only to be acknowledged, and ones that look like
+ * them and are not. The first is Quora's, as its Ashby form draws it — a
+ * required Yes and No over a hidden checkbox — and so is the texting consent
+ * under the phone; the rest are the same markup with other words, and the
+ * shapes other forms ask in: a lone required checkbox, a pair of radios, a
+ * select. `?answered` has the person press No on Quora's first.
+ */
+const ACKNOWLEDGEMENTS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Quora</title>
+<style>._input_1svni_78 { display: none; }</style></head><body>
+<div class="ashby-application-form-container">
+<div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="003d89f3-1128-4fef-a9ac-40e88a4ba7e4" data-field-entry-id="b6511a02-1ab4-47d1-9d4e-49780cb9869a_003d89f3-1128-4fef-a9ac-40e88a4ba7e4"><label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title" for="003d89f3-1128-4fef-a9ac-40e88a4ba7e4">I understand that all employees for this position will be expected to be available for meetings and impromptu communication during Quora's “coordination hours” (Mon-Fri, 9am-3pm Pacific Time).</label><div class="_container_1svni_28 _yesno_1e3gg_148  ashby-application-form-input-yesno"><button class="_container_pjyt6_1 _option_1svni_32  ashby-application-form-input-yesno-option" aria-pressed="false" data-option="yes">Yes</button><button class="_container_pjyt6_1 _option_1svni_32  ashby-application-form-input-yesno-option" aria-pressed="false" data-option="no">No</button><input type="checkbox" class="_input_1svni_78" tabindex="-1" name="003d89f3-1128-4fef-a9ac-40e88a4ba7e4"></div></div>
+<div class="_phoneNumberConsentLegalText_q1pga_1 ashby-application-form-texting-consent-description"><div class="_consentBody_q1pga_8"><div class="   _editor_1n5m7_37"><div contenteditable="false" translate="no" class="tiptap ProseMirror"><p>Check <strong>Yes</strong> or <strong>No</strong> to indicate your agreement to receive text message updates from Quora, Inc. regarding your job application. Frequency may vary. Message and data rates may apply. Reply STOP to opt out of future messaging.</p><p>View our privacy policy here: <a target="_blank" rel="noopener noreferrer" href="https://www.careers.quora.com/pages/quora-global-job-applicant-privacy-notice">Privacy Policy</a></p></div></div></div><div class="_container_1rwuy_1 _consentRadioGroup_q1pga_13"><label class="_label_1rwuy_6"><input class="_radio_1rwuy_12" type="radio" name="communicationConsent" value="given"><div class="_consentRadioLabel_q1pga_38"><div class="   _editor_1n5m7_37"><div contenteditable="false" translate="no" class="tiptap ProseMirror"><p><strong>Yes</strong> - I consent to receiving text messages</p></div></div></div></label><label class="_label_1rwuy_6"><input class="_radio_1rwuy_12" type="radio" name="communicationConsent" value="notGiven"><div class="_consentRadioLabel_q1pga_38"><div class="   _editor_1n5m7_37"><div contenteditable="false" translate="no" class="tiptap ProseMirror"><p><strong>No</strong> - I do not consent to receiving text messages</p></div></div></div></label></div></div>
+<div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="ack-texting" data-field-entry-id="b6511a02-1ab4-47d1-9d4e-49780cb9869a_ack-texting"><label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title" for="ack-texting">I understand that by giving my phone number I agree to receive text messages from the recruiting team about my application.</label><div class="_container_1svni_28 _yesno_1e3gg_148  ashby-application-form-input-yesno"><button class="_container_pjyt6_1 _option_1svni_32  ashby-application-form-input-yesno-option" aria-pressed="false" data-option="yes">Yes</button><button class="_container_pjyt6_1 _option_1svni_32  ashby-application-form-input-yesno-option" aria-pressed="false" data-option="no">No</button><input type="checkbox" class="_input_1svni_78" tabindex="-1" name="ack-texting"></div></div>
+<div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="ack-background" data-field-entry-id="b6511a02-1ab4-47d1-9d4e-49780cb9869a_ack-background"><label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title" for="ack-background">I acknowledge that any offer of employment is contingent on passing a background check.</label><div class="_container_1svni_28 _yesno_1e3gg_148  ashby-application-form-input-yesno"><button class="_container_pjyt6_1 _option_1svni_32  ashby-application-form-input-yesno-option" aria-pressed="false" data-option="yes">Yes</button><button class="_container_pjyt6_1 _option_1svni_32  ashby-application-form-input-yesno-option" aria-pressed="false" data-option="no">No</button><input type="checkbox" class="_input_1svni_78" tabindex="-1" name="ack-background"></div></div>
+<div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="ack-visa" data-field-entry-id="b6511a02-1ab4-47d1-9d4e-49780cb9869a_ack-visa"><label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title" for="ack-visa">I understand that this position does not offer visa sponsorship.</label><div class="_container_1svni_28 _yesno_1e3gg_148  ashby-application-form-input-yesno"><button class="_container_pjyt6_1 _option_1svni_32  ashby-application-form-input-yesno-option" aria-pressed="false" data-option="yes">Yes</button><button class="_container_pjyt6_1 _option_1svni_32  ashby-application-form-input-yesno-option" aria-pressed="false" data-option="no">No</button><input type="checkbox" class="_input_1svni_78" tabindex="-1" name="ack-visa"></div></div>
+
+<div><input type="checkbox" id="ack-privacy" required><label for="ack-privacy">I have read and understand the Candidate Privacy Notice. *</label></div>
+<div><input type="checkbox" id="ack-certify" required><label for="ack-certify">I understand and certify that the information I have provided in this application is true and complete. *</label></div>
+<div><input type="checkbox" id="ack-optional"><label for="ack-optional">I understand that I can withdraw my application at any time.</label></div>
+<fieldset><legend>I acknowledge that this role requires working from the office three days a week.</legend>
+  <label><input type="radio" name="ack-office" value="yes"> Yes</label><label><input type="radio" name="ack-office" value="no"> No</label></fieldset>
+<label for="ack-read">I confirm that I have read the job description.</label>
+<select id="ack-read"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+<fieldset><legend>By checking this box I acknowledge that I may be contacted about marketing events and newsletters.</legend>
+  <label><input type="checkbox" name="ack-marketing"> Yes</label></fieldset>
+</div>
+<script>
+  // Ashby's yes/no: a press takes a microtask to draw, and a second press of the pressed one lets it go.
+  for (const group of document.querySelectorAll('.ashby-application-form-input-yesno')) {
+    const buttons = [...group.querySelectorAll('button')];
+    const check = group.querySelector('input[type=checkbox]');
+    let value;
+    const draw = () => {
+      for (const b of buttons) b.setAttribute('aria-pressed', String(value === (b.dataset.option === 'yes')));
+      check.checked = value === true;
+    };
+    buttons[0].addEventListener('click', () => queueMicrotask(() => { value = value === true ? undefined : true; draw(); }));
+    buttons[1].addEventListener('click', () => queueMicrotask(() => { value = value === false ? undefined : false; draw(); }));
+  }
+  if (location.search.includes('answered')) document.querySelector('[data-field-path="003d89f3-1128-4fef-a9ac-40e88a4ba7e4"] [data-option=no]').click();
+  window.__state = () => ({
+    pressed: Object.fromEntries([...document.querySelectorAll('[data-field-path]')].map((f) => [f.dataset.fieldPath, f.querySelector('[aria-pressed=true]')?.textContent ?? null])),
+    texting: document.querySelector('input[name=communicationConsent]:checked')?.value ?? null,
+    privacy: document.getElementById('ack-privacy').checked,
+    certify: document.getElementById('ack-certify').checked,
+    optional: document.getElementById('ack-optional').checked,
+    office: document.querySelector('input[name=ack-office]:checked')?.value ?? null,
+    read: document.getElementById('ack-read').value,
+    marketing: document.querySelector('input[name=ack-marketing]').checked,
+  });
+</script></body></html>`;
+
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE, '/acknowledgements': ACKNOWLEDGEMENTS };
 
 const PROFILE = {
   first_name: 'Morgan',
@@ -11668,6 +11721,56 @@ async function main() {
       'a dropdown, a pair of radios and a box a form reset empties are filled in again too',
       reset.country === 'US' && reset.auth === 'yes' && reset.phone === '(555) 010-0199' && reset.told.length === 1 && reset.told[0].length === 3,
       JSON.stringify(reset),
+    );
+
+    /* ------------- Statements asked only to be acknowledged ------------- */
+    const acknowledge = (query = '', remembered = []) =>
+      page.goto(`${base}/acknowledgements${query}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, fields, remembered }) => {
+          const m = await import(`${b}/autofill.js`);
+          await new Promise((r) => setTimeout(r, 50));
+          const report = await m.fillComboboxes(fields, m.fillForm(fields, { remembered }), { patience: 800 });
+          await new Promise((r) => setTimeout(r, 100));
+          return {
+            ...window.__state(),
+            acknowledged: report.filled.filter((f) => f.acknowledged).map((f) => f.question),
+            filled: report.filled.map((f) => f.key),
+            skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+          };
+        // Nothing about the right to work, so that nothing but the statement itself decides those.
+        }, { b: base, fields: { full_name: 'Morgan Testwell', email: 'morgan.testwell@example.com', phone: '(555) 010-0199' }, remembered }),
+      );
+    const acked = await acknowledge();
+    const ackedBefore = await acknowledge('?answered');
+    const ackedFromBank = await acknowledge('', [{ question: COORDINATION, answer: 'No' }]);
+    group('Statements a form asks only to be acknowledged');
+    check(
+      'Quora\'s "I understand ... coordination hours" is answered Yes, pressed as Ashby draws it, and reported as acknowledged',
+      acked.pressed[ACK] === 'Yes' && acked.acknowledged.includes(COORDINATION) && !acked.skipped.some((s) => s.startsWith('acknowledged:')),
+      JSON.stringify(acked),
+    );
+    check(
+      'so is a lone required checkbox, a pair of radios and a select, each saying one',
+      acked.privacy === true && acked.office === 'yes' && acked.read === 'Yes' && acked.acknowledged.length === 4 &&
+        acked.acknowledged.includes('I have read and understand the Candidate Privacy Notice.'),
+      JSON.stringify(acked),
+    );
+    check(
+      'a statement about texting, a background check, visa sponsorship or marketing is never answered, nor Quora\'s texting consent',
+      acked.pressed['ack-texting'] === null && acked.pressed['ack-background'] === null && acked.pressed['ack-visa'] === null &&
+        acked.texting === null && acked.marketing === false,
+      JSON.stringify(acked),
+    );
+    check(
+      'nor is the statement that everything is true, or a box nobody has to tick',
+      acked.certify === false && acked.optional === false,
+      JSON.stringify(acked),
+    );
+    check(
+      'a statement the person has already answered No stays No, and the bank\'s No is given before any Yes',
+      ackedBefore.pressed[ACK] === 'No' && !ackedBefore.acknowledged.includes(COORDINATION) &&
+        ackedFromBank.pressed[ACK] === 'No' && !ackedFromBank.acknowledged.includes(COORDINATION),
+      JSON.stringify({ before: ackedBefore.pressed, bank: ackedFromBank.pressed }),
     );
   } finally {
     await browser.close();

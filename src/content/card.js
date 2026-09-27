@@ -6447,7 +6447,19 @@ export function createCard({
     if (done) parts.push(`left ${plural(done, 'field')} that already had a value`);
     if (yours) parts.push(`${plural(yours, 'field')} still for you to answer`);
     const said = r.filled.length || r.skipped.length || !r.refilled?.length ? `${parts.join(', ')}.` : '';
-    return [said, describeRefilled(r.refilled)].filter(Boolean).join(' ');
+    return [said, describeAcknowledged(r.filled), describeRefilled(r.refilled)].filter(Boolean).join(' ');
+  }
+
+  /*
+   * The statements Autofill said Yes to on the person's behalf — "I
+   * understand that ..." — named, since that is a thing said in their name
+   * and they should see which.
+   */
+  function describeAcknowledged(filled) {
+    const said = [...new Set(filled.filter((f) => f.acknowledged).map((f) => String(f.question ?? '').replace(/\s+/g, ' ').trim()).filter(Boolean))];
+    if (!said.length) return '';
+    const cut = (n) => (n.length > 60 ? `${n.slice(0, 57).trimEnd()}…` : n);
+    return `Acknowledged: ${said.map((n) => `“${cut(n)}”`).join(', ')} — check you agree before sending.`;
   }
 
   /*
