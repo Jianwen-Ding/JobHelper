@@ -6369,6 +6369,219 @@ async function main() {
     await page.evaluate(() => { window.__smooth?.(); window.__smooth = null; document.querySelector('#tall')?.remove(); window.scrollTo(0, 0); });
   }
 
+  console.log('\nA card in a narrow window, and a short one');
+
+  /*
+   * The card was a fixed 420px wide, top right. In a window narrower than
+   * about 450px — half a laptop screen, or a page zoomed in — its left edge
+   * was off the screen, and the start of every line in it with it, with no
+   * way to scroll to them. It gives up width now, down to 300px in a 320px
+   * window, and what is inside it wraps to fit rather than running out of it.
+   *
+   * One card with everything that is wide on it: the resume drawn, a letter
+   * box, a question borrowed from another company (its button carries the
+   * company's name), the files to drag, and a list of fields Autofill left,
+   * opened out. The resume is drawn by the card's own pdfview.js and pdf.js,
+   * handed to it where the extension would, since a canvas squeezed to fit
+   * is one of the things being looked at.
+   */
+  const ONE_PAGE_PDF = Buffer.from(
+    [
+      '%PDF-1.4',
+      '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj',
+      '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj',
+      '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>endobj',
+      'trailer<</Size 4/Root 1 0 R>>',
+      '%%EOF',
+      '',
+    ].join('\n'),
+    'utf8',
+  ).toString('base64');
+  const extensionFile = (p) => fs.readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.evaluate((files) => {
+    const urls = Object.fromEntries(
+      Object.entries(files).map(([p, code]) => [p, URL.createObjectURL(new Blob([code], { type: 'text/javascript' }))]),
+    );
+    window.chrome = Object.assign(window.chrome ?? {}, { runtime: { getURL: (p) => urls[p] ?? p } });
+  }, Object.fromEntries(['src/content/pdfview.js', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs'].map((p) => [p, extensionFile(p)])));
+
+  const narrowSetUp = await inPage(async (createCard, pdf) => {
+    const skipped = [
+      { label: 'School', fieldId: 'f-school', reason: 'no matching option' },
+      ...[
+        'I understand that this position does not offer visa sponsorship.',
+        'I acknowledge that Northwind will not sponsor employment visas for this role.',
+        'I understand that candidates must be authorized to work in the United States.',
+        'Please confirm you understand that we cannot support immigration applications.',
+        'I understand that proof of eligibility to work will be asked for before any start date.',
+      ].map((label, i) => ({ label, fieldId: `f-ack${i}`, reason: 'it says two things at once, so acknowledge it yourself' })),
+    ];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Software Engineer Intern, Data Platform', company: 'Northwind', location: 'Boston, MA' },
+        spec: { id: 'job-northwind', label: 'Northwind', tier: 'temporary' },
+        baseLabel: 'New grad',
+        tailor: 'match',
+        diff: [{ kind: 'changed', where: 'Example Co.', from: 'Built a pipeline', to: 'Built a Kafka pipeline' }],
+        rationale: [{ key: 'b1', from: 'v_a', to: 'v_b', toText: 'Built a Kafka pipeline', because: ['kafka'] }],
+        currentDir: '/tmp/morgan-testwell/out/current',
+      },
+      resumes: [{ id: 'newgrad', label: 'New grad', base: true }],
+      settings: {},
+      questions: [
+        { question: 'Why do you want to work here?', answer: 'Because Harbourview Logistics Group asked.', confident: true, namesAnother: 'Harbourview Logistics Group' },
+        { question: 'Describe a technical project you are proud of.', answer: '', confident: false },
+      ],
+      needsCoverLetter: true,
+      isForm: true,
+      onAction: async (action) => {
+        if (action === 'render') return { pages: 1, fits: true, pdfUrl: '/files/Morgan-Testwell-Resume.pdf', absolutePdfUrl: 'about:blank' };
+        if (action === 'pdfBytes') return { base64: pdf };
+        if (action === 'attachmentFiles') return { files: [{ name: 'Morgan-Testwell-Resume.pdf' }, { name: 'Morgan-Testwell-Answers.md' }] };
+        if (action === 'wantedDocuments') return { kinds: ['resume', 'letter'] };
+        if (action === 'autofill') return { filled: [{ key: 'first_name', value: 'Morgan' }, { key: 'email', value: 'morgan@example.com' }], skipped };
+        if (action === 'aiStatus') return { state: 'off', active: false, serverEnabled: false };
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const button = (re) => [...root.querySelectorAll('button')].find((b) => re.test(b.textContent));
+    const until = async (test, ms = 15_000) => {
+      for (const end = Date.now() + ms; Date.now() < end && !test();) await new Promise((r) => setTimeout(r, 50));
+      return Boolean(test());
+    };
+    await new Promise((r) => setTimeout(r, 100));
+    button(/^Build resume/)?.click();
+    const drawn = await until(() => root.querySelector('.pdf-pane canvas.pdf-page'));
+    button(/^Autofill this form/)?.click();
+    await until(() => root.querySelector('.left-list'));
+    button(/^and \d+ more$/)?.click();
+    await new Promise((r) => setTimeout(r, 100));
+    return {
+      drawn,
+      letter: Boolean(root.querySelector('textarea.tall')),
+      borrowed: Boolean(button(/^Start from what you told Harbourview/)),
+      chips: root.querySelectorAll('.file.liftable').length,
+      left: root.querySelectorAll('.left-list .left-name').length,
+    };
+  }, ONE_PAGE_PDF);
+  check(
+    'the card being measured has the wide things on it',
+    narrowSetUp.drawn && narrowSetUp.letter && narrowSetUp.borrowed && narrowSetUp.chips >= 2 && narrowSetUp.left === 6,
+    JSON.stringify(narrowSetUp),
+  );
+
+  /** Where the card is, and whether anything in it runs past its sides. */
+  const cardLayout = () => page.evaluate(() => {
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const card = root.querySelector('.card');
+    const body = root.querySelector('.body');
+    const r = card.getBoundingClientRect();
+    const out = [...card.querySelectorAll('*')]
+      .filter((el) => {
+        const b = el.getBoundingClientRect();
+        return b.width > 0 && (b.right > r.right + 0.5 || b.left < r.left - 0.5);
+      })
+      .map((el) => `${el.localName}.${el.className} ${(el.textContent ?? '').trim().slice(0, 30)}`);
+    const canvas = root.querySelector('.pdf-pane canvas');
+    const pane = root.querySelector('.pdf-pane');
+    const c = canvas?.getBoundingClientRect();
+    const p = pane?.getBoundingClientRect();
+    return {
+      vw: document.documentElement.clientWidth,
+      vh: document.documentElement.clientHeight,
+      left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width,
+      scrollWidth: body?.scrollWidth, clientWidth: body?.clientWidth,
+      scrollHeight: body?.scrollHeight, clientHeight: body?.clientHeight,
+      out: out.slice(0, 5),
+      canvas: c && p ? {
+        inPane: c.left >= p.left - 0.5 && c.right <= p.right + 0.5,
+        shown: +(c.height / c.width).toFixed(3),
+        page: +(canvas.height / canvas.width).toFixed(3),
+      } : null,
+      pane: p ? Math.round(p.height) : null,
+    };
+  });
+  const inWindow = (m) => m.left >= 0 && m.top >= 0 && m.right <= m.vw && m.bottom <= m.vh;
+  const box = (m) => `${Math.round(m.left)}..${Math.round(m.right)} × ${Math.round(m.top)}..${Math.round(m.bottom)} in ${m.vw}×${m.vh}`;
+
+  for (const width of [400, 320]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.waitForTimeout(100);
+    const m = await cardLayout();
+    check(`at ${width}px wide the whole card is inside the window`, inWindow(m), box(m));
+    check(
+      `and nothing in it runs past its sides (${width}px)`,
+      m.scrollWidth <= m.clientWidth && m.out.length === 0,
+      `body ${m.scrollWidth} in ${m.clientWidth}; ${m.out.join(' | ')}`,
+    );
+    check(
+      `and the resume is drawn to fit, the shape of the page (${width}px)`,
+      m.canvas?.inPane === true && Math.abs(m.canvas.shown - m.canvas.page) < 0.02,
+      JSON.stringify(m.canvas),
+    );
+  }
+  // 300px in a 320px window: narrower than that is not a card worth having.
+  {
+    const m = await cardLayout();
+    check('in a 320px window the card is 300px wide', Math.round(m.width) === 300, String(m.width));
+  }
+
+  /*
+   * Folded, it is the same box with less in it, and it stays in the window
+   * too. There is no dragging the card about, so where it can be is where the
+   * window's corner puts it: shrinking the window brings it along.
+   */
+  await page.evaluate(() => document.querySelector('#jobhelper-card-host').shadowRoot.querySelector('button[aria-label^="Fold JobHelper"]')?.click());
+  await page.waitForTimeout(100);
+  {
+    const m = await cardLayout();
+    check('folded at 320px, the card is inside the window as well', inWindow(m) && m.width <= 300, box(m));
+  }
+  await page.evaluate(() => document.querySelector('#jobhelper-card-host').shadowRoot.querySelector('button[aria-label^="Unfold JobHelper"]')?.click());
+  await page.waitForTimeout(100);
+
+  /*
+   * A short window: the card stops at the bottom edge and scrolls inside
+   * itself, and the drawn resume, which scrolls on its own and keeps the
+   * wheel, is kept to part of it — where it was as tall as the card's body,
+   * a wheel anywhere over the card moved the resume and never the card.
+   */
+  for (const width of [400, 1280]) {
+    await page.setViewportSize({ width, height: 500 });
+    await page.waitForTimeout(100);
+    const m = await cardLayout();
+    check(`in a window 500px high the card fits (${width}px wide)`, inWindow(m), box(m));
+    check(
+      `and scrolls inside itself (${width}px wide)`,
+      m.scrollHeight > m.clientHeight && m.scrollWidth <= m.clientWidth,
+      `body ${m.scrollHeight} in ${m.clientHeight}`,
+    );
+    check(
+      `with the drawn resume taking only part of it (${width}px wide)`,
+      m.pane !== null && m.pane <= m.clientHeight * 0.75,
+      `pane ${m.pane} in a body ${m.clientHeight} high`,
+    );
+  }
+
+  // And a normal window is drawn as it always was: 420px, 14px from the corner.
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.waitForTimeout(100);
+  {
+    const m = await cardLayout();
+    check(
+      'at 1280px wide the card is 420px, where it always was',
+      m.width === 420 && m.right === m.vw - 14 && m.top === 14,
+      `${m.width}px wide, ${m.vw - m.right}px from the right, ${m.top}px down`,
+    );
+  }
+  await page.evaluate(() => {
+    document.querySelector('#jobhelper-card-host')?.remove();
+    delete window.chrome.runtime;
+  });
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);

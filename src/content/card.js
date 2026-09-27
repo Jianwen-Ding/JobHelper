@@ -71,8 +71,23 @@ const STYLE = `
   position: fixed;
   top: 14px;
   right: 14px;
+  /*
+   * 420px, and never wider than the window. It was a fixed 420, so in a
+   * half-screen window or a zoomed page its left edge went off the screen and
+   * took the start of every line with it. Narrower than 448px it gives up the
+   * width and keeps the margin (and closer in still, see the rule for narrow
+   * windows below).
+   *
+   * Measured against the window twice over. The percentage is the window less
+   * its scrollbars, which is what the fixed position is measured from too;
+   * 100vw counts the scrollbar, so a card sized by that alone would sit under
+   * it on a machine that draws one. The vw/vh bound is for a page that puts a
+   * filter or transform on <html>, where a percentage would be the page's
+   * own box.
+   */
   width: 420px;
-  max-height: calc(100vh - 28px);
+  max-width: min(calc(100% - 28px), calc(100vw - 28px));
+  max-height: min(calc(100% - 28px), calc(100vh - 28px));
   display: flex;
   flex-direction: column;
   background: #fff;
@@ -661,7 +676,15 @@ span.left-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   padding: 8px;
   background: var(--line-soft);
   border-radius: 8px;
-  max-height: 460px;
+  /*
+   * 460px, or less in a short window. The pane scrolls on its own and keeps
+   * the wheel to itself, so where it was as tall as the card's whole body — a
+   * 500px window — a wheel anywhere over it moved the resume and never the
+   * card, and nothing below it could be reached without finding the sliver of
+   * card beside it. At 60% of the window there is always card around it.
+   * Unchanged in any window 767px tall or taller.
+   */
+  max-height: min(460px, 60vh);
   overflow: auto;
   overscroll-behavior: contain;
 }
@@ -677,6 +700,48 @@ span.left-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 /* What the page did not ask for, kept out of the way until it is wanted. */
 .missed { border-top: 1px solid var(--line-soft); margin-top: 12px; padding-top: 8px; gap: 2px; }
 a { color: var(--accent); }
+
+/*
+ * A narrow window: a half-screen laptop window, or a page zoomed in.
+ *
+ * Below 448px the card is narrower than 420 (see \`.card\`), and 14px each side
+ * is room the card needs more than the page does, so the margin comes in to
+ * 10px: a 320px window keeps a 300px card. Everything inside is then laid out
+ * for a narrower box than it was drawn for, and what would not fit is let
+ * wrap rather than run off the side. At 420 none of this applies, so a normal
+ * window is drawn exactly as it was.
+ */
+@media (max-width: 447px) {
+  .card {
+    top: 10px;
+    right: 10px;
+    max-width: min(calc(100% - 20px), calc(100vw - 20px));
+    max-height: min(calc(100% - 20px), calc(100vh - 20px));
+  }
+  /* A word longer than the line goes onto the next one, not past the edge. */
+  .body { overflow-wrap: break-word; }
+  /*
+   * "New grad → this posting · 1 of 6 changes · Undo all" as a row that
+   * wraps, rather than one squeezed so hard each part stood a word per line.
+   */
+  .diff-head { flex-wrap: wrap; row-gap: 0; }
+  /*
+   * A button says what it does on one line where it can, and on two where it
+   * cannot: "Start from" carries a letter's title, "Start from what you told"
+   * a company's name, and either can be wider than a 300px card. Kept on one
+   * line, it ran out of the card. Not a glyph, whose one line is the point.
+   */
+  button { white-space: normal; max-width: 100%; }
+  button.icon, button.fold-changes { white-space: nowrap; }
+  /*
+   * The names of the fields Autofill left, likewise. They are already cut to
+   * sixty characters at a word; the ellipsis on top of that, at this width,
+   * cut them again to "I understand that this position does not offer
+   * vis…", and five boxes that all start "I understand that" are told apart
+   * by the end that was cut off.
+   */
+  button.left-name, span.left-name { white-space: normal; }
+}
 `;
 
 const HOST_ID = 'jobhelper-card-host';
