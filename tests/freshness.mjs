@@ -201,6 +201,49 @@ async function main() {
       );
     }
 
+    /*
+     * The copy edited there while the card is compiling a change to what it
+     * prints. The compile is followed by a stage, which files the card's copy
+     * whole; the card remembered the store's copy as seen once the compile
+     * was back, edit and all, so it never took the edit and the stage wrote
+     * it away. Measured from the side panel (tests/panel.mjs): a line
+     * switched off there came back on a second later, in the store.
+     */
+    group('The copy edited in ResumeM-M while the card compiles');
+    {
+      const copyNow = async () => {
+        const list = await api('/resumes');
+        return (list.resumes ?? list).find((r) => r.id === copy.id) ?? null;
+      };
+      let before = await folderResume();
+      for (let i = 0; i < 20; i++) {
+        await page.waitForTimeout(3000);
+        const now = await folderResume();
+        if (now === before) break;
+        before = now;
+      }
+      // Noticed on its own, from the store's revision, within a few seconds.
+      await put('/profile', { ...profile, phone: '555-0177' });
+      const compiling = await page
+        .waitForFunction(() => /Compiling/.test(document.querySelector('#jobhelper-card-host')?.shadowRoot?.textContent ?? ''), undefined, {
+          timeout: 30_000,
+          polling: 50,
+        })
+        .then(() => true)
+        .catch(() => false);
+      const renamed = `${copy.label} (renamed while the card compiled)`;
+      await put(`/resumes/${encodeURIComponent(copy.id)}`, { ...(await copyNow()), label: renamed });
+      // The stage that follows the compile, landed: the folder has the new phone number.
+      let after = before;
+      for (const until = Date.now() + 60_000; Date.now() < until && after === before; ) {
+        await page.waitForTimeout(1000);
+        after = await folderResume();
+      }
+      check('(the card was compiling when the copy was edited, and staged after)', compiling && after !== before, `${compiling}, ${before?.slice(0, 8)} → ${after?.slice(0, 8)}`);
+      check('the edit is still in the store after the card has staged', (await copyNow())?.label === renamed, (await copyNow())?.label);
+      check('and the card takes it, and says so', await says(/this copy was edited there/));
+    }
+
     group('The resume the copy was made from, changed in ResumeM-M');
     {
       const base = (await api('/resumes')).resumes?.find?.((r) => r.id === copy.copiedFrom) ??

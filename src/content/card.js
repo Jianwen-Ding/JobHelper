@@ -4041,13 +4041,39 @@ export function createCard({
     ]);
   }
 
-  /** Remember the store's copy as it stands. See `checkFresh`. */
-  function noteStored(of) {
+  /**
+   * Remember the store's copy as it stands. See `checkFresh`.
+   *
+   * `filed` when the card has just written it itself, which makes what is
+   * there now the card's own. Otherwise — after a compile — only when there
+   * is nothing remembered yet. A compile takes seconds, and an edit made to
+   * the copy in ResumeM-M in those seconds was remembered here as already
+   * seen: never taken, and written away by the next stage, which files the
+   * card's copy whole. Measured from JobHelper's side panel: a line switched
+   * off there while the card was compiling a reworded line was switched
+   * back on in the store a second later.
+   */
+  function noteStored(of, { filed = false } = {}) {
     Promise.resolve(onAction('fresh', { spec: of }))
       .then((got) => {
-        if (got && state.spec === of) state.storedPrint = got.storedPrint ?? null;
+        if (!got || state.spec !== of) return;
+        if (filed || !state.storedPrint) state.storedPrint = got.storedPrint ?? null;
       })
       .catch(() => undefined);
+  }
+
+  /**
+   * Whether the store's copy was edited somewhere else since the card last
+   * took or filed it — news, to be taken before anything is filed over it.
+   */
+  async function editedElsewhere() {
+    if (!state.spec?.id || !state.storedPrint) return false;
+    const reply = await Promise.resolve(onAction('fresh', { spec: state.spec })).catch(() => null);
+    return Boolean(
+      reply?.stored &&
+        reply.storedPrint !== state.storedPrint &&
+        JSON.stringify(reply.stored) !== JSON.stringify(state.spec),
+    );
   }
 
   async function compile() {
@@ -4136,6 +4162,17 @@ export function createCard({
     const pages = analysis?.pages ?? [];
     if (pages.length > 0 && pages.every((p) => p?.kind === 'listing')) return;
     /*
+     * Not over an edit made to the copy in ResumeM-M that the card has not
+     * taken yet. Staging files the card's copy whole, so it put back every
+     * line the person had switched there since. Taken instead — which
+     * compiles it and, the folder being behind, stages that.
+     */
+    if (await editedElsewhere()) {
+      lastPrepared = null;
+      await handle.checkFresh({ now: true });
+      return;
+    }
+    /*
      * Recorded before the call, so a second change landing while this one is
      * in flight does not start a second compile of the same thing — and
      * given back if it fails.
@@ -4161,7 +4198,7 @@ export function createCard({
           askedWhatIsStaged = null;
           carried = null;
           // Staging files the copy, so the store's copy is this one now.
-          noteStored(state.spec);
+          noteStored(state.spec, { filed: true });
         }
       },
       // Nobody pressed this, so it does not get to clear what the card is
