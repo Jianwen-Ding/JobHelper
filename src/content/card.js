@@ -178,6 +178,7 @@ button.mode.on:hover { background: #d2e3fc; }
 /* The way out to the builder, quiet and on its own line: it is not a third
    way to build, and it used to look like one. */
 .to-builder { padding: 2px 0; font-size: 12px; }
+.to-panel { padding: 2px 0; font-size: 12px; margin-left: 14px; }
 
 /*
  * Pressing one of these costs minutes and, depending on the command, money;
@@ -781,6 +782,8 @@ export function createCard({
   onClose,
 }) {
   removeCard();
+  /** What the side panel was last told. See `publishPanelTarget`. */
+  let panelSaid = null;
 
   const host = document.createElement('div');
   host.id = HOST_ID;
@@ -5671,6 +5674,26 @@ export function createCard({
               onAction('openTab', { url: `/#resumes/${encodeURIComponent(target)}` });
             },
           }),
+          /*
+           * The same editor, beside this page rather than instead of it.
+           *
+           * A new tab is the right door for twenty minutes of writing and the
+           * wrong one for switching a bullet on while reading the posting it
+           * is for: the posting is behind the tab you are typing in. The side
+           * panel shows the resume this card is working with and follows the
+           * tab. On the same line and at the same weight as the link beside
+           * it, so the card grows by nothing.
+           */
+          h('button', {
+            className: 'link to-panel',
+            textContent: 'Open beside',
+            title: 'Edit this resume in a side panel, next to the posting',
+            disabled: !state.spec?.id,
+            onclick: () => {
+              publishPanelTarget({ force: true });
+              return Promise.resolve(onAction('openPanel', {})).catch(() => undefined);
+            },
+          }),
         ]),
         /*
          * You went to the builder because this posting wanted a bullet the
@@ -7110,7 +7133,34 @@ export function createCard({
    * caret comes back to the same answer even if a question has appeared above
    * it in the meantime.
    */
+  /**
+   * Which resume this card is working with, told to the side panel.
+   *
+   * The panel is a page of the extension and cannot ask the card, so the card
+   * says — whenever it draws and what it would say has changed. Both the copy
+   * made for this posting and the resume it is made from: the copy is only
+   * in the store once it has been built or filed, and until then the panel
+   * shows the base and says so (see src/panel/panel.js).
+   */
+  function publishPanelTarget({ force = false } = {}) {
+    if (!analysis) return;
+    const baseId = state.switchingTo ?? analysis.baseResumeId ?? state.spec?.copiedFrom ?? null;
+    const target = {
+      copyId: state.spec?.id ?? null,
+      copyLabel: state.spec?.label ?? null,
+      baseId,
+      baseLabel: resumes.find((r) => r?.id === baseId)?.label ?? analysis.baseLabel ?? null,
+      company: analysis.job?.company ?? null,
+      role: analysis.job?.title ?? null,
+    };
+    const said = JSON.stringify(target);
+    if (said === panelSaid && !force) return;
+    panelSaid = said;
+    Promise.resolve(onAction('panelTarget', target)).catch(() => undefined);
+  }
+
   function draw() {
+    publishPanelTarget();
     /*
      * The list of pages as it stands on screen, whatever its events have said
      * so far: `toggle` arrives a task after the click, and a repaint in that

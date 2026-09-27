@@ -55,6 +55,13 @@ machine.
    application later".
 9. **Fills the form.** Autofill from your stored profile, and saved answers
    offered on questions it recognises.
+10. **Edits beside the page.** "Open beside" on the card (or "Edit resume
+    beside this page" in the toolbar popup) opens the real ResumeM-M editor
+    in Chrome's side panel, on the copy made for this posting — or, before
+    that exists, the resume it starts from, said as such. It follows the tab
+    you are on, waits for an edit to save before it moves, says so when
+    ResumeM-M is not running or has a different save open, and folds away to
+    a slim bar that keeps your place.
 
 ---
 

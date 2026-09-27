@@ -2880,6 +2880,82 @@ const handlers = {
   },
 
   /**
+   * The resume editor beside the page, in the browser's side panel.
+   *
+   * `sidePanel.open` is refused unless it answers a click, and the click
+   * reaches here as this message: measured in Chromium, called before
+   * anything is awaited it opens, and called after even a resolved promise
+   * or a half-second timer it is refused ("may only be called in response to
+   * a user gesture"). So it is the first thing this does, and it must stay
+   * that way — nothing awaited above it.
+   *
+   * Where the panel cannot open — an older Chrome, a browser without it, a
+   * click that arrived too late — the same page opens as a small window
+   * instead, which follows the tab it was opened from in the same way.
+   */
+  async openPanel(_payload, tab) {
+    const opening =
+      chrome.sidePanel?.open && typeof tab?.windowId === 'number'
+        ? chrome.sidePanel.open({ windowId: tab.windowId })
+        : Promise.reject(new Error('No side panel in this browser'));
+    try {
+      await opening;
+      return { opened: 'panel' };
+    } catch (err) {
+      return { opened: 'window', id: await openPanelWindow(tab), why: String(err?.message ?? err) };
+    }
+  },
+
+  /**
+   * Which resume the card on this tab is working with.
+   *
+   * Kept per tab, with the page it was said on and the save the application
+   * was built from, for the panel to read (see `panelFor`). The panel is an
+   * extension page and cannot ask the card itself.
+   */
+  async panelTarget(payload, tab) {
+    if (typeof tab?.id !== 'number') return { kept: false };
+    const text = (v) => (typeof v === 'string' && v.length < 400 ? v : null);
+    const target = {
+      copyId: text(payload.copyId),
+      copyLabel: text(payload.copyLabel),
+      baseId: text(payload.baseId),
+      baseLabel: text(payload.baseLabel),
+      company: text(payload.company),
+      role: text(payload.role),
+      url: String(tab.url ?? '').split('#')[0],
+      save: (await saveFor(tab.id)) ?? null,
+      at: Date.now(),
+    };
+    await session().set({ [panelKey(tab.id)]: target });
+    return { kept: true };
+  },
+
+  /**
+   * What the side panel should show for a tab.
+   *
+   * The card's word if the tab is still on that application — the trail says
+   * so across the pages it spans, and the page it was said on is enough for
+   * a posting whose trail has not been written yet. Otherwise nothing, and
+   * the panel shows the resume every tailoring starts from, and says so.
+   */
+  async panelFor({ tabId }) {
+    const settings = await getSettings();
+    const answer = { settings: { serverUrl: settings.serverUrl, baseResumeId: settings.baseResumeId } };
+    if (typeof tabId !== 'number') return { ...answer, target: null, application: false };
+    const [trail, stored, tab] = await Promise.all([
+      readTrail(tabId),
+      session().get(panelKey(tabId)).catch(() => ({})),
+      chrome.tabs.get(tabId).catch(() => null),
+    ]);
+    const target = stored?.[panelKey(tabId)] ?? null;
+    const application = (trail.pages ?? []).length > 0;
+    const here = String(tab?.url ?? '').split('#')[0];
+    const current = target && (application || target.url === here) ? target : null;
+    return { ...answer, target: current, application, save: trail.save ?? current?.save ?? null };
+  },
+
+  /**
    * "The application in this frame was just sent."
    *
    * Said by a frame, which has no analysis and no card and so cannot say
@@ -3128,6 +3204,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
  */
 const awayKey = (tabId) => `jh-away:${tabId}`;
 
+/** What the card on a tab told the side panel to show. See `panelTarget`. */
+const panelKey = (tabId) => `jh-panel:${tabId}`;
+
+/**
+ * The side panel's page in a window of its own, for where the panel will not
+ * open. One of them: asked again, the one already open comes forward and is
+ * pointed at the window the request came from.
+ */
+async function openPanelWindow(tab) {
+  const url = chrome.runtime.getURL(
+    `src/panel/panel.html${typeof tab?.windowId === 'number' ? `?window=${tab.windowId}` : ''}`,
+  );
+  const { 'jh-panel-window': open } = await session().get('jh-panel-window').catch(() => ({}));
+  if (typeof open === 'number') {
+    const existing = await chrome.windows.get(open, { populate: true }).catch(() => null);
+    if (existing) {
+      const shown = existing.tabs?.[0];
+      if (shown && shown.url !== url) await chrome.tabs.update(shown.id, { url }).catch(() => undefined);
+      await chrome.windows.update(open, { focused: true }).catch(() => undefined);
+      return open;
+    }
+  }
+  const { 'jh-panel-prefs': prefs } = await chrome.storage.local.get('jh-panel-prefs').catch(() => ({}));
+  const made = await chrome.windows.create({
+    url,
+    type: 'popup',
+    width: Math.max(320, Math.min(900, Number(prefs?.window?.width) || 420)),
+    height: Math.max(120, Math.min(1400, Number(prefs?.window?.height) || 820)),
+  });
+  await session().set({ 'jh-panel-window': made.id }).catch(() => undefined);
+  return made.id;
+}
+
 chrome.tabs?.onActivated?.addListener(async ({ tabId }) => {
   const key = awayKey(tabId);
   const away = (await session().get(key).catch(() => ({})))[key];
@@ -3264,7 +3373,9 @@ chrome.tabs?.onRemoved?.addListener(async (tabId) => {
   }
   // The branch stash goes with the tab it belonged to. It holds a whole
   // trail, first page's markup and all, and nothing else ever removed it.
-  session().remove([trailKey(tabId), framesKey(tabId), branchKey(tabId), awayKey(tabId)]).catch(() => undefined);
+  session()
+    .remove([trailKey(tabId), framesKey(tabId), branchKey(tabId), awayKey(tabId), panelKey(tabId)])
+    .catch(() => undefined);
 });
 
 /*

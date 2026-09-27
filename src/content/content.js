@@ -1388,6 +1388,18 @@
       case 'openTab':
         return send('openTab', { url: payload.url });
 
+      /*
+       * The editor beside the page. Sent straight away, with nothing awaited
+       * first: the side panel only opens in answer to the click, and the
+       * click is only still an answer while this message is.
+       */
+      case 'openPanel':
+        return send('openPanel', {});
+
+      /** Which resume the card is working with, for the side panel to show. */
+      case 'panelTarget':
+        return send('panelTarget', payload);
+
       // Turning ResumeM-M's own AI switch on, from the chip that reports it
       // being off. The switch that needs flipping should be under the hand
       // that is reaching for it.

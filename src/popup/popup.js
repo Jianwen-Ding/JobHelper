@@ -487,6 +487,24 @@ async function boot() {
     chrome.tabs.create({ url: current.serverUrl });
   });
 
+  /*
+   * The side panel opens only in answer to a click, and only while nothing
+   * has been awaited since — so the window is looked up now, ahead of it.
+   */
+  const beside = $('openBeside');
+  let windowId = null;
+  chrome.windows?.getCurrent().then((w) => (windowId = w?.id ?? null)).catch(() => undefined);
+  beside.hidden = !chrome.sidePanel?.open;
+  beside.onclick = () => {
+    if (windowId === null) return;
+    chrome.sidePanel
+      .open({ windowId })
+      .then(() => window.close())
+      .catch((err) => {
+        $('status').textContent = `The side panel would not open: ${err?.message ?? err}`;
+      });
+  };
+
   check();
   // The mute button's own state, which does not depend on the store being
   // reachable: a muted site stays muted whether or not ResumeM-M answers.
