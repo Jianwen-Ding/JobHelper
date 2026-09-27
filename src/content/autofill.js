@@ -3983,6 +3983,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
           skipped.push({ key, reason: PICK_BY_HAND, description: description.slice(0, 60) });
           continue;
         }
+        keepTyped(input, option.textContent, 'select');
         filled.push({ key, value });
       } else {
         const reason = aboutAnotherCountry(key, value, description) ? ANOTHER_COUNTRY : 'no matching option';
@@ -4028,6 +4029,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
         } else if (busy) {
           skipped.push({ key, reason: 'already filled', description: description.slice(0, 60) });
         } else if (parts.every(([box, part]) => box.value === part)) {
+          for (const [box, part] of parts) keepTyped(box, part);
           filled.push({ key, value: parts.map(([, part]) => part).join(' ') });
         } else {
           parts.forEach(([box], n) => setValue(box, was[n]));
@@ -4103,9 +4105,11 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
         });
         continue;
       }
+      keepTyped(input, took);
       filled.push({ key, value: took });
       continue;
     }
+    keepTyped(input, value);
     filled.push({ key, value });
   }
 
@@ -4742,6 +4746,7 @@ function answerChoiceButtons(fields, overwrite, already) {
      */
     if (toggles) {
       const got = pressChoice(group, options, wanted);
+      if (got !== false) keepChosen(group, labelOf(wanted));
       taken.add(key);
       if (got === true) filled.push({ key, value });
       else {
@@ -4753,6 +4758,7 @@ function answerChoiceButtons(fields, overwrite, already) {
     }
     wanted.click();
     if (chosen(wanted)) {
+      keepChosen(group, labelOf(wanted));
       filled.push({ key, value });
       taken.add(key);
     } else {
@@ -5255,6 +5261,7 @@ function answerRadioGroups(fields, overwrite) {
       wanted.dispatchEvent(ours(new Event('input', { bubbles: true })));
       wanted.dispatchEvent(ours(new Event('change', { bubbles: true })));
     }
+    keepChosen(radios[0], optionLabelFor(wanted) || wanted.value);
     filled.push({ key, value: fields[key] });
   }
 
@@ -5278,14 +5285,15 @@ function answerRadioGroups(fields, overwrite) {
  * "have you previously been employed by acme prev_emp_q3 q3" is matching
  * against noise. The bank is keyed on what a person reads.
  */
-function rememberableChoices() {
+function rememberableChoices({ short = false } = {}) {
   const found = [];
-  const add = (question, description, el, answered, choose) => {
+  const add = (question, description, el, answered, choose, shows = answered) => {
     const asked = clean(question);
     // Too short to recognise on the next form. The same bar the bank itself
-    // applies on the way in — see `worthRemembering`.
-    if (asked.length < 8) return;
-    found.push({ question: asked, description, el, answered, choose });
+    // applies on the way in — see `worthRemembering`. Not a bar for finding
+    // this page's own question again, which is what `watchForEmptied` asks.
+    if (asked.length < 8 && !short) return;
+    found.push({ question: asked, description, el, answered, choose, shows });
   };
 
   for (const select of deepQueryAll('select')) {
@@ -5321,6 +5329,8 @@ function rememberableChoices() {
       // Pressed on this pass and not drawn yet is answered. See `pressedNow`.
       () => options.some(chosen) || (toggles && pressedNow.has(group)),
       (answer) => (toggles ? pressInGroup(group, options, answer) : chooseInAria(options, answer)),
+      // What the page itself shows, pressed on this pass or not. See `watchForEmptied`.
+      () => options.some(chosen),
     );
   }
 
@@ -5395,6 +5405,7 @@ function answerFromMemory(remembered) {
     if (!answer || !worthRemembering({ question: choice.question, answer }).keep) continue;
 
     const took = choice.choose(answer);
+    if (took) keepChosen(choice.el, answer);
     const row = { key: 'remembered', value: answer, description: choice.description.slice(0, 60) };
     if (took === true) filled.push({ ...row, question: choice.question, remembered: true });
     else if (took) {
@@ -5560,6 +5571,7 @@ function answerTypedFromMemory(remembered, fields, company) {
       continue;
     }
     if (kept.itemId) FROM_BANK.set(box.el, kept.itemId);
+    keepTyped(box.el, kept.answer);
     filled.push({ ...row, question: box.question, remembered: true, typed: true });
   }
   return { filled, skipped };
@@ -7488,6 +7500,254 @@ export function watchChoices(tell) {
     stopPicks();
     stopChosen();
   };
+}
+
+/* ------------- What was filled, for a page that empties it ------------- */
+
+/*
+ * Every box and choice Autofill wrote and saw take, with what it wrote.
+ *
+ * Reported on Quora's Ashby form. The form was filled, then the resume went
+ * into Ashby's "Autofill from resume" box, and Submit answered "Missing entry
+ * for required field" for the telephone, the discipline, the graduation date
+ * and both yes/no questions. Read off Ashby's bundle: each field keeps its own
+ * state, seeded from the saved value when it mounts, and the resume's parse
+ * sends the form back under a new key — so every field mounts again from what
+ * the parse found, which is the name and the email and nothing else. What the
+ * page emptied was what Autofill had put there, and nothing said so; the
+ * person found out from the server, after pressing Submit, and typed it all
+ * again.
+ *
+ * So what was written is kept, and `watchForEmptied` writes it again where
+ * the page has since emptied it: only there, and never over anything — a
+ * value the parse put in is the page's. A box or a choice the person has
+ * touched since is theirs, and is let go of (see `byThePerson`).
+ */
+const given = [];
+
+/** A box this pass typed into and saw hold what was written — or a dropdown, and the option chosen. */
+function keepTyped(el, written, kind = 'typed') {
+  forgetGiven(el);
+  given.push({ kind, el, written: String(written) });
+}
+const isBox = (entry) => entry.kind === 'typed' || entry.kind === 'select';
+
+/** A choice this pass made, as the answer `rememberableChoices` can make again. */
+function keepChosen(el, answer) {
+  if (!clean(answer)) return;
+  forgetGiven(el);
+  given.push({ kind: 'choice', el, answer: clean(answer) });
+}
+
+function forgetGiven(el) {
+  for (let i = given.length - 1; i >= 0; i--) if (given[i].el === el) given.splice(i, 1);
+}
+
+/*
+ * Which box or choice a kept entry is now.
+ *
+ * The same element while the page keeps it. A page that mounts its form
+ * again draws new elements for the same questions, so they are found again
+ * the way they were found the first time: the same description — label, name,
+ * id and placeholder — and, among the boxes that share one, the same place.
+ * A choice by the question it asks, as the answer bank finds it.
+ */
+function whereNow(entry, page) {
+  if (isBox(entry)) {
+    if (entry.el.isConnected) return isFillable(entry.el) ? entry.el : null;
+    const alike = page.boxes().filter(([el, said]) => el.localName === entry.tag && said === entry.description);
+    return alike[entry.nth]?.[0] ?? null;
+  }
+  // The page is not read again every few hundred milliseconds for a choice it still holds.
+  if (entry.el.isConnected) return entry.choice;
+  entry.choice = page.choices().filter((c) => c.question === entry.question && c.description === entry.description)[entry.nth] ?? null;
+  return entry.choice;
+}
+
+/** The page as `whereNow` reads it, each part read once and only if asked. */
+function pageNow() {
+  let boxes = null;
+  let choices = null;
+  return {
+    boxes: () => (boxes ??= deepQueryAll('input, textarea, select').filter(isFillable).map((el) => [el, describeField(el)])),
+    choices: () => (choices ??= rememberableChoices({ short: true })),
+  };
+}
+
+/** What each kept entry is, written down while it can still be read. */
+function settleGiven() {
+  const page = pageNow();
+  for (const entry of given) {
+    if (entry.name || entry.gone) continue;
+    if (!entry.el.isConnected) {
+      entry.gone = true;
+      continue;
+    }
+    if (isBox(entry)) {
+      // Refused or emptied already, before this could look: nothing to keep.
+      if (emptiedAt(entry, entry.el)) {
+        entry.gone = true;
+        continue;
+      }
+      entry.tag = entry.el.localName;
+      entry.description = describeField(entry.el);
+      entry.nth = Math.max(0, page.boxes().filter(([el, said]) => el.localName === entry.tag && said === entry.description).findIndex(([el]) => el === entry.el));
+      entry.name = withoutMarkers(labelFor(entry.el)) || entry.description.slice(0, 60);
+    } else {
+      const choice = page.choices().find((c) => c.el === entry.el);
+      // And a press the page never showed is not an answer to give it again.
+      if (!choice || !choice.shows()) {
+        entry.gone = true;
+        continue;
+      }
+      entry.choice = choice;
+      entry.question = choice.question;
+      entry.description = choice.description;
+      entry.nth = Math.max(0, page.choices().filter((c) => c.question === choice.question && c.description === choice.description).indexOf(choice));
+      entry.name = choice.question;
+    }
+    entry.refills = 0;
+  }
+}
+
+/** Whether the page shows nothing where this entry was written. */
+const emptiedAt = (entry, now) =>
+  entry.kind === 'typed' ? !clean(now.value) : entry.kind === 'select' ? !selectIsAnswered(now) : !now.shows();
+
+/*
+ * A box or a choice the person has put their own hand to since.
+ *
+ * `isTrusted`, because what Autofill writes fires the same events. Emptied by
+ * hand is emptied on purpose, and changed by hand is theirs; either way it is
+ * never written again from here. A box by what is typed or chosen in it, not
+ * by a click, which is only somebody looking; a radio by its group's name, so
+ * a click on its label — which the browser passes on to the radio — counts.
+ */
+function byThePerson(event) {
+  if (!event.isTrusted || given.length === 0) return;
+  const path = event.composedPath?.() ?? [event.target];
+  for (const entry of given) {
+    if (entry.theirs || (event.type === 'click' && isBox(entry))) continue;
+    const radio = entry.el instanceof HTMLInputElement && entry.el.type === 'radio' ? entry.el.name : null;
+    if (radio ? path.some((n) => n instanceof HTMLInputElement && n.type === 'radio' && n.name === radio) : path.includes(entry.el)) {
+      entry.theirs = true;
+    }
+  }
+}
+
+let refilledTell = null;
+let watchingForEmptied = false;
+let armedUntil = 0;
+let arms = 0;
+let ticking = null;
+let drawing = null;
+let lastDrawn = 0;
+let emptiedSince = 0;
+
+/*
+ * How long to keep looking, and when.
+ *
+ * Right after Autofill, for a page that was still busy with something when
+ * it was pressed — a resume dropped into the autofill box a moment before
+ * comes back after the fill and empties it. And after any file goes into the
+ * page, whoever put it there: the card's Attach, a chip let go of over the
+ * form, the person's own file dialog or a drag from their desktop. Ashby's
+ * parse took seconds; a minute is long past it, and the looking stops.
+ */
+const AFTER_FILL = 15_000;
+const AFTER_FILE = 60_000;
+// Quiet for this long is the page done drawing — but not waited on for ever.
+const SETTLED = 600;
+const SETTLE_AT_MOST = 4000;
+// Put back at most once for each file, and three times in all: a page that
+// empties a box again and again is refusing it, not losing it.
+const MOST_REFILLS = 3;
+
+/**
+ * Fill in again what the page empties after Autofill filled it.
+ *
+ * Called once Autofill has run in this document; `tell` hears the names of
+ * whatever was written again and took. Looks for a short while after the
+ * fill and again after each file put into the page — see `AFTER_FILE` — and
+ * then stops: nothing is watched while nothing is expected.
+ */
+export function watchForEmptied(tell) {
+  refilledTell = tell;
+  settleGiven();
+  if (!watchingForEmptied) {
+    watchingForEmptied = true;
+    const onFile = (event) => {
+      const target = event.composedPath?.()[0] ?? event.target;
+      if (event.type === 'drop' || (target instanceof HTMLInputElement && target.type === 'file')) armRefill(AFTER_FILE);
+    };
+    document.addEventListener('change', onFile, true);
+    document.addEventListener('drop', onFile, true);
+    for (const type of ['input', 'change', 'click']) document.addEventListener(type, byThePerson, true);
+  }
+  armRefill(AFTER_FILL);
+}
+
+function armRefill(ms) {
+  if (!given.length) return;
+  armedUntil = Math.max(armedUntil, Date.now() + ms);
+  arms++;
+  if (ticking) return;
+  lastDrawn = Date.now();
+  drawing = new MutationObserver(() => {
+    lastDrawn = Date.now();
+  });
+  drawing.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+  ticking = setInterval(lookForEmptied, 400);
+}
+
+function stopLooking() {
+  clearInterval(ticking);
+  ticking = null;
+  drawing?.disconnect();
+  drawing = null;
+  emptiedSince = 0;
+}
+
+function lookForEmptied() {
+  const now = Date.now();
+  if (now > armedUntil) return stopLooking();
+  const page = pageNow();
+  const emptied = [];
+  for (const entry of given) {
+    if (!entry.name || entry.gone || entry.theirs || entry.refills >= MOST_REFILLS || entry.arm === arms) continue;
+    const at = whereNow(entry, page);
+    if (!at) continue;
+    // Followed to where it is now, so a hand put to the new one is seen.
+    entry.el = isBox(entry) ? at : at.el;
+    if (emptiedAt(entry, at)) emptied.push([entry, at]);
+  }
+  if (emptied.length === 0) {
+    emptiedSince = 0;
+    return;
+  }
+  emptiedSince ||= now;
+  // Still being drawn: the rest of what it empties, or fills, is on its way.
+  if (now - lastDrawn < SETTLED && now - emptiedSince < SETTLE_AT_MOST) return;
+  emptiedSince = 0;
+
+  const written = [];
+  for (const [entry, at] of emptied) {
+    entry.arm = arms;
+    entry.refills++;
+    if (entry.kind === 'typed') setValue(at, entry.written);
+    else if (entry.kind === 'select' ? !chooseInSelect(at, entry.written) : at.choose(entry.answer) === false) continue;
+    written.push(entry);
+  }
+  if (written.length === 0) return;
+  // Read back once the page has drawn it: a pressed button shows a moment late.
+  setTimeout(() => {
+    const page = pageNow();
+    const took = written.filter((entry) => {
+      const at = whereNow(entry, page);
+      return at && !emptiedAt(entry, at);
+    });
+    if (took.length) refilledTell?.(took.map((entry) => entry.name));
+  }, 500);
 }
 
 /**

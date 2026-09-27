@@ -688,7 +688,7 @@
    * the behaviour this had before the bank existed.
    */
   async function fillThisDocument(fields, history = [], education = []) {
-    const { fillForm, fillComboboxes, fillEducation, choiceQuestions, typedQuestions, answerWidgetsFromMemory } =
+    const { fillForm, fillComboboxes, fillEducation, choiceQuestions, typedQuestions, answerWidgetsFromMemory, watchForEmptied } =
       await imports.autofill();
     const company = companyHere();
     // And the short boxes typed into last time. See `typedQuestions`.
@@ -706,7 +706,18 @@
     // `fillEducation`: a resume with one gets only its dates, in the first block.
     const schooled = await fillEducation(education, fields, report);
     // Last, the react-selects answered on the last form. See `answerWidgetsFromMemory`.
-    return answerWidgetsFromMemory(remembered, schooled);
+    const done = await answerWidgetsFromMemory(remembered, schooled);
+    /*
+     * And kept, on a page that empties it afterwards: Ashby's "Autofill from
+     * resume" mounts its form again from the resume's parse, with nothing
+     * but the name and the email in it. See `watchForEmptied`. Said on the
+     * card, which is in the top frame.
+     */
+    watchForEmptied((names) => {
+      if (window.top === window) cardHandle?.refilled(names);
+      else send('refilledInFrame', { names }).catch(() => undefined);
+    });
+    return done;
   }
 
   /**
@@ -2845,6 +2856,12 @@
      */
     if (message?.type === 'jh-frame-dropped') {
       cardHandle?.dropped(message.payload?.report);
+      sendResponse({ ok: true });
+      return false;
+    }
+    // And what a frame's page emptied after Autofill, and was filled in again. See `watchForEmptied`.
+    if (message?.type === 'jh-frame-refilled') {
+      cardHandle?.refilled(message.payload?.names ?? []);
       sendResponse({ ok: true });
       return false;
     }

@@ -6446,7 +6446,20 @@ export function createCard({
     const yours = r.skipped.length - done;
     if (done) parts.push(`left ${plural(done, 'field')} that already had a value`);
     if (yours) parts.push(`${plural(yours, 'field')} still for you to answer`);
-    return `${parts.join(', ')}.`;
+    const said = r.filled.length || r.skipped.length || !r.refilled?.length ? `${parts.join(', ')}.` : '';
+    return [said, describeRefilled(r.refilled)].filter(Boolean).join(' ');
+  }
+
+  /*
+   * The answers the page emptied after they were filled, named — a few by
+   * name, since a question can run to a paragraph, and the rest counted.
+   */
+  function describeRefilled(names) {
+    if (!names?.length) return '';
+    const cut = (n) => (n.length > 60 ? `${n.slice(0, 57).trimEnd()}…` : n);
+    const shown = names.slice(0, 3).map((n) => `“${cut(n)}”`);
+    const which = names.length > 3 ? `${shown.join(', ')} and ${names.length - 3} more` : shown.join(names.length === 2 ? ' and ' : ', ');
+    return `The page emptied ${which} after ${names.length === 1 ? 'it was' : 'they were'} filled, and ${names.length === 1 ? 'it has' : 'they have'} been filled in again — check before sending.`;
   }
 
   /**
@@ -7729,6 +7742,22 @@ export function createCard({
      */
     dropped(report) {
       state.attachReport = report;
+      draw();
+    },
+
+    /*
+     * What the page emptied after Autofill filled it, and was filled in again.
+     *
+     * Said beside what Autofill did, because it is the same answers: Ashby's
+     * "Autofill from resume" mounts the form again from the resume's parse,
+     * and without a word here the first sign of it was the server refusing
+     * the form at Submit. See `watchForEmptied` in autofill.js.
+     */
+    refilled(names) {
+      const list = (Array.isArray(names) ? names : []).map((n) => String(n ?? '').trim()).filter(Boolean);
+      if (list.length === 0) return;
+      const was = state.autofillReport ?? { filled: [], skipped: [] };
+      state.autofillReport = { ...was, refilled: [...new Set([...(was.refilled ?? []), ...list])] };
       draw();
     },
 

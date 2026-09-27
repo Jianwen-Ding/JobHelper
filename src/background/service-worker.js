@@ -1582,6 +1582,19 @@ const handlers = {
     return true;
   },
 
+  /**
+   * A frame's page emptied what Autofill had filled, and it was filled in
+   * again. Told to the top frame, where the card is, as a drop is.
+   */
+  async refilledInFrame({ names }, tab, sender) {
+    const tabId = tab?.id ?? sender?.tab?.id;
+    if (tabId === undefined) return false;
+    await chrome.tabs
+      .sendMessage(tabId, { type: 'jh-frame-refilled', payload: { names: Array.isArray(names) ? names : [] } }, { frameId: 0 })
+      .catch(() => undefined);
+    return true;
+  },
+
   /** Fill the form in every sub-frame from the same profile. */
   async fillFrames({ fields, history = [], education = [] }, tab) {
     if (tab?.id === undefined) return { frames: [] };

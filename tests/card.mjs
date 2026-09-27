@@ -5552,6 +5552,63 @@ async function main() {
   check('with nothing to keep, nothing is said about it', keeping.gone, String(keeping.gone));
 
   /*
+   * What the page emptied after Autofill, filled in again, said beside what
+   * Autofill did. Ashby's "Autofill from resume" mounts its form again from
+   * the resume's parse with only the name and the email, and nothing said so
+   * until Submit came back "Missing entry for required field".
+   */
+  const refilling = await inPage(async (createCard) => {
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary', sections: [] },
+        tailor: 'none',
+        diff: [],
+        rationale: [],
+        skillChanges: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      isForm: true,
+      onAction: (action) => {
+        if (action === 'autofill') return Promise.resolve({ filled: [{ key: 'phone', value: '(555) 010-0199' }, { key: 'major', value: 'Computer Science' }], skipped: [] });
+        if (action === 'aiStatus') return Promise.resolve({ state: 'off', active: false, serverEnabled: false });
+        return Promise.resolve({});
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const note = () => root.querySelector('.ok-note')?.textContent ?? '';
+    handle.refilled?.(['Phone']);
+    await new Promise((r) => setTimeout(r, 20));
+    const beforeAutofill = note();
+    [...root.querySelectorAll('button')].find((b) => /^Autofill this form/.test(b.textContent))?.click();
+    await new Promise((r) => setTimeout(r, 50));
+    const filled = note();
+    handle.refilled?.(['Phone', 'Discipline/Field of Study']);
+    await new Promise((r) => setTimeout(r, 20));
+    const two = note();
+    handle.refilled?.(['Graduation Date or Anticipated Graduation Date', 'Will you now or in the future require sponsorship for employment visa status?', '']);
+    await new Promise((r) => setTimeout(r, 20));
+    return { beforeAutofill, filled, two, four: note() };
+  });
+  check(
+    'fields the page emptied and Autofill filled in again are named beside what Autofill did',
+    refilling.filled === 'Filled 2 fields.' &&
+      refilling.two === 'Filled 2 fields. The page emptied “Phone” and “Discipline/Field of Study” after they were filled, and they have been filled in again — check before sending.',
+    JSON.stringify(refilling),
+  );
+  check(
+    'more than three are counted after the first three, and one said before any press of Autofill is said alone',
+    /^Filled 2 fields\. The page emptied “Phone”, “Discipline\/Field of Study”, “Graduation Date or Anticipated Graduation Date” and 1 more after they were filled/.test(refilling.four) &&
+      refilling.beforeAutofill === 'The page emptied “Phone” after it was filled, and it has been filled in again — check before sending.',
+    JSON.stringify(refilling),
+  );
+
+  /*
    * The role the card shows while the posting is still being read, which is
    * the page's own title. iCIMS's sign-in page is titled "Login | Careers
    * Markon", and the card said the role was that; a SmartRecruiters title

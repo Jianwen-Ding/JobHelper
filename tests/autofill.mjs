@@ -5635,7 +5635,179 @@ const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><tit
   });
 </script></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL };
+/*
+ * Quora's Ashby application, and its "Autofill from resume".
+ *
+ * The markup is the live page's, cut down to the fields a user found empty
+ * when the form refused to go ("Missing entry for required field: Phone /
+ * Discipline/Field of Study / Graduation Date or Anticipated Graduation Date /
+ * I understand that … coordination hours / Will you now or in the future
+ * require sponsorship"), plus the two it did not flag, Full Name and Email.
+ *
+ * What the page does, read off Ashby's own bundle: every field keeps its own
+ * state, seeded from the saved value when it mounts; text goes to the server
+ * 500ms after the last change, the date and the yes/no as soon as they change;
+ * and the form is checked on the server, against what was saved. A resume
+ * put into the autofill box is parsed ("Parsing your resume. Autofilling key
+ * fields...") and the form render comes back with what the parse found, under
+ * a new key, so every field mounts again from it — Name and Email from the
+ * resume, and nothing in the rest. The date is react-datepicker with its
+ * default "MM/dd/yyyy" and loose parsing, which falls back to `new Date` and
+ * shows the date it took in its own format; picking the day it already holds
+ * lets go of it. `?inplace` keeps the elements and empties them in place;
+ * `?parsed-phone` has the resume carry a telephone number of its own.
+ */
+const ASHBY_RESUME_AUTOFILL = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Quora</title>
+<style>._input_1svni_78 { display: none; } [data-state="hidden"] { display: none; }</style></head><body>
+<div class="_autofillPane_5yu8i_448 ashby-application-form-autofill-pane"><div role="presentation" class="_root_xd2v0_1 ashby-application-form-autofill-input-root" data-state="default">
+  <input id="autofill-box" accept="application/pdf,.pdf,application/msword,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" type="file" tabindex="-1" style="border: 0px; clip: rect(0px, 0px, 0px, 0px); clip-path: inset(50%); height: 1px; margin: 0px -1px -1px 0px; overflow: hidden; padding: 0px; position: absolute; width: 1px; white-space: nowrap;">
+  <div class="_base_xd2v0_31 ashby-application-form-autofill-input-base-layer"><h3 class="_title_xd2v0_64 ashby-application-form-autofill-input-title">Autofill from resume</h3><p class="_description_xd2v0_76 ashby-application-form-autofill-input-description">Upload your resume here to autofill key application fields.</p><button class="_button_zyh3g_28 _ctaButton_xd2v0_94">Upload file</button></div>
+  <div class="_pending_xd2v0_121 ashby-application-form-autofill-input-pending-layer" data-state="hidden"><span aria-label="Loading..." role="progressbar"></span><span>Parsing your resume. Autofilling key fields...</span></div>
+</div></div>
+<div id="form-root"></div>
+<template id="form"><div class="_jobPostingForm_5yu8i_402 ashby-application-form-container"><div class="_section_5yu8i_86 ashby-application-form-section-container">
+  <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="_systemfield_name"><label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="_systemfield_name">Full Name</label><div><input placeholder="Type here..." name="_systemfield_name" required="" id="_systemfield_name" type="text" class="_input_80epu_28 ashby-application-form-input-text" value=""></div></div>
+  <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="_systemfield_email"><label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="_systemfield_email">Email</label><div><input placeholder="hello@example.com..." name="_systemfield_email" required="" id="_systemfield_email" type="email" class="_input_80epu_28 ashby-application-form-input-text" value=""></div></div>
+  <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="ac061e86-2644-429c-9f9f-58ecfe59b7e5"><label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="ac061e86-2644-429c-9f9f-58ecfe59b7e5">Phone</label><input placeholder="1-415-555-1234..." name="ac061e86-2644-429c-9f9f-58ecfe59b7e5" required="" id="ac061e86-2644-429c-9f9f-58ecfe59b7e5" type="tel" class="_input_80epu_28 ashby-application-form-input-text" value="">
+    <div class="_phoneNumberConsentLegalText_q1pga_1 ashby-application-form-texting-consent-description"><div class="_consentBody_q1pga_8"><p>Check <strong>Yes</strong> or <strong>No</strong> to indicate your agreement to receive text message updates from the employer regarding your job application.</p></div>
+      <div class="_container_1rwuy_1 _consentRadioGroup_q1pga_13"><label class="_label_1rwuy_6"><input class="_radio_1rwuy_12" type="radio" name="communicationConsent" value="given"><div><p><strong>Yes</strong> - I consent to receiving text messages</p></div></label><label class="_label_1rwuy_6"><input class="_radio_1rwuy_12" type="radio" name="communicationConsent" value="notGiven"><div><p><strong>No</strong> - I do not consent to receiving text messages</p></div></label></div></div></div>
+  <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="842bb240-06cd-4b26-8c17-aa094b1c9dab"><label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="842bb240-06cd-4b26-8c17-aa094b1c9dab">Discipline/Field of Study</label><div class="_description_1e3gg_48 ashby-application-form-question-description"><p><em><strong>For most recent or in progress degree.</strong></em></p></div><div><input placeholder="Type here..." name="842bb240-06cd-4b26-8c17-aa094b1c9dab" required="" id="842bb240-06cd-4b26-8c17-aa094b1c9dab" type="text" class="_input_80epu_28 ashby-application-form-input-text" value=""></div></div>
+  <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="751b69d2-5b38-4552-b010-e3bdd1e891f2"><label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="751b69d2-5b38-4552-b010-e3bdd1e891f2">Graduation Date or Anticipated Graduation Date</label><div class="_description_1e3gg_48 ashby-application-form-question-description"><p><em><strong>For most recent or in progress degree.</strong></em></p></div><div class="react-datepicker-wrapper"><div class="react-datepicker__input-container"><input type="text" placeholder="Pick date..." class="_input_gc9ve_28 _greedy_gc9ve_61 ashby-application-form-input-date" required="" value=""></div></div></div>
+  <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="_systemfield_resume"><label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="_systemfield_resume">Resume</label><div role="presentation" class="_container_10xk4_70 ashby-application-form-input-file"><input type="file" tabindex="-1" id="_systemfield_resume" required="" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0px, 0px, 0px, 0px);"><div class="ashby-application-form-input-file-dropzone"><button class="ashby-application-form-input-file-dropzone-upload"><span>Upload File</span></button><p>or drag and drop here</p></div></div></div>
+</div><div class="_section_5yu8i_86 ashby-application-form-section-container">
+  <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="003d89f3-1128-4fef-a9ac-40e88a4ba7e4"><label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="003d89f3-1128-4fef-a9ac-40e88a4ba7e4">I understand that all employees for this position will be expected to be available for meetings and impromptu communication during Quora's “coordination hours” (Mon-Fri, 9am-3pm Pacific Time).</label><div class="_container_1svni_28 _yesno_1e3gg_148 ashby-application-form-input-yesno"><button class="_container_pjyt6_1 _option_1svni_32 ashby-application-form-input-yesno-option" aria-pressed="false" data-option="yes">Yes</button><button class="_container_pjyt6_1 _option_1svni_32 ashby-application-form-input-yesno-option" aria-pressed="false" data-option="no">No</button><input type="checkbox" class="_input_1svni_78" tabindex="-1" name="003d89f3-1128-4fef-a9ac-40e88a4ba7e4"></div></div>
+  <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="3710353f-ee10-43fa-b7a9-e747deb6ff04"><label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="3710353f-ee10-43fa-b7a9-e747deb6ff04">Will you now or in the future require sponsorship for employment visa status?</label><div class="_container_1svni_28 _yesno_1e3gg_148 ashby-application-form-input-yesno"><button class="_container_pjyt6_1 _option_1svni_32 ashby-application-form-input-yesno-option" aria-pressed="false" data-option="yes">Yes</button><button class="_container_pjyt6_1 _option_1svni_32 ashby-application-form-input-yesno-option" aria-pressed="false" data-option="no">No</button><input type="checkbox" class="_input_1svni_78" tabindex="-1" name="3710353f-ee10-43fa-b7a9-e747deb6ff04"></div></div>
+</div><button class="_button_zyh3g_28 _primary_zyh3g_97 ashby-application-form-submit-button"><span>Submit Application</span></button></div></template>
+<script>
+  const query = new URLSearchParams(location.search);
+  const DATE = '751b69d2-5b38-4552-b010-e3bdd1e891f2';
+  // What the server holds, which is what the form is checked against.
+  const server = {};
+  window.__server = () => ({ ...server });
+  window.__mounts = 0;
+  const day = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const shown = (d) => String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0') + '/' + d.getFullYear();
+  // react-datepicker's loose parse: its format, then whatever \`new Date\` makes of it.
+  const parse = (v) => {
+    const m = /^(\\d{2})\\/(\\d{2})\\/(\\d{4})$/.exec(v);
+    const d = m ? new Date(Number(m[3]), Number(m[1]) - 1, Number(m[2])) : new Date(v);
+    return isNaN(d) || d.getFullYear() < 1000 ? null : d;
+  };
+  // React's value tracker: an event whose value it has already seen is no change.
+  const tracked = (el) => {
+    const own = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+    let seen = own.get.call(el);
+    Object.defineProperty(el, 'value', { configurable: true, get() { return own.get.call(this); }, set(v) { seen = String(v); own.set.call(this, v); } });
+    return { changed: () => { const now = own.get.call(el); if (now === seen) return null; seen = now; return now; } };
+  };
+  let clearing = [];
+  function mount(saved) {
+    for (const stop of clearing) stop();
+    clearing = [];
+    window.__mounts++;
+    const root = document.getElementById('form-root');
+    root.replaceChildren(document.getElementById('form').content.cloneNode(true));
+    wire(root, saved);
+  }
+  function wire(root, saved) {
+    for (const input of root.querySelectorAll('input.ashby-application-form-input-text')) {
+      const path = input.name;
+      let value = saved[path] ?? '';
+      let timer = null;
+      const t = tracked(input);
+      input.value = value;
+      const save = () => { clearTimeout(timer); if ((server[path] ?? '') !== value) server[path] = value; };
+      const onChange = () => {
+        const now = t.changed();
+        if (now === null) return;
+        value = now;
+        clearTimeout(timer);
+        timer = setTimeout(save, 500);
+      };
+      input.addEventListener('input', onChange);
+      input.addEventListener('change', onChange);
+      input.addEventListener('blur', save);
+      clearing.push(() => clearTimeout(timer));
+      input.__reset = (v) => { value = v ?? ''; input.value = value; };
+    }
+    const box = root.querySelector('.ashby-application-form-input-date');
+    let selected = saved[DATE] ? new Date(saved[DATE] + 'T00:00') : null;
+    const t = tracked(box);
+    box.value = selected ? shown(selected) : '';
+    const pick = (d) => {
+      if (d && selected && d.getTime() === selected.getTime()) return;
+      selected = d && selected && day(d) === day(selected) ? null : d;
+      if (selected) server[DATE] = day(selected);
+      box.value = selected ? shown(selected) : box.value;
+    };
+    const onDate = () => {
+      const now = t.changed();
+      if (now === null) return;
+      const d = parse(now);
+      if (d) pick(d);
+      else if (!now) { selected = null; }
+    };
+    box.addEventListener('input', onDate);
+    box.addEventListener('change', onDate);
+    box.__reset = () => { selected = null; box.value = ''; };
+    window.__picked = () => (selected ? day(selected) : null);
+    for (const group of root.querySelectorAll('.ashby-application-form-input-yesno')) {
+      const buttons = [...group.querySelectorAll('button')];
+      const check = group.querySelector('input[type=checkbox]');
+      const path = check.name;
+      let value = saved[path];
+      const draw = () => {
+        for (const b of buttons) b.setAttribute('aria-pressed', String(value === (b.dataset.option === 'yes')));
+        check.checked = value === true;
+      };
+      const set = (v) => queueMicrotask(() => { value = v; if (v !== undefined) server[path] = v; draw(); });
+      buttons[0].addEventListener('click', () => set(value === true ? undefined : true));
+      buttons[1].addEventListener('click', () => set(value === false ? undefined : false));
+      check.addEventListener('change', () => set(check.checked));
+      group.__reset = () => { value = undefined; draw(); };
+      draw();
+    }
+  }
+  mount({});
+  // The autofill box: the resume is parsed, and the form comes back from what the parse found.
+  const pending = document.querySelector('.ashby-application-form-autofill-input-pending-layer');
+  document.getElementById('autofill-box').addEventListener('change', (e) => {
+    if (!e.target.files.length) return;
+    setTimeout(() => { pending.dataset.state = 'active'; }, 150);
+    setTimeout(() => {
+      const found = { _systemfield_name: 'Morgan Testwell', _systemfield_email: 'morgan.testwell@example.com' };
+      if (query.has('parsed-phone')) found['ac061e86-2644-429c-9f9f-58ecfe59b7e5'] = '555-010-0123';
+      for (const key of Object.keys(server)) delete server[key];
+      Object.assign(server, found);
+      if (query.has('inplace')) {
+        for (const input of document.querySelectorAll('input.ashby-application-form-input-text')) input.__reset(found[input.name]);
+        document.querySelector('.ashby-application-form-input-date').__reset();
+        for (const group of document.querySelectorAll('.ashby-application-form-input-yesno')) group.__reset();
+      } else mount(found);
+      pending.dataset.state = 'hidden';
+    }, 900);
+  });
+</script></body></html>`;
+
+/*
+ * A plain form that puts itself back to nothing when a file goes in — a
+ * dropdown, a pair of radios and a box, emptied by `form.reset()`, which
+ * fires nothing a script would hear.
+ */
+const RESET_ON_FILE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="f">
+  <label for="rc">Country</label>
+  <select id="rc" name="country"><option value="">Select...</option><option value="CA">Canada</option><option value="US">United States</option></select>
+  <fieldset><legend>Are you legally authorized to work in the United States?</legend>
+    <label><input type="radio" name="rauth" value="yes"> Yes</label><label><input type="radio" name="rauth" value="no"> No</label></fieldset>
+  <label for="rp">Phone</label><input id="rp" name="phone" type="tel">
+  <label for="rr">Resume</label><input id="rr" name="resume" type="file">
+</form>
+<script>
+  document.getElementById('rr').addEventListener('change', () => setTimeout(() => document.getElementById('f').reset(), 300));
+</script></body></html>`;
+
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE };
 
 const PROFILE = {
   first_name: 'Morgan',
@@ -11104,6 +11276,120 @@ async function main() {
         nearMisses.shown.every((row) => /Select( ▾)?$/.test(row)) &&
         nearMisses.skipped.includes('school: this one has to be picked by hand') && nearMisses.skipped.includes('major: this one has to be picked by hand'),
       JSON.stringify(nearMisses),
+    );
+    /* ------------- Ashby's "Autofill from resume", after the fill ------------- */
+    /*
+     * Reported on Quora's Ashby form: filled, then the resume went into the
+     * autofill box, and Submit answered "Missing entry for required field"
+     * for the telephone, the discipline, the graduation date and both yes/no
+     * questions — every one of them filled, and emptied when the form came
+     * back from the parse with only the name and the email in it.
+     */
+    const QUORA = {
+      ...PROFILE, phone: '(555) 010-0199', major: 'Computer Science', graduation_date: 'May 2027', requires_sponsorship: 'No',
+    };
+    const COORDINATION = 'I understand that all employees for this position will be expected to be available for meetings and impromptu communication during Quora\'s “coordination hours” (Mon-Fri, 9am-3pm Pacific Time).';
+    const resumeAutofill = (query = '', { clearDiscipline = false, upload = true } = {}) =>
+      page.goto(`${base}/ashby-resume-autofill${query}`, { waitUntil: 'domcontentloaded' }).then(async () => {
+        const filled = await page.evaluate(async ({ b, fields, asked }) => {
+          const m = await import(`${b}/autofill.js`);
+          window.__told = [];
+          const report = await m.fillComboboxes(fields, m.fillForm(fields, { remembered: [{ question: asked, answer: 'Yes' }] }), { patience: 1500 });
+          m.watchForEmptied?.((names) => window.__told.push(names));
+          await new Promise((r) => setTimeout(r, 700));
+          return { server: window.__server(), filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
+        }, { b: base, fields: QUORA, asked: COORDINATION });
+        // Somebody taking one of them out again, by hand.
+        if (clearDiscipline) await page.fill('[id="842bb240-06cd-4b26-8c17-aa094b1c9dab"]', '');
+        if (upload) {
+          // The resume into the autofill box, the way the card's Attach or a dropped chip puts it in any box.
+          await page.evaluate(() => {
+            const box = document.getElementById('autofill-box');
+            const carrier = new DataTransfer();
+            carrier.items.add(new File(['%PDF-1.4'], 'Morgan-Testwell-Resume.pdf', { type: 'application/pdf' }));
+            box.files = carrier.files;
+            box.dispatchEvent(new Event('input', { bubbles: true }));
+            box.dispatchEvent(new Event('change', { bubbles: true }));
+          });
+        }
+        await page.waitForTimeout(4000);
+        return page.evaluate((before) => ({
+          before,
+          server: window.__server(),
+          mounts: window.__mounts,
+          told: window.__told,
+          shown: Object.fromEntries([...document.querySelectorAll('#form-root input[type=text], #form-root input[type=tel], #form-root input[type=email]')].map((i) => [i.name || i.placeholder, i.value])),
+          pressed: [...document.querySelectorAll('#form-root [aria-pressed="true"]')].map((b) => b.textContent),
+        }), filled);
+      });
+    const PHONE = 'ac061e86-2644-429c-9f9f-58ecfe59b7e5';
+    const DISCIPLINE = '842bb240-06cd-4b26-8c17-aa094b1c9dab';
+    const GRADUATION = '751b69d2-5b38-4552-b010-e3bdd1e891f2';
+    const ACK = '003d89f3-1128-4fef-a9ac-40e88a4ba7e4';
+    const SPONSOR = '3710353f-ee10-43fa-b7a9-e747deb6ff04';
+    const wiped = await resumeAutofill();
+    const wipedInPlace = await resumeAutofill('?inplace');
+    const parsedPhone = await resumeAutofill('?parsed-phone');
+    const clearedByHand = await resumeAutofill('', { clearDiscipline: true });
+    const neverWiped = await resumeAutofill('', { upload: false });
+    group('Ashby\'s "Autofill from resume" emptying what was filled');
+    const allBack = (r) =>
+      r.server[PHONE] === '(555) 010-0199' && r.server[DISCIPLINE] === 'Computer Science' && r.server[GRADUATION] === '2027-05-01' &&
+      r.server[ACK] === true && r.server[SPONSOR] === false;
+    check(
+      'filled first: the telephone, the discipline, the date, sponsorship No and the remembered Yes all reach the page',
+      allBack(wiped.before) && wiped.before.server._systemfield_name === 'Morgan Testwell',
+      JSON.stringify(wiped.before),
+    );
+    check(
+      'after the form mounts again from the parse, each is filled in again and saved, and the name and email are the page\'s',
+      wiped.mounts === 2 && allBack(wiped) && wiped.shown[GRADUATION] === undefined && wiped.shown['Pick date...'] === '05/01/2027' &&
+        wiped.server._systemfield_email === 'morgan.testwell@example.com' && wiped.pressed.join() === 'Yes,No',
+      JSON.stringify(wiped),
+    );
+    check(
+      'and the card is told which, once',
+      wiped.told.length === 1 && wiped.told[0].length === 5 && wiped.told[0].includes('Phone') && wiped.told[0].includes('Discipline/Field of Study') &&
+        wiped.told[0].some((n) => /^Graduation Date/.test(n)) && wiped.told[0].some((n) => /coordination hours/.test(n)) && wiped.told[0].some((n) => /sponsorship/.test(n)),
+      JSON.stringify(wiped.told),
+    );
+    check('the same when the page empties the same boxes where they stand', wipedInPlace.mounts === 1 && allBack(wipedInPlace) && wipedInPlace.told.length === 1, JSON.stringify(wipedInPlace));
+    check(
+      'a telephone number the parse put there is the page\'s, and stays',
+      parsedPhone.server[PHONE] === '555-010-0123' && parsedPhone.shown[PHONE] === '555-010-0123' && parsedPhone.server[DISCIPLINE] === 'Computer Science' &&
+        parsedPhone.told.length === 1 && !parsedPhone.told[0].includes('Phone'),
+      JSON.stringify(parsedPhone),
+    );
+    check(
+      'a box the person emptied by hand is not filled in again, the rest are',
+      clearedByHand.shown[DISCIPLINE] === '' && !clearedByHand.server[DISCIPLINE] && clearedByHand.server[PHONE] === '(555) 010-0199' &&
+        !clearedByHand.told.flat().includes('Discipline/Field of Study'),
+      JSON.stringify(clearedByHand),
+    );
+    check('and a form nothing empties is left alone', neverWiped.told.length === 0 && allBack(neverWiped) && neverWiped.mounts === 1, JSON.stringify(neverWiped));
+    const reset = await page.goto(`${base}/reset-on-file`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const told = [];
+        const report = m.fillForm(fields);
+        m.watchForEmptied?.((names) => told.push(names));
+        const box = document.getElementById('rr');
+        const carrier = new DataTransfer();
+        carrier.items.add(new File(['%PDF-1.4'], 'Morgan-Testwell-Resume.pdf', { type: 'application/pdf' }));
+        box.files = carrier.files;
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 2500));
+        return {
+          filled: report.filled.map((f) => f.key), told,
+          country: document.getElementById('rc').value, phone: document.getElementById('rp').value,
+          auth: document.querySelector('input[name=rauth]:checked')?.value ?? null,
+        };
+      }, { b: base, fields: { ...PROFILE, phone: '(555) 010-0199', work_authorization: 'Yes' } }),
+    );
+    check(
+      'a dropdown, a pair of radios and a box a form reset empties are filled in again too',
+      reset.country === 'US' && reset.auth === 'yes' && reset.phone === '(555) 010-0199' && reset.told.length === 1 && reset.told[0].length === 3,
+      JSON.stringify(reset),
     );
   } finally {
     await browser.close();
