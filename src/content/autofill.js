@@ -5848,6 +5848,7 @@ export async function answerWidgetsFromMemory(remembered, report, { patience = 4
     if (!answer || !worthRemembering({ question, answer }).keep) continue;
     const how = await chooseInWidget(el, 'remembered', answer, { patience, fields: {}, asked: question });
     if (how === 'chose') {
+      keepWidget(el, 'remembered', answer, { asked: question });
       filled.push({ key: 'remembered', value: answer, description: description.slice(0, 60), question, remembered: true, widget: true });
     }
   }
@@ -5955,16 +5956,21 @@ const PICK_BY_HAND = 'this one has to be picked by hand';
  * And a widget inside another — a combobox `<div>` around its own text box —
  * is the same question once.
  */
+/** Everything on the page that might be a widget asking something, in page order. */
+function widgetCandidates() {
+  return withPlainDropdowns(
+    deepQueryAll(
+      `[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"], [data-uxi-widget-type="selectinput"], ${FABRIC_SELECT}`,
+    ),
+  );
+}
+
 function widgetChoices(fields, filled) {
   const already = new Set(filled.map((f) => f.key).filter((key) => EDUCATION_KEYS.test(key)));
   const found = [];
   const seen = [];
 
-  for (const widget of withPlainDropdowns(
-    deepQueryAll(
-      `[role="combobox"], [aria-haspopup="listbox"], [role="listbox"], [aria-autocomplete="list"], [aria-autocomplete="both"], [data-uxi-widget-type="selectinput"], ${FABRIC_SELECT}`,
-    ),
-  )) {
+  for (const widget of widgetCandidates()) {
     if (!isWidgetChoice(widget)) continue;
     if (widget.getClientRects().length === 0) continue;
 
@@ -6783,6 +6789,7 @@ export async function fillComboboxes(fields, report, { patience = 4000, history 
     // Looked for in a list that opened, and not in it. See `NOT_LISTED`.
     if (how === 'unlisted') unlisted.add(key);
     if (how === 'chose') {
+      keepWidget(widget, key, value, { fields, asked });
       done.push({ key, value, widget: true });
       chose.add(`${key}\u0000${description}`);
     }
@@ -7114,7 +7121,10 @@ async function fillEducationPart(control, key, value, f, patience) {
   const description = describeField(control);
   if (isWidgetChoice(control)) {
     const how = await chooseInWidget(control, key, value, { patience, fields: f, asked: description });
-    if (how === 'chose') return { key, value, widget: true };
+    if (how === 'chose') {
+      keepWidget(control, key, value, { fields: f, asked: description });
+      return { key, value, widget: true };
+    }
     return { key, reason: how === 'unlisted' ? 'no matching option' : PICK_BY_HAND, description: description.slice(0, 60) };
   }
   if (control instanceof HTMLSelectElement) {
@@ -7558,6 +7568,19 @@ function keepChosen(el, answer) {
   given.push({ kind: 'choice', el, answer: clean(answer) });
 }
 
+/*
+ * A search-and-pick box this pass chose in and saw take, with what it was
+ * chosen for — chosen again the same way, by `chooseInWidget`.
+ *
+ * Quora's Ashby form draws its Location and School Name as these, and the
+ * parse emptied them with everything else; they were the two left empty
+ * once the rest had been filled in again.
+ */
+function keepWidget(el, key, value, { fields = {}, asked = '' } = {}) {
+  forgetGiven(el);
+  given.push({ kind: 'widget', el, key, value: String(value), fields, asked });
+}
+
 function forgetGiven(el) {
   for (let i = given.length - 1; i >= 0; i--) if (given[i].el === el) given.splice(i, 1);
 }
@@ -7577,6 +7600,11 @@ function whereNow(entry, page) {
     const alike = page.boxes().filter(([el, said]) => el.localName === entry.tag && said === entry.description);
     return alike[entry.nth]?.[0] ?? null;
   }
+  // A search-and-pick box as a box is found again: by what describes it, and its place among those alike.
+  if (entry.kind === 'widget') {
+    if (entry.el.isConnected) return entry.el.getClientRects().length > 0 ? entry.el : null;
+    return widgetsAlike(page.widgets(), entry.description)[entry.nth] ?? null;
+  }
   // The page is not read again every few hundred milliseconds for a choice it still holds.
   if (entry.el.isConnected) return entry.choice;
   entry.choice = page.choices().filter((c) => c.question === entry.question && c.description === entry.description)[entry.nth] ?? null;
@@ -7587,10 +7615,25 @@ function whereNow(entry, page) {
 function pageNow() {
   let boxes = null;
   let choices = null;
+  let widgets = null;
   return {
     boxes: () => (boxes ??= deepQueryAll('input, textarea, select').filter(isFillable).map((el) => [el, describeField(el)])),
     choices: () => (choices ??= rememberableChoices({ short: true })),
+    widgets: () =>
+      (widgets ??= widgetCandidates()
+        .filter((el) => isWidgetChoice(el) && el.getClientRects().length > 0)
+        .map((el) => [el, describeField(el)])),
   };
+}
+
+/** The widgets described this way, one for each question — a combobox around its own box is one. */
+function widgetsAlike(widgets, description) {
+  const alike = [];
+  for (const [el, said] of widgets) {
+    if (said !== description || alike.some((other) => other.contains(el) || el.contains(other))) continue;
+    alike.push(el);
+  }
+  return alike;
 }
 
 /** What each kept entry is, written down while it can still be read. */
@@ -7612,6 +7655,14 @@ function settleGiven() {
       entry.description = describeField(entry.el);
       entry.nth = Math.max(0, page.boxes().filter(([el, said]) => el.localName === entry.tag && said === entry.description).findIndex(([el]) => el === entry.el));
       entry.name = withoutMarkers(labelFor(entry.el)) || entry.description.slice(0, 60);
+    } else if (entry.kind === 'widget') {
+      if (emptiedAt(entry, entry.el)) {
+        entry.gone = true;
+        continue;
+      }
+      entry.description = describeField(entry.el);
+      entry.nth = Math.max(0, widgetsAlike(page.widgets(), entry.description).indexOf(entry.el));
+      entry.name = withoutMarkers(labelFor(entry.el)) || entry.description.slice(0, 60);
     } else {
       const choice = page.choices().find((c) => c.el === entry.el);
       // And a press the page never showed is not an answer to give it again.
@@ -7631,7 +7682,28 @@ function settleGiven() {
 
 /** Whether the page shows nothing where this entry was written. */
 const emptiedAt = (entry, now) =>
-  entry.kind === 'typed' ? !clean(now.value) : entry.kind === 'select' ? !selectIsAnswered(now) : !now.shows();
+  entry.kind === 'typed'
+    ? !clean(now.value)
+    : entry.kind === 'select'
+      ? !selectIsAnswered(now)
+      : entry.kind === 'widget'
+        ? widgetShowsNothing(now)
+        : !now.shows();
+
+/*
+ * Whether a search-and-pick box shows nothing at all: no words in its box,
+ * nothing drawn as its value, nothing in the field it submits through, no
+ * option marked chosen. Anything there — the page's pick, or words somebody
+ * is typing — is not emptied.
+ */
+function widgetShowsNothing(widget) {
+  if (clean(typingBoxOf(widget)?.value)) return false;
+  if (hiddenPartner(widget)?.value) return false;
+  if (listboxHoldsAChoice(widget)) return false;
+  const drawn = drawnValue(controlOf(widget));
+  if (drawn !== undefined) return !drawn;
+  return !widgetShowsAnAnswer(widget);
+}
 
 /*
  * A box or a choice the person has put their own hand to since.
@@ -7648,7 +7720,9 @@ function byThePerson(event) {
   for (const entry of given) {
     if (entry.theirs || (event.type === 'click' && isBox(entry))) continue;
     const radio = entry.el instanceof HTMLInputElement && entry.el.type === 'radio' ? entry.el.name : null;
-    if (radio ? path.some((n) => n instanceof HTMLInputElement && n.type === 'radio' && n.name === radio) : path.includes(entry.el)) {
+    // A search-and-pick box by anything in its control — its clear button too — and a click counts: it opens it.
+    const at = entry.kind === 'widget' ? [entry.el, controlOf(entry.el)] : [entry.el];
+    if (radio ? path.some((n) => n instanceof HTMLInputElement && n.type === 'radio' && n.name === radio) : at.some((el) => path.includes(el))) {
       entry.theirs = true;
     }
   }
@@ -7662,6 +7736,9 @@ let ticking = null;
 let drawing = null;
 let lastDrawn = 0;
 let emptiedSince = 0;
+// Choosing in a search-and-pick box again takes its time, and nothing else is looked for meanwhile.
+let choosingAgain = false;
+const CHOOSE_AGAIN_PATIENCE = 4000;
 
 /*
  * How long to keep looking, and when.
@@ -7730,6 +7807,7 @@ function stopLooking() {
 function lookForEmptied() {
   const now = Date.now();
   if (now > armedUntil) return stopLooking();
+  if (choosingAgain) return;
   const page = pageNow();
   const emptied = [];
   for (const entry of given) {
@@ -7737,7 +7815,7 @@ function lookForEmptied() {
     const at = whereNow(entry, page);
     if (!at) continue;
     // Followed to where it is now, so a hand put to the new one is seen.
-    entry.el = isBox(entry) ? at : at.el;
+    entry.el = entry.kind === 'choice' ? at.el : at;
     if (emptiedAt(entry, at)) emptied.push([entry, at]);
   }
   if (emptied.length === 0) {
@@ -7750,13 +7828,58 @@ function lookForEmptied() {
   emptiedSince = 0;
 
   const written = [];
+  const toPick = [];
+  // Choosing in one takes the focus, so not while somebody is typing somewhere; it waits for a later look.
+  const typing = typingElsewhere();
   for (const [entry, at] of emptied) {
+    if (entry.kind === 'widget' && typing) continue;
     entry.arm = arms;
     entry.refills++;
+    if (entry.kind === 'widget') {
+      toPick.push([entry, at]);
+      continue;
+    }
     if (entry.kind === 'typed') setValue(at, entry.written);
     else if (entry.kind === 'select' ? !chooseInSelect(at, entry.written) : at.choose(entry.answer) === false) continue;
     written.push(entry);
   }
+  if (toPick.length === 0) return readBackRefilled(written);
+  /*
+   * One at a time, the way it was chosen the first time, and on the same
+   * terms — see `chooseInWidget`: exactly the answer, seen to take, and
+   * everything typed taken back out where it did not. The focus is given back.
+   */
+  choosingAgain = true;
+  const had = deepActiveElement();
+  (async () => {
+    try {
+      for (const [entry, at] of toPick) {
+        if (!widgetShowsNothing(at)) continue;
+        const how = await chooseInWidget(at, entry.key, entry.value, { patience: CHOOSE_AGAIN_PATIENCE, fields: entry.fields, asked: entry.asked });
+        if (how === 'chose') written.push(entry);
+      }
+    } finally {
+      choosingAgain = false;
+      if (had && had !== document.body && had.isConnected) had.focus?.();
+      else deepActiveElement()?.blur?.();
+    }
+    readBackRefilled(written);
+  })();
+}
+
+/*
+ * Whether the focus is in somewhere to type that is not one of the boxes
+ * chosen in — a person part way through writing something.
+ */
+function typingElsewhere() {
+  const at = deepActiveElement();
+  if (!at || at === document.body) return false;
+  if (given.some((entry) => entry.kind === 'widget' && (entry.el === at || typingBoxOf(entry.el) === at))) return false;
+  if (at.isContentEditable || at instanceof HTMLTextAreaElement) return true;
+  return at instanceof HTMLInputElement && !['button', 'checkbox', 'file', 'hidden', 'image', 'radio', 'reset', 'submit'].includes(at.type);
+}
+
+function readBackRefilled(written) {
   if (written.length === 0) return;
   // Read back once the page has drawn it: a pressed button shows a moment late.
   setTimeout(() => {

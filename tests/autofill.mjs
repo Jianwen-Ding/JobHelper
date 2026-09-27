@@ -5636,6 +5636,60 @@ const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><tit
 </script></body></html>`;
 
 /*
+ * Ashby's search-and-pick box, as its fixtures draw it: an
+ * `ashby-application-form-input-autocomplete` combobox whose list opens on a
+ * press, filters on what is typed — a search only answers once something is,
+ * and a moment late — and whose pick is what the box then says. Let go of
+ * without a pick, the box goes back to the last one. `onPick` hears each pick.
+ */
+const ASHBY_AUTOCOMPLETE = `<script>
+  window.__autocomplete = (input, choices, { search = false, onPick = () => {} } = {}) => {
+    const own = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+    let picked = '';
+    let list = null;
+    let timer = null;
+    const close = () => {
+      list?.remove();
+      list = null;
+      input.setAttribute('aria-expanded', 'false');
+      input.removeAttribute('aria-controls');
+    };
+    const draw = () => {
+      close();
+      const typed = own.get.call(input).toLowerCase();
+      if (search && !typed) return;
+      list = document.createElement('div');
+      list.setAttribute('role', 'listbox');
+      list.id = 'list-' + Math.random().toString(36).slice(2);
+      for (const choice of choices.filter((c) => c.toLowerCase().includes(typed))) {
+        const option = document.createElement('div');
+        option.setAttribute('role', 'option');
+        option.textContent = choice;
+        option.addEventListener('mousedown', (e) => e.preventDefault());
+        option.addEventListener('click', () => {
+          picked = choice;
+          own.set.call(input, choice);
+          close();
+          onPick(choice);
+        });
+        list.append(option);
+      }
+      input.parentElement.append(list);
+      input.setAttribute('aria-expanded', 'true');
+      input.setAttribute('aria-controls', list.id);
+    };
+    const later = () => { clearTimeout(timer); timer = setTimeout(draw, search ? 150 : 0); };
+    input.addEventListener('mousedown', later);
+    // Emptied, it holds nothing: the pick is let go of too.
+    input.addEventListener('input', () => { if (!own.get.call(input) && picked) { picked = ''; onPick(''); } later(); });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+    input.addEventListener('blur', () => { clearTimeout(timer); close(); own.set.call(input, picked); });
+    input.__reset = (v = '') => { picked = v; own.set.call(input, v); close(); };
+    input.__picked = () => picked;
+  };
+</script>`;
+
+/*
  * Quora's Ashby application, and its "Autofill from resume".
  *
  * The markup is the live page's, cut down to the fields a user found empty
@@ -5656,6 +5710,9 @@ const PLAIN_NEAR_MISSES = `<!doctype html><html><head><meta charset="utf-8"><tit
  * shows the date it took in its own format; picking the day it already holds
  * lets go of it. `?inplace` keeps the elements and empties them in place;
  * `?parsed-phone` has the resume carry a telephone number of its own.
+ * `?comboboxes` adds the page's Location and School Name, Ashby's
+ * search-and-pick boxes (see `ASHBY_AUTOCOMPLETE`), saved as they are picked;
+ * `?parsed-location` has the resume carry a location of its own.
  */
 const ASHBY_RESUME_AUTOFILL = `<!doctype html><html><head><meta charset="utf-8"><title>Apply — Quora</title>
 <style>._input_1svni_78 { display: none; } [data-state="hidden"] { display: none; }</style></head><body>
@@ -5665,6 +5722,8 @@ const ASHBY_RESUME_AUTOFILL = `<!doctype html><html><head><meta charset="utf-8">
   <div class="_pending_xd2v0_121 ashby-application-form-autofill-input-pending-layer" data-state="hidden"><span aria-label="Loading..." role="progressbar"></span><span>Parsing your resume. Autofilling key fields...</span></div>
 </div></div>
 <div id="form-root"></div>
+${ASHBY_AUTOCOMPLETE}
+<template id="comboboxes"><div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="_systemfield_location" data-field-entry-id="b6511a02-1ab4-47d1-9d4e-49780cb9869a__systemfield_location"><label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title" for="_systemfield_location">Location</label><div class="_description_1e3gg_48 ashby-application-form-question-description"><p>City, State, and Country</p></div><div class="_inputContainer_d7ago_28"><input class="_input_d7ago_28 ashby-application-form-input-autocomplete" placeholder="Start typing..." aria-autocomplete="list" aria-expanded="false" aria-haspopup="listbox" role="combobox" value=""><button class="_container_pjyt6_1 _toggleButton_d7ago_32"><svg viewBox="0 0 640 640" fill="none" height="1em"><path d="M303.5 473C312.9 482.4 328.1 482.4 337.4 473L537.4 273C546.8 263.6 546.8 248.4 537.4 239.1C528 229.8 512.8 229.7 503.5 239.1L320.5 422.1L137.5 239.1C128.1 229.7 112.9 229.7 103.6 239.1C94.3 248.5 94.2 263.7 103.6 273L303.6 473z"></path></svg></button></div></div><div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="_systemfield_education_history" data-field-entry-id="b6511a02-1ab4-47d1-9d4e-49780cb9869a__systemfield_education_history"><label class="_heading_f7cvd_52 _required_f7cvd_91 _label_1e3gg_42 ashby-application-form-question-title" for="_systemfield_education_history">School Name</label><div class="_description_1e3gg_48 ashby-application-form-question-description"><p><em><strong>For most recent or in progress degree.</strong></em></p></div><div class="_stack_b7xpf_1 _vertical_b7xpf_4 _gapNormal_b7xpf_19"><div class="_stack_b7xpf_1 _vertical_b7xpf_4"><label class="_heading_f7cvd_52 _required_f7cvd_91 _educationLabel_1e3gg_162 ashby-application-form-question-title" for="_systemfield_education_history-school">School</label><div class="_inputContainer_d7ago_28"><input class="_input_d7ago_28 ashby-application-form-input-autocomplete" placeholder="Search schools..." aria-autocomplete="list" aria-expanded="false" aria-haspopup="listbox" role="combobox" value=""><button class="_container_pjyt6_1 _toggleButton_d7ago_32"><svg viewBox="0 0 640 640" fill="none" height="1em"><path d="M303.5 473C312.9 482.4 328.1 482.4 337.4 473L537.4 273C546.8 263.6 546.8 248.4 537.4 239.1C528 229.8 512.8 229.7 503.5 239.1L320.5 422.1L137.5 239.1C128.1 229.7 112.9 229.7 103.6 239.1C94.3 248.5 94.2 263.7 103.6 273L303.6 473z"></path></svg></button></div></div><div class="_stack_b7xpf_1 _horizontal_b7xpf_7 _gapSmall_b7xpf_16 _wrap_b7xpf_34"></div></div></div></template>
 <template id="form"><div class="_jobPostingForm_5yu8i_402 ashby-application-form-container"><div class="_section_5yu8i_86 ashby-application-form-section-container">
   <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="_systemfield_name"><label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="_systemfield_name">Full Name</label><div><input placeholder="Type here..." name="_systemfield_name" required="" id="_systemfield_name" type="text" class="_input_80epu_28 ashby-application-form-input-text" value=""></div></div>
   <div class="_fieldEntry_1e3gg_28 ashby-application-form-field-entry" data-field-path="_systemfield_email"><label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="_systemfield_email">Email</label><div><input placeholder="hello@example.com..." name="_systemfield_email" required="" id="_systemfield_email" type="email" class="_input_80epu_28 ashby-application-form-input-text" value=""></div></div>
@@ -5707,6 +5766,7 @@ const ASHBY_RESUME_AUTOFILL = `<!doctype html><html><head><meta charset="utf-8">
     window.__mounts++;
     const root = document.getElementById('form-root');
     root.replaceChildren(document.getElementById('form').content.cloneNode(true));
+    if (query.has('comboboxes')) root.querySelector('[data-field-path="ac061e86-2644-429c-9f9f-58ecfe59b7e5"]').after(document.getElementById('comboboxes').content.cloneNode(true));
     wire(root, saved);
   }
   function wire(root, saved) {
@@ -5729,6 +5789,13 @@ const ASHBY_RESUME_AUTOFILL = `<!doctype html><html><head><meta charset="utf-8">
       input.addEventListener('blur', save);
       clearing.push(() => clearTimeout(timer));
       input.__reset = (v) => { value = v ?? ''; input.value = value; };
+    }
+    const PLACES = ['Boston, Massachusetts, United States', 'Boston, England, United Kingdom', 'Boston, New York, United States', 'Toronto, Ontario, Canada'];
+    const SCHOOLS = ['Northeastern University', 'Northeastern Illinois University', 'Boston University'];
+    for (const input of root.querySelectorAll('input.ashby-application-form-input-autocomplete')) {
+      const path = input.closest('[data-field-path]').dataset.fieldPath;
+      window.__autocomplete(input, path === '_systemfield_location' ? PLACES : SCHOOLS, { search: true, onPick: (choice) => { server[path] = choice; } });
+      input.__reset(saved[path] ?? '');
     }
     const box = root.querySelector('.ashby-application-form-input-date');
     let selected = saved[DATE] ? new Date(saved[DATE] + 'T00:00') : null;
@@ -5777,10 +5844,12 @@ const ASHBY_RESUME_AUTOFILL = `<!doctype html><html><head><meta charset="utf-8">
     setTimeout(() => {
       const found = { _systemfield_name: 'Morgan Testwell', _systemfield_email: 'morgan.testwell@example.com' };
       if (query.has('parsed-phone')) found['ac061e86-2644-429c-9f9f-58ecfe59b7e5'] = '555-010-0123';
+      if (query.has('parsed-location')) found._systemfield_location = 'Toronto, Ontario, Canada';
       for (const key of Object.keys(server)) delete server[key];
       Object.assign(server, found);
       if (query.has('inplace')) {
         for (const input of document.querySelectorAll('input.ashby-application-form-input-text')) input.__reset(found[input.name]);
+        for (const input of document.querySelectorAll('input.ashby-application-form-input-autocomplete')) input.__reset(found[input.closest('[data-field-path]').dataset.fieldPath]);
         document.querySelector('.ashby-application-form-input-date').__reset();
         for (const group of document.querySelectorAll('.ashby-application-form-input-yesno')) group.__reset();
       } else mount(found);
@@ -5806,59 +5875,6 @@ const RESET_ON_FILE = `<!doctype html><html><head><meta charset="utf-8"><title>A
 <script>
   document.getElementById('rr').addEventListener('change', () => setTimeout(() => document.getElementById('f').reset(), 300));
 </script></body></html>`;
-
-/*
- * Ashby's search-and-pick box, as its fixtures draw it: an
- * `ashby-application-form-input-autocomplete` combobox whose list opens on a
- * press, filters on what is typed — a search only answers once something is,
- * and a moment late — and whose pick is what the box then says. Let go of
- * without a pick, the box goes back to the last one. `onPick` hears each pick.
- */
-const ASHBY_AUTOCOMPLETE = `<script>
-  window.__autocomplete = (input, choices, { search = false, onPick = () => {} } = {}) => {
-    const own = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
-    let picked = '';
-    let list = null;
-    let timer = null;
-    const close = () => {
-      list?.remove();
-      list = null;
-      input.setAttribute('aria-expanded', 'false');
-      input.removeAttribute('aria-controls');
-    };
-    const draw = () => {
-      close();
-      const typed = own.get.call(input).toLowerCase();
-      if (search && !typed) return;
-      list = document.createElement('div');
-      list.setAttribute('role', 'listbox');
-      list.id = 'list-' + Math.random().toString(36).slice(2);
-      for (const choice of choices.filter((c) => c.toLowerCase().includes(typed))) {
-        const option = document.createElement('div');
-        option.setAttribute('role', 'option');
-        option.textContent = choice;
-        option.addEventListener('mousedown', (e) => e.preventDefault());
-        option.addEventListener('click', () => {
-          picked = choice;
-          own.set.call(input, choice);
-          close();
-          onPick(choice);
-        });
-        list.append(option);
-      }
-      input.parentElement.append(list);
-      input.setAttribute('aria-expanded', 'true');
-      input.setAttribute('aria-controls', list.id);
-    };
-    const later = () => { clearTimeout(timer); timer = setTimeout(draw, search ? 150 : 0); };
-    input.addEventListener('mousedown', later);
-    input.addEventListener('input', later);
-    input.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
-    input.addEventListener('blur', () => { clearTimeout(timer); close(); own.set.call(input, picked); });
-    input.__reset = (v = '') => { picked = v; own.set.call(input, v); close(); };
-    input.__picked = () => picked;
-  };
-</script>`;
 
 /*
  * Quora's Ashby form asks the degree as radios — the markup below is the live
@@ -11472,7 +11488,7 @@ async function main() {
       ...PROFILE, phone: '(555) 010-0199', major: 'Computer Science', graduation_date: 'May 2027', requires_sponsorship: 'No',
     };
     const COORDINATION = 'I understand that all employees for this position will be expected to be available for meetings and impromptu communication during Quora\'s “coordination hours” (Mon-Fri, 9am-3pm Pacific Time).';
-    const resumeAutofill = (query = '', { clearDiscipline = false, upload = true } = {}) =>
+    const resumeAutofill = (query = '', { clearDiscipline = false, clearLocation = false, upload = true, fields = QUORA } = {}) =>
       page.goto(`${base}/ashby-resume-autofill${query}`, { waitUntil: 'domcontentloaded' }).then(async () => {
         const filled = await page.evaluate(async ({ b, fields, asked }) => {
           const m = await import(`${b}/autofill.js`);
@@ -11480,10 +11496,17 @@ async function main() {
           const report = await m.fillComboboxes(fields, m.fillForm(fields, { remembered: [{ question: asked, answer: 'Yes' }] }), { patience: 1500 });
           m.watchForEmptied?.((names) => window.__told.push(names));
           await new Promise((r) => setTimeout(r, 700));
-          return { server: window.__server(), filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`) };
-        }, { b: base, fields: QUORA, asked: COORDINATION });
+          return {
+            server: window.__server(), filled: report.filled.map((f) => f.key), skipped: report.skipped.map((s) => `${s.key}: ${s.reason}`),
+            picked: Object.fromEntries([...document.querySelectorAll('#form-root input.ashby-application-form-input-autocomplete')].map((i) => [i.closest('[data-field-path]').dataset.fieldPath, i.value])),
+          };
+        }, { b: base, fields, asked: COORDINATION });
         // Somebody taking one of them out again, by hand.
         if (clearDiscipline) await page.fill('[id="842bb240-06cd-4b26-8c17-aa094b1c9dab"]', '');
+        if (clearLocation) {
+          await page.fill('[data-field-path="_systemfield_location"] input', '');
+          await page.locator('body').click({ position: { x: 5, y: 5 } });
+        }
         if (upload) {
           // The resume into the autofill box, the way the card's Attach or a dropped chip puts it in any box.
           await page.evaluate(() => {
@@ -11503,6 +11526,7 @@ async function main() {
           told: window.__told,
           shown: Object.fromEntries([...document.querySelectorAll('#form-root input[type=text], #form-root input[type=tel], #form-root input[type=email]')].map((i) => [i.name || i.placeholder, i.value])),
           pressed: [...document.querySelectorAll('#form-root [aria-pressed="true"]')].map((b) => b.textContent),
+          picked: Object.fromEntries([...document.querySelectorAll('#form-root input.ashby-application-form-input-autocomplete')].map((i) => [i.closest('[data-field-path]').dataset.fieldPath, i.value])),
         }), filled);
       });
     const PHONE = 'ac061e86-2644-429c-9f9f-58ecfe59b7e5';
@@ -11550,6 +11574,77 @@ async function main() {
       JSON.stringify(clearedByHand),
     );
     check('and a form nothing empties is left alone', neverWiped.told.length === 0 && allBack(neverWiped) && neverWiped.mounts === 1, JSON.stringify(neverWiped));
+    /*
+     * And the page's two search-and-pick boxes, Location and School Name,
+     * chosen by Autofill and emptied by the parse like the rest.
+     */
+    const PICKED = { ...QUORA, address_state: 'MA', location: 'Boston, MA', school: 'Northeastern University' };
+    const LOCATION = '_systemfield_location';
+    const SCHOOL = '_systemfield_education_history';
+    const pickedAgain = await resumeAutofill('?comboboxes', { fields: PICKED });
+    const pickedInPlace = await resumeAutofill('?comboboxes&inplace', { fields: PICKED });
+    const parsedLocation = await resumeAutofill('?comboboxes&parsed-location', { fields: PICKED });
+    const locationByHand = await resumeAutofill('?comboboxes', { fields: PICKED, clearLocation: true });
+    const pickedNeverWiped = await resumeAutofill('?comboboxes', { fields: PICKED, upload: false });
+    const bothPicked = (r) =>
+      r.server[LOCATION] === 'Boston, Massachusetts, United States' && r.server[SCHOOL] === 'Northeastern University' &&
+      r.picked[LOCATION] === 'Boston, Massachusetts, United States' && r.picked[SCHOOL] === 'Northeastern University';
+    group('Ashby\'s search-and-pick boxes emptied by "Autofill from resume"');
+    check(
+      'chosen first: the Location and the School are picked and saved',
+      bothPicked(pickedAgain.before) && pickedAgain.before.filled.includes('location') && pickedAgain.before.filled.includes('school'),
+      JSON.stringify(pickedAgain.before),
+    );
+    check(
+      'after the form mounts again from the parse, both are chosen again and saved, with the rest',
+      pickedAgain.mounts === 2 && bothPicked(pickedAgain) && allBack(pickedAgain),
+      JSON.stringify(pickedAgain),
+    );
+    check(
+      'and the card is told of them, once, with the rest',
+      pickedAgain.told.length === 1 && pickedAgain.told[0].length === 7 && pickedAgain.told[0].includes('Location') &&
+        pickedAgain.told[0].some((n) => /School/.test(n)),
+      JSON.stringify(pickedAgain.told),
+    );
+    check('the same when the page empties them where they stand', pickedInPlace.mounts === 1 && bothPicked(pickedInPlace) && pickedInPlace.told.length === 1, JSON.stringify(pickedInPlace));
+    check(
+      'a location the parse put there is the page\'s, and stays',
+      parsedLocation.server[LOCATION] === 'Toronto, Ontario, Canada' && parsedLocation.picked[LOCATION] === 'Toronto, Ontario, Canada' &&
+        parsedLocation.server[SCHOOL] === 'Northeastern University' && !parsedLocation.told.flat().includes('Location'),
+      JSON.stringify(parsedLocation),
+    );
+    check(
+      'a box the person emptied by hand is not chosen again, the School is',
+      locationByHand.picked[LOCATION] === '' && locationByHand.picked[SCHOOL] === 'Northeastern University' && !locationByHand.told.flat().includes('Location'),
+      JSON.stringify(locationByHand),
+    );
+    check('and boxes nothing empties are left alone', pickedNeverWiped.told.length === 0 && bothPicked(pickedNeverWiped) && pickedNeverWiped.mounts === 1, JSON.stringify(pickedNeverWiped));
+    // A react-select, which draws its pick beside an empty box: the page puts "Select..." back over two of them.
+    const reactSelect = await page.goto(`${base}/greenhouse-stripe`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const told = [];
+        await m.fillComboboxes(fields, m.fillForm(fields));
+        m.watchForEmptied?.((names) => told.push(names));
+        document.activeElement?.blur?.();
+        const shown = (id) => document.getElementById(id).closest('.select__control').querySelector('.select__single-value')?.textContent ?? '';
+        const before = { school: shown('school--0'), degree: shown('degree--0'), discipline: shown('discipline--0') };
+        for (const id of ['school--0', 'degree--0']) {
+          const control = document.getElementById(id).closest('.select__control');
+          control.querySelector('.select__single-value').remove();
+          control.querySelector('.select__value-container').insertAdjacentHTML('afterbegin', '<div class="select__placeholder">Select...</div>');
+        }
+        const began = Date.now();
+        while (!told.length && Date.now() - began < 8000) await new Promise((r) => setTimeout(r, 100));
+        return { before, told, took: Date.now() - began, school: shown('school--0'), degree: shown('degree--0'), discipline: shown('discipline--0'), open: document.querySelectorAll('[role=listbox]').length };
+      }, { b: base, fields: { school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science' } }),
+    );
+    check(
+      'a react-select the page puts back to "Select..." is chosen again, and only the ones it emptied',
+      reactSelect.before.school === 'Northeastern University' && reactSelect.school === 'Northeastern University' && reactSelect.degree === "Bachelor's Degree" &&
+        reactSelect.discipline === 'Computer Science' && reactSelect.open === 0 && reactSelect.told.length === 1 && reactSelect.told[0].length === 2,
+      JSON.stringify(reactSelect),
+    );
     const reset = await page.goto(`${base}/reset-on-file`, { waitUntil: 'domcontentloaded' }).then(() =>
       page.evaluate(async ({ b, fields }) => {
         const m = await import(`${b}/autofill.js`);
