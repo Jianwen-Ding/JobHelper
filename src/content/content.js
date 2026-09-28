@@ -1117,6 +1117,10 @@
       case 'fresh':
         return send('fresh', { spec: payload.spec });
 
+      // Whether a write the card's filing was refused over is this tab's own.
+      case 'ownWrite':
+        return send('ownWrite', { id: payload.id, from: payload.from, to: payload.to });
+
       case 'attachFiles': {
         // Pressed, so this application takes the plain names in the folder.
         const got = await send('attachments', { application: payload.application ?? null, claim: true });
@@ -1230,6 +1234,8 @@
           source: new URL(location.href).hostname,
           jobDescription: analysis.job.description ?? '',
           spec: payload.spec,
+          // The write of the copy it was built on. See `fileTheCopy` in the card.
+          basedOn: payload.basedOn,
           // Including a letter box that is in a frame rather than this page.
           coverLetterRequired: wantsCoverLetter() || letterInFrame,
           /*
@@ -1250,6 +1256,8 @@
             limit: q.limit || undefined,
           })),
         });
+        // Refused over an edit made in ResumeM-M: the card takes it, and asks again.
+        if (result?.conflict) return result;
         await send('openTab', { url: result.absoluteUrl });
         return result;
       }
@@ -1288,6 +1296,10 @@
         return send('stage', {
           spec: payload.spec,
           resumeId: payload.spec.id,
+          // The write of the copy it was built on. See `fileTheCopy` in the card.
+          basedOn: payload.basedOn,
+          // Asked for on the card after the application went out.
+          evenIfSent: payload.evenIfSent || undefined,
           ...filedAs(),
           url: location.href,
           source: new URL(location.href).hostname,
@@ -1305,6 +1317,7 @@
         return send('bundle', {
           spec: payload.spec,
           resumeId: payload.spec.id,
+          basedOn: payload.basedOn,
           ...filedAs(),
           url: location.href,
           source: new URL(location.href).hostname,
@@ -2365,6 +2378,15 @@
        */
 
       /*
+       * And the card stops staging, from this moment: a stage leaving now
+       * reaches the store after the send and rebuilt the files of an
+       * application that had gone out. See `markSent` in the card. Given back
+       * if the send is not recorded. Before the flush below, so the work it
+       * saves says so too.
+       */
+      cardHandle?.markSent?.(true);
+
+      /*
        * Flushed here, not left to the keeper.
        *
        * `holdASpace` — the thing that opens the Workspace draft — only runs
@@ -2397,6 +2419,7 @@
       })
         .then((reply) => {
           if (reply?.ok === false) {
+            cardHandle?.markSent?.(false);
             cardHandle?.setStatus?.('Not recorded — ResumeM-M could not be reached.');
             return false;
           }
@@ -2404,6 +2427,7 @@
           return true;
         })
         .catch(() => {
+          cardHandle?.markSent?.(false);
           cardHandle?.setStatus?.('Not recorded — ResumeM-M could not be reached.');
           return false;
         });

@@ -141,9 +141,32 @@ async function main() {
    * changes to has been compiled before.
    */
   let slowCompiles = false;
+  /*
+   * And holds the card's next stage while `holdStage` is set, calling it
+   * once the stage is held, and hands what that stage sent to `seeStage` (see
+   * "while the card's stage is on its way").
+   */
+  let holdStage = null;
+  let seeStage = null;
   const proxy = await serveSlowProxy(SERVER, {
-    slowRoute: { test: (url) => slowCompiles && /^\/api\/render(\?|$)/.test(url) },
+    slowRoute: {
+      test: (url) => {
+        if (slowCompiles && /^\/api\/render(\?|$)/.test(url)) return true;
+        if (!holdStage || !/^\/api\/applications\/bundle(\?|$)/.test(url)) return false;
+        const held = holdStage;
+        holdStage = null;
+        held();
+        return true;
+      },
+    },
     ms: 4000,
+    respondInstead: (url, body) => {
+      if (seeStage && /^\/api\/applications\/bundle(\?|$)/.test(url)) {
+        seeStage(JSON.parse(body));
+        seeStage = null;
+      }
+      return null;
+    },
   });
   try {
     const worker = await extensionWorker(context);
@@ -256,6 +279,79 @@ async function main() {
       check('(the card was compiling when the copy was edited, and staged after)', compiling && after !== before, `${compiling}, ${before?.slice(0, 8)} → ${after?.slice(0, 8)}`);
       check('the edit is still in the store after the card has staged', (await copyNow())?.label === renamed, (await copyNow())?.label);
       check('and the card takes it, and says so', await says(/this copy was edited there/));
+    }
+
+    /*
+     * The copy edited in ResumeM-M after the card has looked and before its
+     * stage lands. The card asks the store what it holds before staging, and
+     * then files its copy whole: an edit landing between the two was written
+     * away, and nothing the card could look at closes that. Here a suggestion
+     * is switched on the card, its stage is held in the proxy once it has
+     * left the card, and the copy is renamed in the store meanwhile. The
+     * stage says which write it was based on, the store refuses it, and the
+     * card files its switch on top of the rename.
+     */
+    group('The copy edited in ResumeM-M while the card\'s stage is on its way');
+    {
+      const copyNow = async () => {
+        const list = await api('/resumes');
+        return (list.resumes ?? list).find((r) => r.id === copy.id) ?? null;
+      };
+      /** What a switch on the card changes: its wordings and its skills lists. */
+      const keyed = (v) =>
+        JSON.stringify(v ?? null, (_k, x) =>
+          x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x,
+        );
+      const switches = (spec) =>
+        keyed({ choices: spec?.choices ?? {}, skills: spec?.sections?.find((s) => s.kind === 'skills')?.items ?? null });
+      // Settled first: the folder has stopped changing from the group above.
+      let before = await folderResume();
+      for (let i = 0; i < 20; i++) {
+        await page.waitForTimeout(3000);
+        const now = await folderResume();
+        if (now === before) break;
+        before = now;
+      }
+      const was = await copyNow();
+
+      if (await card.locator('.changes.shut').count()) await card.locator('button.fold-changes').first().click();
+      const row = card.locator('.change:has(.pick)').first();
+      const offered = (await row.count()) === 1;
+      const wasOff = (await row.getAttribute('class').catch(() => ''))?.includes('off') ?? false;
+      const held = new Promise((go) => (holdStage = go));
+      const sent = new Promise((go) => (seeStage = go));
+      if (offered) await row.locator('.pick').click();
+      const holding = await Promise.race([held.then(() => true), page.waitForTimeout(60_000).then(() => false)]);
+      const renamed = `${copy.label} (renamed while the card staged)`;
+      if (holding) await put(`/resumes/${encodeURIComponent(copy.id)}`, { ...(await copyNow()), label: renamed });
+      const staged = await Promise.race([sent, page.waitForTimeout(30_000).then(() => null)]);
+      check(
+        '(a switch on the card was staged, and held until the copy had been renamed in the store)',
+        offered && holding && Boolean(staged?.spec) && switches(staged.spec) !== switches(was),
+        JSON.stringify({ offered, holding, staged: Boolean(staged?.spec) }),
+      );
+
+      const both = async () => {
+        const now = await copyNow();
+        return now?.label === renamed && Boolean(staged?.spec) && switches(now) === switches(staged.spec);
+      };
+      let kept = false;
+      for (const until = Date.now() + 45_000; Date.now() < until && !(kept = await both()); ) await page.waitForTimeout(500);
+      // And still, once everything the card does after has landed.
+      await page.waitForTimeout(8000);
+      kept = kept && (await both());
+      const now = await copyNow();
+      check('the rename is still in the store after the card\'s stage landed', now?.label === renamed, now?.label);
+      check(
+        'and so is the switch made on the card',
+        kept,
+        staged?.spec ? `${switches(now) === switches(staged.spec) ? 'same' : 'different'} wordings and skills than the card staged` : '(nothing staged)',
+      );
+      check(
+        'and the card keeps its switch, and says the copy was edited',
+        ((await row.getAttribute('class').catch(() => ''))?.includes('off') ?? wasOff) !== wasOff &&
+          (await says(/edited (in ResumeM-M while the card was filing it|there)/, 10_000)),
+      );
     }
 
     group('The resume the copy was made from, changed in ResumeM-M');

@@ -316,6 +316,9 @@ async function serverFetch(path, options = {}) {
     // What the store called it, for the callers that treat one refusal
     // differently from another. See `holdASpace` and `not-a-job`.
     if (typeof body.kind === 'string') failed.kind = body.kind;
+    // A resume write refused because the store holds a write it was not based
+    // on: what is there now, and which write that is. See `filingRefused`.
+    if (body.kind === 'conflict') failed.conflict = { id: body.id ?? null, current: body.current ?? null, version: body.version ?? null };
     // The server says which sort of refusal this is. "No save open" is the one
     // worth acting on: there is a button that fixes it, one tab away.
     if (body.kind === 'no-project') failed.jobhelper = { fix: 'open-save', serverUrl };
@@ -1135,7 +1138,7 @@ async function holdASpace(trail, tabId) {
   // The write already in flight, handed to whoever else asks — a send waiting
   // on its save has to wait on this, not on a call that returned at once.
   if (holding.has(key)) return holding.get(key);
-  const run = holdTheSpace(key, save, company, role, trail, work);
+  const run = filingOut(tabId, holdTheSpace(key, save, company, role, trail, work, tabId));
   holding.set(key, run);
   return run;
 }
@@ -1153,8 +1156,77 @@ async function holdASpace(trail, tabId) {
  */
 const THIS_WORKER = `${Date.now()}-${Math.random()}`;
 
+/**
+ * A filing of the card's copy that the store refused, handed back as an
+ * answer rather than thrown.
+ *
+ * The card sends the write of the copy its own was built on (`basedOn`), and
+ * the store refuses it when an edit made in ResumeM-M has landed since — the
+ * moment between the card looking and the card writing, which looking could
+ * never close. What is there now comes back with it, and the card takes that
+ * edit rather than failing (see `fileTheCopy` in the card).
+ */
+function filingRefused(err) {
+  if (err?.conflict) return { conflict: err.conflict, error: err.message };
+  /*
+   * And a stage refused because the application has gone out: nothing was
+   * written, and nothing is wrong, so the card is told rather than shown an
+   * error. See `AlreadySent` in ResumeM-M.
+   */
+  if (err?.kind === 'already-sent') return { alreadySent: true, error: err.message };
+  throw err;
+}
+
+/*
+ * The writes of its copy this tab's cards have made, and those still out.
+ *
+ * A card files its copy based on the write it knows of, and is refused over
+ * any other — including a write of its own it never heard back about: the
+ * keeper's, which answers nobody, and a stage the card on the page before
+ * sent just before the tab moved on, answered to a card that no longer
+ * exists. Measured in tests/carrying.mjs: the form page's card, carrying the
+ * posting page's knowledge from before that page's stage came back, was
+ * refused over it, took its own copy for an edit made in ResumeM-M, compiled
+ * and staged again — and that stage landed after Submit. So every filing is
+ * noted here, per tab, as the write it was based on and the write it made,
+ * and `ownWrite` follows them from the card's to the one it was refused over.
+ */
+const filedKey = (tabId) => `filedCopies:${tabId}`;
+const FILINGS_KEPT = 30;
+const filingsOut = new Map();
+function filingOut(tabId, run) {
+  if (tabId === undefined) return run;
+  const out = filingsOut.get(tabId) ?? new Set();
+  out.add(run);
+  filingsOut.set(tabId, out);
+  run.catch(() => undefined).finally(() => {
+    out.delete(run);
+    if (out.size === 0 && filingsOut.get(tabId) === out) filingsOut.delete(tabId);
+  });
+  return run;
+}
+async function noteFiled(tabId, id, basedOn, version) {
+  if (tabId === undefined || !id || version === undefined || basedOn === undefined) return;
+  const key = filedKey(tabId);
+  const list = (await session().get(key).catch(() => ({})))[key] ?? [];
+  list.push({ id, basedOn, version });
+  await session().set({ [key]: list.slice(-FILINGS_KEPT) }).catch(() => undefined);
+}
+/** A filing of the copy, noted and tracked. See `filingOut`. */
+function filing(tab, payload, run) {
+  return filingOut(
+    tab?.id,
+    run.then(async (reply) => {
+      if (reply && !reply.conflict && !reply.alreadySent) {
+        await noteFiled(tab?.id, reply.draft?.resumeId ?? payload?.spec?.id, payload?.basedOn, reply.resumeVersion);
+      }
+      return reply;
+    }),
+  );
+}
+
 /** The write `holdASpace` guards: one per key at a time. */
-async function holdTheSpace(key, save, company, role, trail, work) {
+async function holdTheSpace(key, save, company, role, trail, work, tabId) {
   try {
     const held = (await session().get(key).catch(() => ({})))[key];
     if (held && !(held.pending && held.pending !== THIS_WORKER)) return;
@@ -1163,52 +1235,74 @@ async function holdTheSpace(key, save, company, role, trail, work) {
     // an attempt that died.
     const settled = () => session().set({ [key]: { at: Date.now() } }).catch(() => undefined);
     try {
-      await serverFetch('/api/workspace', {
-        method: 'POST',
-        timeoutMs: SLOW_TIMEOUT_MS,
-        save,
-        body: JSON.stringify({
-          /*
-           * Nobody pressed anything to get here, so the store is allowed to
-           * disbelieve it. `openWorkspace` — the card's button — carries no
-           * such flag: somebody typing a company and a role means it, however
-           * odd it reads. This one is a guess made from a page's markup, and a
-           * guess is how "Indeed — Now Hiring: 300 Software Intern Jobs" and
-           * "Reddit — https://preview.redd.it/…jpeg?width=1280" became rows in
-           * somebody's tracker.
-           */
-          auto: true,
-          /*
-           * And whether it has been applied to yet, which is a different
-           * question from whether there is anything to hold.
-           *
-           * A place to write is wanted as soon as there is a resume: the
-           * letter is drafted before the form is opened, and gating the
-           * workspace on the form having been filled puts the writing surface
-           * behind the thing it is for. But a row that says `applying` is a
-           * claim about what somebody is doing, and a built resume is not that
-           * claim — a resume is built on anything job-shaped you open, and
-           * `prepareSoon` stages the folder off a timer with nobody pressing
-           * anything. So the tracker filled up with "Indeed — Now Hiring: 300
-           * Software Intern Jobs", a `preview.redd.it` image url, and one row
-           * each for "NVIDIA Corporation" and "2100 NVIDIA USA", every one of
-           * them sitting at `applying` for ever.
-           *
-           * Putting text in the employer's boxes or a file in its upload
-           * control is the thing no amount of browsing does by accident. The
-           * store opens the row at `interested` until it hears this, and
-           * advances it when it does.
-           */
-          actedOnForm: Boolean(work.actedOnForm),
-          company,
-          role,
-          url: trail.pages?.[0]?.url,
-          source: trail.pages?.[0]?.url ? new URL(trail.pages[0].url).hostname : undefined,
-          resumeId: work.spec?.id,
-          spec: work.spec,
-          coverLetterRequired: Boolean(work.letter?.trim()) || undefined,
-        }),
+      const body = {
+        /*
+         * Nobody pressed anything to get here, so the store is allowed to
+         * disbelieve it. `openWorkspace` — the card's button — carries no
+         * such flag: somebody typing a company and a role means it, however
+         * odd it reads. This one is a guess made from a page's markup, and a
+         * guess is how "Indeed — Now Hiring: 300 Software Intern Jobs" and
+         * "Reddit — https://preview.redd.it/…jpeg?width=1280" became rows in
+         * somebody's tracker.
+         */
+        auto: true,
+        /*
+         * And whether it has been applied to yet, which is a different
+         * question from whether there is anything to hold.
+         *
+         * A place to write is wanted as soon as there is a resume: the
+         * letter is drafted before the form is opened, and gating the
+         * workspace on the form having been filled puts the writing surface
+         * behind the thing it is for. But a row that says `applying` is a
+         * claim about what somebody is doing, and a built resume is not that
+         * claim — a resume is built on anything job-shaped you open, and
+         * `prepareSoon` stages the folder off a timer with nobody pressing
+         * anything. So the tracker filled up with "Indeed — Now Hiring: 300
+         * Software Intern Jobs", a `preview.redd.it` image url, and one row
+         * each for "NVIDIA Corporation" and "2100 NVIDIA USA", every one of
+         * them sitting at `applying` for ever.
+         *
+         * Putting text in the employer's boxes or a file in its upload
+         * control is the thing no amount of browsing does by accident. The
+         * store opens the row at `interested` until it hears this, and
+         * advances it when it does.
+         */
+        actedOnForm: Boolean(work.actedOnForm),
+        company,
+        role,
+        url: trail.pages?.[0]?.url,
+        source: trail.pages?.[0]?.url ? new URL(trail.pages[0].url).hostname : undefined,
+        resumeId: work.spec?.id,
+        spec: work.spec,
+        /*
+         * Filed only over the write of the copy the card built on, and
+         * only where there is none when the card knows of none. This
+         * files the card's copy with nobody watching, and filed over an
+         * edit made in ResumeM-M since, it wrote the edit away; filed over
+         * a stage the card made meanwhile, it put an older copy back.
+         */
+        ...(work.spec ? { basedOn: work.filed?.id === work.spec.id && work.filed.version !== undefined ? work.filed.version : null } : {}),
+        coverLetterRequired: Boolean(work.letter?.trim()) || undefined,
+      };
+      const post = (sent) =>
+        serverFetch('/api/workspace', { method: 'POST', timeoutMs: SLOW_TIMEOUT_MS, save, body: JSON.stringify(sent) });
+      const reply = await post(body).catch((err) => {
+        if (!err?.conflict) throw err;
+        /*
+         * Refused: the store's copy is newer than the one the card built on.
+         * The space is held without it — the copy is there already, and the
+         * card takes the edit (see `fileTheCopy` in the card).
+         */
+        const { spec: _copy, basedOn: _on, ...without } = body;
+        return post(without).then(() => null);
       });
+      /*
+       * And what it filed, for the card: its next filing is based on the
+       * write before this one, is refused over this one, and has to be able
+       * to tell this write — its own copy — from an edit made in ResumeM-M.
+       * See `ownWrite`.
+       */
+      if (reply && body.spec) await noteFiled(tabId, reply.draft?.resumeId ?? body.spec.id, body.basedOn, reply.resumeVersion);
       await settled();
     } catch (err) {
       /*
@@ -2456,21 +2550,51 @@ const handlers = {
    * That is the only difference and it is the point of having two names.
    */
   async stage(payload, tab) {
-    return serverFetch('/api/applications/bundle', {
-      method: 'POST',
-      timeoutMs: SLOW_TIMEOUT_MS,
-      save: await saveOrRefuse(tab?.id),
-      body: JSON.stringify({ ...payload, status: 'applying' }),
-    });
+    const save = await saveOrRefuse(tab?.id);
+    return filing(
+      tab,
+      payload,
+      serverFetch('/api/applications/bundle', {
+        method: 'POST',
+        timeoutMs: SLOW_TIMEOUT_MS,
+        save,
+        body: JSON.stringify({ ...payload, status: 'applying' }),
+      }).catch(filingRefused),
+    );
   },
 
   async bundle(payload, tab) {
-    return serverFetch('/api/applications/bundle', {
-      method: 'POST',
-      timeoutMs: SLOW_TIMEOUT_MS,
-      save: await saveOrRefuse(tab?.id),
-      body: JSON.stringify(payload),
-    });
+    const save = await saveOrRefuse(tab?.id);
+    return filing(
+      tab,
+      payload,
+      serverFetch('/api/applications/bundle', {
+        method: 'POST',
+        timeoutMs: SLOW_TIMEOUT_MS,
+        save,
+        body: JSON.stringify(payload),
+      }).catch(filingRefused),
+    );
+  },
+
+  /**
+   * Whether the write of the copy a card was refused over is this tab's own:
+   * reached from the write the card built on (`from`) through filings this
+   * tab made (`to`). See `filedKey`. After any filing still out, since the
+   * store writes the copy well before the reply to it comes back.
+   */
+  async ownWrite({ id, from, to }, tab) {
+    const out = [...(filingsOut.get(tab?.id) ?? [])];
+    if (out.length) await Promise.race([Promise.allSettled(out), new Promise((r) => setTimeout(r, SLOW_TIMEOUT_MS))]);
+    const key = filedKey(tab?.id);
+    const list = ((await session().get(key).catch(() => ({})))[key] ?? []).filter((f) => f.id === id);
+    let at = from ?? null;
+    for (let step = 0; step <= list.length && at !== to; step++) {
+      const next = list.find((f) => f.basedOn === at);
+      if (!next) break;
+      at = next.version;
+    }
+    return { own: at === to };
   },
 
   /**
@@ -2863,15 +2987,18 @@ const handlers = {
    * paragraphs; this is the door between the two.
    */
   async openWorkspace(payload, tab) {
-    const result = await serverFetch('/api/workspace', {
-      method: 'POST',
-      timeoutMs: SLOW_TIMEOUT_MS,
-      // The same rule as `bundle`: this writes a space, a tracker row and a
-      // tailored resume into a save, and it has to be the save the proposal
-      // was built from.
-      save: await saveOrRefuse(tab?.id),
-      body: JSON.stringify(payload),
-    });
+    // The same rule as `bundle`: this writes a space, a tracker row and a
+    // tailored resume into a save, and it has to be the save the proposal
+    // was built from.
+    const save = await saveOrRefuse(tab?.id);
+    const result = await filing(
+      tab,
+      payload,
+      serverFetch('/api/workspace', { method: 'POST', timeoutMs: SLOW_TIMEOUT_MS, save, body: JSON.stringify(payload) }).catch(
+        filingRefused,
+      ),
+    );
+    if (result.conflict) return result;
     const { serverUrl } = await getSettings();
     return { ...result, absoluteUrl: `${serverUrl.replace(/\/$/, '')}${result.url}` };
   },
