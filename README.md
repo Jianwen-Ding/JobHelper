@@ -154,6 +154,34 @@ that is not running.
 
 ---
 
+## Reporting a bug
+
+Open the JobHelper toolbar menu and choose **Report a bug**. Describe the
+problem, then paste screenshots with Cmd+V / Ctrl+V or choose image files.
+Reports include the submission time, extension version, and a fingerprint of
+the extension files. You can attach up to three images totaling 4 MB.
+
+**Save bug report** first keeps the report in Chrome's local extension storage.
+It then copies it to ResumeM-M's independent bug inbox. If the server is down
+or has not been updated, the report remains in Chrome and **Retry copying to
+inbox** sends it later. Keep that extension installed until queued reports
+have been copied; removing the extension clears its browser storage.
+After a report reaches the file inbox, **Clear browser copy** frees Chrome
+storage while keeping the files for later agent review.
+
+The server inbox defaults to `ResumeM-M/bug-reports/`, independent of the
+resume save currently open. Each UUID folder contains `report.json` and
+`screenshot-1.png` (or JPEG/WebP) files. The JSON includes notes, creation and
+receipt times, extension version/fingerprint, server build, and `status: new`.
+An agent can read those folders later, or list them with `GET /api/bug-reports`.
+Reports are stored locally; saving one does not start an agent.
+
+For a packaged server, set `RMM_BUG_REPORTS_DIR` to the desired inbox path.
+To keep reports in this workspace, use the absolute path to
+`JobResume/ResumeM-M/bug-reports`. Restart the server and reload JobHelper
+after updating. This feature requires the updated server for the file copy;
+browser storage still works on its own.
+
 ## Tests
 
 ```bash

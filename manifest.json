@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JobHelper",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Spots job postings, offers a resume tailored from your ResumeM-M store, and fills the form from what you already wrote down.",
   "permissions": [
     "storage",

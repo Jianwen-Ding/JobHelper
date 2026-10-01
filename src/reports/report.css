@@ -1,0 +1,24 @@
+:root { font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #202124; background: #f8f9fa; }
+* { box-sizing: border-box; }
+main { max-width: 820px; margin: 40px auto; padding: 28px; background: white; border: 1px solid #dadce0; border-radius: 16px; }
+.brand { color: #1a73e8; font-weight: 600; margin: 0; }
+h1 { font-size: 30px; margin: 8px 0; }
+h2 { font-size: 22px; }
+label { display: block; font-weight: 600; }
+textarea { display: block; width: 100%; margin: 8px 0 20px; padding: 12px; border: 1px solid #dadce0; border-radius: 8px; font: inherit; resize: vertical; }
+#pasteArea { padding: 24px; border: 2px dashed #dadce0; border-radius: 8px; }
+.fileLabel { display: inline; color: #1a73e8; cursor: pointer; text-decoration: underline; }
+#images { display: block; margin-top: 12px; max-width: 100%; }
+.hint { color: #5f6368; font-size: 13px; }
+button { font: inherit; cursor: pointer; border: 1px solid #dadce0; border-radius: 24px; padding: 8px 18px; background: white; color: #1a73e8; }
+#save { background: #1a73e8; color: white; border-color: #1a73e8; }
+button:disabled { opacity: .6; cursor: wait; }
+:focus-visible { outline: 2px solid #1a73e8; outline-offset: 3px; }
+#previews { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0; }
+.preview { width: 210px; }
+.preview img { display: block; width: 100%; height: 140px; object-fit: contain; background: #f8f9fa; border: 1px solid #dadce0; border-radius: 8px; margin-bottom: 8px; }
+section { margin-top: 32px; border-top: 1px solid #dadce0; }
+.report { border-bottom: 1px solid #dadce0; padding: 18px 0; overflow-wrap: anywhere; }
+.report p { white-space: pre-wrap; margin: 6px 0; }
+.error { color: #b31412; }
+@media (max-width: 600px) { main { margin: 12px; padding: 18px; } }

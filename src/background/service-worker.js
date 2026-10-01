@@ -6,6 +6,7 @@
  */
 
 import { getSettings } from '../shared/config.js';
+import { saveBugReport, listBugReports, syncBugReport, clearBugReport } from '../shared/bug-reports.js';
 import {
   EXPECTATION_MS,
   employerKey,
@@ -1591,6 +1592,10 @@ async function keepWork({ work, page }, tab) {
 }
 
 const handlers = {
+  async saveBugReport(payload) { return saveBugReport(payload, serverFetch); },
+  async listBugReports() { return listBugReports(); },
+  async syncBugReport({ id }) { return syncBugReport(id, serverFetch); },
+  async clearBugReport({ id }) { return clearBugReport(id); },
   /** "There is a content script in this frame." Sent once, on load. */
   async frameReady(_payload, tab, sender) {
     await noteFrame(tab?.id, sender?.frameId);

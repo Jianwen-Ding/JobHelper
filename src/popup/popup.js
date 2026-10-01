@@ -1,5 +1,9 @@
 const $ = (id) => document.getElementById(id);
 
+$('reportBug').onclick = () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('src/reports/report.html') });
+};
+
 const send = (type, payload) =>
   new Promise((resolve, reject) => {
     chrome.runtime.sendMessage({ type, payload }, (response) => {
