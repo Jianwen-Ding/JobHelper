@@ -58,6 +58,9 @@ const REFUSE = [
   ['Have you ever been convicted of a crime?', 'No'],
   ['Do you have a disability?', 'No'],
   ['Are you a protected veteran?', 'No'],
+  // As the bank had them, banked in October: the plural slipped past.
+  ['Veterans Status', 'I AM NOT A VETERAN'],
+  ['What is your Veterans Status?', 'I AM NOT A VETERAN'],
   ['Race / Ethnicity', 'Decline to self-identify'],
   ['Gender', 'Decline to self-identify'],
   ['What is your religion?', 'None'],

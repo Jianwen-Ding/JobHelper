@@ -89,7 +89,12 @@ const NEVER_REMEMBER = [
    * not, so its answer was banked and offered to the next employer.
    */
   /\bdisab(led|ility|ilities)\b/i,
-  /\bveteran\b/i,
+  /*
+   * And the plural, which is how the field is usually labelled: "Veterans
+   * Status" passed `\bveteran\b`, and "I AM NOT A VETERAN" was banked twice in
+   * October and offered to the next employer.
+   */
+  /\bveterans?\b/i,
   /\bethnicit(y|ies)\b/i,
   /\brace\b/i,
   /*
