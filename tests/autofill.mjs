@@ -12345,26 +12345,32 @@ async function main() {
         return { asked, said: said.map((x) => ({ question: x.question, answer: x.answer })) };
       }, { b: base }),
     );
-    group('Questions as the answer bank keeps them');
+    group('Questions as the answer bank reads them');
+    /*
+     * The marker is the server's to drop (`tidyQuestion` in ResumeM-M), on the
+     * way in and when matching. Here the question is kept whole: the refusals
+     * that decide what is pressed and what is remembered read all of it.
+     */
+    const tidy = (q) => String(q).replace(/\s*(?:\*|\bRequired)\s*$/i, '').trim();
     const authorized = 'Are you legally authorized to work in the country where this position is located?';
     const arbitration =
       'Click on the link below to review the Arbitration Agreement. Mutual Arbitration Agreement To be considered for employment, all applicants must agree to the Mutual Arbitration Agreement.';
     check(
-      "LinkedIn's yes/no is asked once, without the screen reader's copy or its \"Required\", and a pick in it kept under the same words",
-      banked.asked.includes(authorized) && banked.said.some((x) => x.question === authorized && x.answer === 'Yes'),
+      "LinkedIn's yes/no is asked once, without the screen reader's copy, and a pick in it kept under the same words",
+      banked.asked.some((q) => tidy(q) === authorized) && banked.said.some((x) => tidy(x.question) === authorized && x.answer === 'Yes'),
       JSON.stringify(banked),
     );
     check(
-      'a label marked "Discipline*" is asked and kept as "Discipline"',
-      banked.asked.includes('Discipline') && banked.said.some((x) => x.question === 'Discipline' && x.answer === 'Computer Science'),
+      'a label marked "Discipline*" is asked and kept as that one label',
+      banked.asked.some((q) => tidy(q) === 'Discipline') && banked.said.some((x) => tidy(x.question) === 'Discipline' && x.answer === 'Computer Science'),
       JSON.stringify(banked),
     );
     check(
-      "Workday's legend of paragraphs is read with a space between them, and without its marker",
-      banked.asked.includes(arbitration),
+      "Workday's legend of paragraphs is read with a space between them",
+      banked.asked.some((q) => tidy(q) === arbitration),
       JSON.stringify(banked.asked),
     );
-    check('nothing asked ends in "*" or is read twice', !banked.asked.some((q) => /\*$|\?Are you/.test(q)), JSON.stringify(banked.asked));
+    check('nothing asked is read twice', !banked.asked.some((q) => /\?Are you|(\b\w{3,}\b)\1/.test(q)), JSON.stringify(banked.asked));
   } finally {
     await browser.close();
     server.close();

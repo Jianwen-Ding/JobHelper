@@ -5459,8 +5459,7 @@ function answerRadioGroups(fields, overwrite) {
 function rememberableChoices({ short = false } = {}) {
   const found = [];
   const add = (question, description, el, answered, choose, shows = answered) => {
-    // As the bank keeps it, without the form's required marker. See `cleanQuestion`.
-    const asked = cleanQuestion(question);
+    const asked = clean(question);
     // Too short to recognise on the next form. The same bar the bank itself
     // applies on the way in — see `worthRemembering`. Not a bar for finding
     // this page's own question again, which is what `watchForEmptied` asks.
@@ -5977,7 +5976,7 @@ function widgetQuestion(widget) {
   if (rootOf(widget)?.host?.id === OURS) return null;
   const description = describeField(widget);
   if (!description) return null;
-  const question = cleanQuestion(questionFor(widget));
+  const question = clean(questionFor(widget));
   if (question.length < 8) return null;
   if (OTHER_PEOPLE.test(`${surroundingWords(widget)} ${description}`)) return null;
   if (inWorkHistory(widget) || EDUCATION_SECTION.test(sectionOf(widget))) return null;
@@ -7830,13 +7829,6 @@ export function watchChoices(tell) {
     if (!said?.question || !said?.answer) return;
     const { once, ...answer } = said;
     /*
-     * Without the form's required marker, as every question this file asks
-     * the bank about is (see `rememberableChoices`). Kept with it, "Discipline*"
-     * and "Discipline" were two rows in the bank, and 185 of its questions
-     * ended in "*".
-     */
-    answer.question = cleanQuestion(answer.question);
-    /*
      * The refusal is here rather than at the far end, so nothing personal
      * leaves the page at all — not to the worker, not to the store, not into
      * a log on the way. See `worthRemembering`.
@@ -7861,8 +7853,7 @@ export function watchChoices(tell) {
   document.addEventListener('change', look, true);
   document.addEventListener('click', look, true);
   // And a pick in a react-select, which fires neither usefully. See `watchWidgetPicks`.
-  const told = (said) => {
-    const answer = { ...said, question: cleanQuestion(said.question) };
+  const told = (answer) => {
     const verdict = worthRemembering(answer);
     tell(verdict.keep ? { ...answer, keep: true } : { ...answer, keep: false, why: verdict.why });
   };
