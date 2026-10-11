@@ -110,6 +110,7 @@ const SUITES = [
   { name: 'reporting', file: 'reporting.mjs', cost: 1, nodeTest: true },
   { name: 'remembering', file: 'remembering.mjs', cost: 1, nodeTest: true },
   { name: 'config', file: 'config.mjs', cost: 1, nodeTest: true },
+  { name: 'turns', file: 'turns.mjs', cost: 1, nodeTest: true },
 ];
 
 const pool = (process.env.RMM_SERVERS ?? process.env.RMM_SERVER ?? 'http://127.0.0.1:4600')

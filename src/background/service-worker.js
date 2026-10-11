@@ -315,6 +315,9 @@ async function serverFetch(path, options = {}) {
 
   if (!res.ok) {
     const failed = new Error(body.error ?? `${res.status} ${res.statusText}`);
+    // And the status, for a caller that has to tell "refused" from "not
+    // yet": see `syncBugReport`, whose report is never sent again after a 4xx.
+    failed.status = res.status;
     // What the store called it, for the callers that treat one refusal
     // differently from another. See `holdASpace` and `not-a-job`.
     if (typeof body.kind === 'string') failed.kind = body.kind;
@@ -601,7 +604,8 @@ async function readTrail(tabId) {
 }
 
 /**
- * Store the trail, carrying less rather than failing.
+ * Store the trail, carrying less rather than failing. Only ever from inside
+ * `changeTrail`, which is what keeps two writers of one tab apart.
  *
  * Session storage is 10MB shared across every tab, and five tabs each holding
  * five pages fills it exactly — at which point the write throws and the trail
@@ -746,8 +750,13 @@ function whichTab(tabId, tab, sender) {
  * being whatever it is.
  */
 async function inheritIfNew(tabId, openerTabId) {
-  const theirs = await inheritance(tabId, openerTabId);
-  if (theirs) await writeTrail(tabId, { ...theirs, at: Date.now() });
+  if (tabId === undefined || openerTabId === undefined) return;
+  // Decided inside the turn, so a page of this tab's own landing at the same
+  // moment is not written over by the opener's.
+  await changeTrail(tabId, async () => {
+    const theirs = await inheritance(tabId, openerTabId);
+    return theirs ? { ...theirs, at: Date.now() } : null;
+  });
 }
 
 /** What `inheritIfNew` would copy into this tab, or null. Reads only. */
@@ -937,33 +946,105 @@ function bothLetters(before, since) {
   return `${a.trimEnd()}\n\n${b.trimStart()}`;
 }
 
+/**
+ * Run `step` once every change already queued on `key` has finished, and
+ * hand back what it answers — or what it throws. The chain itself never
+ * breaks: a step that fails is the caller's to hear about, and the next one
+ * still runs. See `changeStored` and `changeTrail`, which are this with the
+ * reading and the writing filled in.
+ *
+ * A step must never wait on another step for the same key, or the two wait
+ * on each other for ever. Nothing does: a trail step parks under orphan keys
+ * and reads other tabs' trails, and no orphan step touches a trail.
+ */
+function inTurn(key, step) {
+  const run = (frameWrites.get(key) ?? Promise.resolve()).then(step);
+  const slot = run.catch(() => undefined);
+  frameWrites.set(key, slot);
+  slot.finally(() => {
+    // Only the last change queued clears the slot, or a change queued while
+    // this one was running would be dropped from the chain.
+    if (frameWrites.get(key) === slot) frameWrites.delete(key);
+  });
+  return run;
+}
+
 function changeStored(key, change) {
-  const next = (frameWrites.get(key) ?? Promise.resolve())
-    .then(async () => {
-      const stored = (await session().get(key).catch(() => ({})))[key];
-      const wanted = await change(stored);
-      if (wanted === null || wanted === undefined) return true;
+  return inTurn(key, async () => {
+    const stored = (await session().get(key).catch(() => ({})))[key];
+    const wanted = await change(stored);
+    if (wanted === null || wanted === undefined) return true;
+    try {
+      await session().set({ [key]: wanted });
+      return true;
+    } catch {
+      await sweepOrphans().catch(() => undefined);
       try {
         await session().set({ [key]: wanted });
         return true;
       } catch {
-        await sweepOrphans().catch(() => undefined);
-        try {
-          await session().set({ [key]: wanted });
-          return true;
-        } catch {
-          return false;
-        }
+        return false;
       }
-    })
-    .catch(() => false)
-    .finally(() => {
-      // Only the last change queued clears the slot, or a change queued while
-      // this one was running would be dropped from the chain.
-      if (frameWrites.get(key) === next) frameWrites.delete(key);
-    });
-  frameWrites.set(key, next);
-  return next;
+    }
+  }).catch(() => false);
+}
+
+/**
+ * One writer at a time for one tab's trail.
+ *
+ * Every handler that wrote the trail read it, built the next one and wrote it
+ * back whole, three turns apart, and the card sends several of them at once:
+ * the keeper's `saveWork` every two seconds, `expectContinuation` the moment
+ * Apply is pressed, `analyze` landing whenever the store answers. Measured in
+ * node with the real worker: a save and a press sent together both answered
+ * `{ok: true}`, and the trail came back holding the expectation and no work —
+ * the letter written over by a copy of the trail from before it, which is
+ * exactly the half-written letter this file exists to keep.
+ *
+ * So the read is made inside the turn, on the trail as the last writer left
+ * it. `change` is given that trail and answers the next one, or null to leave
+ * it alone; it must not hold the turn across a request to the store, which is
+ * why `analyze` asks the store first and only then comes here to merge. What
+ * comes back is `{ before, written }`: the trail it was given, and what was
+ * stored — lighter than asked, or null when nothing was (`writeTrail`).
+ *
+ * And never into a tab that has closed. See `tabClosed`.
+ */
+function changeTrail(tabId, change) {
+  return inTurn(trailKey(tabId), async () => {
+    if (await tabClosed(tabId)) return { before: { pages: [] }, written: null, closed: true };
+    const before = await readTrail(tabId);
+    const next = await change(before);
+    if (!next) return { before, written: null };
+    return { before, written: await writeTrail(tabId, next) };
+  });
+}
+
+/*
+ * Tabs that have closed, so that nothing written late can bring their
+ * application back.
+ *
+ * An AI pass takes minutes and the tab it was for can be closed in the middle
+ * of it. `onRemoved` parks the writing and removes the trail — and then the
+ * pass came back, `remember` read an empty trail and wrote a new one, page
+ * markup and all, under a tab id Chrome will never use again. Measured with
+ * the real worker: `trail:7` was gone after the close and back, at 300kB,
+ * once the reply landed, and nothing ever removed it. The keeper's last
+ * `saveWork`, sent from `pagehide`, does the same thing more cheaply.
+ *
+ * In memory for the common case and in session storage for a worker that was
+ * stopped in between. Tab ids are not reused within a browser session, which
+ * is as long as session storage lives; the marks are swept with the orphans
+ * once nothing could still be in flight for them.
+ */
+const closedKey = (tabId) => `jh-closed:${tabId}`;
+const closedTabs = new Set();
+
+async function tabClosed(tabId) {
+  if (tabId === undefined) return false;
+  if (closedTabs.has(tabId)) return true;
+  const key = closedKey(tabId);
+  return Boolean((await session().get(key).catch(() => ({})))[key]);
 }
 
 function changeFrames(key, change) {
@@ -985,7 +1066,7 @@ function changeFrames(key, change) {
 }
 
 async function noteFrame(tabId, frameId) {
-  if (tabId === undefined || !frameId) return;
+  if (tabId === undefined || !frameId || (await tabClosed(tabId))) return;
   await changeFrames(framesKey(tabId), (ids) => (ids.includes(frameId) ? null : [...ids, frameId]));
 }
 
@@ -1209,10 +1290,20 @@ function filingOut(tabId, run) {
 }
 async function noteFiled(tabId, id, basedOn, version) {
   if (tabId === undefined || !id || version === undefined || basedOn === undefined) return;
-  const key = filedKey(tabId);
-  const list = (await session().get(key).catch(() => ({})))[key] ?? [];
-  list.push({ id, basedOn, version });
-  await session().set({ [key]: list.slice(-FILINGS_KEPT) }).catch(() => undefined);
+  /*
+   * Through the chain, like every other list in session storage.
+   *
+   * A stage and a bundle sent back to back — which is what Submit does — come
+   * back close together, and each read the list, added its own filing and
+   * wrote the list back. Measured: the second write landed on the first, the
+   * stage's filing was gone, and `ownWrite` then answered `own: false` about
+   * the card's own bundle, so the card took its own write for an edit made in
+   * ResumeM-M.
+   */
+  await changeStored(filedKey(tabId), async (stored) => {
+    if (await tabClosed(tabId)) return null;
+    return [...(Array.isArray(stored) ? stored : []), { id, basedOn, version }].slice(-FILINGS_KEPT);
+  });
 }
 /** A filing of the copy, noted and tracked. See `filingOut`. */
 function filing(tab, payload, run) {
@@ -1362,149 +1453,162 @@ function sayJob(job) {
 
 async function remember(tab, page) {
   await inheritIfNew(tab?.id, tab?.openerTabId);
-  const trail = await readTrail(tab?.id);
   /*
-   * Three answers, not two.
-   *
-   * A board that keeps every posting at one address — Indeed's results pane,
-   * any single-page board — leaves the url saying "same page" when the pane
-   * has been changed to a different job entirely. `judgeApplication` says it
-   * is unsure there rather than guessing, and unsure branches: writing the
-   * second job up as the first is the failure this whole file exists to
-   * prevent, and a split is the one of the two that can be undone.
-   *
-   * So it is undoable. What the tab is leaving is stashed whole, and the card
-   * puts up a chip naming the job it has started — one press puts the old one
-   * back. See `keepTogether`.
+   * The judgement and the write in one turn of `changeTrail`, on the trail as
+   * it is when the turn comes. The store has already been asked by then —
+   * `analyze` does that before calling this — so nothing here waits on the
+   * network while other writers of this tab wait on it. Judged before the
+   * turn, a `saveWork` or an Apply press landing meanwhile was written over by
+   * the copy this had read.
    */
-  const verdict = judgeApplication(trail, page);
-  const joins = verdict === 'same';
-  const pages = joins ? trail.pages.filter((p) => p.url !== page.url) : [];
-
-  if (verdict === 'unsure' && tab?.id !== undefined) {
+  let joins = false;
+  let next = null;
+  const { before: trail, written } = await changeTrail(tab?.id, async (trail) => {
     /*
-     * Without the markup of every page but the first.
+     * Three answers, not two.
      *
-     * The stash holds the pages, the writing, the tailored resume and the
-     * save — everything a merge has to give back. Page text is the one part
-     * that is large and nearly recoverable: the first page is the posting,
-     * whose description is what a later form page reads back, and the rest is
-     * forms. Keeping all of it would put half a megabyte into a 10MB budget
-     * shared with every other tab.
+     * A board that keeps every posting at one address — Indeed's results pane,
+     * any single-page board — leaves the url saying "same page" when the pane
+     * has been changed to a different job entirely. `judgeApplication` says it
+     * is unsure there rather than guessing, and unsure branches: writing the
+     * second job up as the first is the failure this whole file exists to
+     * prevent, and a split is the one of the two that can be undone.
+     *
+     * So it is undoable. What the tab is leaving is stashed whole, and the card
+     * puts up a chip naming the job it has started — one press puts the old one
+     * back. See `keepTogether`.
      */
-    const keeping = {
-      ...trail,
-      pages: (trail.pages ?? []).map((p, i) => (i === 0 ? p : { ...p, html: undefined })),
-    };
-    await session()
-      .set({ [branchKey(tab.id)]: { trail: keeping, left: nameOfTrail(trail), at: Date.now() } })
-      .catch(() => undefined);
-  }
+    const verdict = judgeApplication(trail, page);
+    joins = verdict === 'same';
+    const pages = joins ? trail.pages.filter((p) => p.url !== page.url) : [];
 
-  /*
-   * A page that starts a fresh application in a tab that was holding written
-   * work does not get to throw it away.
-   *
-   * `joins` is a judgement — a click, a company name, where the pages live —
-   * and judgements are wrong sometimes. When it says fresh, everything under
-   * `work` is replaced: the letter, the answers, the tailored resume. That is
-   * right for the resume, which can be built again in seconds, and wrong for
-   * the letter, which somebody wrote.
-   *
-   * So it is parked where a closed tab's work is parked, under the address of
-   * the page it was written on, and going back to that page brings it
-   * straight back — see the rescue in `takeWork`. Nothing is carried forward
-   * into the new application, because that is the failure this heuristic
-   * exists to prevent; nothing is destroyed either, which is the failure it
-   * was causing.
-   */
-  if (!joins && trail.work) {
-    /*
-     * Under every page of it, not only the last one. An application is a
-     * posting and a form and whatever came between; somebody coming back to
-     * it comes back to whichever of those they were last looking at, and
-     * keying only the last one meant returning to the form found nothing
-     * because the trail happened to end on the description. Five at most —
-     * see `TRAIL_MAX` — and `sweepOrphans` keeps the total bounded.
-     */
-    const where = [...new Set(trail.pages.map((p) => p?.url).filter(Boolean))];
-    if (where.length > 0) {
-      await sweepOrphans();
+    if (verdict === 'unsure' && tab?.id !== undefined) {
       /*
-       * Named, and from which tab. Both are for the board that keeps every
-       * posting at one address: without the name the next job's page rescues
-       * this job's letter one message later, which is the branch undone on
-       * the spot; without the tab the card calls it "recovered from a closed
-       * tab" when the tab is the one you are sitting in. See `pickParked`.
+       * Without the markup of every page but the first.
+       *
+       * The stash holds the pages, the writing, the tailored resume and the
+       * save — everything a merge has to give back. Page text is the one part
+       * that is large and nearly recoverable: the first page is the posting,
+       * whose description is what a later form page reads back, and the rest is
+       * forms. Keeping all of it would put half a megabyte into a 10MB budget
+       * shared with every other tab.
        */
-      const entry = { work: trail.work, save: trail.save, job: nameOfTrail(trail), tab: tab?.id, at: Date.now() };
-      for (const url of where) await parkWork(url, entry);
+      const keeping = {
+        ...trail,
+        pages: (trail.pages ?? []).map((p, i) => (i === 0 ? p : { ...p, html: undefined })),
+      };
+      await session()
+        .set({ [branchKey(tab.id)]: { trail: keeping, left: nameOfTrail(trail), at: Date.now() } })
+        .catch(() => undefined);
     }
-  }
 
-  pages.push({
-    url: page.url,
-    title: page.title,
-    company: page.company,
     /*
-     * And which job it is, not only who it is with.
+     * A page that starts a fresh application in a tab that was holding written
+     * work does not get to throw it away.
      *
-     * The popup and the toolbar said "Helios" — right, and not enough to come
-     * back to an hour later, or to tell two roles at one employer apart. The
-     * analysis has worked the role out by the time a page is recorded; not
-     * keeping it meant asking the page again later, from a tab that has since
-     * moved on.
+     * `joins` is a judgement — a click, a company name, where the pages live —
+     * and judgements are wrong sometimes. When it says fresh, everything under
+     * `work` is replaced: the letter, the answers, the tailored resume. That is
+     * right for the resume, which can be built again in seconds, and wrong for
+     * the letter, which somebody wrote.
+     *
+     * So it is parked where a closed tab's work is parked, under the address of
+     * the page it was written on, and going back to that page brings it
+     * straight back — see the rescue in `takeWork`. Nothing is carried forward
+     * into the new application, because that is the failure this heuristic
+     * exists to prevent; nothing is destroyed either, which is the failure it
+     * was causing.
      */
-    role: page.role,
-    kind: page.kind,
-    html: trimForStorage(page.html, TRAIL_HTML_MAX),
-    at: Date.now(),
+    if (!joins && trail.work) {
+      /*
+       * Under every page of it, not only the last one. An application is a
+       * posting and a form and whatever came between; somebody coming back to
+       * it comes back to whichever of those they were last looking at, and
+       * keying only the last one meant returning to the form found nothing
+       * because the trail happened to end on the description. Five at most —
+       * see `TRAIL_MAX` — and `sweepOrphans` keeps the total bounded.
+       */
+      const where = [...new Set(trail.pages.map((p) => p?.url).filter(Boolean))];
+      if (where.length > 0) {
+        await sweepOrphans();
+        /*
+         * Named, and from which tab. Both are for the board that keeps every
+         * posting at one address: without the name the next job's page rescues
+         * this job's letter one message later, which is the branch undone on
+         * the spot; without the tab the card calls it "recovered from a closed
+         * tab" when the tab is the one you are sitting in. See `pickParked`.
+         */
+        const entry = { work: trail.work, save: trail.save, job: nameOfTrail(trail), tab: tab?.id, at: Date.now() };
+        for (const url of where) await parkWork(url, entry);
+      }
+    }
+
+    pages.push({
+      url: page.url,
+      title: page.title,
+      company: page.company,
+      /*
+       * And which job it is, not only who it is with.
+       *
+       * The popup and the toolbar said "Helios" — right, and not enough to come
+       * back to an hour later, or to tell two roles at one employer apart. The
+       * analysis has worked the role out by the time a page is recorded; not
+       * keeping it meant asking the page again later, from a tab that has since
+       * moved on.
+       */
+      role: page.role,
+      kind: page.kind,
+      html: trimForStorage(page.html, TRAIL_HTML_MAX),
+      at: Date.now(),
+    });
+
+    /*
+     * A fresh application inherits nothing.
+     *
+     * This kept the whole of the old trail and replaced only its pages, so the
+     * previous posting's resume, letter and answers stayed behind under `work`
+     * — invisible, because the page that started fresh is correctly refused
+     * them. It is the page after that which asks and is given them: read one
+     * job, build its resume, open another job in the same tab, follow Apply,
+     * and the form comes up holding the first job's application.
+     *
+     * The expectation goes once it has been honoured, too: a click means "the
+     * next page", and leaving it standing let it vouch for a third page five
+     * minutes later.
+     *
+     * `expecting` has to be named in that inheriting, because the spread drops
+     * every key except the ones written below it. Carrying it across a fresh
+     * start was the whole of the rule undone by one line: press Apply on Vega
+     * and have the board cancel the navigation and route the page itself —
+     * which content.js already anticipates, and which `target=_blank` produces
+     * too — then read a different job, and the expectation left over from Vega
+     * vouches for it. Vega's form then comes up holding Lyra's resume and
+     * Lyra's description as the source for the letter, with nothing on screen
+     * looking wrong.
+     */
+    const honoured = joins && wasExpected(trail, page.url);
+    next = {
+      ...(joins ? trail : {}),
+      expecting: joins && !honoured ? trail.expecting : undefined,
+      /*
+       * Which save this application is being built from, kept where it will
+       * still be after the worker is stopped — see `saveOf`. Named in the
+       * spread above rather than left to it, because a fresh application
+       * inherits nothing and this is the page that decides which save it is.
+       */
+      save: joins ? (trail.save ?? page.save) : page.save,
+      pages: keepPages(pages, TRAIL_MAX),
+      /*
+       * And, when this was a guess, what the guess was — so the card can say
+       * "started a new application for X, same one as before?" rather than
+       * silently reorganising the tab underneath somebody.
+       */
+      branchedFrom: verdict === 'unsure' ? nameOfTrail(trail) : undefined,
+      at: Date.now(),
+    };
+    return next;
   });
 
-  /*
-   * A fresh application inherits nothing.
-   *
-   * This kept the whole of the old trail and replaced only its pages, so the
-   * previous posting's resume, letter and answers stayed behind under `work`
-   * — invisible, because the page that started fresh is correctly refused
-   * them. It is the page after that which asks and is given them: read one
-   * job, build its resume, open another job in the same tab, follow Apply,
-   * and the form comes up holding the first job's application.
-   *
-   * The expectation goes once it has been honoured, too: a click means "the
-   * next page", and leaving it standing let it vouch for a third page five
-   * minutes later.
-   *
-   * `expecting` has to be named in that inheriting, because the spread drops
-   * every key except the ones written below it. Carrying it across a fresh
-   * start was the whole of the rule undone by one line: press Apply on Vega
-   * and have the board cancel the navigation and route the page itself —
-   * which content.js already anticipates, and which `target=_blank` produces
-   * too — then read a different job, and the expectation left over from Vega
-   * vouches for it. Vega's form then comes up holding Lyra's resume and
-   * Lyra's description as the source for the letter, with nothing on screen
-   * looking wrong.
-   */
-  const honoured = joins && wasExpected(trail, page.url);
-  const next = {
-    ...(joins ? trail : {}),
-    expecting: joins && !honoured ? trail.expecting : undefined,
-    /*
-     * Which save this application is being built from, kept where it will
-     * still be after the worker is stopped — see `saveOf`. Named in the
-     * spread above rather than left to it, because a fresh application
-     * inherits nothing and this is the page that decides which save it is.
-     */
-    save: joins ? (trail.save ?? page.save) : page.save,
-    pages: keepPages(pages, TRAIL_MAX),
-    /*
-     * And, when this was a guess, what the guess was — so the card can say
-     * "started a new application for X, same one as before?" rather than
-     * silently reorganising the tab underneath somebody.
-     */
-    branchedFrom: verdict === 'unsure' ? nameOfTrail(trail) : undefined,
-    at: Date.now(),
-  };
   /*
    * The badge says what was stored, not what this function built.
    *
@@ -1518,7 +1622,6 @@ async function remember(tab, page) {
    * tailored resume is ready" while the third page was in no storage
    * anywhere and the card, which re-reads, listed two.
    */
-  const written = await writeTrail(tab?.id, next);
   const stored = written === null ? trail : next;
   await markTab(tab?.id, stored);
   return { ...summarise(stored), startedFresh: !joins };
@@ -1556,23 +1659,28 @@ const RECEIPT_WINDOW_MS = 60 * 60 * 1000;
  * handler can say when it has settled.
  */
 async function keepWork({ work, page }, tab) {
-  const trail = await readTrail(tab?.id);
-  // Only the application this tab is actually on. Without this a card left
-  // open on another posting would keep writing its work over this one's.
-  if (page && trail.pages.length > 0 && !sameApplication(trail, page)) return { reply: { ok: false } };
-  // And nothing at all into a tab that was told to start fresh, until it
-  // has read a page of its own. See `clearTrail`: the card's keeper is
-  // still running when that button is pressed.
-  if (trail.cleared && trail.pages.length === 0) return { reply: { ok: false } };
-  // And never nothing over something: a card that failed to analyse its page
-  // has an empty state, and saving it threw away the resume built on the
-  // page before.
-  if (!worthKeeping(work) && worthKeeping(trail.work)) return { reply: { ok: false } };
+  // The guards are judged on the trail as it is in the turn, not as it was
+  // when the message arrived. See `changeTrail`.
+  let next = null;
+  const { before: trail, written } = await changeTrail(tab?.id, (trail) => {
+    // Only the application this tab is actually on. Without this a card left
+    // open on another posting would keep writing its work over this one's.
+    if (page && trail.pages.length > 0 && !sameApplication(trail, page)) return null;
+    // And nothing at all into a tab that was told to start fresh, until it
+    // has read a page of its own. See `clearTrail`: the card's keeper is
+    // still running when that button is pressed.
+    if (trail.cleared && trail.pages.length === 0) return null;
+    // And never nothing over something: a card that failed to analyse its page
+    // has an empty state, and saving it threw away the resume built on the
+    // page before.
+    if (!worthKeeping(work) && worthKeeping(trail.work)) return null;
 
-  // Stamped, because `at` is what says the trail is still current — work
-  // written without it reads back as a trail from another sitting.
-  const next = { ...trail, work, at: Date.now() };
-  const written = await writeTrail(tab?.id, next);
+    // Stamped, because `at` is what says the trail is still current — work
+    // written without it reads back as a trail from another sitting.
+    next = { ...trail, work, at: Date.now() };
+    return next;
+  });
+  if (!next) return { reply: { ok: false } };
   /*
    * The toolbar says "your writing is being held" the moment it is — and
    * only then.
@@ -1596,7 +1704,7 @@ const handlers = {
   async saveBugReport(payload) { return saveBugReport(payload, serverFetch); },
   async listBugReports() { return listBugReports(); },
   async syncBugReport({ id }) { return syncBugReport(id, serverFetch); },
-  async clearBugReport({ id }) { return clearBugReport(id); },
+  async clearBugReport({ id, discard }) { return clearBugReport(id, { discard: discard === true }); },
   /** "There is a content script in this frame." Sent once, on load. */
   async frameReady(_payload, tab, sender) {
     await noteFrame(tab?.id, sender?.frameId);
@@ -1823,12 +1931,14 @@ const handlers = {
          */
         if (tab?.id !== undefined) {
           if (rescued.save) saveOf.set(tab.id, rescued.save);
-          await writeTrail(tab.id, {
-            ...trail,
+          // Onto the trail as it is in the turn, so whatever landed since it
+          // was read above is kept alongside. See `changeTrail`.
+          await changeTrail(tab.id, (now) => ({
+            ...now,
             work: rescued.work,
-            save: rescued.save ?? trail.save,
+            save: rescued.save ?? now.save,
             at: Date.now(),
-          });
+          }));
         }
         await dropPark(key, rescued);
         // And its copies under the application's other pages.
@@ -1885,30 +1995,34 @@ const handlers = {
    * one loads. The click is the evidence, and it is available before that.
    */
   async expectContinuation({ to, from }, tab) {
-    const trail = await readTrail(tab?.id);
-    /*
-     * Not when it was pressed on another job's page than the application this
-     * tab holds.
-     *
-     * On a board that swaps postings in place the tab's application stays on
-     * the job read before until the card has read the new one — and a press
-     * in that window promised the old job's application a next page that
-     * belongs to the new one. The tab Apply opened inherited it whole: Exegy's
-     * resume and letter on Kodiak's Greenhouse form, staged there and filed on
-     * Exegy's row under Kodiak's address. So the press is recorded as what it
-     * is — this application was left from that site — which takes back any
-     * expectation it had (so a tab opened now inherits nothing; see
-     * `inheritance`) and stops the site's referrer vouching for the page it
-     * leads to. See `pressedOnAnotherJob` and `judgeApplication`.
-     */
-    if (from && pressedOnAnotherJob(trail, from)) {
-      await writeTrail(tab?.id, { ...trail, expecting: undefined, strayed: { from, at: Date.now() } });
-      return { ok: true, elsewhere: true };
-    }
-    await writeTrail(tab?.id, { ...trail, expecting: { to, at: Date.now() }, strayed: undefined, at: Date.now() });
-    // A new tab inherits this tab's trail, expectation and all, so an Apply
-    // button that opens one lands already knowing where it came from.
-    return { ok: true };
+    let elsewhere = false;
+    // In the turn: pressed at the same moment the keeper saves, which is
+    // what pressing Apply does, the two used to cost each other their write.
+    await changeTrail(tab?.id, (trail) => {
+      /*
+       * Not when it was pressed on another job's page than the application this
+       * tab holds.
+       *
+       * On a board that swaps postings in place the tab's application stays on
+       * the job read before until the card has read the new one — and a press
+       * in that window promised the old job's application a next page that
+       * belongs to the new one. The tab Apply opened inherited it whole: Exegy's
+       * resume and letter on Kodiak's Greenhouse form, staged there and filed on
+       * Exegy's row under Kodiak's address. So the press is recorded as what it
+       * is — this application was left from that site — which takes back any
+       * expectation it had (so a tab opened now inherits nothing; see
+       * `inheritance`) and stops the site's referrer vouching for the page it
+       * leads to. See `pressedOnAnotherJob` and `judgeApplication`.
+       */
+      if (from && pressedOnAnotherJob(trail, from)) {
+        elsewhere = true;
+        return { ...trail, expecting: undefined, strayed: { from, at: Date.now() } };
+      }
+      // A new tab inherits this tab's trail, expectation and all, so an Apply
+      // button that opens one lands already knowing where it came from.
+      return { ...trail, expecting: { to, at: Date.now() }, strayed: undefined, at: Date.now() };
+    });
+    return elsewhere ? { ok: true, elsewhere: true } : { ok: true };
   },
 
   /**
@@ -2011,57 +2125,70 @@ const handlers = {
     const id = whichTab(tabId, tab, sender);
     if (id === undefined) return { ok: false };
     const key = branchKey(id);
-    const held = (await session().get(key).catch(() => ({})))[key];
-    if (!held?.trail) return { ok: false, gone: true };
-
-    const now = await readTrail(id);
+    let held = null;
+    let merged = null;
+    let gone = false;
     /*
-     * And only while both halves are still real.
-     *
-     * `held.at` was written and never read, and the chip lives in the content
-     * script's memory for as long as the page is open — so a branch left
-     * unanswered overnight still offered "Same job — put it back" in the
-     * morning. By then `readTrail` calls the live trail stale and answers
-     * `{pages: []}`, so the merge kept the *old* pages and dropped the page
-     * actually on screen: the card on job B, the toolbar naming job A, and
-     * A's hours-old description fed to whatever is written next.
+     * The stash, the live trail and the merge in one turn: the live half is
+     * the one the keeper is still saving into, and a save landing between
+     * the read and the write was the writing this button promises to keep.
      */
-    if (Date.now() - (held.at ?? 0) > TRAIL_STALE_MS || (now.pages ?? []).length === 0) {
-      await session().remove(key).catch(() => undefined);
-      return { ok: false, gone: true };
-    }
-    /*
-     * The page that is on screen, kept, and the old pages under it. Not the
-     * other way round: `keepPages` drops the oldest first, and the page being
-     * looked at is the one that must survive.
-     */
-    const pages = keepPages(
-      [...(held.trail.pages ?? []), ...(now.pages ?? []).filter((p) => !(held.trail.pages ?? []).some((q) => q.url === p.url))],
-      TRAIL_MAX,
-    );
-    const merged = {
-      ...held.trail,
-      pages,
+    await changeTrail(id, async (now) => {
+      held = (await session().get(key).catch(() => ({})))[key];
+      if (!held?.trail) {
+        gone = true;
+        return null;
+      }
       /*
-       * Both halves, not whichever is older.
+       * And only while both halves are still real.
        *
-       * This took `held.trail.work` whenever there was any, on the grounds
-       * that "the branch is seconds old, so anything under `work` now is what
-       * the card rebuilt on arrival". The staleness check fifteen lines above
-       * accepts a stash for two hours, and the chip offering the merge stays
-       * up for as long as the page is open — so the ordinary shape is: the
-       * card branches, you keep writing, and then you press the button. Every
-       * sentence written after the branch went, from a button whose tooltip
-       * promises "with everything you had written". Nothing had parked it,
-       * because parking happens in `remember` and no `remember` ran in
-       * between.
+       * `held.at` was written and never read, and the chip lives in the content
+       * script's memory for as long as the page is open — so a branch left
+       * unanswered overnight still offered "Same job — put it back" in the
+       * morning. By then `readTrail` calls the live trail stale and answers
+       * `{pages: []}`, so the merge kept the *old* pages and dropped the page
+       * actually on screen: the card on job B, the toolbar naming job A, and
+       * A's hours-old description fed to whatever is written next.
        */
-      work: bothHalves(held.trail.work, now.work),
-      save: held.trail.save ?? now.save,
-      branchedFrom: undefined,
-      at: Date.now(),
-    };
-    await writeTrail(id, merged);
+      if (Date.now() - (held.at ?? 0) > TRAIL_STALE_MS || (now.pages ?? []).length === 0) {
+        await session().remove(key).catch(() => undefined);
+        gone = true;
+        return null;
+      }
+      /*
+       * The page that is on screen, kept, and the old pages under it. Not the
+       * other way round: `keepPages` drops the oldest first, and the page being
+       * looked at is the one that must survive.
+       */
+      const pages = keepPages(
+        [...(held.trail.pages ?? []), ...(now.pages ?? []).filter((p) => !(held.trail.pages ?? []).some((q) => q.url === p.url))],
+        TRAIL_MAX,
+      );
+      merged = {
+        ...held.trail,
+        pages,
+        /*
+         * Both halves, not whichever is older.
+         *
+         * This took `held.trail.work` whenever there was any, on the grounds
+         * that "the branch is seconds old, so anything under `work` now is what
+         * the card rebuilt on arrival". The staleness check fifteen lines above
+         * accepts a stash for two hours, and the chip offering the merge stays
+         * up for as long as the page is open — so the ordinary shape is: the
+         * card branches, you keep writing, and then you press the button. Every
+         * sentence written after the branch went, from a button whose tooltip
+         * promises "with everything you had written". Nothing had parked it,
+         * because parking happens in `remember` and no `remember` ran in
+         * between.
+         */
+        work: bothHalves(held.trail.work, now.work),
+        save: held.trail.save ?? now.save,
+        branchedFrom: undefined,
+        at: Date.now(),
+      };
+      return merged;
+    });
+    if (gone || !merged) return { ok: false, gone: true };
     await markTab(id, merged);
     await session().remove(key).catch(() => undefined);
     /*
@@ -2105,60 +2232,91 @@ const handlers = {
   async keepApart({ tabId } = {}, tab, sender) {
     const id = whichTab(tabId, tab, sender);
     if (id === undefined) return { ok: false };
-    const trail = await readTrail(id);
-    await writeTrail(id, { ...trail, branchedFrom: undefined, at: Date.now() });
+    await changeTrail(id, (trail) => ({ ...trail, branchedFrom: undefined, at: Date.now() }));
     await session().remove(branchKey(id)).catch(() => undefined);
     return { ok: true };
   },
 
   async clearTrail({ tabId, keep } = {}, tab, sender) {
     const id = whichTab(tabId, tab, sender);
-    const trail = await readTrail(id);
-    const held = keep?.url ? trail.pages.filter((p) => p.url === keep.url) : [];
-
+    let next = null;
     /*
-     * What is being forgotten is parked first, exactly as `remember` parks it.
-     *
-     * Forgetting an application and destroying what was written for it are two
-     * different things, and every other path already knows it: closing the tab
-     * parks, and `remember`'s own fresh start parks with the reason written
-     * out — "nothing is destroyed either, which is the failure it was
-     * causing". This one dropped `trail.work` on the floor, and it is reached
-     * from the popup, whose panel says "your writing is being held, and comes
-     * back when you return" two lines above the button. So the same intent had
-     * two outcomes, and the destructive one was the one that had just promised
-     * otherwise.
-     *
-     * Under the pages being forgotten, never the one kept. The card's "start a
-     * new application here" keeps the page you are on, and parking under that
-     * url would have the new application rescue the old one's letter on its
-     * first read — the failure `pickParked` exists to prevent, arranged by
-     * hand. The pages that go are the pages the writing goes with.
+     * Parked and emptied in one turn, so a save the keeper lands meanwhile is
+     * either parked with the rest or refused by the mark below — never written
+     * back over the emptied trail, and never lost. See `changeTrail`.
      */
-    if (trail.work) {
-      const gone = [...new Set(trail.pages.filter((p) => !held.includes(p)).map((p) => p?.url).filter(Boolean))];
-      if (gone.length > 0) {
-        await sweepOrphans();
-        const entry = { work: trail.work, save: trail.save, job: nameOfTrail(trail), tab: id, at: Date.now() };
-        for (const url of gone) await parkWork(url, entry);
-      }
-    }
+    await changeTrail(id, async (trail) => {
+      const held = keep?.url ? trail.pages.filter((p) => p.url === keep.url) : [];
 
-    if (held.length === 0) {
       /*
-       * Marked as emptied, not simply removed.
+       * What is being forgotten is parked first, exactly as `remember` parks it.
        *
-       * An absent trail and a forgotten one read the same to everything
-       * downstream — `pages: []` — and the card does not stop writing when
-       * this is pressed: its keeper re-sends the resume and the letter every
-       * two seconds. `saveWork`'s two guards are both gated on the trail
-       * having something in it, so within two seconds of "Start fresh" the
-       * trail was back, holding the old job's work under no pages, with no
-       * `save` and no badge. The next posting read in that tab was then
-       * handed it. The mark is what tells the two apart; it expires with the
-       * trail's own staleness window, so a tab left alone is a new tab again.
+       * Forgetting an application and destroying what was written for it are two
+       * different things, and every other path already knows it: closing the tab
+       * parks, and `remember`'s own fresh start parks with the reason written
+       * out — "nothing is destroyed either, which is the failure it was
+       * causing". This one dropped `trail.work` on the floor, and it is reached
+       * from the popup, whose panel says "your writing is being held, and comes
+       * back when you return" two lines above the button. So the same intent had
+       * two outcomes, and the destructive one was the one that had just promised
+       * otherwise.
+       *
+       * Under the pages being forgotten, never the one kept. The card's "start a
+       * new application here" keeps the page you are on, and parking under that
+       * url would have the new application rescue the old one's letter on its
+       * first read — the failure `pickParked` exists to prevent, arranged by
+       * hand. The pages that go are the pages the writing goes with.
        */
-      await writeTrail(id, { pages: [], cleared: Date.now(), at: Date.now() });
+      if (trail.work) {
+        const gone = [...new Set(trail.pages.filter((p) => !held.includes(p)).map((p) => p?.url).filter(Boolean))];
+        if (gone.length > 0) {
+          await sweepOrphans();
+          const entry = { work: trail.work, save: trail.save, job: nameOfTrail(trail), tab: id, at: Date.now() };
+          for (const url of gone) await parkWork(url, entry);
+        }
+      }
+
+      if (held.length === 0) {
+        /*
+         * Marked as emptied, not simply removed.
+         *
+         * An absent trail and a forgotten one read the same to everything
+         * downstream — `pages: []` — and the card does not stop writing when
+         * this is pressed: its keeper re-sends the resume and the letter every
+         * two seconds. `saveWork`'s two guards are both gated on the trail
+         * having something in it, so within two seconds of "Start fresh" the
+         * trail was back, holding the old job's work under no pages, with no
+         * `save` and no badge. The next posting read in that tab was then
+         * handed it. The mark is what tells the two apart; it expires with the
+         * trail's own staleness window, so a tab left alone is a new tab again.
+         */
+        next = { pages: [], cleared: Date.now(), at: Date.now() };
+        return next;
+      }
+
+      /*
+       * The save binding survives, because it is not part of the application.
+       *
+       * Every other writer spreads `...trail`; this one built a fresh object,
+       * so `save` — the one field kept here specifically to outlive the worker,
+       * see `saveOf` — was dropped. It went on working while the worker lived,
+       * because `saveFor` finds it in the map first, and the map is memory.
+       *
+       * Measured, with one variable changed at a time: read a posting, follow
+       * Apply, press "Start a new application here", let the worker be stopped,
+       * then Build. The resume compiles and the preview appears, and then the
+       * automatic filing is refused under a perfectly good document — "JobHelper
+       * has lost track of which save this application was built from". Leave the
+       * button unpressed, or leave the worker alive, and neither happens.
+       *
+       * Which save you are working in is not something "use only this page"
+       * says anything about. The pages are what is being forgotten.
+       */
+      next = { pages: held, save: trail.save, at: Date.now() };
+      return next;
+    });
+
+    if (!next || next.pages.length === 0) {
       /*
        * And the remembered binding with it, or the next application in this
        * tab inherits the last one's save.
@@ -2173,38 +2331,20 @@ const handlers = {
       await markTab(id, { pages: [] });
       return { pages: [] };
     }
-
-    /*
-     * The save binding survives, because it is not part of the application.
-     *
-     * Every other writer spreads `...trail`; this one built a fresh object,
-     * so `save` — the one field kept here specifically to outlive the worker,
-     * see `saveOf` — was dropped. It went on working while the worker lived,
-     * because `saveFor` finds it in the map first, and the map is memory.
-     *
-     * Measured, with one variable changed at a time: read a posting, follow
-     * Apply, press "Start a new application here", let the worker be stopped,
-     * then Build. The resume compiles and the preview appears, and then the
-     * automatic filing is refused under a perfectly good document — "JobHelper
-     * has lost track of which save this application was built from". Leave the
-     * button unpressed, or leave the worker alive, and neither happens.
-     *
-     * Which save you are working in is not something "use only this page"
-     * says anything about. The pages are what is being forgotten.
-     */
-    const next = { pages: held, save: trail.save, at: Date.now() };
-    await writeTrail(id, next);
     await markTab(id, next);
     return summarise(next);
   },
 
   /** Drop one page the user says does not belong. */
   async forgetPage({ url }, tab) {
-    const trail = await readTrail(tab?.id);
-    const next = { ...trail, pages: trail.pages.filter((p) => p.url !== url), at: Date.now() };
-    await writeTrail(tab?.id, next);
-    await markTab(tab?.id, next);
-    return summarise(next);
+    let next = null;
+    const { before } = await changeTrail(tab?.id, (trail) => {
+      next = { ...trail, pages: trail.pages.filter((p) => p.url !== url), at: Date.now() };
+      return next;
+    });
+    const shown = next ?? before;
+    await markTab(tab?.id, shown);
+    return summarise(shown);
   },
 
   async ping() {
@@ -2630,7 +2770,27 @@ const handlers = {
    */
   async pdfBytes({ url }) {
     const { serverUrl } = await getSettings();
-    const absolute = url.startsWith('http') ? url : `${serverUrl.replace(/\/$/, '')}${url}`;
+    /*
+     * From the store and nowhere else.
+     *
+     * This is asked by the card, so by the page the card is on, and it was a
+     * fetch of any address at all with the extension's host access — the
+     * loopback ports included — handed back as bytes. The card only ever asks
+     * for a path the store gave it, or the same path spelled out in full.
+     */
+    const base = serverUrl.replace(/\/$/, '');
+    if (typeof url !== 'string' || !url) throw new Error('No PDF address was given.');
+    const absolute = url.startsWith('/') && !url.startsWith('//') ? `${base}${url}` : url;
+    let wanted;
+    try {
+      wanted = new URL(absolute);
+    } catch {
+      throw new Error('That is not an address for a PDF.');
+    }
+    const store = new URL(`${base}/`);
+    if (wanted.origin !== store.origin || !wanted.pathname.startsWith(store.pathname)) {
+      throw new Error('PDFs are only fetched from ResumeM-M.');
+    }
     /*
      * With a ceiling, like every other call to the store.
      *
@@ -3310,10 +3470,59 @@ const handlers = {
   },
 };
 
+/*
+ * Messages only the extension's own pages send.
+ *
+ * Every other message is the card's, and the card runs in whatever page it is
+ * on — so anything that page's own script could reach by impersonating it is
+ * reachable by every site there is. These are the ones nothing in a page has
+ * any business sending: the settings, which include where page content is
+ * sent (the popup); the bug reports, which hold screenshots of whatever was on
+ * screen (the report page); and the panel's view of a named tab (the panel).
+ */
+const OWN_PAGES_ONLY = new Set([
+  'setSettings',
+  'saveBugReport',
+  'clearBugReport',
+  'syncBugReport',
+  'listBugReports',
+  'panelFor',
+]);
+const fromOwnPage = (sender) => Boolean(sender?.url?.startsWith(chrome.runtime.getURL('')));
+
+/*
+ * What a prerendered document may say before anybody can see it.
+ *
+ * Chrome renders a link it expects you to follow in the background, content
+ * scripts and all, and `sender.tab` on its messages is the tab it will be
+ * shown in — which is the tab you are looking at, on another page. So the
+ * prerendered page's `analyze` wrote its job into the visible tab's trail,
+ * branching it and parking the work of the page actually on screen, for a
+ * link nobody had clicked. Measured in Chromium with an "immediate"
+ * speculation rule on a posting. The content script now waits for
+ * `prerenderingchange` before it starts; this is the same rule on this side,
+ * for any older copy of it still running in a page.
+ *
+ * A frame announcing itself is the one exception, because it announces once,
+ * on load, and a frame refused here would be missing when the page it is in
+ * is shown. It writes nothing but a frame id.
+ */
+const PRERENDER_ALLOWED = new Set(['frameReady']);
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const handler = handlers[message?.type];
+  const type = message?.type;
+  // Own properties only: `toString` or `constructor` is not a message.
+  const handler = typeof type === 'string' && Object.hasOwn(handlers, type) ? handlers[type] : null;
   if (!handler) {
-    sendResponse({ ok: false, error: `Unknown message "${message?.type}"` });
+    sendResponse({ ok: false, error: `Unknown message "${type}"` });
+    return false;
+  }
+  if (OWN_PAGES_ONLY.has(type) && !fromOwnPage(sender)) {
+    sendResponse({ ok: false, error: `"${type}" is only accepted from JobHelper’s own pages.` });
+    return false;
+  }
+  if (sender?.documentLifecycle === 'prerender' && !PRERENDER_ALLOWED.has(type)) {
+    sendResponse({ ok: false, error: 'This page has not been shown yet.', fix: { prerendering: true } });
     return false;
   }
   // Which tab asked. The trail is per tab, and this is the only place that
@@ -3445,8 +3654,45 @@ chrome.tabs?.onUpdated?.addListener((tabId, changeInfo) => {
  */
 const ORPHAN_LIMIT = 20;
 
+/** Everything kept under one tab's id, which goes when the tab does. */
+const tabKeys = (tabId) => [
+  trailKey(tabId),
+  framesKey(tabId),
+  filedKey(tabId),
+  branchKey(tabId),
+  awayKey(tabId),
+  panelKey(tabId),
+];
+const TAB_KEYED = /^(?:trail|frames|filedCopies|jh-branched|jh-away|jh-panel):(\d+)$/;
+
 async function sweepOrphans() {
   const all = await session().get(null).catch(() => ({}));
+  /*
+   * And whatever is still filed under a tab that no longer exists.
+   *
+   * `onRemoved` takes a tab's keys with it, but only the ones that exist when
+   * it runs, and a worker that was stopped when a tab closed never hears of
+   * it at all. A trail can be up to five pages of markup, so one left behind
+   * costs as much as a live application. Read after the keys, so a tab that
+   * opens in between has no key in what was read to be mistaken for dead.
+   */
+  const deadTabs = [];
+  const tabKeyed = Object.keys(all ?? {}).filter((key) => TAB_KEYED.test(key));
+  if (tabKeyed.length > 0) {
+    const open = await chrome.tabs?.query?.({}).catch(() => null);
+    if (Array.isArray(open)) {
+      const ids = new Set(open.map((t) => t.id));
+      deadTabs.push(...tabKeyed.filter((key) => !ids.has(Number(TAB_KEYED.exec(key)[1]))));
+    }
+  }
+  /*
+   * The closed-tab marks outlive anything that could still be in flight for
+   * them — the longest request is `SLOW_TIMEOUT_MS` — and after that a late
+   * write is caught by the sweep above instead.
+   */
+  const oldMarks = Object.entries(all ?? {})
+    .filter(([key, value]) => key.startsWith('jh-closed:') && Date.now() - (value?.at ?? 0) > TRAIL_STALE_MS)
+    .map(([key]) => key);
   /*
    * Branch stashes too. Each holds a whole trail including the first page's
    * markup — up to `TRAIL_HTML_MAX` — and until now nothing expired them: a
@@ -3494,13 +3740,19 @@ async function sweepOrphans() {
     else surplus.push(...keys);
   }
 
-  const doomed = [...expired, ...surplus];
+  const doomed = [...expired, ...surplus, ...deadTabs, ...oldMarks];
   if (doomed.length > 0) await session().remove(doomed).catch(() => undefined);
 }
 
 chrome.tabs?.onRemoved?.addListener(async (tabId) => {
+  // Marked before anything else, so a write still in flight for this tab
+  // finds it closed rather than bringing its trail back. See `tabClosed`.
+  closedTabs.add(tabId);
+  await session().set({ [closedKey(tabId)]: { at: Date.now() } }).catch(() => undefined);
   try {
-    const trail = await readTrail(tabId);
+    // In turn, after any write already queued for it: a last `saveWork` sent
+    // from `pagehide` is the newest copy of the letter there is.
+    const trail = await inTurn(trailKey(tabId), () => readTrail(tabId));
     /*
      * Under every page of it, as `remember` does and for the reason given
      * there.
@@ -3535,7 +3787,7 @@ chrome.tabs?.onRemoved?.addListener(async (tabId) => {
   // The branch stash goes with the tab it belonged to. It holds a whole
   // trail, first page's markup and all, and nothing else ever removed it.
   session()
-    .remove([trailKey(tabId), framesKey(tabId), branchKey(tabId), awayKey(tabId), panelKey(tabId)])
+    .remove(tabKeys(tabId))
     .catch(() => undefined);
 });
 

@@ -2618,6 +2618,8 @@
     const frameNotKept = new Set();
     let frameTypedWatch = null;
     let frameChoicesWatched = false;
+    // autofill.js, once this frame has loaded it. See the sending watch below.
+    let frameAutofill = null;
 
     const tellTop = () =>
       send('typedInFrame', {
@@ -2684,12 +2686,37 @@
         // Answering whether it was taken, for the same reason the top
         // document does: the one send a frame has must not be spent on a
         // record that never reached the store.
+        /*
+         * Only from a frame that holds an application. Every frame on the page
+         * runs this, and the worker cannot see into any of them, so a frame's
+         * word is taken as it is: a feedback survey's "Submit", in an iframe
+         * of the careers page, marked the application sent — measured, and a
+         * job marked sent comes off the list of things to finish. Asked at the
+         * press, not at load, because an embedded form is often drawn late;
+         * a frame that declines is not spent, so the real send still counts.
+         * See `maySendFromFrame`.
+         */
         watchForSending(document, (how) => {
-          // What was typed on the form being sent, kept whatever becomes of the record.
-          keepFrameTyped();
-          return send('applicationSentHere', { note: how, url: location.href })
-            .then((reply) => reply?.ok !== false)
-            .catch(() => false);
+          const decide = (autofill) => autofill.maySendFromFrame() || decisiveSignal();
+          const tell = () => {
+            // What was typed on the form being sent, kept whatever becomes of the record.
+            keepFrameTyped();
+            return send('applicationSentHere', { note: how, url: location.href })
+              .then((reply) => reply?.ok !== false)
+              .catch(() => false);
+          };
+          /*
+           * At once where the code is already here — which it is in any frame
+           * with a form worth the name, loaded below — because the press that
+           * sends a form also takes the frame to its next page, and a message
+           * left waiting on a module load can go with the page.
+           */
+          if (frameAutofill) return decide(frameAutofill) ? tell() : false;
+          return imports
+            .autofill()
+            .then(decide)
+            .catch(() => false)
+            .then((application) => (application ? tell() : false));
         });
         /*
          * And the receipt, which on an embedded board is drawn in here: the
@@ -2878,6 +2905,7 @@
       imports
         .autofill()
         .then((autofill) => {
+          frameAutofill = autofill;
           if (!autofill.looksLikeApplicationForm()) return;
           send('applicationFrameHere', {}).catch(() => undefined);
           watchFrameForm(autofill);
@@ -3345,5 +3373,13 @@
   });
 
   // A missing server must not spam every page the user opens.
-  show().catch(quietly);
+  //
+  // And not before the page is shown. A prerendered page — a link Chrome
+  // expects you to follow, rendered in the background — runs this script, and
+  // its messages arrive as the visible tab's: its `analyze` put its job into
+  // the application on screen. The worker refuses them too; see
+  // `PRERENDER_ALLOWED`.
+  const start = () => show().catch(quietly);
+  if (document.prerendering) document.addEventListener('prerenderingchange', start, { once: true });
+  else start();
 })();
