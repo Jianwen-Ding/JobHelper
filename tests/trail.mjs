@@ -922,6 +922,20 @@ describe('a job id at the end of the path, and the view of it before', () => {
     // And more than one segment changed is more than one view.
     assert.equal(rp('/a/job_details/1609178343953401', '/b/create_application/1609178343953401'), false);
   });
+
+  /*
+   * Years written as words of their own are when, not which job. A GitHub
+   * repository of internship lists has eight digits in its name and read as a
+   * job's id. The same rule as ResumeM-M's `jobNumberIn`.
+   */
+  it('does not take years in a name for a job id', () => {
+    const rp = (a, b) => relatedPath(`https://x.example${a}`, `https://x.example${b}`);
+    const repo = 'Automated-List-Of-Summer-2027-and-Fall-2026-Tech-Internships';
+    assert.equal(rp(`/view/${repo}`, `/apply/${repo}`), false);
+    // A requisition with a year beside it still has its own number.
+    const req = 'Software-Engineer-Summer-2027_R171666';
+    assert.equal(rp(`/view/${req}`, `/apply/${req}`), true);
+  });
 });
 
 /*

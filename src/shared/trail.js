@@ -307,7 +307,7 @@ export function relatedPath(a, b) {
     const differ = sa.map((seg, i) => i).filter((i) => sa[i] !== sb[i]);
     if (differ.length === 1) {
       const at = differ[0];
-      const idAfter = sa.slice(at + 1).some((seg) => PATH_JOB_ID.test(seg));
+      const idAfter = sa.slice(at + 1).some((seg) => isJobNumber(seg));
       if (idAfter && (namesAStep(sa[at]) || namesAStep(sb[at]))) return true;
     }
   }
@@ -317,11 +317,26 @@ export function relatedPath(a, b) {
 /** A path segment that is a job's id: five digits or more, and nothing but an id. */
 const PATH_JOB_ID = /^(?=(?:\D*\d){5})[a-z0-9_-]+$/i;
 
+/*
+ * Not counting a year written as a word of its own.
+ *
+ * `Automated-List-Of-Summer-2027-and-Fall-2026-Tech-Internships` — a GitHub
+ * repository of internship lists — has eight digits and nothing but letters,
+ * digits and hyphens, so it read here as a job's id: enough for `relatedPath`
+ * to join a view of it to an "apply"-named sibling as one job, and for a
+ * form beside it to be called another job's over a number nobody had seen.
+ * The digits that make an id a job's are its own; "2027" between hyphens is
+ * when, and `Software-Engineer-Summer-2027_R171666` still has its
+ * six. The same rule as ResumeM-M's `isJobNumber` in `src/jobs/names.ts`.
+ */
+const YEAR_WORD = /(^|[-_])(?:19|20)\d\d(?=$|[-_])/g;
+const isJobNumber = (s) => PATH_JOB_ID.test(s) && PATH_JOB_ID.test(String(s).replace(YEAR_WORD, '$1'));
+
 /** Parameters that could name anything, so agreeing on one says nothing about the job. */
 const ANY_PARAM = /^(id|oid|pid|token)$/i;
 
 /** The job numbers an address names in its parameters, leaving out the ones that could name anything. */
-const jobNumbers = (u) => [...jobIds(u)].filter(([key, value]) => !ANY_PARAM.test(key) && PATH_JOB_ID.test(value)).map(([, value]) => value.toLowerCase());
+const jobNumbers = (u) => [...jobIds(u)].filter(([key, value]) => !ANY_PARAM.test(key) && isJobNumber(value)).map(([, value]) => value.toLowerCase());
 
 /**
  * Two addresses that name the same job's number: both in a job parameter, or
@@ -780,7 +795,7 @@ export function judgeApplication(trail, page, now = Date.now()) {
   });
   if (!sameSite) return 'different';
   const seen = trail.pages.map((p) => String(p?.url ?? '').toLowerCase());
-  const itsJobs = segments(pathOf(page.url) ?? '').filter((seg) => PATH_JOB_ID.test(seg) && /\d/.test(seg));
+  const itsJobs = segments(pathOf(page.url) ?? '').filter((seg) => isJobNumber(seg) && /\d/.test(seg));
   if (itsJobs.some((id) => !seen.some((u) => u.includes(id.toLowerCase())))) return 'different';
   /*
    * The form that comes straight after signing in is the one Apply was

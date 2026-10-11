@@ -1138,6 +1138,10 @@ export function createCard({
     },
   };
 
+  /** Where this card was put up, and whether it was put away rather than replaced. See `leftBehind`. */
+  const bornOn = location.href;
+  let putAway = false;
+
   /*
    * Taking the card off the page, and saying so.
    *
@@ -1149,6 +1153,7 @@ export function createCard({
    * Measured, in `tests/asking.mjs`: press ×, press the button, nothing.
    */
   const closeCard = () => {
+    putAway = true;
     removeCard();
     try {
       onClose?.();
@@ -4387,7 +4392,38 @@ export function createCard({
    * since a queued or retried one was decided on before the send. The store
    * refuses one that gets there anyway.
    */
-  const stagingStopped = () => state.sent && !state.reopened;
+  const stagingStopped = () => (state.sent && !state.reopened) || leftBehind();
+
+  /*
+   * Or because this card is no longer the one for the page.
+   *
+   * A stage is the card's copy filed under the page's names: the spec comes
+   * from here, and the company, role and address are read by the content
+   * script when the message goes (`filedAs`, `location.href`). On a board
+   * that swaps postings in place — LinkedIn's search results, where clicking
+   * the next job in the list changes `currentJobId` and nothing else — the
+   * card for the job just left kept running after the url moved: its
+   * `prepareSoon` wait, a compile finishing, `healSoon`'s retry. The content
+   * script only notices the url on its next one-second tick, and taking the
+   * card off the page stops none of those timers, so the stage they started
+   * went out carrying this posting's tailored resume under the next one's
+   * address — and, once the next posting's analysis had landed, its company
+   * too. Measured in the store: "Apply: Visa — SW Engineer" and, a second
+   * later, "Apply: AV — Associate Software Engineer" filed with
+   * `job-visa-sw-engineer`; a Texas Instruments row given another posting's
+   * address, then taken over by the next "Software Engineering Intern" at
+   * that address. See tests/switching.mjs.
+   *
+   * So a card that another card has replaced, or whose page's address is no
+   * longer the one it was put up on, files nothing. Every url change starts
+   * a fresh card (`startOver`), so the address it was born on is the only
+   * one it is ever right about. A card put away with × or Done is still the
+   * page's: a change made just before pressing it still reaches the folder.
+   */
+  function leftBehind() {
+    if (location.href !== bornOn) return true;
+    return !putAway && live?.host !== host;
+  }
 
   async function stageFiles() {
     if (stagingStopped()) return;
