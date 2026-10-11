@@ -243,8 +243,18 @@ async function refresh() {
     getJson(`${serverUrl}/api/revision`, 2500),
   ]);
   if (mine !== refreshing) return;
-  model.resumes = Array.isArray(list) ? list : (list?.resumes ?? []);
-  model.revision = revision?.revision ?? model.revision;
+  /*
+   * A failed request is not an empty store. `getJson` answers null for a
+   * timeout or a 503, and reading that as "no resumes" told the person the
+   * copy they were editing had been deleted — after one slow answer. Kept as
+   * it was, the way `poll` keeps it, and the revision is not advanced either,
+   * so the next poll asks again rather than believing it is up to date.
+   */
+  const fresh = Array.isArray(list) ? list : Array.isArray(list?.resumes) ? list.resumes : null;
+  if (fresh) {
+    model.resumes = fresh;
+    model.revision = revision?.revision ?? model.revision;
+  }
   choose();
   paint();
   await navigate();

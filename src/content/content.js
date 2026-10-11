@@ -938,6 +938,12 @@
   let inTheAir = null;
   let watchingDrops = false;
 
+  /** Whether a drag carries real files, which a chip's drag never does. */
+  function carriesFiles(event) {
+    const types = event.dataTransfer?.types;
+    return Boolean(types && [...types].includes('Files'));
+  }
+
   function watchForDrops() {
     if (watchingDrops) return;
     watchingDrops = true;
@@ -950,6 +956,11 @@
       'dragover',
       (event) => {
         if (!inTheAir) return;
+        // A real file drag is the page's, not a chip's. See the drop below.
+        if (carriesFiles(event)) {
+          inTheAir = null;
+          return;
+        }
         event.preventDefault();
         if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
       },
@@ -960,6 +971,19 @@
       (event) => {
         const files = inTheAir;
         if (!files) return;
+        /*
+         * A drag that carries files is not ours. A chip's drag never does —
+         * Chromium drops the script-made `File` before the drop, so `types` is
+         * `["text/plain"]` (tests/probe-drag-drop.mjs) — and a file dragged in
+         * from the desktop always does. `inTheAir` alone could not tell them
+         * apart: left set by a chip drag whose `dragend` never arrived, it
+         * cancelled the person's own drag of a real file and put ours in its
+         * place. So the page has this one, and the stale arm is let go of.
+         */
+        if (carriesFiles(event)) {
+          inTheAir = null;
+          return;
+        }
         /*
          * Stopped as well as cancelled: the page's own drop handler would
          * otherwise run on a drag carrying nothing and report "that file could
