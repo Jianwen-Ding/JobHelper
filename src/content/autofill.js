@@ -312,6 +312,12 @@ function addressPartByLabel(label, key) {
  * `full_name` matches, so the applicant's legal name was being typed onto the
  * signature line of a form they had not chosen to complete.
  */
+/*
+ * The words that make a typed name a signature — see the rule in
+ * `NOT_ABOUT_YOU` that uses them.
+ */
+const ATTESTING = String.raw`\b(?:certif(?:y|ies|ied|ying|ication)|attest\w*|acknowledg\w*|i\s+agree|agree(?:s|d)?\s+to|accurate|true\s+and\s+(?:correct|complete|accurate))\b`;
+
 const NOT_ABOUT_YOU = [
   /*
    * Somebody else's name, telephone number or address.
@@ -376,7 +382,11 @@ const NOT_ABOUT_YOU = [
    * university located in?" were each given the university's *name* — in a
    * box asking where it is.
    */
-  /\b(school|university|college|institution)['’]?s?[\s_-]+(address|location|city|town|state|province|country|zip|postal)\b|\b(school|university|college|institution)\b[\s\S]{0,24}\blocated\b/i,
+  /*
+   * And somebody at the school: "Name of your university's career services
+   * contact" was given the university's name.
+   */
+  /\b(school|university|college|institution)['’]?s?[\s_-]+(address|location|city|town|state|province|country|zip|postal)\b|\b(school|university|college|institution)\b[\s\S]{0,24}\blocated\b|\b(school|university|college|institution)\b[\s\S]{0,40}\bcontacts?\b(?![\s_-]+(?:you|your|them|us)\b)/i,
   /*
    * Permission to contact an employer, which is a yes or a no and not the
    * employer's name — "Can we contact your current employer?" took
@@ -502,6 +512,22 @@ const NOT_ABOUT_YOU = [
    * "sign up" are not signing.
    */
   /\b(e-?)?signatures?\b|\be-?sign(ed|ing)?\b|\bsign(ed|ing)?\b(?![\s_-]+(?:in|up|on|out)\b)/i,
+  /*
+   * And a name asked for as a signature without the word. "By typing your
+   * full name below you certify that the information above is true", "By
+   * entering your full name below, you confirm that all information
+   * provided is accurate", "Applicant certification: type your full name",
+   * "Full name (acknowledging the statement above)" and "Your name (I agree
+   * to the terms above)" were each given the applicant's name — signing, in
+   * all but the word, whatever they attest to. A name beside a certifying,
+   * attesting, acknowledging or agreeing word, or one asked for "by typing"
+   * it, is the same signature. "Full name" and "Legal name" alone say none
+   * of these and are still filled.
+   */
+  new RegExp(
+    String.raw`${ATTESTING}[\s\S]{0,80}\bnames?\b|\bnames?\b[\s\S]{0,80}${ATTESTING}|\bby\s+(?:typing|entering|writing|providing|inputting)\b[\s\S]{0,40}\bnames?\b`,
+    'i',
+  ),
   // Where you heard about the job, which is not a profile of yours.
   /\b(did[\s_-]you[\s_-](?:first[\s_-])?hear|hear[\s_-](?:about|of)[\s_-](us|this)|referral)\b/i,
   // Citizenship, birth and residence are different questions with the same
@@ -734,6 +760,50 @@ const asksBothAtOnce = (description) =>
   (AUTHORIZATION.test(description) || WITHOUT_SPONSORSHIP.test(description)) && SPONSORSHIP.test(description);
 
 /*
+ * The right to work or the need for sponsorship, asked in the negative.
+ *
+ * Every answer this file gives the two declarations is the answer to the
+ * plain question — "Do you require sponsorship?", "Are you authorized to work
+ * in the US?" — and a form is free to ask it the other way up. Measured
+ * against a profile that is authorized and needs no sponsorship: "Do you NOT
+ * require visa sponsorship now or in the future?" was answered "No" (that is,
+ * "I do require it"), "Are you currently NOT authorized to work in the United
+ * States?" "Yes", "I confirm I will not require sponsorship" "No", "Is it
+ * true that you will never need sponsorship?" "No", and a box asking "Do you
+ * not need sponsorship?" was typed "No" — each one the opposite of the truth,
+ * declared in the applicant's name on the question most likely to end an
+ * application unread.
+ *
+ * Turning the answer over to match is a guess about how a double negative
+ * was meant, and a wrong guess here is a false legal declaration. So it is
+ * handed back, as `TWO_AT_ONCE` is, and the card names it.
+ *
+ * Only a denial the asker puts in the person's own mouth — after "you" or
+ * "I", in the same sentence, and close in front of the need, the right or
+ * the sponsorship itself. "We do not sponsor visas" beside an ordinary
+ * question is the employer's policy and changes nothing, and "without" is
+ * not read here at all: "…without the need for sponsorship?" asks whether
+ * somebody can work unsponsored, which `asksBothAtOnce` already hands back
+ * as the two questions it is. "Are you unauthorized…" is the same question
+ * in one word, which `AUTHORIZATION` does not read.
+ */
+const DENIED = String.raw`(?:\b(?:not|never|no\s+longer)\b|n['’]t\b)`;
+const ASKED_OF_YOU = String.raw`\b(?:you|i)\b[^.?!;]{0,40}?`;
+const NEGATIVE_QUESTION = new RegExp(
+  String.raw`${ASKED_OF_YOU}${DENIED}[^.?!;]{0,20}?\b(?:require|need|authori[sz]|eligib|sponsor|permitted|allowed)` +
+    String.raw`|${ASKED_OF_YOU}\b(?:unauthori[sz]ed|ineligible)\b`,
+  'i',
+);
+const IN_THE_NEGATIVE = 'this one asks it in the negative';
+/** The declaration a question asked in the negative is about, or null. */
+function askedInTheNegative(description) {
+  if (!NEGATIVE_QUESTION.test(description)) return null;
+  if (SPONSORSHIP.test(description)) return 'requires_sponsorship';
+  if (AUTHORIZATION.test(description) || /\b(?:unauthori[sz]ed|ineligible)\b/i.test(description)) return 'work_authorization';
+  return null;
+}
+
+/*
  * Which field each row of `skipped` is about, and what that field is called.
  *
  * The card said "3 fields still for you to answer" and nothing else, so the
@@ -782,13 +852,16 @@ const handBack = (description, skipped, el, label) => {
    * is still unanswered.
    */
   if (acknowledgesWorkRights(description)) return true;
-  if (!asksBothAtOnce(description)) return false;
+  const both = asksBothAtOnce(description);
+  // And the same question asked the other way up. See `askedInTheNegative`.
+  const negative = both ? null : askedInTheNegative(description);
+  if (!both && !negative) return false;
   skipped.push(
     leftAt(
       el,
       {
-        key: 'work_authorization',
-        reason: TWO_AT_ONCE,
+        key: both ? 'work_authorization' : negative,
+        reason: both ? TWO_AT_ONCE : IN_THE_NEGATIVE,
         description: description.slice(0, 60),
       },
       label,
@@ -2825,11 +2898,23 @@ function educationDatePart(description) {
    * left empty. First and last only beside "attended", so "First name" and a
    * "Last updated" note are not dates of a degree.
    */
-  const which = /\b(start\w*|from|began|begin\w*)\b|\bfirst\b.{0,20}\battend/i.test(description)
-    ? 'start'
-    : /\b(end\w*|to|until|finish\w*|complet\w*)\b|\blast\b.{0,20}\battend/i.test(description)
-      ? 'end'
-      : null;
+  /*
+   * The words that can only mean the end first. "Date of graduation from
+   * this school" was read for "from" before anything else, and was given
+   * the date the applicant *started* — a graduation date four years early,
+   * on the line an employer checks against a transcript. "From" and "to"
+   * are the weakest words here, so each counts only where nothing plainer
+   * has spoken.
+   */
+  const which = /\b(graduat\w*|finish\w*|complet(?:ed|ion)|until)\b|\blast\b.{0,20}\battend/i.test(description)
+    ? 'end'
+    : /\b(start\w*|began|begin\w*)\b|\bfirst\b.{0,20}\battend/i.test(description)
+      ? 'start'
+      : /\b(end\w*|to)\b/i.test(description)
+        ? 'end'
+        : /\bfrom\b/i.test(description)
+          ? 'start'
+          : null;
   if (!which) return null;
   const part = /\bmonth\b/i.test(description) ? 'month' : /\byear\b/i.test(description) ? 'year' : 'date';
   return which === 'start' ? `education_start_${part}` : `graduation_${part}`;
@@ -3289,7 +3374,8 @@ function gpaOption(options, value, textOf = (o) => o.textContent) {
  * readable form leaves it empty and raises nothing. A box whose placeholder
  * says MM/YYYY will usually be checked against that shape when the form is
  * sent. Anything else gets the readable form, which a person would type.
- * Never a day: `type=date` wants one, and a guessed day is a guess.
+ * Never a day: `type=date` wants one, and a guessed day is a guess. `null`
+ * where the box says it wants one, which is the caller's to leave.
  */
 export function graduationFor(input, value) {
   const hit = /^([a-z]+)\s+(\d{4})$/i.exec(String(value).trim());
@@ -3304,6 +3390,14 @@ export function graduationFor(input, value) {
    * reported as filled — the one shape its own label said it would not take.
    */
   const hint = `${input.placeholder ?? ''} ${input.getAttribute?.('aria-label') ?? ''} ${labelFor(input)}`.toLowerCase();
+  /*
+   * Unless the shape wants a day. "Graduation date (DD/MM/YYYY)" holds
+   * "MM/YYYY" inside it, so it was given "05/2027" — a month where its day
+   * goes, and a date the form reads as the 5th of the 27th month, or
+   * refuses — and "dd/mm/yy" was given "05/27". A day is not on the resume,
+   * and a guessed one is a guess: `null`, and the caller leaves the box.
+   */
+  if (/\bdd(?:\b|mm)|mm[\s/.-]*dd\b/.test(hint)) return null;
   if (/yyyy\s*-\s*mm/.test(hint)) return `${year}-${mm}`;
   if (/mm\s*\/\s*yyyy/.test(hint)) return `${mm}/${year}`;
   if (/mm\s*\/\s*yy\b/.test(hint)) return `${mm}/${year.slice(2)}`;
@@ -3979,6 +4073,13 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     if (!(input instanceof HTMLSelectElement) && NOT_LISTED.test(description)) continue;
     if (anotherLevelOfStudy(input, key, fields)) continue;
     if (asksYesOrNo(input, key)) continue;
+    /*
+     * "Visa status" is in the sponsorship pattern for the Yes and No lists
+     * that ask it that way, and nowhere else: typed into a box, the stored
+     * "No" is no visa status at all. Measured: a free-text "Visa status" was
+     * given "No". A box that says "sponsor" is still asked the question.
+     */
+    if (key === 'requires_sponsorship' && !(input instanceof HTMLSelectElement) && !/\bsponsor/i.test(description)) continue;
     let value = answers[key];
     // The legal name or the one the resume prints. See `NAME_FOR_THE_FORM`.
     if (NAME_FOR_THE_FORM[key] && !asksPreferred && !asksForLegalName(input)) value = answers[NAME_FOR_THE_FORM[key]] || value;
@@ -4153,6 +4254,11 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
       value = monthAsNumber(value);
     } else if (key === 'linkedin' && isWorkdayLinkedIn(input)) {
       value = wholeLinkedInAddress(value);
+    }
+    // A shape with a day in it. See `graduationFor`.
+    if (value === null) {
+      skipped.push(leftAt(input, { key, reason: 'the field would not accept it in that form', description: description.slice(0, 60) }));
+      continue;
     }
     /*
      * Never more than the box has room for. See `fitsIn`: the same answer
@@ -4548,6 +4654,11 @@ function fillJob(block, job, overwrite, filled, skipped) {
     if (isWidgetChoice(input)) return;
     if (input.value && !overwrite) return;
     const written = slot === 'start' || slot === 'end' ? graduationFor(input, value) : String(value);
+    // A shape with a day in it. See `graduationFor`.
+    if (written === null) {
+      skipped.push(leftAt(input, { key, reason: 'the field would not accept it in that form', description: clean(labelFor(input)).slice(0, 60) }));
+      return;
+    }
     setValue(input, written);
     /*
      * The same month without its leading zero is the month. Workday's month
@@ -5625,6 +5736,34 @@ const NOT_ACKNOWLEDGED = [
   /\b(?:background|drug|credit|reference)\s+(?:check|screen|test|investigation)\w*|\bconsumer\s+reports?\b|\bfingerprint\w*|\b(criminal|convict\w*|felon\w*|arrest\w*|misdemeanou?r)\b/i,
   /\b(gender|race|racial|ethnic\w*|veterans?|disabilit\w*|disabled|eeoc?|self[\s-]?identif\w*|sexual\s+orientation|pronouns|demographic\w*|equal\s+(?:employment|opportunity))\b/i,
   /\b(certify|attest\w*|to\s+the\s+best\s+of\s+my\s+knowledge|falsif\w*|misrepresent\w*|omissions?|grounds\s+for|at[\s-]will|signature|e-?sign\w*)\b|\btrue\s*(?:,|and)?\s*(?:complete|correct|accurate)\b|\b(?:complete|correct|accurate)\s+and\s+(?:true|complete|correct|accurate)\b/i,
+  /*
+   * A right given up, a promise about other employers, and a fact about the
+   * person's past or their age. Each had the shape of an acknowledgement and
+   * none is one, and each was ticked or answered Yes, measured: "I have read
+   * and agree to the Mutual Arbitration Agreement, including the waiver of my
+   * right to a jury trial", "I acknowledge that I am not bound by any
+   * non-compete or non-solicitation agreement", "…I am not a current or former
+   * government official and have no conflicts of interest", "I hereby
+   * acknowledge that I consent to the transfer of my personal data outside the
+   * European Economic Area", "…I have never been terminated or asked to
+   * resign", "I understand that I am at least 18 years of age", and "I
+   * acknowledge that I have not previously been employed by Acme" as a Yes.
+   * The first gives away a legal right; the rest are statements of fact the
+   * employer will hold the person to, and can be false. A consent is the
+   * person's to give whatever it is to.
+   */
+  /\b(arbitrat\w*|waive\w*|waiver|jury|class[\s-]+actions?|non[\s-]?compet\w*|non[\s-]?solicit\w*|conflicts?\s+of\s+interest|government\s+officials?|public\s+officials?|consent\w*|terminat\w*|dismiss\w*|years\s+of\s+age|of\s+legal\s+age|at\s+least\s+(?:1[68]|21)|(?:previously|formerly|ever)\s+(?:been\s+)?employed)\b|\b(?:transfer\w*|export\w*)\b[^.]{0,40}\b(?:data|information)\b|\bcross[\s-]border\b/i,
+  /*
+   * And, whatever it is about, a statement of fact about the person: "that I
+   * am…", "that I have…", "that I will…". What an acknowledgement asks is
+   * that something was read or understood — "I have read and understand the
+   * Candidate Privacy Notice", "I acknowledge that this role requires
+   * working from the office" — and those still are; one that goes on to say
+   * what the person is, has done or will do is a declaration in their name,
+   * and the list above can never name every one. "That I have read" is
+   * still the reading.
+   */
+  /\bthat\s+i(?:\s+|['’])(?:am|m|was|were|will|ll|would|have|ve|had|do|did|can|hold|meet|possess|consent|agree)\b(?!\s+(?:read|reviewed|received|been\s+(?:given|provided|informed)))/i,
 ];
 
 const statementOf = (statement) => clean(statement).replace(/^[*\s]+/, '');
@@ -5770,6 +5909,8 @@ const OTHER_PEOPLE = NOT_ABOUT_YOU[0];
 function profileKeyOf(input, description) {
   const label = clean(labelFor(input));
   if (asksBothAtOnce(description)) return 'work_authorization';
+  const negative = askedInTheNegative(description);
+  if (negative) return negative;
   if (isNotAboutYou(description, label, surroundingWords(input), boundedSection(input))) return null;
   const dated = educationDateKey(input, description);
   const found = dated ? [dated] : FIELD_PATTERNS.find(([, re]) => re.test(description));
@@ -6291,6 +6432,12 @@ function widgetChoices(fields, filled) {
       found.push({ key: 'work_authorization', description: description.slice(0, 60), el: widget, both: true });
       continue;
     }
+    // And asked in the negative, as `handBack` hands it back. See `askedInTheNegative`.
+    const negative = askedInTheNegative(description);
+    if (negative) {
+      found.push({ key: negative, description: description.slice(0, 60), el: widget, negative: true });
+      continue;
+    }
     if (isNotAboutYou(description, clean(labelFor(widget)), surroundingWords(widget), boundedSection(widget))) continue;
 
     /*
@@ -6390,10 +6537,10 @@ function widgetShowsThisAnswer(widget, key, value) {
 }
 
 function unfillableChoices(fields, filled) {
-  return widgetChoices(fields, filled).map(({ key, description, both, elsewhere, policy, el }) =>
+  return widgetChoices(fields, filled).map(({ key, description, both, negative, elsewhere, policy, el }) =>
     leftAt(el, {
       key,
-      reason: policy ? FOR_YOU_TO_ACKNOWLEDGE : both ? TWO_AT_ONCE : elsewhere ? ANOTHER_COUNTRY : PICK_BY_HAND,
+      reason: policy ? FOR_YOU_TO_ACKNOWLEDGE : both ? TWO_AT_ONCE : negative ? IN_THE_NEGATIVE : elsewhere ? ANOTHER_COUNTRY : PICK_BY_HAND,
       description,
     }),
   );
@@ -7083,8 +7230,8 @@ export async function fillComboboxes(fields, report, { patience = 4000, history 
   const done = [];
   // Which question each choice answered: a key can now be asked twice.
   const chose = new Set();
-  for (const { key, el: widget, both, elsewhere, policy, asked, description } of widgetChoices(fields, report.filled)) {
-    if (both || elsewhere || policy || !pending.has(key)) continue;
+  for (const { key, el: widget, both, negative, elsewhere, policy, asked, description } of widgetChoices(fields, report.filled)) {
+    if (both || negative || elsewhere || policy || !pending.has(key)) continue;
     const value = String(fields[key]);
     const how = await chooseInWidget(widget, key, value, { patience, fields, asked });
     // Looked for in a list that opened, and not in it. See `NOT_LISTED`.
@@ -7473,6 +7620,8 @@ async function fillEducationPart(control, key, value, f, patience) {
   else if (key.startsWith('education_start_') && control.type === 'month' && f.education_start_date) written = graduationFor(control, f.education_start_date);
   else if (key === 'graduation_date' || key === 'education_start_date') written = graduationFor(control, written);
   else if ((key === 'graduation_month' || key === 'education_start_month') && asksMonthAsNumber(control)) written = monthAsNumber(written);
+  // A shape with a day in it. See `graduationFor`.
+  if (written === null) return leftAt(control, { key, reason: 'the field would not accept it in that form', description: description.slice(0, 60) });
   const before = control.value;
   setValue(control, written);
   if (control.value !== written || browserWouldRefuse(control)) {
@@ -8320,7 +8469,15 @@ export function looksLikeApplicationForm() {
     // labelled inputs and nothing else — so there has to be a route that reads
     // the fields rather than the copy.
     telltales >= 1 ||
-    (keys.has('first_name') && keys.has('last_name'));
+    /*
+     * And a legal first and last name — with something more. On their own
+     * they are a mailing list's too: a newsletter frame of First name, Last
+     * name, Email and Company with a Subscribe button, and a "Get job alerts"
+     * box of the first three, were each recognised and given the person's
+     * name and address. What iCIMS and Taleo ask beside the two halves of the
+     * name is a telephone number or a file, which an alerts box does not.
+     */
+    (keys.has('first_name') && keys.has('last_name') && (keys.has('phone') || deepQueryAll('input[type=file]').length > 0));
 
   // And in every case, enough of a form to be one. Evidence alone let a frame
   // through that merely talked about applying.
@@ -8352,6 +8509,21 @@ export function looksLikeApplicationForm() {
  */
 const ON_A_TRACKER_HOST =
   /\b(greenhouse|lever|workday|myworkdayjobs|ashby|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite|bamboohr|rippling|breezy|recruitee|teamtailor|jazzhr|successfactors|brassring|myjobs\.adp|workforcenow\.adp)\b/i;
+
+/**
+ * Whether a send pressed in this frame can be an application going out.
+ *
+ * A frame tells the worker of every press that looks like a send, and the
+ * worker has no way to look inside it — so a feedback survey's "Submit" in
+ * an iframe of the careers page marked the application as sent, measured,
+ * and took it off the list of things to finish. An application by the rules
+ * above, or any page of a hiring system's own host: the last step of a form
+ * served a page at a time, iCIMS's above all, can be a review with nothing
+ * left to fill, and is still the one that sends it.
+ */
+export function maySendFromFrame() {
+  return looksLikeApplicationForm() || ON_A_TRACKER_HOST.test(location.hostname);
+}
 
 export function mayFillFrame() {
   if (looksLikeApplicationForm()) return true;

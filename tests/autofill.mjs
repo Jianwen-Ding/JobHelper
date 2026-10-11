@@ -6372,7 +6372,127 @@ const BANK_SHAPES = `<!doctype html><html><head><meta charset="utf-8"><title>App
 </fieldset></div>
 </body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/greenhouse-react-education': GREENHOUSE_REACT_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE, '/acknowledgements': ACKNOWLEDGEMENTS, '/sponsorship-policies': SPONSORSHIP_POLICIES, '/sponsorship-policy-pressed': SPONSORSHIP_POLICY_PRESSED, '/sponsorship-policy-aria': SPONSORSHIP_POLICY_ARIA, '/bank-shapes': BANK_SHAPES };
+/*
+ * The right to work and sponsorship asked the other way up, beside the plain
+ * questions that must still be answered. Each of the first six was answered
+ * with the plain question's answer — the opposite of the truth.
+ */
+const NEGATED_QUESTIONS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+  <label for="n-require">Do you NOT require visa sponsorship now or in the future?</label>
+  <select id="n-require"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <label for="n-confirm">I confirm I will not require sponsorship</label>
+  <select id="n-confirm"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <fieldset><legend>Are you currently NOT authorized to work in the United States?</legend>
+    <label><input type="radio" name="n-auth" value="yes"> Yes</label><label><input type="radio" name="n-auth" value="no"> No</label></fieldset>
+  <fieldset><legend>Is it true that you will never need sponsorship?</legend>
+    <label><input type="radio" name="n-never" value="yes"> Yes</label><label><input type="radio" name="n-never" value="no"> No</label></fieldset>
+  <label for="n-text">Do you not need sponsorship?</label><input id="n-text">
+  <label for="n-unauth">Are you unauthorized to work in the US?</label>
+  <select id="n-unauth"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+
+  <label for="p-future">Will you now or in the future require sponsorship?</label>
+  <select id="p-future"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <fieldset><legend>Are you legally authorized to work in the United States?</legend>
+    <label><input type="radio" name="p-auth" value="yes"> Yes</label><label><input type="radio" name="p-auth" value="no"> No</label></fieldset>
+  <label for="p-policy">Do you require visa sponsorship? Please note we do not sponsor visas for this role.</label>
+  <select id="p-policy"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <label for="p-without">Can you work for us without the need for visa sponsorship?</label>
+  <select id="p-without"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+</form></body></html>`;
+
+/*
+ * Statements shaped like an acknowledgement that are not one: a right given
+ * up, a promise about other employers, a consent, and facts about the person.
+ * Each was ticked or answered Yes. And two that are still only read and
+ * acknowledged, which still are.
+ */
+const NOT_ONLY_ACKNOWLEDGED = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+  <div><input type="checkbox" id="x-arbitration" required><label for="x-arbitration">I have read and agree to the Mutual Arbitration Agreement, including the waiver of my right to a jury trial and to bring class actions. *</label></div>
+  <div><input type="checkbox" id="x-compete" required><label for="x-compete">I acknowledge that I am not bound by any non-compete or non-solicitation agreement with a current or former employer. *</label></div>
+  <div><input type="checkbox" id="x-official" required><label for="x-official">I acknowledge that I am not a current or former government official and have no conflicts of interest. *</label></div>
+  <div><input type="checkbox" id="x-transfer" required><label for="x-transfer">I hereby acknowledge that I consent to the transfer of my personal data outside the European Economic Area. *</label></div>
+  <div><input type="checkbox" id="x-terminated" required><label for="x-terminated">I acknowledge that I have never been terminated or asked to resign from any employment. *</label></div>
+  <div><input type="checkbox" id="x-age" required><label for="x-age">I understand that I am at least 18 years of age. *</label></div>
+  <div><input type="checkbox" id="x-fact" required><label for="x-fact">I acknowledge that I will be able to start within two weeks of an offer. *</label></div>
+  <fieldset><legend>I acknowledge that I have not previously been employed by Acme or any of its subsidiaries.</legend>
+    <label><input type="radio" name="x-before" value="yes"> Yes</label><label><input type="radio" name="x-before" value="no"> No</label></fieldset>
+
+  <div><input type="checkbox" id="y-privacy" required><label for="y-privacy">I acknowledge I have read the privacy notice describing how my personal data is used. *</label></div>
+  <label for="y-read">I confirm that I have read the job description.</label>
+  <select id="y-read"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+</form></body></html>`;
+
+/*
+ * A name asked for as a signature without the word "sign", beside the name
+ * boxes that are only the name.
+ */
+const SIGNED_WITHOUT_THE_WORD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+  <label for="s-typing">By typing your full name below you certify that the information above is true</label><input id="s-typing">
+  <label for="s-entering">By entering your full name below, you confirm that all information provided is accurate and complete.</label><input id="s-entering">
+  <label for="s-certification">Applicant certification: type your full name</label><input id="s-certification">
+  <label for="s-acknowledging">Full name (acknowledging the statement above)</label><input id="s-acknowledging">
+  <label for="s-agree">Your name (I agree to the terms above)</label><input id="s-agree">
+  <label for="s-full">Full name *</label><input id="s-full">
+  <label for="s-legal">Legal name</label><input id="s-legal">
+  <label for="s-first">First name</label><input id="s-first">
+</form></body></html>`;
+
+/*
+ * Education dates whose words for the end come after a "from", and date
+ * shapes that want a day. Plus the other things nothing in the profile is.
+ */
+const EDUCATION_WORDING = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+<section><h3>Education</h3>
+  <label for="e-school">School</label><input id="e-school">
+  <label for="e-graduation">Date of graduation from this school</label><input id="e-graduation">
+  <label for="e-graduated">Year you graduated from university</label><input id="e-graduated">
+  <label for="e-start">Start date</label><input id="e-start">
+  <label for="e-end">End date</label><input id="e-end">
+</section>
+</form></body></html>`;
+
+const DAY_SHAPES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+  <label for="d-ddmmyyyy">Graduation date (DD/MM/YYYY)</label><input id="d-ddmmyyyy">
+  <label for="d-ddmmyy">Expected graduation (dd/mm/yy)</label><input id="d-ddmmyy">
+  <label for="d-mmddyyyy">Graduation date</label><input id="d-mmddyyyy" placeholder="MM/DD/YYYY">
+  <label for="d-mmyyyy">Graduation date (MM/YYYY)</label><input id="d-mmyyyy">
+  <label for="d-visa">Visa status</label><input id="d-visa">
+  <label for="d-visa-yes-no">Visa status</label>
+  <select id="d-visa-yes-no"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <label for="d-sponsor-text">Will you require sponsorship? (Yes/No)</label><input id="d-sponsor-text">
+  <label for="d-contact">Name of your university's career services contact</label><input id="d-contact">
+  <label for="d-university">University</label><input id="d-university">
+</form></body></html>`;
+
+/*
+ * The two halves of a name in somebody else's frame: a newsletter box and a
+ * job-alerts box, and a survey with a Submit. And the shapes an application
+ * asks them in, which are still applications.
+ */
+const NEWSLETTER_NAMES = `<!doctype html><html><head><meta charset="utf-8"><title>Newsletter</title></head><body><form>
+<h3>Get our weekly newsletter</h3>
+<label for="fn">First name</label><input id="fn"><label for="ln">Last name</label><input id="ln">
+<label for="em">Email</label><input id="em" type="email"><label for="co">Company</label><input id="co">
+<button>Subscribe</button></form></body></html>`;
+const ALERTS_NAMES = `<!doctype html><html><head><meta charset="utf-8"><title>Feedback</title></head><body>
+<form onsubmit="event.preventDefault()"><p>Get job alerts from Acme</p>
+<label>First name <input name="fn"></label><label>Last name <input name="ln"></label><label>Email <input name="em"></label>
+<button type="submit">Submit</button></form></body></html>`;
+const SURVEY_FRAME = `<!doctype html><html><head><meta charset="utf-8"><title>Survey</title></head><body>
+<form onsubmit="event.preventDefault()"><p>How was your visit today?</p>
+<label>Rating <select name="r"><option>5</option><option>4</option></select></label>
+<label>Comments <textarea name="c"></textarea></label><label>Email (optional) <input name="em"></label>
+<button type="submit">Submit</button></form></body></html>`;
+const NAMES_AND_PHONE = `<!doctype html><html><head><meta charset="utf-8"><title>Candidate</title></head><body><form>
+<label for="fn">First name</label><input id="fn"><label for="ln">Last name</label><input id="ln">
+<label for="em">Email</label><input id="em" type="email"><label for="ph">Phone</label><input id="ph" type="tel">
+<button>Next</button></form></body></html>`;
+const NAMES_AND_FILE = `<!doctype html><html><head><meta charset="utf-8"><title>Candidate</title></head><body><form>
+<label for="fn">First name</label><input id="fn"><label for="ln">Last name</label><input id="ln">
+<label for="em">Email</label><input id="em" type="email"><label for="up">Attachment</label><input id="up" type="file">
+<button>Next</button></form></body></html>`;
+
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/greenhouse-react-education': GREENHOUSE_REACT_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE, '/acknowledgements': ACKNOWLEDGEMENTS, '/sponsorship-policies': SPONSORSHIP_POLICIES, '/sponsorship-policy-pressed': SPONSORSHIP_POLICY_PRESSED, '/sponsorship-policy-aria': SPONSORSHIP_POLICY_ARIA, '/bank-shapes': BANK_SHAPES, '/negated-questions': NEGATED_QUESTIONS, '/not-only-acknowledged': NOT_ONLY_ACKNOWLEDGED, '/signed-without-the-word': SIGNED_WITHOUT_THE_WORD, '/education-wording': EDUCATION_WORDING, '/day-shapes': DAY_SHAPES, '/newsletter-names': NEWSLETTER_NAMES, '/alerts-names': ALERTS_NAMES, '/survey-frame': SURVEY_FRAME, '/names-and-phone': NAMES_AND_PHONE, '/names-and-file': NAMES_AND_FILE };
 
 const PROFILE = {
   first_name: 'Morgan',
@@ -12371,6 +12491,163 @@ async function main() {
       JSON.stringify(banked.asked),
     );
     check('nothing asked is read twice', !banked.asked.some((q) => /\?Are you|(\b\w{3,}\b)\1/.test(q)), JSON.stringify(banked.asked));
+
+    /* -------- The right to work and sponsorship, asked in the negative -------- */
+    const valuesOf = (where, fields, ids) =>
+      page.goto(`${base}${where}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, fields, ids }) => {
+          const m = await import(`${b}/autofill.js`);
+          const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 300 });
+          const valueOf = (id) => {
+            const el = document.getElementById(id);
+            if (el) return el.type === 'checkbox' ? el.checked : el.value;
+            return document.querySelector(`input[name="${id}"]:checked`)?.value ?? null;
+          };
+          return {
+            values: Object.fromEntries(ids.map((id) => [id, valueOf(id)])),
+            acknowledged: report.filled.filter((f) => f.acknowledged).map((f) => f.question),
+            filled: report.filled.map((f) => f.key),
+            skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`),
+          };
+        }, { b: base, fields, ids }),
+      );
+    const negated = await valuesOf('/negated-questions', PROFILE, [
+      'n-require', 'n-confirm', 'n-auth', 'n-never', 'n-text', 'n-unauth', 'p-future', 'p-auth', 'p-policy', 'p-without',
+    ]);
+    group('The right to work and sponsorship, asked in the negative');
+    check(
+      '"Do you NOT require…", "I confirm I will not require…", "Are you currently NOT authorized…", "…you will never need…", "Do you not need…" and "Are you unauthorized…" are none of them answered',
+      ['n-require', 'n-confirm', 'n-text', 'n-unauth'].every((id) => negated.values[id] === '') &&
+        negated.values['n-auth'] === null && negated.values['n-never'] === null,
+      JSON.stringify(negated.values),
+    );
+    check(
+      'and each is handed back, named as asked in the negative',
+      negated.skipped.filter((x) => x.endsWith('this one asks it in the negative')).length === 6,
+      JSON.stringify(negated.skipped),
+    );
+    check(
+      'while the plain questions are answered as before — "Will you now or in the future require sponsorship?", "Are you legally authorized…?", and one beside the employer\'s "we do not sponsor"',
+      negated.values['p-future'] === 'No' && negated.values['p-auth'] === 'yes' && negated.values['p-policy'] === 'No',
+      JSON.stringify(negated.values),
+    );
+    check(
+      '"…without the need for visa sponsorship?" is no negative question — it is still the two at once it always was',
+      negated.values['p-without'] === '' && negated.skipped.includes('work_authorization: this one asks two things at once'),
+      JSON.stringify(negated.skipped),
+    );
+
+    /* ------- Shaped like an acknowledgement, and a declaration instead ------- */
+    const asserted = await valuesOf('/not-only-acknowledged', { full_name: 'Morgan Testwell' }, [
+      'x-arbitration', 'x-compete', 'x-official', 'x-transfer', 'x-terminated', 'x-age', 'x-fact', 'x-before', 'y-privacy', 'y-read',
+    ]);
+    group('Statements shaped like an acknowledgement that are not one');
+    check(
+      'an arbitration agreement waiving a jury, a non-compete, "not a government official", a consent to send data abroad, "never been terminated" and "at least 18" are never ticked',
+      ['x-arbitration', 'x-compete', 'x-official', 'x-transfer', 'x-terminated', 'x-age'].every((id) => asserted.values[id] === false),
+      JSON.stringify(asserted.values),
+    );
+    check(
+      'nor any statement of what the person is or will do, nor "I have not previously been employed by Acme" as a Yes',
+      asserted.values['x-fact'] === false && asserted.values['x-before'] === null,
+      JSON.stringify(asserted.values),
+    );
+    check(
+      'while "I acknowledge I have read the privacy notice…" is still ticked and "I confirm that I have read the job description" still Yes',
+      asserted.values['y-privacy'] === true && asserted.values['y-read'] === 'Yes' && asserted.acknowledged.length === 2,
+      JSON.stringify(asserted),
+    );
+
+    /* ------------------- A signature without the word ------------------- */
+    const signed = await valuesOf('/signed-without-the-word', PROFILE, [
+      's-typing', 's-entering', 's-certification', 's-acknowledging', 's-agree', 's-full', 's-legal', 's-first',
+    ]);
+    group('A name asked for as a signature, without the word');
+    check(
+      '"By typing your full name below you certify…", "By entering your full name below…", "Applicant certification: type your full name", "Full name (acknowledging…)" and "Your name (I agree…)" are left for the person',
+      ['s-typing', 's-entering', 's-certification', 's-acknowledging', 's-agree'].every((id) => signed.values[id] === ''),
+      JSON.stringify(signed.values),
+    );
+    check(
+      'while "Full name", "Legal name" and "First name" are still filled',
+      signed.values['s-full'] === 'Morgan Testwell' && signed.values['s-legal'] === 'Morgan Testwell' && signed.values['s-first'] === 'Morgan',
+      JSON.stringify(signed.values),
+    );
+
+    /* ------------- Education dates, and shapes with a day in them ------------- */
+    const eduWording = await valuesOf(
+      '/education-wording',
+      {
+        school: 'Northeastern University',
+        graduation_date: 'May 2027',
+        graduation_year: '2027',
+        graduation_month: 'May',
+        education_start_date: 'August 2023',
+        education_start_year: '2023',
+        education_start_month: 'August',
+      },
+      ['e-school', 'e-graduation', 'e-graduated', 'e-start', 'e-end'],
+    );
+    group('Education dates and the shapes they are asked in');
+    check(
+      '"Date of graduation from this school" is the graduation, not the start, for all its "from"; so is "Year you graduated from university"',
+      eduWording.values['e-graduation'] === 'May 2027' && eduWording.values['e-graduated'] === '2027',
+      JSON.stringify(eduWording.values),
+    );
+    check(
+      'and "Start date" and "End date" are as they were',
+      eduWording.values['e-start'] === 'August 2023' && eduWording.values['e-end'] === 'May 2027',
+      JSON.stringify(eduWording.values),
+    );
+    const dayShapes = await valuesOf(
+      '/day-shapes',
+      { ...PROFILE, school: 'Northeastern University', graduation_date: 'May 2027' },
+      ['d-ddmmyyyy', 'd-ddmmyy', 'd-mmddyyyy', 'd-mmyyyy', 'd-visa', 'd-visa-yes-no', 'd-sponsor-text', 'd-contact', 'd-university'],
+    );
+    check(
+      'a graduation asked as DD/MM/YYYY, dd/mm/yy or MM/DD/YYYY is left for the person and said so, where MM/YYYY is still filled',
+      dayShapes.values['d-ddmmyyyy'] === '' && dayShapes.values['d-ddmmyy'] === '' && dayShapes.values['d-mmddyyyy'] === '' &&
+        dayShapes.values['d-mmyyyy'] === '05/2027' &&
+        dayShapes.skipped.filter((x) => x === 'graduation_date: the field would not accept it in that form').length === 3,
+      JSON.stringify(dayShapes),
+    );
+    check(
+      'a "Visa status" box is not typed "No", where a Yes/No list asking it and a box saying "sponsorship" still are',
+      dayShapes.values['d-visa'] === '' && dayShapes.values['d-visa-yes-no'] === 'No' && dayShapes.values['d-sponsor-text'] === 'No',
+      JSON.stringify(dayShapes.values),
+    );
+    check(
+      '"Name of your university\'s career services contact" is not the university, where "University" is',
+      dayShapes.values['d-contact'] === '' && dayShapes.values['d-university'] === 'Northeastern University',
+      JSON.stringify(dayShapes.values),
+    );
+
+    /* ------- A first and last name in somebody else's frame ------- */
+    const recognised = {};
+    for (const where of ['/newsletter-names', '/alerts-names', '/survey-frame', '/names-and-phone', '/names-and-file']) {
+      recognised[where] = await page.goto(`${base}${where}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b }) => {
+          const m = await import(`${b}/autofill.js`);
+          return { form: m.looksLikeApplicationForm(), fill: m.mayFillFrame(), send: m.maySendFromFrame() };
+        }, { b: base }),
+      );
+    }
+    group('A first and last name are not an application on their own');
+    check(
+      'a newsletter box and a job-alerts box asking First name, Last name and Email are not an application, so a frame of either is neither filled nor heard sending',
+      ['/newsletter-names', '/alerts-names'].every((w) => !recognised[w].form && !recognised[w].fill && !recognised[w].send),
+      JSON.stringify(recognised),
+    );
+    check(
+      'nor is a survey frame whose Submit would otherwise have marked the application sent',
+      !recognised['/survey-frame'].send,
+      JSON.stringify(recognised['/survey-frame']),
+    );
+    check(
+      'while the two halves of a name beside a telephone number or a file are still an application',
+      recognised['/names-and-phone'].form && recognised['/names-and-file'].form && recognised['/names-and-file'].send,
+      JSON.stringify(recognised),
+    );
   } finally {
     await browser.close();
     server.close();

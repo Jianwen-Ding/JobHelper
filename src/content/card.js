@@ -7739,7 +7739,7 @@ export function createCard({
   let leftOpenFor = null;
 
   const WHY_LEFT = [
-    [/two things at once|acknowledge it yourself/, 'yours to answer'],
+    [/two things at once|acknowledge it yourself|in the negative/, 'yours to answer'],
     [/not one of the options|no matching option/, 'no matching option'],
     [/by hand/, 'pick by hand'],
     [/would not (?:take|accept)/, 'the field would not take it'],
