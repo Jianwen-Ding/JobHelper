@@ -87,6 +87,7 @@ const SUITES = [
   { name: 'attaching', file: 'attaching.mjs', cost: 6 },
   { name: 'dropping', file: 'dropping.mjs', cost: 6 },
   { name: 'card-answers', file: 'card-answers.mjs', cost: 4 },
+  { name: 'card-edges', file: 'card-edges.mjs', cost: 12 },
   { name: 'panel-flaky', file: 'panel-flaky.mjs', cost: 8 },
   { name: 'asking', file: 'asking.mjs', cost: 46 },
   { name: 'late', file: 'late.mjs', cost: 45 },

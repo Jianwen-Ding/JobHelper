@@ -895,6 +895,28 @@ export function createCard({
   for (const type of ['wheel', 'touchstart', 'touchmove']) {
     host.addEventListener(type, (event) => event.stopPropagation(), { passive: true });
   }
+  /*
+   * Typing in the card stays in the card. A page's keyboard shortcuts — "/"
+   * for its search box, "j"/"k" to move between jobs — are written to leave
+   * alone keys typed into an input or a textarea, but they look at
+   * `event.target`, and outside the shadow root that is this host, a plain
+   * <div>. So "CI/CD" typed into an answer box sent the caret to the page's
+   * search at the "/". Stopped here, on the way out of the card: the card's
+   * own handlers, all inside the shadow root, have already heard the key.
+   * Only for keys typed into something editable in the card, so a page's
+   * shortcuts still work wherever else focus is.
+   */
+  const editable = (node) =>
+    node instanceof HTMLElement &&
+    (node.isContentEditable ||
+      node.localName === 'textarea' ||
+      node.localName === 'select' ||
+      (node.localName === 'input' && !/^(button|checkbox|radio|submit|reset|image|file|range|color)$/i.test(node.type)));
+  for (const type of ['keydown', 'keypress', 'keyup']) {
+    host.addEventListener(type, (event) => {
+      if (editable(event.composedPath()[0])) event.stopPropagation();
+    });
+  }
   const root = host.attachShadow({ mode: 'open' });
   root.append(Object.assign(document.createElement('style'), { textContent: STYLE }));
   /*
@@ -907,10 +929,17 @@ export function createCard({
    * for exactly that: "I spotted a typo, do that again". So a change made on
    * the card after the send starts it staging again, and says so to the
    * store (`evenIfSent`). Looking is not a change: folding, unfolding, Back
-   * and Done do not count. Heard before the control's own handler, so the
-   * stage that control asks for goes.
+   * and Done do not count. Nor is using the files that went out — opening
+   * their folder, copying its path, attaching them, autofilling the form,
+   * opening a preview or ResumeM-M, copying an answer, inserting one into
+   * the page — because none of those changes what the files say, and
+   * counting them had the next store change rebuild, with `evenIfSent`, the
+   * files that were sent. Matched on what the button says or its
+   * aria-label, not its title, which is a sentence about it. Heard before
+   * the control's own handler, so the stage that control asks for goes.
    */
-  const NOT_A_CHANGE = /^(Unfold|Fold|Back|Done|Close)/i;
+  const NOT_A_CHANGE =
+    /^(Unfold|Fold|Back|Done|Close|Open|Copy|Attach files|Attaching|Autofill|Filling|Show|See what you sent|Insert into form|Stop)/i;
   for (const type of ['input', 'change', 'click']) {
     root.addEventListener(
       type,
@@ -919,8 +948,8 @@ export function createCard({
         if (type === 'click') {
           const button = event.composedPath().find((n) => n instanceof HTMLElement && n.tagName === 'BUTTON');
           if (!button) return;
-          const said = (button.getAttribute('aria-label') || button.title || button.textContent || '').trim();
-          if (NOT_A_CHANGE.test(said)) return;
+          const said = [button.getAttribute('aria-label'), button.textContent].map((t) => (t ?? '').trim());
+          if (said.some((t) => NOT_A_CHANGE.test(t))) return;
         }
         state.reopened = true;
       },
@@ -1989,15 +2018,32 @@ export function createCard({
     other: 'Answers',
   };
 
-  /** The same normalisation `wordsOf` does in attach.js, for the same reason. */
+  /**
+   * The same normalisation `wordsOf` does in attach.js, for the same reason,
+   * and the same reading as `kindOf` there: the last kind named, not the
+   * first in `DOCUMENT_KINDS` order. The store writes the kind at the end —
+   * `Name-Role-Cover-Letter.pdf` — after the role, so a role of "Computer
+   * Vision (CV) Engineer" read both files as resumes: two resume chips, no
+   * letter chip, and "Missing: cover letter" over a letter that was there.
+   */
   function documentKind(name) {
     const text = String(name ?? '')
       .normalize('NFD')
       .replace(/\p{Diacritic}/gu, '')
       .replace(/[._-]+/g, ' ')
       .toLowerCase();
-    for (const [kind, { test }] of Object.entries(DOCUMENT_KINDS)) if (test.test(text)) return kind;
-    return 'other';
+    let found = 'other';
+    let end = -1;
+    for (const [kind, { test }] of Object.entries(DOCUMENT_KINDS)) {
+      for (const match of text.matchAll(new RegExp(test.source, 'g'))) {
+        const at = match.index + match[0].length;
+        if (at > end) {
+          end = at;
+          found = kind;
+        }
+      }
+    }
+    return found;
   }
 
   /**
@@ -2308,8 +2354,17 @@ export function createCard({
      */
     let dragging = false;
     let pressed = false;
+    let over = false;
     const tell = (files) => onAction('dragging', { files }).catch(() => undefined);
+    /*
+     * Only while somebody is still reaching for this chip. `ready` waits for
+     * the files when they are being fetched again, and a pointer that passed
+     * over the chip in that time has already been disarmed by
+     * `pointerleave` — arming then would leave the page taking the next drop
+     * anywhere on it, for a drag nobody began.
+     */
     const arm = () => {
+      if (!over && !pressed && !dragging) return;
       const files = carrying();
       if (files.length > 0) tell(files);
     };
@@ -2337,7 +2392,10 @@ export function createCard({
      * somebody reaches for a chip, and reaching for one and changing your
      * mind disarms again.
      */
-    chip.onpointerenter = () => ready();
+    chip.onpointerenter = () => {
+      over = true;
+      ready();
+    };
     chip.onpointerdown = () => {
       pressed = true;
       dragging = false;
@@ -2352,6 +2410,7 @@ export function createCard({
      * the chip, and `pressed` is what tells that from a hover that ended.
      */
     chip.onpointerleave = () => {
+      over = false;
       if (!pressed && !dragging) tell([]);
     };
     chip.onpointerup = () => {
@@ -6403,16 +6462,38 @@ export function createCard({
                     }),
                   ])
                 : null,
-              state.letterOffer && !state.letter?.trim()
+              /*
+               * Offered whenever there is something on offer, not only over an
+               * empty box. A draft that arrives over a letter already started
+               * is offered rather than used (`applyLetterReply`), and with the
+               * button drawn only for an empty box, "offered" meant lost: the
+               * draft the run had just written could not be reached. Over a
+               * letter it replaces, and what it replaced is kept, so "Put back
+               * what you had" brings it back — see `state.replaced`.
+               */
+              state.letterOffer
                 ? h('button', {
                     className: 'tiny',
-                    textContent: `Start from "${state.letterOffer.title}"`,
+                    textContent: state.letter?.trim()
+                      ? state.letterOffer.title === 'the draft'
+                        ? 'Replace with the draft'
+                        : `Replace with "${state.letterOffer.title}"`
+                      : `Start from "${state.letterOffer.title}"`,
                     onclick: () => {
+                      if (state.letter?.trim()) {
+                        state.replaced.letter = state.letter;
+                        state.replaced.letterGaps = state.letterGaps ?? [];
+                        state.letterSaved = false;
+                      }
                       state.letter = state.letterOffer.body;
                       // A draft offered over a letter carries what it left unfilled.
                       state.letterGaps = state.letterOffer.placeholders ?? [];
                       prepareSoon();
-                      state.letterSource = `Copied from ${state.letterOffer.title}. It is addressed to another company — read it before sending.`;
+                      const kept = state.replaced.letter != null ? ' What you had can be put back.' : '';
+                      state.letterSource =
+                        state.letterOffer.title === 'the draft'
+                          ? unfinishedIf(state.letterGaps, `Drafted in your voice.${kept}`)
+                          : `Copied from ${state.letterOffer.title}. It is addressed to another company — read it before sending.${kept}`;
                       state.letterOffer = null;
                       draw();
                     },
