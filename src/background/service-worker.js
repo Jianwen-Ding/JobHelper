@@ -67,6 +67,29 @@ const SLOW_TIMEOUT_MS = 10 * 60_000;
 const saveOf = new Map();
 
 /**
+ * The id ResumeM-M gives the letter it files for this employer and role.
+ *
+ * The same shape as `letterId` in ResumeM-M's src/jobs/answers.ts, on purpose:
+ * the local day, then the employer and the role each cut to 30 characters,
+ * with whichever is empty left out. "Save to store" used to key the letter by
+ * the UTC date, a role cut at 40 and a "letter" stand-in for a missing
+ * employer — so the letter saved here and the one filed with the application
+ * were two rows for one letter, and after 5pm in California they were not
+ * even dated the same day.
+ */
+function letterId(company, role, at = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const day = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+  const slug = (s) =>
+    String(s)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 30);
+  return [day, company && slug(company), role && slug(role)].filter(Boolean).join('-');
+}
+
+/**
  * Which save this tab's application was built from, memory or not.
  *
  * The map is the fast path and the trail is the true one; the trail is in
@@ -2421,9 +2444,11 @@ const handlers = {
    * of small print naming a tab in another window. The switch that needs
    * flipping should be under the hand that is reaching for it.
    */
-  async setAiEnabled({ enabled }) {
+  async setAiEnabled({ enabled }, tab) {
     await serverFetch('/api/config', {
       method: 'PUT',
+      // Every write the card makes says which save it means. See `saveFor`.
+      save: await saveFor(tab?.id),
       body: JSON.stringify({ ai: { enabled: Boolean(enabled) } }),
     });
     return handlers.aiStatus();
@@ -2698,9 +2723,12 @@ const handlers = {
   },
 
   /** Save a phrasing the user accepted from a suggestion. */
-  async addVariant({ entryId, bulletId, variant }) {
+  async addVariant({ entryId, bulletId, variant }, tab) {
     return serverFetch(`/api/entries/${encodeURIComponent(entryId)}/bullets/${encodeURIComponent(bulletId)}/variants`, {
       method: 'POST',
+      // The entry is the save's: a phrasing kept after the editor switched
+      // saves belongs in the one the proposal was built from, or nowhere.
+      save: await saveFor(tab?.id),
       body: JSON.stringify({ ...variant, suggested: true }),
     });
   },
@@ -3001,10 +3029,17 @@ const handlers = {
    * The refusal happened on the page — see `worthRemembering` — so nothing
    * personal reaches this function, let alone the store.
    */
-  async rememberChoice({ question, answer }) {
+  async rememberChoice({ question, answer }, tab) {
     if (!question?.trim() || !answer?.trim()) return { ok: false };
     return serverFetch('/api/answers/save', {
       method: 'POST',
+      /*
+       * Into the bank of the save this application belongs to. Sent without
+       * it, an answer kept after the editor switched saves went into the
+       * other save's bank with a 200. No save known sends no header, as
+       * before. See `saveFor`.
+       */
+      save: await saveFor(tab?.id),
       body: JSON.stringify({ question, answer, label: 'Chosen on a form' }),
     });
   },
@@ -3021,12 +3056,15 @@ const handlers = {
    * one under the second form's wording. As with choices, the refusal
    * happened on the page — see `worthRememberingTyped`.
    */
-  async rememberTyped({ answers }) {
+  async rememberTyped({ answers }, tab) {
     let kept = 0;
+    // Asked once: every answer here belongs to the same application.
+    const save = await saveFor(tab?.id);
     for (const { question, answer, itemId } of Array.isArray(answers) ? answers : []) {
       if (!question?.trim() || !answer?.trim()) continue;
       const reply = await serverFetch('/api/answers/save', {
         method: 'POST',
+        save,
         body: JSON.stringify({ question, answer, label: 'Typed on a form', ...(itemId ? { itemId } : {}) }),
       }).catch(() => null);
       if (reply?.ok) kept++;
@@ -3073,9 +3111,10 @@ const handlers = {
     return { ok: true };
   },
 
-  async saveAnswer({ question, answer, itemId, label }) {
+  async saveAnswer({ question, answer, itemId, label }, tab) {
     return serverFetch('/api/answers/save', {
       method: 'POST',
+      save: await saveFor(tab?.id),
       // `label` is the employer this was written for. Dropping it here is how
       // every answer the card saved ended up labelled "Saved" — see the note
       // at the call site in card.js.
@@ -3139,27 +3178,28 @@ const handlers = {
     );
   },
 
-  async saveLetter({ body, job }) {
+  async saveLetter({ body, job }, tab) {
+    const save = await saveFor(tab?.id);
     /*
-     * The role as well as the employer. Keyed by the employer alone, two
-     * applications at one company — two roles, in two tabs — saved into one
-     * letter, and the second save replaced the first application's.
+     * The store's own id for this employer, role and day, which is the id
+     * filing the application puts its letter under — asked rather than
+     * worked out, so the two cannot drift. A store too old to answer gets the
+     * same rule worked out here: see `letterId`. The PUT merges over a letter
+     * already filed under the id, so its link to the application is kept.
      */
-    const slugOf = (s, n) =>
-      String(s ?? '')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '')
-        .slice(0, n);
-    const role = slugOf(job.title, 40);
-    const id = `${new Date().toISOString().slice(0, 10)}-${slugOf(job.company ?? 'letter', 30) || 'letter'}${role ? `-${role}` : ''}`;
+    const query = new URLSearchParams();
+    if (job?.company) query.set('company', job.company);
+    if (job?.title) query.set('role', job.title);
+    const asked = await serverFetch(`/api/letters/id?${query}`, { save }).catch(() => null);
+    const id = typeof asked?.id === 'string' && asked.id ? asked.id : letterId(job?.company, job?.title);
     return serverFetch(`/api/letters/${encodeURIComponent(id)}`, {
       method: 'PUT',
+      save,
       body: JSON.stringify({
         id,
-        title: `${job.title ?? 'Role'} — ${job.company ?? 'Unknown'}`,
-        company: job.company,
-        role: job.title,
+        title: `${job?.title ?? 'Role'} — ${job?.company ?? 'Unknown'}`,
+        company: job?.company,
+        role: job?.title,
         createdAt: new Date().toISOString(),
         body,
       }),
@@ -3462,9 +3502,11 @@ const handlers = {
     return { stopped: going.length };
   },
 
-  async trackStatus({ id, status, note }) {
+  async trackStatus({ id, status, note }, tab) {
     return serverFetch(`/api/applications/${encodeURIComponent(id)}/status`, {
       method: 'POST',
+      // The tracker row is the save's; see `/extension/sent` above.
+      save: await saveFor(tab?.id),
       body: JSON.stringify({ status, note }),
     });
   },

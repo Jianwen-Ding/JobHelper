@@ -162,6 +162,20 @@ function fakeStore() {
       });
     }
     if (url === '/api/applications/bundle') return send({ ok: true, id: 'app-1', folder: '/tmp/x' });
+    // The writes the card makes outside filing: the answer bank, a letter, a
+    // tracker row's status, a kept phrasing, the AI switch.
+    // The store's letter id, only when the test has said what it is: a store
+    // from before the route answers 404, and the worker works it out itself.
+    if (url === '/api/letters/id' && state.letterId) return send({ id: state.letterId });
+    if (
+      url === '/api/answers/save' ||
+      url === '/api/config' ||
+      /^\/api\/letters\/[^/]+$/.test(url) ||
+      /^\/api\/applications\/[^/]+\/status$/.test(url) ||
+      /^\/api\/entries\/[^/]+\/bullets\/[^/]+\/variants$/.test(url)
+    ) {
+      return send({ ok: true });
+    }
     if (url === '/api/workspace') return send({ ok: true, id: 'ws-1', url: '/workspace/ws-1' });
     // A bare list, which is what ResumeM-M's `/api/resumes` answers and what
     // the card's picker reads.
@@ -214,6 +228,12 @@ async function main() {
     headless: true,
     viewport: { width: 1200, height: 800 },
     args: ['--no-sandbox', `--disable-extensions-except=${extensionRoot}`, `--load-extension=${extensionRoot}`],
+    /*
+     * West of Greenwich, whatever the machine running this is set to, so an
+     * evening is a day behind UTC — which is where a letter id built from the
+     * UTC date stops agreeing with the store's. See "The letter's id".
+     */
+    env: { ...process.env, TZ: 'America/Los_Angeles' },
   });
 
   try {
@@ -288,6 +308,115 @@ async function main() {
         lastSaveFor('/api/applications/bundle') === 'personal',
         lastSaveFor('/api/applications/bundle'),
       );
+    }
+
+    /* ---------------------------------------------------------------- *
+     * Every write says which save it means                              *
+     * ---------------------------------------------------------------- */
+
+    /*
+     * Filing and `/extension/sent` sent the save header; the answer bank,
+     * "Save to store", a tracker row's status, a kept phrasing and the AI
+     * switch did not. The store only refuses a header it disagrees with, so
+     * after the editor switched saves those writes went into the other save
+     * with a 200 — an answer for a work application in the personal bank.
+     */
+    group('Every write says which save it means');
+    {
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      await ask(driver, 'analyze', { url: 'http://saves.example/jobs/1', title: 'Helios', html: '<p>one</p>', company: 'Helios' });
+      const writes = [
+        ['rememberChoice', { question: 'Will you relocate?', answer: 'Yes' }, '/api/answers/save'],
+        ['rememberTyped', { answers: [{ question: 'Notice period?', answer: 'Two weeks' }] }, '/api/answers/save'],
+        ['saveAnswer', { question: 'Why us?', answer: 'Helios builds what I use.', label: 'Helios' }, '/api/answers/save'],
+        ['saveLetter', { body: 'Dear Helios,', job: { company: 'Helios', title: 'Platform Engineer' } }, null],
+        ['trackStatus', { id: 'app-1', status: 'withdrawn' }, '/api/applications/app-1/status'],
+        ['addVariant', { entryId: 'e1', bulletId: 'b1', variant: { text: 'Built it.' } }, '/api/entries/e1/bullets/b1/variants'],
+        ['setAiEnabled', { enabled: true }, '/api/config'],
+      ];
+      for (const [type, payload, route] of writes) {
+        const before = store.hits.length;
+        const r = await ask(driver, type, payload);
+        const hit = store.hits.slice(before).find((h) => (route ? h.url === route : h.method === 'PUT' && h.url.startsWith('/api/letters/')));
+        check(`${type} names the save it was built in`, hit?.project === 'work', `${hit ? (hit.project ?? 'no save header') : 'no request'} ${JSON.stringify(r.reply).slice(0, 80)}`);
+      }
+
+      // The editor is pointed at another save; the application is still work's.
+      store.save = 'personal';
+      const before = store.hits.length;
+      const refused = await ask(driver, 'saveAnswer', { question: 'Why us?', answer: 'Helios again.', label: 'Helios' });
+      const hit = store.hits.slice(before).find((h) => h.url === '/api/answers/save');
+      check('after a switch, an answer is refused rather than put in the other save', hit?.project === 'work' && refused.reply?.ok !== true, JSON.stringify(refused.reply).slice(0, 160));
+
+      // No save known at all: the write goes as it always did, unheadered.
+      await ask(driver, 'clearTrail', {});
+      const before2 = store.hits.length;
+      const plain = await ask(driver, 'rememberChoice', { question: 'Will you relocate?', answer: 'Yes' });
+      const hit2 = store.hits.slice(before2).find((h) => h.url === '/api/answers/save');
+      check('with no save known, it is sent without one and taken', hit2 && hit2.project === null && plain.reply?.data?.ok === true, `${hit2?.project} ${JSON.stringify(plain.reply).slice(0, 120)}`);
+    }
+
+    /*
+     * The letter's id, as ResumeM-M's `letterId` makes it.
+     *
+     * The id was the UTC date, the employer cut at 30 and the role at 40,
+     * with "letter" for a missing employer; the store files the same letter
+     * under its local day, both cut at 30, the missing one left out. So the
+     * letter saved here and the one filed with the application were two rows
+     * — and in an evening west of Greenwich, two different days.
+     */
+    group('The letter’s id');
+    {
+      const sw = context.serviceWorkers()[0] ?? worker;
+      // 19:00 on 1 March in Los Angeles, which is already 2 March in UTC.
+      await sw.evaluate(() => {
+        const Real = Date;
+        const at = Real.parse('2026-03-02T03:00:00Z');
+        globalThis.__jhRealDate = Real;
+        globalThis.Date = class extends Real {
+          constructor(...a) {
+            super(...(a.length ? a : [at]));
+          }
+          static now() {
+            return at;
+          }
+        };
+      });
+      const lettersSaved = async (job) => {
+        const before = store.hits.length;
+        await ask(driver, 'saveLetter', { body: 'Dear team,', job });
+        const hit = store.hits.slice(before).find((h) => h.method === 'PUT' && h.url.startsWith('/api/letters/'));
+        return hit ? decodeURIComponent(hit.url.slice('/api/letters/'.length)) : null;
+      };
+      try {
+        const long = await lettersSaved({
+          company: 'Acme Corporation International Holdings',
+          title: 'Senior Staff Software Engineer, Machine Learning Platform',
+        });
+        check(
+          'it is dated the local day, with employer and role each cut to 30',
+          long === '2026-03-01-acme-corporation-international-senior-staff-software-engineer',
+          String(long),
+        );
+        const noCompany = await lettersSaved({ title: 'Platform Engineer' });
+        check('a missing employer is left out, not called "letter"', noCompany === '2026-03-01-platform-engineer', String(noCompany));
+        // Those were a store too old to say; one that can is asked.
+        store.letterId = '2026-03-01-helios-platform-engineer';
+        const told = await lettersSaved({ company: 'Helios', title: 'Platform Engineer' });
+        const asked = store.sentTo('/api/letters/id').at(-1);
+        check('a store that names the id is asked, and its id is used', told === store.letterId, String(told));
+        check(
+          'asked with the employer and the role',
+          asked?.query.get('company') === 'Helios' && asked?.query.get('role') === 'Platform Engineer',
+          asked ? asked.query.toString() : 'not asked',
+        );
+      } finally {
+        store.letterId = undefined;
+        await sw.evaluate(() => {
+          if (globalThis.__jhRealDate) globalThis.Date = globalThis.__jhRealDate;
+        }).catch(() => undefined);
+      }
     }
 
     /* ---------------------------------------------------------------- *

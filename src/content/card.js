@@ -1271,6 +1271,12 @@ export function createCard({
     ai: null,
     /** Answers typed on an earlier page of this same application. */
     carriedOver: null,
+    /**
+     * What earlier steps of a form that moves on in place were answered with,
+     * by question — the questions that step showed are gone from
+     * `state.questions` once the next one is read. See `setQuestions`.
+     */
+    earlierSteps: {},
     /** "Edit in ResumeM-M" was pressed, so coming back here means something. */
     wentToEditor: false,
     /** And you did come back, so what is on screen may be out of date. */
@@ -1463,11 +1469,11 @@ export function createCard({
        * silently carried nothing, because the field ids belong to a page that
        * no longer exists and were never the key here in the first place.
        */
-      answersByQuestion: Object.fromEntries(
-        (state.questions ?? [])
-          .map((q) => [q.question, answerShown(q)])
-          .filter(([, a]) => a?.trim()),
-      ),
+      /*
+       * Every step's, so the step after next still has the first one's — see
+       * `collectedAnswers`. Only a question asked again is filled from it.
+       */
+      answersByQuestion: Object.fromEntries(collectedAnswers().map(({ question, answer }) => [question, answer])),
       answerGaps: state.answerGaps,
     };
   }
@@ -5195,14 +5201,43 @@ export function createCard({
     const question = window.prompt('What does it ask?');
     if (!question?.trim()) return;
 
-    state.questions = [...state.questions, { question: question.trim(), answer: '', confident: false }];
+    state.questions = [...state.questions, { question: question.trim(), answer: '', confident: false, byHand: true }];
     draw();
 
-    const matched = await onAction('matchAnswers', { questions: [question.trim()] }).catch(() => null);
+    /*
+     * Matched the way a question read off the page is — see `gatherQuestions`
+     * in content.js — and offered the way one is.
+     *
+     * This asked without saying who is being applied to and copied the bank's
+     * text straight into the box, sure or not. So a "Why do you want to work
+     * here?" typed in on an Acme form came back as "I have admired Globex…",
+     * filled in, and was staged and filed as what Acme was sent: the store
+     * could not say the answer named somebody else, because it was never told
+     * who this was for, and the card dropped `namesAnother` and the row it
+     * came from even when it was told.
+     *
+     * Now the company goes with the question, the answer keeps the row and
+     * the name it carries, and only a confident match goes into the box. A
+     * loose one or one written for somebody else is offered beside it — see
+     * `offeredOnly` — for the person to take or leave.
+     */
+    const matched = await onAction('matchAnswers', {
+      questions: [question.trim()],
+      company: analysis?.job?.company || undefined,
+    }).catch(() => null);
     const hit = matched?.matches?.[0];
     if (hit?.answer) {
       state.questions = state.questions.map((q) =>
-        q.question === question.trim() ? { ...q, answer: hit.answer, confident: hit.confident } : q,
+        q.question === question.trim()
+          ? {
+              ...q,
+              answer: hit.answer,
+              confident: Boolean(hit.confident),
+              score: hit.score ?? 0,
+              itemId: hit.item?.id ?? hit.itemId,
+              namesAnother: hit.namesAnother,
+            }
+          : q,
       );
       draw();
     }
@@ -5480,7 +5515,7 @@ export function createCard({
       // Not the model's to answer, so not handed to the run either — see the
       // question box, and `YOURS_TO_ANSWER` in autofill.js.
       if (q.yours) continue;
-      const borrowed = Boolean(q.namesAnother) && !state.answers[q.question];
+      const borrowed = offeredOnly(q) && !state.answers[q.question];
       const before = state.answers[q.question] ?? (borrowed ? '' : q.answer ?? '');
       slots.push({ id: `q${slots.length + 1}`, question: q.question, answer: before, before, limit: q.limit });
     }
@@ -6943,18 +6978,49 @@ export function createCard({
    * box, past the offer, because a carried answer is not borrowed.
    */
   function answerShown(q) {
-    return state.answers[q.question] ?? (q.namesAnother ? '' : (q.answer ?? ''));
+    return state.answers[q.question] ?? (offeredOnly(q) ? '' : (q.answer ?? ''));
   }
 
+  /**
+   * A bank answer that is put in front of the person rather than in the box.
+   *
+   * One that names another employer, always. And one matched to a question
+   * typed in by hand that the store was not sure of: there is no field on the
+   * page to read the question against, only what somebody typed into a
+   * prompt, so a loose match is a starting point to read and not an answer.
+   * Questions read off the page keep their "close match" in the box, as they
+   * always have.
+   */
+  function offeredOnly(q) {
+    return Boolean(q.namesAnother) || Boolean(q.byHand && q.answer && !q.confident);
+  }
+
+  /*
+   * And every step of the application, not only the one on screen.
+   *
+   * A form is several steps — in place, or a page each — and what is staged
+   * and filed is the application's answers file, which held only the step
+   * the card was on when it was staged: by the last step, "Why us?" from the
+   * first was nowhere in it. The earlier steps come first, so anything asked
+   * again here is what is on screen now.
+   */
   function collectedAnswers() {
     const out = new Map();
+    for (const earlier of [state.carriedOver, state.earlierSteps]) {
+      for (const [question, answer] of Object.entries(earlier ?? {})) {
+        if (typeof answer === 'string' && answer.trim()) out.set(question, answer);
+      }
+    }
+    // A box emptied here takes back what an earlier step said to it.
     for (const q of state.questions ?? []) {
       const answer = answerShown(q);
       if (answer.trim()) out.set(q.question, answer);
+      else out.delete(q.question);
     }
     // Questions typed in by hand are in `state.answers` and on no page.
     for (const [question, answer] of Object.entries(state.answers)) {
       if (answer?.trim()) out.set(question, answer);
+      else out.delete(question);
     }
     return [...out].map(([question, answer]) => ({ question, answer }));
   }
@@ -7033,7 +7099,7 @@ export function createCard({
        * cover letter learned this the same way and was fixed the same way:
        * put it in front of the person, and let them take it.
        */
-      const borrowed = Boolean(q.namesAnother) && !state.answers[q.question];
+      const borrowed = offeredOnly(q) && !state.answers[q.question];
       const value = state.answers[q.question] ?? (borrowed ? '' : (q.answer ?? ''));
       const badge = q.namesAnother
         ? h('span', { className: 'badge weak', textContent: `written for ${q.namesAnother}` })
@@ -7067,7 +7133,7 @@ export function createCard({
           ? h('div', { className: 'row gap' }, [
               h('button', {
                 className: 'tiny',
-                textContent: `Start from what you told ${q.namesAnother}`,
+                textContent: q.namesAnother ? `Start from what you told ${q.namesAnother}` : 'Start from your closest answer',
                 onclick: () => {
                   state.answers[q.question] = q.answer ?? '';
                   draw();
@@ -7075,7 +7141,9 @@ export function createCard({
               }),
               h('span', {
                 className: 'faint',
-                textContent: `It names ${q.namesAnother}, so it is not put in for you.`,
+                textContent: q.namesAnother
+                  ? `It names ${q.namesAnother}, so it is not put in for you.`
+                  : 'It was written for a question like this one, not this one, so it is not put in for you.',
               }),
             ])
           : null,
@@ -8296,6 +8364,17 @@ export function createCard({
       const byHand = (state.questions ?? []).filter(
         (q) => !q.fieldId && !(qs ?? []).some((n) => n.question === q.question),
       );
+      /*
+       * And what the step going away was answered with, kept. Typed answers
+       * stay in `state.answers` either way; a bank answer left as it stood
+       * lives only on its question, so it went with the step — and the
+       * answers file staged on step two had nothing from step one in it.
+       */
+      for (const q of state.questions ?? []) {
+        if (byHand.includes(q) || (qs ?? []).some((n) => n.question === q.question)) continue;
+        const shown = answerShown(q);
+        if (shown.trim()) state.earlierSteps[q.question] = shown;
+      }
       state.questions = [...(qs ?? []), ...byHand];
       // Questions arrive after the card is built, so anything carried over
       // from the last page can only be matched to them now.
