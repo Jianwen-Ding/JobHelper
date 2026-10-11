@@ -1189,7 +1189,7 @@ function fromLabelledBy(element) {
      * description of anything.
      */
     .filter((id) => id !== element.id)
-    .map((id) => byIdAround(element, id)?.textContent ?? '')
+    .map((id) => labelWords(byIdAround(element, id)))
     .join(' ');
   return clean(text);
 }
@@ -1354,6 +1354,15 @@ const LEVELS_OUTSIDE = 3;
  * else, as assistive technology leaves it out, and an element boundary is a
  * word boundary. A label that is nothing but hidden text keeps it, rather than
  * becoming no label at all.
+ *
+ * And so is every other element a question is read from: a group's
+ * `<legend>`, its row header, the heading over it, what `aria-labelledby`
+ * names. Those were still read by `textContent`, and went into the answer
+ * bank the same ways — LinkedIn's yes/no fieldsets as "Are you legally
+ * authorized …?Are you legally authorized …? Required", and Workday's
+ * questionnaire, whose legend is paragraphs of rich text, as "Click on the
+ * link below to review the Arbitration Agreement.Mutual Arbitration
+ * AgreementTo be considered for employment…".
  */
 /*
  * And the words a `<slot>` shows, which are not its children.
@@ -1598,7 +1607,7 @@ function labelFor(input) {
     if (fieldsDrawnIn(group, oneField, 2) > 1) break;
     const heading = group.querySelector('label,legend,th,.label,[class*="label"]');
     // A label a component draws round a slot says what is put in it, as in `optionLabelFor`.
-    if (heading && !heading.contains(from)) return hostOf(heading) && heading.querySelector('slot') ? drawnText(heading) : clean(heading.textContent);
+    if (heading && !heading.contains(from)) return hostOf(heading) && heading.querySelector('slot') ? drawnText(heading) : labelWords(heading);
     let lead = group.firstElementChild;
     while (lead?.matches(NEVER_SHOWN)) lead = lead.nextElementSibling;
     const said = lead && !lead.contains(from) && !fieldsDrawnIn(lead, ANOTHER_FIELD, 1) ? shownText(lead) : '';
@@ -2797,7 +2806,7 @@ function graduationPartKey(input) {
    * a First name box and a box labelled Month beside it filled nothing and
    * reported nothing.
    */
-  const asked = clean(legend?.textContent) || clean(group?.getAttribute('aria-label')) || (group ? fromLabelledBy(group) : '');
+  const asked = labelWords(legend) || clean(group?.getAttribute('aria-label')) || (group ? fromLabelledBy(group) : '');
   const found = asked ? FIELD_PATTERNS.find(([, re]) => re.test(asked))?.[0] : null;
   return /^graduation_(month|year|date)$/.test(found ?? '') ? `graduation_${part}` : null;
 }
@@ -4940,10 +4949,10 @@ function choiceQuestionFor(group) {
   if (said) return said;
 
   // Out of the components the group is drawn in: see `closestAround`.
-  const legend = clean(closestAround(group, 'fieldset')?.querySelector('legend')?.textContent);
+  const legend = labelWords(closestAround(group, 'fieldset')?.querySelector('legend'));
   if (legend) return legend;
 
-  const header = clean(closestAround(group, 'tr')?.querySelector('th')?.textContent);
+  const header = labelWords(closestAround(group, 'tr')?.querySelector('th'));
   if (header) return header;
 
   /*
@@ -4977,7 +4986,7 @@ function choiceQuestionFor(group) {
   for (let up = 0; at && up < 3; ) {
     const put = putInto.has(at instanceof ShadowRoot ? at : at.getRootNode());
     const drawn = put && headingDrawnBefore(at, (el) => el === group, HEADINGS);
-    const heading = put ? (drawn ? shownText(drawn) : '') : clean(at.querySelector(HEADINGS)?.textContent);
+    const heading = put ? (drawn ? shownText(drawn) : '') : labelWords(at.querySelector(HEADINGS));
     if (heading) return heading;
     if (at instanceof ShadowRoot) {
       const others = deepQueryAll(A_CHOICE_GROUP, at).filter((g) => g !== group && !drawnInside(g, group) && !drawnInside(group, g));
@@ -5059,7 +5068,7 @@ function headingDrawnBefore(scope, ours, selector) {
  */
 function groupLabelFor(radios) {
   const first = radios[0];
-  const legend = clean(closestAround(first, 'fieldset')?.querySelector('legend')?.textContent);
+  const legend = labelWords(closestAround(first, 'fieldset')?.querySelector('legend'));
   if (legend) return legend;
 
   /*
@@ -5105,7 +5114,7 @@ function groupLabelFor(radios) {
    * reach the table and could take a column heading from some other row as
    * the question for this one.
    */
-  const header = clean(closestAround(first, 'tr')?.querySelector('th')?.textContent);
+  const header = labelWords(closestAround(first, 'tr')?.querySelector('th'));
   if (header) return header;
 
   /*
@@ -5161,7 +5170,7 @@ function groupLabelFor(radios) {
       const heading = shared
         ? headings.filter((el) => el.compareDocumentPosition(from) & Node.DOCUMENT_POSITION_FOLLOWING).pop()
         : headings[0];
-      if (heading) return clean(heading.textContent);
+      if (heading) return labelWords(heading);
     }
     if (group instanceof ShadowRoot) {
       if (group.host.id === OURS) break;
@@ -5450,7 +5459,8 @@ function answerRadioGroups(fields, overwrite) {
 function rememberableChoices({ short = false } = {}) {
   const found = [];
   const add = (question, description, el, answered, choose, shows = answered) => {
-    const asked = clean(question);
+    // As the bank keeps it, without the form's required marker. See `cleanQuestion`.
+    const asked = cleanQuestion(question);
     // Too short to recognise on the next form. The same bar the bank itself
     // applies on the way in — see `worthRemembering`. Not a bar for finding
     // this page's own question again, which is what `watchForEmptied` asks.
@@ -5967,7 +5977,7 @@ function widgetQuestion(widget) {
   if (rootOf(widget)?.host?.id === OURS) return null;
   const description = describeField(widget);
   if (!description) return null;
-  const question = clean(questionFor(widget));
+  const question = cleanQuestion(questionFor(widget));
   if (question.length < 8) return null;
   if (OTHER_PEOPLE.test(`${surroundingWords(widget)} ${description}`)) return null;
   if (inWorkHistory(widget) || EDUCATION_SECTION.test(sectionOf(widget))) return null;
@@ -7820,6 +7830,13 @@ export function watchChoices(tell) {
     if (!said?.question || !said?.answer) return;
     const { once, ...answer } = said;
     /*
+     * Without the form's required marker, as every question this file asks
+     * the bank about is (see `rememberableChoices`). Kept with it, "Discipline*"
+     * and "Discipline" were two rows in the bank, and 185 of its questions
+     * ended in "*".
+     */
+    answer.question = cleanQuestion(answer.question);
+    /*
      * The refusal is here rather than at the far end, so nothing personal
      * leaves the page at all — not to the worker, not to the store, not into
      * a log on the way. See `worthRemembering`.
@@ -7844,7 +7861,8 @@ export function watchChoices(tell) {
   document.addEventListener('change', look, true);
   document.addEventListener('click', look, true);
   // And a pick in a react-select, which fires neither usefully. See `watchWidgetPicks`.
-  const told = (answer) => {
+  const told = (said) => {
+    const answer = { ...said, question: cleanQuestion(said.question) };
     const verdict = worthRemembering(answer);
     tell(verdict.keep ? { ...answer, keep: true } : { ...answer, keep: false, why: verdict.why });
   };
