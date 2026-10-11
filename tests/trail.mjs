@@ -935,6 +935,10 @@ describe('a job id at the end of the path, and the view of it before', () => {
     // A requisition with a year beside it still has its own number.
     const req = 'Software-Engineer-Summer-2027_R171666';
     assert.equal(rp(`/view/${req}`, `/apply/${req}`), true);
+    // And a year beside another number is part of the id, not a date.
+    assert.equal(rp('/view/req_2026_1234', '/apply/req_2026_1234'), true);
+    assert.equal(rp('/jobs/view?jobId=JR-2026-0412', '/apply/start?jobId=JR-2026-0412'), true);
+    assert.equal(rp('/jobdetail.ftl?job=2026-1234', '/jobapply.ftl?job=2026-1234'), true);
   });
 });
 

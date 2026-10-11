@@ -329,8 +329,16 @@ const PATH_JOB_ID = /^(?=(?:\D*\d){5})[a-z0-9_-]+$/i;
  * when, and `Software-Engineer-Summer-2027_R171666` still has its
  * six. The same rule as ResumeM-M's `isJobNumber` in `src/jobs/names.ts`.
  */
-const YEAR_WORD = /(^|[-_])(?:19|20)\d\d(?=$|[-_])/g;
-const isJobNumber = (s) => PATH_JOB_ID.test(s) && PATH_JOB_ID.test(String(s).replace(YEAR_WORD, '$1'));
+/*
+ * A year beside words only — "Summer-2027-and-Fall". A year beside another
+ * number is part of the id: `job=2026-1234`, `JR-2026-0412`, `req_2026_1234`.
+ */
+const withoutWordYears = (s) => {
+  const words = String(s).split(/[-_]/);
+  const loose = (i) => !/\d/.test(words[i] ?? '');
+  return words.filter((w, i) => !(/^(?:19|20)\d\d$/.test(w) && loose(i - 1) && loose(i + 1))).join('-');
+};
+const isJobNumber = (s) => PATH_JOB_ID.test(s) && PATH_JOB_ID.test(withoutWordYears(s));
 
 /** Parameters that could name anything, so agreeing on one says nothing about the job. */
 const ANY_PARAM = /^(id|oid|pid|token)$/i;
