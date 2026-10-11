@@ -612,6 +612,176 @@ export function titleKey(title) {
     .trim();
 }
 
+/*
+ * The employer an applicant tracking system's address names, by its board.
+ *
+ * Greenhouse, Lever, Ashby and the rest keep every employer's postings under
+ * the name that employer chose for its board — `job-boards.greenhouse.io/
+ * kodiak/jobs/4430607009` is Kodiak's before a word of the page is read. That
+ * is the one piece of the destination's own identity there is at the moment
+ * it matters most: `trailPages` asks whether a page belongs before it has been
+ * analysed, with nothing but its address, its title and where it came from.
+ *
+ * Only systems whose board name is the employer's own choice. Workday and
+ * iCIMS tenants are not on the list: `myhrabc` is AmerisourceBergen and
+ * `uscareers-…` is anybody, so a tenant that does not read as the employer
+ * says nothing.
+ */
+const BOARDS = [
+  [/^(boards|job-boards)(\.eu)?\.greenhouse\.io$/, 'path'],
+  [/^jobs(\.eu)?\.lever\.co$/, 'path'],
+  [/^jobs\.ashbyhq\.com$/, 'path'],
+  [/^apply\.workable\.com$/, 'path'],
+  [/^(jobs|careers)\.smartrecruiters\.com$/, 'path'],
+  [/^jobs\.jobvite\.com$/, 'path'],
+  [/^[a-z0-9-]+\.recruitee\.com$/, 'label'],
+  [/^[a-z0-9-]+\.bamboohr\.com$/, 'label'],
+  [/^[a-z0-9-]+\.breezy\.hr$/, 'label'],
+];
+
+/** Letters and digits only, accents off: `Areté` and `arete` are one name. */
+const compact = (s) =>
+  String(s ?? '')
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+
+/** The board an address is on, as `{ system, slug }`, or null where it names none. */
+export function boardOf(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  const host = u.hostname.toLowerCase();
+  for (const [system, where] of BOARDS) {
+    if (!system.test(host)) continue;
+    let raw;
+    if (where === 'label') {
+      raw = host.split('.')[0];
+    } else {
+      const segs = segments(u.pathname);
+      // Greenhouse's embed names the board in a parameter: /embed/job_app?for=acme.
+      raw = segs[0] === 'embed' ? u.searchParams.get('for') : segs[0];
+    }
+    let slug;
+    try {
+      slug = compact(decodeURIComponent(raw ?? ''));
+    } catch {
+      slug = compact(raw);
+    }
+    return slug.length >= 2 ? { system: system.source, slug } : null;
+  }
+  return null;
+}
+
+/** Words in an employer's name that say nothing about which employer. */
+const EMPLOYER_NOISE = new Set([
+  'the', 'and', 'of', 'for', 'inc', 'llc', 'ltd', 'corp', 'co', 'company', 'corporation', 'group', 'holdings',
+  'technologies', 'technology', 'tech', 'labs', 'lab', 'systems', 'solutions', 'services', 'software',
+  'international', 'global', 'america', 'americas', 'usa', 'us', 'careers', 'jobs', 'studios', 'studio',
+]);
+
+/*
+ * Could this board be this employer's?
+ *
+ * Generous on purpose, because saying no splits an application at its form.
+ * Boards are named loosely — `formlabsinternships`, `2kearlycareers`,
+ * `rivianvw.tech` for Rivian and Volkswagen Group Technologies, `snapchat` for
+ * Snap Inc. — so any of the whole name, a distinctive word of it, its
+ * initials or its first four letters will do. What is left is a board that
+ * shares nothing with the name at all: `kodiak` for Exegy, `cloudflare` for
+ * GITAI, `figma` for Oceaneering.
+ */
+function boardCouldBe(slug, name) {
+  const words = employerKey(name)
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  const whole = words.join('');
+  if (!whole) return true;
+  if (slug.includes(whole) || (slug.length >= 3 && whole.includes(slug))) return true;
+  if (words.some((w) => w.length >= 3 && !EMPLOYER_NOISE.has(w) && slug.includes(w))) return true;
+  const initials = words.map((w) => w[0]).join('');
+  if (initials.length >= 2 && slug.startsWith(initials)) return true;
+  return whole.length >= 4 && slug.startsWith(whole.slice(0, 4));
+}
+
+/*
+ * A page on an applicant tracking system whose board is plainly another
+ * employer's than the one the application in hand is with.
+ *
+ * Not where the trail is already on that board: an employer the analysis
+ * named oddly is still on its own board, and the board agreeing is the
+ * stronger fact. And no opinion where the trail has no employer to compare.
+ */
+function anotherEmployersBoard(trail, url) {
+  const board = boardOf(url);
+  if (!board) return false;
+  const pages = trail?.pages ?? [];
+  if (pages.some((p) => boardOf(p?.url)?.slug === board.slug)) return false;
+  const known = pages.map((p) => p?.company).filter((c) => typeof c === 'string' && c.trim());
+  if (known.length === 0) return false;
+  return !known.some((name) => boardCouldBe(board.slug, name));
+}
+
+/** The job numbers an address names, in its parameters or as a whole segment of its path. */
+const numbersIn = (u) =>
+  new Set([
+    ...jobNumbers(u),
+    ...segments(pathOf(u) ?? '')
+      .filter((seg) => isJobNumber(seg) && /\d/.test(seg))
+      .map((seg) => seg.toLowerCase()),
+  ]);
+
+/**
+ * Was Apply pressed on a page of another job than the application in hand?
+ *
+ * A board that swaps postings in place — LinkedIn's search results, where the
+ * next job in the list changes `currentJobId` and nothing else — leaves the
+ * tab's application on the job read before until the card has read the new
+ * one, and a card that never reads it (the analysis is slow, or the pane is
+ * not scored as a posting) never moves it on at all. Pressing the new job's
+ * Apply in that window set the expectation on the old job's application, and
+ * the tab Apply opened inherited it whole: Kodiak's Greenhouse form came up
+ * as the Exegy application, staged Exegy's resume under Kodiak's address and
+ * filed it on Exegy's row.
+ *
+ * Only on the same site, and only when the address plainly names a different
+ * job — a parameter or a job number that disagrees — and is no page of the
+ * application in hand. A press anywhere else says nothing either way.
+ */
+/**
+ * Whether Apply was lately pressed on another job's page on this site — see
+ * `pressedOnAnotherJob`, and `expectContinuation`, which records it.
+ */
+function strayedFrom(trail, host, now = Date.now()) {
+  const strayed = trail?.strayed;
+  if (!strayed?.from || now - (strayed.at ?? 0) > EXPECTATION_MS) return false;
+  const there = hostOf(strayed.from);
+  return Boolean(there && host) && (there === host || rootOf(there) === rootOf(host));
+}
+
+export function pressedOnAnotherJob(trail, from) {
+  const here = hostOf(from);
+  if (!here) return false;
+  const site = (trail?.pages ?? []).filter((p) => {
+    const there = hostOf(p?.url);
+    return Boolean(there) && (there === here || rootOf(there) === rootOf(here));
+  });
+  if (site.length === 0) return false;
+  if (site.some((p) => p.url === from || relatedPath(from, p.url))) return false;
+  return site.some((p) => {
+    if (namesAnotherJob(from, p.url)) return true;
+    const mine = numbersIn(from);
+    const theirs = numbersIn(p.url);
+    return mine.size > 0 && theirs.size > 0 && ![...mine].some((n) => theirs.has(n));
+  });
+}
+
 /**
  * Same application, a different one, or not clear enough to say.
  *
@@ -659,6 +829,22 @@ export function judgeApplication(trail, page, now = Date.now()) {
   for (const p of trail.pages) {
     if (p?.url && namesAnotherJob(page.url, p.url)) return 'different';
   }
+
+  /*
+   * Nor a page whose own address says whose it is, and says another employer.
+   *
+   * The company veto below needs the page's employer, and the first time a
+   * page is judged — `trailPages`, deciding which pages the analysis may read
+   * — nobody has read it yet. Everything that vouched for it then (the
+   * referrer from the board, the click) was evidence about where you came
+   * from, so it joined; the analysis read the earlier pages as this one's,
+   * and `mergeJobPages` takes the employer from the first page that names
+   * one, which is the old job's. By the time `remember` asked again the page
+   * was "Exegy" too, and the veto agreed with itself. Measured in the store:
+   * Kodiak's Greenhouse form (`/kodiak/jobs/4430607009`) staged as "Apply:
+   * Exegy", Cloudflare's as GITAI, Figma's as Oceaneering.
+   */
+  if (anotherEmployersBoard(trail, page.url)) return 'different';
 
   const co = employerKey;
   const mine = co(page.company);
@@ -749,6 +935,19 @@ export function judgeApplication(trail, page, now = Date.now()) {
      */
     const cameFromHere =
       page.referrerHost && (page.referrerHost === there || rootOf(page.referrerHost) === rootOf(there));
+    /*
+     * Unless Apply was pressed on that site on another job's page.
+     *
+     * The referrer names a site, not a posting, and on a board the site is
+     * every posting. Press Apply on the next job in LinkedIn's list before the
+     * card has moved the tab on to it, and the employer's page it opens was
+     * "referred from linkedin.com" — which this application's first page was
+     * too. The press is told apart in `expectContinuation`; see
+     * `pressedOnAnotherJob`. It is the only witness on a destination whose
+     * address names nobody — `careers.withwaymo.com`, where AmerisourceBergen's
+     * application, already sent on Workday, went on staging.
+     */
+    if (cameFromHere && strayedFrom(trail, page.referrerHost, now)) continue;
     if (cameFromHere) return looksNew() ? 'unsure' : 'same';
   }
 

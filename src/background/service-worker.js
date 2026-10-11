@@ -16,6 +16,7 @@ import {
   keepPages,
   onlyLists,
   plainlyAnotherRole,
+  pressedOnAnotherJob,
   lighten,
   sameApplication,
   carriesOn,
@@ -1883,9 +1884,28 @@ const handlers = {
    * evidence that two pages belong together can be gone by the time the second
    * one loads. The click is the evidence, and it is available before that.
    */
-  async expectContinuation({ to }, tab) {
+  async expectContinuation({ to, from }, tab) {
     const trail = await readTrail(tab?.id);
-    await writeTrail(tab?.id, { ...trail, expecting: { to, at: Date.now() }, at: Date.now() });
+    /*
+     * Not when it was pressed on another job's page than the application this
+     * tab holds.
+     *
+     * On a board that swaps postings in place the tab's application stays on
+     * the job read before until the card has read the new one — and a press
+     * in that window promised the old job's application a next page that
+     * belongs to the new one. The tab Apply opened inherited it whole: Exegy's
+     * resume and letter on Kodiak's Greenhouse form, staged there and filed on
+     * Exegy's row under Kodiak's address. So the press is recorded as what it
+     * is — this application was left from that site — which takes back any
+     * expectation it had (so a tab opened now inherits nothing; see
+     * `inheritance`) and stops the site's referrer vouching for the page it
+     * leads to. See `pressedOnAnotherJob` and `judgeApplication`.
+     */
+    if (from && pressedOnAnotherJob(trail, from)) {
+      await writeTrail(tab?.id, { ...trail, expecting: undefined, strayed: { from, at: Date.now() } });
+      return { ok: true, elsewhere: true };
+    }
+    await writeTrail(tab?.id, { ...trail, expecting: { to, at: Date.now() }, strayed: undefined, at: Date.now() });
     // A new tab inherits this tab's trail, expectation and all, so an Apply
     // button that opens one lands already knowing where it came from.
     return { ok: true };

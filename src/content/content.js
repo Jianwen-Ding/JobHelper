@@ -2261,7 +2261,10 @@
       // Best effort by design: if this never arrives, the trail falls back to
       // the host and path rules and to `wasLinkedFrom`, which reads the same
       // link out of the page we came from with no race in it at all.
-      send('expectContinuation', { to }).catch(() => undefined);
+      // And which page it was pressed on: on a board that swaps postings in
+      // place that may not be the job this tab's application is on yet. See
+      // `pressedOnAnotherJob`.
+      send('expectContinuation', { to, from: location.href }).catch(() => undefined);
     };
 
     /*
