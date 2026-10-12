@@ -5,7 +5,7 @@
  * is not running.
  */
 
-import { getSettings } from '../shared/config.js';
+import { getSettings, NOT_PAIRED_MESSAGE, pairingHeaders, rememberPairing } from '../shared/config.js';
 import { saveBugReport, listBugReports, syncBugReport, clearBugReport } from '../shared/bug-reports.js';
 import {
   EXPECTATION_MS,
@@ -252,10 +252,28 @@ async function stoppably(tab, what, fn) {
   }
 }
 
+/**
+ * The refusal ResumeM-M gives an extension it has not paired with, as
+ * something to do rather than a failure.
+ *
+ * The button goes to the editor's pairing section, which is where the code
+ * is. Marked `pair`, so the popup can put its code box up; anything that only
+ * knows the older marks still gets a button that opens the right page.
+ */
+function notPaired(serverUrl, cause) {
+  const err = new Error(NOT_PAIRED_MESSAGE, cause ? { cause } : undefined);
+  err.kind = 'not-paired';
+  err.status = 403;
+  err.jobhelper = { fix: 'pair', serverUrl: `${serverUrl.replace(/\/$/, '')}/#pair` };
+  return err;
+}
+
 async function serverFetch(path, options = {}) {
   const { timeoutMs = REQUEST_TIMEOUT_MS, save, ...init } = options;
   const { serverUrl } = await getSettings();
   const url = `${serverUrl.replace(/\/$/, '')}${path}`;
+  // On every request: ResumeM-M answers only the extension it paired with.
+  const paired = await pairingHeaders(serverUrl);
 
   let res;
   try {
@@ -274,6 +292,7 @@ async function serverFetch(path, options = {}) {
         : AbortSignal.timeout(timeoutMs),
       headers: {
         'Content-Type': 'application/json',
+        ...paired,
         ...(save ? { 'X-RMM-Project': save } : {}),
         ...(init.headers ?? {}),
       },
@@ -344,6 +363,8 @@ async function serverFetch(path, options = {}) {
   }
 
   if (!res.ok) {
+    // Not paired, or no longer: said as what to do, with the way to do it.
+    if (body.kind === 'not-paired') throw notPaired(serverUrl);
     const failed = new Error(body.error ?? `${res.status} ${res.statusText}`);
     // And the status, for a caller that has to tell "refused" from "not
     // yet": see `syncBugReport`, whose report is never sent again after a 4xx.
@@ -2393,7 +2414,27 @@ const handlers = {
     // card gives — with the button that fixes it. The popup is where someone
     // goes to check the connection, and it was the one place that answered
     // with a raw browser string: "Failed to fetch".
-    return serverFetch('/health');
+    const health = await serverFetch('/health');
+    // Up, and not ours yet: the one thing to say is how to pair.
+    if (health?.paired === false) throw notPaired((await getSettings()).serverUrl);
+    return health;
+  },
+
+  /**
+   * Pair with ResumeM-M, with the code its editor is showing.
+   *
+   * The token it hands back is what every request carries from then on, kept
+   * for that server's address only. The server's refusals — a wrong code, one
+   * that has run out — are already sentences, and are passed on as they are.
+   */
+  async pair({ code } = {}) {
+    const said = String(code ?? '').trim();
+    if (!said) throw new Error('Enter the code ResumeM-M is showing under Save & Files → Pair JobHelper.');
+    const { serverUrl } = await getSettings();
+    const reply = await serverFetch('/api/extension/pair', { method: 'POST', body: JSON.stringify({ code: said }) });
+    if (typeof reply?.token !== 'string' || !reply.token) throw new Error('ResumeM-M did not hand back a pairing.');
+    await rememberPairing(serverUrl, reply.token);
+    return { paired: true };
   },
 
   /**
@@ -2426,12 +2467,17 @@ const handlers = {
        */
       const res = await fetch(`${serverUrl.replace(/\/$/, '')}/health`, {
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        headers: await pairingHeaders(serverUrl),
       });
       if (!res.ok) throw new Error(`the server answered ${res.status}`);
       server = await res.json();
     } catch {
       return { active: false, useAi, reachable: false, serverEnabled: false, state: 'offline' };
     }
+
+    // Not paired, so the server said nothing about its AI. Not "no AI set
+    // up", which would send somebody off to set up what is already there.
+    if (server?.paired === false) return { active: false, useAi, reachable: true, serverEnabled: false, state: 'not-paired' };
 
     // Older servers do not report it; treat unknown as off rather than
     // claiming an AI is running when we cannot tell.
@@ -2864,7 +2910,7 @@ const handlers = {
      */
     let res;
     try {
-      res = await fetch(absolute, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      res = await fetch(absolute, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS), headers: await pairingHeaders(serverUrl) });
     } catch (cause) {
       const failed = new Error('ResumeM-M did not answer with the PDF. Check it is still running, then try again.', {
         cause,
@@ -2872,6 +2918,7 @@ const handlers = {
       failed.jobhelper = { fix: 'start-server', serverUrl };
       throw failed;
     }
+    if (res.status === 403 && (await res.clone().json().catch(() => null))?.kind === 'not-paired') throw notPaired(serverUrl);
     if (!res.ok) throw new Error(`Could not load the PDF (${res.status})`);
 
     // Messaging is JSON, so the bytes travel as base64. A one-page resume is
@@ -2978,7 +3025,10 @@ const handlers = {
     const missing = [];
     for (const item of list.attachments ?? []) {
       try {
-        const res = await fetch(`${base}${item.url}`, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+        const res = await fetch(`${base}${item.url}`, {
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+          headers: await pairingHeaders(serverUrl),
+        });
         if (!res.ok) {
           missing.push({ name: item.name, why: `the store answered ${res.status} for it` });
           continue;
@@ -3132,6 +3182,20 @@ const handlers = {
         { type: 'jh-frame-typed', payload: { frameId: sender.frameId, answers: Array.isArray(answers) ? answers : [] } },
         { frameId: 0 },
       )
+      .catch(() => undefined);
+    return { ok: true };
+  },
+
+  /**
+   * A frame's "was that the send?", put to the card in the top document: a
+   * Submit pressed on a hiring system's host with no form recognised. Only
+   * relayed — the answer, if it is yes, comes back as `applicationSentHere`.
+   * See `askIfSent` in content.js.
+   */
+  async askIfSentInFrame({ note, url }, tab, sender) {
+    if (tab?.id === undefined || !sender?.frameId) return { ok: false };
+    await chrome.tabs
+      .sendMessage(tab.id, { type: 'jh-ask-if-sent', payload: { note: String(note ?? ''), url: String(url ?? '') } }, { frameId: 0 })
       .catch(() => undefined);
     return { ok: true };
   },
@@ -3556,6 +3620,9 @@ const handlers = {
  */
 const OWN_PAGES_ONLY = new Set([
   'setSettings',
+  // Pairing replaces the token every request to ResumeM-M carries. The popup
+  // asks for it; a page, through the card, has no business to.
+  'pair',
   'saveBugReport',
   'clearBugReport',
   'syncBugReport',

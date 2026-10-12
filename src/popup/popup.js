@@ -41,7 +41,8 @@ function setStatus(text, kind = '', fix) {
    * checking the connection, and it was the one place the same failure was a
    * dead end.
    */
-  if (fix?.serverUrl) {
+  // Not for pairing, whose box above has the same button beside the code.
+  if (fix?.serverUrl && fix.fix !== 'pair') {
     const button = document.createElement('button');
     button.className = 'ai-fix';
     button.textContent = fix.fix === 'open-save' ? 'Open a save in ResumeM-M' : 'Open ResumeM-M';
@@ -54,7 +55,49 @@ function setStatus(text, kind = '', fix) {
 }
 
 /** Report a failure, carrying whatever it knows about how to get past it. */
-const failed = (err) => setStatus(err.message, 'err', err.jobhelper);
+const failed = (err) => {
+  // Not paired: the code box is the way past it, so it goes up as well.
+  if (err.jobhelper?.fix === 'pair') showPairing(err.jobhelper.serverUrl);
+  setStatus(err.message, 'err', err.jobhelper);
+};
+
+/**
+ * Ask for the pairing code.
+ *
+ * ResumeM-M answers only the JobHelper it has been paired with, so a fresh
+ * install — and every install from before pairing existed — lands here until
+ * somebody types the code its editor shows. Said in the words of the place
+ * the code is, with a button that goes there.
+ */
+function showPairing(pairUrl) {
+  const box = $('pairing');
+  if (!box) return;
+  box.hidden = false;
+  $('pairOpen').onclick = () => {
+    chrome.tabs.create({ url: pairUrl });
+  };
+  const go = acts(async () => {
+    $('pairSaid').textContent = '';
+    $('pairButton').disabled = true;
+    try {
+      await send('pair', { code: $('pairCode').value });
+    } catch (err) {
+      // The server's own sentence: a wrong code says how many tries are left.
+      $('pairSaid').textContent = err.message;
+      return;
+    } finally {
+      $('pairButton').disabled = false;
+    }
+    box.hidden = true;
+    $('pairCode').value = '';
+    setStatus('Paired with ResumeM-M.', 'ok');
+    await check();
+  });
+  $('pairButton').onclick = go;
+  $('pairCode').onkeydown = (event) => {
+    if (event.key === 'Enter') go();
+  };
+}
 
 /**
  * A control that does something, and says so when it cannot.
@@ -322,6 +365,11 @@ const AI_STATE = {
     hint: 'ResumeM-M has no AI command configured. Set one up and this switch starts working.',
     fix: 'Set one up',
   },
+  'not-paired': {
+    text: 'AI unknown',
+    className: 'ai off',
+    hint: 'ResumeM-M says what its AI setting is once JobHelper is paired with it.',
+  },
   offline: {
     text: 'AI unknown',
     className: 'ai off',
@@ -543,6 +591,8 @@ async function check() {
   setStatus('Checking…');
   try {
     await send('ping');
+    // Answered, so whatever was asked for pairing has been settled.
+    if (current()) $('pairing').hidden = true;
     const resumes = await send('listResumes');
     const settings = await send('getSettings');
     if (!current()) return;

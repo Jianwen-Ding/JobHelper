@@ -2259,7 +2259,45 @@ export async function useServer(context, serverUrl) {
   await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
   await page.evaluate((url) => chrome.storage.sync.set({ serverUrl: url }), serverUrl);
   await page.evaluate((key) => chrome.storage.local.set({ [key]: true }), OPEN_SHADOW_FLAG);
+  await pairExtension(page, serverUrl);
   await page.close();
+}
+
+/**
+ * Pair the extension with the server it now points at, as a person would.
+ *
+ * ResumeM-M answers only the extension it has been paired with. The code is
+ * asked for here the way the editor asks — a local process with no browser
+ * headers may make one, as it may read the save off the disk — and then
+ * typed in through the extension's own `pair` message, which is what the
+ * popup's Pair button sends. So the token is the real one, in the real place.
+ *
+ * Only when the extension says it needs to. A fake store, an older
+ * ResumeM-M, a proxy that forwards no headers, or a server that is down on
+ * purpose all answer the ping some other way, and there is nothing to pair.
+ * Retried, because two suites pairing with one server at the same moment
+ * replace each other's code.
+ */
+export async function pairExtension(page, server) {
+  const ask = (type, payload) =>
+    page.evaluate(
+      ([t, p]) => new Promise((done) => chrome.runtime.sendMessage({ type: t, payload: p }, done)),
+      [type, payload],
+    );
+  let last;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const ping = await ask('ping');
+    if (ping?.ok || ping?.fix?.fix !== 'pair') return;
+    const res = await fetch(`${server.replace(/\/$/, '')}/api/extension/pairings/code`, { method: 'POST' });
+    if (!res.ok) throw new Error(`${server} would not make a pairing code: ${res.status} ${await res.text()}`);
+    const { code } = await res.json();
+    last = await ask('pair', { code });
+    // Looked at again at the top: another server sharing this machine's
+    // pairings may have written over it in the same instant.
+    if (last?.ok) continue;
+    await new Promise((go) => setTimeout(go, 200 + Math.random() * 400));
+  }
+  throw new Error(`Could not pair the extension with ${server}: ${last?.error ?? 'no answer'}`);
 }
 
 /**
@@ -2446,6 +2484,7 @@ export async function pointExtensionAt(context, worker, server) {
   await setup.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
   await setup.evaluate((s) => chrome.storage.sync.set({ serverUrl: s }), server);
   await setup.evaluate((key) => chrome.storage.local.set({ [key]: true }), OPEN_SHADOW_FLAG);
+  await pairExtension(setup, server);
   await setup.close();
 }
 

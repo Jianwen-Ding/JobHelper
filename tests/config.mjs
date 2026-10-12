@@ -180,3 +180,47 @@ describe('a setting nobody has chosen', () => {
     assert.notEqual(DEFAULTS.minScore, 4, 'the shipped default has moved on, and the stored copy still wins');
   });
 });
+
+/*
+ * The pairing token ResumeM-M hands this extension: one per server address,
+ * so pointing the popup at a second ResumeM-M does not send it the first
+ * one's token, and an address typed differently is still the same server.
+ */
+describe('the pairing token', async () => {
+  const { pairingHeaders, pairingToken, rememberPairing } = await import('../src/shared/config.js');
+  const withLocal = async (fn) => {
+    const before = globalThis.chrome;
+    const area = {};
+    globalThis.chrome = {
+      ...(before ?? {}),
+      storage: {
+        ...(before?.storage ?? {}),
+        local: {
+          get: async (key) => (key in area ? { [key]: structuredClone(area[key]) } : {}),
+          set: async (patch) => Object.assign(area, structuredClone(patch)),
+        },
+      },
+    };
+    try {
+      await fn(area);
+    } finally {
+      globalThis.chrome = before;
+    }
+  };
+
+  it('is kept per server, and sent only to that one', () =>
+    withLocal(async (area) => {
+      await rememberPairing('http://127.0.0.1:4600', 'token-for-4600');
+      assert.deepEqual(area.rmmPairing, { 'http://127.0.0.1:4600': 'token-for-4600' });
+      assert.equal(await pairingToken('127.0.0.1:4600/'), 'token-for-4600');
+      assert.deepEqual(await pairingHeaders('http://127.0.0.1:4600/api/store'), { 'X-RMM-Pair': 'token-for-4600' });
+      assert.deepEqual(await pairingHeaders('http://127.0.0.1:4601'), {});
+    }));
+
+  it('is forgotten when told', () =>
+    withLocal(async () => {
+      await rememberPairing('http://127.0.0.1:4600', 'a');
+      await rememberPairing('http://127.0.0.1:4600', null);
+      assert.equal(await pairingToken('http://127.0.0.1:4600'), null);
+    }));
+});

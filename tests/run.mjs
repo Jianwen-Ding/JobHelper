@@ -89,6 +89,7 @@ const SUITES = [
   { name: 'card-answers', file: 'card-answers.mjs', cost: 4 },
   { name: 'card-edges', file: 'card-edges.mjs', cost: 12 },
   { name: 'panel-flaky', file: 'panel-flaky.mjs', cost: 8 },
+  { name: 'pairing', file: 'pairing.mjs', cost: 10 },
   { name: 'asking', file: 'asking.mjs', cost: 46 },
   { name: 'late', file: 'late.mjs', cost: 45 },
   { name: 'worker', file: 'worker.mjs', cost: 42 },

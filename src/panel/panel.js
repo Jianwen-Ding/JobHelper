@@ -25,7 +25,7 @@
  * active tab of that window and `?tab=<id>` stays on one tab.
  */
 
-import { getSettings } from '../shared/config.js';
+import { getSettings, NOT_PAIRED_MESSAGE, pairingHeaders } from '../shared/config.js';
 
 const $ = (s) => document.querySelector(s);
 const params = new URLSearchParams(location.search);
@@ -142,7 +142,9 @@ const basename = (dir) => String(dir ?? '').split(/[\\/]/).filter(Boolean).pop()
 
 async function getJson(url, timeout = 3000) {
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(timeout), cache: 'no-store' });
+    // With the pairing token: ResumeM-M answers only the extension it paired with.
+    const headers = await pairingHeaders(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(timeout), cache: 'no-store', headers });
     if (!res.ok) return { failed: res.status };
     return await res.json();
   } catch {
@@ -236,7 +238,7 @@ async function refresh() {
   }
   model.down = false;
   model.health = health;
-  if (!health.projectOpen) return paint();
+  if (!health.projectOpen || health.paired === false) return paint();
 
   const [list, revision] = await Promise.all([
     getJson(`${serverUrl}/api/resumes`, 4000),
@@ -419,6 +421,15 @@ function paint() {
         },
       );
     }
+  } else if (model.health?.paired === false) {
+    note('');
+    cover = true;
+    message('JobHelper is not paired with ResumeM-M', NOT_PAIRED_MESSAGE, {
+      actions: [
+        ['Open ResumeM-M', () => chrome.tabs.create({ url: `${model.serverUrl.replace(/\/$/, '')}/#pair` }), true],
+        ['Try again', () => refresh()],
+      ],
+    });
   } else if (model.health && !model.health.projectOpen) {
     note('');
     cover = true;
@@ -737,7 +748,7 @@ async function poll() {
     }
     return;
   }
-  if (model.down || health.dataDir !== model.health?.dataDir || health.projectOpen !== model.health?.projectOpen) {
+  if (model.down || health.dataDir !== model.health?.dataDir || health.projectOpen !== model.health?.projectOpen || health.paired !== model.health?.paired) {
     return refresh();
   }
   const revision = (await getJson(`${model.serverUrl}/api/revision`, 2500))?.revision;

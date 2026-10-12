@@ -135,6 +135,19 @@
   .open-app .what { font-size: 11px; color: var(--muted); margin-top: 2px; line-height: 1.5; }
   .open-app .row { margin-top: 9px; }
   .open-app button { background: #fff; }
+
+  /*
+   * Pairing with ResumeM-M: shown only when the server says this extension is
+   * not paired, and then first, because nothing else here works until it is.
+   */
+  .pairing {
+    margin: 0 0 14px; padding: 10px 12px; border-radius: 8px;
+    background: var(--warn-bg); color: var(--ink); line-height: 1.5;
+  }
+  .pairing .what { font-size: 12px; margin-bottom: 8px; }
+  .pairing input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }
+  .pairing .said { font-size: 11px; margin-top: 6px; color: var(--warn); }
+  .pairing .said:empty { display: none; }
 </style>
 </head>
 <body>
@@ -151,6 +164,16 @@
     <button id="backToApplication">Back to it</button>
     <button id="dropApplication">Start fresh</button>
   </div>
+</div>
+
+<div class="pairing" id="pairing" hidden>
+  <div class="what" id="pairingWhat">JobHelper is not paired with ResumeM-M yet. Open ResumeM-M → Save &amp; Files → Pair JobHelper, and enter the code here.</div>
+  <input type="text" id="pairCode" placeholder="ABCD-EFGH" autocomplete="off" spellcheck="false" maxlength="12" aria-label="Pairing code">
+  <div class="row">
+    <button id="pairButton" class="primary">Pair</button>
+    <button id="pairOpen">Open ResumeM-M</button>
+  </div>
+  <div class="said" id="pairSaid" role="status"></div>
 </div>
 
 <label>
