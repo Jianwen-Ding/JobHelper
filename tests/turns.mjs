@@ -254,3 +254,69 @@ test('pdfBytes fetches from the store and nowhere else', async () => {
   }
   assert.deepEqual(asked, ['http://127.0.0.1:4600/files/resume.pdf', 'http://127.0.0.1:4600/files/resume.pdf']);
 });
+
+/*
+ * One closed tab's letter, and two tabs loading pages of its application at
+ * the same moment: two tabs reopened on one posting, or "Reopen closed
+ * window" bringing back the posting and its form together. Both read the
+ * parked list before either had dropped anything, both picked the same entry,
+ * and both were handed the letter as recovered — every time, at every offset.
+ * Exactly one may have it.
+ */
+test('a closed tab’s letter is recovered into one tab, not two loading together', async () => {
+  const form = `${posting}/apply`;
+  const onPosting = { url: posting, company: 'Helios', role: 'Platform Engineer', kind: 'posting' };
+  const onForm = { url: form, company: 'Helios', role: 'Platform Engineer', kind: 'form' };
+  const doubled = [];
+  for (let i = 0; i < 8; i++) {
+    const closed = 600 + i * 3;
+    const [b, c] = [closed + 1, closed + 2];
+    // The same address for both on even runs; the posting and the form on odd ones.
+    const pageC = i % 2 ? onForm : onPosting;
+    seed(closed, { pages: [onPosting, onForm], work: { letter: `LETTER-${i}` } });
+    openTabs.delete(closed);
+    await listeners.removed(closed);
+    seed(b, { pages: [onPosting] });
+    seed(c, { pages: [pageC] });
+    const replies = await Promise.all([
+      send('takeWork', { page: onPosting }, { id: b }),
+      delay(i % 4).then(() => send('takeWork', { page: pageC }, { id: c })),
+    ]);
+    const got = replies.filter((r) => r.data?.work?.letter === `LETTER-${i}`);
+    if (got.length !== 1) doubled.push(`run ${i}: ${JSON.stringify(replies.map((r) => r.data))}`);
+    for (const r of replies) if (r.data?.work?.letter !== `LETTER-${i}`) assert.equal(r.data?.work, null);
+    for (const t of [b, c]) openTabs.delete(t);
+  }
+  assert.deepEqual(doubled, []);
+});
+
+/*
+ * And across a restart. The claim is what says an entry was taken, and a
+ * worker stopped after one tab claimed it and before the copies under the
+ * application's other pages were dropped wakes with those copies still
+ * parked. Kept in memory, the claim would be gone with the worker, and the
+ * next tab would be handed the letter again. Last in the file, because it
+ * loads the worker a second time.
+ */
+test('a claim made before the worker restarted still holds after it', async () => {
+  const form = `${posting}/apply`;
+  const onPosting = { url: posting, company: 'Helios', role: 'Platform Engineer', kind: 'posting' };
+  const onForm = { url: form, company: 'Helios', role: 'Platform Engineer', kind: 'form' };
+  for (const key of Object.keys(session)) if (key.startsWith('jh-orphan:')) delete session[key];
+  seed(700, { pages: [onPosting, onForm], work: { letter: 'ONLY-ONCE' } });
+  openTabs.delete(700);
+  await listeners.removed(700);
+  const parked = Object.fromEntries(Object.entries(session).filter(([key]) => key.startsWith('jh-orphan:')));
+  assert.equal(Object.keys(parked).length, 2, 'parked under the posting and the form');
+
+  seed(701, { pages: [onPosting] });
+  const first = await send('takeWork', { page: onPosting }, { id: 701 });
+  assert.equal(first.data?.work?.letter, 'ONLY-ONCE');
+
+  // Stopped before the drops landed: the copies are back where they were.
+  Object.assign(session, structuredClone(parked));
+  await import('../src/background/service-worker.js?restarted');
+  seed(702, { pages: [onForm] });
+  const second = await send('takeWork', { page: onForm }, { id: 702 });
+  assert.equal(second.data?.work, null, `handed again after a restart: ${JSON.stringify(second.data)}`);
+});

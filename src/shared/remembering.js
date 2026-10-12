@@ -387,6 +387,57 @@ const ABOUT_THIS_EMPLOYER = [
 const CONTACT_SHAPE = [/[^\s@]+@[^\s@]+\.[^\s@]+/, /\+?\(?\d[\d\s().-]{7,}\d/];
 
 /*
+ * Parameter names that carry a credential or an identifier rather than a
+ * place, read a word at a time: `access_token`, `resourceKey`, `X-Amz-
+ * Signature`, `sessionid`. A word, not a substring, because `keywords`,
+ * `author` and `design` are ordinary parameters on ordinary links; and the
+ * end of a word, so `resourcekey` and `passcode` are caught with `key`.
+ */
+const SECRET_PARAM_WORD = /(token|key|secret|pass(word|wd)?|pwd|auth|sig(nature)?|session(id)?|sid|code|otp|ssn|dob|jwt|credentials?)$/i;
+
+/**
+ * Whether a link carries something private in the parts of it that are not
+ * the place it points to.
+ *
+ * A link was exempt from the contact check, because the digits in a path are
+ * an id and not a telephone number — and that exemption reached the whole of
+ * it, so `https://x.com/?ssn=123456789`, `?access_token=ghp_…`, `?email=…`,
+ * `https://user:pass@x.com/` and a Drive link's `resourcekey=` all went into
+ * the bank and were offered to the next form. The scheme, the host and the
+ * path are still read as a place. What is refused is a link that logs in as
+ * somebody, and a query or fragment parameter that is named like a secret or
+ * whose value, decoded, would be refused if it had been typed on its own.
+ */
+function linkCarriesPrivate(said, depth = 0) {
+  let url;
+  try {
+    url = new URL(said);
+  } catch {
+    // Not a link after all, so read as anything else typed would be.
+    return looksPrivate(said) || CONTACT_SHAPE.some((re) => re.test(said));
+  }
+  if (url.username || url.password) return true;
+  const params = [...url.searchParams];
+  const fragment = url.hash.slice(1);
+  if (fragment.includes('=')) params.push(...new URLSearchParams(fragment));
+  else if (fragment) params.push(['', fragment]);
+  return params.some(([name, value]) => {
+    let decoded = value;
+    try {
+      decoded = decodeURIComponent(value);
+    } catch {
+      // Already decoded by URLSearchParams, or a stray `%`: read it as it is.
+    }
+    // The name a word at a time, with camelCase and the separators taken apart.
+    const words = name.replace(/([a-z])([A-Z])/g, '$1 $2').split(/[^A-Za-z0-9]+/).filter(Boolean);
+    if (neverRemember(words.join(' ')) || words.some((w) => SECRET_PARAM_WORD.test(w))) return true;
+    // A link inside a link — a redirect — is read the same way, once more.
+    if (depth < 2 && /^https?:\/\//i.test(decoded)) return linkCarriesPrivate(decoded, depth + 1);
+    return [name, decoded].some((t) => looksPrivate(t) || CONTACT_SHAPE.some((re) => re.test(t)));
+  });
+}
+
+/*
  * A line, not a paragraph. From here on it is writing, the card's to draft
  * and the bank's to keep only when somebody saves it there on purpose — and
  * it is where ResumeM-M's voice corpus starts reading an answer as prose (60
@@ -448,9 +499,11 @@ export function worthRememberingTyped({ question, answer, company } = {}) {
    * A link is one word however long it is — and its digits are an id in a
    * path, not a telephone number, so it is read for the shapes that are
    * anchored to the whole answer and not for a number somewhere inside it.
+   * Its query, its fragment and anybody it logs in as are not a place, and
+   * are read in full by `linkCarriesPrivate`.
    */
   const oneLink = /^https?:\/\/\S+$/i.test(said) && said.length <= 200;
-  if (looksPrivate(said) || (!oneLink && CONTACT_SHAPE.some((re) => re.test(said)))) {
+  if (looksPrivate(said) || (oneLink ? linkCarriesPrivate(said) : CONTACT_SHAPE.some((re) => re.test(said)))) {
     return { keep: false, why: 'the answer looks personal, so it is not kept' };
   }
   if (namesThem(said, company)) return { keep: false, why: 'the answer depends on the employer, so it is not kept' };

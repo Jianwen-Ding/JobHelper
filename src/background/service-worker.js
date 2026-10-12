@@ -542,6 +542,50 @@ async function dropParkEverywhere(gone) {
   }
 }
 
+/**
+ * Where it is written down that a parked entry has been taken, keyed by the
+ * tab that parked it and the moment it did — which is what every copy of it,
+ * under every address, has in common.
+ */
+const claimKey = (entry) => `jh-claimed:${entry?.tab ?? '-'}:${entry?.at ?? 0}`;
+
+/**
+ * Take a parked entry for one tab, or learn that another tab already has.
+ *
+ * `takeWork` reads the parked list, picks from it and drops what it picked,
+ * several awaits apart — and the reading was outside any turn. Two tabs
+ * loading pages of the same application at once, which is what "Reopen closed
+ * window" does with a posting and its form, or two tabs opened on one posting,
+ * both read the list before either dropped anything, both picked the same
+ * entry, and both were handed the closed tab's letter as "recovered". Measured
+ * with the real worker in node: twenty times out of twenty. Two copies of one
+ * letter in two tabs is two applications that each think they own it, and
+ * whichever is sent second goes out under the wrong one's history.
+ *
+ * Dropping inside the address's own turn would not do it: the copies sit
+ * under every page of the application, so the posting's tab and the form's
+ * tab each have a different address and a different turn. The claim is one
+ * key per entry, checked and written in that key's turn, so exactly one
+ * caller gets `true`. And in session storage rather than in memory, so a
+ * worker stopped between the claim and the drop does not wake up with the
+ * copies still parked and nothing to say they were taken. `sweepOrphans`
+ * expires the marks once the entry they name would be stale anyway.
+ */
+function claimPark(entry) {
+  const key = claimKey(entry);
+  return inTurn(key, async () => {
+    const stored = await session().get(key).catch(() => ({}));
+    if (stored?.[key]) return false;
+    /*
+     * A mark that cannot be written still hands the work over. The worst
+     * that costs is the double this exists to stop; refusing would lose the
+     * letter outright, which nothing gets back. See `takeWork`.
+     */
+    await session().set({ [key]: { at: Date.now() } }).catch(() => undefined);
+    return true;
+  }).catch(() => true);
+}
+
 async function parkWork(url, entry) {
   const key = orphanKey(url);
   /*
@@ -1961,6 +2005,14 @@ const handlers = {
     const rescued = pickParked(held, looking, tab?.id, openTabs);
     if (rescued) {
       const fresh = Date.now() - (rescued.at ?? 0) < TRAIL_STALE_MS;
+      /*
+       * Claimed in a turn of its own before anything is written, so that of
+       * two tabs which both picked this entry only one carries it on. The
+       * other answers as though nothing had been parked: the entry is still
+       * in storage for the moment it takes the winner to drop it, and it is
+       * not this tab's. See `claimPark`.
+       */
+      if (rescued.work && fresh && !(await claimPark(rescued))) return { work: trail.work ?? null };
       // Claimed or expired, this one goes either way. Leaving the stale ones
       // behind is how the space fills up; see `sweepOrphans`. The others stay
       // for the job they belong to.
@@ -3867,7 +3919,12 @@ async function sweepOrphans() {
    * write is caught by the sweep above instead.
    */
   const oldMarks = Object.entries(all ?? {})
-    .filter(([key, value]) => key.startsWith('jh-closed:') && Date.now() - (value?.at ?? 0) > TRAIL_STALE_MS)
+    .filter(
+      ([key, value]) =>
+        // And the claim marks, by the same clock: past it the entry a mark
+        // names is too old to be handed over by `takeWork` anyway.
+        (key.startsWith('jh-closed:') || key.startsWith('jh-claimed:')) && Date.now() - (value?.at ?? 0) > TRAIL_STALE_MS,
+    )
     .map(([key]) => key);
   /*
    * Branch stashes too. Each holds a whole trail including the first page's

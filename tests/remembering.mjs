@@ -495,3 +495,60 @@ test('a long link is still a line', () => {
   const link = `https://www.behance.net/gallery/123456789/${'a-project-name-'.repeat(4)}`;
   assert.equal(worthRememberingTyped({ question: 'Portfolio link', answer: link }).keep, true);
 });
+
+/*
+ * But only the place a link points to is exempt. Its query, its fragment and
+ * anybody it logs in as were exempt with it, so each of these was kept and
+ * offered to the next form: a number, a token, an address and a telephone
+ * number in a query, a password before the host, and a Drive link's key.
+ */
+const LINK_REFUSE = [
+  'https://x.com/?ssn=123456789',
+  'https://x.com/?SSN=123456789&dob=01/02/1990',
+  'https://x.com/p?token=eyJhbGciOiJIUzI1NiJ9.abc.def',
+  'https://x.com/?access_token=ghp_abcdefABCDEF0123456789abcdef012345',
+  'https://x.com/?q=ghp_abcdefABCDEF0123456789abcdef012345',
+  'https://x.com/?email=me@a.com',
+  'https://x.com/?contact=me%40a.com',
+  'https://x.com/?phone=4155551234',
+  'https://x.com/?when=1990-01-02',
+  'https://user:pass@x.com/',
+  'https://user@x.com/',
+  'https://drive.google.com/file/d/1AbC/view?usp=sharing&resourcekey=0-SECRETkey',
+  'https://x.com/?resourceKey=abc',
+  'https://x.com/?X-Amz-Signature=abc',
+  'https://x.com/#access_token=abc',
+  'https://x.com/?next=https%3A%2F%2Fy.com%2F%3Ftoken%3Dabc',
+];
+
+test('a link carrying a secret or a contact detail is refused as personal', () => {
+  for (const answer of LINK_REFUSE) {
+    const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
+    assert.equal(said.keep, false, `${answer} was kept`);
+    assert.match(said.why, /personal/, `${answer}: ${said.why}`);
+  }
+});
+
+/*
+ * And the links people actually paste are still kept, with the query strings
+ * the sites add to them when they are shared.
+ */
+const LINK_KEEP = [
+  'https://www.linkedin.com/in/jay-example',
+  'https://www.linkedin.com/in/jay-example?trk=public_profile',
+  'https://www.linkedin.com/in/jay-example/?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app',
+  'https://github.com/jay-example',
+  'https://github.com/jay-example/repo#readme',
+  'https://github.com/jay-example/repo/blob/main/src/a.js#L10-L20',
+  'https://jay.dev/?ref=resume',
+  'https://medium.com/@jay/a-post-1a2b3c?author=jay',
+  'https://www.linkedin.com/jobs/search/?keywords=engineer',
+  'https://drive.google.com/file/d/1AbC/view?usp=sharing',
+];
+
+test('an ordinary link, with the query strings sites add, is still kept', () => {
+  for (const answer of LINK_KEEP) {
+    const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
+    assert.equal(said.keep, true, `${answer} was refused: ${said.why}`);
+  }
+});
