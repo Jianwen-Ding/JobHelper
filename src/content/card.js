@@ -1314,6 +1314,8 @@ export function createCard({
     trail: null,
     /** Whether that list is open — kept, because a redraw rebuilds it. */
     trailOpen: false,
+    /** Whether the build's own notes are open. See `drawBuildWarnings`. */
+    buildNotesOpen: false,
     render: null,
     busy: null,
     error: null,
@@ -7113,8 +7115,14 @@ export function createCard({
                      * folding takes away is a card sitting over the
                      * confirmation page of a form that has been sent, which
                      * is the one moment it has nothing left to offer.
+                     *
+                     * Except when this filing replaced the files of one that
+                     * had already gone out. Folded, the warning that says so
+                     * was under the chevron, on a card that looks finished —
+                     * and it is the one thing the store has to say that
+                     * somebody may want to undo. See `drawBuildWarnings`.
                      */
-                    state.folded = true;
+                    state.folded = !bundle.replaced;
                   }
                 },
               ),
@@ -7148,6 +7156,8 @@ export function createCard({
       ]),
     );
 
+    // What the last stage of the folder had to say. See `drawBuildWarnings`.
+    if (state.staged) body.append(...drawBuildWarnings(state.staged));
     if (state.note) body.append(h('div', { className: 'ok-note', textContent: state.note }));
     if (state.error) body.append(drawError());
     return body;
@@ -7775,6 +7785,51 @@ export function createCard({
     return step;
   }
 
+  /**
+   * What the store said about a build of the folder: a stage, or a filing.
+   *
+   * The bundle route has always answered with `warnings`, and the card never
+   * read them. Most are quiet — the resume squeezed to fit, a line of the
+   * letter set past the page's edge, a note about the TeX install — and are
+   * kept quiet here, folded under one line, because they are worth reading
+   * once and not worth standing between somebody and an upload dialog.
+   *
+   * One is not. A build over an application that has already gone out
+   * replaces the files in its folder — "Prepare to submit" on a card reopened
+   * after the send, "Mark as applied" pressed again with another resume — and
+   * the store keeps the resume that was sent and says so (`replaced`). The
+   * card said nothing, so the folder somebody would later open to see what an
+   * employer had in front of them held a different resume, and the only
+   * record of the swap was a line in the tracker's history. It is drawn in
+   * the amber the done panel uses for what is wrong with the folder, first,
+   * and it is nothing at all when there was nothing to say.
+   */
+  function drawBuildWarnings(result) {
+    const replaced = result?.replaced ?? null;
+    const others = (result?.warnings ?? []).filter((w) => w && w !== replaced);
+    const shown = [];
+    if (replaced) {
+      shown.push(
+        h('div', { className: 'done-missing', dataset: { note: 'replaced' } }, [
+          h('strong', { textContent: 'The files that were sent have been replaced.' }),
+          h('div', { textContent: replaced }),
+        ]),
+      );
+    }
+    if (others.length) {
+      const notes = h('details', { className: 'trail', open: state.buildNotesOpen, dataset: { note: 'build-notes' } }, [
+        h('summary', { textContent: others.length === 1 ? 'A note from the build' : `${others.length} notes from the build` }),
+        ...others.map((w) => h('div', { className: 'faint', textContent: w })),
+      ]);
+      // Kept, because a redraw rebuilds it. See `trailOpen`.
+      notes.addEventListener('toggle', () => {
+        state.buildNotesOpen = notes.open;
+      });
+      shown.push(notes);
+    }
+    return shown;
+  }
+
   /* ---- Done view ---- */
 
   function drawDoneView() {
@@ -7819,6 +7874,8 @@ export function createCard({
     const lost = b.missing;
 
     return h('div', { className: 'body' }, [
+      // First: a folder of sent files rebuilt is the thing most worth seeing.
+      ...drawBuildWarnings(b),
       lost
         ? h('div', { className: 'done-missing' }, [
             h('strong', { textContent: `Not quite the resume you were looking at: ${lost}` }),

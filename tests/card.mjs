@@ -4984,6 +4984,97 @@ async function main() {
     String(gappyFolder.filed.done),
   );
 
+  console.log('\nA build that replaced the files of an application already sent');
+
+  /*
+   * The store answers a build with `warnings`, and since it started keeping
+   * the resume an already-sent application went out with, with `replaced`
+   * too: "had already been sent, and this build replaced the resume …". The
+   * card read neither. "Mark as applied" pressed again with another resume
+   * folded the card away over a folder whose files were no longer the ones
+   * the employer had, and said nothing. Said first, in amber, and the card
+   * left open; the other notes quiet under one line; and nothing at all for
+   * a build with nothing to say.
+   */
+  const rebuiltSent = await inPage(async (createCard, given) => {
+    const REPLACED =
+      'Acme — Platform Engineer had already been sent, and this build replaced the resume (Summer intern → Acme) in its folder: ' +
+      'the files there are no longer the ones that went out. The resume that was sent, Summer intern, is kept.';
+    const card = (bundleReply) =>
+      createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Platform Engineer', company: 'Acme', description: 'Kafka and Go.' },
+          spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+          rationale: [],
+          diff: [],
+        },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async (action) => {
+          if (action === 'aiStatus') return { active: false, state: 'off' };
+          if (action === 'render') return { pages: 1, fits: true };
+          if (action === 'stage') return { currentDir: '/tmp/x', dir: '/tmp/x', files: ['Resume.pdf'], warnings: [] };
+          if (action === 'bundle') return bundleReply;
+          return {};
+        },
+      });
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const file = async (reply) => {
+      card(reply);
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      const byText = (t) => [...root.querySelectorAll('button')].find((b) => new RegExp(t).test(b.textContent));
+      await wait(120);
+      byText('Build resume')?.click();
+      await wait(300);
+      byText('Mark as applied')?.click();
+      await wait(300);
+      const folded = Boolean(root.querySelector('button[aria-label="Unfold JobHelper"]'));
+      root.querySelector('button[aria-label="Unfold JobHelper"]')?.click();
+      await wait(100);
+      return {
+        folded,
+        replaced: root.querySelector('.done-missing[data-note="replaced"]')?.textContent ?? null,
+        first: root.querySelector('.body')?.firstElementChild?.dataset?.note ?? null,
+        notes: root.querySelector('[data-note="build-notes"]')?.textContent ?? null,
+        notesOpen: root.querySelector('[data-note="build-notes"]')?.open ?? null,
+      };
+    };
+    const base = { currentDir: '/tmp/x', dir: '/tmp/x', files: ['Resume.pdf'] };
+    return {
+      REPLACED,
+      replacing: await file({
+        ...base,
+        replaced: REPLACED,
+        warnings: [REPLACED, 'The resume was squeezed to fit: tighter margins.'],
+      }),
+      quiet: await file({ ...base, warnings: [] }),
+    };
+  });
+  check(
+    'a filing that replaced sent files says so, first and in amber',
+    rebuiltSent.replacing.replaced?.includes(rebuiltSent.REPLACED) &&
+      /The files that were sent have been replaced\./.test(rebuiltSent.replacing.replaced) &&
+      rebuiltSent.replacing.first === 'replaced',
+    JSON.stringify(rebuiltSent.replacing),
+  );
+  check('and the card is not folded away over it', rebuiltSent.replacing.folded === false, JSON.stringify(rebuiltSent.replacing));
+  check(
+    'the other notes are there, shut, under one line',
+    /A note from the build/.test(rebuiltSent.replacing.notes ?? '') &&
+      /squeezed to fit/.test(rebuiltSent.replacing.notes ?? '') &&
+      !/already been sent/.test(rebuiltSent.replacing.notes ?? '') &&
+      rebuiltSent.replacing.notesOpen === false,
+    JSON.stringify(rebuiltSent.replacing),
+  );
+  check(
+    'a filing with nothing to say shows nothing, and folds as before',
+    rebuiltSent.quiet.replaced === null && rebuiltSent.quiet.notes === null && rebuiltSent.quiet.folded === true,
+    JSON.stringify(rebuiltSent.quiet),
+  );
+
   console.log('\nAn AI answer with placeholders left in it');
 
   /*
