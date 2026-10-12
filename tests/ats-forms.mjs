@@ -1056,6 +1056,76 @@ const NOT_FOR_A_JOB = {
     <button type="button">Submit application</button>`,
 };
 
+/*
+ * And two more a bank's form can look like, beside the shapes below that
+ * read the words round a field: a link to resume a saved application in the
+ * same box as the upload, and the bank's "Our team will contact you" over a
+ * box for comments, which is not a question.
+ */
+NOT_FOR_A_JOB['a personal-loan application with "Resume your application" beside the upload'] = `
+    <h1>Apply for a personal loan</h1>
+    <label for="fn">First name</label><input id="fn" name="first_name">
+    <label for="ln">Last name</label><input id="ln" name="last_name">
+    <label for="em">Email</label><input id="em" type="email" name="email">
+    <label for="ph">Phone</label><input id="ph" name="phone">
+    <h3>Resume the application you started</h3>
+    <div class="field"><a href="/bank/resume">Resume your application</a>
+      <label for="ps">Upload file</label><input id="ps" type="file" name="paystubs"></div>
+    <button type="button">Submit application</button>`;
+NOT_FOR_A_JOB['a personal-loan application with "Our team will contact you" over a comments box'] = `
+    <h1>Apply for a personal loan</h1>
+    <label for="fn">First name</label><input id="fn" name="first_name">
+    <label for="ln">Last name</label><input id="ln" name="last_name">
+    <label for="em">Email</label><input id="em" type="email" name="email">
+    <label for="ph">Phone</label><input id="ph" name="phone">
+    <p>Our team will contact you within two business days.</p>
+    <label for="c">Comments</label><textarea id="c" name="comments"></textarea>
+    <button type="button">Submit application</button>`;
+
+/*
+ * Job applications whose only sign of an employer is said round a field
+ * rather than in its label.
+ *
+ * "Résumé" was read off the label of the field that asks for it, and with
+ * `\b` — which without the `u` flag finds no edge after an "é" — so
+ * "Résumé (optional)" asked for nothing. And the word is very often not in
+ * the label at all: a heading over an upload labelled "Attach", a span
+ * "Resume/CV" beside a button, Workday's "Resume/CV" over "Select files", a
+ * job question in the paragraph above a box labelled "Your answer". Every
+ * one of these was a job application before the round that read only the
+ * label, and none was after it. Measured in the hunt's `detect.mjs`.
+ */
+const AROUND = `
+    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>
+    <label for="fn">First name</label><input id="fn" name="first_name">
+    <label for="ln">Last name</label><input id="ln" name="last_name">
+    <label for="em">Email</label><input id="em" type="email" name="email">
+    <label for="ph">Phone</label><input id="ph" name="phone">`;
+const FOR_A_JOB_BY_WHAT_IS_ROUND = {
+  'a heading "Resume" over an upload labelled "Attach"': `${AROUND}
+    <h3>Resume</h3><label for="f">Attach</label><input id="f" type="file" name="attachment">`,
+  'a heading "Resume *" over "Upload file"': `${AROUND}
+    <h3>Resume *</h3><label for="f">Upload file</label><input id="f" type="file" name="file">`,
+  'a heading "Your resume" over "Drop files here"': `${AROUND}
+    <h3>Your resume</h3><label for="f">Drop files here or browse</label><input id="f" type="file" name="files">`,
+  'a span "Resume/CV" beside a button "Attach"': `${AROUND}
+    <div class="field"><span class="lbl">Resume/CV</span><button type="button">Attach</button><input type="file" name="file" style="display:none"></div>`,
+  'Workday\'s "Resume/CV" over "Select files"': `<h3>Resume/CV</h3>${AROUND}
+    <div data-automation-id="attachments-FileUpload"><label for="wd">Select files</label><input id="wd" type="file" data-automation-id="file-upload-input-ref"></div>`,
+  '"Attach your CV" at the top, the upload labelled "Documents"': `<p>Attach your CV and any other documents.</p>${AROUND}
+    <label for="f">Documents</label><input id="f" type="file" name="documents">`,
+  'an upload labelled "Résumé (optional)"': `${AROUND}
+    <label for="f">Résumé (optional)</label><input id="f" type="file" name="f1">`,
+  'an upload labelled "Upload Resumé"': `${AROUND}
+    <label for="f">Upload Resumé</label><input id="f" type="file" name="f1">`,
+  'an upload labelled "Resume - application documents"': `${AROUND}
+    <label for="f">Resume - application documents</label><input id="f" type="file" name="f1">`,
+  'an upload labelled "Lebenslauf hochladen"': `${AROUND}
+    <label for="f">Lebenslauf hochladen</label><input id="f" type="file" name="datei">`,
+  'a job question above a box labelled "Your answer"': `${AROUND}
+    <p>Why do you want to join our team?</p><label for="q">Your answer</label><textarea id="q" name="q1"></textarea>`,
+};
+
 const shell = (body) =>
   `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>${body}</form></body></html>`;
 
@@ -1124,6 +1194,12 @@ async function main() {
     const negative =
       url.startsWith('/not/') &&
       (NOT_APPLICATIONS[decodeURIComponent(url.slice(5))] ?? NOT_FOR_A_JOB[decodeURIComponent(url.slice(5))]);
+    const roundIt = url.startsWith('/round/') && FOR_A_JOB_BY_WHAT_IS_ROUND[decodeURIComponent(url.slice(7))];
+    if (roundIt) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(shell(roundIt));
+      return;
+    }
     if (negative) {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(shell(negative));
@@ -1497,6 +1573,18 @@ async function main() {
         return { form: m.looksLikeApplicationForm(), job: m.looksLikeJobApplication?.() ?? '(no such test)' };
       }, base);
       check(`${what} is not taken for a job application`, verdict.job === false, JSON.stringify(verdict));
+      await page.close();
+    }
+
+    console.log('\nA job application, said round the field');
+    for (const what of Object.keys(FOR_A_JOB_BY_WHAT_IS_ROUND)) {
+      const page = await browser.newPage();
+      await page.goto(`${base}/round/${encodeURIComponent(what)}`, { waitUntil: 'load' });
+      const verdict = await page.evaluate(async (b) => {
+        const m = await import(`${b}/autofill.js`);
+        return { form: m.looksLikeApplicationForm(), job: m.looksLikeJobApplication?.() ?? '(no such test)' };
+      }, base);
+      check(`${what} is taken for a job application`, verdict.form === true && verdict.job === true, JSON.stringify(verdict));
       await page.close();
     }
   } finally {

@@ -403,9 +403,10 @@ const CONTACT_SHAPE = [/[^\s@]+@[^\s@]+\.[^\s@]+/, /\+?\(?\d[\d\s().-]{7,}\d/];
  * `accessToken` went into the bank as freely as a page number, where the
  * looser rule had refused them all. So the whole words are back on the list,
  * a name that *ends* in one of the unmistakable words is refused whatever
- * comes before it (see `SECRET_ENDING`), and the three short words that mean
- * a secret only sometimes are refused when the value is one (see
- * `SECRET_WHEN_OPAQUE`).
+ * comes before it (see `SECRET_ENDING`), and the short words that mean a
+ * secret only sometimes are refused when the value is one (see
+ * `SECRET_WHEN_OPAQUE`). `pass` and `pw` are among those now, refused alone
+ * unless they carry a switch (`ONLY_A_FLAG`).
  */
 const SECRET_PARAM = new Set([
   'token',
@@ -424,8 +425,6 @@ const SECRET_PARAM = new Set([
   'auth_code',
   'passcode',
   'passphrase',
-  'pass',
-  'pw',
   'password',
   'passwd',
   'pwd',
@@ -471,12 +470,62 @@ const SECRET_ENDING = /(token|secret|password|passwd|apikey|accesskey|privatekey
  * is none of those, and neither is the Go playground's `code=fmt.Println` —
  * a dot between two words is code, not a key.
  */
-const SECRET_WHEN_OPAQUE = new Set(['key', 'code', 'session']);
+/*
+ * And not through eight characters mixed, which is what words with a
+ * number in them are: a conference's `?session=fall2024` and `?session=
+ * a12b34c5`, pretalx's `?session=ses_4f8a9b2c`, a tag `?key=react2024`, an
+ * anchor `?key=section-1` and a shop's `?promo_code=SUMMER2024` were all
+ * refused as credentials. What a server generates to stand for somebody is
+ * longer than that — a PHP session id is twenty-six characters, a Java one
+ * thirty-two — and an OAuth code has its slash. Nor round a dot, which the
+ * Go playground's `code=fmt.Println` needed setting aside from and nothing
+ * real needed refusing for. So sixteen characters or more, or a slash.
+ *
+ * The rest of the names here say a secret as often as not, and are read the
+ * same way: a `bearer` or a `ticket` (a CAS sign-in's `ST-…`), a
+ * `magic_link`, and the session cookies a server puts in a link when the
+ * browser will not keep them — `PHPSESSID`, `jsessionid` — and `ssid`. Each
+ * kept a session or a sign-in in the bank, while `?ticket=general` and
+ * `?ssid=HomeWifi` are words.
+ *
+ * And `pass` inside a longer name, which is a pass of some other kind:
+ * `?season_pass=1` was refused as a password. Alone it is still one (see
+ * `ONLY_A_FLAG`).
+ */
+const SECRET_WHEN_OPAQUE = new Set([
+  'key',
+  'code',
+  'session',
+  'pass',
+  'bearer',
+  'ticket',
+  'magic_link',
+  'magiclink',
+  'phpsessid',
+  'jsessionid',
+  'ssid',
+]);
 const looksOpaque = (value) => {
   if (!/^[\w\-./+=~%]+$/.test(value)) return false;
-  if (value.length >= 16 || /\/|%2f/i.test(value)) return true;
-  return /[a-z]/i.test(value) && /\d/.test(value) && (value.length >= 8 || value.includes('.'));
+  return value.length >= 16 || /\/|%2f/i.test(value);
 };
+
+/*
+ * `pass` and `pw` alone are a password, unless all they carry is a switch:
+ * `?pw=1` turns something on, it does not sign anybody in, and was refused.
+ */
+const PASSWORD_WORD = /^(pass|pw)$/;
+const ONLY_A_FLAG = /^(0|1|true|false|yes|no|on|off|y|n)$/i;
+
+/*
+ * A Google Sheet shared before 2014 is named by its `key`: `docs.google.com/
+ * spreadsheet/ccc?key=0Au…&usp=sharing`, and `/pub?key=` when published. That
+ * is the document's id, the one a newer link carries in its path, and sixteen
+ * characters and more of it was refused as a credential. On Google Docs' own
+ * host a `key` is that; a Google API key under any name is still caught by
+ * its shape, `AIza…`.
+ */
+const KEY_IS_THE_DOCUMENT = /^docs\.google\.com$/;
 
 /** Names under which a number is a telephone number, and a date a birthday. */
 const PHONE_PARAM = /^(phone|tel|telephone|mobile|cell)$/;
@@ -492,6 +541,18 @@ const PHONE_PARAM = /^(phone|tel|telephone|mobile|cell)$/;
  */
 const CONTACT_PARAM = /^(contact|phone|tel|telephone|mobile|cell|cellphone|whatsapp|sms|number|num|no|callback|call)$/;
 const BARE_PERSONAL_NUMBER = /^\+?\d{9,11}$/;
+/*
+ * But the short names that say something are not saying "a person". A
+ * time in seconds is ten digits beginning with 1 until 2033, and it is what
+ * `?t=`, `?ts=`, a cache-buster's `?cb=` and jQuery's `?_=` carry, and
+ * WordPress's `?p=123456789` is a post: each was refused as a telephone
+ * number. Ten digits beginning with 1 is not a whole telephone number
+ * anywhere this is used — no North American area code begins with 1 — so
+ * it is a time under any name but one that says contact; and under these,
+ * any run of digits is what they say.
+ */
+const NOT_SOMEBODY = /^(t|ts|cb|_|p|v|s|pg|id)$/;
+const A_TIME = /^1\d{9}$/;
 const BIRTH_PARAM = /^(dob|birth|birthdate|birthday|born)$/;
 
 /*
@@ -508,6 +569,8 @@ const PHONE_PUNCTUATED = /(^|[^\w])(\+\d[\d\s().-]{7,}\d|\(\d{2,4}\)\s?\d{3,4}[\
  */
 const TOKEN_SHAPE = [
   /eyJ[\w-]+\.[\w-]+\./,
+  // A Stripe secret or restricted key, live or test.
+  /\b[sr]k_(live|test)_[A-Za-z0-9]{16,}/,
   /\b(gh[pousr]_|github_pat_)[A-Za-z0-9_]{16,}/,
   /\bsk-[A-Za-z0-9_-]{16,}/,
   /\bAKIA[0-9A-Z]{16}\b/,
@@ -529,6 +592,15 @@ const LINK_VALUE_SHAPE = [
   /\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){3,7}/,
   /\b[A-CEGHJ-PR-TW-Z]{2} ?\d{2} ?\d{2} ?\d{2} ?[A-D]\b/i,
   /\b\d{4}([ -])\d{4}\1\d{4}\1\d{1,7}\b/,
+];
+
+/*
+ * Paths that are a credential whatever the query says. See `linkCarriesPrivate`.
+ */
+const SECRET_PATH = [
+  /^hooks\.slack\.com\/services\/T[A-Z0-9]+\/B[A-Z0-9]+\/[A-Za-z0-9]+/i,
+  /^(?:[\w-]+\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+/i,
+  /\/bot\d+:[A-Za-z0-9_-]{30,}/,
 ];
 
 const DATE_SHAPE = /^\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}$/;
@@ -568,7 +640,20 @@ function linkCarriesPrivate(said, depth = 0) {
     return looksPrivate(said) || CONTACT_SHAPE.some((re) => re.test(said));
   }
   if (url.username || url.password) return true;
+  /*
+   * And a path that is a secret by itself, which no parameter name gives
+   * away: a Slack webhook (`hooks.slack.com/services/T…/B…/…`), a Discord
+   * one, and a Telegram bot's token in front of the method it calls. Anyone
+   * holding these can post as their owner, and each was kept.
+   */
+  if (SECRET_PATH.some((re) => re.test(`${url.hostname.toLowerCase()}${url.pathname}`))) return true;
   const params = [...url.searchParams];
+  /*
+   * And the parameters some servers write into the path after a `;`, as
+   * Java's do with `;jsessionid=…` when the browser will not keep a cookie.
+   */
+  for (const [, name, value] of url.pathname.matchAll(/;([^=/;]+)=([^/;]*)/g)) params.push([name, value]);
+  const docsKey = KEY_IS_THE_DOCUMENT.test(url.hostname.toLowerCase().replace(/\.$/, ''));
   const fragment = url.hash.slice(1);
   if (fragment.includes('=')) params.push(...new URLSearchParams(fragment));
   else if (fragment) params.push(['', fragment]);
@@ -587,12 +672,16 @@ function linkCarriesPrivate(said, depth = 0) {
       .filter(Boolean);
     const named = [...words, words.join(''), words.join('_'), words.join('-')];
     for (let i = 1; i < words.length; i++) named.push(words[i - 1] + words[i], `${words[i - 1]}_${words[i]}`);
+    const whole = words.join('');
     if (named.some((w) => SECRET_PARAM.has(w))) return true;
-    if (SECRET_ENDING.test(words.join(''))) return true;
-    if (words.some((w) => SECRET_WHEN_OPAQUE.has(w)) && [value, decoded].some(looksOpaque)) return true;
+    if (SECRET_ENDING.test(whole)) return true;
+    if (PASSWORD_WORD.test(whole) && !ONLY_A_FLAG.test(decoded.trim())) return true;
+    const opaqueName = named.some((w) => SECRET_WHEN_OPAQUE.has(w) && !(PASSWORD_WORD.test(whole) || (w === 'key' && docsKey)));
+    if (opaqueName && [value, decoded].some(looksOpaque)) return true;
+    const contactName = words.some((w) => CONTACT_PARAM.test(w));
     if (
       BARE_PERSONAL_NUMBER.test(decoded.trim()) &&
-      ((words.join('').length <= 2 && words.join('') !== 'id') || words.some((w) => CONTACT_PARAM.test(w)))
+      (contactName || (whole.length <= 2 && !NOT_SOMEBODY.test(name.toLowerCase()) && !A_TIME.test(decoded.trim())))
     ) {
       return true;
     }
@@ -679,7 +768,13 @@ function withoutOrcid(link) {
   } catch {
     return link;
   }
-  if (host !== 'orcid.org' && host !== 'www.orcid.org') return link;
+  /*
+   * Its subdomains too — `pub.orcid.org` is the public API's, `sandbox.
+   * orcid.org` the test one's — and with the dot a fully written host ends
+   * in, which the browser keeps.
+   */
+  host = host.replace(/\.$/, '');
+  if (host !== 'orcid.org' && !host.endsWith('.orcid.org')) return link;
   return link.replace(/(?<=\/)(\d{4}-\d{4}-\d{4}-\d{3}[\dX])(?=\/|$)/gi, (id) => {
     const digits = id.replace(/-/g, '');
     let total = 0;

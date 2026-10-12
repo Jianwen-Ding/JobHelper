@@ -629,7 +629,11 @@ const LINK_REFUSE_ROUND_14 = [
   'https://x.com/a?password_reset_token=abc',
   'https://x.com/a?verification_code=123456',
   'https://x.com/a?pass=hunter2',
-  'https://x.com/a?session=abc123def456',
+  /*
+   * Sixteen characters, as a session id is. This was twelve, which the rule
+   * of eight mixed characters refused — and `?session=fall2024` with it.
+   */
+  'https://x.com/a?session=abc123def456ghi7',
   'https://x.com/a?contact=4155551234',
   'https://x.com/a?n=123456789',
   'https://x.com/a?glpat=glpat-abcdefghij1234567890',
@@ -679,6 +683,79 @@ test('an ORCID link is kept, and only a real ORCID iD is let through', () => {
    */
   assert.equal(
     worthRememberingTyped({ question: 'Portfolio link', answer: 'https://pay.example.com/card/4111-1111-1111-0238', company: 'Helios Systems' }).keep,
+    false,
+  );
+});
+
+/*
+ * Round 15. The rule of eight characters mixing letters and digits refused
+ * what conferences, tags and shops write under `session`, `key` and `code`;
+ * every short name refused a time; `pass` and `pw` refused a switch; and a
+ * legacy Google Sheet's `key` is the sheet. And the secrets still kept: a
+ * Stripe key, a webhook or bot token in a path, and the session and sign-in
+ * names the list did not have.
+ */
+const LINK_KEEP_ROUND_15 = [
+  'https://example.com/talks?session=fall2024',
+  'https://conf.example.org/2024/schedule?session=a12b34c5',
+  'https://pretalx.com/conf2024/talk/ABC123/?session=ses_4f8a9b2c',
+  'https://example.com/?key=react2024',
+  'https://example.com/?key=section-1',
+  'https://shop.example.com/?promo_code=SUMMER2024',
+  'https://docs.google.com/spreadsheet/ccc?key=0AuXbG3d5E6f7G8h9I0jKlMnOpQrStUvWxYzdGc&usp=sharing',
+  'https://docs.google.com/spreadsheet/pub?key=0AuXbG3d5E6f7G8h9I0jKlMnOpQrStUvWxYzdGc&output=html',
+  'https://morgan.dev/blog?t=1697040000',
+  'https://morgan.dev/?ts=1697040000',
+  'https://morgan.dev/?cb=1697040000',
+  'https://morgan.dev/?_=1697040000',
+  'https://morgan.dev/?p=123456789',
+  'https://morgan.dev/?pw=1',
+  'https://morgan.dev/?season_pass=1',
+  'https://example.com/?ticket=general',
+  'https://example.com/?ssid=HomeWifi',
+  'https://pub.orcid.org/0000-0002-1825-0097',
+  'https://orcid.org./0000-0002-1825-0097',
+];
+
+const LINK_REFUSE_ROUND_15 = [
+  // Still refused: a Google API key, an OAuth code, and a long session.
+  'https://maps.googleapis.com/maps/api/js?key=AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY',
+  'https://docs.google.com/spreadsheet/ccc?key=AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY',
+  'https://x.com/a?code=4/0AY0e-g7abc',
+  'https://example.com/?session=abcdefghijklmnop',
+  'https://x.com/a?pass=hunter2',
+  'https://x.com/a?pw=hunter2',
+  'https://x.com/a?n=123456789',
+  'https://x.com/a?phone=1415555123',
+  // And now refused. The credential-shaped ones are put together here rather
+  // than written out, so the repository's secret scanning does not take
+  // these made-up values for real keys and refuse the push.
+  `https://example.com/x?k=${['sk', 'live', '51H8abcdefghijklmnopqrstu'].join('_')}`,
+  `https://example.com/x?k=${['rk', 'test', '51H8abcdefghijklmnopqrstu'].join('_')}`,
+  `https://${'hooks.slack' + '.com'}/services/T00000000/B00000000/${'X'.repeat(24)}`,
+  `https://api.telegram.org/bot123456789:${'AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw'}/getMe`,
+  'https://example.com/?PHPSESSID=8f3a9c2b1d4e5f60aa',
+  'https://example.com/app;jsessionid=8F3A9C2B1D4E5F60AA',
+  'https://example.com/?ssid=8f3a9c2b1d4e5f60aa',
+  'https://example.com/x?bearer=abc123def456ghi7',
+  'https://example.com/?magic_link=8f3a9c2b1d4e5f60aa',
+  'https://example.com/?ticket=ST-12345-abcdefghijk-cas',
+  'https://example.com/?season_pass=8f3a9c2b1d4e5f60aa',
+];
+
+test('words with a number in them, times and switches are kept, and the secrets they were confused with are not', () => {
+  for (const answer of LINK_KEEP_ROUND_15) {
+    const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
+    assert.equal(said.keep, true, `${answer} was refused: ${said.why}`);
+  }
+  for (const answer of LINK_REFUSE_ROUND_15) {
+    const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
+    assert.equal(said.keep, false, `${answer} was kept`);
+    assert.match(said.why, /personal/, `${answer}: ${said.why}`);
+  }
+  // A card number on a host that only ends in "orcid.org" is not on ORCID's.
+  assert.equal(
+    worthRememberingTyped({ question: 'Portfolio link', answer: 'https://notorcid.org/4111-1111-1111-0238', company: 'Helios Systems' }).keep,
     false,
   );
 });

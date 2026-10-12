@@ -8798,8 +8798,85 @@ const JOB_WORDS =
  * employer's, while "Resume/CV", "Upload résumé" and a box named
  * `resume_file` are only ever an employer's.
  */
+/*
+ * And with edges that know what a letter is. `\b` without the `u` flag
+ * counts only A-Z, 0-9 and `_` as word characters, so after the last "é" of
+ * "résumé" it found no edge at all, and "Résumé (optional)" and "Upload
+ * Resumé" asked for nothing. Nor did a box named `resume_file`, which this
+ * comment promised: `_` is a word character to `\b`, so "resume" in it had
+ * no edge either. The edges here are a letter or a digit on either side;
+ * an underscore or a hyphen is a gap between words, as it is in a name.
+ *
+ * "application" is not among the words that make it the verb. "Resume -
+ * application documents" is an employer's upload, and so is a box named
+ * `application` labelled "Resume"; the verb before it comes with "your",
+ * "a" or "the" between, which are still here. Nor is "where" alone: "Resume
+ * where available" is the noun, and the verb is "resume where you left off".
+ *
+ * And in the other languages the server reads a posting in: "Lebenslauf",
+ * "currículum", and "简历", which is written with no spaces round it and so
+ * has no edges to ask for.
+ */
 const ASKS_FOR_A_RESUME =
-  /\b(r[ée]sum[ée]s?|cv|curriculum vitae)\b(?![\s_-]+(your|a|my|the|saved|application|draft|later|where)\b)/i;
+  /(?:(?<![\p{L}\p{N}])(r[ée]sum[ée]s?|cvs?|curr[ií]culum(?:[\s_-]+vitae)?|lebensl(?:auf|äufe))(?![\p{L}\p{N}])|简历)(?![\s_-]+(your|a|my|the|saved|draft|later|where[\s_-]+you)\b)/iu;
+
+/*
+ * The same, said so that it can only be the noun, for reading the page as a
+ * whole. A résumé is very often asked for once, over the section, and the
+ * upload itself labelled "Select files" or "Documents": Workday's heading
+ * "Resume/CV" sits above an `attachments-FileUpload` whose input says
+ * "Select files", and "Attach your CV and any other documents" can be the
+ * form's opening line. Neither is near the box. The page is not read for the
+ * bare word — that is how "Resume a saved application" made a bank's loan
+ * form a job application — only for a résumé that is somebody's ("your CV")
+ * or one being sent ("upload a résumé"), or "Resume/CV", none of which the
+ * verb can be.
+ */
+const A_RESUME_ON_THE_PAGE =
+  /(?<![\p{L}\p{N}])((your|upload|attach|submit|include|send)[\s_-]+((your|a|an|the|updated|current|latest)[\s_-]+)?(r[ée]sum[ée]|cv|curriculum vitae)|r[ée]sum[ée][\s]*\/[\s]*cv|cv[\s]*\/[\s]*r[ée]sum[ée])(?![\p{L}\p{N}])/iu;
+
+/**
+ * The words round a field, other than its label: what is drawn in its own
+ * group, and what is drawn before that group up to the field before it.
+ *
+ * A résumé upload very often says "résumé" only there. Its own label is the
+ * button's — "Attach", "Upload file", "Drop files here or browse" — and the
+ * word is a heading over it (`<h3>Resume</h3>`), a span beside the button
+ * (`<span>Resume/CV</span><button>Attach</button>`), or a line above
+ * ("Please upload your resume (PDF)"). `describeField` gives the box one
+ * label, the nearest, and that is the button's; when the whole page was read
+ * it did not matter, and once only the label was read, every one of these
+ * forms stopped being a job application.
+ *
+ * The group is the highest element holding this field and no other, as
+ * `labelFor` climbs it — anything wider holds another field's words. And
+ * what comes before it, as `labelFor` looks back: three things drawn, and
+ * never past another field. Each piece is read as it is drawn, an element's
+ * edge a space (`drawnText`), not by `textContent`, which runs a heading and
+ * a label together into "ResumeAttach", one word that is neither. And each
+ * on its own, so that what one piece ends with is never taken for what
+ * follows another's "résumé".
+ */
+function wordsAround(field) {
+  const pieces = [];
+  const putInto = new Set();
+  let own = field;
+  for (let group = groupDrawnAround(field, putInto), i = 0; group && i < 7; i++) {
+    if (fieldsDrawnIn(group, ANOTHER_FIELD, 2) > 1) break;
+    own = group instanceof ShadowRoot ? group.host : group;
+    group = groupDrawnAround(own, putInto);
+  }
+  if (own !== field) pieces.push(drawnText(own).slice(0, 600));
+  let node = drawnBefore(own);
+  for (let i = 0; i < 3 && node; node = drawnBefore(node)) {
+    if (node.matches(NEVER_SHOWN)) continue;
+    i++;
+    if (fieldsDrawnIn(node, ANOTHER_FIELD, 1)) break;
+    const text = drawnText(node);
+    if (text) pieces.push(text.slice(0, 600));
+  }
+  return pieces;
+}
 
 export function looksLikeJobApplication() {
   if (!looksLikeApplicationForm()) return false;
@@ -8814,14 +8891,30 @@ export function looksLikeJobApplication() {
    * label of the box it is to be answered in — Recruitee's "What draws you to
    * this team?" is that box's own `aria-label` — so that is where to look.
    */
+  /*
+   * Or by the words round it, when the box's own label is only "Your answer"
+   * and the question is the paragraph above (`wordsAround`). Only what reads
+   * as a question, though: what is round a box is not all asked of it, and a
+   * bank's "Our team will contact you" above a box for comments is not about
+   * the job.
+   */
   for (const box of deepQueryAll('textarea')) {
     if (ASKS_ABOUT_THE_JOB.test(describeField(box) ?? '')) return true;
+    if (wordsAround(box).some((said) => said.includes('?') && ASKS_ABOUT_THE_JOB.test(said))) return true;
   }
   // A résumé asked for by a field of its own: a file input, or a box for a
   // link to one, labelled or named for it.
   for (const field of deepQueryAll('input, textarea')) {
     if (ASKS_FOR_A_RESUME.test(describeField(field) ?? '')) return true;
   }
+  // An upload with "résumé" round it rather than in its label, and the page
+  // asking for one in words only the noun can be. See `wordsAround` and
+  // `A_RESUME_ON_THE_PAGE`.
+  const uploads = deepQueryAll('input[type=file]');
+  for (const upload of uploads) {
+    if (wordsAround(upload).some((said) => ASKS_FOR_A_RESUME.test(said))) return true;
+  }
+  if (uploads.length > 0 && A_RESUME_ON_THE_PAGE.test(drawnText(document.body))) return true;
   for (const key of fieldsAskedFor()) if (TELLTALE.has(key)) return true;
   return false;
 }
