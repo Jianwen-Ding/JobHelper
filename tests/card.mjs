@@ -4998,6 +4998,54 @@ async function main() {
     String(gappyFolder.filed.done),
   );
 
+  /*
+   * A card with no letter at all says nothing about the letter.
+   *
+   * The store reads `coverLetter: null` as "take the letter away". A page
+   * reloaded while its letter was still being filed, with the browser's
+   * storage too full to carry the letter across, came back with no letter,
+   * staged on its own — and removed the one just filed. Measured in
+   * tests/adverse.mjs, "the letter is kept even so", about one run in two.
+   */
+  const noLetter = await inPage(async (createCard) => {
+    const sent = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme', description: 'Kafka and Go.' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: true,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'render') return { pages: 1, fits: true };
+        if (action === 'stage') return { currentDir: '/tmp/x', dir: '/tmp/x', files: ['Resume.pdf'] };
+        if (action === 'bundle') return { currentDir: '/tmp/x', dir: '/tmp/x', files: ['Resume.pdf'] };
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => new RegExp(t).test(b.textContent));
+    await wait(120);
+    byText('Build resume')?.click();
+    await wait(1600);
+    const staged = sent.filter((c) => c.action === 'stage').at(-1)?.payload;
+    byText('Mark as applied')?.click();
+    await wait(200);
+    const bundled = sent.filter((c) => c.action === 'bundle').at(-1)?.payload;
+    const shape = (p) => (p ? (p.coverLetter === null ? 'null' : p.coverLetter === undefined ? 'nothing' : JSON.stringify(p.coverLetter)) : 'not sent');
+    return { staged: shape(staged), bundled: shape(bundled) };
+  });
+  check('a card with no letter stages without one, not with null', noLetter.staged === 'nothing', JSON.stringify(noLetter));
+  check('and files without one, not with null', noLetter.bundled === 'nothing', JSON.stringify(noLetter));
+
   console.log('\nA build that replaced the files of an application already sent');
 
   /*

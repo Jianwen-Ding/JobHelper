@@ -5261,7 +5261,17 @@ export function createCard({
    * and files what is in the box.
    */
   function stagedLetter() {
-    return letterGapsLeft().length ? '' : state.letter;
+    if (letterGapsLeft().length) return '';
+    /*
+     * No letter at all — `null`, a card that never had one or has not got
+     * its own back yet — is sent as nothing, not as `null`: the store reads
+     * `null` as "take the letter away". A page reloaded while its letter was
+     * still being filed, with the browser's storage too full to carry it
+     * across, came back with `letter: null`, staged on its own, and removed
+     * the letter that had just been filed. Emptying the box is `''`, and
+     * still takes it away.
+     */
+    return state.letter ?? undefined;
   }
 
   function prepareSoon() {
@@ -7378,7 +7388,7 @@ export function createCard({
             onclick: () =>
               act(
                 'bundle',
-                { spec: state.spec, coverLetter: state.letter, answers: collectedAnswers(), naming: state.naming },
+                { spec: state.spec, coverLetter: state.letter ?? undefined, answers: collectedAnswers(), naming: state.naming },
                 (bundle) => {
                   if (bundle) {
                     state.bundle = bundle;

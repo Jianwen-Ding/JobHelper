@@ -3684,18 +3684,27 @@ const handlers = {
        *
        * One that belongs to an application is that application's record of
        * what was sent, and is left alone: this goes beside it, under the
-       * next free `-2`, `-3`. Anything else under the id is the same letter
-       * saved before, and keeps what this does not know about it.
+       * next `-2`, `-3` that no application's letter has — the server's own
+       * rule (`unclaimedLetterId`). Not the next name nobody has: that one
+       * is this card's own letter from the save before, so every "Save to
+       * store" for a sent application made another letter, `-2`, `-3`,
+       * `-4`, one per press. Anything under the name it lands on is the same
+       * letter saved before, and keeps what this does not know about it.
+       * Even a letter filed with this card's own application is skipped: on
+       * this store a PUT replaces it whole, and that letter is what was sent.
        */
       const fallback = letterId(job?.company, job?.title);
       const letters = await serverFetch('/api/letters', { save });
       const all = Array.isArray(letters) ? letters : [];
-      const taken = new Set(all.map((l) => l?.id).filter((x) => typeof x === 'string'));
-      const there = all.find((l) => l?.id === fallback);
+      const byId = new Map(all.filter((l) => typeof l?.id === 'string').map((l) => [l.id, l]));
+      const claimed = (name) => {
+        const by = byId.get(name)?.applicationId;
+        return typeof by === 'string' && by !== '';
+      };
       id = fallback;
-      if (there && typeof there.applicationId === 'string' && there.applicationId) {
-        for (let n = 2; taken.has(id); n++) id = `${fallback}-${n}`;
-      } else if (there) {
+      for (let n = 2; claimed(id); n++) id = `${fallback}-${n}`;
+      const there = byId.get(id);
+      if (there) {
         kept = Object.fromEntries(
           ['applicationId', 'tags', 'voice', 'createdAt'].filter((k) => there[k] !== undefined).map((k) => [k, there[k]]),
         );

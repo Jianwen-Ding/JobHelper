@@ -519,10 +519,36 @@ async function main() {
         const beside = await savedOld();
         check('a store too old to name the id is looked at before it is written to', beside.listed, JSON.stringify(beside));
         check(
-          'a letter filed with an application is left alone, and this goes under the next free name',
-          beside.url === `/api/letters/${filedId}-3` && beside.said.applicationId === undefined,
+          'a letter filed with an application is left alone, and this goes onto the next name no application has',
+          beside.url === `/api/letters/${filedId}-2` &&
+            beside.said.applicationId === undefined &&
+            beside.said.createdAt === '2026-03-01T11:00:00.000Z' &&
+            beside.said.body === 'Dear Acme, a re-save from the card.',
           `${beside.url} ${JSON.stringify(beside.said)}`,
         );
+
+        /*
+         * Saved again, it goes onto the letter it made the first time. It
+         * skipped every name that was taken, its own `-2` among them, and
+         * each "Save to store" for a sent application made another letter.
+         */
+        store.oldLetters = [
+          { id: filedId, title: 'Software Engineer Intern — Acme', applicationId: 'app-acme', createdAt: '2026-03-01T10:00:00.000Z', body: 'The letter that was sent.' },
+          { id: `${filedId}-2`, title: 'Software Engineer Intern — Acme', createdAt: '2026-03-02T08:00:00.000Z', body: 'Dear Acme, a re-save from the card.' },
+          { id: `${filedId}-3`, title: 'Another application', applicationId: 'app-other', body: 'Another one sent.' },
+        ];
+        const again = await savedOld();
+        check(
+          'saved again for a sent application, it goes onto its own letter from before, not a new one',
+          again.url === `/api/letters/${filedId}-2` && again.said.createdAt === '2026-03-02T08:00:00.000Z',
+          `${again.url} ${JSON.stringify(again.said)}`,
+        );
+        store.oldLetters = [
+          { id: filedId, applicationId: 'app-acme', body: 'The letter that was sent.' },
+          { id: `${filedId}-2`, applicationId: 'app-other', body: 'Another one sent.' },
+        ];
+        const past = await savedOld();
+        check('and past every letter an application has', past.url === `/api/letters/${filedId}-3`, String(past.url));
 
         store.oldLetters = [{ id: filedId, title: 'Saved before', tags: ['mine'], voice: true, createdAt: '2026-01-05T09:00:00.000Z', body: 'Older draft.' }];
         const over = await savedOld();
