@@ -3034,10 +3034,15 @@ export function createCard({
     return turn;
   }
 
+  /*
+   * "In ResumeM-M or another tab": the edit the store refused over may be
+   * another tab's card filing the same copy, which the card cannot tell from
+   * an edit made in the editor.
+   */
   const MERGED_NOTE =
-    'This copy was edited in ResumeM-M while the card was filing it. The card kept that edit and put its own changes back on top.';
+    'This copy was edited in ResumeM-M or another tab while the card was filing it. The card kept that edit and put its own changes back on top.';
   const ADOPTED_NOTE =
-    'This copy was edited in ResumeM-M while the card was filing it, in the same places the card had changed, so the card took the copy as it is there. Switch them again here if you still want them.';
+    'This copy was edited in ResumeM-M or another tab while the card was filing it, in the same places the card had changed, so the card took the copy as it is there. Switch them again here if you still want them.';
 
   /**
    * File the copy — staged, sent, or handed to the editor — only over the
@@ -3089,7 +3094,16 @@ export function createCard({
        */
       const mine = await Promise.resolve(onAction('ownWrite', { id: spec.id, from: basedOn ?? null, to: version })).catch(() => null);
       state.filed = { id: spec.id, version, copy: current };
-      if (mine?.own || !current) continue;
+      /*
+       * Or a copy this card let out itself (`ownVersion`), whatever the
+       * worker can follow. The worker learns of a filing from the store's
+       * reply, and a reply can be lost: the worker stopped while a stage was
+       * out, and the write landed with nothing noted. That write, refused
+       * over, read as an edit made elsewhere, and where the switch just made
+       * here touched the same place it was taken over that switch, and said.
+       * Filed over as it stands, like the worker's own.
+       */
+      if (mine?.own || ownVersion(current) || !current) continue;
       const { merged, clashes } = on?.copy ? mergeCopy(on.copy, spec, current) : { merged: current, clashes: ['(no base)'] };
       const next = clashes.length ? current : merged;
       // Only an edit that changes the copy is one to take and say.

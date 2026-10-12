@@ -849,9 +849,32 @@ async function inheritIfNew(tabId, openerTabId) {
   if (tabId === undefined || openerTabId === undefined) return;
   // Decided inside the turn, so a page of this tab's own landing at the same
   // moment is not written over by the opener's.
-  await changeTrail(tabId, async () => {
+  let inherited = false;
+  const { written } = await changeTrail(tabId, async () => {
     const theirs = await inheritance(tabId, openerTabId);
+    inherited = Boolean(theirs);
     return theirs ? { ...theirs, at: Date.now() } : null;
+  });
+  /*
+   * And the opener's filings of the copy with it.
+   *
+   * The trail carries the card's work, and in it the write of the copy that
+   * work was built on (`filed`) — but the list `ownWrite` follows from that
+   * write stayed with the opener, under its own tab id. So the form page's
+   * card, built on the opener's first stage and refused over its second (a
+   * stage the card before it sent just as Apply was pressed), asked this tab
+   * whether that write was its own, found nothing to follow, and was told
+   * no: it took its own copy for an edit made in ResumeM-M and put it over
+   * the switch just made on the form page. Measured with the real worker in
+   * node. Copied once, with the trail, for the same reason the trail is:
+   * from then on the two tabs file their own copies.
+   */
+  if (!inherited || !written) return;
+  await changeStored(filedKey(tabId), async (stored) => {
+    if (await tabClosed(tabId)) return null;
+    const theirs = (await session().get(filedKey(openerTabId)).catch(() => ({})))[filedKey(openerTabId)];
+    if (!Array.isArray(theirs) || theirs.length === 0) return null;
+    return [...theirs, ...(Array.isArray(stored) ? stored : [])].slice(-FILINGS_KEPT);
   });
 }
 
@@ -3448,6 +3471,14 @@ const handlers = {
       save: (await saveFor(tab.id)) ?? null,
       at: Date.now(),
     };
+    /*
+     * And not for a tab that has closed. A closing page's card says which
+     * resume it is on as the page goes, and that message can land after
+     * `onRemoved` has swept the tab's keys: it wrote this one back, for a tab
+     * id Chrome will never use again, and nothing ever removed it. Asked
+     * after `saveFor`, the last wait before the write. See `tabClosed`.
+     */
+    if (await tabClosed(tab.id)) return { kept: false };
     await session().set({ [panelKey(tab.id)]: target });
     return { kept: true };
   },

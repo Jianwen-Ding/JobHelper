@@ -350,7 +350,7 @@ async function main() {
       check(
         'and the card keeps its switch, and says the copy was edited',
         ((await row.getAttribute('class').catch(() => ''))?.includes('off') ?? wasOff) !== wasOff &&
-          (await says(/edited (in ResumeM-M while the card was filing it|there)/, 10_000)),
+          (await says(/edited (in ResumeM-M or another tab while the card was filing it|there)/, 10_000)),
       );
     }
 

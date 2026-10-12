@@ -58,7 +58,7 @@ const STORE = `(() => {
   s.onAction = async (action, payload) => {
     s.sent.push({ action, payload: payload && JSON.parse(JSON.stringify(payload)) });
     const failing = s.fail[action];
-    if (failing) {
+    if (failing && failing !== 'lost') {
       delete s.fail[action];
       if (failing === 'throw') throw new Error('The store did not answer');
       return null;
@@ -71,15 +71,34 @@ const STORE = `(() => {
       }
       case 'stage':
       case 'bundle': {
+        // \`s.versions\`: each write of the copy numbered, and a filing based
+        // on any write but the last refused with the copy the store holds.
+        if (s.versions && s.copyVersion && payload.basedOn !== s.copyVersion) {
+          return { conflict: { current: JSON.parse(JSON.stringify(s.copy)), version: s.copyVersion } };
+        }
         s.copy = JSON.parse(JSON.stringify(payload.spec));
+        if (s.versions) s.copyVersion = (s.copyVersion ?? 0) + 1;
+        // 'lost': written, and the reply never reaches the card — the worker
+        // was stopped while it was on its way.
+        if (failing === 'lost') {
+          delete s.fail[action];
+          await gated(action);
+          throw new Error('The message channel closed before a response was received.');
+        }
         const built = { printed: 'p' + s.version, choices: payload.spec?.choices ?? null, as: action };
         await gated(action);
         s.folder.push(built);
-        return { currentDir: '/tmp/upload', application: { id: 'app-acme' }, files: ['Jane-Resume.pdf'] };
+        return {
+          currentDir: '/tmp/upload',
+          application: { id: 'app-acme' },
+          files: ['Jane-Resume.pdf'],
+          ...(s.versions ? { resumeVersion: s.copyVersion } : {}),
+        };
       }
       case 'fresh':
         await gated(action);
         return {
+          ...(s.versions ? { version: s.copyVersion ?? null } : {}),
           printed: 'p' + s.version,
           stored: s.copy,
           storedPrint: s.copy ? JSON.stringify(s.copy) : null,
@@ -159,6 +178,7 @@ async function main() {
         document.querySelector('#zone')?.remove();
         // eslint-disable-next-line no-eval
         const s = (0, eval)(store);
+        s.versions = Boolean(opts.versions);
         s.resumes = opts.resumes ?? [
           { id: 'base', label: 'New grad resume', tier: 'base' },
           { id: 'kept', label: 'Systems resume', tier: 'base' },
@@ -647,6 +667,50 @@ async function main() {
       return { said: note(), renders: renders().length };
     });
     check('nor is filing it as applied', !/Updated from ResumeM-M/.test(filed.said) && filed.renders === 1, JSON.stringify(filed));
+  }
+
+  /*
+   * A write of the card's own that it never heard back about.
+   *
+   * The worker was stopped while a stage was out: the store wrote the copy,
+   * and the reply, and the worker's note of the filing, went with the
+   * worker. The card's next filing, based on the write before, was refused
+   * over that one, and nobody could say it was the card's — so it read as an
+   * edit made in ResumeM-M, was taken over the switch just made here, and
+   * was said to be one.
+   */
+  console.log('\nA write of the card\'s own whose reply was lost');
+  {
+    await setUp({ versions: true });
+    const lost = await inPage(async () => {
+      const stages = () => jh.s.sent.filter((c) => c.action === 'stage');
+      const first = ticks();
+      jh.s.fail.stage = 'lost';
+      const stopped = jh.s.hold('stage');
+      const before = stages().length;
+      jh.root.querySelectorAll('.pick input')[0].click();
+      await until(() => stages().length > before && !jh.s.fail.stage, 4000);
+      // Switched back while that stage is out, then the worker stops.
+      jh.root.querySelectorAll('.pick input')[0].click();
+      await wait(300);
+      stopped();
+      await wait(2500);
+      return {
+        first,
+        ticks: ticks(),
+        said: note(),
+        stored: jh.s.copy?.choices ?? null,
+        mine: jh.handle.takeWork()?.spec?.choices ?? null,
+        basedOn: stages().map((c) => c.payload.basedOn ?? null),
+      };
+    });
+    check(
+      'the switch made after it is kept on the card',
+      JSON.stringify(lost.ticks) === JSON.stringify(lost.first),
+      JSON.stringify(lost),
+    );
+    check('and filed', JSON.stringify(lost.stored) === JSON.stringify(lost.mine), JSON.stringify(lost));
+    check('and the card does not say the copy was edited elsewhere', !/edited in/.test(lost.said), lost.said);
   }
 
   /* ------------------------------------------------------------------ */

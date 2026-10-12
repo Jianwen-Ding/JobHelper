@@ -143,6 +143,58 @@ test('a stage and a bundle sent back to back are both noted as this tab’s own'
   assert.equal(own.data?.own, true, 'the card took its own write for an edit made in ResumeM-M');
 });
 
+/*
+ * A tab opened by Apply carries the opener's work, and in it the write of the
+ * copy the work was built on — and the opener staged again as Apply was
+ * pressed. The form page's card, refused over that stage, asks this tab
+ * whether it is its own: it is, as much as the trail is, so the opener's
+ * filings come over with the trail.
+ */
+test('a tab opened by Apply knows the opener’s filings of the copy as its own', async () => {
+  seed(31);
+  let n = 0;
+  store = async () => {
+    const version = `v${++n}`;
+    return json({ draft: { resumeId: 'job-31' }, resumeVersion: version });
+  };
+  const opener = { id: 31 };
+  await send('stage', { spec: { id: 'job-31' }, basedOn: null }, opener);
+  await send('stage', { spec: { id: 'job-31', more: 1 }, basedOn: 'v1' }, opener);
+  await send('expectContinuation', { to: `${posting}/apply`, from: posting }, opener);
+  assert.equal(session['filedCopies:31']?.length, 2);
+
+  openTabs.add(32);
+  const child = { id: 32, openerTabId: 31 };
+  const form = { url: `${posting}/apply`, company: 'Helios', role: 'Platform Engineer', kind: 'form' };
+  await send('takeWork', { page: form }, child);
+  assert.ok(session['trail:32']?.pages?.length, 'the tab did not inherit the opener’s trail');
+  const own = await send('ownWrite', { id: 'job-31', from: 'v1', to: 'v2' }, child);
+  assert.equal(own.data?.own, true, `the opener’s stage read as an edit made elsewhere: ${JSON.stringify(session['filedCopies:32'] ?? null)}`);
+
+  // And once only: the opener's filings after that are its own.
+  await send('stage', { spec: { id: 'job-31', more: 2 }, basedOn: 'v2' }, opener);
+  const later = await send('ownWrite', { id: 'job-31', from: 'v2', to: 'v3' }, child);
+  assert.equal(later.data?.own, false, 'a filing the opener made afterwards was taken as this tab’s');
+});
+
+test('a card saying its resume as its tab closes does not bring the tab’s keys back', async () => {
+  // At every offset across the close, because whether the write landed
+  // after the sweep depended on exactly when the message arrived.
+  const back = [];
+  for (let i = 0; i < 10; i++) {
+    const tab = { id: 330 + i, url: posting };
+    seed(tab.id);
+    openTabs.delete(tab.id);
+    const closing = listeners.removed(tab.id);
+    await delay(i);
+    const late = send('panelTarget', { copyId: 'c', company: 'Helios', role: 'Platform Engineer' }, tab);
+    await Promise.all([closing, late]);
+    await delay(30);
+    if (`jh-panel:${tab.id}` in session) back.push(`${i}ms`);
+  }
+  assert.deepEqual(back, [], 'jh-panel was written back for a tab that had closed');
+});
+
 test('a reply that lands after its tab closed does not bring the trail back', async () => {
   openTabs.add(7);
   let release;
