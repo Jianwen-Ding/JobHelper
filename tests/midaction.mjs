@@ -714,6 +714,58 @@ async function main() {
   }
 
   /* ------------------------------------------------------------------ */
+  console.log('\nThe keeper\'s filing of the card\'s copy, whose reply was lost');
+  {
+    /*
+     * The same, through the keeper. `takeWork` hands the card's copy to the
+     * keeper to file with the application, and the keeper's write landed with
+     * its reply lost — but only the card's own stages were counted as
+     * unconfirmed, so on the card's next filing the keeper's write read as an
+     * edit made in ResumeM-M: taken over the two switches made here since,
+     * and said to be one.
+     */
+    await setUp({ versions: true });
+    const kept = await inPage(async () => {
+      const stages = () => jh.s.sent.filter((c) => c.action === 'stage');
+      const settle = async (n) => {
+        await until(() => stages().length >= n, 4000);
+        await wait(600);
+      };
+      const picks = () => jh.root.querySelectorAll('.pick input');
+      let n = stages().length;
+      picks()[0].click();
+      await settle(++n);
+      // A second switch, and in the same moment the keeper files the card's copy.
+      picks()[1].click();
+      await wait(150);
+      const work = jh.handle.takeWork();
+      // Landed in the store; the reply and the worker's note of it lost.
+      jh.s.copy = JSON.parse(JSON.stringify(work.spec));
+      jh.s.copyVersion += 1;
+      // Both switched back on the card.
+      picks()[0].click();
+      await wait(150);
+      picks()[1].click();
+      const meant = ticks();
+      await wait(3500);
+      return {
+        meant,
+        ticks: ticks(),
+        said: note(),
+        stored: jh.s.copy?.choices ?? null,
+        mine: jh.handle.takeWork()?.spec?.choices ?? null,
+      };
+    });
+    check('the switches made after it are kept on the card', JSON.stringify(kept.ticks) === JSON.stringify(kept.meant), JSON.stringify(kept));
+    check(
+      'and filed',
+      JSON.stringify(kept.stored) === JSON.stringify(kept.mine) && kept.stored.b_pipeline === 'v_base' && kept.stored['edu_neu.subtitle'] === 'v_plain',
+      JSON.stringify(kept),
+    );
+    check('and the card does not say the copy was edited elsewhere', !/edited in/.test(kept.said), kept.said);
+  }
+
+  /* ------------------------------------------------------------------ */
   console.log('\nA copy the card filed earlier, put back in ResumeM-M');
   {
     /*

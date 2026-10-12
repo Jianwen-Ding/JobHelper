@@ -8780,19 +8780,45 @@ const JOB_WORDS =
 /*
  * Written out rather than borrowed from the test above, which is
  * `/\b(resum|cv)\b/` and matches neither "resume" nor "résumé" — `\b` after
- * "resum" wants a non-word character and finds the "e". A prefix, as the
- * scorer in content.js has it, so every spelling anyone writes counts.
+ * "resum" wants a non-word character and finds the "e". Every spelling
+ * anyone writes counts, with and without the accents.
  */
-const ASKS_FOR_A_RESUME = /\bcv\b|résum|resum|curriculum vitae/i;
+/*
+ * And read off the field that asks, never off the page. This was tested
+ * against the whole page's text whenever there was any file input at all,
+ * and as a prefix, so the verb counted as much as the noun: the same bank's
+ * loan form with a "Resume a saved application" link and an "Upload your two
+ * most recent pay stubs" box was taken for a job application, read unasked
+ * and sent away, account number and all — the fix above undone by one link
+ * and one upload. Measured in the hunt's `loan.mjs`.
+ *
+ * So the noun alone, as a whole word, and not where it is followed by what
+ * the verb is followed by: "Resume your application", "resume a saved
+ * draft", "resume application" are a bank's and a council's as much as an
+ * employer's, while "Resume/CV", "Upload résumé" and a box named
+ * `resume_file` are only ever an employer's.
+ */
+const ASKS_FOR_A_RESUME =
+  /\b(r[ée]sum[ée]s?|cv|curriculum vitae)\b(?![\s_-]+(your|a|my|the|saved|application|draft|later|where)\b)/i;
 
 export function looksLikeJobApplication() {
   if (!looksLikeApplicationForm()) return false;
   if (ON_A_TRACKER_HOST.test(location.hostname)) return true;
   const text = deepText();
   if (JOB_WORDS.test(text)) return true;
-  if (deepQueryAll('textarea').length > 0 && ASKS_ABOUT_THE_JOB.test(text)) return true;
-  // A résumé asked for by a file input on the page, or by a field of its own.
-  if (deepQueryAll('input[type=file]').length > 0 && ASKS_FOR_A_RESUME.test(text)) return true;
+  /*
+   * A long-form question about this role, read off the question itself. On
+   * the page's text, as `looksLikeApplicationForm` reads it, any textarea
+   * anywhere let "Our team will contact you" under a loan form count as an
+   * employer asking about the job. The question the employer asks is the
+   * label of the box it is to be answered in — Recruitee's "What draws you to
+   * this team?" is that box's own `aria-label` — so that is where to look.
+   */
+  for (const box of deepQueryAll('textarea')) {
+    if (ASKS_ABOUT_THE_JOB.test(describeField(box) ?? '')) return true;
+  }
+  // A résumé asked for by a field of its own: a file input, or a box for a
+  // link to one, labelled or named for it.
   for (const field of deepQueryAll('input, textarea')) {
     if (ASKS_FOR_A_RESUME.test(describeField(field) ?? '')) return true;
   }

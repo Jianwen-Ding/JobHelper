@@ -607,10 +607,78 @@ test('a link’s parameters are read by whole names and by shapes that mean some
   }
 });
 
+/*
+ * What the exact list let through that the loose one had refused: a name
+ * that was a secret by its last word (`accesstoken`), a name that was never
+ * on the list by itself (`access_key`, `pass`), a key or a code under the
+ * short word that is only sometimes one, and a telephone number or a Social
+ * Security number with no punctuation, under a name that says contact or a
+ * name that says nothing. And what has to stay kept beside them: the ids,
+ * referrals and keys people paste, a long `?id=`, and the short `key`,
+ * `code` and `session` values the list above keeps.
+ */
+const LINK_REFUSE_ROUND_14 = [
+  'https://x.com/a?key=AIzaSyA1234567890abcdefghijklmnopqrs',
+  'https://maps.googleapis.com/maps/api/staticmap?center=Boston&key=AIzaSyA1234567890abcdefghijklmnopqrs',
+  'https://x.com/cb?code=4%2F0AY0e-g7abcdef&state=xyz',
+  'https://x.com/a?code=4/0AY0e-g7abc',
+  'https://x.com/a?access_key=abc123',
+  'https://x.com/a?private_key=abc',
+  'https://x.com/a?license_key=ABCD-EFGH',
+  'https://x.com/a?accesstoken=abc',
+  'https://x.com/a?password_reset_token=abc',
+  'https://x.com/a?verification_code=123456',
+  'https://x.com/a?pass=hunter2',
+  'https://x.com/a?session=abc123def456',
+  'https://x.com/a?contact=4155551234',
+  'https://x.com/a?n=123456789',
+  'https://x.com/a?glpat=glpat-abcdefghij1234567890',
+];
+
+const LINK_KEEP_ROUND_14 = [
+  'https://arxiv.org/abs/2401.12345v2',
+  'https://doi.org/10.1145/3290605.3300234',
+  'https://www.kaggle.com/competitions/titanic/leaderboard?tab=public',
+  'https://www.kaggle.com/code/janedoe/eda?scriptVersionId=123456789',
+  'https://leetcode.com/u/janedoe/',
+  'https://www.hackerrank.com/profile/janedoe',
+  'https://medium.com/@janedoe',
+  'https://janedoe.substack.com/p/hello?r=1abcd&utm_campaign=post',
+  'https://janedoe.dev/?ref=linkedin',
+  'https://example.com/item?id=12345678901234',
+  'https://x.com/a?id=4155551234',
+  'https://news.ycombinator.com/item?id=38291034',
+  'https://www.dropbox.com/scl/fi/abc/cv.pdf?rlkey=xyz&dl=0',
+  'https://github.com/janedoe/repo/issues/1#issuecomment-1234567890',
+  'https://scholar.google.com/citations?user=AbCdEfGAAAAJ&hl=en',
+  'https://orcid.org/0000-0002-1825-0097',
+];
+
+test('a key, a code, a session or a number is refused when it is one, and the ids people paste are not', () => {
+  for (const answer of LINK_REFUSE_ROUND_14) {
+    const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
+    assert.equal(said.keep, false, `${answer} was kept`);
+    assert.match(said.why, /personal/, `${answer}: ${said.why}`);
+  }
+  for (const answer of LINK_KEEP_ROUND_14) {
+    const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
+    assert.equal(said.keep, true, `${answer} was refused: ${said.why}`);
+  }
+});
+
 test('an ORCID link is kept, and only a real ORCID iD is let through', () => {
   for (const link of ['https://orcid.org/0000-0002-1825-0097', 'https://orcid.org/0000-0001-5109-3700/', 'https://orcid.org/0000-0002-1694-233X']) {
     assert.equal(worthRememberingTyped({ question: 'ORCID iD', answer: link, company: 'Helios Systems' }).keep, true, link);
   }
   // Sixteen digits in fours with a check digit that does not add up are not an iD.
   assert.equal(worthRememberingTyped({ question: 'ORCID iD', answer: 'https://orcid.org/4111-1111-1111-1111', company: 'Helios Systems' }).keep, false);
+  /*
+   * And only on ORCID's host. This card number's last digit happens to pass
+   * the iD's check, and in a payment link's path it was set aside as an iD
+   * and the link kept.
+   */
+  assert.equal(
+    worthRememberingTyped({ question: 'Portfolio link', answer: 'https://pay.example.com/card/4111-1111-1111-0238', company: 'Helios Systems' }).keep,
+    false,
+  );
 });

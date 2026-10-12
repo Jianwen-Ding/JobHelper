@@ -396,6 +396,16 @@ const CONTACT_SHAPE = [/[^\s@]+@[^\s@]+\.[^\s@]+/, /\+?\(?\d[\d\s().-]{7,}\d/];
  * Dropbox's `rlkey` and `monkey`, `code` the Go playground's `code` and every
  * `zipcode` and `country_code`, `pass` `bypass`, and `session` a page number
  * called `session=42`. Those are links people paste every day.
+ *
+ * But the list was cut too far. Every name it refused before being made
+ * exact had to be on it by name, and several were not: `access_key`,
+ * `private_key`, `license_key`, `verification_code`, `pass` itself and
+ * `accessToken` went into the bank as freely as a page number, where the
+ * looser rule had refused them all. So the whole words are back on the list,
+ * a name that *ends* in one of the unmistakable words is refused whatever
+ * comes before it (see `SECRET_ENDING`), and the three short words that mean
+ * a secret only sometimes are refused when the value is one (see
+ * `SECRET_WHEN_OPAQUE`).
  */
 const SECRET_PARAM = new Set([
   'token',
@@ -404,8 +414,18 @@ const SECRET_PARAM = new Set([
   'id_token',
   'apikey',
   'api_key',
+  'access_key',
+  'private_key',
+  'license_key',
+  'licence_key',
+  'secret_key',
   'resourcekey',
+  'verification_code',
+  'auth_code',
   'passcode',
+  'passphrase',
+  'pass',
+  'pw',
   'password',
   'passwd',
   'pwd',
@@ -429,8 +449,49 @@ const SECRET_PARAM = new Set([
   'credentials',
 ]);
 
+/*
+ * A name that ends in one of these is a credential whatever it starts with:
+ * `accessToken`, `password_reset_token`, `client-secret`, `x-api-key` run
+ * together as `xapikey`. Read off the whole name with its separators taken
+ * out, and only at the end, because these words do not end any innocent word
+ * the way `key` ends `monkey` — and at the start they do not mean the same
+ * thing: `tokens=3` is a count.
+ */
+const SECRET_ENDING = /(token|secret|password|passwd|apikey|accesskey|privatekey)$/;
+
+/*
+ * Three words that are a secret only when what they carry is. `key=AIza…`
+ * is a Google API key and `code=4/0AY…` is an OAuth code to be swapped for
+ * a token, and both were kept once `key` and `code` came off the list for
+ * the sake of `rlkey` and `zipcode`; but `key=python` is a tag, `code=US` a
+ * country and `session=42` a page. So the value decides: a run of the
+ * characters a generated credential is made of, with no spaces, that is
+ * sixteen characters or more, has a slash in it, or mixes letters with
+ * digits through eight characters or round a dot. A word or a small number
+ * is none of those, and neither is the Go playground's `code=fmt.Println` —
+ * a dot between two words is code, not a key.
+ */
+const SECRET_WHEN_OPAQUE = new Set(['key', 'code', 'session']);
+const looksOpaque = (value) => {
+  if (!/^[\w\-./+=~%]+$/.test(value)) return false;
+  if (value.length >= 16 || /\/|%2f/i.test(value)) return true;
+  return /[a-z]/i.test(value) && /\d/.test(value) && (value.length >= 8 || value.includes('.'));
+};
+
 /** Names under which a number is a telephone number, and a date a birthday. */
 const PHONE_PARAM = /^(phone|tel|telephone|mobile|cell)$/;
+/*
+ * And names under which a bare run of digits is somebody's number all the
+ * same. Nine digits is a Social Security number with its dashes taken out,
+ * and ten or eleven a telephone number, and neither has punctuation to give
+ * it away — so `?contact=4155551234` and `?n=123456789` were kept. Refused
+ * only under a name that says contact, or one too short to say anything at
+ * all (and none: a bare fragment). Not under `id`, `item`, `scriptVersionId`
+ * or any other longer name, which is what nine and ten digit ids are
+ * published under every day.
+ */
+const CONTACT_PARAM = /^(contact|phone|tel|telephone|mobile|cell|cellphone|whatsapp|sms|number|num|no|callback|call)$/;
+const BARE_PERSONAL_NUMBER = /^\+?\d{9,11}$/;
 const BIRTH_PARAM = /^(dob|birth|birthdate|birthday|born)$/;
 
 /*
@@ -451,6 +512,9 @@ const TOKEN_SHAPE = [
   /\bsk-[A-Za-z0-9_-]{16,}/,
   /\bAKIA[0-9A-Z]{16}\b/,
   /\bxox[abposr]-[A-Za-z0-9-]{8,}/,
+  // A Google API key, and a GitLab personal access token.
+  /\bAIza[0-9A-Za-z_-]{35}/,
+  /\bglpat-[\w-]{20,}/,
 ];
 
 /*
@@ -524,6 +588,14 @@ function linkCarriesPrivate(said, depth = 0) {
     const named = [...words, words.join(''), words.join('_'), words.join('-')];
     for (let i = 1; i < words.length; i++) named.push(words[i - 1] + words[i], `${words[i - 1]}_${words[i]}`);
     if (named.some((w) => SECRET_PARAM.has(w))) return true;
+    if (SECRET_ENDING.test(words.join(''))) return true;
+    if (words.some((w) => SECRET_WHEN_OPAQUE.has(w)) && [value, decoded].some(looksOpaque)) return true;
+    if (
+      BARE_PERSONAL_NUMBER.test(decoded.trim()) &&
+      ((words.join('').length <= 2 && words.join('') !== 'id') || words.some((w) => CONTACT_PARAM.test(w)))
+    ) {
+      return true;
+    }
     // A link inside a link — a redirect — is read the same way, once more.
     if (depth < 2 && /^https?:\/\//i.test(decoded)) return linkCarriesPrivate(decoded, depth + 1);
     const phoneName = words.some((w) => PHONE_PARAM.test(w));
@@ -593,9 +665,22 @@ export function mayRememberTyped(question, company) {
  * most often carries was never remembered. Only a real iD is set aside — the
  * last character is the ISO 7064 11,2 check digit ORCID uses — so sixteen
  * digits that merely look like one are still read as they are.
+ *
+ * And only on ORCID's own host. Set aside wherever it appeared, a card number
+ * in a payment link's path — `pay.example.com/card/4111-1111-1111-0238`,
+ * whose last digit happens to satisfy the same check one time in eleven —
+ * was taken for an iD and kept. An iD anywhere else is a researcher's to
+ * paste as the orcid.org link it is.
  */
-function withoutOrcid(path) {
-  return path.replace(/(?<=\/)(\d{4}-\d{4}-\d{4}-\d{3}[\dX])(?=\/|$)/gi, (id) => {
+function withoutOrcid(link) {
+  let host = '';
+  try {
+    host = new URL(link).hostname.toLowerCase();
+  } catch {
+    return link;
+  }
+  if (host !== 'orcid.org' && host !== 'www.orcid.org') return link;
+  return link.replace(/(?<=\/)(\d{4}-\d{4}-\d{4}-\d{3}[\dX])(?=\/|$)/gi, (id) => {
     const digits = id.replace(/-/g, '');
     let total = 0;
     for (const d of digits.slice(0, 15)) total = (total + Number(d)) * 2;

@@ -1709,7 +1709,26 @@ const LOAN_FORM_HTML = `<!doctype html><html><head><title>Personal loan applicat
 export const LOAN_APPLICATION = { name: 'loan-application', path: '/bank/application/personal-loan', html: LOAN_FORM_HTML };
 export const LOAN_FORM = { name: 'loan-form', path: '/bank/loans/personal', html: LOAN_FORM_HTML };
 
-export const NOT_READ = [JENKINS_CONSOLE, CI_JOB_LOG, NEWS_JOBS_SECTION, LOAN_APPLICATION, LOAN_FORM];
+/*
+ * And the same bank's form as banks actually serve it, with a link back to a
+ * saved application and an upload for pay stubs. That was enough to undo the
+ * fix for the two above: "Resume" was looked for anywhere on the page once
+ * there was a file input, and the verb in "Resume a saved application"
+ * passed for the noun, so the page was read on sight and its text sent away.
+ */
+export const LOAN_FORM_WITH_UPLOAD = {
+  name: 'loan-form-with-upload',
+  path: '/bank/application/personal-loan-docs',
+  html: LOAN_FORM_HTML.replace(
+    '<p>Requirements: you must be 18+. Benefits: low APR.</p>',
+    '<p>Requirements: you must be 18+. Benefits: low APR. <a href="/bank/resume">Resume a saved application</a></p>',
+  ).replace(
+    '<p>NOT-FOR-THE-STORE',
+    '<label for="ps">Upload your two most recent pay stubs</label><input id="ps" type="file" name="paystubs">\n<p>NOT-FOR-THE-STORE',
+  ),
+};
+
+export const NOT_READ = [JENKINS_CONSOLE, CI_JOB_LOG, NEWS_JOBS_SECTION, LOAN_APPLICATION, LOAN_FORM, LOAN_FORM_WITH_UPLOAD];
 
 /*
  * A pull request, on the repository of a tool for job applications.

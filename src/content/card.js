@@ -1566,6 +1566,17 @@ export function createCard({
   function takeWork() {
     // The keeper files this spec with the application's workspace. See `sentOut`.
     sentOut(state.spec);
+    /*
+     * And it is a filing of this card's copy like any other, whose reply can
+     * be lost the same way: the worker stopped after the keeper's write
+     * landed and before anything was noted. Left out of `unconfirmed`, that
+     * write came back as the store's copy on the card's next filing, read as
+     * an edit made elsewhere, was taken over the switch made here since, and
+     * the card said the copy had been edited in ResumeM-M. Only a copy the
+     * store does not already hold: one it confirmed is not unconfirmed, and
+     * marking it so would file over a ResumeM-M edit that put it back.
+     */
+    if (state.spec?.id && specKey(state.spec) !== specKey(state.filed?.copy)) filingOut(state.spec);
     return {
       spec: state.spec,
       // Which write of the store's copy it is built on: the keeper files it

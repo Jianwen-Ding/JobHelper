@@ -1022,6 +1022,38 @@ const NOT_FOR_A_JOB = {
     <label for="id">Photo ID</label><input id="id" type="file" name="photo_id">
     <label for="pets">Tell us about any pets</label><textarea id="pets" name="pets"></textarea>
     <button type="button">Start your application</button>`,
+  /*
+   * The loan form again, with what every bank's has besides: a link back to
+   * a saved application and an upload. "Resume" was looked for anywhere on
+   * the page whenever there was a file input, and as a prefix, so the verb in
+   * "Resume a saved application" passed for the noun, the pay stubs passed
+   * for a résumé, and the page was read unasked and sent away.
+   */
+  'a personal-loan application with "Resume a saved application" and an upload': `
+    <h1>Apply for a personal loan</h1>
+    <p>Requirements: you must be 18+. Benefits: low APR. <a href="/bank/resume">Resume a saved application</a></p>
+    <label for="fn">First name</label><input id="fn" name="first_name">
+    <label for="ln">Last name</label><input id="ln" name="last_name">
+    <label for="em">Email</label><input id="em" type="email" name="email">
+    <label for="ph">Phone</label><input id="ph" name="phone">
+    <label for="inc">Annual income</label><input id="inc" name="income">
+    <label for="ssn">Social Security number</label><input id="ssn" name="ssn">
+    <label for="ps">Upload your two most recent pay stubs</label><input id="ps" type="file" name="paystubs">
+    <button type="button">Submit application</button>`,
+  /*
+   * And with a long answer about the applicant's own job beside the bank's
+   * "Our team will contact you". A textarea anywhere and "our team" anywhere
+   * were enough to count as an employer asking about the role.
+   */
+  'a personal-loan application with a box about your job and "our team"': `
+    <h1>Apply for a personal loan</h1>
+    <label for="fn">First name</label><input id="fn" name="first_name">
+    <label for="ln">Last name</label><input id="ln" name="last_name">
+    <label for="em">Email</label><input id="em" type="email" name="email">
+    <label for="ph">Phone</label><input id="ph" name="phone">
+    <label for="emp">Tell us about your job at your current employer</label><textarea id="emp" name="emp"></textarea>
+    <p>Our team will contact you within two business days.</p>
+    <button type="button">Submit application</button>`,
 };
 
 const shell = (body) =>
