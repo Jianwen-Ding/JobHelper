@@ -161,8 +161,16 @@ export async function rememberPairing(serverUrl, token) {
   await chrome.storage.local.set({ [PAIRING_KEY]: next });
 }
 
-/** The header that says this is the paired JobHelper, when it is. */
+/**
+ * The header that says this is the paired JobHelper, when it is — and sent
+ * empty when it is not.
+ *
+ * Always sent, because its absence is how ResumeM-M tells a JobHelper that
+ * knows about pairing from one built before pairing existed. The older one
+ * has no box to type a code into, so the store tells it to update instead of
+ * "make a code, and enter it in the extension", which it could not do.
+ */
 export async function pairingHeaders(serverUrl) {
   const token = await pairingToken(serverUrl);
-  return token ? { [PAIR_HEADER]: token } : {};
+  return { [PAIR_HEADER]: token ?? '' };
 }

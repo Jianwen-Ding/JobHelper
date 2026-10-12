@@ -61,7 +61,15 @@ function fakeStore() {
     const raw = await readBody(req);
     // The query as well: `/api/autofill` carries the resume's choices in it.
     const query = new URLSearchParams(req.url.split('?')[1] ?? '');
-    state.hits.push({ url, query, method: req.method, project: req.headers['x-rmm-project'] ?? null, body: raw });
+    state.hits.push({
+      url,
+      query,
+      method: req.method,
+      project: req.headers['x-rmm-project'] ?? null,
+      // Whether the pairing header was there at all, empty or not: see "The pairing header".
+      pair: 'x-rmm-pair' in req.headers ? req.headers['x-rmm-pair'] : null,
+      body: raw,
+    });
 
     const mode = state.routes[url] ?? 'ok';
     if (mode === 'silent') {
@@ -169,6 +177,9 @@ function fakeStore() {
     if (url === '/api/letters/id' && state.letterId) {
       return send({ id: state.letterId, ...(state.letterFor ? { applicationId: state.letterFor } : {}) });
     }
+    // A store from before that route: 404 for it, and a list of its letters.
+    if (url === '/api/letters/id' && state.oldLetters) return send({ error: 'no route' }, 404);
+    if (url === '/api/letters' && req.method === 'GET') return send(state.oldLetters ?? []);
     if (
       url === '/api/answers/save' ||
       url === '/api/config' ||
@@ -362,13 +373,15 @@ async function main() {
     }
 
     /*
-     * The letter's id, as ResumeM-M's `letterId` makes it.
+     * The letter's id, as a ResumeM-M too old to be asked makes it.
      *
-     * The id was the UTC date, the employer cut at 30 and the role at 40,
-     * with "letter" for a missing employer; the store files the same letter
-     * under its local day, both cut at 30, the missing one left out. So the
-     * letter saved here and the one filed with the application were two rows
-     * — and in an evening west of Greenwich, two different days.
+     * The id was the employer cut at 30 and the role at 40, with "letter" for
+     * a missing employer; the store files the same letter with both cut at
+     * 30, the missing one left out. So the letter saved here and the one
+     * filed with the application were two rows. And dated as that store
+     * dates it, by the day in UTC: worked out here by the local day, in an
+     * evening west of Greenwich it was another day from the letter it was
+     * meant to find.
      */
     group('The letter’s id');
     {
@@ -399,12 +412,12 @@ async function main() {
           title: 'Senior Staff Software Engineer, Machine Learning Platform',
         });
         check(
-          'it is dated the local day, with employer and role each cut to 30',
-          long === '2026-03-01-acme-corporation-international-senior-staff-software-engineer',
+          'it is dated the UTC day that store files by, with employer and role each cut to 30',
+          long === '2026-03-02-acme-corporation-international-senior-staff-software-engineer',
           String(long),
         );
         const noCompany = await lettersSaved({ title: 'Platform Engineer' });
-        check('a missing employer is left out, not called "letter"', noCompany === '2026-03-01-platform-engineer', String(noCompany));
+        check('a missing employer is left out, not called "letter"', noCompany === '2026-03-02-platform-engineer', String(noCompany));
         /*
          * Employers named in other scripts. Slugged to ASCII they were all
          * the bare date, so a second letter that day replaced the first.
@@ -420,11 +433,11 @@ async function main() {
           'employers in any script keep their names in the id',
           JSON.stringify(scripts) ===
             JSON.stringify([
-              '2026-03-01-株式会社ソニー',
-              '2026-03-01-яндекс',
-              '2026-03-01-شركة-أرامكو',
-              '2026-03-01-אלביט-מערכות',
-              '2026-03-01-acme-gmbh',
+              '2026-03-02-株式会社ソニー',
+              '2026-03-02-яндекс',
+              '2026-03-02-شركة-أرامكو',
+              '2026-03-02-אלביט-מערכות',
+              '2026-03-02-acme-gmbh',
             ]),
           JSON.stringify(scripts),
         );
@@ -473,9 +486,63 @@ async function main() {
           put?.url === '/api/letters/2026-03-01-helios-platform-engineer-2' && sent.applicationId === 'app-helios-2',
           `${put?.url} ${put?.body}`,
         );
+
+        /*
+         * A store too old to name the id replaces a letter whole on a PUT.
+         * Measured against one: the letter filed with the application — its
+         * link, its tags, its date and its text — was replaced by the card's
+         * draft. So what is under the id is looked at in the list first.
+         */
+        store.letterId = undefined;
+        store.letterFor = undefined;
+        const savedOld = async () => {
+          const at = store.hits.length;
+          await ask(driver, 'saveLetter', {
+            body: 'Dear Acme, a re-save from the card.',
+            applicationId: 'app-acme',
+            job: { company: 'Acme', title: 'Software Engineer Intern', url: 'https://acme.example/jobs/1' },
+          });
+          const hit = store.hits.slice(at).find((h) => h.method === 'PUT' && h.url.startsWith('/api/letters/'));
+          let said = {};
+          try {
+            said = JSON.parse(hit?.body ?? '{}');
+          } catch {
+            /* checked below */
+          }
+          return { url: hit ? decodeURIComponent(hit.url) : null, said, listed: store.hits.slice(at).some((h) => h.url === '/api/letters') };
+        };
+        const filedId = '2026-03-02-acme-software-engineer-intern';
+        store.oldLetters = [
+          { id: filedId, title: 'Software Engineer Intern — Acme', applicationId: 'app-acme', tags: ['swe'], voice: false, createdAt: '2026-03-01T10:00:00.000Z', body: 'The letter that was sent.' },
+          { id: `${filedId}-2`, title: 'Another', createdAt: '2026-03-01T11:00:00.000Z', body: 'Another.' },
+        ];
+        const beside = await savedOld();
+        check('a store too old to name the id is looked at before it is written to', beside.listed, JSON.stringify(beside));
+        check(
+          'a letter filed with an application is left alone, and this goes under the next free name',
+          beside.url === `/api/letters/${filedId}-3` && beside.said.applicationId === undefined,
+          `${beside.url} ${JSON.stringify(beside.said)}`,
+        );
+
+        store.oldLetters = [{ id: filedId, title: 'Saved before', tags: ['mine'], voice: true, createdAt: '2026-01-05T09:00:00.000Z', body: 'Older draft.' }];
+        const over = await savedOld();
+        check(
+          'one belonging to no application is saved over, keeping its tags, voice and date',
+          over.url === `/api/letters/${filedId}` &&
+            JSON.stringify(over.said.tags) === '["mine"]' &&
+            over.said.voice === true &&
+            over.said.createdAt === '2026-01-05T09:00:00.000Z' &&
+            over.said.body === 'Dear Acme, a re-save from the card.',
+          `${over.url} ${JSON.stringify(over.said)}`,
+        );
+
+        store.oldLetters = [];
+        const fresh = await savedOld();
+        check('and with nothing there, it is saved under the id that store would give it', fresh.url === `/api/letters/${filedId}`, String(fresh.url));
       } finally {
         store.letterId = undefined;
         store.letterFor = undefined;
+        store.oldLetters = undefined;
         await sw.evaluate(() => {
           if (globalThis.__jhRealDate) globalThis.Date = globalThis.__jhRealDate;
         }).catch(() => undefined);
@@ -2862,6 +2929,24 @@ async function main() {
         filed.length === 1 && body?.company === 'Helios' && body?.role === 'Platform Engineer',
         JSON.stringify(body),
       );
+    }
+
+    /*
+     * The pairing header, on every request to the store, empty while this
+     * extension is not paired. Its absence is how ResumeM-M tells a JobHelper
+     * from before pairing, which has nowhere to enter a code, and tells it to
+     * update rather than to make one.
+     */
+    group('The pairing header');
+    {
+      const toStore = store.hits.filter((h) => h.url.startsWith('/api') || h.url === '/health');
+      const without = toStore.filter((h) => h.pair === null);
+      check(
+        'every request this run made to the store carried it',
+        toStore.length > 20 && without.length === 0,
+        `${toStore.length} requests, ${without.length} without: ${[...new Set(without.map((h) => h.url))].slice(0, 5).join(', ')}`,
+      );
+      check('empty, since nothing here was ever paired', toStore.every((h) => h.pair === ''), [...new Set(toStore.map((h) => h.pair))].join(','));
     }
   } finally {
     await context.close();

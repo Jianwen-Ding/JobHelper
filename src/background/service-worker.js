@@ -68,19 +68,25 @@ const SLOW_TIMEOUT_MS = 10 * 60_000;
 const saveOf = new Map();
 
 /**
- * The id ResumeM-M gives the letter it files for this employer and role.
+ * The id a ResumeM-M too old to be asked gives the letter it files for this
+ * employer and role.
  *
- * The same shape as `letterId` in ResumeM-M's src/jobs/answers.ts, on purpose:
- * the local day, then the employer and the role each cut to 30 characters,
- * with whichever is empty left out. "Save to store" used to key the letter by
- * the UTC date, a role cut at 40 and a "letter" stand-in for a missing
- * employer — so the letter saved here and the one filed with the application
- * were two rows for one letter, and after 5pm in California they were not
- * even dated the same day.
+ * Only ever used for such a store: a current one names the id itself (see
+ * `saveLetter`), which is the only way the two cannot drift. The employer
+ * and the role each cut to 30 characters, with whichever is empty left out.
+ * "Save to store" used to key the letter with a role cut at 40 and a
+ * "letter" stand-in for a missing employer, so the letter saved here and the
+ * one filed with the application were two rows for one letter.
+ *
+ * And the day in UTC, because that is the day such a store dates it by:
+ * `letterId` there is `toISOString().slice(0, 10)`. The local day, which the
+ * current store uses and this once copied, was a different day from that
+ * store's every evening west of Greenwich — so the lookup that keeps a
+ * filed letter from being written over (see `saveLetter`) looked under the
+ * wrong date and found nothing.
  */
 function letterId(company, role, at = new Date()) {
-  const pad = (n) => String(n).padStart(2, '0');
-  const day = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+  const day = at.toISOString().slice(0, 10);
   /*
    * Letters and digits in any script, exactly as the server's rule does it.
    * ASCII only, an employer written in Japanese, Cyrillic, Arabic or Hebrew
@@ -3640,9 +3646,10 @@ const handlers = {
     /*
      * The store's own id for this employer, role and day, which is the id
      * filing the application puts its letter under — asked rather than
-     * worked out, so the two cannot drift. A store too old to answer gets the
-     * same rule worked out here: see `letterId`. The PUT merges over a letter
-     * already filed under the id, so its link to the application is kept.
+     * worked out, so the two cannot drift. A store too old to answer gets its
+     * rule worked out here (see `letterId`), and is looked at before it is
+     * written to, below. The PUT merges over a letter already filed under the
+     * id, so its link to the application is kept.
      *
      * Asked with the application the card has for this page and the page's
      * address, which is all this knows about which application it is. By
@@ -3660,8 +3667,40 @@ const handlers = {
     if (applicationId) query.set('applicationId', applicationId);
     if (job?.url) query.set('url', job.url);
     const asked = await serverFetch(`/api/letters/id?${query}`, { save }).catch(() => null);
-    const id = typeof asked?.id === 'string' && asked.id ? asked.id : letterId(job?.company, job?.title);
-    const linked = typeof asked?.applicationId === 'string' && asked.applicationId ? asked.applicationId : undefined;
+    const named = typeof asked?.id === 'string' && asked.id ? asked.id : undefined;
+    let id = named;
+    let linked = named && typeof asked?.applicationId === 'string' && asked.applicationId ? asked.applicationId : undefined;
+    /** What a letter already filed under the id keeps when this one is saved over it. */
+    let kept = {};
+    if (!named) {
+      /*
+       * A store too old to name the id: it answered 404, or a page that is
+       * not JSON. Its PUT replaces the letter whole, so saving under the id
+       * worked out here wrote straight over a letter already filed there —
+       * measured on one, the letter filed with the application, its link to
+       * the application, its tags and its date all replaced by this card's
+       * draft. So what is there is looked at first, in the list that store
+       * does have.
+       *
+       * One that belongs to an application is that application's record of
+       * what was sent, and is left alone: this goes beside it, under the
+       * next free `-2`, `-3`. Anything else under the id is the same letter
+       * saved before, and keeps what this does not know about it.
+       */
+      const fallback = letterId(job?.company, job?.title);
+      const letters = await serverFetch('/api/letters', { save });
+      const all = Array.isArray(letters) ? letters : [];
+      const taken = new Set(all.map((l) => l?.id).filter((x) => typeof x === 'string'));
+      const there = all.find((l) => l?.id === fallback);
+      id = fallback;
+      if (there && typeof there.applicationId === 'string' && there.applicationId) {
+        for (let n = 2; taken.has(id); n++) id = `${fallback}-${n}`;
+      } else if (there) {
+        kept = Object.fromEntries(
+          ['applicationId', 'tags', 'voice', 'createdAt'].filter((k) => there[k] !== undefined).map((k) => [k, there[k]]),
+        );
+      }
+    }
     return serverFetch(`/api/letters/${encodeURIComponent(id)}`, {
       method: 'PUT',
       save,
@@ -3673,6 +3712,7 @@ const handlers = {
         createdAt: new Date().toISOString(),
         body,
         ...(linked ? { applicationId: linked } : {}),
+        ...kept,
       }),
     });
   },

@@ -214,7 +214,9 @@ describe('the pairing token', async () => {
       assert.deepEqual(area.rmmPairing, { 'http://127.0.0.1:4600': 'token-for-4600' });
       assert.equal(await pairingToken('127.0.0.1:4600/'), 'token-for-4600');
       assert.deepEqual(await pairingHeaders('http://127.0.0.1:4600/api/store'), { 'X-RMM-Pair': 'token-for-4600' });
-      assert.deepEqual(await pairingHeaders('http://127.0.0.1:4601'), {});
+      // Another server gets the header empty, never this one's token: empty
+      // is how a ResumeM-M tells a JobHelper that pairs from one too old to.
+      assert.deepEqual(await pairingHeaders('http://127.0.0.1:4601'), { 'X-RMM-Pair': '' });
     }));
 
   it('is forgotten when told', () =>
