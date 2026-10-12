@@ -2404,8 +2404,125 @@ function isFillable(input) {
   // page is the question actually being asked. For a select Chosen has
   // hidden, that is asked of what Chosen drew in its place.
   if (input.getClientRects().length === 0 && !(chosenOf(input)?.getClientRects().length > 0)) return false;
-  if (BOT_TRAP.test(labelFor(input))) return false;
+  if (isTrap(input)) return false;
   return true;
+}
+
+/*
+ * A box a person cannot see is a box a person was never asked.
+ *
+ * Occupying space is not the same as being shown. A page can put a box a
+ * screen to the left, fade it to nothing, cut it to a pixel, or hide it from
+ * everything that reads the page aloud, and every one of those still has a
+ * box: measured, a form whose visible part asked only First Name and Email
+ * had its off-screen Phone, Street and Zip and its `opacity: 0` GPA and City
+ * filled in as well — the applicant's details handed to a page that never
+ * asked for them where they could see it. The same trick as a bot trap
+ * (`BOT_TRAP`), aimed at people instead of robots; caught the same way,
+ * whatever the label says.
+ *
+ * A dropdown is asked about through what is drawn for it. A styled select —
+ * bootstrap-select, select2, Radix — fades or clips its own `<select>` to
+ * nothing behind the button the applicant presses, which is the ordinary
+ * shape and not a trap; so it is the select's surroundings that must be on
+ * the page, or what Chosen drew in its place when Chosen has hidden it.
+ * Radios, checkboxes, file inputs and combobox inputs, the other things
+ * pages hide behind a drawing, never come through here: they are answered by
+ * their own code, which reads what was drawn for them.
+ *
+ * A step not yet reached — a collapsed accordion, `height: 0` — is left alone
+ * like a `display: none` one, and filled when it is open and asked again.
+ */
+function isTrap(input) {
+  if (BOT_TRAP.test(labelFor(input))) return true;
+  let shown = input;
+  if (input instanceof HTMLSelectElement) {
+    shown = input.getClientRects().length > 0 ? parentAround(input) : chosenOf(input);
+    if (!shown) return false;
+  }
+  return hiddenFromPerson(shown);
+}
+
+/** The width and height left of `rect` after a CSS `clip: rect(...)`. */
+function clippedSize(style, rect) {
+  const m = /^rect\((.*)\)$/.exec(style.clip ?? '');
+  if (!m) return null;
+  const [top, right, bottom, left] = m[1].split(/[\s,]+/).map((v) => (v === 'auto' ? null : parseFloat(v)));
+  const w = (right ?? rect.width) - (left ?? 0);
+  const h = (bottom ?? rect.height) - (top ?? 0);
+  return { w, h };
+}
+
+/** Whether a `clip-path` leaves nothing: `inset(50%)`, or a polygon of one point. */
+function clipPathEmpties(clipPath) {
+  if (!clipPath || clipPath === 'none') return false;
+  const inset = /^inset\(([^)]*)\)/.exec(clipPath);
+  if (inset) {
+    const p = inset[1].split(/\s+round\s+/)[0].trim().split(/\s+/).map((v) => (v.endsWith('%') ? parseFloat(v) : NaN));
+    const [t, r = t, b = t, l = r] = p;
+    return t + b >= 100 || l + r >= 100;
+  }
+  const poly = /^polygon\(([^)]*)\)/.exec(clipPath);
+  if (poly) {
+    const points = poly[1].replace(/^\s*(nonzero|evenodd)\s*,/, '').split(',').map((s) => s.trim().replace(/\s+/g, ' '));
+    return new Set(points).size <= 1;
+  }
+  return false;
+}
+
+/*
+ * Whether `el` is on the page but not for a person: faded out, hidden,
+ * aria-hidden or inert, cut to a pixel, or put outside anywhere the page can
+ * be scrolled to. Below the fold is not outside: the page scrolls there.
+ */
+function hiddenFromPerson(el) {
+  const style = getComputedStyle(el);
+  if (style.visibility !== 'visible') return true;
+  const rect = el.getBoundingClientRect();
+  if (rect.width <= 1 || rect.height <= 1) return true;
+
+  // Outside the document: left of or above its start, or past its end.
+  const doc = document.documentElement;
+  const x = rect.left + window.scrollX;
+  const y = rect.top + window.scrollY;
+  if (x + rect.width <= 0 || y + rect.height <= 0) return true;
+  const across = [doc, document.body].filter(Boolean).map((e) => getComputedStyle(e).overflowX);
+  const width = across.some((o) => o === 'hidden' || o === 'clip') ? doc.clientWidth : Math.max(doc.scrollWidth, doc.clientWidth);
+  if (x >= width || y >= Math.max(doc.scrollHeight, doc.clientHeight)) return true;
+
+  // What it can be seen through, out to the page: each box it sits in.
+  let left = rect.left;
+  let top = rect.top;
+  let right = rect.right;
+  let bottom = rect.bottom;
+  for (let node = el; node && node !== document.body && node !== doc; node = parentAround(node)) {
+    const s = node === el ? style : getComputedStyle(node);
+    if (parseFloat(s.opacity) === 0) return true;
+    if (node.getAttribute('aria-hidden') === 'true' && node !== el) return true;
+    if (node.hasAttribute('inert')) return true;
+    if (s.display === 'contents') continue;
+    const box = node === el ? rect : node.getBoundingClientRect();
+    const clip = s.position === 'absolute' || s.position === 'fixed' ? clippedSize(s, box) : null;
+    if (clip && (clip.w <= 1 || clip.h <= 1)) return true;
+    if (clipPathEmpties(s.clipPath)) return true;
+    // A box that hides what spills out of it shows only what is inside it.
+    // One that scrolls shows the rest when scrolled, unless it is itself a pixel.
+    const cutX = s.overflowX === 'hidden' || s.overflowX === 'clip';
+    const cutY = s.overflowY === 'hidden' || s.overflowY === 'clip';
+    if (node !== el && s.overflowX !== 'visible' && box.width <= 1) return true;
+    if (node !== el && s.overflowY !== 'visible' && box.height <= 1) return true;
+    if (node !== el && cutX) {
+      left = Math.max(left, box.left);
+      right = Math.min(right, box.right);
+    }
+    if (node !== el && cutY) {
+      top = Math.max(top, box.top);
+      bottom = Math.min(bottom, box.bottom);
+    }
+    if (right - left <= 1 || bottom - top <= 1) return true;
+  }
+  if (document.body?.hasAttribute('inert') || document.body?.getAttribute('aria-hidden') === 'true') return true;
+  return false;
 }
 
 /*
