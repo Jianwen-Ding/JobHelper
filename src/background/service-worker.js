@@ -729,13 +729,41 @@ async function readTrail(tabId) {
  * Session storage is 10MB shared across every tab, and five tabs each holding
  * five pages fills it exactly — at which point the write throws and the trail
  * silently stops working, which is the worst of the available outcomes.
+ *
+ * Other tabs give up their page text before this one gives up any.
+ *
+ * It used to go straight to `lighten`, so the tab that ran out of room was
+ * the one that paid: the tab you are applying in, at the moment you are in
+ * it, while twenty postings opened this morning and never looked at again
+ * each kept their full text. Measured with the real extension: thirty large
+ * postings open, then a posting and its "Apply" — the form came up with the
+ * posting's text gone from the trail, which is the text the letter and the
+ * answers are written from. So when a write does not fit, other tabs' pages
+ * lose their text first, least recently written first (`at`), one tab at a
+ * time until it fits — see `makeRoom`. Only then is this trail lightened, and
+ * if its first page still had to go without, the trail says so
+ * (`textDropped`), for the card and the toolbar to say in words.
  */
 async function writeTrail(tabId, trail) {
   const key = trailKey(tabId);
-  for (const attempt of [trail, lighten(trail), lighten(trail, 0)]) {
+  const put = async (attempt) => {
+    const stored = noteDropped(trail, attempt);
+    await session().set({ [key]: stored });
+    return stored;
+  };
+  let refused;
+  try {
+    return await put(trail);
+  } catch (err) {
+    refused = err;
+  }
+  if (/quota/i.test(refused?.message ?? '')) {
+    const fitted = await makeRoom(tabId, () => put(trail));
+    if (fitted) return fitted;
+  }
+  for (const attempt of [lighten(trail), lighten(trail, 0)]) {
     try {
-      await session().set({ [key]: attempt });
-      return attempt;
+      return await put(attempt);
     } catch {
       // Out of room. Drop the oldest pages' text and try again.
     }
@@ -743,6 +771,86 @@ async function writeTrail(tabId, trail) {
   // Even with every page's text dropped it would not go in. Saying so beats
   // returning the trail as though it had been stored.
   return null;
+}
+
+/**
+ * Whether what is being stored has lost the first page's text — the posting,
+ * which is what everything later is written from (see `lighten`).
+ *
+ * Set when this write is the one that dropped it; kept by the trails built on
+ * top of it, which carry the empty page along; and cleared once the first
+ * page has text again, because the page that lost it has been replaced.
+ */
+function noteDropped(wanted, stored) {
+  const had = Boolean(wanted.pages?.[0]?.html);
+  const has = Boolean(stored.pages?.[0]?.html);
+  if (had && !has) return { ...stored, textDropped: true };
+  if (has && stored.textDropped) {
+    const { textDropped, ...rest } = stored;
+    return rest;
+  }
+  return stored;
+}
+
+/**
+ * The tabs whose turn is waiting on `makeRoom`, by trail key.
+ *
+ * Making room runs inside one tab's turn and waits on a turn of each tab it
+ * strips. Two tabs doing that at once, each waiting on the other, would wait
+ * for ever — so a tab that is itself making room is never waited on: it is
+ * skipped, and its own write finishes, lightened if it must be. Nothing ever
+ * waits on a tab that joined this set before it did, so no circle can close.
+ * A tab's own key is never waited on either: that is the turn this is in.
+ */
+const makingRoom = new Set();
+
+/** What the toolbar says when the first page's text was not kept. The card says the same. */
+const POSTING_TEXT_DROPPED = 'the posting text could not be kept (browser storage is full)';
+
+/**
+ * Take the page text out of other tabs' trails, least recently written first,
+ * until `retry` succeeds. Answers what `retry` answered, or null if every
+ * other tab was stripped and it still did not fit.
+ *
+ * Only the pages' markup goes: never `work`, the letter, the answers, or the
+ * pages themselves, which still say where the application has been. Each
+ * strip is a `changeTrail` step for that tab, so it cannot land between that
+ * tab's own read and write and undo one of them; and it keeps the trail's
+ * `at`, because it is not a sign that anybody is using that tab.
+ */
+async function makeRoom(tabId, retry) {
+  const own = trailKey(tabId);
+  if (makingRoom.has(own)) return null;
+  makingRoom.add(own);
+  try {
+    const all = await session().get(null).catch(() => ({}));
+    const others = Object.entries(all ?? {})
+      .map(([key, value]) => ({ key, value, tab: /^trail:(\d+)$/.exec(key)?.[1] }))
+      .filter(({ key, value, tab }) => tab !== undefined && key !== own && (value?.pages ?? []).some((p) => p?.html))
+      .sort((a, b) => (a.value.at ?? 0) - (b.value.at ?? 0));
+    for (const { key, tab } of others) {
+      if (makingRoom.has(key)) continue;
+      const { written } = await changeTrail(Number(tab), (trail) => {
+        const pages = trail.pages ?? [];
+        if (!pages.some((p) => p?.html)) return null;
+        return {
+          ...trail,
+          pages: pages.map((p) => (p?.html ? { ...p, html: '' } : p)),
+          // Said on that tab's card too, when somebody goes back to it.
+          textDropped: Boolean(pages[0]?.html) || trail.textDropped,
+        };
+      }).catch(() => ({ written: null }));
+      if (!written) continue;
+      try {
+        return await retry();
+      } catch {
+        // Still not enough. The next oldest.
+      }
+    }
+    return null;
+  } finally {
+    makingRoom.delete(own);
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -831,6 +939,12 @@ async function markTab(tabId, trail) {
      * is the resume exactly as it is kept until somebody ticks something.
      */
     else if (held.work?.spec) parts.push('the resume for it is ready');
+    /*
+     * And when the posting itself is not being held. The letter and the
+     * answers are written from it, so that is worth knowing before writing
+     * them rather than after. See `writeTrail`.
+     */
+    if (held.textDropped) parts.push(POSTING_TEXT_DROPPED);
 
     await chrome.action.setBadgeText({ tabId, text: String(n) });
     await chrome.action.setBadgeBackgroundColor?.({ tabId, color: '#1a73e8' });
@@ -1768,7 +1882,11 @@ async function remember(tab, page) {
    * tailored resume is ready" while the third page was in no storage
    * anywhere and the card, which re-reads, listed two.
    */
-  const stored = written === null ? trail : next;
+  /*
+   * And what was stored is `written`, not `next`: lighter than asked when
+   * storage was full, and marked when the posting's text could not be kept.
+   */
+  const stored = written ?? trail;
   await markTab(tab?.id, stored);
   return { ...summarise(stored), startedFresh: !joins };
 }

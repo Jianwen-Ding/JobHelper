@@ -3727,8 +3727,27 @@ export function createCard({
       h('div', { className: 'co', textContent: [job.company, job.location].filter(Boolean).join(' · ') }),
       drawSentBefore(),
       drawBranch(),
+      drawDropped(),
       drawTrail(),
     ].filter(Boolean));
+  }
+
+  /**
+   * "The posting text could not be kept."
+   *
+   * When session storage is full the worker takes page text from other tabs
+   * first, and only then from this one — and when even that was not enough
+   * and the first page, the posting, went without, the letter and the answers
+   * have nothing to be written from but the form. That is said here, before
+   * they are written, rather than discovered in what comes out. See
+   * `writeTrail` in the worker.
+   */
+  function drawDropped() {
+    if (!state.trail?.textDropped) return null;
+    return h('div', {
+      className: 'hint warn dropped',
+      textContent: 'The posting text could not be kept (browser storage is full).',
+    });
   }
 
   /**

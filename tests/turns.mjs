@@ -14,10 +14,19 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+/*
+ * Bytes as Chrome counts them for `getBytesInUse`: each key and its value as
+ * JSON. A `quota` makes `set` refuse, with Chrome's own words, a write that
+ * would take the area past it — and leaves what was there, as Chrome does.
+ */
+const bytesOf = (data) => Object.entries(data).reduce((n, [k, v]) => n + k.length + JSON.stringify(v).length, 0);
 function area(latency = 0) {
   const data = {};
-  return {
+  // Through a name rather than `this`: tests wrap `set` and call it unbound.
+  const it = {
     data,
+    quota: Infinity,
+    bytesInUse: () => bytesOf(data),
     async get(keys) {
       await delay(latency);
       if (keys === null || keys === undefined) return structuredClone(data);
@@ -27,6 +36,9 @@ function area(latency = 0) {
     },
     async set(obj) {
       await delay(latency);
+      if (it.quota !== Infinity && bytesOf({ ...data, ...obj }) > it.quota) {
+        throw new Error('Session storage quota bytes exceeded. Values were not stored.');
+      }
       for (const [k, v] of Object.entries(obj)) data[k] = structuredClone(v);
     },
     async remove(keys) {
@@ -34,6 +46,7 @@ function area(latency = 0) {
       for (const k of [].concat(keys)) delete data[k];
     },
   };
+  return it;
 }
 const listeners = {};
 const on = (name) => ({ addListener: (f) => (listeners[name] = f) });
@@ -497,5 +510,128 @@ test('a claim cut off by a restart does not stand against the tab that made it',
     assert.equal(after.data?.work?.letter, 'CLAIMANT-GONE', `held for a closed tab: ${JSON.stringify(after.data)}`);
   } finally {
     chrome.tabs.get = realGet;
+  }
+});
+
+/*
+ * Session storage full, and the tab being applied in is the one writing.
+ *
+ * It used to be the one that paid: `writeTrail` went straight to lightening
+ * its own trail, so with other tabs' postings filling the area the posting
+ * you were applying to lost its text — the text the letter and the answers
+ * are written from — while postings opened hours ago kept all of theirs.
+ * Other tabs give up their page text first now, least recently written first,
+ * and only their text.
+ */
+const words = 'streaming platform kafka distributed systems reliability ownership latency'.split(' ');
+const bigPage = (n, kb) => {
+  let out = '<html><body>';
+  for (let i = 0; out.length < kb * 1024; i += 1) out += `<p>${n} ${i} ${words.map((w, k) => words[(k + i) % words.length]).join(' ')}</p>`;
+  return `${out}</body></html>`;
+};
+const fullTrail = (tabId, at, kb, job = { url: `https://boards.example/other/${tabId}`, company: `Other${tabId}`, role: 'Engineer' }) => {
+  openTabs.add(tabId);
+  session[`trail:${tabId}`] = {
+    pages: [{ ...job, kind: 'posting', html: bigPage(tabId, kb), at }],
+    work: { letter: `LETTER-${tabId}`, answersByQuestion: { 'Why us?': `ANSWER-${tabId}` } },
+    save: 'work',
+    at,
+  };
+};
+
+test('a full session storage takes other tabs’ page text before the posting being applied to', async () => {
+  const ss = chrome.storage.session;
+  store = async () => json(analyzed());
+  const now = Date.now();
+  fullTrail(801, now - 30 * 60_000, 200); // the oldest
+  fullTrail(802, now - 20 * 60_000, 200);
+  fullTrail(803, now - 10 * 60_000, 200); // the newest
+  // Room for what is there and a little more: not for a fourth posting, until
+  // one other tab's text goes.
+  ss.quota = ss.bytesInUse() + 120 * 1024;
+  try {
+    openTabs.add(804);
+    const html = bigPage(804, 200);
+    const reply = await send('analyze', { url: `${posting}?tab=804`, title: 'Platform Engineer', html }, { id: 804 });
+    const mine = session['trail:804'];
+    assert.ok(mine, 'the trail was not stored at all');
+    assert.ok(mine.pages[0].html.length > 150_000, `the posting lost its text: ${mine.pages[0].html.length} chars kept`);
+    assert.equal(mine.textDropped, undefined);
+    assert.equal(reply.data?.trail?.textDropped, undefined);
+
+    // The oldest tab gave up its text, and nothing else.
+    const oldest = session['trail:801'];
+    assert.equal(oldest.pages[0].html, '', 'the least recently used tab still holds its text');
+    assert.equal(oldest.pages[0].url, 'https://boards.example/other/801');
+    assert.equal(oldest.work.letter, 'LETTER-801');
+    assert.equal(oldest.work.answersByQuestion['Why us?'], 'ANSWER-801');
+    assert.equal(oldest.at, now - 30 * 60_000, 'stripping it made it look recently used');
+    // And the newest kept everything: one tab was enough.
+    assert.ok(session['trail:803'].pages[0].html.length > 150_000, 'a newer tab was stripped before an older one');
+    assert.ok(ss.bytesInUse() <= ss.quota);
+  } finally {
+    ss.quota = Infinity;
+    for (const id of [801, 802, 803, 804]) {
+      delete session[`trail:${id}`];
+      openTabs.delete(id);
+    }
+  }
+});
+
+test('a posting that cannot be kept even then is said to be, on the card and the toolbar', async () => {
+  const ss = chrome.storage.session;
+  store = async () => json(analyzed());
+  const titles = new Map();
+  const realTitle = chrome.action.setTitle;
+  chrome.action.setTitle = async ({ tabId, title }) => void titles.set(tabId, title);
+  fullTrail(811, Date.now() - 60_000, 50);
+  // Too small for this posting even with every other tab's text gone.
+  ss.quota = ss.bytesInUse() + 100 * 1024;
+  try {
+    openTabs.add(812);
+    const reply = await send('analyze', { url: `${posting}?tab=812`, title: 'Platform Engineer', html: bigPage(812, 300) }, { id: 812 });
+    const mine = session['trail:812'];
+    assert.ok(mine, 'the trail was not stored at all');
+    assert.equal(mine.pages[0].html, '');
+    assert.equal(mine.textDropped, true);
+    assert.equal(reply.data?.trail?.textDropped, true, 'the card is not told');
+    assert.match(titles.get(812) ?? '', /posting text could not be kept \(browser storage is full\)/);
+    // The other tab's text went first all the same, and its letter stayed.
+    assert.equal(session['trail:811'].pages[0].html, '');
+    assert.equal(session['trail:811'].work.letter, 'LETTER-811');
+  } finally {
+    ss.quota = Infinity;
+    chrome.action.setTitle = realTitle;
+    for (const id of [811, 812]) {
+      delete session[`trail:${id}`];
+      openTabs.delete(id);
+    }
+  }
+});
+
+test('two tabs making room at once do not wait on each other for ever', async () => {
+  const ss = chrome.storage.session;
+  store = async () => json(analyzed());
+  const now = Date.now();
+  // Both tabs on Helios, so each new page joins its own application.
+  const helios = (id) => ({ url: `${posting}?tab=${id}`, company: 'Helios', role: 'Platform Engineer' });
+  fullTrail(821, now - 60_000, 150, helios(821));
+  fullTrail(822, now - 50_000, 150, helios(822));
+  ss.quota = ss.bytesInUse() + 20 * 1024;
+  try {
+    const both = Promise.all(
+      [821, 822].map((id) =>
+        send('analyze', { url: `${posting}/apply?tab=${id}`, title: 'Apply', html: bigPage(id + 100, 150) }, { id }),
+      ),
+    );
+    const done = await Promise.race([both.then(() => true), delay(5_000).then(() => false)]);
+    assert.equal(done, true, 'the two writes deadlocked');
+    for (const id of [821, 822]) assert.ok(session[`trail:${id}`]?.work, `tab ${id} lost its work`);
+  } finally {
+    ss.quota = Infinity;
+    for (const id of [821, 822]) {
+      delete session[`trail:${id}`];
+      openTabs.delete(id);
+    }
   }
 });
