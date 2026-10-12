@@ -1985,6 +1985,8 @@
           dismissed = true;
         },
       });
+      // A frame's question that came while there was no card. See `askIfSent`.
+      putSentQuestion();
       return cardHandle;
     };
     /*
@@ -2418,6 +2420,54 @@
    * as often inside an iframe as on the page and the frame has to reach the
    * same verdict from the same rules rather than from a second copy of them.
    */
+  /**
+   * "Did you just send your application?", for a Submit pressed in a frame
+   * whose only claim to being the application is its host. See the frame's
+   * watch below, and `drawSentQuestion` in the card.
+   *
+   * With no card up, the question waits for the next one rather than raising
+   * a card of its own: a card closed with × was closed on purpose, and a tab
+   * that never had one has no application for "Yes" to record — the worker
+   * files a send under the work this tab carries, and would answer that it
+   * has nothing to file it under. The toolbar button, or the next page that
+   * puts a card up, asks it then. The newest question is the one kept.
+   *
+   * "Yes" goes the frame's own way, `applicationSentHere`, so it is recorded
+   * exactly as a send the frame had counted for itself would have been; the
+   * card stops staging first, as it does for a send on this page. "Not yet"
+   * records nothing.
+   */
+  let sentQuestion = null;
+  function askIfSent(said) {
+    sentQuestion = { note: String(said?.note ?? ''), url: String(said?.url ?? location.href) };
+    putSentQuestion();
+  }
+  function putSentQuestion() {
+    if (!sentQuestion || !cardHandle?.askIfSent) return;
+    const said = sentQuestion;
+    sentQuestion = null;
+    cardHandle.askIfSent({
+      company: companyHere(),
+      onAnswer: (yes) => {
+        if (yes) void recordSaidSent(said);
+      },
+    });
+  }
+  async function recordSaidSent({ note, url }) {
+    cardHandle?.markSent?.(true);
+    saveWorkNow?.();
+    const reply = await send('applicationSentHere', {
+      note: note ? `${note} (confirmed on the card)` : 'Said to be sent, on the card',
+      url,
+    }).catch(() => null);
+    if (!reply || reply.ok === false) {
+      cardHandle?.markSent?.(false);
+      cardHandle?.setStatus?.('Not recorded — ResumeM-M could not be reached, or this tab has no application to record.');
+      return;
+    }
+    cardHandle?.setStatus?.('Recorded as sent.');
+  }
+
   async function watchForSending() {
     const { watchForSending: watch, watchForReceipt: watchReceipt } = await imports.sending();
     /*
@@ -2803,8 +2853,21 @@
          * a frame that declines is not spent, so the real send still counts.
          * See `maySendFromFrame`.
          */
+        let askedAt = 0;
         watchForSending(document, (how) => {
-          const decide = (autofill) => autofill.maySendFromFrame() || decisiveSignal();
+          /*
+           * Two strengths of evidence, and only the stronger one records.
+           *
+           * A form in here, or the posting itself, is the application: the
+           * send is counted as it always was. A hiring system's own host with
+           * no form recognised is weaker — iCIMS's last step is a review with
+           * nothing left to fill, but the same host serves its searches and
+           * its surveys — so the card asks the person instead (`askIfSent`,
+           * in the top document). Asking does not spend the frame's one send:
+           * a form drawn late and sent after still counts on its own.
+           */
+          const decide = (autofill) =>
+            autofill.looksLikeApplicationForm() || decisiveSignal() ? 'send' : autofill.maySendFromFrame() ? 'ask' : null;
           const tell = () => {
             // What was typed on the form being sent, kept whatever becomes of the record.
             keepFrameTyped();
@@ -2812,18 +2875,27 @@
               .then((reply) => reply?.ok !== false)
               .catch(() => false);
           };
+          // Once a press: its click and the submit it causes both arrive here.
+          const ask = () => {
+            if (Date.now() - askedAt > 1500) {
+              askedAt = Date.now();
+              send('askIfSentInFrame', { note: how, url: location.href }).catch(() => undefined);
+            }
+            return false;
+          };
+          const go = (verdict) => (verdict === 'send' ? tell() : verdict === 'ask' ? ask() : false);
           /*
            * At once where the code is already here — which it is in any frame
            * with a form worth the name, loaded below — because the press that
            * sends a form also takes the frame to its next page, and a message
            * left waiting on a module load can go with the page.
            */
-          if (frameAutofill) return decide(frameAutofill) ? tell() : false;
+          if (frameAutofill) return go(decide(frameAutofill));
           return imports
             .autofill()
             .then(decide)
-            .catch(() => false)
-            .then((application) => (application ? tell() : false));
+            .catch(() => null)
+            .then(go);
         });
         /*
          * And the receipt, which on an embedded board is drawn in here: the
@@ -3119,6 +3191,15 @@
         else typedInFrames.delete(frameId);
         showTypedToKeep();
       }
+      sendResponse({ ok: true });
+      return false;
+    }
+    /*
+     * A Submit in a frame that may have sent the application: asked on the
+     * card. See `askIfSent`.
+     */
+    if (message?.type === 'jh-ask-if-sent') {
+      askIfSent(message.payload ?? {});
       sendResponse({ ok: true });
       return false;
     }

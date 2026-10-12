@@ -91,7 +91,11 @@ async function main() {
         box: box(),
         offer: [...root.querySelectorAll('button')].map((b) => b.textContent).find((t) => /^Start from/.test(t)) ?? null,
         carried: handle.takeWork().answersByQuestion,
+        // A saved answer in the box is drawn shut until opened: see `keptShut`.
+        shut: Boolean(root.querySelector('.kept-shut')),
       };
+      root.querySelector('.kept-shut button')?.click();
+      before.opened = box();
       byText('Build resume')?.click();
       await settle(120);
       before.staged = sent.filter((c) => c.action === 'stage').at(-1)?.payload?.answers ?? null;
@@ -167,7 +171,16 @@ async function main() {
     confident: true,
     item: { id: 'item-sure' },
   });
-  check('a confident match is filled in', sure.before.box === 'Because Acme builds the tools I already rely on.', String(sure.before.box));
+  /*
+   * Filled in, and drawn shut: the box is a "Saved answer: show" row until it
+   * is opened, so the page's `window.find` cannot read it (`keptShut`). It
+   * used to be checked as the box's text, which is now the opened box's.
+   */
+  check(
+    'a confident match is filled in, behind a row until opened',
+    sure.before.shut === true && sure.before.box === null && sure.before.opened === 'Because Acme builds the tools I already rely on.',
+    JSON.stringify({ shut: sure.before.shut, box: sure.before.box, opened: sure.before.opened }),
+  );
   check('with nothing to offer beside it', sure.before.offer === null, String(sure.before.offer));
   check(
     'and is staged',
@@ -313,6 +326,163 @@ async function main() {
     pages.carried?.['How did you hear about us?'] === 'A friend who works there.',
     JSON.stringify(pages.carried),
   );
+
+  /*
+   * A loose match to a question read off the page, offered as a hand-added
+   * one's is. It used to go into the box under a faint "close match" badge,
+   * and from there into the stage, the bundle and the next page, as this
+   * question's answer — when the store had said it was an answer to some
+   * other question. See `offeredOnly`.
+   */
+  console.log('\nA loose match to a question read off the page');
+  const offered = await inPage(async (createCard) => {
+    const sent = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [
+        { question: 'Why this team?', answer: 'Because I like building platforms.', confident: false, score: 0.6, fieldId: 'jh-q-1' },
+        { question: 'Tell us about a project.', answer: 'I built a scheduler.', confident: true, score: 0.95, fieldId: 'jh-q-2' },
+      ],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        if (action === 'render') return { pages: 1, fits: true };
+        if (action === 'stage') return { currentDir: '/tmp/x' };
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const settle = (ms = 80) => new Promise((r) => setTimeout(r, ms));
+    const qBox = (q) => [...root.querySelectorAll('.q')].find((n) => n.textContent.includes(q));
+    await settle(30);
+    const loose = qBox('Why this team?');
+    const before = {
+      box: loose?.querySelector('textarea')?.value ?? null,
+      offer: [...(loose?.querySelectorAll('button') ?? [])].map((b) => b.textContent).find((t) => /^Start from/.test(t)) ?? null,
+      sure: Boolean(qBox('Tell us about a project.')?.querySelector('.kept-shut')),
+      carried: handle.takeWork().answersByQuestion,
+    };
+    [...root.querySelectorAll('button')].find((b) => b.textContent === 'Build resume')?.click();
+    await settle(150);
+    before.staged = sent.filter((c) => c.action === 'stage').at(-1)?.payload?.answers ?? null;
+    [...qBox('Why this team?').querySelectorAll('button')].find((b) => /^Start from/.test(b.textContent))?.click();
+    await settle();
+    return { before, taken: qBox('Why this team?')?.querySelector('textarea')?.value ?? null };
+  });
+  check('a loose match to a question on the page is not put in the box', offered.before.box === '', JSON.stringify(offered.before.box));
+  check('it is offered instead', offered.before.offer === 'Start from your closest answer', String(offered.before.offer));
+  check(
+    'and not staged or carried as this question’s answer',
+    Array.isArray(offered.before.staged) &&
+      !offered.before.staged.some((a) => a.question === 'Why this team?') &&
+      !('Why this team?' in (offered.before.carried ?? {})),
+    JSON.stringify({ staged: offered.before.staged, carried: offered.before.carried }),
+  );
+  check(
+    'while a confident one beside it still fills, and is staged',
+    offered.before.sure === true && offered.before.staged?.some((a) => a.question === 'Tell us about a project.' && a.answer === 'I built a scheduler.'),
+    JSON.stringify(offered.before),
+  );
+  check('taken, the loose one is in the box, open', offered.taken === 'Because I like building platforms.', String(offered.taken));
+
+  /*
+   * And the page cannot read a saved answer out of the card with
+   * `window.find`, which walks into a closed shadow root, text boxes and shut
+   * `<details>` included. A saved answer is not drawn until it is opened; it
+   * is still what Insert puts in and what is staged. See `keptShut`.
+   */
+  console.log('\nA saved answer the page cannot find until it is opened');
+  const findable = await inPage(async (createCard) => {
+    const sent = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [
+        { question: 'Tell us about a project.', answer: 'Quokka lanterns at dawn, a scheduler.', confident: true, fieldId: 'jh-q-1' },
+        { question: 'Why this team?', answer: 'Walrus pomelo platforms.', confident: false, fieldId: 'jh-q-2' },
+        { question: 'Why Acme?', answer: 'Ibis lychee at Globex.', confident: true, namesAnother: 'Globex', fieldId: 'jh-q-3' },
+      ],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        if (action === 'insertAnswer') return true;
+        if (action === 'render') return { pages: 1, fits: true };
+        if (action === 'stage') return { currentDir: '/tmp/x' };
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const settle = (ms = 80) => new Promise((r) => setTimeout(r, ms));
+    // As a script on the page would ask: the whole document, wrapping round.
+    const find = (text) => {
+      getSelection().removeAllRanges();
+      return window.find(text, false, false, true);
+    };
+    await settle(30);
+    const shut = {
+      // That find reaches into the card at all, or the rest proves nothing.
+      question: find('Tell us about a project'),
+      saved: find('Quokka lanterns'),
+      offered: find('Walrus pomelo'),
+      named: find('Ibis lychee'),
+      row: root.querySelector('.kept-shut')?.textContent ?? null,
+    };
+    const q = [...root.querySelectorAll('.q')].find((n) => n.textContent.includes('Tell us about a project.'));
+    [...q.querySelectorAll('button')].find((b) => b.textContent === 'Insert into form')?.click();
+    [...root.querySelectorAll('button')].find((b) => b.textContent === 'Build resume')?.click();
+    await settle(150);
+    const inserted = sent.find((c) => c.action === 'insertAnswer')?.payload?.text ?? null;
+    const staged = sent.filter((c) => c.action === 'stage').at(-1)?.payload?.answers ?? null;
+    q.querySelector('.kept-shut button')?.click();
+    await settle(30);
+    const box = root.querySelector('textarea[data-field="answer:Tell us about a project."]');
+    const opened = {
+      value: box?.value ?? null,
+      focused: root.activeElement === box,
+      saved: find('Quokka lanterns'),
+      rowGone: !root.querySelector('.q .kept-shut'),
+    };
+    return { shut, inserted, staged, opened };
+  });
+  check('find reaches into the card, so the rest means something', findable.shut.question === true, JSON.stringify(findable.shut));
+  check(
+    'a saved answer in the box cannot be found before it is opened',
+    findable.shut.saved === false,
+    JSON.stringify(findable.shut),
+  );
+  check(
+    'nor one offered beside the box, loose or written for another employer',
+    findable.shut.offered === false && findable.shut.named === false,
+    JSON.stringify(findable.shut),
+  );
+  check('the box is a row saying there is one', /^Saved answer:\s*show$/.test(findable.shut.row ?? ''), String(findable.shut.row));
+  check(
+    'shut, it is still what Insert puts in and what is staged',
+    findable.inserted === 'Quokka lanterns at dawn, a scheduler.' &&
+      findable.staged?.some((a) => a.question === 'Tell us about a project.' && a.answer === 'Quokka lanterns at dawn, a scheduler.'),
+    JSON.stringify({ inserted: findable.inserted, staged: findable.staged }),
+  );
+  check(
+    'opened, it is in the box, ready to type in',
+    findable.opened.value === 'Quokka lanterns at dawn, a scheduler.' && findable.opened.focused && findable.opened.rowGone,
+    JSON.stringify(findable.opened),
+  );
+  check('and can be found like anything else on screen', findable.opened.saved === true, JSON.stringify(findable.opened));
 
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);

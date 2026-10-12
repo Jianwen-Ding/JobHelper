@@ -4170,13 +4170,17 @@ async function main() {
         question: 'Please provide a short description (150 words or less) of any hands-on technical project in which you participated.',
         fieldId: 'jh-q-1',
         answer: 'I built a rocket avionics board.',
-        confident: false,
+        // Confident: a loose match is offered, not put in the box, so there
+        // would be nothing in it to count. See `offeredOnly`.
+        confident: true,
       },
       { question: 'What technical skills do you hope to use in this position?', fieldId: 'jh-q-2', answer: '', confident: false },
       { question: 'Tell us about yourself (no more than 200 words).', fieldId: 'jh-q-3', answer: '', confident: false },
     ]);
     const counts = () => [...root.querySelectorAll('.q .wordcount')].map((c) => ({ text: c.textContent, over: c.classList.contains('over') }));
     const before = counts();
+    // The saved answer is drawn shut until opened: see `keptShut`.
+    root.querySelector('.kept-shut button')?.click();
     const box = root.querySelector('textarea[data-field^="answer:Please provide"]');
     box.value = Array.from({ length: 151 }, (_, i) => `word${i}`).join(' ');
     box.dispatchEvent(new Event('input', { bubbles: true }));
@@ -4600,6 +4604,8 @@ async function main() {
     const counters = () => [...root.querySelectorAll('.q .count')];
     const before = counters().map((c) => ({ text: c.textContent, over: c.classList.contains('over') }));
 
+    // The saved answer is drawn shut until opened: see `keptShut`.
+    root.querySelector('.kept-shut button')?.click();
     const box = root.querySelector('textarea[data-field="answer:Why us?"]');
     box.value = 'x'.repeat(52);
     box.dispatchEvent(new Event('input', { bubbles: true }));
@@ -6714,6 +6720,187 @@ async function main() {
     check('and isolated from the page around it', rtl.isolated === 'isolate', JSON.stringify(rtl));
     check('every writing box takes its direction from what is typed', rtl.boxes > 0 && rtl.auto === rtl.boxes, JSON.stringify(rtl));
   }
+
+  console.log('\nComing back to a posting whose copy is already filed');
+
+  /*
+   * A new tab on a posting days later carries nothing, and the card started a
+   * fresh proposal from the default base; the first stage then filed that over
+   * the copy already made for the job, taking the base chosen for it and every
+   * change made since. The analysis names the application's resume, and the
+   * card now starts from it: the copy's content, the copy's base in the
+   * picker, and a stage that files it as it is. Run twice: the opening read
+   * made from the copy's own base, and from the default, which is read again
+   * from the copy's base with the copy kept on screen.
+   */
+  const revisit = (createCard, given) =>
+    (async () => {
+      const sent = [];
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const job = { title: 'Platform Engineer', company: 'Acme' };
+      const copy = {
+        id: 'job-acme-platform-engineer',
+        label: 'Platform Engineer — Acme',
+        tier: 'temporary',
+        copiedFrom: 'intern',
+        generatedFor: { company: 'Acme', role: 'Platform Engineer' },
+        // `b_pipeline` is the suggestion, taken; `b_own` was switched by hand.
+        choices: { b_pipeline: 'v_kafka', b_own: 'v_mine' },
+      };
+      const reading = (base) => ({
+        isJobPosting: true,
+        job,
+        application: { id: 'app-acme', resumeId: copy.id },
+        spec: { id: copy.id, label: copy.label, copiedFrom: base, choices: { b_pipeline: 'v_base', b_own: 'v_theirs' } },
+        baseResumeId: base,
+        baseLabel: base === 'intern' ? 'Intern resume' : 'New grad resume',
+        tailor: 'match',
+        aiUsed: false,
+        diff: [],
+        rationale: [{ key: 'b_pipeline', from: 'v_base', to: 'v_kafka', toText: 'Built a Kafka pipeline', because: ['kafka'] }],
+      });
+      let handle = null;
+      handle = createCard({
+        analysis: null,
+        resumes: [
+          { id: 'newgrad', label: 'New grad resume', tier: 'base' },
+          { id: 'intern', label: 'Intern resume', tier: 'base' },
+          { ...copy },
+        ],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        isForm: true,
+        onAction: async (action, payload) => {
+          sent.push({ action, payload: JSON.parse(JSON.stringify(payload ?? {})) });
+          if (action === 'fresh') {
+            // Slow, so a stage asked for meanwhile has to wait for it.
+            if (payload.spec?.id !== copy.id) return {};
+            if (!sent.some((c, i) => c.action === 'fresh' && i < sent.length - 1)) await wait(given.slow ?? 0);
+            return { stored: JSON.parse(JSON.stringify(copy)), storedPrint: 'print-1', version: 'v7', base: null };
+          }
+          if (action === 'rebuild') {
+            const next = reading(payload.baseResumeId);
+            handle.update(next);
+            return next;
+          }
+          if (action === 'stage') return { currentDir: '/tmp/x', application: { id: 'app-acme' }, resumeVersion: 'v8' };
+          if (action === 'render') return { pages: 1, fits: true };
+          return {};
+        },
+      });
+      handle.update(reading(given.base));
+      handle.restoreWork(null);
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      /*
+       * Build resume pressed while the store's copy is still being asked
+       * for: its stage, the first, waits for the answer and files the copy.
+       */
+      await wait(20);
+      [...root.querySelectorAll('button')].find((b) => b.textContent === 'Build resume')?.click();
+      await wait((given.slow ?? 0) + 600);
+      root.querySelector('.fold-changes')?.click();
+      const stages = sent.filter((c) => c.action === 'stage');
+      return {
+        asked: sent.filter((c) => c.action === 'fresh').map((c) => c.payload.spec?.id),
+        rebuilt: sent.filter((c) => c.action === 'rebuild').map((c) => c.payload.baseResumeId),
+        stages: stages.map((c) => ({ choices: c.payload.spec?.choices, copiedFrom: c.payload.spec?.copiedFrom, basedOn: c.payload.basedOn })),
+        picker: root.querySelector('select[title="Which resume to start from"]')?.value ?? null,
+        ticks: [...root.querySelectorAll('.pick input')].map((b) => b.checked),
+        rows: root.querySelector('.changes')?.textContent ?? '',
+        carried: handle.takeWork(),
+        copy,
+      };
+    })();
+
+  for (const [name, given] of [
+    ['read from the copy’s own base', { base: 'intern', slow: 1500 }],
+    ['read from the default base', { base: 'newgrad', slow: 300 }],
+  ]) {
+    const back = await inPage(revisit, given);
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    check(`${name}: the card asks the store for the posting’s copy`, back.asked[0] === back.copy.id, JSON.stringify(back.asked));
+    check(
+      `${name}: and starts from it, with the change made by hand still in it`,
+      same(back.carried.spec?.choices, back.copy.choices),
+      JSON.stringify(back.carried.spec?.choices),
+    );
+    check(`${name}: the picker says the base it was made from`, back.picker === 'intern', String(back.picker));
+    check(`${name}: and that base goes with the work`, back.carried.baseResumeId === 'intern', String(back.carried.baseResumeId));
+    check(
+      `${name}: the first stage files the copy unchanged, over the write it was read at`,
+      back.stages.length >= 1 &&
+        same(back.stages[0].choices, back.copy.choices) &&
+        back.stages[0].copiedFrom === 'intern' &&
+        back.stages[0].basedOn === 'v7',
+      JSON.stringify(back.stages),
+    );
+    check(
+      `${name}: the suggestion is still offered, ticked because the copy has it`,
+      /Kafka pipeline/.test(back.rows) && same(back.ticks, [true]),
+      `${JSON.stringify(back.ticks)} ${back.rows.slice(0, 120)}`,
+    );
+    check(
+      `${name}: read again from the copy’s base only when the opening read was not`,
+      given.base === 'intern' ? back.rebuilt.length === 0 : same(back.rebuilt, ['intern']),
+      JSON.stringify(back.rebuilt),
+    );
+  }
+
+  console.log('\nA send the card is not sure of is asked about');
+
+  /*
+   * A Submit in a frame on a hiring system's host, with no form recognised,
+   * is asked about rather than recorded (see `askIfSent` in content.js). The
+   * card's half: the question, in the strip the card asks its other question
+   * in, and each answer handed back once.
+   */
+  const askedSend = await inPage(async (createCard) => {
+    const answers = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const strip = () => root.querySelector('.sent-question');
+    const press = (name) => [...(strip()?.querySelectorAll('button') ?? [])].find((b) => b.textContent === name)?.click();
+    const before = Boolean(strip());
+    handle.askIfSent({ company: 'Acme', onAnswer: (yes) => answers.push(yes) });
+    const said = strip()?.textContent ?? '';
+    const buttons = [...(strip()?.querySelectorAll('button') ?? [])].map((b) => b.textContent);
+    press('Yes');
+    const afterYes = Boolean(strip());
+    handle.askIfSent({ company: '', onAnswer: (yes) => answers.push(yes) });
+    const unnamed = strip()?.textContent ?? '';
+    press('Not yet');
+    return { before, said, buttons, afterYes, unnamed, after: Boolean(strip()), answers };
+  });
+  check('nothing is asked until a frame asks', askedSend.before === false, JSON.stringify(askedSend));
+  check(
+    'it asks whether the application went to the employer',
+    /^Did you just send your application to Acme\?/.test(askedSend.said),
+    askedSend.said,
+  );
+  check('with Yes and Not yet', JSON.stringify(askedSend.buttons) === '["Yes","Not yet"]', JSON.stringify(askedSend.buttons));
+  check(
+    'with no name from the frame, the posting’s',
+    /^Did you just send your application to Acme\?/.test(askedSend.unnamed),
+    askedSend.unnamed,
+  );
+  check(
+    'each answer is handed back once, and the question goes',
+    JSON.stringify(askedSend.answers) === '[true,false]' && askedSend.afterYes === false && askedSend.after === false,
+    JSON.stringify(askedSend),
+  );
 
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);

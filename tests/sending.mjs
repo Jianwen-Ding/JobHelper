@@ -242,7 +242,9 @@ const MINE = [...SENDS, ...DOES_NOT_SEND, RECEIPT_APPLY, RECEIPT_ELSEWHERE, RECE
   .map((f) => f.company)
   // What the nameless step is filed under when its names regress; see there.
   .concat(['careers.corvane.test'])
-  .concat(['Novena', 'Larkspur', 'Marlow Systems']);
+  .concat(['Novena', 'Larkspur', 'Marlow Systems'])
+  // A Submit on a hiring system's host with no form: see there.
+  .concat(['Hallam Freight', 'Pellow Tide']);
 
 async function main() {
   await requireOpenSave(SERVER);
@@ -267,7 +269,8 @@ async function main() {
       `--disable-extensions-except=${extensionRoot}`,
       `--load-extension=${extensionRoot}`,
       // A careers host of the company's own. See `NAMELESS_APPLY`.
-      '--host-resolver-rules=MAP careers.corvane.test 127.0.0.1',
+      // And a hiring system's host, for a frame with no form in it.
+      '--host-resolver-rules=MAP careers.corvane.test 127.0.0.1, MAP apply.icims.test 127.0.0.1',
     ],
   });
 
@@ -481,6 +484,88 @@ async function main() {
      * On a description page "Apply Now" means "show me the form", and taking
      * it as a submission would file every job you so much as looked at.
      */
+    /*
+     * A Submit in a frame whose only claim to being the application is its
+     * host: a hiring system's review step with nothing left to fill — but the
+     * same host serves searches and surveys. Counted outright, a survey's
+     * Submit took a job off the list of things to finish; now the card asks,
+     * and only "Yes" records it, the way the frame would have. A form in the
+     * frame is still counted without asking: "embedded-apply" above.
+     */
+    group('A Submit on a hiring system’s host with no form is asked about');
+    {
+      const posting = (slug, company) => ({
+        name: `host-only-${slug}`,
+        path: `/${slug}/jobs/platform-engineer`,
+        company,
+        html: `<!doctype html><html><head><title>Platform Engineer at ${company}</title></head>
+          <body><h1>${company}</h1><h2>Platform Engineer</h2>
+          <p>We are looking for a platform engineer to run our Kafka and Kubernetes estate.
+             Responsibilities include owning the streaming infrastructure. Minimum qualifications:
+             years of experience with distributed systems. Equal opportunity employer. Full-time.</p>
+          <script>document.write('<iframe src="http://apply.icims.test:' + location.port +
+            '/review/${slug}" title="Review" width="720" height="300"></iframe>');</script></body></html>`,
+      });
+      // The last step of the form: nothing to fill, one button, and no role named.
+      const review = (slug) => ({
+        name: `host-only-${slug}-review`,
+        path: `/review/${slug}`,
+        html: `<!doctype html><html><head><title>Review</title></head><body>
+          <h1>Review</h1><p>Please check everything is right before you continue.</p>
+          <button type="button">Submit Application</button></body></html>`,
+      });
+      const cases = [
+        { fixture: posting('hallam', 'Hallam Freight'), answer: 'Yes' },
+        { fixture: posting('pellow', 'Pellow Tide'), answer: 'Not yet' },
+      ];
+      const second = await serveFixtures([...cases.map((c) => c.fixture), review('hallam'), review('pellow')]);
+      try {
+        for (const { fixture, answer } of cases) {
+          const page = await context.newPage();
+          try {
+            await page.goto(second.urlFor(fixture), { waitUntil: 'domcontentloaded' });
+            await settled(page);
+            await cardOf(page).getByRole('button', { name: 'Build resume' }).click();
+            await cardOf(page).locator('.fit.ok, .fit.bad').waitFor({ timeout: 120_000 });
+            const before = await awaitFiled(fixture.company, (f) => f.application?.status === 'applying');
+            await press(page, 'Submit Application', { inFrame: true });
+            const asked = page.locator(`${HOST} .sent-question`);
+            await asked.waitFor({ timeout: 10_000 }).catch(() => undefined);
+            const said = await asked.innerText().catch(() => '');
+            // Asked, and nothing recorded on the strength of the press alone.
+            await page.waitForTimeout(1500);
+            const meanwhile = await filed(fixture.company);
+            await asked.getByRole('button', { name: answer, exact: true }).click();
+            const after =
+              answer === 'Yes'
+                ? await awaitFiled(fixture.company, (f) => f.application?.status === 'applied')
+                : await new Promise((done) => setTimeout(() => done(filed(fixture.company)), 2500));
+            const gone = (await asked.count()) === 0;
+            const name = `${fixture.company}, "${answer}"`;
+            check(`${name}: held as being worked on before the press`, before.application?.status === 'applying', before.application?.status ?? '(none)');
+            check(
+              `${name}: the card asks, naming the employer`,
+              said.includes(`Did you just send your application to ${fixture.company}?`),
+              said || '(no question)',
+            );
+            check(`${name}: and nothing is recorded until it is answered`, meanwhile.application?.status === 'applying', meanwhile.application?.status ?? '(none)');
+            check(
+              answer === 'Yes' ? `${name}: records it as sent, and closes the draft` : `${name}: records nothing`,
+              answer === 'Yes'
+                ? after.application?.status === 'applied' && after.draft?.status === 'submitted'
+                : after.application?.status === 'applying' && after.draft?.status !== 'submitted',
+              `${after.application?.status ?? '(none)'} / ${after.draft?.status ?? '(none)'}`,
+            );
+            check(`${name}: and the question goes`, gone, String(gone));
+          } finally {
+            await page.close().catch(() => undefined);
+          }
+        }
+      } finally {
+        await second.close();
+      }
+    }
+
     group('Apply Now on a description page is not a submission');
     {
       const posting = {

@@ -244,10 +244,15 @@ async function main() {
       ]);
       await wait(50);
       const now = jh.root.activeElement;
+      const typed = { field: now?.dataset?.field ?? null, value: now?.value ?? null, caret: now?.selectionStart ?? null };
+      // The untouched one is the bank's, drawn shut until opened (`keptShut`
+      // in card.js): read after the caret above, since opening it moves focus.
+      [...jh.root.querySelectorAll('.q')]
+        .find((q) => q.textContent.includes('Tell us about a project.'))
+        ?.querySelector('.kept-shut button')
+        ?.click();
       return {
-        field: now?.dataset?.field ?? null,
-        value: now?.value ?? null,
-        caret: now?.selectionStart ?? null,
+        ...typed,
         other: jh.root.querySelector('textarea[data-field="answer:Tell us about a project."]')?.value ?? null,
       };
     });

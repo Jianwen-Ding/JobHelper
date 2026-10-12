@@ -296,6 +296,8 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
   border-radius: 8px; color: var(--ink);
 }
 .branch .row { margin-top: 6px; }
+/* The same strip, asked from above the body: see \`drawSentQuestion\`. */
+.branch.sent-question { margin: 8px 12px 0; flex: 0 0 auto; }
 /*
  * And the same strip when you have come back to a job you had already
  * started. Nothing was decided on your behalf there and there is nothing to
@@ -476,6 +478,14 @@ select {
 
 .q { border: 1px solid var(--line-soft); border-radius: 7px; padding: 9px; margin-bottom: 7px; background: var(--panel-sunk); }
 .q .qt { font-weight: 620; font-size: 12.5px; margin-bottom: 5px; line-height: 1.45; }
+/*
+ * A saved answer not yet opened: one row where the box will be, holding the
+ * words "Saved answer" and nothing of the answer. See \`keptShut\`.
+ */
+.q .kept-shut {
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 12px; color: var(--muted);
+  border: 1px dashed var(--line); border-radius: 6px; background: #fff;
+}
 .q .badge {
   display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: 11px; margin-left: 6px;
   background: var(--good-bg); color: var(--good); font-weight: 500; white-space: nowrap;
@@ -1355,6 +1365,12 @@ export function createCard({
     /** Questions whose last "Insert into form" put nothing in, by question. */
     insertMissed: {},
     /**
+     * Questions whose answer from the bank has been opened on this card, by
+     * question. Until then the box is a row that says there is one and does
+     * not draw it: see `keptShut`.
+     */
+    bankOpened: {},
+    /**
      * What to change about a drafted answer, by question, and about the
      * letter — typed beside the box and sent with the next redraft. See
      * `whatToChange` in ResumeM-M.
@@ -1472,6 +1488,11 @@ export function createCard({
     note: null,
     /** Whether the person said afterwards that they did not send it. */
     unsent: false,
+    /**
+     * "Did you just send your application?", while it is waiting for an
+     * answer: who to, and what to do with it. See `askIfSent`.
+     */
+    sentQuestion: null,
     /** The text that was saved to the store, so an edit after it can be saved too. */
     letterSavedAs: null,
     /**
@@ -1483,6 +1504,12 @@ export function createCard({
     baseChosen: null,
     /** The resume a switch still in flight is going to. See `switchBaseTo`. */
     switchingTo: null,
+    /**
+     * This posting's copy as the store already had it, when the card started
+     * from that rather than from a fresh proposal: its id and the resume it
+     * was made from. Set by `takeSavedCopy`, cleared by asking for a build.
+     */
+    onCopy: null,
     /**
      * The store's copy that the card's own is built on: its id, which write
      * of it the store holds (`version`, null for "none there yet"), and what
@@ -1623,6 +1650,8 @@ export function createCard({
     state.returned = how === 'job';
     if (!work) {
       maybeAutoDraft();
+      // Nothing carried, but perhaps something filed: see `takeSavedCopy`.
+      void takeSavedCopy();
       return;
     }
     // The page's own reading was already made from it; see `heldBase`.
@@ -1754,6 +1783,88 @@ export function createCard({
      */
     prepareSoon();
     draw();
+  }
+
+  /**
+   * Start from this posting's copy as the store holds it, when it holds one.
+   *
+   * Coming back to a posting with nothing carried — a new tab, days later —
+   * the card started a fresh proposal from the default base, and the first
+   * stage filed that over the copy already made for the job: the resume
+   * picked to start from, and every box ticked and line switched since, gone
+   * under a resume the person had never chosen. The analysis says which
+   * resume the application was filed with (`application.resumeId`, present
+   * only once there is a row), and `fresh` hands back that copy and which
+   * write of it the store holds, so the card goes on from there: the copy is
+   * the spec, the resume it was made from is the picker's choice, and the
+   * first stage files it over itself, unchanged.
+   *
+   * The suggestions stay offered, worked out against the copy: from the
+   * opening read when that read was made from the same base, and otherwise
+   * read again from that base, quietly, with the copy kept on screen (see
+   * `update`). Asking for a build — a button, or another base — is asking
+   * for a new proposal, and gets one.
+   *
+   * Staging waits for this answer (see `stageFiles`); a press made while it
+   * is out wins, and the copy is not put over it.
+   */
+  let adopting = null;
+  async function takeSavedCopy() {
+    const id = analysis?.application?.resumeId;
+    /*
+     * Only under the id this posting's copy is filed as. The row can name a
+     * resume somebody filed it with by hand — a kept base — and starting from
+     * that would stage over the base itself; the store never hands a kept
+     * resume's id out as a posting's copy (`copyIdFor` in ResumeM-M).
+     */
+    if (!id || id !== analysis?.spec?.id || state.askedFor || state.onCopy?.id === id) return;
+    const token = rebuildToken;
+    const asked = Promise.resolve(onAction('fresh', { spec: { ...analysis.spec, id } })).catch(() => null);
+    adopting = asked;
+    let reply = null;
+    try {
+      reply = await asked;
+    } finally {
+      if (adopting === asked) adopting = null;
+    }
+    const stored = reply?.stored;
+    // Gone from the store, or overtaken by a press or a carried resume: the
+    // card stays on what it has.
+    if (!stored || stored.id !== id || state.askedFor || token !== rebuildToken || leftBehind()) return;
+
+    const from = stored.copiedFrom ?? null;
+    state.onCopy = { id, from };
+    if (from) state.baseChosen = from;
+    if ('version' in reply) state.filed = { id, version: reply.version ?? null, copy: stored };
+    state.storedPrint = reply.storedPrint ?? null;
+
+    // The suggestions, if the opening read was made from the copy's own base.
+    const read = state.offers.match?.analysis;
+    const sameBase = Boolean(read && from && read.baseResumeId === from);
+    const rows = sameBase ? read : {
+      ...(read ?? {}),
+      tailor: 'match',
+      diff: [],
+      rationale: [],
+      skillChanges: [],
+      ...(from ? { baseResumeId: from, baseLabel: resumes.find((r) => r?.id === from)?.label ?? read?.baseLabel } : {}),
+    };
+    state.offers.match = {
+      analysis: { ...rows, spec: stored },
+      spec: stored,
+      full: withAllOn(stored, rows.rationale, rows.skillChanges),
+      none: withAllOff(stored, rows.rationale, rows.skillChanges),
+    };
+    // The AI's reading only if it was made from the same base: see `switchBaseTo`.
+    if (state.offers.ai?.analysis?.baseResumeId !== from) state.offers.ai = null;
+    // On the list, not the AI's: nothing is parked over the copy.
+    state.showing = 'match';
+    showOffer('match');
+    // Nothing is staged for it here: a stage something else asks for files
+    // the copy as it is, having waited for this. See `stageFiles`.
+    if (!sameBase && from) {
+      onAction('rebuild', { tailor: 'match', baseResumeId: from }).catch(() => undefined);
+    }
   }
 
   /**
@@ -3099,6 +3210,8 @@ export function createCard({
     state.rebuilding = mode;
     // A switch this overtakes is dropped; see `overtakenHere` in content.js.
     state.switchingTo = null;
+    // Asked for, so a new proposal rather than the saved copy. See `takeSavedCopy`.
+    state.onCopy = null;
     try {
       return await act('rebuild', { tailor: mode, baseResumeId: state.baseChosen ?? undefined }, (result) => {
         if (mine !== rebuildToken) return;
@@ -3139,6 +3252,7 @@ export function createCard({
     const mode = state.builtWith === 'ai' ? 'ai' : 'match';
     const mine = ++rebuildToken;
     state.rebuilding = mode;
+    state.onCopy = null;
     /*
      * The picker says what was picked while it is worked out. It is drawn
      * from the proposal on screen, and `act` redraws before the reply, so it
@@ -3308,6 +3422,50 @@ export function createCard({
         textContent: '×',
         onclick: () => closeCard(),
       }),
+    ]);
+  }
+
+  /**
+   * A Submit pressed in a frame that may or may not have sent the
+   * application, put to the person.
+   *
+   * The frame that sent counts it without asking when it holds an
+   * application form; a page of a hiring system's own host with no form in
+   * it — a review step, but just as often a survey or a search box on the
+   * same host — is only evidence, and a job wrongly marked sent comes off the
+   * list of things to finish. So it is asked here, on the card, in the strip
+   * the card already asks its other question in (`drawBranch`), above the
+   * body so a reduced or finished card shows it too. "Yes" records it the way
+   * the frame would have; "Not yet" records nothing. See `askIfSent` in
+   * content.js.
+   */
+  function drawSentQuestion() {
+    const asked = state.sentQuestion;
+    if (!asked) return null;
+    const company = asked.company || analysis?.spec?.generatedFor?.company || analysis?.job?.company || '';
+    const answer = (yes) => {
+      state.sentQuestion = null;
+      draw();
+      asked.onAnswer?.(yes);
+    };
+    return h('div', { className: 'branch sent-question' }, [
+      h('div', {
+        textContent: company ? `Did you just send your application to ${company}?` : 'Did you just send your application?',
+      }),
+      h('div', { className: 'row gap' }, [
+        h('button', {
+          className: 'tiny',
+          textContent: 'Yes',
+          title: 'Record this application as sent',
+          onclick: () => answer(true),
+        }),
+        h('button', {
+          className: 'link',
+          textContent: 'Not yet',
+          title: 'Record nothing; it is still being worked on',
+          onclick: () => answer(false),
+        }),
+      ]),
     ]);
   }
 
@@ -4089,6 +4247,24 @@ export function createCard({
   }
 
   /**
+   * The other end of the same list: every suggestion taken, over a resume
+   * that is not the one the server proposed from — the store's copy, which
+   * `takeSavedCopy` starts from and which has its own changes besides.
+   */
+  function withAllOn(spec, rationale = [], skillChanges = []) {
+    if (!spec) return spec;
+    const choices = { ...(spec.choices ?? {}) };
+    for (const r of rationale ?? []) if (r.key && r.to) choices[r.key] = r.to;
+    const sections = (spec.sections ?? []).map((section) => {
+      if (section.kind !== 'skills') return section;
+      const items = { ...(section.items ?? {}) };
+      for (const sc of skillChanges ?? []) if (Array.isArray(sc.to)) items[sc.groupId] = [...sc.to];
+      return { ...section, items };
+    });
+    return { ...spec, choices, ...(spec.sections ? { sections } : {}) };
+  }
+
+  /**
    * Back to the resume exactly as it is kept, without asking the server.
    *
    * A round trip would fetch a spec we can compute from one already in hand,
@@ -4597,6 +4773,8 @@ export function createCard({
   }
 
   async function stageFiles() {
+    // Not before the card knows whether it is on the saved copy: see `takeSavedCopy`.
+    if (adopting) await adopting;
     if (stagingStopped()) return;
     if (!state.spec) return;
     /*
@@ -7169,17 +7347,43 @@ export function createCard({
   }
 
   /**
+   * A box holding the bank's words for this question, not opened yet here.
+   *
+   * The card's root is closed, which keeps `shadowRoot` and its text away
+   * from the page — but not the browser's own find. `window.find`, called by
+   * a script on the employer's page, walks into the card like Ctrl+F does,
+   * text boxes and shut `<details>` included, and answers whether a phrase is
+   * there: enough to read a saved answer back a guess at a time. So an answer
+   * the bank put here is not drawn at all until somebody opens it, or does
+   * anything else to the box — types, rewrites, puts a draft back. Untouched
+   * means nothing in `state.answers` but what the page before carried here
+   * as it was, which is the bank's words too when they went untouched there.
+   * Only the drawing waits: the value is what `answerShown` says, and
+   * Insert, staging and filing read it as they did.
+   */
+  function keptShut(q, value) {
+    if (!q.answer || value !== q.answer || state.bankOpened[q.question]) return false;
+    const held = state.answers[q.question];
+    return held === undefined || held === state.carriedOver?.[q.question];
+  }
+
+  /**
    * A bank answer that is put in front of the person rather than in the box.
    *
-   * One that names another employer, always. And one matched to a question
-   * typed in by hand that the store was not sure of: there is no field on the
-   * page to read the question against, only what somebody typed into a
-   * prompt, so a loose match is a starting point to read and not an answer.
-   * Questions read off the page keep their "close match" in the box, as they
-   * always have.
+   * One that names another employer, always. And any match the store was
+   * not sure of, wherever the question came from.
+   *
+   * This used to be only the questions typed in by hand, on the reasoning
+   * that a question read off the page had a field to be read against. But
+   * the store's "not sure" is the same "not sure" either way: a close match
+   * to "Why this team?" is an answer to some other question, and in the box
+   * it was staged, carried and filed as this one's, with only a faint
+   * "close match" badge to say so. So a loose match is a starting point to
+   * read — "Start from your closest answer" — and only a confident one goes
+   * in.
    */
   function offeredOnly(q) {
-    return Boolean(q.namesAnother) || Boolean(q.byHand && q.answer && !q.confident);
+    return Boolean(q.namesAnother) || Boolean(q.answer && !q.confident);
   }
 
   /*
@@ -7323,6 +7527,8 @@ export function createCard({
                 textContent: q.namesAnother ? `Start from what you told ${q.namesAnother}` : 'Start from your closest answer',
                 onclick: () => {
                   state.answers[q.question] = q.answer ?? '';
+                  // Taken, so it is opened: see `keptShut`.
+                  state.bankOpened[q.question] = true;
                   draw();
                 },
               }),
@@ -7334,7 +7540,23 @@ export function createCard({
               }),
             ])
           : null,
-        h('textarea', {
+        keptShut(q, value)
+          ? h('div', { className: 'kept-shut' }, [
+              h('span', { textContent: 'Saved answer:' }),
+              h('button', {
+                className: 'link',
+                textContent: 'show',
+                title: 'Show the answer saved for this question, and edit it',
+                onclick: () => {
+                  state.bankOpened[q.question] = true;
+                  draw();
+                  // Into the box it opened into, ready to type in.
+                  const opened = [...card.querySelectorAll('textarea')].find((t) => t.dataset.field === `answer:${q.question}`);
+                  opened?.focus({ preventScroll: true });
+                },
+              }),
+            ])
+          : h('textarea', {
           value,
           // Named for the question it answers, so a repaint puts the caret
           // back in the same box even if another question arrived above it.
@@ -7884,7 +8106,7 @@ export function createCard({
     const small = reducedNow();
     card.classList.toggle('reduced-card', small);
     card.replaceChildren(
-      drawHead(),
+      ...[drawHead(), drawSentQuestion()].filter(Boolean),
       /*
        * Folded, the card is its header and one line saying what it is the
        * header for. The line matters: a bar reading only "JobHelper" over
@@ -8277,6 +8499,38 @@ export function createCard({
      */
     update(next, { show = false } = {}) {
       /*
+       * On the saved copy, a keyword reading nobody asked for is a list of
+       * suggestions for it, not a resume to replace it with — and from
+       * another base, not even that. See `takeSavedCopy`.
+       */
+      if (state.onCopy && !show && next?.spec && slotOf(next) === 'match' && state.spec) {
+        analysis = Object.assign(analysis ?? {}, aboutThePage(next));
+        if (next.baseResumeId === state.onCopy.from) {
+          const copy = state.spec;
+          state.offers.match = {
+            analysis: { ...proposalOf(next), spec: copy },
+            spec: copy,
+            full: withAllOn(copy, next.rationale, next.skillChanges),
+            none: withAllOff(copy, next.rationale, next.skillChanges),
+          };
+          if (state.showing === 'match') {
+            const render = state.render;
+            showOffer('match');
+            // The same resume, so the same preview.
+            if (state.spec === copy && render) {
+              state.render = render;
+              draw();
+            }
+            maybeAutoDraft();
+            return;
+          }
+        }
+        state.note = null;
+        draw();
+        maybeAutoDraft();
+        return;
+      }
+      /*
        * Filed, and only shown if there is nothing to displace.
        *
        * An analysis arriving is not the same event as somebody asking for
@@ -8651,6 +8905,15 @@ export function createCard({
       preparing = null;
       clearTimeout(healing);
       healing = null;
+    },
+
+    /**
+     * Ask whether the application just went out. See `drawSentQuestion`.
+     * Asked again, it is the newer question that stands.
+     */
+    askIfSent({ company = '', onAnswer } = {}) {
+      state.sentQuestion = { company: String(company ?? ''), onAnswer };
+      draw();
     },
 
     setStatus(text, fix = null) {
