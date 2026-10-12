@@ -370,6 +370,10 @@
    * open matches it, and so does a board's search results — only that
    * somebody put it where jobs go. Which is the question the chip asks, and
    * the answer is on the address.
+   *
+   * Points towards the chip and nothing more: unlike the host tests above it
+   * is not a reason to read the page unasked. Jenkins serves every page under
+   * `/job/`, build logs included. See `worthReading` in `show`.
    */
   const IN_A_JOBS_AREA =
     /\/(jobs?|careers?|opening|openings|position|positions|vacanc(y|ies)|apply|application|hiring|req|requisition)(\/|$|[?#])/i;
@@ -610,8 +614,11 @@
   }
   /** Ask the worker whether this tab is applying, once the page is shown. */
   function wantReceiptIfApplying() {
+    // Where this page is, which the worker matches against the application's
+    // own sites: a tab that once held one is not a reason to watch every
+    // page opened in it after. See `applicationInTab`.
     const ask = () =>
-      send('applicationInTab', {})
+      send('applicationInTab', { url: location.href })
         .then((reply) => {
           if (reply?.open) wantReceipt();
         })
@@ -1730,7 +1737,10 @@
      */
     if (heldFor.url === location.href) return heldFor.answer;
     const held = await send('openHere', { page: pageIdentity() }).catch(() => null);
-    // Something written, or this page plainly the next one — see `carriesOn`.
+    // Something written and this page reached from it, or this page plainly
+    // the next one — see `openHere` in the worker and `carriesOn`. Never
+    // merely the next page in the tab: the card's own staging counts as
+    // written, and the chat client opened after a posting was read whole.
     heldFor = { url: location.href, answer: Boolean(held?.open && (held?.made || held?.carriesOn)) };
     return heldFor.answer;
   }
@@ -1831,7 +1841,7 @@
 
     const [
       { createCard, removeCard },
-      { wantsCoverLetter, looksLikeApplicationForm },
+      { wantsCoverLetter, looksLikeApplicationForm, looksLikeJobApplication },
       { createAsk, removeAsk },
     ] = await Promise.all([
       imports.card(),
@@ -1876,7 +1886,7 @@
      * posting — the page after you press submit is on one — but does mean
      * somebody arrived here through a hiring system, and the server's
      * classifier is the thing that decides the rest. And a real application
-     * form on the page, found the same way the frame branch finds one.
+     * form for a job on the page — see below for why "for a job".
      *
      * Everything else is a guess, and the guesses were the whole problem: a
      * forum thread about offers, a careers article, a salary page, a
@@ -1886,6 +1896,27 @@
      * sent anywhere, not classified. Yes runs the whole pass. No records the
      * site as one not to offer on, which is the same switch the popup shows
      * and the same one a later yes undoes. See `ask.js`.
+     *
+     * The address used to be a fourth answer — `/job/` or `/jobs/` anywhere in
+     * it — and it is one of those guesses. Jenkins puts every page it has
+     * under `/job/<name>/`, a build's console included, with whatever the
+     * build printed: `/job/payments-service/1234/console` and the database
+     * password in its log were sent to be classified the moment the page
+     * opened. So was a CI job's log at `/actions/runs/987/job/654`, and a
+     * news site's `/jobs/` section. The address is still worth its two points
+     * to the score, which is what decides whether the chip asks; it is not
+     * worth reading a page on. A real posting under such an address says so
+     * in a way that counts: its JobPosting data or its title (`showNow`), or
+     * the board or tracker it is served from.
+     *
+     * And the form has to be an application for a job, not merely an
+     * application. A bank's personal-loan form asks for a legal name, a
+     * telephone number and an income, and its button says "Submit
+     * application" — enough for `looksLikeApplicationForm`, which asks only
+     * whether a frame may be given the profile. Taken as reason to read the
+     * page, it sent the form, account number and all, to be analysed, put the
+     * card up, and filed the loan in the tracker as applied when it was
+     * submitted. See `looksLikeJobApplication`.
      */
     const worthReading = async () =>
       showNow ||
@@ -1893,22 +1924,21 @@
       // The host, not the address: any page shared from LinkedIn carries
       // `utm_source=linkedin`, and that is no reason to read it unasked.
       ON_A_BOARD.test(location.hostname) ||
-      IN_A_JOBS_AREA.test(location.href) ||
-      looksLikeApplicationForm() ||
+      looksLikeJobApplication() ||
       /*
        * Or this tab is in the middle of an application somebody has written
-       * into, which is the one answer none of the four above can give.
+       * into, which is the one answer none of those above can give.
        *
        * This is the gate that actually fired on the walk reported — Indeed,
        * to a posting, to an application form at `/n/c/8f2a1b` on a host no
        * pattern knows, whose form is drawn by script and says nothing at
-       * first paint. None of the four match, so the page was not read at
+       * first paint. None of those match, so the page was not read at
        * all; and the branch below then either asked "is this a job page?"
        * about the form the person was standing on, or, where the trail
        * claimed the page, returned in silence. Both leave no card, and the
        * resume built two pages earlier had nothing left to reach it from.
        *
-       * Last, so the four cheap answers short-circuit it and the ordinary
+       * Last, so the cheap answers short-circuit it and the ordinary
        * page never pays for the message. See `workIsOpenHere`.
        */
       (await workIsOpenHere());
@@ -2009,6 +2039,8 @@
       });
       // A frame's question that came while there was no card. See `askIfSent`.
       putSentQuestion();
+      // And where the store stands, for the card to be told when it moves.
+      noteRevision?.();
       return cardHandle;
     };
     /*
@@ -2418,6 +2450,8 @@
    */
   /** `keepWorkSafe`'s saver, so a route change can call it before tearing down. */
   let saveWorkNow = null;
+  // Where the store stood when the card went up. See `keepWorkSafe`.
+  let noteRevision = null;
 
   /**
    * False until this page's card has been offered whatever was carried to it.
@@ -2719,15 +2753,27 @@
      */
     let revision = null;
     /*
-     * Where things stand, read now rather than on the first tick: a change
-     * made in the four seconds after the card went up was otherwise taken
-     * for where things started, and never reached it.
+     * Where things stand, read as the card goes up rather than on the first
+     * tick: a change made in the four seconds after the card went up was
+     * otherwise taken for where things started, and never reached it.
+     *
+     * As the card goes up, and not as the page loads. This runs on every
+     * page anybody opens, and read here it was a request to ResumeM-M for
+     * every one of them — a chat client, a news site, a build log — for an
+     * answer only a card is ever told about. Measured in the hunt's
+     * `navleak.mjs`: one `GET /api/revision` per page visited, card or not.
+     * Taken again for each new card, which fetches everything it shows from
+     * that moment on.
      */
-    send('revision')
-      .then((r) => {
-        revision ??= r?.revision ?? null;
-      })
-      .catch(() => undefined);
+    noteRevision = () => {
+      revision = null;
+      send('revision')
+        .then((r) => {
+          revision ??= r?.revision ?? null;
+        })
+        .catch(() => undefined);
+    };
+    if (cardHandle) noteRevision();
     every(4000, async () => {
       if (document.visibilityState !== 'visible' || !cardHandle?.storeChanged) return;
       const now = (await send('revision').catch(() => null))?.revision;
@@ -2965,8 +3011,10 @@
           const pressed = event.composedPath?.()?.[0] ?? event.target;
           if (pressed?.closest?.('button, input[type=submit], [role=button]')) askThenWatch();
         };
+        // By this frame's address and the pages it sits under, as the receipt
+        // itself will be judged. See `applicationInTab`.
         const askThenWatch = () =>
-          send('applicationInTab', {})
+          send('applicationInTab', { url: location.href, above: [...(location.ancestorOrigins ?? [])] })
             .then((reply) => {
               if (!reply?.open || watching) return;
               watching = true;
@@ -3165,7 +3213,16 @@
         .autofill()
         .then((autofill) => {
           frameAutofill = autofill;
-          if (!autofill.looksLikeApplicationForm()) return;
+          /*
+           * An application for a job, not any form that is applied with. The
+           * notice puts the card up over whatever page holds this frame, and
+           * reads that page, without the score or the chip having a say — so
+           * a bank's loan form embedded in its own page did here what it did
+           * as a page of its own. See `looksLikeJobApplication`. A card put up
+           * on other grounds still scans this frame and starts watching it
+           * then, through `jh-frame-scan`.
+           */
+          if (!autofill.looksLikeJobApplication()) return;
           send('applicationFrameHere', {}).catch(() => undefined);
           watchFrameForm(autofill);
         })

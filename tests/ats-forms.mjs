@@ -360,6 +360,7 @@ export const SYSTEMS = [
 
   {
     name: 'Taleo',
+    vouchedForBy: 'taleo.net',
     /*
      * A table, with the label in the cell before the field and no `for`. The
      * ids and names are opaque, as Taleo's really are — so the only thing that
@@ -463,6 +464,7 @@ export const SYSTEMS = [
 
   {
     name: 'JazzHR',
+    vouchedForBy: 'applytojob.com',
     html: `
       <label for="jz-fn">First Name *</label><input id="jz-fn" name="firstname" type="text">
       <label for="jz-ln">Last Name *</label><input id="jz-ln" name="lastname" type="text">
@@ -519,6 +521,7 @@ export const SYSTEMS = [
 
   {
     name: 'SAP SuccessFactors',
+    vouchedForBy: 'successfactors.com',
     html: `
       <label for="sf-fn">First Name</label><input id="sf-fn" name="firstName" type="text">
       <label for="sf-ln">Last Name</label><input id="sf-ln" name="lastName" type="text">
@@ -692,6 +695,7 @@ export const SYSTEMS = [
 
   {
     name: 'iCIMS',
+    vouchedForBy: 'icims.com',
     // The whole form is in an iframe, which is how iCIMS serves it.
     frame: `
       <label for="ic-fn">First Name</label><input id="ic-fn" name="icims_firstname" type="text">
@@ -819,6 +823,7 @@ export const SYSTEMS = [
      * emergency contact who is the person having the emergency.
      */
     name: 'A form that asks for references',
+    vouchedForBy: 'brassring.com',
     html: `
       <table><tbody>
         <tr><td><label for="rr-fn">First Name</label></td><td><input id="rr-fn" name="TEXT1" type="text"></td></tr>
@@ -906,6 +911,7 @@ export const SYSTEMS = [
 
   {
     name: 'BrassRing',
+    vouchedForBy: 'brassring.com',
     // Old-school: a table, and labels in the cell to the left.
     html: `
       <table>
@@ -981,6 +987,43 @@ const NOT_APPLICATIONS = {
     <button type="button">Post</button>`,
 };
 
+/*
+ * Applications, and not for a job.
+ *
+ * A bank's personal-loan form is an application form by every rule above: a
+ * legal first and last name beside a telephone number, and a button that says
+ * "Submit application". It is meant to be — those rules decide whether a frame
+ * may be given the profile, and that is not the question this asks. But the
+ * card took a recognised form as reason enough to read the page unasked, so
+ * the loan form, Social Security number box and all, was sent to be analysed,
+ * the card went up over it, and Submit filed "Bank — Personal loan application"
+ * in the tracker as applied. `looksLikeJobApplication` is the test the card
+ * asks now, and every system above has to pass it too: see the check beside
+ * "is recognised as an application form".
+ */
+const NOT_FOR_A_JOB = {
+  'a personal-loan application': `
+    <h1>Apply for a personal loan</h1><p>Requirements: you must be 18+. Benefits: low APR.</p>
+    <label for="fn">First name</label><input id="fn" name="first_name">
+    <label for="ln">Last name</label><input id="ln" name="last_name">
+    <label for="em">Email</label><input id="em" type="email" name="email">
+    <label for="ph">Phone</label><input id="ph" name="phone">
+    <label for="inc">Annual income</label><input id="inc" name="income">
+    <label for="emp">Employer</label><input id="emp" name="employer">
+    <label for="ssn">Social Security number</label><input id="ssn" name="ssn">
+    <button type="button">Submit application</button>`,
+  'a rental application': `
+    <h1>Rental application — 12 Elm Street, Apt 3</h1>
+    <label for="fn">First name</label><input id="fn" name="first_name">
+    <label for="ln">Last name</label><input id="ln" name="last_name">
+    <label for="em">Email</label><input id="em" type="email" name="email">
+    <label for="ph">Phone</label><input id="ph" type="tel" name="phone">
+    <label for="cur">Current address</label><input id="cur" name="current_address">
+    <label for="id">Photo ID</label><input id="id" type="file" name="photo_id">
+    <label for="pets">Tell us about any pets</label><textarea id="pets" name="pets"></textarea>
+    <button type="button">Start your application</button>`,
+};
+
 const shell = (body) =>
   `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>${body}</form></body></html>`;
 
@@ -1018,6 +1061,12 @@ const CONSTRAINED = `
   <input id="li" type="url" name="linkedin">
   <button type="submit">Submit Application</button>`;
 
+/** The hosts the card counts as a hiring system's, as written in content.js. */
+const TRACKED = (() => {
+  const content = fs.readFileSync(path.join(root, 'src/content/content.js'), 'utf8');
+  return content.match(/const TRACKER_HOSTS = \[([\s\S]*?)\];/)?.[1] ?? '';
+})();
+
 async function main() {
   const source = fs.readFileSync(path.join(root, 'src/content/autofill.js'), 'utf8');
   /*
@@ -1040,7 +1089,9 @@ async function main() {
       res.end(shell(CONSTRAINED));
       return;
     }
-    const negative = url.startsWith('/not/') && NOT_APPLICATIONS[decodeURIComponent(url.slice(5))];
+    const negative =
+      url.startsWith('/not/') &&
+      (NOT_APPLICATIONS[decodeURIComponent(url.slice(5))] ?? NOT_FOR_A_JOB[decodeURIComponent(url.slice(5))]);
     if (negative) {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(shell(negative));
@@ -1105,6 +1156,7 @@ async function main() {
             questions: m.findQuestions().map((q) => q.question),
             wantsLetter: m.wantsCoverLetter(),
             isApplication: m.looksLikeApplicationForm(),
+            isJobApplication: m.looksLikeJobApplication?.() ?? '(no such test)',
             // Which option of each radio group ended up chosen, and whether
             // anything ticked a checkbox it had no business ticking.
             chosen: Object.fromEntries(
@@ -1284,6 +1336,28 @@ async function main() {
        * system — so every one of them has to be recognised.
        */
       check(`${system.name}: is recognised as an application form`, out.isApplication === true);
+      /*
+       * And as one for a job, by what is on the form alone — served from
+       * 127.0.0.1, no tracker's host vouches for it. This is what lets the
+       * card read the page unasked, so a system that fails it is one the card
+       * only offers on through the chip. See `NOT_FOR_A_JOB`.
+       */
+      if (system.vouchedForBy) {
+        /*
+         * Except where the form is a name, an email and a telephone number
+         * and nothing else, which is the loan form's shape exactly: nothing on
+         * it says job, and nothing could. These are read for the host they are
+         * served from, which the card counts on its own — so the host has to
+         * stay on its list.
+         */
+        check(
+          `${system.name}: is read on its own host instead, ${system.vouchedForBy}`,
+          out.isJobApplication === false && TRACKED.includes(`'${system.vouchedForBy}'`),
+          String(out.isJobApplication),
+        );
+      } else {
+        check(`${system.name}: and as an application for a job`, out.isJobApplication === true, String(out.isJobApplication));
+      }
 
       for (const key of system.reportsUnfillable ?? []) {
         check(
@@ -1379,6 +1453,18 @@ async function main() {
         base,
       );
       check(`${what} is left alone`, verdict === false);
+      await page.close();
+    }
+
+    console.log('\nAn application, but not for a job');
+    for (const what of Object.keys(NOT_FOR_A_JOB)) {
+      const page = await browser.newPage();
+      await page.goto(`${base}/not/${encodeURIComponent(what)}`, { waitUntil: 'load' });
+      const verdict = await page.evaluate(async (b) => {
+        const m = await import(`${b}/autofill.js`);
+        return { form: m.looksLikeApplicationForm(), job: m.looksLikeJobApplication?.() ?? '(no such test)' };
+      }, base);
+      check(`${what} is not taken for a job application`, verdict.job === false, JSON.stringify(verdict));
       await page.close();
     }
   } finally {

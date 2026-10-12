@@ -1650,6 +1650,68 @@ benchmarked against the Boston market, the company said.</p>
 
 
 /*
+ * Pages that must not be read unless somebody asks.
+ *
+ * Not the same list as `QUIET`, which is about the card: each of these scores
+ * high enough for the chip to ask, and the chip asking is right. What is wrong
+ * is reading the page before anybody answers it — sending its text to the
+ * store to be classified — and every one of these was read on sight. Each
+ * carries `NOT-FOR-THE-STORE` so a suite can tell whether its text left.
+ *
+ * Three were read for their address alone, because `/job/` or `/jobs/` in it
+ * counted as reason enough: a Jenkins build's console, which is where a
+ * build prints its secrets; a CI job's log; and a newspaper's Jobs section.
+ * Two were read because they are application forms, for a loan.
+ */
+export const JENKINS_CONSOLE = {
+  name: 'jenkins-console',
+  path: '/jenkins/job/payments-service/1234/console',
+  html: `<!doctype html><html><head><title>payments-service #1234 Console [Jenkins]</title><style>${CHROME}</style></head>
+<body><div class="wrap"><pre>Started by user admin
++ pip install -r requirements.txt
++ export DB_URL=postgres://svc:NOT-FOR-THE-STORE-hunter2@db.internal/payments
++ pytest -q
+${Array.from({ length: 60 }, (_, i) => `test_${i} PASSED`).join('\n')}
+Finished: SUCCESS</pre></div></body></html>`,
+};
+
+export const CI_JOB_LOG = {
+  name: 'ci-job-log',
+  path: '/acme/api/actions/runs/987/job/654',
+  html: `<!doctype html><html><head><title>CI · acme/api@1a2b3c</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h2>build (ubuntu-latest)</h2><pre>Run pip install -r requirements.txt
+NOT-FOR-THE-STORE token=ghs_0000
+${Array.from({ length: 60 }, (_, i) => `line ${i}`).join('\n')}</pre></div></body></html>`,
+};
+
+export const NEWS_JOBS_SECTION = {
+  name: 'news-jobs-section',
+  path: '/daily-news/jobs/',
+  html: `<!doctype html><html><head><title>Jobs - Daily News</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Jobs</h1>
+${Array.from({ length: 6 }, (_, i) => `<h2>Unemployment falls in month ${i + 1}</h2>
+<p>Employers report a higher salary range on offer, better benefits and more full-time staff.</p>`).join('')}
+<p>Reader comments: NOT-FOR-THE-STORE my private note</p></div></body></html>`,
+};
+
+const LOAN_FORM_HTML = `<!doctype html><html><head><title>Personal loan application | Example Bank</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Apply for a personal loan</h1><p>Requirements: you must be 18+. Benefits: low APR.</p>
+<form><label for="fn">First name</label><input id="fn" name="first_name">
+<label for="ln">Last name</label><input id="ln" name="last_name">
+<label for="em">Email</label><input id="em" type="email" name="email">
+<label for="ph">Phone</label><input id="ph" name="phone">
+<label for="inc">Annual income</label><input id="inc" name="income">
+<label for="emp">Employer</label><input id="emp" name="employer">
+<label for="ssn">Social Security number</label><input id="ssn" name="ssn">
+<p>NOT-FOR-THE-STORE account 4111-1111</p>
+<button type="button">Submit application</button></form></div></body></html>`;
+
+export const LOAN_APPLICATION = { name: 'loan-application', path: '/bank/application/personal-loan', html: LOAN_FORM_HTML };
+export const LOAN_FORM = { name: 'loan-form', path: '/bank/loans/personal', html: LOAN_FORM_HTML };
+
+export const NOT_READ = [JENKINS_CONSOLE, CI_JOB_LOG, NEWS_JOBS_SECTION, LOAN_APPLICATION, LOAN_FORM];
+
+/*
  * A pull request, on the repository of a tool for job applications.
  *
  * Reported from life: the extension put a card up on
@@ -2311,6 +2373,22 @@ export async function pairExtension(page, server) {
  * Set before any page the card could appear on is opened; each content
  * script reads it once, when it loads the card.
  */
+/**
+ * Answer "Yes" on the "Job posting?" chip, the way a person would.
+ *
+ * For the pages that are asked about before they are read: a careers home or
+ * a list of openings on a site no pattern here knows. Those used to be read
+ * on sight for `/careers/` or `/openings/` in their address, and the address
+ * is not reason enough — Jenkins serves every build log under `/job/`. So the
+ * card on such a page now comes after the chip, and the suites that walk
+ * through one press its Yes, which is what somebody applying would do.
+ */
+export async function sayYesToTheChip(page, { timeout = 20_000 } = {}) {
+  const yes = page.locator('#jobhelper-ask-host button.yes');
+  await yes.waitFor({ timeout });
+  await yes.click();
+}
+
 export const OPEN_SHADOW_FLAG = 'jobhelperTestOpenShadow';
 export async function openCardForTests(worker, open = true) {
   await worker.evaluate(

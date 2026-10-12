@@ -36,6 +36,7 @@ import {
   pointExtensionAt,
   requireOpenSave,
   serveFixtures,
+  sayYesToTheChip,
 } from './fixtures.mjs';
 
 
@@ -139,11 +140,16 @@ async function main() {
      * ------------------------------------------------------------------ */
 
     console.log('\nTime to a usable card, by shape of posting');
-    for (const [label, fixture, budget] of [
+    for (const [label, fixture, budget, how] of [
       ['structured posting (JSON-LD)', STREAMLY, 12_000],
       ['plain careers page', CYGNUS_ROLE_A, 12_000],
       ['an applicant tracking system', LEVER_ROLE, 12_000],
-      ['a board of several roles', CYGNUS_BOARD, 12_000],
+      /*
+       * Asked about first, on a site nothing here knows: a list of openings
+       * is read once Yes is pressed, and timed from there. See
+       * `sayYesToTheChip`.
+       */
+      ['a board of several roles', CYGNUS_BOARD, 12_000, { asked: true }],
       ['a posting rendered by script', WORKDAY, 15_000],
       ['half a megabyte of application shell', HEAVY_POSTING, 15_000],
       ['an Ashby-shaped posting', ASHBY_ROLE, 12_000],
@@ -153,6 +159,7 @@ async function main() {
     ]) {
       const page = await context.newPage();
       await page.goto(fixtures.urlFor(fixture), { waitUntil: 'domcontentloaded' });
+      if (how?.asked) await sayYesToTheChip(page);
       await timed(label, budget, () => settled(page));
       await page.close();
     }

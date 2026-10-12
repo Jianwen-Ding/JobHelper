@@ -2239,12 +2239,28 @@ const handlers = {
    * under the threshold. See `carriesOn` in trail.js for why the looser joins
    * — a referrer, a link — are not enough to read a page on.
    */
+  /*
+   * And "something written" is only half of it: the page still has to be
+   * reached from the application, by the joins `sameApplication` accepts — the
+   * same site and the same posting, a referrer from a site already in it,
+   * Apply pressed to here, a link on a page already held.
+   *
+   * It used to be enough on its own, for any page the tab went on to. And
+   * the card writes on its own: a posting with a form stages its files as
+   * soon as it knows what the form wants, and the answer bank's matches fill
+   * the questions in, so looking at a posting was "something written". The
+   * next page in that tab — a chat client opened from the address bar,
+   * nothing to do with the job — was then read whole and sent to be
+   * analysed, and so was every page after it for the trail's two hours.
+   * Measured in the hunt's `carry.mjs`. Nothing joins a page like that to
+   * the application, and nothing here now reads it.
+   */
   async openHere({ page } = {}, tab) {
     await inheritIfNew(tab?.id, tab?.openerTabId);
     const trail = await readTrail(tab?.id);
     return {
       open: (trail?.pages ?? []).length > 0,
-      made: madeSomething(trail?.work),
+      made: madeSomething(trail?.work) && Boolean(page?.url) && sameApplication(trail, page),
       carriesOn: Boolean(page && carriesOn(trail, page)),
       job: nameOfTrail(trail),
     };
@@ -2256,9 +2272,26 @@ const handlers = {
    * loads, to decide whether to watch for a receipt; see `wantReceipt` in
    * content.js.
    */
-  async applicationInTab(_payload, tab) {
+  /*
+   * And only for a page on a site the application has been through, or the
+   * one it expects next — the same test `applicationSentHere` puts a receipt
+   * to, by root host, with the origins a frame sits under counted as its own.
+   *
+   * Any page at all used to be told yes for as long as the tab had a trail,
+   * so every page and every frame opened in it for the next two hours ran
+   * the receipt watcher, a quarter of an hour each of reading a page's text
+   * on every change to it — a chat client's endless updates included — to
+   * find a receipt that would then have been refused for being on another
+   * site. Measured in the hunt's `carry.mjs`.
+   */
+  async applicationInTab({ url, above = [] } = {}, tab) {
     const trail = await readTrail(tab?.id);
-    return { open: (trail?.pages ?? []).length > 0 };
+    if (!(trail?.pages ?? []).length) return { open: false };
+    const been = new Set(
+      [...trail.pages.map((p) => p.url), trail.expecting?.to].map((u) => rootOf(hostOf(u))).filter(Boolean),
+    );
+    const here = [url ?? tab?.url, ...(Array.isArray(above) ? above : [])].map((u) => rootOf(hostOf(u))).filter(Boolean);
+    return { open: here.some((r) => been.has(r)) };
   },
 
   /** Forget the trail — "this is a different application from the last one". */

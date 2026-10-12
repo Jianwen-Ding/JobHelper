@@ -62,6 +62,7 @@ import {
   useServer,
   requireOpenSave,
   pointExtensionAt,
+  sayYesToTheChip,
 } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -689,6 +690,9 @@ async function main() {
     {
       const page = await context.newPage();
       await page.goto(fixtures.urlFor(CYGNUS_BOARD), { waitUntil: 'domcontentloaded' });
+      // A list of openings on a site nothing here knows is asked about first.
+      // See `sayYesToTheChip`.
+      await sayYesToTheChip(page);
       await settled(page);
 
       await page.click('#role-a');
@@ -701,7 +705,13 @@ async function main() {
 
       await page.goBack();
       await page.waitForLoadState('domcontentloaded');
-      await settled(page);
+      /*
+       * No card to wait for on the way back. The list is read when somebody
+       * says Yes to it, and that Yes was for the visit before; going back to
+       * it is a fresh load, of a page the trail already holds, which is
+       * neither read again nor asked about again. See `sayYesToTheChip`.
+       */
+      await page.waitForTimeout(1500);
       await page.click('#role-b');
       await page.waitForLoadState('domcontentloaded');
       await settled(page);

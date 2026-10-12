@@ -8687,9 +8687,8 @@ function watchChosenPicks(write, watching) {
   };
 }
 
-export function looksLikeApplicationForm() {
-  const text = deepText();
-
+/** Which parts of a person this document's fields ask for, by profile key. */
+function fieldsAskedFor() {
   const keys = new Set();
   for (const input of deepQueryAll('input, textarea, select')) {
     const description = describeField(input);
@@ -8700,6 +8699,13 @@ export function looksLikeApplicationForm() {
     // and on several systems the only place the name is asked for.
     else if (BARE_NAME.test(withoutMarkers(labelFor(input)))) keys.add(bareNameKey(input) ?? 'full_name');
   }
+  return keys;
+}
+
+export function looksLikeApplicationForm() {
+  const text = deepText();
+
+  const keys = fieldsAskedFor();
 
   let telltales = 0;
   for (const key of keys) if (TELLTALE.has(key)) telltales++;
@@ -8743,6 +8749,55 @@ export function looksLikeApplicationForm() {
   // And in every case, enough of a form to be one. Evidence alone let a frame
   // through that merely talked about applying.
   return evidence && keys.size >= 2;
+}
+
+/**
+ * Whether the form here is an application for a *job*, rather than for
+ * anything else that is applied for.
+ *
+ * `looksLikeApplicationForm` answers the question it was written for — may a
+ * frame be given the profile — and it is generous on purpose about what an
+ * application is: a legal first and last name beside a telephone number, or
+ * a button saying "Submit application". A bank asks both. Its personal-loan
+ * form at `/application/personal-loan` (name, email, phone, income, employer,
+ * Social Security number, "Submit application") passed, and since the card
+ * took a recognised form as reason enough to read a page unasked, the page —
+ * account number and all — was sent to be analysed, the card came up, and
+ * Submit filed "Bank — Personal loan application" in the tracker as applied
+ * and kept "Annual income" in the answer bank. Measured in the hunt's
+ * `loan.mjs`, and on `/loans/personal` the same.
+ *
+ * So this asks the form for something only an employer wants: a résumé or a
+ * CV, the words a hiring form uses and a loan form never does, a question
+ * about this role or team, a field only an employer asks for, or the form
+ * being served by a hiring system. Every real application form in the suites
+ * has at least one; the loan form has none. A form with none can still be
+ * read — through the chip, or when the tab is plainly carrying an
+ * application on — but it is not read on its own say-so.
+ */
+const JOB_WORDS =
+  /\b(cover letter|work authoriz\w*|legally authorized to work|require sponsorship|equal opportunity employer|voluntary self-identification|job application)\b/i;
+/*
+ * Written out rather than borrowed from the test above, which is
+ * `/\b(resum|cv)\b/` and matches neither "resume" nor "résumé" — `\b` after
+ * "resum" wants a non-word character and finds the "e". A prefix, as the
+ * scorer in content.js has it, so every spelling anyone writes counts.
+ */
+const ASKS_FOR_A_RESUME = /\bcv\b|résum|resum|curriculum vitae/i;
+
+export function looksLikeJobApplication() {
+  if (!looksLikeApplicationForm()) return false;
+  if (ON_A_TRACKER_HOST.test(location.hostname)) return true;
+  const text = deepText();
+  if (JOB_WORDS.test(text)) return true;
+  if (deepQueryAll('textarea').length > 0 && ASKS_ABOUT_THE_JOB.test(text)) return true;
+  // A résumé asked for by a file input on the page, or by a field of its own.
+  if (deepQueryAll('input[type=file]').length > 0 && ASKS_FOR_A_RESUME.test(text)) return true;
+  for (const field of deepQueryAll('input, textarea')) {
+    if (ASKS_FOR_A_RESUME.test(describeField(field) ?? '')) return true;
+  }
+  for (const key of fieldsAskedFor()) if (TELLTALE.has(key)) return true;
+  return false;
 }
 
 /**

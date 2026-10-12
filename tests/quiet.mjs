@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import {
   HELIOS_ROLE,
+  NOT_READ,
   QUIET,
   findChromium,
   pointExtensionAt,
@@ -91,7 +92,7 @@ function* sweep(context, fixtures, list, watchMs) {
 async function main() {
   await requireOpenSave(SERVER);
   // The control posting is served alongside, so it is reached the same way.
-  const fixtures = await serveFixtures([...QUIET, HELIOS_ROLE]);
+  const fixtures = await serveFixtures([...QUIET, ...NOT_READ, HELIOS_ROLE]);
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-quiet-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     executablePath: findChromium(),
@@ -133,6 +134,72 @@ async function main() {
       }
       check('a real posting still gets a card', appeared);
       await page.close();
+    }
+
+    /* ------------------------------------------------------------------ *
+     * Pages the chip may ask about, and nothing may read unasked          *
+     * ------------------------------------------------------------------ */
+
+    /*
+     * Quiet is not only "no card". A page sent to the store to be classified
+     * has left the browser whatever the verdict, and the verdict on a build
+     * log is "not a job" — so the sweep above, which watches for a card,
+     * passed over a Jenkins console whose database password had gone to
+     * `/api/extension/analyze` the moment it opened. The address had `/job/`
+     * in it, and that alone counted as reason to read it. A loan application
+     * went the same way for being an application form, and there the store
+     * said yes: a card, and Submit filed the loan as applied.
+     *
+     * So the store is watched from in front, and every request is kept. Each
+     * page carries `NOT-FOR-THE-STORE`; none of it may arrive. Nor may
+     * `/api/revision`, which was asked on every page anybody opened, card or
+     * not, when only a card has any use for the answer.
+     */
+    console.log('\nPages read only if somebody asks');
+    {
+      const asked = [];
+      const watching = await serveSlowProxy(SERVER, {
+        slowRoute: /^$/,
+        ms: 0,
+        respondInstead: (url, body) => {
+          asked.push({ url, body });
+          return null;
+        },
+      });
+      try {
+        await useServer(context, watching.base);
+        asked.length = 0;
+        for (const results of sweep(context, fixtures, NOT_READ, WATCH_MS)) {
+          for (const { fixture, everAppeared, errors } of await results) {
+            check(`no card on ${fixture.name}`, !everAppeared);
+            check(`and nothing thrown on ${fixture.name}`, errors.length === 0, errors.join('; '));
+          }
+        }
+        const sent = asked.filter((r) => r.body.includes('NOT-FOR-THE-STORE'));
+        check(
+          'none of their text reached the store',
+          sent.length === 0,
+          sent.map((r) => `${r.url} ${(r.body.match(/"url":"([^"]+)"/) ?? [])[1] ?? ''}`).join(' | '),
+        );
+        const revisions = asked.filter((r) => r.url.startsWith('/api/revision'));
+        check('and the store was not asked for its revision by pages with no card', revisions.length === 0, `${revisions.length} asked`);
+
+        /*
+         * The control again, through the same proxy: a proxy that saw nothing
+         * because nothing reached it would pass both of those.
+         */
+        asked.length = 0;
+        const page = await context.newPage();
+        await page.goto(fixtures.urlFor(HELIOS_ROLE), { waitUntil: 'domcontentloaded' });
+        await page.locator('#jobhelper-card-host .card .role').waitFor({ timeout: 25_000 }).catch(() => undefined);
+        await page.waitForTimeout(1500);
+        check('while a posting is still read', asked.some((r) => r.url.startsWith('/api/extension/analyze')));
+        check('and its card watches the store', asked.some((r) => r.url.startsWith('/api/revision')));
+        await page.close();
+      } finally {
+        await useServer(context, SERVER);
+        watching.close();
+      }
     }
 
     /* ------------------------------------------------------------------ *

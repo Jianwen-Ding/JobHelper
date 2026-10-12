@@ -38,6 +38,7 @@ import {
   requireOpenSave,
   pointExtensionAt,
   serveSlowProxy,
+  sayYesToTheChip,
 } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -697,6 +698,8 @@ async function main() {
     {
       const home = await context.newPage();
       await home.goto(fixtures.urlFor(CAREERS_HOME), { waitUntil: 'domcontentloaded' });
+      // Asked about first: a careers home on a site nothing here knows. See `sayYesToTheChip`.
+      await sayYesToTheChip(home);
       await settled(home);
       const card = cardOf(home);
       await card.getByRole('button', { name: /^(Build resume|Recompile)$/ }).click();

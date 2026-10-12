@@ -1831,7 +1831,15 @@ async function main() {
     {
       const site = http.createServer((_req, res) => {
         res.writeHead(200, { 'content-type': 'text/html' });
+        /*
+         * Read because the board says what its results are, in the JobPosting
+         * data boards put beside them. It used to be read for `/jobs/` in its
+         * address, which is no longer reason enough to read a page unasked —
+         * Jenkins puts every build log under `/job/` — and a page the chip asks
+         * about is not read at all, failed or not.
+         */
         res.end(`<!doctype html><title>Engineering jobs in Boston | Board</title>
+          <script type="application/ld+json">{"@context":"https://schema.org","@type":"ItemList","itemListElement":[{"@type":"JobPosting","title":"Engineer"}]}</script>
           <h1>Search results</h1><div class="count">24 jobs found</div>
           <ul>${'<li>Engineer, full-time. Responsibilities and requirements inside. <time>1 day ago</time></li>'.repeat(24)}</ul>
           <script>let n = 0; setInterval(() => { document.querySelector('time').textContent = (++n) + ' seconds ago'; }, 100);</script>`);
@@ -2084,6 +2092,72 @@ async function main() {
      * Heard from here as the message it sends: a content script's messages
      * reach the extension's own pages as well as the worker.
      */
+    /*
+     * A tab that once held a job, and the next page opened in it.
+     *
+     * Looking at a posting with a form leaves work in the tab without anybody
+     * writing a word: the card stages its files as soon as it knows what the
+     * form wants, and the answer bank fills in the questions it recognises.
+     * `openHere` took that for "something written", and "something written"
+     * was enough on its own — so the next page in the tab, a chat client
+     * typed into the address bar, was read whole and sent to be analysed,
+     * past the score gate and without the chip, and so was every page after
+     * it for the trail's two hours. And `applicationInTab` said yes to every
+     * one of them, so each ran the receipt watcher over its every change for
+     * a quarter of an hour, for a receipt the worker refuses anyway for being
+     * on another site. Measured in the hunt's `carry.mjs`.
+     *
+     * Asked of the worker directly, because the answer is the whole of it:
+     * the content script reads the page exactly when `open` and either of
+     * `made` or `carriesOn` are true.
+     */
+    group('A tab that once held a job does not carry it onto every page after');
+    {
+      store.save = 'work';
+      store.role = 'Platform Engineer';
+      store.company = 'Streamly';
+      await ask(driver, 'clearTrail', {});
+      await ask(driver, 'analyze', {
+        url: 'http://jobs.example/streamly/jobs/123',
+        title: 'Platform Engineer at Streamly',
+        html: '<h1>Platform Engineer</h1><form><input name="email"></form>',
+        company: 'Streamly',
+      });
+      // What the card leaves behind on its own on a posting with a form.
+      await ask(driver, 'saveWork', {
+        work: {
+          spec: { id: 'job-fake', generatedFor: { company: 'Streamly', role: 'Platform Engineer' } },
+          staged: { currentDir: '/tmp/streamly' },
+          answersByQuestion: { 'Why are you interested in this role?': 'answer to it' },
+        },
+      });
+      const carried = (reply) => Boolean(reply?.open && (reply?.made || reply?.carriesOn));
+      const chat = { url: 'http://chat.example/client/T1/C1', title: 'general - Workspace - Chat' };
+      const atChat = (await ask(driver, 'openHere', { page: chat })).reply?.data;
+      check('the trail is there to be carried', atChat?.open === true, JSON.stringify(atChat));
+      check("an unrelated page next in the tab is not read on the application's account", !carried(atChat), JSON.stringify(atChat));
+
+      // The ways an application really does carry on, which must still.
+      const sentOn = (await ask(driver, 'openHere', {
+        page: { url: 'https://acme.bytedance.example/n/c/8f2a1b', title: 'Apply', referrerHost: 'jobs.example' },
+      })).reply?.data;
+      check('a form on another site, reached from the posting, still is', carried(sentOn), JSON.stringify(sentOn));
+      const ownSteps = (await ask(driver, 'openHere', {
+        page: { url: 'http://jobs.example/streamly/jobs/123/apply', title: 'Apply' },
+      })).reply?.data;
+      check("and so is the next step down the posting's own address", carried(ownSteps), JSON.stringify(ownSteps));
+
+      const watched = async (payload) => (await ask(driver, 'applicationInTab', payload)).reply?.data?.open;
+      check('the chat client is not watched for a receipt', (await watched({ url: chat.url })) === false);
+      check('a page on the posting\'s own site is', (await watched({ url: 'http://jobs.example/streamly/thanks' })) === true);
+      check(
+        'and so is a frame of another host inside it',
+        (await watched({ url: 'https://boards.greenhouse.io/streamly/jobs/1', above: ['http://jobs.example'] })) === true,
+      );
+      await ask(driver, 'clearTrail', {});
+      store.company = undefined;
+    }
+
     group('Watching for a receipt only where there is an application');
     {
       const site = http.createServer((req, res) => {
