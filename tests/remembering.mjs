@@ -14,7 +14,9 @@ import {
   looksPrivate,
   mayRememberTyped,
   namesThem,
+  asksWhenYouStart,
   neverRemember,
+  onlyAPassedDate,
   worthRemembering,
   worthRememberingTyped,
 } from '../src/shared/remembering.js';
@@ -822,4 +824,47 @@ test('a password named for whose it is, a generated code under sixteen, and the 
     const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
     assert.equal(said.keep, true, `${answer} was refused: ${said.why}`);
   }
+});
+
+/*
+ * A date that has gone by is not typed back. "November 2026" typed as an
+ * earliest start date in October was typed into the next form the following
+ * March, unread: a start date in the past, as the person's own answer. Kept
+ * while it is still to come, and refused once its month is over.
+ */
+test('a month and a year is kept until it has passed, and not typed back after', () => {
+  const october = new Date(2026, 9, 12, 12).getTime();
+  const march = new Date(2027, 2, 1, 12).getTime();
+  const question = 'Earliest start date';
+  for (const answer of ['November 2026', 'Nov. 2026', 'Nov 2026', 'Sept 2026', 'October 2026']) {
+    const later = worthRememberingTyped({ question, answer, company: 'Helios Systems', now: march });
+    assert.equal(later.keep, false, `${answer} was typed back after it passed`);
+    assert.match(later.why, /passed/, `${answer}: ${later.why}`);
+  }
+  for (const answer of ['November 2026', 'Nov. 2026', 'October 2026', 'Jan. 2027']) {
+    const now = worthRememberingTyped({ question, answer, company: 'Helios Systems', now: october });
+    assert.equal(now.keep, true, `${answer} was refused before it passed: ${now.why}`);
+  }
+  // Not a date on a calendar, or not only one: left to the other rules.
+  for (const answer of ['Immediately', 'January 5th', 'Two weeks after an offer', 'Spring 2027']) {
+    assert.equal(worthRememberingTyped({ question, answer, company: 'Helios Systems', now: march }).keep, true, answer);
+  }
+  /*
+   * Only a start date goes stale. A graduation date in the past is still the
+   * day somebody graduated: kept, and typed back, however long ago it was.
+   */
+  for (const q of ['Expected graduation date', 'Graduation date', 'Start date', 'End date']) {
+    for (const when of [october, march]) {
+      const said = worthRememberingTyped({ question: q, answer: 'May 2024', company: 'Helios Systems', now: when });
+      assert.equal(said.keep, true, `${q}: ${said.why}`);
+    }
+  }
+  for (const q of ['When can you start?', 'When are you available to start?', 'Available from', 'Availability', 'Desired start date', 'Joining date', 'Internship start date']) {
+    assert.equal(asksWhenYouStart(q), true, q);
+    assert.equal(worthRememberingTyped({ question: q, answer: 'November 2026', company: 'Helios Systems', now: march }).keep, false, q);
+  }
+  // A full date never gets this far: its shape is one secrets come in.
+  assert.match(worthRememberingTyped({ question, answer: '11/01/2026', now: march }).why, /personal/);
+  assert.equal(onlyAPassedDate('September 2026', new Date(2026, 9, 1).getTime()), true);
+  assert.equal(onlyAPassedDate('October 2026', new Date(2026, 9, 31, 23, 59).getTime()), false);
 });

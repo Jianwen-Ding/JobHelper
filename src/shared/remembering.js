@@ -1014,6 +1014,58 @@ const SNOWFLAKE_ID = /(?<!\d)\d{17,}(?!\d)/g;
 const UUID = /(?<![0-9a-f-])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f-])/gi;
 const withoutIds = (place) => place.replace(UUID, 'uuid').replace(SNOWFLAKE_ID, 'id');
 
+/*
+ * A month and a year, and nothing else: "November 2026", "Nov. 2026",
+ * "Sept 2026". The answer an earliest-start-date box is given, and one that
+ * stops being true. A full date is refused as a shape secrets come in before
+ * this is reached (see `SENSITIVE_SHAPE`), so this is the date that gets as
+ * far as the bank.
+ */
+const MONTH_YEAR =
+  /^(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?,?\s+(\d{4})$/i;
+const MONTH_NUMBER = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+
+/*
+ * A question about when somebody can start: the only kind a passing date
+ * makes untrue. A graduation date in the past is still the day somebody
+ * graduated, and "May 2024" for it is kept and typed back like any answer.
+ * "Start date" alone is not one, because in a work-history block it asks
+ * about the past. The same words as ResumeM-M's `asksWhenYouStart`.
+ */
+const ASKS_WHEN_YOU_START = new RegExp(
+  [
+    String.raw`\b(earliest|desired|preferred|expected|anticipated|proposed|possible|potential|available|availability)\s+(start(ing)?|joining|begin(ning)?)\s+date\b`,
+    String.raw`\bwhen\s+(can|could|would|will|are)\s+you\s+(be\s+(able|available)\s+to\s+)?(start|begin|join|commence|available)\b`,
+    String.raw`\bavailab(le|ility)\s+(from|to\s+(start|begin|join|work))\b`,
+    String.raw`\bavailability\b`,
+    String.raw`\b(join(ing)?\s+date|date\s+of\s+joining)\b`,
+    String.raw`\bnotice\s+period\b`,
+    String.raw`\b(begin|start|commence)\s+(work(ing)?|employment)\b`,
+    String.raw`\b(internship|co-?op)\s+start(\s+date)?\b`,
+    String.raw`\bearliest\s+(date|start)\b`,
+  ].join('|'),
+  'i',
+);
+
+export function asksWhenYouStart(question) {
+  return ASKS_WHEN_YOU_START.test(String(question ?? ''));
+}
+
+/**
+ * Whether an answer that is only a month and a year names one already over,
+ * on the person's own calendar. The month covers all of its days, so
+ * "October 2026" has not passed until November. ResumeM-M reads the same
+ * dates for the same reason: see `namesPassedDate` in its `answers.ts`.
+ */
+export function onlyAPassedDate(answer, now = Date.now()) {
+  const m = MONTH_YEAR.exec(String(answer ?? '').trim());
+  if (!m) return false;
+  const month = MONTH_NUMBER[m[1].slice(0, 3).toLowerCase()];
+  const year = Number(m[2]);
+  const today = new Date(now);
+  return year < today.getFullYear() || (year === today.getFullYear() && month < today.getMonth() + 1);
+}
+
 /**
  * Whether a typed answer is worth keeping for next time — and if not, why.
  *
@@ -1021,7 +1073,7 @@ const withoutIds = (place) => place.replace(UUID, 'uuid').replace(SNOWFLAKE_ID, 
  * the bank, and on the way back out of it, because the bank also holds what
  * was typed into the Workspace by hand and what was kept before these rules.
  */
-export function worthRememberingTyped({ question, answer, company } = {}) {
+export function worthRememberingTyped({ question, answer, company, now = Date.now() } = {}) {
   const said = String(answer ?? '').trim();
   const asked = mayRememberTyped(question, company);
   if (!said) return { keep: false, why: 'there is no answer here' };
@@ -1045,6 +1097,15 @@ export function worthRememberingTyped({ question, answer, company } = {}) {
     return { keep: false, why: 'the answer looks personal, so it is not kept' };
   }
   if (namesThem(said, company)) return { keep: false, why: 'the answer depends on the employer, so it is not kept' };
+  /*
+   * A start date that has gone by. "November 2026" typed as an earliest
+   * start date in October was typed back into the next form the following
+   * March: a start date in the past, given as the person's own answer,
+   * unread. Kept while it is still to come; refused once it has passed, on
+   * the way back out and — since it could never be typed back — on the way
+   * in. Only for a question about starting: see `asksWhenYouStart`.
+   */
+  if (asksWhenYouStart(question) && onlyAPassedDate(said, now)) return { keep: false, why: 'the date in the answer has passed, so it is not kept' };
   if (/[\r\n]/.test(said) || (said.length >= A_LINE && !oneLink)) {
     return { keep: false, why: 'this is longer than a line, so it is not kept' };
   }
