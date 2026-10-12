@@ -7478,6 +7478,39 @@ async function main() {
     // Read now: a computed style is live, and the build below redraws these away.
     const n = getComputedStyle(c.root.querySelector('.step-head .n'));
     const stepNumber = ratio(n.color, n.backgroundColor);
+    /*
+     * Blue and green on the question box's grey. The accent was 4.27:1 there
+     * (the "Save for next time" link and the ✦) and the "answered before"
+     * badge 4.42:1 on its pale green. This card's question is new, so the
+     * badge and an enabled ✦ are put in its box to be measured where the
+     * real ones sit.
+     */
+    const q = c.root.querySelector('.q');
+    const sunk = getComputedStyle(q).backgroundColor;
+    const save = [...q.querySelectorAll('button.link')].find((b) => b.textContent.trim() === 'Save for next time');
+    const mark = q.appendChild(Object.assign(document.createElement('span'), { className: 'ai-mark', textContent: '✦' }));
+    const badge = q.appendChild(Object.assign(document.createElement('span'), { className: 'badge', textContent: 'answered before' }));
+    const answeredBefore = getComputedStyle(badge);
+    const inTheBox = {
+      save: save ? ratio(getComputedStyle(save).color, sunk) : 0,
+      mark: ratio(getComputedStyle(mark).color, sunk),
+      badge: ratio(answeredBefore.color, answeredBefore.backgroundColor),
+    };
+    mark.remove();
+    badge.remove();
+    /*
+     * The base resume picker was named only by its title, which a screen
+     * reader may or may not fall back to. Its name, as the accessibility tree
+     * builds it before the title: aria-labelledby, aria-label, a <label>.
+     */
+    const picker = c.root.querySelector('select[title="Which resume to start from"]');
+    const byIds = (picker?.getAttribute('aria-labelledby') ?? '').split(/\s+/).filter(Boolean)
+      .map((id) => c.root.getElementById(id)?.textContent.trim() ?? '').join(' ').trim();
+    const pickerName = {
+      found: Boolean(picker),
+      title: picker?.title ?? null,
+      name: byIds || picker?.getAttribute('aria-label')?.trim() || [...(picker?.labels ?? [])].map((l) => l.textContent.trim()).join(' ').trim(),
+    };
     const box = c.root.querySelector('textarea[data-field^="answer:"]');
     box.focus();
     const ring = { style: getComputedStyle(box).outlineStyle, width: getComputedStyle(box).outlineWidth };
@@ -7490,6 +7523,8 @@ async function main() {
       faintOnWhite: ratio(faint, 'rgb(255,255,255)'),
       faintOnSunk: ratio(faint, 'rgb(248,249,250)'),
       stepNumber,
+      inTheBox,
+      pickerName,
       ring,
       spinner: spinner ? getComputedStyle(spinner).animationName : '(none)',
       bar: bar ? getComputedStyle(bar, '::before').animationName : '(none)',
@@ -7501,6 +7536,17 @@ async function main() {
   await page.emulateMedia({ reducedMotion: null });
   check('faint text is 4.5:1 on white and on the sunk panels', looks.faintOnWhite >= 4.5 && looks.faintOnSunk >= 4.5, JSON.stringify(looks));
   check('so are the step numbers', looks.stepNumber >= 4.5, String(looks.stepNumber));
+  check(
+    'and the blue "Save for next time" and ✦ on a question box’s grey',
+    looks.inTheBox.save >= 4.5 && looks.inTheBox.mark >= 4.5,
+    JSON.stringify(looks.inTheBox),
+  );
+  check('and the "answered before" badge', looks.inTheBox.badge >= 4.5, JSON.stringify(looks.inTheBox));
+  check(
+    'the base resume picker has a name of its own, not just its title, and says it picks a resume',
+    looks.pickerName.found && Boolean(looks.pickerName.name) && looks.pickerName.name !== looks.pickerName.title && /resume/i.test(looks.pickerName.name),
+    JSON.stringify(looks.pickerName),
+  );
   check('a focused text box has a solid 2px ring', looks.ring.style === 'solid' && looks.ring.width === '2px', JSON.stringify(looks.ring));
   check('with less motion asked for, the spinner and the bar stand still', looks.spinner === 'none' && looks.bar === 'none', JSON.stringify(looks));
 

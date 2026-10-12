@@ -192,7 +192,9 @@ const STYLE = `
   cursor: default; white-space: nowrap;
 }
 .ai::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.ai.on { background: var(--accent-soft); color: var(--accent); }
+/* The accent on its own soft blue is 3.93:1, under the 4.5:1 small text
+   needs; the darker accent shade reads at 4.68:1 on the same tint. */
+.ai.on { background: var(--accent-soft); color: var(--accent-hover); }
 .ai.off { background: var(--line-soft); color: var(--muted); }
 .ai.warn { background: var(--warn-bg); color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn-line); }
 .ai.actionable { cursor: pointer; }
@@ -254,7 +256,7 @@ button.link {
   border: 0; background: none; color: var(--accent); padding: 3px 6px; font-size: 12px;
   box-shadow: none; font-weight: 500;
 }
-button.link:hover { background: var(--accent-soft); }
+button.link:hover { background: var(--accent-soft); color: var(--accent-hover); }
 button:disabled { opacity: .38; cursor: default; }
 button:disabled:hover { background: #fff; border-color: var(--line); }
 
@@ -462,7 +464,7 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 }
 .change .why { margin-top: 5px; }
 .kw {
-  display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 999px;
+  display: inline-block; background: var(--accent-soft); color: var(--accent-hover); border-radius: 999px;
   padding: 0 7px; font-size: 11px; margin: 0 3px 2px 0; font-weight: 500;
 }
 .no-change {
@@ -503,6 +505,14 @@ select {
 .q { border: 1px solid var(--line-soft); border-radius: 7px; padding: 9px; margin-bottom: 7px; background: var(--panel-sunk); }
 .q .qt { font-weight: 620; font-size: 12.5px; margin-bottom: 5px; line-height: 1.45; }
 /*
+ * The accent is 4.5:1 on white and only just: on the grey of a question box
+ * it was 4.27:1, so "Save for next time" and the ✦ on "Draft an answer" were
+ * under what small text needs. Inside the box they take the accent's darker
+ * hover shade, 5.1:1 on the grey and 4.7:1 on the soft blue a link hovers to.
+ * The accent everywhere else is left as it is.
+ */
+.q button.link, .q .ai-mark { color: var(--accent-hover); }
+/*
  * A saved answer not yet opened: one row where the box will be, holding the
  * words "Saved answer" and nothing of the answer. See \`keptShut\`.
  */
@@ -511,8 +521,13 @@ select {
   border: 1px dashed var(--line); border-radius: 6px; background: #fff;
 }
 .q .badge {
+  /*
+   * #137333, not --good: the good green on its own pale green was 4.42:1 at
+   * 11px, just under the 4.5:1 small text needs. This is 5.2:1. --good stays
+   * as it is, because on white, where it is used everywhere else, it is 5.0:1.
+   */
   display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: 11px; margin-left: 6px;
-  background: var(--good-bg); color: var(--good); font-weight: 500; white-space: nowrap;
+  background: var(--good-bg); color: #137333; font-weight: 500; white-space: nowrap;
 }
 .q .badge.weak { background: var(--warn-bg); color: var(--warn); }
 .q .badge.none { background: var(--line-soft); color: var(--muted); }
@@ -6330,7 +6345,15 @@ export function createCard({
   }
 
   function drawProposeView() {
-    const baseSelect = h('select', { title: 'Which resume to start from' });
+    /*
+     * Named with aria-label, not only its title. A title is a tooltip, and a
+     * screen reader that reads it as the name does so as a fallback some do
+     * not take, so the picker could be heard as an unnamed "combobox, New
+     * grad resume". The name starts with the "Start from" it sits beside, so
+     * someone using voice control can say what they see. The title stays: it
+     * is what the mouse shows, and what the tests find the picker by.
+     */
+    const baseSelect = h('select', { title: 'Which resume to start from', 'aria-label': 'Start from base resume' });
     /** The resume the picker says, which is a switch in flight's until it lands. */
     const inUse = state.switchingTo ?? analysis?.baseResumeId;
 
