@@ -255,7 +255,13 @@ async function main() {
           check('and is not sent to the store before the chip is answered', !sentFor('greenhouse-gardening-tips'), `${analysed.length} sent`);
           await inChip(page, 'yes').click();
           check('pressing yes puts the card up', await appears(page, `${CARD} .card`));
-          check('and only then is it sent to the store', sentFor('greenhouse-gardening-tips'));
+          // The card can be up a moment before its analysis request lands.
+          let sent = false;
+          for (let waited = 0; waited < 5000 && !sent; waited += 100) {
+            sent = sentFor('greenhouse-gardening-tips');
+            if (!sent) await new Promise((go) => setTimeout(go, 100));
+          }
+          check('and only then is it sent to the store', sent);
           await page.close();
         }
 

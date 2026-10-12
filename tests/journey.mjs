@@ -242,15 +242,12 @@ async function main() {
     // What the card would hand over. Asserted through the server rather than
     // by opening a tab, because the hand-off is the part that used to lose it.
     const before = await (await fetch(`${SERVER}/api/workspace`)).json();
-    const openWorkspace = await page.evaluate(async () => {
-      const host = document.querySelector('#jobhelper-card-host');
-      const button = [...host.shadowRoot.querySelectorAll('button')].find((b) =>
-        /Write these in ResumeM-M/.test(b.textContent),
-      );
-      if (!button) return 'no button';
-      button.click();
-      return 'clicked';
-    });
+    // A real press: the card refuses clicks a page's script makes (see
+    // card.js on untrusted events), so a button.click() from page.evaluate
+    // did nothing and the auto-held draft, with no questions, was read instead.
+    const writeThese = formCard.locator('button', { hasText: 'Write these in ResumeM-M' }).first();
+    const openWorkspace = (await writeThese.count()) ? (await writeThese.click(), 'clicked') : 'no button';
+    check('"Write these in ResumeM-M" was pressed', openWorkspace === 'clicked', openWorkspace);
 
     if (openWorkspace === 'clicked') {
       await page.waitForTimeout(4000);
