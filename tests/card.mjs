@@ -2582,6 +2582,92 @@ async function main() {
   );
 
   /*
+   * "You may have applied to this already."
+   *
+   * A sent application the store ties to this posting by the names alone —
+   * the same job seen on its other page, or another job with the same title —
+   * holds a stage with `maybe` (409 `already-sent`). The card says when and
+   * where that one went, stages nothing more until it is answered, and
+   * "It's a different job" sends the stage again with `evenIfSent`, which
+   * the store files as a new application. Nothing is marked sent.
+   */
+  const maybeSent = await inPage((createCard) => {
+    const sent = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Software Engineer Intern', company: 'Stripe' },
+        spec: { id: 'job-stripe', label: 'Stripe', tier: 'temporary' },
+        rationale: [],
+        diff: [],
+        applied: { id: 'stripe-1', at: '2026-09-24T15:00:00.000Z', status: 'applied', maybe: true, url: 'https://www.linkedin.com/jobs/view/4462047454/' },
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        if (action === 'render') return { pages: 1, fits: true };
+        if (action === 'stage') {
+          if (!payload?.evenIfSent) {
+            return {
+              alreadySent: true,
+              maybe: true,
+              application: { id: 'stripe-1', url: 'https://www.linkedin.com/jobs/view/4462047454/', appliedAt: '2026-09-24T15:00:00.000Z', status: 'applied' },
+              error: 'You may have applied to this already',
+            };
+          }
+          return { currentDir: '/tmp/x', application: { id: 'stripe-2' } };
+        }
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
+    const said = () => root.querySelector('.maybe-sent')?.textContent ?? null;
+    const stages = () => sent.filter((c) => c.action === 'stage');
+    const first = said();
+    byText('Build resume').click();
+    return new Promise((resolve) =>
+      setTimeout(() => {
+        const held = stages().length;
+        const heldSaid = said();
+        // More changes: nothing more is staged while it is unanswered.
+        handle.restoreWork({ letter: 'Dear Stripe,' }, false);
+        setTimeout(() => {
+          const stillHeld = stages().length;
+          const button = [...root.querySelectorAll('button')].find((b) => /different job/.test(b.textContent));
+          button?.click();
+          setTimeout(
+            () =>
+              resolve({
+                first,
+                heldSaid,
+                held,
+                stillHeld,
+                hadButton: Boolean(button),
+                after: stages().map((c) => Boolean(c.payload?.evenIfSent)),
+                afterSaid: said(),
+                sentMark: Boolean(handle.takeWork?.()?.sent),
+              }),
+            2600,
+          );
+        }, 2600);
+      }, 2600),
+    );
+  });
+  check(
+    'a maybe-sent application is said with when and where',
+    /You may have applied to this already, on 24 September|You may have applied to this already, on September 24/.test(maybeSent.first ?? '') &&
+      (maybeSent.first ?? '').includes('linkedin.com/jobs/view/4462047454'),
+    JSON.stringify(maybeSent.first),
+  );
+  check('its stage is held once, and not sent again until it is answered', maybeSent.held === 1 && maybeSent.stillHeld === 1, JSON.stringify(maybeSent));
+  check('saying it is another job stages with evenIfSent', maybeSent.hadButton && maybeSent.after.length === 2 && maybeSent.after[1] === true, JSON.stringify(maybeSent.after));
+  check('and the question goes, with nothing marked sent', maybeSent.afterSaid === null && !maybeSent.sentMark, JSON.stringify(maybeSent));
+
+  /*
    * "Saved" has to be about the text that was saved.
    *
    * The request carries a snapshot of the box, which is right. The callback

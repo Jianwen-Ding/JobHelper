@@ -1628,6 +1628,17 @@ export function createCard({
     sent: false,
     /** And worked on again on the card since: see `NOT_A_CHANGE`. */
     reopened: false,
+    /**
+     * An application that may be this one, already sent: the store matched
+     * it by the names alone, and held a stage over it until somebody says
+     * (`maybeSent` in ResumeM-M). `{ id, at, url, status }`, from the
+     * analysis or the refusal; `held` once a stage has been refused for it.
+     * Not `sent`: nobody knows that it went, and it is not carried to the
+     * next page as if it had.
+     */
+    maybeSent: null,
+    /** Told it is another job: stages go with `evenIfSent`, and a new application is filed. */
+    anotherJob: false,
   };
 
   /**
@@ -3283,8 +3294,28 @@ export function createCard({
       sentOut(spec);
       filingOut(spec);
       // Asked for on the card after the send: see `NOT_A_CHANGE`.
-      const evenIfSent = action === 'stage' && state.sent && state.reopened ? { evenIfSent: true } : {};
+      // And once told the application it may be is another job: see `drawSentBefore`.
+      const evenIfSent =
+        action === 'stage' && ((state.sent && state.reopened) || state.anotherJob) ? { evenIfSent: true } : {};
       const result = await onAction(action, { ...payload, spec, ...(basedOn !== undefined ? { basedOn } : {}), ...evenIfSent });
+      if (result?.alreadySent && result.maybe) {
+        /*
+         * Held because it may have gone out already, not because it has:
+         * nothing is marked sent. The card asks, and stops staging until it
+         * is answered (`stagingStopped`).
+         */
+        const app = result.application ?? {};
+        state.maybeSent = {
+          ...(state.maybeSent ?? {}),
+          ...(app.id ? { id: app.id } : {}),
+          ...(app.url ? { url: app.url } : {}),
+          ...(app.appliedAt && !state.maybeSent?.at ? { at: app.appliedAt } : {}),
+          ...(app.status ? { status: app.status } : {}),
+          held: true,
+        };
+        draw();
+        return result;
+      }
       if (result?.alreadySent) {
         state.sent = true;
         return result;
@@ -3799,7 +3830,16 @@ export function createCard({
   }
 
   function drawSentBefore() {
-    const past = analysis?.applied;
+    const told = analysis?.applied;
+    /*
+     * "You may have applied to this already": a sent application the store
+     * ties to this posting by the names alone (`maybe`), from the analysis
+     * or from a stage it held. Said with where it went, so whoever reads it
+     * can tell, and with the one button that answers it.
+     */
+    const maybe = state.maybeSent || told?.maybe ? { ...(told?.maybe ? told : {}), ...(state.maybeSent ?? {}) } : null;
+    if (maybe) return state.anotherJob ? null : drawMaybeSent(maybe);
+    const past = told;
     if (!past?.at) return null;
 
     const when = new Date(past.at);
@@ -3837,6 +3877,52 @@ export function createCard({
             onclick: () => onAction('openTab', { url: `/#applications/${encodeURIComponent(past.id)}` }),
           })
         : null,
+    ]);
+  }
+
+  /*
+   * The question, and its answer. "It's another job" is the existing
+   * `evenIfSent`, said on purpose: the stage goes again, and the store files
+   * a new application beside the sent one, which it never touches. Not
+   * answering leaves the folder as it was.
+   */
+  function drawMaybeSent(past) {
+    const when = past.at ? new Date(past.at) : null;
+    const said =
+      when && !Number.isNaN(when.getTime())
+        ? when.toLocaleDateString(undefined, {
+            day: 'numeric',
+            month: 'long',
+            ...(when.getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' }),
+          })
+        : null;
+    return h('div', { className: 'before maybe-sent' }, [
+      document.createTextNode('You may have applied to this already'),
+      ...(said ? [document.createTextNode(', on '), h('b', { textContent: said })] : []),
+      ...(past.url ? [document.createTextNode(` (${past.url})`)] : []),
+      document.createTextNode(
+        past.held ? '. Nothing has been prepared for it yet, in case it is the same job. ' : '. ',
+      ),
+      past.id
+        ? h('button', {
+            className: 'link',
+            textContent: 'See what you sent',
+            title: 'Open that application in ResumeM-M',
+            onclick: () => onAction('openTab', { url: `/#applications/${encodeURIComponent(past.id)}` }),
+          })
+        : null,
+      document.createTextNode(' '),
+      h('button', {
+        className: 'link',
+        textContent: 'It’s a different job — prepare it',
+        title: 'File this as a new application; the one already sent is left as it was',
+        onclick: () => {
+          state.anotherJob = true;
+          lastPrepared = null;
+          draw();
+          prepareSoon();
+        },
+      }),
     ]);
   }
 
@@ -5013,7 +5099,13 @@ export function createCard({
    * since a queued or retried one was decided on before the send. The store
    * refuses one that gets there anyway.
    */
-  const stagingStopped = () => (state.sent && !state.reopened) || leftBehind();
+  /*
+   * And while a stage is held over an application that may be this one,
+   * until somebody says it is another job (`maybeSent`): every stage would be
+   * held the same way, and say so again.
+   */
+  const stagingStopped = () =>
+    (state.sent && !state.reopened) || (state.maybeSent?.held && !state.anotherJob) || leftBehind();
 
   /*
    * Or because this card is no longer the one for the page.

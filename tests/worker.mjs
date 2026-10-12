@@ -176,6 +176,11 @@ function fakeStore() {
         })),
       });
     }
+    // A stage refused as (maybe) sent, when the test says so: ResumeM-M's 409.
+    if (url === '/api/applications/bundle' && state.refuseStage) {
+      const body = JSON.parse(raw || '{}');
+      if (!body.evenIfSent) return send(state.refuseStage, 409);
+    }
     if (url === '/api/applications/bundle') return send({ ok: true, id: 'app-1', folder: '/tmp/x' });
     // The writes the card makes outside filing: the answer bank, a letter, a
     // tracker row's status, a kept phrasing, the AI switch.
@@ -308,6 +313,34 @@ async function main() {
         lastSaveFor('/api/applications/bundle'),
       );
       check('so the store takes it rather than refusing it', bundled.reply?.ok === true, JSON.stringify(bundled.reply).slice(0, 120));
+    }
+
+    /*
+     * A stage the store held because the application may already have gone
+     * out (409 `already-sent` with `maybe`): handed to the card as that, with
+     * which application, so it asks rather than marking anything sent; and
+     * asked again with `evenIfSent`, it goes through. A plain `already-sent`
+     * is still just that.
+     */
+    group('A stage held as maybe sent');
+    {
+      store.save = 'work';
+      await ask(driver, 'analyze', { url: 'http://m.example/jobs/9', title: 'Stripe', html: '<p>nine</p>', company: 'Stripe' });
+      const application = { id: 'stripe-1', url: 'https://www.linkedin.com/jobs/view/4462047454/', appliedAt: '2026-09-24T15:00:00.000Z', status: 'applied' };
+      store.refuseStage = { kind: 'already-sent', maybe: true, error: 'You may have applied to this already', application: { ...application, company: 'Stripe' } };
+      const held = await ask(driver, 'stage', { company: 'Stripe' });
+      check(
+        'is handed back as maybe sent, naming the application',
+        held.reply?.data?.alreadySent === true && held.reply?.data?.maybe === true && held.reply?.data?.application?.id === 'stripe-1' &&
+          held.reply?.data?.application?.url === application.url,
+        JSON.stringify(held.reply).slice(0, 300),
+      );
+      const again = await ask(driver, 'stage', { company: 'Stripe', evenIfSent: true });
+      check('and told it is another job, goes through', again.reply?.ok === true && !again.reply?.data?.alreadySent, JSON.stringify(again.reply).slice(0, 200));
+      store.refuseStage = { kind: 'already-sent', error: 'already sent', application };
+      const sure = await ask(driver, 'stage', { company: 'Stripe' });
+      check('while a sure one is still only already sent', sure.reply?.data?.alreadySent === true && !sure.reply?.data?.maybe, JSON.stringify(sure.reply).slice(0, 200));
+      store.refuseStage = undefined;
     }
 
     /*
@@ -964,6 +997,70 @@ async function main() {
       const other = await ask(driver, 'takeWork', { page: { url: WHERE, title: 'Platform Engineer' } });
       store.company = undefined;
       check('while another employer’s is not', other.reply?.data?.work?.letter !== 'FOR-ALTAIR', JSON.stringify(other.reply?.data));
+    }
+
+    /*
+     * One job, its title written two ways: by the employer's form, where the
+     * trail ended, and by LinkedIn's posting. `titleKey` alone read each pair
+     * below as two jobs, so the letter came back to neither another tab nor
+     * this one. Real pairs from a tracker.
+     */
+    group('A letter comes back when LinkedIn and the form spell the title differently');
+    {
+      const WHERE = 'https://www.linkedin.com/jobs/view/4999999999/';
+      const PAIRS = [
+        ['the work mode on one side', 'CrowdStrike', 'Software Engineer – Sensor, Sensor Performance and Stability (Hybrid)', 'Software Engineer – Sensor, Sensor Performance and Stability'],
+        ['the season and year in either order', 'Careers Americas', 'Software Engineer Intern, 2027 Summer U.S.', 'Software Engineer Intern, Summer 2027 U.S.'],
+        ['a bracketed season on one side', 'Figma', 'Software Engineer Intern', 'Software Engineer Intern (Summer 2027)'],
+        ['the employer’s spelling of a dash and an apostrophe', 'Intel', 'Software Engineering - Intern, Bachelor’s', "Software Engineering Intern, Bachelor's"],
+      ];
+      const thisTab = await driver.evaluate(async () => (await chrome.tabs.getCurrent()).id);
+      store.save = 'work';
+      for (const [what, company, parkedRole, role] of PAIRS) {
+        for (const [whose, tab] of [['a closed tab’s', 987654], ['this tab’s own', thisTab]]) {
+          await ask(driver, 'clearTrail', {});
+          await driver.evaluate(
+            ([key, job, tab]) =>
+              chrome.storage.session.set({ [key]: { parked: [{ work: { letter: 'THE-LETTER' }, save: 'work', job, tab, at: Date.now() }], at: Date.now() } }),
+            [`jh-orphan:${WHERE}`, { company, role: parkedRole }, tab],
+          );
+          store.role = role;
+          store.company = company;
+          await ask(driver, 'analyze', { url: WHERE, title: role, html: '<p>posting</p>', company });
+          const got = await ask(driver, 'takeWork', { page: { url: WHERE, title: role } });
+          check(`${what}: ${whose} letter comes back`, got.reply?.data?.work?.letter === 'THE-LETTER', JSON.stringify(got.reply?.data ?? null));
+        }
+      }
+
+      /*
+       * This tab's own, under a title `sameTitle` does not know, comes back
+       * too — said as whose it was — while another tab's under it stays
+       * parked for that tab. Two seasons are still two jobs to any tab but
+       * this one's.
+       */
+      for (const [whose, tab, back] of [['this tab’s own', thisTab, true], ['a closed tab’s', 987654, false]]) {
+        await ask(driver, 'clearTrail', {});
+        await driver.evaluate(
+          ([key, tab]) =>
+            chrome.storage.session.set({
+              [key]: { parked: [{ work: { letter: 'OWN-LETTER' }, save: 'work', job: { company: 'Figma', role: 'Software Engineer Intern, Platform' }, tab, at: Date.now() }], at: Date.now() },
+            }),
+          [`jh-orphan:${WHERE}`, tab],
+        );
+        store.role = 'Software Engineer Intern - Platform Team';
+        store.company = 'Figma';
+        await ask(driver, 'analyze', { url: WHERE, title: store.role, html: '<p>posting</p>', company: 'Figma' });
+        const got = await ask(driver, 'takeWork', { page: { url: WHERE, title: store.role } });
+        check(
+          `under a title written another way, ${whose} letter ${back ? 'comes back, named' : 'is left for its tab'}`,
+          back
+            ? got.reply?.data?.work?.letter === 'OWN-LETTER' && got.reply?.data?.recoveredFor === 'Software Engineer Intern, Platform at Figma'
+            : got.reply?.data?.work?.letter !== 'OWN-LETTER',
+          JSON.stringify(got.reply?.data ?? null),
+        );
+      }
+      store.role = 'Platform Engineer';
+      store.company = undefined;
     }
 
     /*

@@ -382,6 +382,13 @@ async function serverFetch(path, options = {}) {
     // A resume write refused because the store holds a write it was not based
     // on: what is there now, and which write that is. See `filingRefused`.
     if (body.kind === 'conflict') failed.conflict = { id: body.id ?? null, current: body.current ?? null, version: body.version ?? null };
+    // A stage held because the application may already have gone out, and
+    // which one: the card asks rather than says. See `filingRefused`.
+    if (body.kind === 'already-sent' && body.maybe) {
+      failed.maybe = true;
+      const app = body.application ?? {};
+      failed.application = { id: app.id ?? null, url: app.url ?? null, appliedAt: app.appliedAt ?? null, status: app.status ?? null };
+    }
     // The server says which sort of refusal this is. "No save open" is the one
     // worth acting on: there is a button that fixes it, one tab away.
     if (body.kind === 'no-project') failed.jobhelper = { fix: 'open-save', serverUrl };
@@ -508,12 +515,41 @@ function plainlyOtherJob(job, other) {
  * page was ever analysed has nothing better to go on, and that is the rescue
  * this is for.
  */
+/*
+ * The same title as one job's two pages write it.
+ *
+ * `titleKey` alone read the employer's form and LinkedIn's posting for one
+ * job as two titles, so the letter written on one tab was never this tab's
+ * on the other: "Software Engineer – Sensor, … (Hybrid)" on Workday and the
+ * same without "(Hybrid)" on LinkedIn; "2027 Summer" on iCIMS and "Summer
+ * 2027" on LinkedIn; "Software Engineer Intern" on Greenhouse and "Software
+ * Engineer Intern (Summer 2027)" on LinkedIn. So how the job is worked comes
+ * off the end, a year before its season is put after it, and a title that is
+ * the other plus a bracketed season or year on the end is the same. Two
+ * titles that each name a season and not the same one are still two jobs:
+ * the Summer 2026 letter is not the Summer 2027 posting's.
+ */
+const WORK_MODE_SUFFIX = /(?:\s*\(\s*(?:remote|hybrid|on-?site|in[- ]office)\s*\)|\s+[-–—|]\s+(?:remote|hybrid|on-?site|in[- ]office))\s*$/i;
+const YEAR_THEN_SEASON = /\b((?:19|20)\d\d)\s+(summer|fall|autumn|winter|spring)\b/gi;
+const SEASON_SUFFIX =
+  /\s*\(\s*(?:(?:summer|fall|autumn|winter|spring)\s+(?:19|20)\d\d|(?:19|20)\d\d(?:\s+(?:summer|fall|autumn|winter|spring))?)\s*\)\s*$/i;
+
+function sameTitle(title, other) {
+  const plain = (t) => String(t ?? '').replace(WORK_MODE_SUFFIX, '').trim();
+  const key = (t) => titleKey(t.replace(YEAR_THEN_SEASON, '$2 $1'));
+  const one = plain(title);
+  const two = plain(other);
+  if (key(one) === key(two)) return true;
+  const withSeason = (longer, shorter) => SEASON_SUFFIX.test(longer) && key(longer.replace(SEASON_SUFFIX, '')) === key(shorter);
+  return withSeason(one, two) || withSeason(two, one);
+}
+
 const sameJob = (job, other) => {
   if (!job || !other || companyOf(job) !== companyOf(other)) return false;
   const role = String(job.role ?? '').trim();
   const otherRole = String(other.role ?? '').trim();
   if (!role || !otherRole) return !plainlyAnotherRole(job.role, other.role);
-  if (titleKey(role) !== titleKey(otherRole)) return false;
+  if (!sameTitle(role, otherRole)) return false;
   const req = String(job.requisition ?? '').trim().toLowerCase();
   const otherReq = String(other.requisition ?? '').trim().toLowerCase();
   return !(req && otherReq && req !== otherReq);
@@ -702,6 +738,17 @@ function pickParked(parked, job, tabId, openTabs = new Set()) {
   const mine = held.filter((p) => sameJob(p.job, job));
   const ownMine = mine.filter((p) => p.tab !== undefined && p.tab === tabId);
   if (mine.length > 0) return ownMine[ownMine.length - 1] ?? mine[mine.length - 1];
+  /*
+   * And this tab's own whatever its page is called, short of plainly another
+   * job (`plainlyOtherJob`: another employer, or no word of the role in
+   * common). The tab went from LinkedIn to the employer's form and back, and
+   * the two write the title differently in more ways than `sameTitle` knows;
+   * refused as "not the same job", the letter this tab had written was left
+   * parked for nobody. Another tab's park still has to be `sameJob`. The
+   * card is told whose it was when the roles do not match (`takeWork`).
+   */
+  const ownAnyway = thisTabs.filter((p) => !plainlyOtherJob(p.job, job));
+  if (ownAnyway.length > 0) return ownAnyway[ownAnyway.length - 1];
   /*
    * And never one that names a role when this page names one too: then
    * `sameJob` has already said whether it is this job, and it is not. Offered
@@ -1624,6 +1671,15 @@ function filingRefused(err) {
    * written, and nothing is wrong, so the card is told rather than shown an
    * error. See `AlreadySent` in ResumeM-M.
    */
+  if (err?.kind === 'already-sent' && err.maybe) {
+    /*
+     * Or that it may have: a sent application only the names tie to this
+     * posting. Not sent as far as anybody knows, so the card asks, and says
+     * which one; confirmed, the stage goes again with `evenIfSent` and the
+     * store files a new application beside it.
+     */
+    return { alreadySent: true, maybe: true, application: err.application ?? null, error: err.message };
+  }
   if (err?.kind === 'already-sent') return { alreadySent: true, error: err.message };
   throw err;
 }
