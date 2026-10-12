@@ -1016,13 +1016,20 @@ const withoutIds = (place) => place.replace(UUID, 'uuid').replace(SNOWFLAKE_ID, 
 
 /*
  * A month and a year, and nothing else: "November 2026", "Nov. 2026",
- * "Sept 2026". The answer an earliest-start-date box is given, and one that
- * stops being true. A full date is refused as a shape secrets come in before
- * this is reached (see `SENSITIVE_SHAPE`), so this is the date that gets as
- * far as the bank.
+ * "Sept 2026", and the same in numbers, "11/2026" and "2026-11". Or a season
+ * and a year, "Fall 2026", which covers the season to the end of its last
+ * month: Spring to May, Summer to August, Fall or Autumn to December, and
+ * Winter to February of the year after. The answer an earliest-start-date
+ * box is given, and one that stops being true. A full date is refused as a
+ * shape secrets come in before this is reached (see `SENSITIVE_SHAPE`), so
+ * this is the date that gets as far as the bank.
  */
 const MONTH_YEAR =
   /^(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?,?\s+(\d{4})$/i;
+const SEASON_YEAR = /^(spring|summer|fall|autumn|winter)\s+(?:of\s+)?(\d{4})$/i;
+const SEASON_ENDS = { spring: 5, summer: 8, fall: 12, autumn: 12, winter: 2 };
+const NUMERIC_MONTH_YEAR = /^(\d{1,2})\/(\d{4})$/;
+const ISO_MONTH = /^(\d{4})-(\d{1,2})$/;
 const MONTH_NUMBER = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
 
 /*
@@ -1030,19 +1037,36 @@ const MONTH_NUMBER = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, a
  * makes untrue. A graduation date in the past is still the day somebody
  * graduated, and "May 2024" for it is kept and typed back like any answer.
  * "Start date" alone is not one, because in a work-history block it asks
- * about the past. The same words as ResumeM-M's `asksWhenYouStart`.
+ * about the past.
+ *
+ * "Availability" alone is not enough either. It asked about starting as
+ * often as it asked about weekends, overtime or travel, and an answer to
+ * those carries dates that pass without making it untrue. What is read is
+ * the date somebody is available from, a question asking when, how soon or
+ * what date they could start, in the languages forms come in, or the word
+ * on its own as the whole label, which a form asks nothing else with.
+ *
+ * The same words as ResumeM-M's `asksWhenYouStart`, and the same cases in
+ * both test suites.
  */
 const ASKS_WHEN_YOU_START = new RegExp(
   [
     String.raw`\b(earliest|desired|preferred|expected|anticipated|proposed|possible|potential|available|availability)\s+(start(ing)?|joining|begin(ning)?)\s+date\b`,
-    String.raw`\bwhen\s+(can|could|would|will|are)\s+you\s+(be\s+(able|available)\s+to\s+)?(start|begin|join|commence|available)\b`,
-    String.raw`\bavailab(le|ility)\s+(from|to\s+(start|begin|join|work))\b`,
-    String.raw`\bavailability\b`,
+    String.raw`\b(when|what\s+date|how\s+soon)\s+(can|could|would|will|are)\s+you\s+(be\s+)?((able|available|ready)\s+to\s+)?(start|begin|join|commence|available)\b`,
+    String.raw`\bearliest\s+(that\s+)?you\s+(can|could|would|will)\s+(be\s+able\s+to\s+)?(start|begin|join|commence)\b`,
+    String.raw`\bavailab(le|ility)\s+(from|to\s+(start|begin|join))\b`,
+    String.raw`\b(date\s+(available|of\s+availability)|availability\s+date)\b`,
+    String.raw`^\s*availability[\s:?*]*$`,
     String.raw`\b(join(ing)?\s+date|date\s+of\s+joining)\b`,
     String.raw`\bnotice\s+period\b`,
     String.raw`\b(begin|start|commence)\s+(work(ing)?|employment)\b`,
     String.raw`\b(internship|co-?op)\s+start(\s+date)?\b`,
     String.raw`\bearliest\s+(date|start)\b`,
+    // German, French and Spanish, as the forms of employers there ask it.
+    String.raw`\b(ab\s+wann|wann\s+k(ö|oe|o)nn(en|ten)\s+sie\s+(anfangen|beginnen|starten|eintreten))\b`,
+    String.raw`\beintritts(datum|termin)\b`,
+    String.raw`\b(date\s+de\s+d[ée]but|disponibilit[ée]|quand\s+pouvez[-\s]vous\s+(commencer|d[ée]buter))`,
+    String.raw`\b(fecha\s+de\s+(inicio|incorporaci[óo]n|disponibilidad)|cu[áa]ndo\s+(puede|puedes|podr[íi]as?)\s+(usted\s+)?(empezar|comenzar|incorporarse|incorporarte))`,
   ].join('|'),
   'i',
 );
@@ -1054,14 +1078,25 @@ export function asksWhenYouStart(question) {
 /**
  * Whether an answer that is only a month and a year names one already over,
  * on the person's own calendar. The month covers all of its days, so
- * "October 2026" has not passed until November. ResumeM-M reads the same
- * dates for the same reason: see `namesPassedDate` in its `answers.ts`.
+ * "October 2026" has not passed until November. A season is the month it
+ * ends in, so "Winter 2026" has not passed until March 2027. ResumeM-M reads
+ * the same dates for the same reason: see `namesPassedDate` in its
+ * `answers.ts`.
  */
 export function onlyAPassedDate(answer, now = Date.now()) {
-  const m = MONTH_YEAR.exec(String(answer ?? '').trim());
-  if (!m) return false;
-  const month = MONTH_NUMBER[m[1].slice(0, 3).toLowerCase()];
-  const year = Number(m[2]);
+  const said = String(answer ?? '').trim();
+  let month;
+  let year;
+  let m;
+  if ((m = MONTH_YEAR.exec(said))) [month, year] = [MONTH_NUMBER[m[1].slice(0, 3).toLowerCase()], Number(m[2])];
+  else if ((m = SEASON_YEAR.exec(said))) {
+    month = SEASON_ENDS[m[1].toLowerCase()];
+    // Winter 2026 is the one that starts in December 2026.
+    year = Number(m[2]) + (month === 2 ? 1 : 0);
+  } else if ((m = NUMERIC_MONTH_YEAR.exec(said))) [month, year] = [Number(m[1]), Number(m[2])];
+  else if ((m = ISO_MONTH.exec(said))) [month, year] = [Number(m[2]), Number(m[1])];
+  else return false;
+  if (month < 1 || month > 12) return false;
   const today = new Date(now);
   return year < today.getFullYear() || (year === today.getFullYear() && month < today.getMonth() + 1);
 }

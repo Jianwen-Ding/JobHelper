@@ -868,3 +868,53 @@ test('a month and a year is kept until it has passed, and not typed back after',
   assert.equal(onlyAPassedDate('September 2026', new Date(2026, 9, 1).getTime()), true);
   assert.equal(onlyAPassedDate('October 2026', new Date(2026, 9, 31, 23, 59).getTime()), false);
 });
+
+/*
+ * The same cases as ResumeM-M's tests/answers.test.ts, for the same words:
+ * the two regexes are kept identical, and so are the questions they are held
+ * to. "Availability" in a sentence asked about weekends, overtime and travel
+ * as often as about starting, and the common ways of asking when, how soon
+ * or what date were not read at all.
+ */
+const ASKS_WHEN_YOU_START_CASES = [
+  ['What date can you start?', true],
+  ['When is the earliest you could start?', true],
+  ['How soon can you start?', true],
+  ['How soon could you join?', true],
+  ['Date available', true],
+  ['Date available for employment', true],
+  ['If offered, what date could you start?', true],
+  ['Wann können Sie anfangen?', true],
+  ['Eintrittsdatum', true],
+  ['Date de début', true],
+  ['Date de disponibilité', true],
+  ['Fecha de inicio', true],
+  ['¿Cuándo puede empezar?', true],
+  ['Availability', true],
+  ['What is your availability to work weekends?', false],
+  ['Please describe your availability for overtime', false],
+  ['Do you have any availability constraints for travel?', false],
+  ['Start date', false],
+  ['Job start date', false],
+  ['End date', false],
+];
+test('the common ways of asking when somebody can start are read, and availability for other things is not', () => {
+  for (const [q, asks] of ASKS_WHEN_YOU_START_CASES) assert.equal(asksWhenYouStart(q), asks, q);
+});
+
+/*
+ * A season and a year, or a month and a year in numbers, is the same answer
+ * as "November 2025" and passes the same way. A season runs to the end of its
+ * last month: Spring to May, Summer to August, Fall or Autumn to December,
+ * and Winter to February of the year after.
+ */
+test('a season or a numeric month and year is not typed back once it has passed', () => {
+  const october = new Date(2026, 9, 12, 12).getTime();
+  for (const answer of ['Fall 2025', 'Autumn 2025', 'Summer 2026', 'Spring 2026', 'Winter 2025', '11/2025', '2025-11', '09/2026']) {
+    assert.equal(onlyAPassedDate(answer, october), true, answer);
+    assert.equal(worthRememberingTyped({ question: 'When can you start?', answer, company: 'Helios Systems', now: october }).keep, false, answer);
+  }
+  for (const answer of ['Fall 2026', 'Winter 2026', '10/2026', '2026-10', '13/2025', '2025-13']) {
+    assert.equal(onlyAPassedDate(answer, october), false, answer);
+  }
+});

@@ -177,6 +177,38 @@ test('a tab opened by Apply knows the opener’s filings of the copy as its own'
   assert.equal(later.data?.own, false, 'a filing the opener made afterwards was taken as this tab’s');
 });
 
+/*
+ * The card's save as Apply is pressed lands on the opener's trail, and the
+ * tab Apply opened asks for its work at the same moment. Waiting on its own
+ * trail's queue alone, it copied the opener's work from before the save:
+ * the spec, but not the render just compiled, and the form drew no resume.
+ * A slow write is what holds the save in the opener's queue long enough.
+ */
+test('a tab opened by Apply takes the work the opener was saving as Apply was pressed', async () => {
+  const set = chrome.storage.session.set;
+  chrome.storage.session.set = async (o) => {
+    await delay(30);
+    return set(o);
+  };
+  try {
+    const page = { url: posting, company: 'Helios', role: 'Platform Engineer' };
+    seed(51, {
+      work: { spec: { id: 'job-x' }, letter: 'Dear Helios,' },
+      expecting: { to: `${posting}/apply`, from: posting, at: Date.now() },
+    });
+    openTabs.add(52);
+    const work = { spec: { id: 'job-x' }, letter: 'Dear Helios,', render: { pdf: 'RENDERED' } };
+    const [, taken] = await Promise.all([
+      send('saveWork', { work, page }, { id: 51 }),
+      send('takeWork', { page }, { id: 52, openerTabId: 51 }),
+    ]);
+    assert.equal(taken.data?.work?.render?.pdf, 'RENDERED', `the new tab took the work from before the save: ${JSON.stringify(taken)}`);
+    assert.equal(session['trail:52']?.work?.render?.pdf, 'RENDERED');
+  } finally {
+    chrome.storage.session.set = set;
+  }
+});
+
 test('a card saying its resume as its tab closes does not bring the tab’s keys back', async () => {
   // At every offset across the close, because whether the write landed
   // after the sweep depended on exactly when the message arrived.

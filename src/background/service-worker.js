@@ -2022,6 +2022,16 @@ const handlers = {
 
   /** The work from the pages before this one, if this page continues them. */
   async takeWork({ page }, tab) {
+    /*
+     * And behind every change queued on the opener's trail, when Apply
+     * opened this page in a tab of its own. The save the posting's card
+     * makes as Apply is pressed lands on the opener's trail, not this one,
+     * so waiting on this tab's queue alone let `inheritIfNew` copy the
+     * opener's work from before that save: the spec without its render, and
+     * the new tab drew no resume. Waited on here, outside any step of either
+     * trail, so neither queue is ever made to wait on the other.
+     */
+    if (tab?.openerTabId !== undefined) await inTurn(trailKey(tab.openerTabId), () => undefined);
     await inheritIfNew(tab?.id, tab?.openerTabId);
     /*
      * Behind every change already queued on this tab's trail, not beside
