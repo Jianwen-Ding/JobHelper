@@ -938,7 +938,16 @@
     (employerKey
       ? employerKey(a.job.company) === employerKey(b.job.company)
       : (a.job.company ?? '') === (b.job.company ?? '')) &&
-    (titleKey ? titleKey(a.job.title) === titleKey(b.job.title) : (a.job.title ?? '') === (b.job.title ?? ''));
+    (titleKey ? titleKey(a.job.title) === titleKey(b.job.title) : (a.job.title ?? '') === (b.job.title ?? '')) &&
+    // Two requisitions under one title — "Engineer (12345678)" and
+    // "(87654321)" on one board — read as one title once the number is cut,
+    // and a late reply for one landed on the other's card. Different only
+    // when both readings carry a number: one taken without it is the same.
+    !(
+      a.job.requisition &&
+      b.job.requisition &&
+      String(a.job.requisition).trim().toLowerCase() !== String(b.job.requisition).trim().toLowerCase()
+    );
 
   /** Whether a model actually chose something, as the card reads it. */
   const wasDecided = (a) => a?.tailor === 'ai' && a?.aiUsed;
@@ -1354,8 +1363,21 @@
         return result;
       }
 
-      case 'saveLetter':
-        return send('saveLetter', { body: payload.body, job: analysis.job });
+      // Under the names the application is filed under (`filedAs`), so the
+      // letter lands on that application's id: the page's bare title would
+      // give two requisitions under one title — "Engineer (12345678)" and
+      // "(87654321)" — one letter id, the second writing over the first.
+      case 'saveLetter': {
+        const named = analysis?.spec?.generatedFor;
+        return send('saveLetter', {
+          body: payload.body,
+          job: {
+            ...analysis?.job,
+            company: named?.company || analysis?.job?.company,
+            title: named?.role || analysis?.job?.title,
+          },
+        });
+      }
 
       // Who it is addressed to comes from the page, as it does everywhere
       // else here — the card sends the words and the resume they are set to

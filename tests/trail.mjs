@@ -463,6 +463,14 @@ describe('a late AI result, against the posting on screen', async () => {
       assert.equal(sameJob(job('Acme', b), job('Acme', a)), false, `${b} / ${a}`);
     }
   });
+  it('but not on another requisition under the same title', () => {
+    const req = (requisition) => ({ job: { company: 'Acme', title: 'Software Engineer Intern', requisition } });
+    assert.equal(sameJob(req('12345678'), req('87654321')), false);
+    assert.equal(sameJob(req('12345678'), req('12345678')), true);
+    // A reading without the number is still the same posting.
+    assert.equal(sameJob(req('12345678'), req(undefined)), true);
+    assert.equal(sameJob(req(undefined), req('87654321')), true);
+  });
 });
 
 describe('what the card is told', () => {
