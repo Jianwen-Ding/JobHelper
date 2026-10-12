@@ -635,3 +635,90 @@ test('two tabs making room at once do not wait on each other for ever', async ()
     }
   }
 });
+
+/*
+ * A branch stash — what a tab left on an unsure verdict, kept for "Same job —
+ * put it back" — holds a whole posting's markup, and making room went
+ * straight to the live tabs' trails and never looked at it. A tab mid-
+ * application in another window lost the posting its letter is written from,
+ * and the stash kept all of its own. The sweep goes first now, and then the
+ * stashes' markup, oldest first, and only then another tab's.
+ */
+test('a full session storage takes a branch stash’s page text before a live tab’s', async () => {
+  const ss = chrome.storage.session;
+  store = async () => json(analyzed());
+  const now = Date.now();
+  // A live tab, mid-application: its posting and a half-written letter.
+  fullTrail(831, now - 2 * 60_000, 200);
+  // A stash written a minute ago, holding a whole posting.
+  seed(832, { at: now - 60_000 });
+  session['jh-branched:832'] = {
+    trail: {
+      pages: [{ url: 'https://boards.example/old/832', company: 'Old', role: 'Engineer', kind: 'posting', html: bigPage(832, 200) }],
+      work: { letter: 'LETTER-832' },
+      save: 'work',
+    },
+    left: 'Old job',
+    at: now - 60_000,
+  };
+  ss.quota = ss.bytesInUse() + 120 * 1024;
+  try {
+    openTabs.add(833);
+    await send('analyze', { url: `${posting}?tab=833`, title: 'Platform Engineer', html: bigPage(833, 200) }, { id: 833 });
+    assert.ok(session['trail:833'].pages[0].html.length > 150_000, 'the posting being applied to lost its text');
+    assert.ok(session['trail:831'].pages[0].html.length > 150_000, 'a live tab was stripped while a stash kept its text');
+    assert.equal(session['trail:831'].textDropped, undefined);
+
+    const stash = session['jh-branched:832'];
+    assert.equal(stash.trail.pages[0].html, '');
+    assert.equal(stash.trail.pages[0].url, 'https://boards.example/old/832');
+    assert.equal(stash.trail.work.letter, 'LETTER-832');
+    assert.equal(stash.trail.textDropped, true);
+    assert.equal(stash.at, now - 60_000, 'stripping it made it look newer');
+    assert.ok(ss.bytesInUse() <= ss.quota);
+
+    /*
+     * And it still puts the application back: the pages, the letter, the
+     * save — all but the posting's text, which the card is told is gone.
+     */
+    ss.quota = Infinity;
+    const back = await send('keepTogether', {}, { id: 832 });
+    assert.equal(back.data?.ok, true);
+    assert.equal(back.data?.work?.letter, 'LETTER-832');
+    const merged = session['trail:832'];
+    assert.equal(merged.pages[0].url, 'https://boards.example/old/832');
+    assert.equal(merged.textDropped, true, 'the card is not told the posting text went');
+    assert.equal(session['jh-branched:832'], undefined);
+  } finally {
+    ss.quota = Infinity;
+    for (const id of [831, 832, 833]) {
+      delete session[`trail:${id}`];
+      delete session[`jh-branched:${id}`];
+      openTabs.delete(id);
+    }
+  }
+});
+
+test('a full session storage sweeps what closed tabs left before it strips an open one', async () => {
+  const ss = chrome.storage.session;
+  store = async () => json(analyzed());
+  const now = Date.now();
+  fullTrail(841, now - 2 * 60_000, 200);
+  // Left under a tab that has closed: a worker stopped at the time never heard.
+  fullTrail(842, now - 30 * 60_000, 200);
+  openTabs.delete(842);
+  ss.quota = ss.bytesInUse() + 120 * 1024;
+  try {
+    openTabs.add(843);
+    await send('analyze', { url: `${posting}?tab=843`, title: 'Platform Engineer', html: bigPage(843, 200) }, { id: 843 });
+    assert.ok(session['trail:843'].pages[0].html.length > 150_000, 'the posting being applied to lost its text');
+    assert.equal(session['trail:842'], undefined, 'the closed tab’s trail is still there');
+    assert.ok(session['trail:841'].pages[0].html.length > 150_000, 'an open tab was stripped before a closed one was swept');
+  } finally {
+    ss.quota = Infinity;
+    for (const id of [841, 842, 843]) {
+      delete session[`trail:${id}`];
+      openTabs.delete(id);
+    }
+  }
+});

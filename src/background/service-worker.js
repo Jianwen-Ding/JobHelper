@@ -817,12 +817,51 @@ const POSTING_TEXT_DROPPED = 'the posting text could not be kept (browser storag
  * strip is a `changeTrail` step for that tab, so it cannot land between that
  * tab's own read and write and undo one of them; and it keeps the trail's
  * `at`, because it is not a sign that anybody is using that tab.
+ *
+ * Before any live tab, what nobody is using. The sweep goes first — closed
+ * tabs' keys, branch stashes and parks past their time — and then the branch
+ * stashes' markup, oldest first (see `stripStash`). A stash is an
+ * application a tab left on an unsure verdict, kept in case "Same job — put
+ * it back" is pressed; each holds a whole posting's markup. Live tabs' trails
+ * were stripped while those kept theirs, so a tab mid-application in another
+ * window lost the posting its letter is written from, to keep a copy of one
+ * nobody may ever ask for.
  */
 async function makeRoom(tabId, retry) {
   const own = trailKey(tabId);
   if (makingRoom.has(own)) return null;
   makingRoom.add(own);
   try {
+    await sweepOrphans().catch(() => undefined);
+    try {
+      return await retry();
+    } catch {
+      // Still not enough. The stashes next.
+    }
+    const swept = await session().get(null).catch(() => ({}));
+    const stashes = Object.entries(swept ?? {})
+      .map(([key, value]) => ({ key, value, tab: /^jh-branched:(\d+)$/.exec(key)?.[1] }))
+      .filter(({ value, tab }) => tab !== undefined && (value?.trail?.pages ?? []).some((p) => p?.html))
+      .sort((a, b) => (a.value.at ?? 0) - (b.value.at ?? 0));
+    for (const { key, tab } of stashes) {
+      /*
+       * In that tab's turn, which is the one `remember` writes the stash in
+       * and `keepTogether` reads it in — except this tab's own, whose turn is
+       * the one this is running in, and a tab that is itself making room,
+       * which is never waited on (see `makingRoom`).
+       */
+      const strip = () => stripStash(key);
+      let stripped;
+      if (trailKey(Number(tab)) === own) stripped = await strip();
+      else if (makingRoom.has(trailKey(Number(tab)))) continue;
+      else stripped = await inTurn(trailKey(Number(tab)), strip).catch(() => false);
+      if (!stripped) continue;
+      try {
+        return await retry();
+      } catch {
+        // Still not enough. The next oldest.
+      }
+    }
     const all = await session().get(null).catch(() => ({}));
     const others = Object.entries(all ?? {})
       .map(([key, value]) => ({ key, value, tab: /^trail:(\d+)$/.exec(key)?.[1] }))
@@ -851,6 +890,33 @@ async function makeRoom(tabId, retry) {
   } finally {
     makingRoom.delete(own);
   }
+}
+
+/**
+ * A branch stash without its pages' markup. Answers whether it wrote one.
+ *
+ * What it costs: putting the application back (`keepTogether`) brings back
+ * its pages, its writing, its tailored resume and its save as before, but not
+ * the posting's text, which is what the letter and the answers are written
+ * from on the pages after it. So the stash says so (`textDropped`), the
+ * merged trail carries that, and the card says "The posting text could not be
+ * kept", as it does for a trail of its own that lost it. Opening the posting
+ * again reads it afresh.
+ */
+async function stripStash(key) {
+  const held = (await session().get(key).catch(() => ({})))[key];
+  const pages = held?.trail?.pages ?? [];
+  if (!pages.some((p) => p?.html)) return false;
+  const trail = {
+    ...held.trail,
+    pages: pages.map((p) => (p?.html ? { ...p, html: '' } : p)),
+    textDropped: Boolean(pages[0]?.html) || held.trail.textDropped,
+  };
+  // Its own `at` kept: the age `keepTogether` and the sweep judge it by.
+  return session()
+    .set({ [key]: { ...held, trail } })
+    .then(() => true)
+    .catch(() => false);
 }
 
 /* ------------------------------------------------------------------ *

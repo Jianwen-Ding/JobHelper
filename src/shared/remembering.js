@@ -1065,7 +1065,14 @@ const ASKS_WHEN_YOU_START = new RegExp(
     // German, French and Spanish, as the forms of employers there ask it.
     String.raw`\b(ab\s+wann|wann\s+k(ö|oe|o)nn(en|ten)\s+sie\s+(anfangen|beginnen|starten|eintreten))\b`,
     String.raw`\beintritts(datum|termin)\b`,
-    String.raw`\b(date\s+de\s+d[ée]but|disponibilit[ée]|quand\s+pouvez[-\s]vous\s+(commencer|d[ée]buter))`,
+    /*
+     * "Disponibilité" as English "availability" is: the word alone asked
+     * about weekends ("Disponibilité le week-end") and travel ("disponibilité
+     * pour les déplacements") as well. Read with a start beside it, or as the
+     * whole label.
+     */
+    String.raw`\b(date\s+de\s+(d[ée]but|disponibilit[ée])|disponib(ilit[ée]|le)\s+[àa]\s+partir|disponibilit[ée]\s+pour\s+(commencer|d[ée]buter)|quand\s+pouvez[-\s]vous\s+(commencer|d[ée]buter))`,
+    String.raw`^\s*disponibilit[ée][\s:?*]*$`,
     String.raw`\b(fecha\s+de\s+(inicio|incorporaci[óo]n|disponibilidad)|cu[áa]ndo\s+(puede|puedes|podr[íi]as?)\s+(usted\s+)?(empezar|comenzar|incorporarse|incorporarte))`,
   ].join('|'),
   'i',
