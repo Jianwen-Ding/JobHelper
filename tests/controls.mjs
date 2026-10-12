@@ -563,6 +563,10 @@ async function main() {
         const again = await context.newPage();
         await again.goto(fixtures.urlFor(HELIOS_FORM), { waitUntil: 'domcontentloaded' });
         await settled(again);
+        // The answer saved a moment ago comes back from the bank, and a bank
+        // answer is kept shut until it is opened (see `keptShut` in card.js).
+        const shut = cardOf(again).locator('.q .kept-shut button').first();
+        await shut.waitFor({ timeout: 20_000 }).then(() => shut.click(), () => {});
         const secondBox = cardOf(again).locator('.q textarea').first();
         await secondBox.waitFor({ timeout: 20_000 });
         const alsoSaid = `A second way of putting it — ${Date.now()}`;
