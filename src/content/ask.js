@@ -160,6 +160,9 @@ export function createAsk({ site, onYes, onNo, onLater }) {
 
   const chip = document.createElement('div');
   chip.className = 'ask';
+  // Named, so a screen reader says whose question "Job posting?" is.
+  chip.setAttribute('role', 'group');
+  chip.setAttribute('aria-label', 'JobHelper');
   root.append(chip);
 
   const answer = (fn) => () => {
@@ -196,6 +199,19 @@ export function createAsk({ site, onYes, onNo, onLater }) {
   later.setAttribute('aria-label', 'Not now');
   later.onclick = answer(onLater);
   chip.append(later);
+
+  /*
+   * Escape is "not now". It is the key everybody presses to get something
+   * off the screen, and it did nothing here — so the only keyboard way to
+   * dismiss the chip was to Tab to a button marked "×". Not "No", which
+   * mutes the whole site and outlives the page.
+   */
+  chip.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    answer(onLater)();
+  });
 
   document.documentElement.append(host);
   return { remove: removeAsk };

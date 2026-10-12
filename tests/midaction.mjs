@@ -805,6 +805,73 @@ async function main() {
   }
 
   /* ------------------------------------------------------------------ */
+  console.log('\nResumeM-M\'s copy, taken back after the application went out');
+  {
+    /*
+     * The keeper is handed the card's copy every two seconds, and `takeWork`
+     * counted every copy it handed over as a filing of the card's own the
+     * store had not confirmed — whether or not the keeper ever filed it, and
+     * with nothing to clear the list once staging had stopped. So after
+     * "Edit in ResumeM-M" on a card whose application had gone out, the copy
+     * taken back from ResumeM-M (`cameBack`) was on that list by the next
+     * tick, and when ResumeM-M later put that copy back — an undo there — the
+     * card's next filing was refused over it, took it for its own, and wrote
+     * the undo away with nothing said.
+     */
+    await setUp({ versions: true });
+    const back = await inPage(async () => {
+      const stages = () => jh.s.sent.filter((c) => c.action === 'stage');
+      const picks = () => jh.root.querySelectorAll('.pick input');
+      const n = stages().length;
+      picks()[0].click();
+      await until(() => stages().length > n, 4000);
+      await wait(600);
+      const filed = JSON.parse(JSON.stringify(jh.s.copy));
+      button(/Edit in ResumeM-M/).click();
+      await wait(300);
+      // The application goes out, from the page after, while the editor is open.
+      jh.handle.restoreWork({ sent: true });
+      // In ResumeM-M the second line is switched too, and the card comes back to it.
+      const there = { ...filed, choices: { ...filed.choices, 'edu_neu.subtitle': 'v_systems' } };
+      jh.s.copy = JSON.parse(JSON.stringify(there));
+      jh.s.copyVersion += 1;
+      jh.s.resumes = [...jh.s.resumes, JSON.parse(JSON.stringify(there))];
+      // The keeper ticks while the copy taken back is being compiled, before
+      // the card has asked the store which write of it that is.
+      const compiled = jh.s.hold('render');
+      const renders = jh.s.sent.filter((c) => c.action === 'render').length;
+      const returned = jh.handle.cameBack();
+      await until(() => jh.s.sent.filter((c) => c.action === 'render').length > renders, 4000);
+      jh.handle.takeWork();
+      await wait(100);
+      jh.handle.takeWork();
+      compiled();
+      await returned;
+      await wait(300);
+      // Then the first line is switched back there, and the watcher sees it.
+      jh.s.copy = { ...there, choices: { ...there.choices, b_pipeline: 'v_base' } };
+      jh.s.copyVersion += 1;
+      await jh.handle.storeChanged();
+      await wait(600);
+      // And undone again there: the copy is the one the card took back.
+      jh.s.copy = JSON.parse(JSON.stringify(there));
+      jh.s.copyVersion += 1;
+      // On the card, the second line is switched back.
+      const m = stages().length;
+      picks()[1].click();
+      await until(() => stages().length > m, 4000);
+      await wait(1500);
+      return { stored: jh.s.copy.choices, said: note(), stages: stages().length - m };
+    });
+    check(
+      'the undo made in ResumeM-M is kept under the switch made here',
+      back.stored.b_pipeline === 'v_kafka' && back.stored['edu_neu.subtitle'] === 'v_plain',
+      JSON.stringify(back),
+    );
+    check('and the card says the copy was edited there', /edited in ResumeM-M/.test(back.said), back.said);
+  }
+
+  /* ------------------------------------------------------------------ */
   console.log('\nThe resume in the picker, deleted in ResumeM-M');
   {
     await setUp();

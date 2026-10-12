@@ -12,7 +12,8 @@
     --accent-soft: #e8f0fe;
     --ink: #202124;
     --muted: #5f6368;
-    --faint: #80868b;
+    /* #80868b was 3.5:1 on the sunk panel at 11px; this is 4.7:1. See card.js. */
+    --faint: #6b7075;
     --line: #dadce0;
     --line-soft: #f1f3f4;
     --panel-sunk: #f8f9fa;
@@ -81,7 +82,7 @@
   .ai-line { display: flex; align-items: center; gap: 7px; }
   .ai-command {
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 11px; color: var(--faint, #80868b); margin-top: 3px;
+    font-size: 11px; color: var(--faint, #6b7075); margin-top: 3px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .ai-command:empty { display: none; }
@@ -236,7 +237,9 @@
   <button id="openBeside" title="The resume editor in the side panel, beside this page">Edit resume beside this page</button>
 </div>
 
-<div class="status" id="status">Checking server…</div>
+<!-- A status: what it says changes as the server answers, and a screen
+     reader was never told, so "Connected" or "not running" went unheard. -->
+<div class="status" id="status" role="status">Checking server…</div>
 <div class="row"><button id="reportBug">Report a bug</button></div>
 
 <script src="popup.js" type="module"></script>

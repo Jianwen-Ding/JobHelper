@@ -303,6 +303,16 @@ async function main() {
       check('and the site is not recorded anywhere', (await mutedHosts(context, worker)).length === 0);
       await page.reload({ waitUntil: 'domcontentloaded' });
       check('and it asks again on the next visit', await appears(page, ASK));
+      /*
+       * And Escape is "not now", the key people press first to get something
+       * off the screen. It did nothing, and from the keyboard the only way
+       * out was to Tab to the ×.
+       */
+      await inChip(page, 'yes').focus();
+      await page.keyboard.press('Escape');
+      const gone = await neverAppears(page, ASK, 1200);
+      const muted = await mutedHosts(context, worker);
+      check('Escape dismisses the chip, as not now: the site is not recorded', gone && muted.length === 0, JSON.stringify({ gone, muted }));
       await page.close();
     }
 
@@ -385,9 +395,25 @@ async function main() {
       const page = await context.newPage();
       await page.goto(forumUrl, { waitUntil: 'domcontentloaded' });
       check('the chip is back now the site is not muted', await appears(page, ASK));
-      await inChip(page, 'yes').click();
+      // From the keyboard, which is where losing focus is felt.
+      await inChip(page, 'yes').focus();
+      await page.keyboard.press('Enter');
       check('pressing yes puts the card up', await appears(page, `${CARD} .card`));
       check('and the chip is gone', (await page.locator(ASK).count()) === 0);
+      /*
+       * And focus goes to the card. The chip, and the Yes that had focus,
+       * left the page, so focus fell to <body> and somebody on the keyboard
+       * was put back at the top of the page with the card somewhere else.
+       */
+      let onCard = false;
+      for (let i = 0; i < 40 && !onCard; i++) {
+        onCard = await page.evaluate((sel) => {
+          const host = document.querySelector(sel);
+          return Boolean(host && document.activeElement === host && host.shadowRoot?.activeElement?.classList.contains('card'));
+        }, CARD);
+        if (!onCard) await page.waitForTimeout(150);
+      }
+      check('and focus is on the card', onCard);
       await page.close();
     }
 

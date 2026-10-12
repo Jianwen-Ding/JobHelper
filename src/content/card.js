@@ -35,6 +35,17 @@ const STYLE = `
  * under the card, and the host needed a rule of its own against it.
  */
 .layer { display: contents; }
+/*
+ * The card itself takes focus only when the control that had it is gone
+ * (see \`draw\`); said with a ring when that came from the keyboard.
+ */
+.card:focus { outline: none; }
+.card:focus-visible { outline: 2px solid #1a73e8; outline-offset: 2px; }
+/* Heard, not seen: the card's spoken announcements. See \`announce\`. */
+.said {
+  position: fixed; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
 .layer:popover-open {
   display: block;
   position: fixed;
@@ -57,7 +68,12 @@ const STYLE = `
   --ink: #202124;
   --ink-soft: #3c4043;
   --muted: #5f6368;
-  --faint: #80868b;
+  /*
+   * Darker than the editor's #80868b, which measured 3.68:1 on white and
+   * 3.49:1 on the sunk panels at the 11px this colour is used for — under
+   * the 4.5:1 small text needs. #6b7075 is 5.0:1 and 4.7:1.
+   */
+  --faint: #6b7075;
   --line: #dadce0;
   --line-soft: #f1f3f4;
   --panel-sunk: #f8f9fa;
@@ -181,6 +197,8 @@ const STYLE = `
 .ai.warn { background: var(--warn-bg); color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn-line); }
 .ai.actionable { cursor: pointer; }
 .ai.actionable:hover { filter: brightness(.96); }
+/* A pressable chip is a real button (see \`drawAiChip\`), and keeps the chip's look. */
+button.ai { border: 0; line-height: inherit; }
 
 /*
  * Three ways to tailor, side by side, with the one in use marked — and a
@@ -322,7 +340,8 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .step:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
 .step-head { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
 .step-head .n {
-  width: 18px; height: 18px; border-radius: 50%; background: var(--accent-soft); color: var(--accent);
+  /* #185abc, not the accent: the accent on its own soft blue was 3.9:1 at 11px. */
+  width: 18px; height: 18px; border-radius: 50%; background: var(--accent-soft); color: #185abc;
   font-size: 11px; font-weight: 700; display: grid; place-items: center; flex: 0 0 auto;
 }
 .step-head .t { font-weight: 500; font-size: 14px; }
@@ -456,7 +475,12 @@ textarea {
   border: 1px solid var(--line); border-radius: 6px; resize: vertical; color: var(--ink); background: #fff;
   line-height: 1.55;
 }
-textarea:focus-visible { outline: 0; border-color: #c8d8f7; box-shadow: 0 0 0 3px var(--accent-soft); }
+/*
+ * A focused box has to be told from the others at a glance. The ring was the
+ * accent's palest tint, #e8f0fe on white — next to invisible, so tabbing
+ * through the answers gave no sign of which box would take the typing.
+ */
+textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
 textarea.tall { min-height: 160px; }
 /*
  * What to change about a draft: one line beside the button that sends it.
@@ -467,7 +491,7 @@ input.redo {
   flex: 1 1 180px; min-width: 0; font: inherit; font-size: 12px; padding: 5px 8px;
   border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: #fff;
 }
-input.redo:focus-visible { outline: 0; border-color: #c8d8f7; box-shadow: 0 0 0 3px var(--accent-soft); }
+input.redo:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
 select {
   font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px;
   max-width: 100%; background: #fff; color: var(--ink);
@@ -665,6 +689,18 @@ span.left-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   100% { transform: translateX(110%) scaleX(.1); }
 }
 .progress-label { font-size: 11px; color: var(--muted); margin-top: -3px; margin-bottom: 6px; }
+/*
+ * Asked for less motion, given none: the spinner and the bar sweep for as
+ * long as the work takes, which can be minutes. The bar stays as a still
+ * strip and the spinner as a still ring, so there is still a sign that
+ * something is going; the label and its clock say the rest.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .spinner, .progress::before, .progress::after { animation: none; }
+  .progress::before { transform: scaleX(.4); }
+  .progress::after { display: none; }
+  button, .pick .box { transition: none; }
+}
 /* The clock, quieter than the label and only there once there is one. */
 .progress-label .elapsed { margin-left: 6px; font-variant-numeric: tabular-nums; color: var(--faint); }
 .progress-label .elapsed:empty { display: none; }
@@ -1038,9 +1074,11 @@ export function createCard({
    * files that were sent. Matched on what the button says or its
    * aria-label, not its title, which is a sentence about it. Heard before
    * the control's own handler, so the stage that control asks for goes.
+   * The AI chip ("AI off …", "Turning on…") is a switch, not a change to
+   * the files; it is a button now (see `drawAiChip`), so it is named here.
    */
   const NOT_A_CHANGE =
-    /^(Unfold|Fold|Back|Done|Close|Open|Copy|Attach files|Attaching|Autofill|Filling|Show|See what you sent|Insert into form|Stop)/i;
+    /^(Unfold|Fold|Back|Done|Close|Open|Copy|Attach files|Attaching|Autofill|Filling|Show|See what you sent|Insert into form|Stop|AI off|Turning on)/i;
   for (const type of ['input', 'change', 'click']) {
     root.addEventListener(
       type,
@@ -1061,10 +1099,45 @@ export function createCard({
   const card = document.createElement('div');
   card.className = 'card';
   // What is raised above a page's modal; see `raise`.
+  /*
+   * A named region, so a screen reader can say where it is and jump to it:
+   * a bare <div> over somebody's application form was announced as nothing
+   * at all, its buttons and boxes loose among the page's own. And a place
+   * focus can be put (`tabindex=-1`, out of the tab order) when the control
+   * that had it is gone after a redraw — see `draw`.
+   */
+  card.setAttribute('role', 'region');
+  card.setAttribute('aria-label', 'JobHelper');
+  card.tabIndex = -1;
+  /*
+   * What the card says out loud. A build finishing, an autofill's result or
+   * the "Did you just send…" question was drawn and never announced, so
+   * somebody who could not see the card had no way to know the work they
+   * asked for was done. Kept outside `card`, beside it, because `draw`
+   * replaces all of the card's children and a live region that is removed
+   * and put back is announced again or not at all, depending on the reader.
+   * Written to only when work finishes or fails — see `announce` — never by
+   * a redraw.
+   */
+  const said = document.createElement('div');
+  said.className = 'said';
+  said.setAttribute('role', 'status');
   const layer = document.createElement('div');
   layer.className = 'layer';
-  layer.append(card);
+  layer.append(card, said);
   root.append(layer);
+  let saying = null;
+  /** The error last drawn as an alert: see `drawError`. */
+  let alertedError = null;
+  function announce(text) {
+    clearTimeout(saying);
+    // Emptied first, so the same sentence twice ("Resume built: 1 page.")
+    // is still a change the reader hears.
+    said.textContent = '';
+    saying = setTimeout(() => {
+      said.textContent = String(text ?? '');
+    }, 60);
+  }
   document.documentElement.append(host);
 
   /*
@@ -1575,8 +1648,24 @@ export function createCard({
      * the card said the copy had been edited in ResumeM-M. Only a copy the
      * store does not already hold: one it confirmed is not unconfirmed, and
      * marking it so would file over a ResumeM-M edit that put it back.
+     *
+     * And only once per copy, and only a copy the keeper could file. This
+     * runs on every two-second tick, and it marked the copy each time —
+     * though the keeper files a copy once, when it first holds the space —
+     * so the list filled with copies nobody had filed, and nothing cleared
+     * it once staging had stopped (after Submit, on a listing, after a
+     * failed stage). Worse, after `cameBack` the copy is ResumeM-M's own,
+     * taken from the store with `state.filed` cleared, and the next tick
+     * marked it as the card's: when ResumeM-M later put that copy back, an
+     * undo there, the card's next filing was refused over it, took it for
+     * its own and filed over the undo without a merge. With no `filed` the
+     * next filing asks the store what it holds first (`learnFiled`), so it
+     * is never refused over a write the card does not know of; and a copy
+     * taken from the store is not handed out as the card's (`tookFromStore`).
      */
-    if (state.spec?.id && specKey(state.spec) !== specKey(state.filed?.copy)) filingOut(state.spec);
+    const handing = state.spec?.id ? specKey(state.spec) : null;
+    if (handing && handing !== keeperHanded && state.filed && handing !== specKey(state.filed.copy)) filingOut(state.spec);
+    keeperHanded = handing;
     return {
       spec: state.spec,
       // Which write of the store's copy it is built on: the keeper files it
@@ -1942,7 +2031,24 @@ export function createCard({
     // `dataset` is a read-only DOMStringMap, so assigning it does nothing at
     // all — silently, which is the worst way for it to not work.
     const { dataset, ...rest } = props;
+    /*
+     * And `'aria-expanded'`, `'aria-label'` and the rest are attributes, not
+     * properties: assigned, they became expando properties on the element
+     * and never reached the accessibility tree. The "›" toggle said nothing
+     * about being open and the progress bar had no name, while the source
+     * read as though both did. So `aria-*`, `data-*` and `role` are set as
+     * attributes; everything else is still a property, which is what
+     * `textContent`, `onclick`, `value` and `disabled` need to be.
+     */
+    const attrs = {};
+    for (const k of Object.keys(rest)) {
+      if (k === 'role' || k.startsWith('aria-') || k.startsWith('data-')) {
+        attrs[k] = rest[k];
+        delete rest[k];
+      }
+    }
     const n = Object.assign(document.createElement(tag), rest);
+    for (const [k, v] of Object.entries(attrs)) if (v != null && v !== false) n.setAttribute(k, String(v));
     /*
      * A box takes its direction from what is typed into it. The card is left
      * to right (see `:host`), but an answer or a letter written in Arabic or
@@ -2214,7 +2320,9 @@ export function createCard({
    */
   function closeRenameMenus(except) {
     for (const menu of root?.querySelectorAll?.('.rename-menu') ?? []) {
-      if (menu !== except) menu.classList.add('hidden');
+      if (menu === except) continue;
+      menu.classList.add('hidden');
+      menu.parentElement?.querySelector('.open-file')?.setAttribute('aria-expanded', 'false');
     }
   }
 
@@ -2461,12 +2569,21 @@ export function createCard({
         type: 'button',
         textContent: '\u22ef',
         title: `Change what the ${DOCUMENT_KINDS[kind]?.says ?? 'file'} is called`,
+        /*
+         * "⋯" is read out as "horizontal ellipsis", once per file, so a
+         * screen reader heard the same punctuation mark beside every chip
+         * and could not tell which file it would rename.
+         */
+        'aria-label': `Rename ${name}`,
+        'aria-haspopup': 'menu',
+        'aria-expanded': String(open),
         onclick: (event) => {
           event.stopPropagation();
           const open = event.currentTarget.parentElement?.querySelector('.rename-menu');
           closeRenameMenus(open);
           if (open) open.classList.toggle('hidden');
           renaming = open && !open.classList.contains('hidden') ? { name } : null;
+          event.currentTarget.setAttribute('aria-expanded', String(Boolean(renaming)));
         },
       }),
       h('div', { className: `rename-menu${open ? '' : ' hidden'}` }, [
@@ -3034,6 +3151,15 @@ export function createCard({
     unconfirmed.splice(0, at >= 0 ? at + 1 : unconfirmed.length);
   }
   const unconfirmedFiling = (stored) => unconfirmed.includes(specKey(stored));
+  /*
+   * The copy `takeWork` last handed the keeper, so a copy is counted as the
+   * keeper's filing once rather than on every tick. Set to a copy taken from
+   * the store as well: that one is ResumeM-M's, not a filing of the card's.
+   */
+  let keeperHanded = null;
+  const tookFromStore = (spec) => {
+    keeperHanded = spec?.id ? specKey(spec) : null;
+  };
 
   /** What files the copy it is given: see `sentOut`. */
   const FILES_THE_COPY = new Set(['stage', 'bundle', 'openWorkspace']);
@@ -3440,10 +3566,17 @@ export function createCard({
     // A state this version does not know is not an invitation to press
     // anything, so the fallback is the quiet one.
     const look = AI_CHIP[named] ?? AI_CHIP['both-off'];
-    const chip = h('span', {
+    /*
+     * A button where it does something. It was a <span> with a click
+     * handler, which a mouse can press and a keyboard cannot reach at all:
+     * no tab stop, no Enter, and announced as plain text — so the one way
+     * out of "AI off" was closed to anybody not using a mouse.
+     */
+    const chip = h(look.turnOn ? 'button' : 'span', {
       className: `${look.className}${look.turnOn ? ' actionable' : ''}`,
       title: look.title,
       textContent: look.text,
+      ...(look.turnOn ? { type: 'button' } : {}),
     });
 
     if (look.turnOn) {
@@ -3490,6 +3623,8 @@ export function createCard({
        */
       h('button', {
         className: 'icon',
+        // Fold and Unfold are one control: see `focusKey`.
+        dataset: { focus: 'fold' },
         title: state.folded ? 'Unfold' : 'Fold out of the way',
         ariaLabel: state.folded ? 'Unfold JobHelper' : 'Fold JobHelper out of the way',
         textContent: state.folded ? '⌄' : '⌃',
@@ -3984,6 +4119,8 @@ export function createCard({
      */
     const what = stopName(action);
     return h('div', {}, [
+      // Named for what it is waiting on. Written this way all along, but the
+      // name only reached the bar once `h` set `aria-*` as attributes.
       h('div', { className: 'progress', role: 'progressbar', 'aria-label': label }),
       h('div', { className: 'progress-label' }, [
         h('span', { textContent: label }),
@@ -4762,6 +4899,8 @@ export function createCard({
         return;
       }
       state.render = r;
+      // Said, as well as drawn: see `announce`.
+      announce(`Resume built${r.pages ? `: ${plural(r.pages, 'page')}` : ''}.`);
       // What this compile printed, to be told later whether the store would
       // print something else. See `checkFresh`.
       state.printed = r.printed ?? null;
@@ -5134,7 +5273,14 @@ export function createCard({
           className: `fold-changes${open ? ' open' : ''}`,
           textContent: open ? '⌄' : '›',
           title: open ? 'Hide what was changed' : 'Show what was changed',
+          /*
+           * Named in words: "›" read aloud is a punctuation mark. Expanded
+           * or not, said as an attribute (see `h`), and kept under one
+           * focus key while its face flips between › and ⌄ (see `draw`).
+           */
+          'aria-label': 'What was changed',
           'aria-expanded': String(open),
+          dataset: { focus: 'fold-changes' },
           onclick: () => {
             state.changesOpen = !open;
             draw();
@@ -6120,7 +6266,7 @@ export function createCard({
         className: 'tiny',
         textContent: busyLabel('autofill', 'Autofill this form', 'Filling…'),
         disabled: busyIn('page'),
-        onclick: () => act('autofill', {}, (r) => (state.autofillReport = r)),
+        onclick: () => act('autofill', {}, autofilled),
       }),
       /*
        * The upload boxes, filled the same way the text boxes are.
@@ -6398,6 +6544,14 @@ export function createCard({
       value: state.feedback,
       placeholder: 'Anything to change? e.g. “lead with the distributed systems work”.',
       /*
+       * A name of its own. A placeholder is a hint, not a label: it is gone
+       * the moment something is typed, and several readers do not use it as
+       * the name at all — so this box, the letter, the answers and the
+       * "what to change" lines were announced as "edit text", and nothing
+       * said which one the caret was in.
+       */
+      'aria-label': 'What to change about the resume',
+      /*
        * Named, like the letter and the answer boxes, so a repaint mid-sentence
        * can find this box again. Without it this was the one text box `draw`
        * could not restore focus to — the AI status arriving, the resume list
@@ -6451,6 +6605,8 @@ export function createCard({
           h('button', {
             className: onOriginal() ? 'mode on' : 'mode',
             textContent: 'Use Original',
+            // One control whatever it says while it works: see `focusKey`.
+            dataset: { focus: 'mode-original' },
             title:
               'Send this resume exactly as you keep it. Every keyword suggestion below comes off.',
             // Live while the AI reads — see `supersede`.
@@ -6460,6 +6616,7 @@ export function createCard({
           h('button', {
             className: state.showing === 'match' && !onOriginal() ? 'mode on' : 'mode',
             textContent: rebuildLabel('match', 'Keyword match', 'Matching on keywords…'),
+            dataset: { focus: 'mode-match' },
             title: state.offers.match
               ? 'Take every keyword suggestion below. No AI: this posting’s words against the phrasings already in your save.'
               : 'Match this posting’s words against the phrasings already in your save.',
@@ -6484,6 +6641,7 @@ export function createCard({
              * of the posting — and makes "why did it keep that?" unanswerable.
              */
             onclick: () => useAiTailoring(),
+            dataset: { focus: 'mode-ai' },
           }, rebuildLabel('ai', state.offers.ai ? 'AI tailoring' : 'Have AI Tailor', 'Reading the posting…')),
           /*
            * Running it again is a separate press from looking at it.
@@ -6635,6 +6793,7 @@ export function createCard({
           h('button', {
             className: 'primary',
             textContent: busyLabel('render', state.render ? 'Recompile' : 'Build resume', 'Compiling…'),
+            dataset: { focus: 'build' },
             // `compile`, not `resume`: the proposal on screen can be built
             // while the AI is off reading the posting about a different one.
             disabled: busyIn('compile'),
@@ -6866,6 +7025,8 @@ export function createCard({
               h('textarea', {
                 className: 'tall',
                 dataset: { field: 'letter' },
+                // Named, not only hinted: see the feedback box.
+                'aria-label': 'Cover letter',
                 value: state.letter ?? '',
                 placeholder: 'Write the letter here. Saving it makes it the reference for the next one.',
                 /*
@@ -6968,6 +7129,7 @@ export function createCard({
                       className: 'redo',
                       type: 'text',
                       dataset: { field: 'change:letter' },
+                      'aria-label': 'What the AI should change in the letter',
                       value: state.changeLetter ?? '',
                       placeholder: 'Tell the AI what to change (optional)',
                       oninput: (e) => {
@@ -7226,7 +7388,18 @@ export function createCard({
    * where to find it.
    */
   function drawError() {
-    const box = h('div', { className: 'err' }, [h('div', { textContent: state.error })]);
+    /*
+     * An alert, the first time it is drawn. An error was drawn and never
+     * said, so a failure was silent to anybody not looking at the card. But
+     * the card is redrawn for a status read or a clock landing, and an alert
+     * built anew each time would be read out again each time, so later
+     * drawings of the same error are plain text. `alertedError` is forgotten
+     * once no error is showing (see `draw`), so the same failure twice is
+     * said twice; it is declared with `said`, above, since `draw` reads it.
+     */
+    const fresh = state.error !== alertedError;
+    alertedError = state.error;
+    const box = h('div', { className: 'err', role: fresh ? 'alert' : null }, [h('div', { textContent: state.error })]);
     const fix = state.errorFix;
     if (!fix) return box;
 
@@ -7656,6 +7829,13 @@ export function createCard({
           // Named for the question it answers, so a repaint puts the caret
           // back in the same box even if another question arrived above it.
           dataset: { field: `answer:${q.question}` },
+          /*
+           * Named for the question. Every answer box on the card was the same
+           * unnamed "edit text", and the one with a stored answer had no
+           * placeholder to fall back on, so nothing said which question the
+           * caret was answering.
+           */
+          'aria-label': q.question,
           placeholder: q.answer ? '' : 'No stored answer yet — write one and it is saved for next time.',
           oninput: (e) => {
             state.answers[q.question] = e.target.value;
@@ -7676,6 +7856,13 @@ export function createCard({
           h('button', {
             className: 'tiny',
             textContent: 'Insert into form',
+            /*
+             * With the question in its name: there is one of these per
+             * question, and a list of buttons all called "Insert into form"
+             * does not say which answer goes where. Starting with the words
+             * on the button, so voice control and `NOT_A_CHANGE` still match.
+             */
+            'aria-label': `Insert into form: ${q.question}`,
             disabled: !q.fieldId,
             // With the question it answers: the box must still be asking it. See
             // `insertAnswer` in autofill.js.
@@ -7769,6 +7956,8 @@ export function createCard({
           h('button', {
             className: 'link',
             textContent: 'Save for next time',
+            // One per question, so named for it. See "Insert into form".
+            'aria-label': `Save for next time: ${q.question}`,
             onclick: () =>
               act('saveAnswer', {
                 question: q.question,
@@ -7812,6 +8001,7 @@ export function createCard({
                 className: 'redo',
                 type: 'text',
                 dataset: { field: `change:${q.question}` },
+                'aria-label': `What the AI should change in the answer to: ${q.question}`,
                 value: state.changeAnswer[q.question] ?? '',
                 placeholder: 'Tell the AI what to change (optional)',
                 oninput: (e) => {
@@ -8102,7 +8292,7 @@ export function createCard({
           className: 'tiny',
           textContent: busyLabel('autofill', 'Autofill this form', 'Filling…'),
           disabled: busyIn('page'),
-          onclick: () => act('autofill', {}, (r) => (state.autofillReport = r)),
+          onclick: () => act('autofill', {}, autofilled),
         }),
         /*
          * The escape hatch, not the step.
@@ -8201,6 +8391,59 @@ export function createCard({
     Promise.resolve(onAction('panelTarget', target)).catch(() => undefined);
   }
 
+  /*
+   * Which control a button is, across a redraw that replaces it.
+   *
+   * By `data-focus` where a button changes its face — Fold and Unfold are
+   * one control, as are "›" and "⌄", and "Build resume" is "Compiling…"
+   * while it works — and otherwise by its accessible name and which of the
+   * buttons with that name it is, since "Insert into form" appears once per
+   * question. Only buttons and the like: text boxes go back by `data-field`.
+   */
+  let focusOwed = null;
+  const focusables = () => [...card.querySelectorAll('button, select, input[type="checkbox"], summary, a[href]')];
+  const nameOf = (el) => (el.dataset?.focus ? `#${el.dataset.focus}` : (el.getAttribute('aria-label') || el.textContent || '').trim());
+  function focusKey(el) {
+    if (!(el instanceof HTMLElement) || !card.contains(el) || el.dataset?.field) return null;
+    if (!el.matches('button, select, input[type="checkbox"], summary, a[href]')) return null;
+    const name = nameOf(el);
+    const same = focusables().filter((n) => n.tagName === el.tagName && nameOf(n) === name);
+    return { tag: el.tagName, name, nth: Math.max(0, same.indexOf(el)) };
+  }
+  function findByFocusKey(key) {
+    const same = focusables().filter((n) => n.tagName === key.tag && nameOf(n) === key.name);
+    return same[key.nth] ?? null;
+  }
+
+  /*
+   * Escape, on the card: an open menu shuts first, and focus goes back to
+   * the button that opened it; with none open, the card folds out of the
+   * way, as its ⌃ button does. It did nothing at all, which is the one key
+   * everybody tries first to get something off the screen. Heard on the
+   * card, so an Escape pressed in the page's own form is the page's. The
+   * rename box handles its own Escape and keeps it (see `renameMenu`).
+   */
+  card.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || event.defaultPrevented) return;
+    const menu = root.querySelector('.rename-menu:not(.hidden)');
+    if (menu) {
+      event.preventDefault();
+      event.stopPropagation();
+      const opener = menu.parentElement?.querySelector('.open-file');
+      closeRenameMenus();
+      renaming = null;
+      opener?.focus({ preventScroll: true });
+      return;
+    }
+    if (state.folded) return;
+    event.preventDefault();
+    event.stopPropagation();
+    state.folded = true;
+    draw();
+    // On the button that undoes it, wherever focus was before.
+    card.querySelector('[data-focus="fold"]')?.focus({ preventScroll: true });
+  });
+
   function draw() {
     publishPanelTarget();
     /*
@@ -8212,6 +8455,18 @@ export function createCard({
     if (shownTrail) state.trailOpen = shownTrail.open;
     const active = root.activeElement;
     const focused = active && active !== card ? active.dataset?.field : null;
+    /*
+     * And a button, by what it is rather than by the node.
+     *
+     * Only text boxes were put back, so pressing Fold, Unfold, Use Original,
+     * Keyword match, "›" or Build resume with the keyboard dropped focus to
+     * the page's <body> the moment the card redrew: the next Tab started
+     * from the top of the employer's page, and a screen reader said nothing
+     * about where it had gone. Only when focus was in the card — `active` is
+     * null when it is anywhere on the page, and somebody typing into the
+     * page's own form must never be pulled into the card by a redraw.
+     */
+    const pressed = !focused && active && active !== card ? focusKey(active) : null;
     const caret = focused ? { start: active.selectionStart, end: active.selectionEnd } : null;
     /*
      * And how far the box itself is scrolled. The letter box is a fixed height
@@ -8247,6 +8502,7 @@ export function createCard({
     // it is not drawing.
     const small = reducedNow();
     card.classList.toggle('reduced-card', small);
+    if (!state.error) alertedError = null;
     card.replaceChildren(
       ...[drawHead(), drawSentQuestion()].filter(Boolean),
       /*
@@ -8297,11 +8553,46 @@ export function createCard({
       if (body) body.scrollTop = wasScrolled;
     }
 
+    if (pressed) {
+      /*
+       * Back on the same control if there is one to take it. A button that
+       * is gone — Build resume while it builds — or disabled while the card
+       * is busy cannot hold focus, so the card itself takes it (it is a
+       * named region, out of the tab order), and the button is remembered:
+       * if focus is still on the card when it comes back, it goes back to
+       * it.
+       */
+      const back = findByFocusKey(pressed);
+      back?.focus({ preventScroll: true });
+      // Taken, or not: a disabled button, or one in a menu that is now shut,
+      // refuses focus without a word.
+      if (back && root.activeElement === back) focusOwed = null;
+      else {
+        card.focus({ preventScroll: true });
+        focusOwed = pressed;
+      }
+    } else if (focusOwed) {
+      const back = root.activeElement === card ? findByFocusKey(focusOwed) : null;
+      if (root.activeElement !== card) focusOwed = null;
+      else if (back) {
+        back.focus({ preventScroll: true });
+        if (root.activeElement === back) focusOwed = null;
+      }
+    }
+
     if (!focused) return;
     const again = card.querySelector(`[data-field="${CSS.escape(focused)}"]`);
-    if (!again) return;
     // `preventScroll`, or focusing the box would undo the line above.
-    again.focus({ preventScroll: true });
+    again?.focus({ preventScroll: true });
+    /*
+     * A box that is gone, or hidden — a rename box once the name is put —
+     * leaves focus nowhere, so the card takes it rather than the page's
+     * <body>. Still only when focus was in the card to begin with.
+     */
+    if (!again || root.activeElement !== again) {
+      card.focus({ preventScroll: true });
+      return;
+    }
     try {
       again.setSelectionRange(caret.start, caret.end);
     } catch {
@@ -8309,6 +8600,12 @@ export function createCard({
       // Focus is the part that matters; the position is a courtesy.
     }
     again.scrollTop = boxScrolled;
+  }
+
+  /** An autofill's report, kept and said. See `announce`. */
+  function autofilled(r) {
+    state.autofillReport = r;
+    if (r) announce(describeAutofill(r));
   }
 
   /**
@@ -8740,6 +9037,8 @@ export function createCard({
       // Which write this is goes unsaid in the list: asked again before the
       // next filing. See `fileTheCopy`.
       state.filed = null;
+      // ResumeM-M's copy, not one the card filed. See `takeWork`.
+      tookFromStore(stored);
       state.render = null;
       await compile();
     },
@@ -8848,6 +9147,8 @@ export function createCard({
         const again = on ? mergeCopy(on.copy, of, reply.stored) : null;
         const kept = Boolean(again && !again.clashes.length && !sameValue(again.merged, reply.stored));
         state.spec = kept ? again.merged : reply.stored;
+        // Taken as it is there, it is ResumeM-M's copy, not a filing of the card's.
+        if (!kept) tookFromStore(reply.stored);
         if ('version' in reply) state.filed = { id: of.id, version: reply.version ?? null, copy: reply.stored };
         state.render = null;
         state.note = `Updated from ResumeM-M: this copy was edited there.${kept ? ' Your changes here since were kept on top.' : ''}`;
@@ -8999,6 +9300,11 @@ export function createCard({
       if (moved) draw();
     },
 
+    /** Put focus on the card itself, a named region: see `cardFocusOwed` in content.js. */
+    focus() {
+      card.focus({ preventScroll: true });
+    },
+
     /** Hand back the work worth keeping when this page is replaced. */
     takeWork,
 
@@ -9068,6 +9374,9 @@ export function createCard({
     askIfSent({ company = '', onAnswer } = {}) {
       state.sentQuestion = { company: String(company ?? ''), onAnswer };
       draw();
+      // Asked out loud too: a question nobody hears is never answered.
+      const to = String(company ?? '') || analysis?.spec?.generatedFor?.company || analysis?.job?.company || '';
+      announce(to ? `Did you just send your application to ${to}?` : 'Did you just send your application?');
     },
 
     setStatus(text, fix = null) {

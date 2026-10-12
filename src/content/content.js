@@ -464,6 +464,20 @@
 
   let cardHandle = null;
   /*
+   * The chip's Yes was pressed and the card it brings has not had focus yet.
+   * Given to the card as it comes up, and only while focus is on nothing in
+   * particular: somebody who has gone on to type into the page's own form
+   * in the meantime keeps their place.
+   */
+  let cardFocusOwed = false;
+  const giveCardFocus = () => {
+    if (!cardFocusOwed || !cardHandle) return;
+    const now = document.activeElement;
+    if (now && now !== document.body && now !== document.documentElement) return;
+    cardFocusOwed = false;
+    cardHandle.focus?.();
+  };
+  /*
    * Whether this page's card was put away by hand.
    *
    * "Not now" has to mean not now — not "until the next DOM change puts it
@@ -1978,7 +1992,22 @@
       askedFor = location.href;
       createAsk({
         site: location.hostname,
-        onYes: () => void show({ force: true }).catch(quietly),
+        /*
+         * And focus goes to the card it asked about. Pressing Yes took the
+         * chip, and the focused button with it, off the page, so focus fell
+         * to <body>: somebody answering from the keyboard was left at the
+         * top of the page with no idea where the card was. Only if focus is
+         * still nowhere when the card is up — see `giveCardFocus`.
+         */
+        onYes: () => {
+          cardFocusOwed = true;
+          void show({ force: true })
+            .catch(quietly)
+            .finally(() => {
+              giveCardFocus();
+              cardFocusOwed = false;
+            });
+        },
         onNo: () => void setMuted(true).catch(quietly),
       });
       return;
@@ -2037,6 +2066,8 @@
           dismissed = true;
         },
       });
+      // Asked for from the chip: see `cardFocusOwed`.
+      giveCardFocus();
       // A frame's question that came while there was no card. See `askIfSent`.
       putSentQuestion();
       // And where the store stands, for the card to be told when it moves.

@@ -7058,6 +7058,291 @@ async function main() {
     JSON.stringify(askedSend),
   );
 
+  /* ------------------------------------------------------------------ */
+  console.log('\nThe card from the keyboard and a screen reader');
+
+  /*
+   * A card made for these checks: a posting with two suggestions, one
+   * question, the AI off in both places (so its chip is something to press),
+   * and every compile held until the test lets it go.
+   */
+  const A11Y_CARD = (createCard) => {
+    let releaseRender = null;
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', choices: { b_pipeline: 'v_kafka' } },
+        baseLabel: 'New grad resume',
+        tailor: 'match',
+        diff: [{ kind: 'changed', where: 'Acme Co.', from: 'Built a pipeline', to: 'Built a Kafka pipeline' }],
+        rationale: [{ key: 'b_pipeline', from: 'v_base', to: 'v_kafka', toText: 'Built a Kafka pipeline', because: ['kafka'] }],
+      },
+      resumes: [],
+      settings: {},
+      questions: [{ question: 'Why do you want to work here?', answer: '', confident: false, fieldId: 'q1' }],
+      needsCoverLetter: false,
+      onAction: async (action) => {
+        if (action === 'aiStatus') return { active: false, state: 'off', serverEnabled: false };
+        if (action === 'render') {
+          if (window.__holdRender) await new Promise((r) => (releaseRender = r));
+          return { pages: 1, fits: true };
+        }
+        if (action === 'stage') return { currentDir: '/tmp/x', files: ['Jane-Resume.pdf'], application: { id: 'app-1' } };
+        if (action === 'attachmentFiles') return { files: [{ name: 'Jane-Resume.pdf', base64: 'JVBERi0xLjQK', type: 'application/pdf' }] };
+        if (action === 'autofill') return { filled: [{ label: 'Email' }], skipped: [] };
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const card = root.querySelector('.card');
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const until = async (test, ms = 3000) => {
+      for (const end = Date.now() + ms; Date.now() < end; await wait(20)) if (test()) return true;
+      return false;
+    };
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
+    const active = () => {
+      const a = root.activeElement;
+      if (!a) return { outside: document.activeElement?.id || document.activeElement?.tagName || null };
+      return { tag: a.tagName, label: a.getAttribute('aria-label'), text: a.textContent.trim().slice(0, 30), focus: a.dataset?.focus ?? null, isCard: a === card };
+    };
+    // Whatever it says at the moment: "Recompile" once something has compiled.
+    const build = () => [...root.querySelectorAll('button')].find((b) => /^(Build resume|Recompile|Compiling…)$/.test(b.textContent.trim()));
+    return { handle, root, card, wait, until, byText, build, active, release: () => releaseRender?.() };
+  };
+
+  /*
+   * Focus after a redraw. The card rebuilds every child on each redraw, and
+   * only text boxes were put back: a button pressed from the keyboard took
+   * focus down with it to the page's <body>.
+   */
+  const refocus = await inPage(async (createCard, A11Y_CARD) => {
+    const c = (0, eval)(`(${A11Y_CARD})`)(createCard);
+    await c.wait(80);
+    const out = {};
+    // Fold, then Unfold: one control with two faces.
+    const fold = c.root.querySelector('button[aria-label="Fold JobHelper out of the way"]');
+    fold.focus();
+    fold.click();
+    out.afterFold = c.active();
+    const unfold = c.root.querySelector('button[aria-label="Unfold JobHelper"]');
+    unfold.focus();
+    unfold.click();
+    out.afterUnfold = c.active();
+    // The "›" toggle.
+    const chev = c.root.querySelector('.fold-changes');
+    chev.focus();
+    chev.click();
+    out.afterChevron = { ...c.active(), expanded: c.root.activeElement?.getAttribute('aria-expanded') ?? null };
+    // Keyword match and Use Original, which redraw and recompile.
+    for (const name of ['Use Original', 'Keyword match']) {
+      const b = c.byText(name);
+      b.focus();
+      b.click();
+      await c.wait(150);
+      out[name] = c.active();
+    }
+    // Build resume, held while it compiles: the button is disabled and
+    // relabelled, so the card holds focus, and gives it back after.
+    window.__holdRender = true;
+    // "Recompile" by now: the mode buttons above compiled.
+    const build = c.build();
+    build.focus();
+    build.click();
+    await c.wait(50);
+    out.whileBuilding = c.active();
+    out.progressLabel = c.root.querySelector('.progress')?.getAttribute('aria-label') ?? null;
+    window.__holdRender = false;
+    c.release();
+    await c.until(() => c.build() && !c.build().disabled);
+    await c.wait(100);
+    out.afterBuild = c.active();
+    out.said = c.root.querySelector('[role="status"]')?.textContent ?? null;
+
+    // Somebody typing in the page's own form is never pulled into the card.
+    const theirs = document.createElement('textarea');
+    theirs.id = 'their-form-box';
+    document.body.append(theirs);
+    theirs.focus();
+    c.handle.setQuestions([
+      { question: 'Why do you want to work here?', answer: '', confident: false, fieldId: 'q1' },
+      { question: 'Tell us about a project.', answer: '', confident: false, fieldId: 'q2' },
+    ]);
+    c.handle.say('Something landed');
+    await c.wait(100);
+    out.pageForm = { doc: document.activeElement?.id ?? document.activeElement?.tagName, inCard: c.root.activeElement !== null };
+    theirs.remove();
+    return out;
+  }, A11Y_CARD.toString());
+  check('Fold pressed from the keyboard leaves focus on the button, now Unfold', refocus.afterFold.label === 'Unfold JobHelper', JSON.stringify(refocus.afterFold));
+  check('and Unfold leaves it on Fold', refocus.afterUnfold.label === 'Fold JobHelper out of the way', JSON.stringify(refocus.afterUnfold));
+  check('the "›" toggle keeps focus, and says it is open', refocus.afterChevron.text === '⌄' && refocus.afterChevron.expanded === 'true', JSON.stringify(refocus.afterChevron));
+  check('Use Original keeps focus', refocus['Use Original'].text === 'Use Original', JSON.stringify(refocus['Use Original']));
+  check('Keyword match keeps focus', refocus['Keyword match'].text === 'Keyword match', JSON.stringify(refocus['Keyword match']));
+  check('while Build resume works, focus is on the card, not the page', refocus.whileBuilding.isCard === true, JSON.stringify(refocus.whileBuilding));
+  check('and the progress bar is named for what it waits on', /Compiling/.test(refocus.progressLabel ?? ''), String(refocus.progressLabel));
+  check('and back on the button when the build is done', refocus.afterBuild.text === 'Recompile', JSON.stringify(refocus.afterBuild));
+  check('the build finishing is said out loud', /Resume built/.test(refocus.said ?? ''), String(refocus.said));
+  check(
+    'a redraw while somebody types in the page’s form leaves focus in their form',
+    refocus.pageForm.doc === 'their-form-box' && refocus.pageForm.inCard === false,
+    JSON.stringify(refocus.pageForm),
+  );
+
+  /*
+   * What a screen reader is told: names, roles, and announcements made only
+   * when work finishes.
+   */
+  const told = await inPage(async (createCard, A11Y_CARD) => {
+    const c = (0, eval)(`(${A11Y_CARD})`)(createCard);
+    await c.wait(80);
+    const status = c.root.querySelector('[role="status"]');
+    const out = {
+      region: { role: c.card.getAttribute('role'), label: c.card.getAttribute('aria-label') },
+      statusOutsideCard: Boolean(status) && !c.card.contains(status),
+      statusCount: c.root.querySelectorAll('[role="status"]').length,
+    };
+    // The AI chip is a button where it does something.
+    const chip = c.root.querySelector('.ai');
+    out.chip = { tag: chip?.tagName, tabIndex: chip?.tabIndex };
+    // `h` sets aria-* as attributes.
+    const chev = c.root.querySelector('.fold-changes');
+    out.chevron = { label: chev.getAttribute('aria-label'), expanded: chev.getAttribute('aria-expanded') };
+    // Names on the boxes and on the buttons there is one of per question.
+    out.answerName = c.root.querySelector('textarea[data-field^="answer:"]')?.getAttribute('aria-label') ?? null;
+    out.feedbackName = c.root.querySelector('textarea[data-field="feedback"]')?.getAttribute('aria-label') ?? null;
+    out.changeName = c.root.querySelector('input[data-field^="change:"]')?.getAttribute('aria-label') ?? null;
+    out.insertName = c.byText('Insert into form')?.getAttribute('aria-label') ?? null;
+    out.saveName = c.byText('Save for next time')?.getAttribute('aria-label') ?? null;
+    // Redraws say nothing.
+    c.handle.setQuestions([{ question: 'Why do you want to work here?', answer: '', confident: false, fieldId: 'q1' }]);
+    await c.wait(150);
+    out.quietAfterRedraw = status?.textContent ?? null;
+    // An autofill's result is said.
+    const autofill = [...c.root.querySelectorAll('button')].find((b) => /^Autofill/.test(b.textContent.trim()));
+    autofill?.click();
+    await c.wait(200);
+    out.afterAutofill = autofill ? status?.textContent ?? '' : '(no Autofill button)';
+    // The "Did you just send…" question is said.
+    c.handle.askIfSent({ company: 'Acme', onAnswer: () => {} });
+    await c.wait(150);
+    out.afterAsk = status?.textContent ?? '';
+    // An error is an alert, once.
+    c.handle.setStatus('ResumeM-M is not running.');
+    out.errRole = c.root.querySelector('.err')?.getAttribute('role') ?? null;
+    c.handle.say('Redrawn');
+    out.errRoleAgain = c.root.querySelector('.err')?.getAttribute('role') ?? null;
+    // Build, for the file chips and their rename buttons.
+    c.build().click();
+    await c.until(() => c.root.querySelector('.file.liftable .rename .open-file'));
+    out.renameName = c.root.querySelector('.file.liftable .rename .open-file')?.getAttribute('aria-label') ?? null;
+    return out;
+  }, A11Y_CARD.toString());
+  check('the card is a region named JobHelper', told.region.role === 'region' && told.region.label === 'JobHelper', JSON.stringify(told.region));
+  check('with one status line, kept outside what a redraw replaces', told.statusOutsideCard && told.statusCount === 1, JSON.stringify(told));
+  check('the AI chip is a button, reachable by Tab', told.chip.tag === 'BUTTON' && told.chip.tabIndex === 0, JSON.stringify(told.chip));
+  check('the "›" toggle has a name and says whether it is open', told.chevron.label === 'What was changed' && told.chevron.expanded === 'false', JSON.stringify(told.chevron));
+  check('an answer box is named for its question', told.answerName === 'Why do you want to work here?', String(told.answerName));
+  check('the feedback box and the "what to change" line have names', Boolean(told.feedbackName) && /Why do you want/.test(told.changeName ?? ''), JSON.stringify(told));
+  check(
+    'Insert into form and Save for next time say which question they are for',
+    told.insertName === 'Insert into form: Why do you want to work here?' && told.saveName === 'Save for next time: Why do you want to work here?',
+    JSON.stringify([told.insertName, told.saveName]),
+  );
+  check('a redraw announces nothing', told.quietAfterRedraw === '', JSON.stringify(told.quietAfterRedraw));
+  check('an autofill’s result is announced', /Email|filled/i.test(told.afterAutofill), told.afterAutofill);
+  check('the "Did you just send" question is announced', /Did you just send your application to Acme\?/.test(told.afterAsk), told.afterAsk);
+  check('an error is an alert', told.errRole === 'alert', String(told.errRole));
+  check('and not alerted again by the next redraw', told.errRole === 'alert' && told.errRoleAgain === null, String(told.errRoleAgain));
+  check('a file’s "⋯" says which file it renames', told.renameName === 'Rename Jane-Resume.pdf', String(told.renameName));
+
+  /* Escape: a menu shuts first, then the card folds. */
+  const escape = await inPage(async (createCard, A11Y_CARD) => {
+    const c = (0, eval)(`(${A11Y_CARD})`)(createCard);
+    await c.wait(80);
+    const esc = (target) => target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true, cancelable: true }));
+    c.build().click();
+    await c.until(() => c.root.querySelector('.file.liftable .rename .open-file'));
+    await c.wait(100);
+    const opener = c.root.querySelector('.file.liftable .rename .open-file');
+    opener.focus();
+    opener.click();
+    const menuOpen = !c.root.querySelector('.rename-menu').classList.contains('hidden');
+    esc(c.root.activeElement);
+    const out = {
+      menuOpen,
+      menuShut: c.root.querySelector('.rename-menu').classList.contains('hidden'),
+      focusAfterMenu: c.active(),
+      foldedAfterMenu: c.card.classList.contains('folded'),
+    };
+    esc(c.root.activeElement);
+    out.folded = c.card.classList.contains('folded');
+    out.focusAfterFold = c.active();
+    return out;
+  }, A11Y_CARD.toString());
+  check('Escape shuts an open menu first', escape.menuOpen && escape.menuShut && !escape.foldedAfterMenu, JSON.stringify(escape));
+  check('and gives focus back to its button', /^Rename /.test(escape.focusAfterMenu.label ?? ''), JSON.stringify(escape.focusAfterMenu));
+  check('then folds the card, with focus on Unfold', escape.folded && escape.focusAfterFold.label === 'Unfold JobHelper', JSON.stringify(escape));
+
+  /* Contrast, focus rings and motion. */
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const looks = await inPage(async (createCard, A11Y_CARD) => {
+    const c = (0, eval)(`(${A11Y_CARD})`)(createCard);
+    await c.wait(80);
+    const lum = (rgb) => {
+      if (!/\d/.test(rgb)) throw new Error(`not a colour: "${rgb}"`);
+      const [r, g, b] = rgb.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number).map((v) => {
+        v /= 255;
+        return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const ratio = (a, b) => {
+      const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
+      return (x + 0.05) / (y + 0.05);
+    };
+    const hex = getComputedStyle(c.card).getPropertyValue('--faint').trim();
+    const faint = `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(',')})`;
+    // Read now: a computed style is live, and the build below redraws these away.
+    const n = getComputedStyle(c.root.querySelector('.step-head .n'));
+    const stepNumber = ratio(n.color, n.backgroundColor);
+    const box = c.root.querySelector('textarea[data-field^="answer:"]');
+    box.focus();
+    const ring = { style: getComputedStyle(box).outlineStyle, width: getComputedStyle(box).outlineWidth };
+    window.__holdRender = true;
+    c.build().click();
+    await c.wait(50);
+    const spinner = c.root.querySelector('.spinner');
+    const bar = c.root.querySelector('.progress');
+    const out = {
+      faintOnWhite: ratio(faint, 'rgb(255,255,255)'),
+      faintOnSunk: ratio(faint, 'rgb(248,249,250)'),
+      stepNumber,
+      ring,
+      spinner: spinner ? getComputedStyle(spinner).animationName : '(none)',
+      bar: bar ? getComputedStyle(bar, '::before').animationName : '(none)',
+    };
+    window.__holdRender = false;
+    c.release();
+    return out;
+  }, A11Y_CARD.toString());
+  await page.emulateMedia({ reducedMotion: null });
+  check('faint text is 4.5:1 on white and on the sunk panels', looks.faintOnWhite >= 4.5 && looks.faintOnSunk >= 4.5, JSON.stringify(looks));
+  check('so are the step numbers', looks.stepNumber >= 4.5, String(looks.stepNumber));
+  check('a focused text box has a solid 2px ring', looks.ring.style === 'solid' && looks.ring.width === '2px', JSON.stringify(looks.ring));
+  check('with less motion asked for, the spinner and the bar stand still', looks.spinner === 'none' && looks.bar === 'none', JSON.stringify(looks));
+
+  /* The popup and the panel use the same faint grey, and the popup's status line is one. */
+  {
+    const popupHtml = fs.readFileSync(new URL('../src/popup/popup.html', import.meta.url), 'utf8');
+    const panelCss = fs.readFileSync(new URL('../src/panel/panel.css', import.meta.url), 'utf8');
+    const faintIn = (text) => /--faint:\s*(#[0-9a-f]{6})/i.exec(text)?.[1]?.toLowerCase() ?? null;
+    const status = /<[^>]*id="status"[^>]*>/.exec(popupHtml)?.[0] ?? '';
+    check('the popup’s status line is a status', /role="status"/.test(status), status);
+    check('the popup and the panel use the darker faint grey', faintIn(popupHtml) === '#6b7075' && faintIn(panelCss) === '#6b7075', `${faintIn(popupHtml)} ${faintIn(panelCss)}`);
+  }
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);
