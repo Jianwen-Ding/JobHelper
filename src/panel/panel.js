@@ -753,9 +753,17 @@ async function poll() {
   }
   const revision = (await getJson(`${model.serverUrl}/api/revision`, 2500))?.revision;
   if (!revision || revision === model.revision) return;
-  model.revision = revision;
+  /*
+   * The revision is taken only with a list to go with it, as `refresh` does.
+   * It was taken first, so one failed /api/resumes left the panel sure it was
+   * up to date while it showed the old list — a new copy for this posting
+   * missing from the picker until the store happened to change again.
+   */
   const list = await getJson(`${model.serverUrl}/api/resumes`, 4000);
-  if (Array.isArray(list)) model.resumes = list;
+  const fresh = Array.isArray(list) ? list : Array.isArray(list?.resumes) ? list.resumes : null;
+  if (!fresh) return;
+  model.revision = revision;
+  model.resumes = fresh;
   post({ rmm: 'refresh' });
   choose();
   paint();

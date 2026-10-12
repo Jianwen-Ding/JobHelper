@@ -941,13 +941,17 @@ const frameWrites = new Map();
 let settingWrites = Promise.resolve();
 
 function changeSettings(change) {
-  const next = settingWrites
-    .then(async () => {
-      const patch = change(await getSettings());
-      if (patch) await chrome.storage.sync.set(patch);
-    })
-    .catch(() => undefined);
-  settingWrites = next;
+  const next = settingWrites.then(async () => {
+    const patch = change(await getSettings());
+    if (patch) await chrome.storage.sync.set(patch);
+  });
+  /*
+   * The queue goes on past a refused write; the caller hears about it. Both
+   * used to be the same swallowed promise, so a write `chrome.storage.sync`
+   * refused (8KB per item: a long enough `mutedHosts`) came back as success,
+   * and the popup said "Muted <host>." for a site that was not muted.
+   */
+  settingWrites = next.catch(() => undefined);
   return next;
 }
 
@@ -2570,6 +2574,13 @@ const handlers = {
       if (muted) hosts.add(host);
       else hosts.delete(host);
       return { mutedHosts: [...hosts] };
+    }).catch((error) => {
+      // Said in words: Chrome's own is "Resource::kQuotaBytesPerItem quota
+      // exceeded", which tells nobody that the list of muted sites is full.
+      if (/quota/i.test(error?.message ?? '')) {
+        throw new Error('Chrome’s synced settings have no room for another muted site. Unmute a site you no longer need muted (open it, then this popup), and try again.');
+      }
+      throw error;
     });
     return getSettings();
   },

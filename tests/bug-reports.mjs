@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { saveBugReport, listBugReports, syncBugReport, clearBugReport, imageKind, refused } from '../src/shared/bug-reports.js';
+import { saveBugReport, listBugReports, syncBugReport, clearBugReport, imageKind, refused, screenshotCount } from '../src/shared/bug-reports.js';
 
 test('an offline report survives in local storage, retries once, and carries version/time/build', async () => {
   const values = {};
@@ -99,5 +99,69 @@ test('a report the server refuses is marked so, and can be deleted once asked', 
 
 test('a full store says what to do about it', async () => {
   localStore(2000);
-  await assert.rejects(saveBugReport({ text: 'x'.repeat(3000) }, async () => ({})), /storage for reports is full/);
+  await assert.rejects(saveBugReport({ text: 'x'.repeat(3000) }, async () => ({})), /storage for reports is full.*Clear the browser copies/);
+});
+
+/*
+ * Once the inbox has a report, the browser keeps it without its screenshots.
+ *
+ * Measured before this: one report at full size, already in the inbox, still
+ * held 5.6MB of `storage.local`'s 10MB, the next one could not be saved, and
+ * the same full store refused pairing as well. The count is kept so the
+ * reports page can still say how many there were.
+ */
+test('a report the inbox holds keeps no screenshots in the browser, and says how many it had', async () => {
+  const values = localStore();
+  const inbox = async (route, options) => {
+    // The server is sent the screenshots; only the browser's copy lets go of them.
+    assert.equal(JSON.parse(options.body).screenshots.length, 2);
+    return { id: 'x', directory: '/inbox/x' };
+  };
+  const copied = await saveBugReport({ text: 'Copied', screenshots: [PNG, JPEG] }, inbox);
+  assert.ok(copied.receipt);
+  assert.deepEqual(copied.screenshots, []);
+  assert.equal(copied.screenshotCount, 2);
+  assert.equal(screenshotCount(copied), 2);
+  assert.deepEqual(values[`bug-report:${copied.id}`].screenshots, []);
+  // One the inbox has not taken keeps them: they are the only copy.
+  const waiting = await saveBugReport({ text: 'Waiting', screenshots: [PNG] }, async () => { throw new Error('offline'); });
+  assert.deepEqual(values[`bug-report:${waiting.id}`].screenshots, [PNG]);
+  assert.equal(screenshotCount(waiting), 1);
+  // And one copied before this, still carrying them, is let go of when listed.
+  values['bug-report:00000000-0000-4000-8000-000000000000'] = { id: '00000000-0000-4000-8000-000000000000', text: 'Old',
+    screenshots: [PNG, JPEG, WEBP], createdAt: '2020-01-01T00:00:00.000Z', receipt: { id: 'o', directory: '/inbox/o' } };
+  const old = (await listBugReports()).find((report) => report.text === 'Old');
+  assert.equal(screenshotCount(old), 3);
+  assert.deepEqual(values['bug-report:00000000-0000-4000-8000-000000000000'].screenshots, []);
+});
+
+test('with a full report already in the inbox, the next full report still fits', async () => {
+  // 10MB, as `storage.local` is, and two reports of the largest size allowed.
+  localStore(10 * 1024 * 1024);
+  const shot = (n) => 'data:image/png;base64,iVBORw0KGgo' + 'A'.repeat(n - 'data:image/png;base64,iVBORw0KGgo'.length);
+  const big = [shot(1_860_000), shot(1_860_000), shot(1_860_000)];
+  const inbox = async () => ({ id: 'x', directory: '/inbox/x' });
+  assert.ok((await saveBugReport({ text: 'First', screenshots: big }, inbox)).receipt);
+  assert.ok((await saveBugReport({ text: 'Second', screenshots: big }, inbox)).receipt);
+});
+
+/*
+ * A report deleted while its retry was out stays deleted.
+ *
+ * Measured before this: Delete answered "Report deleted from this browser",
+ * and when the retry's POST came back it wrote the report back, notes and
+ * screenshots and all.
+ */
+test('a report deleted while it is being copied is not written back', async () => {
+  const values = localStore();
+  const report = await saveBugReport({ text: 'Private', screenshots: [PNG] }, async () => { throw new Error('offline'); });
+  for (const answer of [() => ({ id: 'x', directory: '/inbox/x' }), () => { throw new Error('still offline'); }]) {
+    values[`bug-report:${report.id}`] = structuredClone(report);
+    await syncBugReport(report.id, async () => {
+      await clearBugReport(report.id, { discard: true });
+      return answer();
+    });
+    assert.deepEqual(await listBugReports(), []);
+    assert.equal(Object.keys(values).length, 0);
+  }
 });

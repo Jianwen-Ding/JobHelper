@@ -57,10 +57,36 @@ export function screenshotIsValid(image) {
  */
 export const refused = (report) => typeof report?.syncStatus === 'number' && report.syncStatus >= 400 && report.syncStatus < 500;
 
+/**
+ * What the browser keeps of a report once the file inbox holds it.
+ *
+ * Everything but the screenshots, and how many there were. The inbox has the
+ * images; the browser copy kept them too, at up to 5.6MB a report, in a
+ * `storage.local` that holds 10MB for the whole extension. Measured: one
+ * report already in the inbox left no room for the next one, and the same
+ * full store then refused pairing and the panel's own preferences.
+ */
+function lighten(report) {
+  if (!report?.receipt || !report.screenshots?.length) return report;
+  return { ...report, screenshots: [], screenshotCount: report.screenshots.length };
+}
+
+/** How many screenshots a report was saved with, whether or not the browser still holds them. */
+export const screenshotCount = (report) => report?.screenshotCount ?? report?.screenshots?.length ?? 0;
+
 export async function listBugReports() {
   const stored = await chrome.storage.local.get(null);
-  return Object.entries(stored).filter(([key]) => key.startsWith(PREFIX)).map(([, report]) => report)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const reports = Object.entries(stored).filter(([key]) => key.startsWith(PREFIX)).map(([, report]) => report);
+  /*
+   * Reports copied to the inbox before the browser copy was lightened still
+   * carry their screenshots, and may be what is filling the store right now.
+   * Let go of them here, where the reports page looks. Best effort: a failed
+   * write leaves them as they were, which is no worse than before.
+   */
+  const heavy = Object.fromEntries(reports.filter((report) => lighten(report) !== report)
+    .map((report) => [PREFIX + report.id, lighten(report)]));
+  if (Object.keys(heavy).length) await chrome.storage.local.set(heavy).catch(() => undefined);
+  return reports.map(lighten).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 /**
@@ -87,16 +113,22 @@ export async function syncBugReport(id, serverFetch) {
   const report = (await chrome.storage.local.get(key))[key];
   if (!report) throw new Error('That report is not in this browser.');
   if (report.receipt) return report;
+  let kept;
   try {
     const receipt = await serverFetch('/api/bug-reports', { method: 'POST', body: JSON.stringify(report) });
-    const kept = { ...report, receipt, syncError: null, syncStatus: null };
-    await chrome.storage.local.set({ [key]: kept });
-    return kept;
+    kept = lighten({ ...report, receipt, syncError: null, syncStatus: null });
   } catch (error) {
-    const kept = { ...report, syncError: error.message, syncStatus: typeof error?.status === 'number' ? error.status : null };
-    await chrome.storage.local.set({ [key]: kept });
-    return kept;
+    kept = { ...report, syncError: error.message, syncStatus: typeof error?.status === 'number' ? error.status : null };
   }
+  /*
+   * Only if it is still there. The POST can take a while, and the person may
+   * have deleted the report in the meantime; writing it back after that
+   * returned a report — notes, screenshots and all — that they had just been
+   * told was gone.
+   */
+  if (!(await chrome.storage.local.get(key))[key]) return kept;
+  await chrome.storage.local.set({ [key]: kept });
+  return kept;
 }
 
 export async function saveBugReport({ text, screenshots = [] }, serverFetch) {
@@ -116,7 +148,7 @@ export async function saveBugReport({ text, screenshots = [] }, serverFetch) {
     await chrome.storage.local.set({ [PREFIX + report.id]: report });
   } catch (error) {
     if (/quota/i.test(error?.message ?? '')) {
-      throw new Error('Browser storage for reports is full. Delete reports below that were never copied to the inbox, then save again.');
+      throw new Error('Browser storage for reports is full. Clear the browser copies of reports below that are already in the file inbox, or delete ones that were never copied, then save again.');
     }
     throw error;
   }

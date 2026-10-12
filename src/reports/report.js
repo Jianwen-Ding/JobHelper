@@ -1,4 +1,4 @@
-import { imageKind, refused } from '../shared/bug-reports.js';
+import { imageKind, refused, screenshotCount } from '../shared/bug-reports.js';
 
 const $ = (id) => document.getElementById(id);
 const send = async (type, payload) => {
@@ -58,7 +58,11 @@ async function inbox() {
   for (const report of reports) {
     const row = document.createElement('article'); row.className = 'report';
     const info = document.createElement('p'); info.className = 'hint';
-    info.textContent = `${new Date(report.createdAt).toLocaleString()} · JobHelper ${report.version} · ${report.screenshots.length} screenshot(s) · ${report.id}`;
+    // A report in the inbox is kept here without its screenshots (they are
+    // in the inbox), so the count is the one it was saved with, said as such.
+    const count = screenshotCount(report);
+    const shots = count && !report.screenshots.length ? `${count} screenshot(s), in the file inbox` : `${count} screenshot(s)`;
+    info.textContent = `${new Date(report.createdAt).toLocaleString()} · JobHelper ${report.version} · ${shots} · ${report.id}`;
     const notes = document.createElement('p'); notes.textContent = report.text;
     const place = document.createElement('p'); place.className = 'hint';
     const turnedDown = refused(report);
@@ -68,10 +72,16 @@ async function inbox() {
     row.append(info, notes, place);
     if (!report.receipt) {
       const retry = document.createElement('button'); retry.textContent = 'Retry copying to inbox';
+      /*
+       * Delete waits while a retry is out. Deleting during one was answered
+       * "Report deleted", and then the retry finished and wrote the report
+       * back. bug-reports.js no longer writes back a deleted report, but the
+       * row should not offer both at once either.
+       */
       retry.onclick = async () => {
-        retry.disabled = true;
+        retry.disabled = true; discard.disabled = true;
         try { await send('syncBugReport', { id: report.id }); await inbox(); }
-        catch (error) { status(error.message, true); retry.disabled = false; }
+        catch (error) { status(error.message, true); retry.disabled = false; discard.disabled = false; }
       };
       /*
        * And a way to let go of it. A report the inbox never took could not be
@@ -82,9 +92,9 @@ async function inbox() {
       discard.title = 'This report was never copied to the file inbox. Deleting it removes the only copy.';
       discard.onclick = async () => {
         if (!confirm('This report was never copied to the file inbox, so this is its only copy. Delete it anyway?')) return;
-        discard.disabled = true;
+        discard.disabled = true; retry.disabled = true;
         try { await send('clearBugReport', { id: report.id, discard: true }); await inbox(); status('Report deleted from this browser.'); }
-        catch (error) { status(error.message, true); discard.disabled = false; }
+        catch (error) { status(error.message, true); discard.disabled = false; retry.disabled = false; }
       };
       row.append(retry, discard);
     } else {

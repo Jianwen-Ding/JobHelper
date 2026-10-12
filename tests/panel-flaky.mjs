@@ -32,22 +32,46 @@ const group = (name) => console.log(`\n${name}`);
 
 async function main() {
   let failResumes = false;
+  // For the poll: a revision that moves, a copy that arrives with it, and a
+  // number of /api/resumes requests to fail before answering again.
+  let revision = 1;
+  let arrived = [];
+  let failNext = 0;
   const server = http.createServer((req, res) => {
     const json = (o, code = 200) => {
       res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
       res.end(JSON.stringify(o));
     };
     if (req.url.startsWith('/health')) return json({ service: 'resumem-m', projectOpen: true, dataDir: '/save' });
-    if (req.url.startsWith('/api/revision')) return json({ revision: 1 });
+    if (req.url.startsWith('/api/revision')) return json({ revision });
     if (req.url.startsWith('/api/resumes')) {
+      if (failNext > 0) {
+        failNext--;
+        return json({ error: 'busy' }, 503);
+      }
       return failResumes
         ? json({ error: 'busy' }, 503)
         : json([
             { id: 'base', label: 'Base', tier: 'base' },
             { id: 'job-x', label: 'Copy for X', tier: 'temporary' },
+            ...arrived,
           ]);
     }
     res.writeHead(200, { 'content-type': 'text/html' });
+    // The editor, as far as the panel hears from it: which resume is open.
+    // Without it the panel has nothing on screen and draws no picker.
+    if (req.url === '/') {
+      return res.end(`<!doctype html><title>Editor</title><script>
+        let open = decodeURIComponent(location.hash.split('/')[1] || '');
+        const say = () => parent.postMessage({ rmm: 'state', resumeId: open, label: null, save: 'saved', view: 'edit', focus: false, exists: true }, '*');
+        addEventListener('message', (e) => {
+          const m = e.data || {};
+          if (m.rmm === 'open') { open = m.id; parent.postMessage({ rmm: 'opened', seq: m.seq, ok: true }, '*'); say(); }
+          if (m.rmm === 'flush') parent.postMessage({ rmm: 'flushed', seq: m.seq, ok: true }, '*');
+        });
+        say();
+      </script>`);
+    }
     res.end('<!doctype html><title>Posting</title><h1>A posting</h1>');
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -113,6 +137,27 @@ async function main() {
     {
       const text = await said();
       check('still nothing said', !/deleted|no longer/i.test(text), text);
+    }
+
+    /*
+     * The same failure, from the poll. It took the new revision before asking
+     * for the list, and kept the old list when that one request failed — so
+     * it believed itself up to date and never asked again, and a copy made in
+     * the store stayed missing from the picker until the store changed again.
+     */
+    group('One /api/resumes request failing during a poll');
+    await panel.bringToFront();
+    const options = () => panel.evaluate(() => [...document.querySelectorAll('#picker option')].map((o) => o.textContent));
+    check('the picker is drawn, from the list as it was', (await options()).includes('Copy for X'), JSON.stringify(await options()));
+    arrived = [{ id: 'job-y', label: 'Copy for Y', tier: 'temporary' }];
+    revision = 2;
+    failNext = 1;
+    // The poll runs every four seconds: one to fail, one to ask again.
+    await panel.waitForTimeout(10_000);
+    {
+      const listed = await options();
+      check('the request that failed was not the last one asked', failNext === 0, `${failNext} left to fail`);
+      check('the new copy is in the picker after all', listed.includes('Copy for Y'), JSON.stringify(listed));
     }
   } finally {
     await context.close();

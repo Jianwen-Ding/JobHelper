@@ -13,6 +13,7 @@
  * server on the way in, so do not point it at the one you use.
  */
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -95,6 +96,32 @@ async function main() {
     const said = await waitFor(async () => (await popup.textContent('#pairSaid')) || undefined);
     check('is refused, saying how many tries are left', /tries left/.test(said ?? ''), said);
     check('and the box stays up', await popup.isVisible('#pairing'));
+
+    /*
+     * The address changed to a server that is not running. The box stayed up
+     * with the last code's answer under it, asking for a code for the server
+     * before — its "Open ResumeM-M" went there — beneath a status line that
+     * said this one was not open.
+     */
+    console.log('The address changed to a server that is not running');
+    const dead = await new Promise((done) => {
+      const probe = net.createServer().listen(0, '127.0.0.1', () => {
+        const { port } = probe.address();
+        probe.close(() => done(`http://127.0.0.1:${port}`));
+      });
+    });
+    await popup.fill('#serverUrl', dead);
+    await popup.dispatchEvent('#serverUrl', 'change');
+    const down = await waitFor(async () => {
+      const text = await popup.textContent('#status');
+      return /not open|did not answer/.test(text ?? '') ? text : undefined;
+    });
+    check('the popup says it is not running', Boolean(down), await popup.textContent('#status'));
+    check('the code box goes away', !(await popup.isVisible('#pairing')));
+    check('and what the last code was told goes with it', (await popup.textContent('#pairSaid')) === '', await popup.textContent('#pairSaid'));
+    await popup.fill('#serverUrl', SERVER);
+    await popup.dispatchEvent('#serverUrl', 'change');
+    check('back at the unpaired server, it asks again', Boolean(await waitFor(() => popup.isVisible('#pairing'))));
 
     console.log('The right code, read off the editor');
     const editor = await context.newPage();

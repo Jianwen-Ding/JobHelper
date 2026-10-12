@@ -1262,6 +1262,31 @@ async function main() {
       check('taking one off leaves the other', JSON.stringify(left) === JSON.stringify(['second.example']), JSON.stringify(left));
     }
 
+    /*
+     * A mute Chrome refused is not reported as a mute.
+     *
+     * `chrome.storage.sync` holds 8KB per item, and a long enough `mutedHosts`
+     * is over it. The write chain swallowed the refusal so that one failure
+     * would not jam every later change, and swallowed it from the caller too:
+     * `muteHost` answered ok, and the popup said "Muted <host>." for a site
+     * that was not muted.
+     */
+    group('A mute the synced settings have no room for');
+    {
+      const full = Array.from({ length: 229 }, (_, i) => `careers-${i}.example-job-board.com`);
+      await ask(driver, 'setSettings', { patch: { mutedHosts: full } });
+      const host = 'jobs.another-board-with-a-long-name.example.org';
+      const refusedMute = await ask(driver, 'muteHost', { host, muted: true });
+      check('the mute is answered as failed', refusedMute.reply?.ok === false, refusedMute.reply?.error ?? 'answered ok');
+      check('in words, not Chrome’s', /no room for another muted site/.test(refusedMute.reply?.error ?? ''), refusedMute.reply?.error);
+      const after = (await ask(driver, 'getSettings', {})).reply?.data?.mutedHosts ?? [];
+      check('and the site is not muted', !after.includes(host) && after.length === full.length, `${after.length} hosts`);
+      // The chain is not jammed by the refusal: the next change still lands.
+      const freed = await ask(driver, 'muteHost', { host: full[0], muted: false });
+      check('a later change still goes through', freed.reply?.ok === true && !freed.reply.data.mutedHosts.includes(full[0]), JSON.stringify(freed.reply?.error));
+      await ask(driver, 'setSettings', { patch: { mutedHosts: [] } });
+    }
+
     /* ---------------------------------------------------------------- *
      * Holding a space in the editor                                     *
      * ---------------------------------------------------------------- */

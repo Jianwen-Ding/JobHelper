@@ -529,7 +529,17 @@ async function boot() {
     const wasMuted = ((await send('getSettings')).mutedHosts ?? []).includes(host);
     // Through the worker, which serialises it: this list is shared with every
     // tab's card and a read here plus a write there loses one of the two.
-    await send('muteHost', { host, muted: !wasMuted });
+    /*
+     * Said as this site's failure, not as "Muted". The worker used to answer
+     * ok for a write Chrome had refused, and this said "Muted <host>." for a
+     * site the card went on appearing on; now it says so, and why.
+     */
+    try {
+      await send('muteHost', { host, muted: !wasMuted });
+    } catch (err) {
+      setStatus(`${host} was not ${wasMuted ? 'unmuted' : 'muted'}. ${err.message}`, 'err');
+      return;
+    }
     await drawMute();
     setStatus(wasMuted ? `${host} is no longer muted — reload the page.` : `Muted ${host}.`, 'ok');
   });
@@ -589,10 +599,17 @@ async function check() {
    * seconds the fetch took to give up.
    */
   setStatus('Checking…');
+  /*
+   * And the pairing box goes with it, along with what the last code got told.
+   * It is put back up only by an answer that says "not paired" (see `failed`).
+   * Kept up, it went on asking for a code for the previous address — its
+   * "Open ResumeM-M" going to that server — under a status line saying the
+   * new one was not running.
+   */
+  $('pairing').hidden = true;
+  $('pairSaid').textContent = '';
   try {
     await send('ping');
-    // Answered, so whatever was asked for pairing has been settled.
-    if (current()) $('pairing').hidden = true;
     const resumes = await send('listResumes');
     const settings = await send('getSettings');
     if (!current()) return;
