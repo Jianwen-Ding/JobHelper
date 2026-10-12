@@ -388,12 +388,97 @@ const CONTACT_SHAPE = [/[^\s@]+@[^\s@]+\.[^\s@]+/, /\+?\(?\d[\d\s().-]{7,}\d/];
 
 /*
  * Parameter names that carry a credential or an identifier rather than a
- * place, read a word at a time: `access_token`, `resourceKey`, `X-Amz-
- * Signature`, `sessionid`. A word, not a substring, because `keywords`,
- * `author` and `design` are ordinary parameters on ordinary links; and the
- * end of a word, so `resourcekey` and `passcode` are caught with `key`.
+ * place: `access_token`, `resourceKey`, `X-Amz-Signature`, `sessionid`.
+ *
+ * A list, matched against whole words of the name (and against neighbouring
+ * words run together, so `resourceKey` is `resourcekey` and `api_key` is
+ * `api_key`), and nothing looser. Read by the end of a word, `key` refused
+ * Dropbox's `rlkey` and `monkey`, `code` the Go playground's `code` and every
+ * `zipcode` and `country_code`, `pass` `bypass`, and `session` a page number
+ * called `session=42`. Those are links people paste every day.
  */
-const SECRET_PARAM_WORD = /(token|key|secret|pass(word|wd)?|pwd|auth|sig(nature)?|session(id)?|sid|code|otp|ssn|dob|jwt|credentials?)$/i;
+const SECRET_PARAM = new Set([
+  'token',
+  'access_token',
+  'refresh_token',
+  'id_token',
+  'apikey',
+  'api_key',
+  'resourcekey',
+  'passcode',
+  'password',
+  'passwd',
+  'pwd',
+  'secret',
+  'client_secret',
+  'sessionid',
+  'session_id',
+  'sid',
+  'sig',
+  'signature',
+  'x-amz-signature',
+  'ssn',
+  'dob',
+  'birthdate',
+  'birthday',
+  'otp',
+  'jwt',
+  'auth',
+  'authorization',
+  'credential',
+  'credentials',
+]);
+
+/** Names under which a number is a telephone number, and a date a birthday. */
+const PHONE_PARAM = /^(phone|tel|telephone|mobile|cell)$/;
+const BIRTH_PARAM = /^(dob|birth|birthdate|birthday|born)$/;
+
+/*
+ * A telephone number by its punctuation: a leading `+`, an area code in
+ * brackets, or the 3-3-4 groups people write. A run of bare digits is an id
+ * far more often in a link — a GitHub comment, a playlist, a record — and is
+ * read as a telephone number only under a name that says it is one.
+ */
+const PHONE_PUNCTUATED = /(^|[^\w])(\+\d[\d\s().-]{7,}\d|\(\d{2,4}\)\s?\d{3,4}[\s.-]?\d{3,4}|\d{3}[\s.-]\d{3}[\s.-]\d{4})(?!\w)/;
+
+/*
+ * Values shaped like a credential whatever they are called: a JWT, and the
+ * prefixes GitHub, OpenAI-style, AWS and Slack keys carry.
+ */
+const TOKEN_SHAPE = [
+  /eyJ[\w-]+\.[\w-]+\./,
+  /\b(gh[pousr]_|github_pat_)[A-Za-z0-9_]{16,}/,
+  /\bsk-[A-Za-z0-9_-]{16,}/,
+  /\bAKIA[0-9A-Z]{16}\b/,
+  /\bxox[abposr]-[A-Za-z0-9-]{8,}/,
+];
+
+/*
+ * Shapes refused in a value as they are in any answer — an SSN with its
+ * dashes, an IBAN, a National Insurance number, a card number in its groups
+ * of four, an identifier after its label — but not the bare digit runs and
+ * dates `looksPrivate` also refuses, which in a link are an id, a time or a
+ * page: those are below, under the names that make them personal.
+ */
+const LINK_VALUE_SHAPE = [
+  /\b\d{3}(?:\s?[-–.]\s?| )\d{2}(?:\s?[-–.]\s?| )\d{4}\b/,
+  /\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){3,7}/,
+  /\b[A-CEGHJ-PR-TW-Z]{2} ?\d{2} ?\d{2} ?\d{2} ?[A-D]\b/i,
+  /\b\d{4}([ -])\d{4}\1\d{4}\1\d{1,7}\b/,
+];
+
+const DATE_SHAPE = /^\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}$/;
+/*
+ * A date is a birthday under a birth name, and otherwise only when it is
+ * one somebody applying for work could have been born on: the 15th of
+ * January this year is a date filter, 1990-01-02 is somebody's age.
+ */
+function birthLikeDate(value, birthName) {
+  if (!DATE_SHAPE.test(value)) return false;
+  if (birthName) return true;
+  const year = value.match(/\b\d{4}\b/)?.[0];
+  return Boolean(year) && Number(year) <= new Date().getFullYear() - 14;
+}
 
 /**
  * Whether a link carries something private in the parts of it that are not
@@ -405,8 +490,10 @@ const SECRET_PARAM_WORD = /(token|key|secret|pass(word|wd)?|pwd|auth|sig(nature)
  * `https://user:pass@x.com/` and a Drive link's `resourcekey=` all went into
  * the bank and were offered to the next form. The scheme, the host and the
  * path are still read as a place. What is refused is a link that logs in as
- * somebody, and a query or fragment parameter that is named like a secret or
- * whose value, decoded, would be refused if it had been typed on its own.
+ * somebody, a query or fragment parameter named like a secret, and a value
+ * that is shaped like one, or like an address, a telephone number or a
+ * birthday. Every digit run and date was refused at first, and with it a
+ * YouTube time, a GitHub comment, a playlist and a date filter.
  */
 function linkCarriesPrivate(said, depth = 0) {
   let url;
@@ -429,11 +516,27 @@ function linkCarriesPrivate(said, depth = 0) {
       // Already decoded by URLSearchParams, or a stray `%`: read it as it is.
     }
     // The name a word at a time, with camelCase and the separators taken apart.
-    const words = name.replace(/([a-z])([A-Z])/g, '$1 $2').split(/[^A-Za-z0-9]+/).filter(Boolean);
-    if (neverRemember(words.join(' ')) || words.some((w) => SECRET_PARAM_WORD.test(w))) return true;
+    const words = name
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean);
+    const named = [...words, words.join(''), words.join('_'), words.join('-')];
+    for (let i = 1; i < words.length; i++) named.push(words[i - 1] + words[i], `${words[i - 1]}_${words[i]}`);
+    if (named.some((w) => SECRET_PARAM.has(w))) return true;
     // A link inside a link — a redirect — is read the same way, once more.
     if (depth < 2 && /^https?:\/\//i.test(decoded)) return linkCarriesPrivate(decoded, depth + 1);
-    return [name, decoded].some((t) => looksPrivate(t) || CONTACT_SHAPE.some((re) => re.test(t)));
+    const phoneName = words.some((w) => PHONE_PARAM.test(w));
+    const birthName = words.some((w) => BIRTH_PARAM.test(w));
+    return [name, decoded].some(
+      (t) =>
+        CONTACT_SHAPE[0].test(t) ||
+        (phoneName ? CONTACT_SHAPE[1].test(t) : PHONE_PUNCTUATED.test(t)) ||
+        birthLikeDate(t, birthName) ||
+        TOKEN_SHAPE.some((re) => re.test(t)) ||
+        LINK_VALUE_SHAPE.some((re) => re.test(t)) ||
+        labelledIdentifier(t),
+    );
   });
 }
 
@@ -503,7 +606,13 @@ export function worthRememberingTyped({ question, answer, company } = {}) {
    * are read in full by `linkCarriesPrivate`.
    */
   const oneLink = /^https?:\/\/\S+$/i.test(said) && said.length <= 200;
-  if (looksPrivate(said) || (oneLink ? linkCarriesPrivate(said) : CONTACT_SHAPE.some((re) => re.test(said)))) {
+  /*
+   * The query and the fragment of a link are read by `linkCarriesPrivate`
+   * alone. Read here as well, a Scholar `cluster=` id was a card number to
+   * `looksPrivate`, whatever was decided there.
+   */
+  const place = oneLink ? said.replace(/[?#].*$/, '') : said;
+  if (looksPrivate(place) || (oneLink ? linkCarriesPrivate(said) : CONTACT_SHAPE.some((re) => re.test(said)))) {
     return { keep: false, why: 'the answer looks personal, so it is not kept' };
   }
   if (namesThem(said, company)) return { keep: false, why: 'the answer depends on the employer, so it is not kept' };

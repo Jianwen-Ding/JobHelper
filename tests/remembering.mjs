@@ -552,3 +552,57 @@ test('an ordinary link, with the query strings sites add, is still kept', () => 
     assert.equal(said.keep, true, `${answer} was refused: ${said.why}`);
   }
 });
+
+/*
+ * The parameter names were read by the end of a word, and every digit run
+ * and date in a value was refused: so `rlkey`, `monkey`, `zipcode`, `code`,
+ * `bypass` and `session` were secrets, a GitHub comment and a ten-digit id
+ * were telephone numbers, a Scholar cluster a card, and a date filter a
+ * birthday — all of them links people paste, refused as personal. And a JWT
+ * under a name that says nothing was kept.
+ */
+const LINK_KEEP_TOO = [
+  'https://www.dropbox.com/scl/fi/abc/resume.pdf?rlkey=abc123xyz&dl=0',
+  'https://www.credential.net/abc?key=1',
+  'https://x.com/?monkey=1',
+  'https://go.dev/play/?code=fmt.Println',
+  'https://play.golang.org/p/abc?code=fmt.Println',
+  'https://x.com/?zipcode=02139',
+  'https://x.com/?country_code=US',
+  'https://x.com/?session=42',
+  'https://x.com/?bypass=1',
+  'https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLx0sYbCqOb8TBPRdmBHs5Iftvv9TPboYG',
+  'https://github.com/jay-example/repo/issues/1#issuecomment-1234567890',
+  'https://x.com/?id=1234567890',
+  'https://scholar.google.com/scholar?cluster=12345678901234567',
+  'https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=120s',
+  'https://youtu.be/dQw4w9WgXcQ?t=120',
+  'https://x.com/events?date=2024-01-15',
+  'https://x.com/?v=1.2.3',
+];
+
+const LINK_REFUSE_TOO = [
+  'https://x.com/reset?t=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc',
+  'https://x.com/?accessToken=abc',
+  'https://x.com/?sessionId=abc',
+  'https://x.com/?client_secret=abc',
+  'https://x.com/?birthDate=2001-02-03',
+  'https://x.com/?dob=2015-02-03',
+  'https://x.com/?k=%2B1%20415%20555%201234',
+  'https://x.com/?k=(415)%20555-1234',
+  'https://x.com/?k=415-555-1234',
+  'https://x.com/?mobile=4155551234',
+  'https://x.com/?k=sk-abcdef1234567890abcdef1234567890',
+];
+
+test('a link’s parameters are read by whole names and by shapes that mean something', () => {
+  for (const answer of LINK_KEEP_TOO) {
+    const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
+    assert.equal(said.keep, true, `${answer} was refused: ${said.why}`);
+  }
+  for (const answer of LINK_REFUSE_TOO) {
+    const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
+    assert.equal(said.keep, false, `${answer} was kept`);
+    assert.match(said.why, /personal/, `${answer}: ${said.why}`);
+  }
+});

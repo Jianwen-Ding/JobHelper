@@ -1285,6 +1285,33 @@ async function main() {
       const freed = await ask(driver, 'muteHost', { host: full[0], muted: false });
       check('a later change still goes through', freed.reply?.ok === true && !freed.reply.data.mutedHosts.includes(full[0]), JSON.stringify(freed.reply?.error));
       await ask(driver, 'setSettings', { patch: { mutedHosts: [] } });
+
+      /*
+       * Chrome's limit on writes a minute says "quota" too. Any message
+       * with the word in it was read as a full list, so an unmute refused by
+       * that limit was told there was no room for another muted site.
+       */
+      const sw = context.serviceWorkers()[0] ?? worker;
+      await sw.evaluate(() => {
+        const sync = chrome.storage.sync;
+        globalThis.__jhRealSyncSet = sync.set;
+        sync.set = async () => {
+          throw new Error('This request exceeds the MAX_WRITE_OPERATIONS_PER_MINUTE quota.');
+        };
+      });
+      try {
+        const limited = await ask(driver, 'muteHost', { host: full[1], muted: false });
+        check('an unmute refused for writing too often is failed', limited.reply?.ok === false, JSON.stringify(limited.reply));
+        check(
+          'and not said to be out of room',
+          !/no room/.test(limited.reply?.error ?? '') && /MAX_WRITE_OPERATIONS_PER_MINUTE/.test(limited.reply?.error ?? ''),
+          limited.reply?.error,
+        );
+      } finally {
+        await sw.evaluate(() => {
+          chrome.storage.sync.set = globalThis.__jhRealSyncSet;
+        });
+      }
     }
 
     /* ---------------------------------------------------------------- *

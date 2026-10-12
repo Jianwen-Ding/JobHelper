@@ -1741,7 +1741,17 @@ export function createCard({
      * "Not compiled yet" over the AI's proposal, which is true.
      */
     if (work.render && (!work.spec || state.spec === work.spec)) state.render = work.render;
-    if (work.staged) state.staged = work.staged;
+    /*
+     * The folder, without what its build said. The stage's reply comes with
+     * the work for the folder path, and `replaced` and `warnings` came with
+     * it: the amber "files that were sent have been replaced" said once was
+     * said again on every page of the application after, though nothing had
+     * been built there. Warnings belong to the reply they came in.
+     */
+    if (work.staged) {
+      const { replaced: _replaced, warnings: _warnings, ...folder } = work.staged;
+      state.staged = folder;
+    }
     // One way only: the reports do not survive the page, so if this were
     // assigned rather than or-ed, walking from the form you filled to the next
     // step would say the application had never been touched.
@@ -2989,6 +2999,31 @@ export function createCard({
   }
   const ownVersion = (stored) => sent.includes(specKey(stored));
 
+  /*
+   * The copies this card has filed that the store has not yet said it holds:
+   * written, with no reply back. Only these may be taken as the card's own
+   * when a filing is refused over one (see `fileNow`). `sent` will not do
+   * there: it keeps copies the store already confirmed, and a ResumeM-M edit
+   * that comes back to one of them — most often undoing the card's switch
+   * there — read as the card's own and was filed over with no word. Once the
+   * store confirms a filing, it holds that one, so every copy sent up to it
+   * is either written over or was never written, and the store holding one
+   * again is an edit made elsewhere.
+   */
+  const unconfirmed = [];
+  function filingOut(spec) {
+    const key = specKey(spec);
+    const at = unconfirmed.indexOf(key);
+    if (at >= 0) unconfirmed.splice(at, 1);
+    unconfirmed.push(key);
+    if (unconfirmed.length > SENT_KEEP) unconfirmed.shift();
+  }
+  function filingConfirmed(spec) {
+    const at = unconfirmed.indexOf(specKey(spec));
+    unconfirmed.splice(0, at >= 0 ? at + 1 : unconfirmed.length);
+  }
+  const unconfirmedFiling = (stored) => unconfirmed.includes(specKey(stored));
+
   /** What files the copy it is given: see `sentOut`. */
   const FILES_THE_COPY = new Set(['stage', 'bundle', 'openWorkspace']);
 
@@ -3073,6 +3108,7 @@ export function createCard({
       // Asked again as it goes: this stage was decided on before any send.
       if (action === 'stage' && stagingStopped()) return { alreadySent: true };
       sentOut(spec);
+      filingOut(spec);
       // Asked for on the card after the send: see `NOT_A_CHANGE`.
       const evenIfSent = action === 'stage' && state.sent && state.reopened ? { evenIfSent: true } : {};
       const result = await onAction(action, { ...payload, spec, ...(basedOn !== undefined ? { basedOn } : {}), ...evenIfSent });
@@ -3081,7 +3117,10 @@ export function createCard({
         return result;
       }
       if (!result?.conflict) {
-        if (result && result.resumeVersion !== undefined) state.filed = { id: spec.id, version: result.resumeVersion, copy: spec };
+        if (result && result.resumeVersion !== undefined) {
+          state.filed = { id: spec.id, version: result.resumeVersion, copy: spec };
+          filingConfirmed(spec);
+        }
         if (said) tookOver(payload.spec, spec, said);
         return result;
       }
@@ -3097,15 +3136,18 @@ export function createCard({
       const mine = await Promise.resolve(onAction('ownWrite', { id: spec.id, from: basedOn ?? null, to: version })).catch(() => null);
       state.filed = { id: spec.id, version, copy: current };
       /*
-       * Or a copy this card let out itself (`ownVersion`), whatever the
-       * worker can follow. The worker learns of a filing from the store's
-       * reply, and a reply can be lost: the worker stopped while a stage was
-       * out, and the write landed with nothing noted. That write, refused
-       * over, read as an edit made elsewhere, and where the switch just made
-       * here touched the same place it was taken over that switch, and said.
-       * Filed over as it stands, like the worker's own.
+       * Or a copy this card filed itself and never heard back about
+       * (`unconfirmedFiling`), whatever the worker can follow. The worker
+       * learns of a filing from the store's reply, and a reply can be lost:
+       * the worker stopped while a stage was out, and the write landed with
+       * nothing noted. That write, refused over, read as an edit made
+       * elsewhere, and where the switch just made here touched the same
+       * place it was taken over that switch, and said. Filed over as it
+       * stands, like the worker's own. Not any copy the card ever sent: one
+       * the store confirmed and that is back there again was put back in
+       * ResumeM-M, and is an edit to keep.
        */
-      if (mine?.own || ownVersion(current) || !current) continue;
+      if (mine?.own || unconfirmedFiling(current) || !current) continue;
       const { merged, clashes } = on?.copy ? mergeCopy(on.copy, spec, current) : { merged: current, clashes: ['(no base)'] };
       const next = clashes.length ? current : merged;
       // Only an edit that changes the copy is one to take and say.

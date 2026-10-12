@@ -343,6 +343,44 @@ test('a closed tab’s letter is recovered into one tab, not two loading togethe
 });
 
 /*
+ * The tab that won the claim closed before the work could be written into it.
+ * `changeTrail` writes nothing into a closed tab — and the parks were dropped
+ * anyway, so the letter was in no tab and no park, and every tab that asked
+ * after was told there was nothing. Kept parked, the next tab gets it.
+ */
+test('a closed tab’s letter is not lost when the tab that claimed it closes too', async () => {
+  const onPosting = { url: posting, company: 'Helios', role: 'Platform Engineer', kind: 'posting' };
+  for (const key of Object.keys(session)) if (key.startsWith('jh-orphan:')) delete session[key];
+  seed(650, { work: { letter: 'CLAIMED-THEN-CLOSED' } });
+  openTabs.delete(650);
+  await listeners.removed(650);
+  seed(651);
+  seed(652);
+  const ss = chrome.storage.session;
+  const realSet = ss.set;
+  let closing = null;
+  // The moment the claim is written down, the tab that made it closes.
+  ss.set = async (obj) => {
+    const done = await realSet.call(ss, obj);
+    if (!closing && Object.keys(obj).some((k) => k.startsWith('jh-claimed:'))) {
+      openTabs.delete(651);
+      closing = listeners.removed(651);
+    }
+    return done;
+  };
+  try {
+    const won = await send('takeWork', { page: onPosting }, { id: 651 });
+    await closing;
+    assert.equal(won.data?.work, null);
+  } finally {
+    ss.set = realSet;
+  }
+  const next = await send('takeWork', { page: onPosting }, { id: 652 });
+  assert.equal(next.data?.work?.letter, 'CLAIMED-THEN-CLOSED', `lost: ${JSON.stringify(next.data)}`);
+  openTabs.delete(652);
+});
+
+/*
  * And across a restart. The claim is what says an entry was taken, and a
  * worker stopped after one tab claimed it and before the copies under the
  * application's other pages were dropped wakes with those copies still
@@ -371,4 +409,61 @@ test('a claim made before the worker restarted still holds after it', async () =
   seed(702, { pages: [onForm] });
   const second = await send('takeWork', { page: onForm }, { id: 702 });
   assert.equal(second.data?.work, null, `handed again after a restart: ${JSON.stringify(second.data)}`);
+});
+
+/*
+ * A worker stopped after the claim and before the work was written into the
+ * tab that made it. The mark stayed, and stood against every tab, the one
+ * that claimed included: it reloaded to nothing, and the park was swept a
+ * day later with the letter in it. The tab that claimed gets it when it asks
+ * again; any other, while that one is still open, does not.
+ */
+test('a claim cut off by a restart does not stand against the tab that made it', async () => {
+  const onPosting = { url: posting, company: 'Helios', role: 'Platform Engineer', kind: 'posting' };
+  for (const key of Object.keys(session)) if (key.startsWith('jh-orphan:') || key.startsWith('jh-claimed:')) delete session[key];
+  seed(710, { work: { letter: 'CUT-OFF' } });
+  openTabs.delete(710);
+  await listeners.removed(710);
+  seed(711);
+  const ss = chrome.storage.session;
+  const realSet = ss.set;
+  // The trail write never finishes: the worker is stopped while it is out.
+  ss.set = (obj) => ('trail:711' in obj ? new Promise(() => {}) : realSet.call(ss, obj));
+  void send('takeWork', { page: onPosting }, { id: 711 });
+  await delay(200);
+  ss.set = realSet;
+  assert.ok(Object.keys(session).some((k) => k.startsWith('jh-claimed:')), 'claimed before the stop');
+  await import('../src/background/service-worker.js?restarted-again');
+  const again = await send('takeWork', { page: onPosting }, { id: 711 });
+  assert.equal(again.data?.work?.letter, 'CUT-OFF', `the claimant got nothing: ${JSON.stringify(again.data)}`);
+  seed(712);
+  const other = await send('takeWork', { page: onPosting }, { id: 712 });
+  assert.equal(other.data?.work, null);
+  openTabs.delete(711);
+  openTabs.delete(712);
+
+  // And once the tab that claimed has closed as well, the next tab gets it.
+  for (const key of Object.keys(session)) if (key.startsWith('jh-orphan:') || key.startsWith('jh-claimed:')) delete session[key];
+  seed(720, { work: { letter: 'CLAIMANT-GONE' } });
+  openTabs.delete(720);
+  await listeners.removed(720);
+  seed(721);
+  ss.set = (obj) => ('trail:721' in obj ? new Promise(() => {}) : realSet.call(ss, obj));
+  void send('takeWork', { page: onPosting }, { id: 721 });
+  await delay(200);
+  ss.set = realSet;
+  await import('../src/background/service-worker.js?restarted-thrice');
+  const realGet = chrome.tabs.get;
+  chrome.tabs.get = async (id) => {
+    if (!openTabs.has(id)) throw new Error(`No tab with id: ${id}.`);
+    return { id };
+  };
+  try {
+    openTabs.delete(721);
+    seed(722);
+    const after = await send('takeWork', { page: onPosting }, { id: 722 });
+    assert.equal(after.data?.work?.letter, 'CLAIMANT-GONE', `held for a closed tab: ${JSON.stringify(after.data)}`);
+  } finally {
+    chrome.tabs.get = realGet;
+  }
 });

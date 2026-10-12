@@ -571,19 +571,42 @@ const claimKey = (entry) => `jh-claimed:${entry?.tab ?? '-'}:${entry?.at ?? 0}`;
  * copies still parked and nothing to say they were taken. `sweepOrphans`
  * expires the marks once the entry they name would be stale anyway.
  */
-function claimPark(entry) {
+function claimPark(entry, tabId) {
   const key = claimKey(entry);
   return inTurn(key, async () => {
-    const stored = await session().get(key).catch(() => ({}));
-    if (stored?.[key]) return false;
+    const mark = (await session().get(key).catch(() => ({})))?.[key];
+    /*
+     * A mark names the tab that made it, and does not stand against that tab
+     * or against a tab that is no longer there. A worker stopped between the
+     * claim and the drop left a mark that blocked every tab, the one that
+     * claimed included, and the park was swept a day later with the letter
+     * in it: the tab that claimed asks again when it reloads, and must get
+     * it. And a claimant closed before it could take the work has nothing
+     * to hold it for. Another tab still open keeps its claim.
+     */
+    if (mark) {
+      const theirs = mark.tab !== undefined && mark.tab !== tabId;
+      const stillOpen = theirs ? Boolean(await chrome.tabs.get(mark.tab).catch(() => null)) : true;
+      if (mark.tab === undefined || (theirs && stillOpen)) return false;
+    }
     /*
      * A mark that cannot be written still hands the work over. The worst
      * that costs is the double this exists to stop; refusing would lose the
      * letter outright, which nothing gets back. See `takeWork`.
      */
-    await session().set({ [key]: { at: Date.now() } }).catch(() => undefined);
+    await session().set({ [key]: { at: Date.now(), tab: tabId } }).catch(() => undefined);
     return true;
   }).catch(() => true);
+}
+
+/**
+ * Let a claim go when the work did not reach the tab that made it — it
+ * closed in the middle, or its trail could not be written — so the park
+ * stays takeable by the next tab on the application, not by nobody.
+ */
+function releaseClaim(entry) {
+  const key = claimKey(entry);
+  return inTurn(key, () => session().remove(key)).catch(() => undefined);
 }
 
 async function parkWork(url, entry) {
@@ -2035,7 +2058,7 @@ const handlers = {
        * in storage for the moment it takes the winner to drop it, and it is
        * not this tab's. See `claimPark`.
        */
-      if (rescued.work && fresh && !(await claimPark(rescued))) return { work: trail.work ?? null };
+      if (rescued.work && fresh && !(await claimPark(rescued, tab?.id))) return { work: trail.work ?? null };
       // Claimed or expired, this one goes either way. Leaving the stale ones
       // behind is how the space fills up; see `sweepOrphans`. The others stay
       // for the job they belong to.
@@ -2064,12 +2087,23 @@ const handlers = {
           if (rescued.save) saveOf.set(tab.id, rescued.save);
           // Onto the trail as it is in the turn, so whatever landed since it
           // was read above is kept alongside. See `changeTrail`.
-          await changeTrail(tab.id, (now) => ({
+          const into = await changeTrail(tab.id, (now) => ({
             ...now,
             work: rescued.work,
             save: rescued.save ?? now.save,
             at: Date.now(),
           }));
+          /*
+           * Not written — the tab closed while this was going on, which
+           * `changeTrail` declines to write into, or there was no room — and
+           * the parks were dropped all the same: the letter was then nowhere,
+           * and the claim kept every other tab from asking. Kept where they
+           * are, the claim let go, the next tab on the application gets it.
+           */
+          if (into.closed || !into.written) {
+            await releaseClaim(rescued);
+            return { work: trail.work ?? null };
+          }
         }
         await dropPark(key, rescued);
         // And its copies under the application's other pages.
@@ -2652,7 +2686,10 @@ const handlers = {
     }).catch((error) => {
       // Said in words: Chrome's own is "Resource::kQuotaBytesPerItem quota
       // exceeded", which tells nobody that the list of muted sites is full.
-      if (/quota/i.test(error?.message ?? '')) {
+      // Only that one, and only for a mute: Chrome's limit on writes a
+      // minute is a "quota" too, and an unmute refused by it was told there
+      // was no room for another muted site — which unmuting does not need.
+      if (muted && /QUOTA_BYTES|kQuotaBytes/.test(error?.message ?? '')) {
         throw new Error('Chrome’s synced settings have no room for another muted site. Unmute a site you no longer need muted (open it, then this popup), and try again.');
       }
       throw error;

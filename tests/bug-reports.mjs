@@ -165,3 +165,52 @@ test('a report deleted while it is being copied is not written back', async () =
     assert.equal(Object.keys(values).length, 0);
   }
 });
+
+/*
+ * And a deletion that lands between a look and a write. The reports page
+ * lightens a report it lists, and the copy to the inbox writes once it is
+ * back, each after looking that the report is still there — and with a store
+ * that takes its time, "Clear browser copy" or "Delete" pressed in that gap
+ * was answered "gone", and the report written back a moment later.
+ */
+test('a report deleted between a look and a write stays deleted', async () => {
+  const pause = (ms) => new Promise((done) => setTimeout(done, ms));
+  const values = {};
+  globalThis.chrome = { runtime: { getManifest: () => ({ version: '0.1.0' }), getURL: (path) => path },
+    storage: { local: {
+      async get(key) {
+        await pause(20);
+        return key === null ? structuredClone(values) : (key in values ? { [key]: structuredClone(values[key]) } : {});
+      },
+      async set(next) {
+        await pause(20);
+        Object.assign(values, structuredClone(next));
+      },
+      async remove(key) {
+        await pause(5);
+        delete values[key];
+      },
+    } } };
+  // In the inbox from before lightening, so listing it writes it back lighter.
+  const listed = '11111111-2222-3333-4444-555555555555';
+  values[`bug-report:${listed}`] = { id: listed, text: 'x', screenshots: [PNG], createdAt: new Date().toISOString(), receipt: { path: '/inbox/x' } };
+  const listing = listBugReports();
+  await pause(1);
+  assert.equal((await clearBugReport(listed)).cleared, true);
+  await listing;
+  await pause(50);
+  assert.equal(`bug-report:${listed}` in values, false, 'brought back by the listing');
+
+  // Deleted after the copy's look that it is still there, before its write.
+  const copied = '11111111-2222-3333-4444-666666666666';
+  values[`bug-report:${copied}`] = { id: copied, text: 'y', screenshots: [], createdAt: new Date().toISOString(), receipt: null };
+  const syncing = syncBugReport(copied, async () => {
+    await pause(30);
+    return { path: '/inbox/y' };
+  });
+  await pause(20 + 30 + 2);
+  await clearBugReport(copied, { discard: true });
+  await syncing;
+  await pause(50);
+  assert.equal(`bug-report:${copied}` in values, false, 'brought back by the copy');
+});

@@ -74,6 +74,22 @@ function lighten(report) {
 /** How many screenshots a report was saved with, whether or not the browser still holds them. */
 export const screenshotCount = (report) => report?.screenshotCount ?? report?.screenshots?.length ?? 0;
 
+/*
+ * Every write of a report, one at a time, each with its own look at whether
+ * the report is still there. A check made outside the turn and a write made
+ * after it let a deletion land between them: the reports page lightening a
+ * report as "Clear browser copy" was pressed, or a copy to the inbox
+ * finishing as "Delete" was, wrote back a report the person had just been
+ * told was gone. All of these run in the service worker, so one queue in
+ * this module is all of them.
+ */
+let writes = Promise.resolve();
+function inQueue(write) {
+  const turn = writes.then(write);
+  writes = turn.catch(() => undefined);
+  return turn;
+}
+
 export async function listBugReports() {
   const stored = await chrome.storage.local.get(null);
   const reports = Object.entries(stored).filter(([key]) => key.startsWith(PREFIX)).map(([, report]) => report);
@@ -83,9 +99,14 @@ export async function listBugReports() {
    * Let go of them here, where the reports page looks. Best effort: a failed
    * write leaves them as they were, which is no worse than before.
    */
-  const heavy = Object.fromEntries(reports.filter((report) => lighten(report) !== report)
-    .map((report) => [PREFIX + report.id, lighten(report)]));
-  if (Object.keys(heavy).length) await chrome.storage.local.set(heavy).catch(() => undefined);
+  for (const report of reports.filter((each) => lighten(each) !== each)) {
+    const key = PREFIX + report.id;
+    // Read again in the queue: one deleted since the read above stays deleted.
+    await inQueue(async () => {
+      const now = (await chrome.storage.local.get(key))[key];
+      if (now && lighten(now) !== now) await chrome.storage.local.set({ [key]: lighten(now) });
+    }).catch(() => undefined);
+  }
   return reports.map(lighten).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
@@ -100,11 +121,13 @@ export async function listBugReports() {
 export async function clearBugReport(id, { discard = false } = {}) {
   if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/.test(id)) throw new Error('Invalid report ID.');
   const key = PREFIX + id;
-  const report = (await chrome.storage.local.get(key))[key];
-  if (!report) return { cleared: true };
-  if (!report.receipt && !discard) throw new Error('Copy this report to the file inbox before clearing its browser copy.');
-  await chrome.storage.local.remove(key);
-  return { cleared: true, discarded: !report.receipt };
+  return inQueue(async () => {
+    const report = (await chrome.storage.local.get(key))[key];
+    if (!report) return { cleared: true };
+    if (!report.receipt && !discard) throw new Error('Copy this report to the file inbox before clearing its browser copy.');
+    await chrome.storage.local.remove(key);
+    return { cleared: true, discarded: !report.receipt };
+  });
 }
 
 export async function syncBugReport(id, serverFetch) {
@@ -124,11 +147,14 @@ export async function syncBugReport(id, serverFetch) {
    * Only if it is still there. The POST can take a while, and the person may
    * have deleted the report in the meantime; writing it back after that
    * returned a report — notes, screenshots and all — that they had just been
-   * told was gone.
+   * told was gone. Looked at and written in one turn of the queue, or the
+   * deletion could still land between the look and the write.
    */
-  if (!(await chrome.storage.local.get(key))[key]) return kept;
-  await chrome.storage.local.set({ [key]: kept });
-  return kept;
+  return inQueue(async () => {
+    if (!(await chrome.storage.local.get(key))[key]) return kept;
+    await chrome.storage.local.set({ [key]: kept });
+    return kept;
+  });
 }
 
 export async function saveBugReport({ text, screenshots = [] }, serverFetch) {

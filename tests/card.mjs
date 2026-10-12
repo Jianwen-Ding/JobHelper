@@ -5075,6 +5075,65 @@ async function main() {
     JSON.stringify(rebuiltSent.quiet),
   );
 
+  /*
+   * And only on the page whose build said it. The stage's reply travels to
+   * the next page with the work, for its folder — and its warnings went with
+   * it, so a replacement said once was said again in amber on every page of
+   * the application after, though nothing was built there.
+   */
+  const carriedWarning = await inPage(async (createCard) => {
+    const REPLACED = 'Acme — Platform Engineer had already been sent, and this build replaced the resume in its folder.';
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const card = () =>
+      createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Platform Engineer', company: 'Acme', description: 'Kafka and Go.' },
+          spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+          rationale: [],
+          diff: [],
+        },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async (action) => {
+          if (action === 'aiStatus') return { active: false, state: 'off' };
+          if (action === 'render') return { pages: 1, fits: true };
+          if (action === 'stage') {
+            return { currentDir: '/tmp/x', dir: '/tmp/x', files: ['Resume.pdf'], replaced: REPLACED, warnings: [REPLACED, 'Squeezed.'] };
+          }
+          return {};
+        },
+      });
+    const shown = () => {
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      return {
+        replaced: Boolean(root.querySelector('[data-note="replaced"]')),
+        notes: Boolean(root.querySelector('[data-note="build-notes"]')),
+        folder: root.textContent.includes('/tmp/x'),
+      };
+    };
+    const first = card();
+    await wait(120);
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    [...root.querySelectorAll('button')].find((b) => /Build resume/.test(b.textContent))?.click();
+    await wait(400);
+    const built = shown();
+    const work = JSON.parse(JSON.stringify(first.takeWork()));
+    // The next page of the application: a new card, given the work.
+    const next = card();
+    next.restoreWork({ ...work, sent: true }, true);
+    await wait(300);
+    return { built, next: shown() };
+  });
+  check('the page that built it says so', carriedWarning.built.replaced && carriedWarning.built.notes, JSON.stringify(carriedWarning));
+  check(
+    'the next page, given the work, does not say it again',
+    !carriedWarning.next.replaced && !carriedWarning.next.notes,
+    JSON.stringify(carriedWarning),
+  );
+
   console.log('\nAn AI answer with placeholders left in it');
 
   /*

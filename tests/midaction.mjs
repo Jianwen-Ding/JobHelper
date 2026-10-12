@@ -714,6 +714,45 @@ async function main() {
   }
 
   /* ------------------------------------------------------------------ */
+  console.log('\nA copy the card filed earlier, put back in ResumeM-M');
+  {
+    /*
+     * The card's own copies are known by content, and one the store had
+     * already confirmed came back as an undo in ResumeM-M: taken as the
+     * card's own, and the person's undo filed over with nothing said.
+     */
+    await setUp({ versions: true });
+    const undone = await inPage(async () => {
+      const stages = () => jh.s.sent.filter((c) => c.action === 'stage');
+      const settle = async (n) => {
+        await until(() => stages().length >= n, 4000);
+        await wait(600);
+      };
+      const picks = () => jh.root.querySelectorAll('.pick input');
+      let n = stages().length;
+      picks()[0].click();
+      await settle(++n);
+      const first = JSON.parse(JSON.stringify(jh.s.copy));
+      picks()[1].click();
+      await settle(++n);
+      // In ResumeM-M the second switch is undone: the copy is the first one again.
+      jh.s.copy = JSON.parse(JSON.stringify(first));
+      jh.s.copyVersion += 1;
+      // Back on the card, the first switch is switched back.
+      picks()[0].click();
+      await until(() => stages().length > n, 4000);
+      await wait(1500);
+      return { stored: jh.s.copy.choices, ticks: ticks(), said: note() };
+    });
+    check(
+      'the undo made there is kept under the switch made here',
+      undone.stored['edu_neu.subtitle'] === 'v_plain' && undone.stored.b_pipeline === 'v_base',
+      JSON.stringify(undone),
+    );
+    check('and the card says the copy was edited there', /edited in ResumeM-M/.test(undone.said), undone.said);
+  }
+
+  /* ------------------------------------------------------------------ */
   console.log('\nThe resume in the picker, deleted in ResumeM-M');
   {
     await setUp();
