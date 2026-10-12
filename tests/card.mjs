@@ -7285,6 +7285,104 @@ async function main() {
   check('and gives focus back to its button', /^Rename /.test(escape.focusAfterMenu.label ?? ''), JSON.stringify(escape.focusAfterMenu));
   check('then folds the card, with focus on Unfold', escape.folded && escape.focusAfterFold.label === 'Unfold JobHelper', JSON.stringify(escape));
 
+  /*
+   * But not an Escape that an input method is using. Typing Japanese, Escape
+   * cancels the half-made word, and the keydown reaches the card marked
+   * `isComposing`: the card folded under the person mid-word, with the
+   * half-composed text left in the answer box. Driven here with a real
+   * composition through the DevTools protocol, as the hunt's `cardprobe.mjs`
+   * measured it, and then with the shapes of the event other browsers send
+   * (key code 229), on the card, on the rename box and on the "is this a
+   * job?" chip.
+   */
+  await inPage(async (createCard, A11Y_CARD) => {
+    window.__c = (0, eval)(`(${A11Y_CARD})`)(createCard);
+    await window.__c.wait(80);
+    window.__c.root.querySelector('textarea[data-field^="answer:"]').focus();
+  }, A11Y_CARD.toString());
+  const ime = await page.context().newCDPSession(page);
+  await page.keyboard.type('I like ');
+  await ime.send('Input.imeSetComposition', { text: 'にほ', selectionStart: 2, selectionEnd: 2 });
+  await page.keyboard.press('Escape');
+  const composing = await page.evaluate(() => ({
+    folded: window.__c.card.classList.contains('folded'),
+    stillTyping: window.__c.root.activeElement?.dataset?.field ?? null,
+  }));
+  await ime.send('Input.imeCommitComposition', { text: 'にほ' }).catch(() => {});
+  await ime.detach();
+  check(
+    'an Escape that cancels an input method’s word leaves the card open, the box still being typed in',
+    !composing.folded && /^answer:/.test(composing.stillTyping ?? ''),
+    JSON.stringify(composing),
+  );
+
+  const composed = await inPage(async (createCard, A11Y_CARD) => {
+    const c = (0, eval)(`(${A11Y_CARD})`)(createCard);
+    await c.wait(80);
+    const key = (target, init) =>
+      target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, composed: true, cancelable: true, ...init }));
+    const box = c.root.querySelector('textarea[data-field^="answer:"]');
+    box.focus();
+    key(box, { key: 'Escape', isComposing: true });
+    const out = { foldedComposing: c.card.classList.contains('folded') };
+    key(box, { key: 'Escape', keyCode: 229 });
+    out.folded229 = c.card.classList.contains('folded');
+    // Unfolded again if either folded it, so that what follows is measured too.
+    if (c.card.classList.contains('folded')) c.root.querySelector('button[aria-label="Unfold JobHelper"]')?.click();
+    await c.wait(50);
+    // The rename box: an Enter or an Escape inside a composition is not the name.
+    c.build().click();
+    await c.until(() => c.root.querySelector('.file.liftable .rename .open-file'));
+    await c.wait(100);
+    c.root.querySelector('.file.liftable .rename .open-file').click();
+    [...c.root.querySelectorAll('.rename-menu button')].find((b) => /^Rename/.test(b.textContent))?.click();
+    const rename = c.root.querySelector('.rename-box:not(.hidden)');
+    out.renameOpen = Boolean(rename);
+    if (rename) {
+      rename.value = 'Jane-にほ';
+      rename.dispatchEvent(new Event('input', { bubbles: true }));
+      key(rename, { key: 'Escape', isComposing: true });
+      out.renameAfterEscape = !rename.classList.contains('hidden');
+      key(rename, { key: 'Enter', isComposing: true });
+      await c.wait(150);
+      out.namedMidWord = [...c.root.querySelectorAll('.file')].some((f) => /にほ/.test(f.textContent));
+      out.menuAfter = Boolean(c.root.querySelector('.rename-menu:not(.hidden)'));
+    }
+    return out;
+  }, A11Y_CARD.toString());
+  check('nor does one marked isComposing, or key code 229', !composed.foldedComposing && !composed.folded229, JSON.stringify(composed));
+  check(
+    'and the rename box keeps an Escape or an Enter that is the input method’s',
+    composed.renameOpen && composed.renameAfterEscape && !composed.namedMidWord && composed.menuAfter,
+    JSON.stringify(composed),
+  );
+
+  {
+    const askSource = fs.readFileSync(new URL('../src/content/ask.js', import.meta.url), 'utf8');
+    const asked = await page.evaluate(async (code) => {
+      globalThis.__JOBHELPER_HARNESS__ = true;
+      const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+      const { createAsk, removeAsk } = await import(url);
+      let later = 0;
+      createAsk({ site: 'example.com', onYes: () => {}, onNo: () => {}, onLater: () => later++ });
+      const chip = () => document.getElementById('jobhelper-ask-host')?.shadowRoot?.querySelector('.later')?.parentElement;
+      const key = (init) =>
+        chip()?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true, cancelable: true, ...init }));
+      key({ isComposing: true });
+      key({ keyCode: 229 });
+      const out = { laterComposing: later, stillUp: Boolean(chip()) };
+      key({});
+      out.laterPlain = later;
+      removeAsk();
+      return out;
+    }, askSource);
+    check(
+      'the "is this a job?" chip stays up for an input method’s Escape, and goes for a plain one',
+      asked.laterComposing === 0 && asked.stillUp && asked.laterPlain === 1,
+      JSON.stringify(asked),
+    );
+  }
+
   /* Contrast, focus rings and motion. */
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const looks = await inPage(async (createCard, A11Y_CARD) => {

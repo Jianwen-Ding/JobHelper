@@ -8807,18 +8807,35 @@ const JOB_WORDS =
  * no edge either. The edges here are a letter or a digit on either side;
  * an underscore or a hyphen is a gap between words, as it is in a name.
  *
- * "application" is not among the words that make it the verb. "Resume -
- * application documents" is an employer's upload, and so is a box named
- * `application` labelled "Resume"; the verb before it comes with "your",
- * "a" or "the" between, which are still here. Nor is "where" alone: "Resume
+ * "application" was taken off the words that make it the verb, because
+ * "Resume - application documents" is an employer's upload, and so is a box
+ * named `application` labelled "Resume" (it is back, straight after only:
+ * see below). Nor is "where" alone: "Resume
  * where available" is the noun, and the verb is "resume where you left off".
  *
  * And in the other languages the server reads a posting in: "Lebenslauf",
  * "currículum", and "简历", which is written with no spaces round it and so
  * has no edges to ask for.
  */
+/*
+ * But "CVS" is a pharmacy, and "Curriculum" alone is a school's. A health
+ * plan's "Preferred pharmacy (e.g. CVS)", a "CVS ExtraCare card number" and
+ * a school enrolment's "Curriculum" box each made a loan or an enrolment
+ * form a job application. So `cv` alone, and "curriculum" only with "vitae"
+ * after it — except "currículum" with its accent, which is how Spanish
+ * writes a CV with nothing after it, and no school's form in English does.
+ *
+ * And the verb has more words after it than "your" and "a". "Resume an
+ * existing application", "Resume previous", "Resume pending", "Resume
+ * incomplete" are a bank's links, and a "Resume application" button beside
+ * the pay-stub upload made the loan form a job application again. So
+ * "application" is back among them — but only straight after, with a space:
+ * "Resume - application documents" and "Resume: application documents" are
+ * an employer's upload with a dash or a colon between, which the verb is
+ * never written with.
+ */
 const ASKS_FOR_A_RESUME =
-  /(?:(?<![\p{L}\p{N}])(r[ée]sum[ée]s?|cvs?|curr[ií]culum(?:[\s_-]+vitae)?|lebensl(?:auf|äufe))(?![\p{L}\p{N}])|简历)(?![\s_-]+(your|a|my|the|saved|draft|later|where[\s_-]+you)\b)/iu;
+  /(?:(?<![\p{L}\p{N}])(r[ée]sum[ée]s?|cv|curr[ií]culum[\s_-]+vitae|currículum|lebensl(?:auf|äufe))(?![\p{L}\p{N}])|简历)(?![\s_-]+(your|a|an|my|the|saved|draft|later|existing|previous|pending|incomplete|where[\s_-]+you)\b|\s+application\b)/iu;
 
 /*
  * The same, said so that it can only be the noun, for reading the page as a
@@ -8898,9 +8915,21 @@ export function looksLikeJobApplication() {
    * bank's "Our team will contact you" above a box for comments is not about
    * the job.
    */
+  /*
+   * And a sentence at a time. The whole piece was asked whether it had a
+   * "?" anywhere and the job's words anywhere, so a bank's "Questions? Our
+   * team is available 24/7." over a box for comments was an employer asking
+   * about the role: the question was "Questions?" and "our team" was in the
+   * next sentence. Only a sentence that is itself a question and itself
+   * about the job counts.
+   */
+  const asksAboutTheJob = (said) =>
+    said
+      .split(/(?<=[.?!])\s+|\n+/)
+      .some((sentence) => sentence.trim().endsWith('?') && ASKS_ABOUT_THE_JOB.test(sentence));
   for (const box of deepQueryAll('textarea')) {
     if (ASKS_ABOUT_THE_JOB.test(describeField(box) ?? '')) return true;
-    if (wordsAround(box).some((said) => said.includes('?') && ASKS_ABOUT_THE_JOB.test(said))) return true;
+    if (wordsAround(box).some(asksAboutTheJob)) return true;
   }
   // A résumé asked for by a field of its own: a file input, or a box for a
   // link to one, labelled or named for it.

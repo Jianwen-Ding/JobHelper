@@ -916,6 +916,15 @@ export function statedWordLimit(question) {
   return hit ? Number(hit[1]) : null;
 }
 
+/*
+ * Whether a key belongs to somebody else: to an input method composing a
+ * word (`isComposing`, and key code 229, which is how Chrome and Safari mark
+ * the keys an input method takes even where `isComposing` is not set), or
+ * to a handler that has already acted on it. Escape and Enter there commit
+ * or cancel the half-made word, and are not the card's to act on.
+ */
+const composingOrTaken = (event) => event.isComposing || event.keyCode === 229 || event.defaultPrevented;
+
 const wordsIn = (text) => (String(text ?? '').trim().match(/\S+/g) ?? []).length;
 
 /*
@@ -2624,6 +2633,12 @@ export function createCard({
           },
           onkeydown: (event) => {
             event.stopPropagation();
+            /*
+             * An Enter or an Escape inside an input method's composition is
+             * the input method's: it commits or cancels the word, and it is
+             * not the name being saved or given up (see `composingOrTaken`).
+             */
+            if (composingOrTaken(event)) return;
             if (event.key === 'Enter') put({ custom: event.target.value });
             if (event.key === 'Escape') {
               renaming = null;
@@ -8422,9 +8437,16 @@ export function createCard({
    * everybody tries first to get something off the screen. Heard on the
    * card, so an Escape pressed in the page's own form is the page's. The
    * rename box handles its own Escape and keeps it (see `renameMenu`).
+   *
+   * But not an Escape that belongs to an input method. Typing Japanese or
+   * Chinese, Escape is how a half-made word is cancelled, and the keydown
+   * reaches the card all the same, marked `isComposing` (or, in some
+   * browsers, as key code 229). The card folded under the person mid-word
+   * and the half-composed text stayed in the answer box. So the composition
+   * has it, and so does anything on the page that has already used it.
    */
   card.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape' || event.defaultPrevented) return;
+    if (event.key !== 'Escape' || composingOrTaken(event)) return;
     const menu = root.querySelector('.rename-menu:not(.hidden)');
     if (menu) {
       event.preventDefault();

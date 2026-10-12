@@ -1083,6 +1083,45 @@ NOT_FOR_A_JOB['a personal-loan application with "Our team will contact you" over
     <button type="button">Submit application</button>`;
 
 /*
+ * Round 16. A pharmacy called "CVS" and a school's "Curriculum" were each
+ * read as a CV; a "Resume application" button and "Resume an existing
+ * application" beside an upload as a résumé asked for; and the bank's
+ * "Questions? Our team is available 24/7." over a comments box as a question
+ * about the job, because the piece had a "?" in one sentence and "our team"
+ * in the next. Measured in the hunt's `detect.mjs`.
+ */
+const LOAN_FIELDS = `
+    <h1>Apply for a personal loan</h1>
+    <label for="fn">First name</label><input id="fn" name="first_name">
+    <label for="ln">Last name</label><input id="ln" name="last_name">
+    <label for="em">Email</label><input id="em" type="email" name="email">
+    <label for="ph">Phone</label><input id="ph" name="phone">
+    <label for="ssn">Social Security number</label><input id="ssn" name="ssn">`;
+Object.assign(NOT_FOR_A_JOB, {
+  'a health enrolment with a pharmacy "(e.g. CVS)"': `${LOAN_FIELDS}
+    <label for="rx">Preferred pharmacy (e.g. CVS)</label><input id="rx" name="pharmacy">
+    <button type="button">Submit application</button>`,
+  'a loan form asking for a "CVS ExtraCare card number"': `${LOAN_FIELDS}
+    <label for="x">CVS ExtraCare card number</label><input id="x" name="x">
+    <button type="button">Submit application</button>`,
+  'a school enrolment with a "Curriculum" box': `${LOAN_FIELDS}
+    <label for="c">Curriculum</label><input id="c" name="curriculum">
+    <button type="button">Submit application</button>`,
+  'a loan form with a "Resume application" button beside the upload': `${LOAN_FIELDS}
+    <div class="f"><button type="button">Resume application</button>
+      <label for="ps">Upload file</label><input id="ps" type="file" name="paystubs"></div>
+    <button type="button">Submit application</button>`,
+  'a loan form with "Resume an existing application" above the upload': `${LOAN_FIELDS}
+    <p>Resume an existing application</p>
+    <label for="ps">Upload your pay stubs</label><input id="ps" type="file" name="paystubs">
+    <button type="button">Submit application</button>`,
+  'a loan form with "Questions? Our team is available 24/7." over a comments box': `${LOAN_FIELDS}
+    <p>Questions? Our team is available 24/7.</p>
+    <label for="c">Comments</label><textarea id="c" name="comments"></textarea>
+    <button type="button">Submit application</button>`,
+});
+
+/*
  * Job applications whose only sign of an employer is said round a field
  * rather than in its label.
  *
@@ -1120,6 +1159,19 @@ const FOR_A_JOB_BY_WHAT_IS_ROUND = {
     <label for="f">Upload Resumé</label><input id="f" type="file" name="f1">`,
   'an upload labelled "Resume - application documents"': `${AROUND}
     <label for="f">Resume - application documents</label><input id="f" type="file" name="f1">`,
+  // A dash or a colon between is the noun, never the verb (round 16).
+  'an upload labelled "Resume: application documents"': `${AROUND}
+    <label for="f">Resume: application documents</label><input id="f" type="file" name="f1">`,
+  'an upload labelled "Resume" named `application`': `${AROUND}
+    <label for="f">Resume</label><input id="f" type="file" name="application">`,
+  'an upload labelled "Curriculum vitae"': `${AROUND}
+    <label for="f">Curriculum vitae</label><input id="f" type="file" name="f1">`,
+  'an upload labelled "Currículum"': `${AROUND}
+    <label for="f">Currículum</label><input id="f" type="file" name="f1">`,
+  'an upload labelled "CV"': `${AROUND}
+    <label for="f">CV</label><input id="f" type="file" name="f1">`,
+  'a job question after another sentence, above "Your answer"': `${AROUND}
+    <p>Questions? Read the FAQ. Why do you want to join our team?</p><label for="q">Your answer</label><textarea id="q" name="q1"></textarea>`,
   'an upload labelled "Lebenslauf hochladen"': `${AROUND}
     <label for="f">Lebenslauf hochladen</label><input id="f" type="file" name="datei">`,
   'a job question above a box labelled "Your answer"': `${AROUND}

@@ -511,11 +511,53 @@ const looksOpaque = (value) => {
 };
 
 /*
+ * But sixteen was too long for the names that stand for a sign-in. A reset
+ * link's `?code=8f3k2m9x1q`, a verification `?code=AB12CD34EF56`, a
+ * `?session=a8f9c2e1d4b7f3` and a Maps `?key=a1b2c3d4e5f6g7h` were all kept,
+ * because each is under sixteen characters and has no slash; and a code a
+ * server mails out is ten or twelve characters, not twenty-six. What tells
+ * them from `fall2024` and `SUMMER2024` is length and mixing together: twelve
+ * letters and digits run together with no break is generated, and a word
+ * with a year on it is not. Read on the longest run without a separator, so
+ * a prefix with a word in it — pretalx's `ses_4f8a9b2c` is `ses` and eight
+ * characters, a public talk's id — is judged on what was generated, and a
+ * run of digits alone, a time, is not mixed at all.
+ *
+ * And on a page that says it is for signing in, resetting or confirming,
+ * eight is enough: there a short code is the one that was sent, and nothing
+ * on such a page is a conference session or a promotion.
+ *
+ * `key` keeps its sixteen, for the tags and anchors it carries, but a mixed
+ * run of twelve is refused under it too.
+ */
+const SIGN_IN_CODE_NAME = new Set(['code', 'session', 'magic_link', 'magiclink', 'ticket', 'bearer', 'phpsessid', 'jsessionid']);
+const SIGN_IN_PAGE = /(?:^|[^a-z])(reset|verif|log-?in|oauth|auth(?!or)|sign-?in|confirm|invit)/i;
+const longestMixedRun = (value) =>
+  Math.max(0, ...(value.match(/[A-Za-z0-9]+/g) || []).filter((run) => /[A-Za-z]/.test(run) && /\d/.test(run)).map((run) => run.length));
+const looksGenerated = (value, signInPage) => {
+  if (!/^[\w\-./+=~%]+$/.test(value)) return false;
+  return longestMixedRun(value) >= (signInPage ? 8 : 12);
+};
+
+/*
  * `pass` and `pw` alone are a password, unless all they carry is a switch:
  * `?pw=1` turns something on, it does not sign anybody in, and was refused.
  */
 const PASSWORD_WORD = /^(pass|pw)$/;
 const ONLY_A_FLAG = /^(0|1|true|false|yes|no|on|off|y|n)$/i;
+/*
+ * And inside a longer name too. Read only as the whole name, `pass` and `pw`
+ * let `?user_pass=hunter2`, `?admin_pass=…`, `?wifi_pass=…`, `?user_pw=…`
+ * and `?userPw=…` into the bank, each a password under a word that says
+ * whose. So `pw` as any word of the name is one, and `pass` as the last word
+ * is — but not the passes that get somebody on a bus or into a park, which
+ * are named for what they are a pass to. `bypass` and `passport` are one
+ * word and never reach here.
+ */
+const NOT_A_PASSWORD = /^(season|boarding|bus|day|week|weekly|month|monthly|annual|year|train|rail|transit|metro|ski|park|parking|festival|event|museum|gym|guest|visitor|press|backstage|hall)$/;
+const namesAPassword = (words) =>
+  words.includes('pw') ||
+  (words.length > 1 && words[words.length - 1] === 'pass' && !NOT_A_PASSWORD.test(words[words.length - 2]));
 
 /*
  * A Google Sheet shared before 2014 is named by its `key`: `docs.google.com/
@@ -578,6 +620,14 @@ const TOKEN_SHAPE = [
   // A Google API key, and a GitLab personal access token.
   /\bAIza[0-9A-Za-z_-]{35}/,
   /\bglpat-[\w-]{20,}/,
+  /*
+   * And the keys that were still kept by their shape: SendGrid's, an npm
+   * token, a PyPI upload token and a Mailchimp key with its data centre.
+   */
+  /\bSG\.[\w-]{16,}\.[\w-]{16,}/,
+  /\bnpm_[A-Za-z0-9]{36}\b/,
+  /\bpypi-[A-Za-z0-9_-]{50,}/,
+  /\b[0-9a-f]{32}-us\d{1,2}\b/,
 ];
 
 /*
@@ -597,9 +647,14 @@ const LINK_VALUE_SHAPE = [
 /*
  * Paths that are a credential whatever the query says. See `linkCarriesPrivate`.
  */
+/*
+ * Slack's workflow and trigger webhooks post as their owner as the older
+ * `services` ones do, and Discord's API takes a version in front of
+ * `webhooks` (`/api/v10/webhooks/…`); both forms were kept.
+ */
 const SECRET_PATH = [
-  /^hooks\.slack\.com\/services\/T[A-Z0-9]+\/B[A-Z0-9]+\/[A-Za-z0-9]+/i,
-  /^(?:[\w-]+\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+/i,
+  /^hooks\.slack\.com\/(?:services|workflows|triggers)\/T[A-Z0-9]+\/[A-Za-z0-9]+\/[A-Za-z0-9]+/i,
+  /^(?:[\w-]+\.)?discord(?:app)?\.com\/api\/(?:v\d+\/)?webhooks\/\d+\/[\w-]+/i,
   /\/bot\d+:[A-Za-z0-9_-]{30,}/,
 ];
 
@@ -654,6 +709,7 @@ function linkCarriesPrivate(said, depth = 0) {
    */
   for (const [, name, value] of url.pathname.matchAll(/;([^=/;]+)=([^/;]*)/g)) params.push([name, value]);
   const docsKey = KEY_IS_THE_DOCUMENT.test(url.hostname.toLowerCase().replace(/\.$/, ''));
+  const signInPage = SIGN_IN_PAGE.test(`${url.hostname}${url.pathname}`);
   const fragment = url.hash.slice(1);
   if (fragment.includes('=')) params.push(...new URLSearchParams(fragment));
   else if (fragment) params.push(['', fragment]);
@@ -675,9 +731,12 @@ function linkCarriesPrivate(said, depth = 0) {
     const whole = words.join('');
     if (named.some((w) => SECRET_PARAM.has(w))) return true;
     if (SECRET_ENDING.test(whole)) return true;
-    if (PASSWORD_WORD.test(whole) && !ONLY_A_FLAG.test(decoded.trim())) return true;
+    if ((PASSWORD_WORD.test(whole) || namesAPassword(words)) && !ONLY_A_FLAG.test(decoded.trim())) return true;
     const opaqueName = named.some((w) => SECRET_WHEN_OPAQUE.has(w) && !(PASSWORD_WORD.test(whole) || (w === 'key' && docsKey)));
     if (opaqueName && [value, decoded].some(looksOpaque)) return true;
+    const signInName = named.some((w) => SIGN_IN_CODE_NAME.has(w));
+    if (signInName && [value, decoded].some((v) => looksGenerated(v, signInPage))) return true;
+    if (!docsKey && named.includes('key') && [value, decoded].some((v) => looksGenerated(v, false))) return true;
     const contactName = words.some((w) => CONTACT_PARAM.test(w));
     if (
       BARE_PERSONAL_NUMBER.test(decoded.trim()) &&

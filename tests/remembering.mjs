@@ -759,3 +759,67 @@ test('words with a number in them, times and switches are kept, and the secrets 
     false,
   );
 });
+
+/*
+ * Round 16. A password under a name that says whose (`user_pass`, `userPw`)
+ * was kept, since only `pass` and `pw` alone were read as one; a code or a
+ * session a server generates was kept under sixteen characters; and the
+ * webhooks and keys that no rule had a shape for. Beside them, the passes
+ * that are not passwords and the round-15 words with numbers in them, which
+ * have to stay kept. The credential-shaped values are put together here, as
+ * above, so that secret scanning does not take them for real ones.
+ */
+const LINK_REFUSE_ROUND_16 = [
+  'https://example.com/login?user_pass=hunter2',
+  'https://example.com/login?wifi_pass=hunter22',
+  'https://example.com/login?admin_pass=Secret123',
+  'https://example.com/login?user_pw=hunter2',
+  'https://example.com/login?userPw=hunter2',
+  'https://example.com/?code=8f3k2m9x1q7z',
+  'https://example.com/reset?code=8f3k2m9x1q',
+  'https://example.com/verify?code=AB12CD34EF56',
+  'https://example.com/login?session=a8f9c2e1d4b7f3',
+  'https://example.com/?magic_link=8fj3k29dk3x7',
+  'https://maps.example.com/api?key=a1b2c3d4e5f6g7h',
+  /*
+   * The ids in these are shorter than real ones: a run of eighteen digits is
+   * refused by itself as an account number, which would hide whether the
+   * path was read at all.
+   */
+  `https://${'hooks.slack' + '.com'}/workflows/T0ABCDEF0/A0ABCDEF0/${'1234'}/${'x'.repeat(24)}`,
+  `https://${'hooks.slack' + '.com'}/triggers/T0ABCDEF0/${'1234'}/${'ab'.repeat(16)}`,
+  `https://${'discord' + '.com'}/api/v10/webhooks/${'1234'}/${'Ab'.repeat(34)}`,
+  `https://example.com/?k=${['SG', 'x'.repeat(22), 'y'.repeat(43)].join('.')}`,
+  `https://example.com/?k=${'npm'}_${'a'.repeat(36)}`,
+  `https://example.com/?k=${'pypi'}-${'Ag'.repeat(30)}`,
+  `https://example.com/?k=${'0123456789abcdef'.repeat(2)}-${'us'}1`,
+];
+
+const LINK_KEEP_ROUND_16 = [
+  'https://morgan.dev/?season_pass=gold',
+  'https://example.com/flight?boarding_pass=AB12',
+  'https://example.com/?day_pass=true',
+  'https://example.com/?bus_pass=monthly',
+  'https://example.com/?user_pass=1',
+  'https://example.com/talks?session=fall2024',
+  'https://pretalx.com/conf2024/talk/ABC123/?session=ses_4f8a9b2c',
+  'https://example.com/?key=react2024',
+  'https://shop.example.com/?promo_code=SUMMER2024',
+  'https://go.dev/play/?code=fmt.Println',
+  'https://docs.google.com/spreadsheet/ccc?key=0AuXbG3d5E6f7G8h9I0jKlMnOpQrStUvWxYzdGc&usp=sharing',
+  'https://example.com/?code=1697040000123',
+  'https://discord.gg/abcdef',
+  'https://myteam.slack.com/archives/C123',
+];
+
+test('a password named for whose it is, a generated code under sixteen, and the webhooks and keys with a shape are refused', () => {
+  for (const answer of LINK_REFUSE_ROUND_16) {
+    const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
+    assert.equal(said.keep, false, `${answer} was kept`);
+    assert.match(said.why, /personal/, `${answer}: ${said.why}`);
+  }
+  for (const answer of LINK_KEEP_ROUND_16) {
+    const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
+    assert.equal(said.keep, true, `${answer} was refused: ${said.why}`);
+  }
+});
