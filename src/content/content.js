@@ -2446,6 +2446,16 @@
       // place that may not be the job this tab's application is on yet. See
       // `pressedOnAnotherJob`.
       send('expectContinuation', { to, from: location.href }).catch(() => undefined);
+      /*
+       * And the work as it is now, sent while this page is still alive. The
+       * keeper saves every two seconds, so a resume compiled just before
+       * Apply was often in no tick yet, and reached the worker only through
+       * the save fired as the page unloads — a message from a page being torn
+       * down, which a busy machine can lose or deliver late. Lost, the form
+       * page restored the spec without its render and drew no resume. The
+       * same save Submit makes before it goes (see `saveWorkNow`).
+       */
+      saveWorkNow?.();
     };
 
     /*

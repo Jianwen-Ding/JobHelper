@@ -2023,6 +2023,16 @@ const handlers = {
   /** The work from the pages before this one, if this page continues them. */
   async takeWork({ page }, tab) {
     await inheritIfNew(tab?.id, tab?.openerTabId);
+    /*
+     * Behind every change already queued on this tab's trail, not beside
+     * them. The page before this one saves its work as it leaves — the
+     * render it just compiled among it — and that save can still be in the
+     * queue when the next page asks: read past it, this handed back the
+     * work from a tick before, with the spec but no render, and the form
+     * page drew no resume at all until Build was pressed again. Waiting on
+     * an empty step is safe: it is not itself a step that waits on another.
+     */
+    if (tab?.id !== undefined) await inTurn(trailKey(tab.id), () => undefined);
     const trail = await readTrail(tab?.id);
     if (page && sameApplication(trail, page) && trail.work) return { work: trail.work };
     if (page && !sameApplication(trail, page)) return { work: null };
