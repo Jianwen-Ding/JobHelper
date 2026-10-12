@@ -463,6 +463,13 @@ async function main() {
           body: JSON.stringify({ question, answer, label: 'Saved' }),
         });
       }
+      /*
+       * An answer from the bank arrives kept shut, "Saved answer: show", until
+       * it is opened (see `keptShut` in card.js), so it is opened here and
+       * then read: arriving is what is being checked, not being on show.
+       */
+      const shut = form.locator(`${HOST} .q:has(.qt:text(${JSON.stringify(ASKED)})) .kept-shut button`);
+      await shut.waitFor({ timeout: 20_000 }).then(() => shut.click(), () => {});
       const arrived = await form
         .waitForFunction(
           ([host, question, text]) =>
