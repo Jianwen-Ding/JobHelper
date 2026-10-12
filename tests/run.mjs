@@ -103,6 +103,8 @@ const SUITES = [
   { name: 'switching', file: 'switching.mjs', cost: 14 },
   { name: 'joins', file: 'joins.mjs', cost: 8 },
   { name: 'ats-forms', file: 'ats-forms.mjs', cost: 7 },
+  // Every round's job and not-a-job forms, settled; see its header.
+  { name: 'corpus-jobforms', file: 'corpus-jobforms.mjs', cost: 6 },
   { name: 'autofill', file: 'autofill.mjs', cost: 2 },
   { name: 'reusing', file: 'reusing.mjs', cost: 3 },
   { name: 'csp', file: 'csp.mjs', cost: 2 },
@@ -114,6 +116,8 @@ const SUITES = [
   { name: 'documents', file: 'documents.mjs', cost: 1, nodeTest: true },
   { name: 'reporting', file: 'reporting.mjs', cost: 1, nodeTest: true },
   { name: 'remembering', file: 'remembering.mjs', cost: 1, nodeTest: true },
+  // Every round's links, settled; see its header.
+  { name: 'corpus-links', file: 'corpus-links.mjs', cost: 1, nodeTest: true },
   { name: 'config', file: 'config.mjs', cost: 1, nodeTest: true },
   { name: 'turns', file: 'turns.mjs', cost: 1, nodeTest: true },
 ];

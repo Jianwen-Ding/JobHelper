@@ -206,12 +206,16 @@ export function createAsk({ site, onYes, onNo, onLater }) {
    * dismiss the chip was to Tab to a button marked "×". Not "No", which
    * mutes the whole site and outlives the page.
    *
-   * But not an Escape that cancels a word an input method is composing, or
-   * one something else has already used: that Escape is the input method's,
-   * and the chip went away under it.
+   * But not an Escape that cancels a word an input method is composing:
+   * that Escape is the input method's, and the chip went away under it.
+   *
+   * One the page has called `preventDefault` on is still the chip's. That
+   * was refused too, and an ATS editor that swallows Escape at the window,
+   * as rich-text editors do, left the chip with no keyboard way off the
+   * screen but Tab to "×". The Escape was pressed on the chip.
    */
   chip.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape' || event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
+    if (event.key !== 'Escape' || event.isComposing || event.keyCode === 229) return;
     event.preventDefault();
     event.stopPropagation();
     answer(onLater)();

@@ -446,6 +446,13 @@ const SECRET_PARAM = new Set([
   'authorization',
   'credential',
   'credentials',
+  /*
+   * LinkedIn's `?session_redirect=…`, which it adds to a profile link copied
+   * from a signed-in session. Refused since round 9 by choice, for its
+   * `session`; it went back into the bank when `session` came to be judged
+   * by its value, and `abc` is no value to judge.
+   */
+  'session_redirect',
 ]);
 
 /*
@@ -504,6 +511,7 @@ const SECRET_WHEN_OPAQUE = new Set([
   'phpsessid',
   'jsessionid',
   'ssid',
+  'invite',
 ]);
 const looksOpaque = (value) => {
   if (!/^[\w\-./+=~%]+$/.test(value)) return false;
@@ -518,10 +526,12 @@ const looksOpaque = (value) => {
  * server mails out is ten or twelve characters, not twenty-six. What tells
  * them from `fall2024` and `SUMMER2024` is length and mixing together: twelve
  * letters and digits run together with no break is generated, and a word
- * with a year on it is not. Read on the longest run without a separator, so
- * a prefix with a word in it — pretalx's `ses_4f8a9b2c` is `ses` and eight
- * characters, a public talk's id — is judged on what was generated, and a
- * run of digits alone, a time, is not mixed at all.
+ * with a year on it is not (mixing read as how often the two alternate, not
+ * how long the run is: see `runLooksGenerated`). Read a run without a
+ * separator at a time, so a prefix with a word in it — pretalx's
+ * `ses_4f8a9b2c` is `ses` and eight characters, a public talk's id — is
+ * judged on what was generated, and a run of digits alone, a time, is not
+ * mixed at all.
  *
  * And on a page that says it is for signing in, resetting or confirming,
  * eight is enough: there a short code is the one that was sent, and nothing
@@ -530,34 +540,126 @@ const looksOpaque = (value) => {
  * `key` keeps its sixteen, for the tags and anchors it carries, but a mixed
  * run of twelve is refused under it too.
  */
-const SIGN_IN_CODE_NAME = new Set(['code', 'session', 'magic_link', 'magiclink', 'ticket', 'bearer', 'phpsessid', 'jsessionid']);
-const SIGN_IN_PAGE = /(?:^|[^a-z])(reset|verif|log-?in|oauth|auth(?!or)|sign-?in|confirm|invit)/i;
-const longestMixedRun = (value) =>
-  Math.max(0, ...(value.match(/[A-Za-z0-9]+/g) || []).filter((run) => /[A-Za-z]/.test(run) && /\d/.test(run)).map((run) => run.length));
+const SIGN_IN_CODE_NAME = new Set([
+  'code',
+  'session',
+  'magic_link',
+  'magiclink',
+  'ticket',
+  'bearer',
+  'phpsessid',
+  'jsessionid',
+  /*
+   * And an invitation's: `?invite=8f3a9c2b1d4e5f60aa` lets whoever holds it
+   * in as the person it was sent to, and was kept, because `invite` was on
+   * no list at all. `?invite=friends` is still a word.
+   */
+  'invite',
+]);
+/*
+ * Read as whole words of the path, and of the path alone. Read as the start
+ * of any word, of the host and the path together, it had no right edge, so
+ * `/order-confirmation`, `/invite-only-events`, `/authentic-recipes`,
+ * `/verification-talks`, `/reset-your-garden` and `/confirmed/` were each a
+ * page for signing in, and a shop's `?code=SUMMER2024` on its order page was
+ * refused as the code that had been sent. A page for signing in says so in a
+ * word of its own: `/reset`, `/verify`, `/login.php`, `/auth/callback`,
+ * `/password-reset`. A hyphen after the word is no edge, because that is how
+ * a slug goes on into other words (`/invite-only-events`, `/reset-your-
+ * garden`) — unless the word after it is about signing in as well:
+ * `/reset-password`, `/login-link`, `/auth-callback`.
+ */
+const SIGN_IN_PAGE =
+  /(?:^|[/._-])(reset|verify|login|log-in|signin|sign-in|oauth|auth|confirm|invite)(?=[/._]|$|-(?:password|pass|pw|code|link|email|account|callback)(?![a-z]))/i;
+/*
+ * How often a run goes from letters to digits and back. A word with a year
+ * on it goes once (`SPRINGSALE2024`, `release20240115`) or twice
+ * (`keynote2024day1`), and was refused all the same for being twelve
+ * characters of letters and digits run together, as were `?session=
+ * keynote2024day1` and a MySQL collation, `?code=utf8mb4general`. Length
+ * says nothing about who wrote a value; what a server generates changes
+ * between letters and digits all the way through, because each character is
+ * drawn on its own. So a run is generated when it switches five times or
+ * more (`AB12CD34EF56`, `8f3k2m9x1q7z`), or three times with no word in it —
+ * no four letters together — as `abc123def456` has none and `keynote2024day1`
+ * has "keynote". `utf8mb4general` switches four times and says "general".
+ *
+ * The length is still asked for, so that a short one is a word or a talk's
+ * id (`a12b34c5`, `ses_4f8a9b2c`): twelve, and eight on a page that says it
+ * is for signing in, where a short code is the one that was sent.
+ */
+const switchesIn = (run) => (run.match(/[A-Za-z](?=\d)|\d(?=[A-Za-z])/g) || []).length;
+const runLooksGenerated = (run) => {
+  if (!/[A-Za-z]/.test(run) || !/\d/.test(run)) return false;
+  const switches = switchesIn(run);
+  return switches >= 5 || (switches >= 3 && !/[A-Za-z]{4}/.test(run));
+};
 const looksGenerated = (value, signInPage) => {
   if (!/^[\w\-./+=~%]+$/.test(value)) return false;
-  return longestMixedRun(value) >= (signInPage ? 8 : 12);
+  return (value.match(/[A-Za-z0-9]+/g) || []).some((run) => run.length >= (signInPage ? 8 : 12) && runLooksGenerated(run));
 };
+
+/*
+ * A code made of digits alone, under a name that says it is one: the six
+ * digits of `?code=482913` and `/reset?code=482913`, and `?pin=4829`. These
+ * were left alone on purpose in round 15, as a page number would be — but
+ * four to eight digits under `code` or `pin` is what a text message and a
+ * sign-in email send, and a link carrying one signs somebody in. Only the
+ * names that are nothing but that: `zipcode`, `country_code`, `pincode`
+ * (India's postal code) and `promo_code` are other names, and a run of
+ * thirteen digits under `code` is a time.
+ */
+const NUMERIC_CODE_NAME =
+  /^(?:(?:verification|verify|auth|login|signin|reset|confirm|confirmation|security|access|sms|mfa|otp|onetime)?(?:code|pin)|otp|passcode|verification)$/;
+const NUMERIC_CODE = /^\d{4,8}$/;
+
+/*
+ * A CAS sign-in's service ticket, `?ticket=ST-12345-abcdef`: a kind, a
+ * number and what was generated. Sixteen characters of it was refused as
+ * opaque; a shorter one was a word to every rule above.
+ */
+const CAS_TICKET = /^(?:ST|PT|PGT|TGT)-\d+-[\w.-]+$/;
 
 /*
  * `pass` and `pw` alone are a password, unless all they carry is a switch:
  * `?pw=1` turns something on, it does not sign anybody in, and was refused.
+ * And `pass` with a number on it — `?pass2=` is the box a password is typed
+ * into the second time — and run together with whose it is, `?userpass=`
+ * and `?pass_user=`, which no word of the name says alone.
  */
-const PASSWORD_WORD = /^(pass|pw)$/;
+const PASSWORD_WORD = /^(pass\d*|pw|userpass|passuser)$/;
 const ONLY_A_FLAG = /^(0|1|true|false|yes|no|on|off|y|n)$/i;
 /*
  * And inside a longer name too. Read only as the whole name, `pass` and `pw`
  * let `?user_pass=hunter2`, `?admin_pass=…`, `?wifi_pass=…`, `?user_pw=…`
  * and `?userPw=…` into the bank, each a password under a word that says
- * whose. So `pw` as any word of the name is one, and `pass` as the last word
- * is — but not the passes that get somebody on a bus or into a park, which
- * are named for what they are a pass to. `bypass` and `passport` are one
- * word and never reach here.
+ * whose. So `pw` and `pass` as the last word are one — but not the passes
+ * that get somebody on a bus or into a park, which are named for what they
+ * are a pass to. `bypass` and `passport` are one word and never reach here.
+ *
+ * `pw` was read as any word of the name, and `?pw_version=3`, `?pw_reset=
+ * done` and `?pw_min_len=8` were refused: they are about a password, and
+ * carry none. It is a password when it ends the name, as `pass` is. And the
+ * passes were too few: a render's `first_pass`, a filter's `high_pass`,
+ * `low_pass` and `band_pass`, a `free_pass`, a `vip_pass`, a `travel_pass`,
+ * a Eurail pass and `by_pass` were all refused as passwords.
  */
-const NOT_A_PASSWORD = /^(season|boarding|bus|day|week|weekly|month|monthly|annual|year|train|rail|transit|metro|ski|park|parking|festival|event|museum|gym|guest|visitor|press|backstage|hall)$/;
-const namesAPassword = (words) =>
-  words.includes('pw') ||
-  (words.length > 1 && words[words.length - 1] === 'pass' && !NOT_A_PASSWORD.test(words[words.length - 2]));
+const NOT_A_PASSWORD =
+  /^(season|boarding|bus|day|week|weekly|month|monthly|annual|year|train|rail|transit|metro|ski|park|parking|festival|event|museum|gym|guest|visitor|press|backstage|hall|first|second|third|final|render|shadow|high|low|band|notch|all|skip|free|vip|travel|eurail|interrail|mountain|by)$/;
+/*
+ * But a guest's pass is the Wi-Fi's password when the link is about the
+ * Wi-Fi or about signing in: `?wifi_guest_pass=…`, `/wifi?guest_pass=…`,
+ * `/login?guest_pass=…`. Those were kept as a pass to a park would be.
+ */
+const A_NETWORK = /(?:^|[^a-z])(wi-?fi|wlan|ssid|net|network)(?![a-z])/i;
+const namesAPassword = (words, onANetwork) => {
+  const last = words[words.length - 1];
+  if (!/^(pass\d*|pw)$/.test(last ?? '')) return false;
+  if (words.length === 1 || last === 'pw' || last !== 'pass') return true;
+  const before = words[words.length - 2];
+  if ((before === 'guest' || before === 'visitor') && (onANetwork || words.some((w) => A_NETWORK.test(w)))) return true;
+  return !NOT_A_PASSWORD.test(before);
+};
 
 /*
  * A Google Sheet shared before 2014 is named by its `key`: `docs.google.com/
@@ -568,6 +670,42 @@ const namesAPassword = (words) =>
  * its shape, `AIza…`.
  */
 const KEY_IS_THE_DOCUMENT = /^docs\.google\.com$/;
+
+/*
+ * Loom's share link carries `?sid=` with a UUID in it, which is the viewing's
+ * own id for Loom's counting, not anybody's sign-in: the link opens the same
+ * video signed out. Refused under `sid` everywhere, the one link a person
+ * pastes to show a recorded walkthrough was never kept. On Loom's host `sid`
+ * is that; anywhere else it is still a session.
+ */
+const SID_IS_THE_VIEW = /^(?:www\.)?loom\.com$/;
+
+/*
+ * A contact detail that is a whole piece of a link's path, between its
+ * slashes. An address by the shape the rest of the file uses, with a domain
+ * that ends in letters — `react@18.3.1` in a CDN's path is a package at a
+ * version. A telephone number by the punctuation `PHONE_PUNCTUATED` reads
+ * it by (a `+`, an area code in brackets, 3-3-4), or as ten bare digits in
+ * the North American shape: an area code and an exchange that do not begin
+ * with 0 or 1. The ids a path is full of are rarely that shape at that
+ * length: a LeetCode submission `1234567890` begins with 1, Vimeo's and a
+ * meetup's are nine digits. (A ten-digit book number in an Amazon path can
+ * be, and is refused; a résumé's links are seldom to a book.)
+ */
+const EMAIL_IN_THE_PATH = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i;
+const PHONE_IN_THE_PATH =
+  /^(?:\+\d[\d\s().-]{7,}\d|\(\d{2,4}\)\s?\d{3,4}[\s.-]?\d{3,4}|\d{3}[\s.-]\d{3}[\s.-]\d{4}|1?[2-9]\d{2}[2-9]\d{6})$/;
+function contactInThePath(segment) {
+  let piece = segment;
+  try {
+    piece = decodeURIComponent(segment);
+  } catch {
+    // A stray `%`: read it as it is.
+  }
+  piece = piece.trim();
+  if (!piece) return false;
+  return EMAIL_IN_THE_PATH.test(piece) || PHONE_IN_THE_PATH.test(piece);
+}
 
 /** Names under which a number is a telephone number, and a date a birthday. */
 const PHONE_PARAM = /^(phone|tel|telephone|mobile|cell)$/;
@@ -702,6 +840,12 @@ function linkCarriesPrivate(said, depth = 0) {
    * holding these can post as their owner, and each was kept.
    */
   if (SECRET_PATH.some((re) => re.test(`${url.hostname.toLowerCase()}${url.pathname}`))) return true;
+  /*
+   * And an address or a telephone number that is a whole piece of the path:
+   * `x.com/jane@doe.com`, `x.com/u/4155551234`. The path was read as a place
+   * and nothing else, and both were kept. See `contactInThePath`.
+   */
+  if (url.pathname.split('/').some(contactInThePath)) return true;
   const params = [...url.searchParams];
   /*
    * And the parameters some servers write into the path after a `;`, as
@@ -709,7 +853,10 @@ function linkCarriesPrivate(said, depth = 0) {
    */
   for (const [, name, value] of url.pathname.matchAll(/;([^=/;]+)=([^/;]*)/g)) params.push([name, value]);
   const docsKey = KEY_IS_THE_DOCUMENT.test(url.hostname.toLowerCase().replace(/\.$/, ''));
-  const signInPage = SIGN_IN_PAGE.test(`${url.hostname}${url.pathname}`);
+  const signInPage = SIGN_IN_PAGE.test(url.pathname);
+  const sidIsTheView = SID_IS_THE_VIEW.test(url.hostname.toLowerCase().replace(/\.$/, ''));
+  const names = params.map(([name]) => name);
+  const onANetwork = signInPage || A_NETWORK.test(url.pathname) || names.some((n) => /wi-?fi|wlan|ssid/i.test(n));
   const fragment = url.hash.slice(1);
   if (fragment.includes('=')) params.push(...new URLSearchParams(fragment));
   else if (fragment) params.push(['', fragment]);
@@ -729,9 +876,11 @@ function linkCarriesPrivate(said, depth = 0) {
     const named = [...words, words.join(''), words.join('_'), words.join('-')];
     for (let i = 1; i < words.length; i++) named.push(words[i - 1] + words[i], `${words[i - 1]}_${words[i]}`);
     const whole = words.join('');
-    if (named.some((w) => SECRET_PARAM.has(w))) return true;
+    if (named.some((w) => SECRET_PARAM.has(w) && !(w === 'sid' && sidIsTheView))) return true;
     if (SECRET_ENDING.test(whole)) return true;
-    if ((PASSWORD_WORD.test(whole) || namesAPassword(words)) && !ONLY_A_FLAG.test(decoded.trim())) return true;
+    if ((PASSWORD_WORD.test(whole) || namesAPassword(words, onANetwork)) && !ONLY_A_FLAG.test(decoded.trim())) return true;
+    if (NUMERIC_CODE_NAME.test(whole) && NUMERIC_CODE.test(decoded.trim())) return true;
+    if (named.includes('ticket') && CAS_TICKET.test(decoded.trim())) return true;
     const opaqueName = named.some((w) => SECRET_WHEN_OPAQUE.has(w) && !(PASSWORD_WORD.test(whole) || (w === 'key' && docsKey)));
     if (opaqueName && [value, decoded].some(looksOpaque)) return true;
     const signInName = named.some((w) => SIGN_IN_CODE_NAME.has(w));
@@ -843,6 +992,28 @@ function withoutOrcid(link) {
   });
 }
 
+/*
+ * The ids a link's path is made of that `looksPrivate` takes for a card
+ * number, set aside the same way as an ORCID iD.
+ *
+ * A post's id on X, LinkedIn and TikTok is nineteen digits run together
+ * (`/status/1234567890123456789`, `activity-7123456789012345678-AbCd`,
+ * `/video/7123456789012345678`), and a credential's UUID on credential.net is
+ * thirty-two digits in its 8-4-4-4-12 groups. Each is a run of thirteen
+ * digits or more to the card-number shape, so every post and certificate
+ * link anybody pastes was refused as personal, before and after every round
+ * that looked at it.
+ *
+ * A card in a path is written as one: fifteen or sixteen digits, run
+ * together or in fours (`/card/4111-1111-1111-0238`), and those are still
+ * read as they are. Seventeen digits or more run together is an id: a card
+ * that long exists, rarely, and is written in groups; every post on these
+ * sites has one. And an 8-4-4-4-12 group is a UUID's, which no card is.
+ */
+const SNOWFLAKE_ID = /(?<!\d)\d{17,}(?!\d)/g;
+const UUID = /(?<![0-9a-f-])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f-])/gi;
+const withoutIds = (place) => place.replace(UUID, 'uuid').replace(SNOWFLAKE_ID, 'id');
+
 /**
  * Whether a typed answer is worth keeping for next time — and if not, why.
  *
@@ -869,7 +1040,7 @@ export function worthRememberingTyped({ question, answer, company } = {}) {
    * alone. Read here as well, a Scholar `cluster=` id was a card number to
    * `looksPrivate`, whatever was decided there.
    */
-  const place = oneLink ? withoutOrcid(said.replace(/[?#].*$/, '')) : said;
+  const place = oneLink ? withoutIds(withoutOrcid(said.replace(/[?#].*$/, ''))) : said;
   if (looksPrivate(place) || (oneLink ? linkCarriesPrivate(said) : CONTACT_SHAPE.some((re) => re.test(said)))) {
     return { keep: false, why: 'the answer looks personal, so it is not kept' };
   }

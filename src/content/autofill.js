@@ -8834,8 +8834,31 @@ const JOB_WORDS =
  * an employer's upload with a dash or a colon between, which the verb is
  * never written with.
  */
+/*
+ * But the verb is only ever "resume", and its words only ever follow it
+ * after a plain space. Read after every spelling with any gap, "CV
+ * application form" was the verb, and so was "Resume - an up-to-date copy":
+ * a CV is never resumed, and the verb is not written with a dash after it.
+ * So the words that make it the verb are read after "resume" alone, and
+ * "an" and "application" — the two an employer's label also follows the
+ * noun with — only after a space and nothing else. "Resume application" is
+ * still the bank's button.
+ *
+ * And "CVs", when what follows makes it a list of documents: "Upload CVs and
+ * cover letters", "CVs & portfolios", "CVs/Résumés". Alone it is the pharmacy
+ * again, and so is "CVS/pharmacy", which is how the pharmacy writes itself.
+ */
 const ASKS_FOR_A_RESUME =
-  /(?:(?<![\p{L}\p{N}])(r[ée]sum[ée]s?|cv|curr[ií]culum[\s_-]+vitae|currículum|lebensl(?:auf|äufe))(?![\p{L}\p{N}])|简历)(?![\s_-]+(your|a|an|my|the|saved|draft|later|existing|previous|pending|incomplete|where[\s_-]+you)\b|\s+application\b)/iu;
+  /(?:(?<![\p{L}\p{N}])(?:resumes?(?![\s_-]+(?:your|my|the|a|saved|draft|later|existing|previous|pending|incomplete|where[\s_-]+you)\b| (?:an|application)\b)|r[ée]sum[ée]s?(?<!resumes?)|cv|cvs(?=\s*(?:and\b|&|\/(?!\s*pharmacy)))|curr[ií]culum[\s_-]+vitae|currículum|lebensl(?:auf|äufe))(?![\p{L}\p{N}])|简历)/iu;
+/*
+ * "Curriculum" alone is a school's word, and a school enrolment's
+ * "Curriculum" box made a loan form a job application (see above). But in
+ * Italian, as in Spanish, it is the CV with nothing after it, and an upload
+ * labelled "Curriculum" is that: a school's curriculum is something it
+ * writes, not a file it asks somebody to send. So it counts on a file
+ * input's own label, and nowhere else.
+ */
+const ASKS_FOR_A_CURRICULUM = /(?<![\p{L}\p{N}])curr[ií]culum(?![\p{L}\p{N}])/iu;
 
 /*
  * The same, said so that it can only be the noun, for reading the page as a
@@ -8923,10 +8946,21 @@ export function looksLikeJobApplication() {
    * next sentence. Only a sentence that is itself a question and itself
    * about the job counts.
    */
+  /*
+   * But a question does not always end at its "?", nor a sentence at every
+   * full stop. "Why do you want to join our team?*" ends in the mark that
+   * says it is required, "\"Why this role?\"" in a quote, and "What draws you
+   * to this role?Max 300 words." runs on into the limit with no space; and
+   * "Why are you interested in this role (e.g. growth, mission)?" was cut at
+   * "e.g." into two pieces, neither of them both a question and about the
+   * job. So a sentence asks when it has a "?" in it, and sentences are split
+   * only where the next one starts with a capital, as "Our team" does after
+   * "Questions?" and "growth" after "e.g." does not.
+   */
   const asksAboutTheJob = (said) =>
     said
-      .split(/(?<=[.?!])\s+|\n+/)
-      .some((sentence) => sentence.trim().endsWith('?') && ASKS_ABOUT_THE_JOB.test(sentence));
+      .split(/(?<=[.?!])\s+(?=[A-Z])|\n+/)
+      .some((sentence) => sentence.includes('?') && ASKS_ABOUT_THE_JOB.test(sentence));
   for (const box of deepQueryAll('textarea')) {
     if (ASKS_ABOUT_THE_JOB.test(describeField(box) ?? '')) return true;
     if (wordsAround(box).some(asksAboutTheJob)) return true;
@@ -8934,7 +8968,9 @@ export function looksLikeJobApplication() {
   // A résumé asked for by a field of its own: a file input, or a box for a
   // link to one, labelled or named for it.
   for (const field of deepQueryAll('input, textarea')) {
-    if (ASKS_FOR_A_RESUME.test(describeField(field) ?? '')) return true;
+    const label = describeField(field) ?? '';
+    if (ASKS_FOR_A_RESUME.test(label)) return true;
+    if (field.type === 'file' && ASKS_FOR_A_CURRICULUM.test(label)) return true;
   }
   // An upload with "résumé" round it rather than in its label, and the page
   // asking for one in words only the noun can be. See `wordsAround` and

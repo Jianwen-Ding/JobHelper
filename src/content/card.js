@@ -917,13 +917,19 @@ export function statedWordLimit(question) {
 }
 
 /*
- * Whether a key belongs to somebody else: to an input method composing a
- * word (`isComposing`, and key code 229, which is how Chrome and Safari mark
- * the keys an input method takes even where `isComposing` is not set), or
- * to a handler that has already acted on it. Escape and Enter there commit
- * or cancel the half-made word, and are not the card's to act on.
+ * Whether a key belongs to an input method composing a word (`isComposing`,
+ * and key code 229, which is how Chrome and Safari mark the keys an input
+ * method takes even where `isComposing` is not set). Escape and Enter there
+ * commit or cancel the half-made word, and are not the card's to act on.
+ *
+ * Not a key some handler has already called `preventDefault` on. That was
+ * here too, and the page's handlers are the page's: an ATS editor that
+ * swallows Escape and Enter at the window, as rich-text editors do, took the
+ * card's Escape and the rename box's Enter and Escape with them, so the box
+ * could be neither saved nor given up from the keyboard. The card's keys are
+ * pressed inside the card, and the page has no say in what they mean.
  */
-const composingOrTaken = (event) => event.isComposing || event.keyCode === 229 || event.defaultPrevented;
+const composing = (event) => event.isComposing || event.keyCode === 229;
 
 const wordsIn = (text) => (String(text ?? '').trim().match(/\S+/g) ?? []).length;
 
@@ -2636,9 +2642,9 @@ export function createCard({
             /*
              * An Enter or an Escape inside an input method's composition is
              * the input method's: it commits or cancels the word, and it is
-             * not the name being saved or given up (see `composingOrTaken`).
+             * not the name being saved or given up (see `composing`).
              */
-            if (composingOrTaken(event)) return;
+            if (composing(event)) return;
             if (event.key === 'Enter') put({ custom: event.target.value });
             if (event.key === 'Escape') {
               renaming = null;
@@ -8443,10 +8449,11 @@ export function createCard({
    * reaches the card all the same, marked `isComposing` (or, in some
    * browsers, as key code 229). The card folded under the person mid-word
    * and the half-composed text stayed in the answer box. So the composition
-   * has it, and so does anything on the page that has already used it.
+   * has it. (Not the page, though it has called `preventDefault`: see
+   * `composing`.)
    */
   card.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape' || composingOrTaken(event)) return;
+    if (event.key !== 'Escape' || composing(event)) return;
     const menu = root.querySelector('.rename-menu:not(.hidden)');
     if (menu) {
       event.preventDefault();

@@ -313,6 +313,19 @@ async function main() {
       const gone = await neverAppears(page, ASK, 1200);
       const muted = await mutedHosts(context, worker);
       check('Escape dismisses the chip, as not now: the site is not recorded', gone && muted.length === 0, JSON.stringify({ gone, muted }));
+      /*
+       * And on a page that calls preventDefault on every Escape at the
+       * window, as an ATS's rich-text editor does. The chip took such an
+       * Escape for one already used, and stayed up.
+       */
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await appears(page, ASK);
+      await page.evaluate(() =>
+        window.addEventListener('keydown', (e) => e.key === 'Escape' && e.preventDefault(), true),
+      );
+      await inChip(page, 'yes').focus();
+      await page.keyboard.press('Escape');
+      check('and on a page that calls preventDefault on Escape too', await neverAppears(page, ASK, 1200));
       await page.close();
     }
 

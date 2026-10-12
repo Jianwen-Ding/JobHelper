@@ -1,0 +1,1748 @@
+{
+ "check": "jobforms",
+ "note": "Built from /tmp/claude-0/hunt17-corpus (round 17) and settled: probe-only and unstated cases left out, conflicts decided (see sources with round r17), and the r17 review findings added. Strings stored as {\"parts\":[...]} are joined with \"\" at runtime, so that no realistic secret is ever in the file whole: GitHub push protection refuses one.",
+ "cases": [
+  {
+   "id": "jobforms-001",
+   "input": {
+    "name": "Greenhouse",
+    "body": "\n      <label for=\"first_name\">First Name <span class=\"asterisk\">*</span></label>\n      <input type=\"text\" id=\"first_name\" name=\"job_application[first_name]\">\n      <label for=\"last_name\">Last Name <span class=\"asterisk\">*</span></label>\n      <input type=\"text\" id=\"last_name\" name=\"job_application[last_name]\">\n      <label for=\"email\">Email <span class=\"asterisk\">*</span></label>\n      <input type=\"text\" id=\"email\" name=\"job_application[email]\">\n      <label for=\"phone\">Phone</label>\n      <input type=\"text\" id=\"phone\" name=\"job_application[phone]\">\n      <label for=\"job_application_answers_attributes_0_text_value\">LinkedIn Profile</label>\n      <input type=\"text\" id=\"job_application_answers_attributes_0_text_value\"\n             name=\"job_application[answers_attributes][0][text_value]\">\n      <label for=\"job_application_answers_attributes_1_boolean_value\">\n        Are you legally authorized to work in the United States? <span class=\"asterisk\">*</span>\n      </label>\n      <select id=\"job_application_answers_attributes_1_boolean_value\"\n              name=\"job_application[answers_attributes][1][boolean_value]\">\n        <option value=\"\">--</option><option value=\"1\">Yes</option><option value=\"0\">No</option>\n      </select>\n      <label for=\"job_application_answers_attributes_2_boolean_value\">\n        Will you now or in the future require sponsorship for employment visa status?\n      </label>\n      <select id=\"job_application_answers_attributes_2_boolean_value\"\n              name=\"job_application[answers_attributes][2][boolean_value]\">\n        <option value=\"\">--</option><option value=\"1\">Yes</option><option value=\"0\">No</option>\n      </select>\n      <label for=\"cover_letter_text\">Cover Letter</label>\n      <textarea id=\"cover_letter_text\" name=\"job_application[cover_letter_text]\"></textarea>\n      <label for=\"q_why\">Why do you want to work at Acme? <span class=\"asterisk\">*</span></label>\n      <textarea id=\"q_why\" name=\"job_application[answers_attributes][3][text_value]\"></textarea>\n      <!--\n        The Education block, as Greenhouse builds it: three selects with the\n        options already on the page, named for the nested attributes rather\n        than for anything readable, plus a plain box for the grade. \"Discipline\"\n        is what it calls the subject — the word \"major\" appears nowhere.\n      -->\n      <label for=\"school--0\">School</label>\n      <select id=\"school--0\" name=\"job_application[educations_attributes][0][school_name_id]\">\n        <option value=\"\">--</option>\n        <option value=\"11\">Boston University</option>\n        <option value=\"12\">Northeastern University</option>\n        <option value=\"13\">Northwestern University</option>\n      </select>\n      <label for=\"degree--0\">Degree</label>\n      <select id=\"degree--0\" name=\"job_application[educations_attributes][0][degree_id]\">\n        <option value=\"\">--</option>\n        <!-- Greenhouse's own list: levels, not the degree as the store words it. -->\n        <option value=\"21\">Associate's Degree</option>\n        <option value=\"22\">Bachelor's Degree</option>\n        <option value=\"23\">Master's Degree</option>\n        <option value=\"24\">Doctor of Philosophy (Ph.D.)</option>\n      </select>\n      <label for=\"discipline--0\">Discipline</label>\n      <select id=\"discipline--0\" name=\"job_application[educations_attributes][0][discipline_id]\">\n        <option value=\"\">--</option>\n        <option value=\"31\">Computer Engineering</option>\n        <option value=\"32\">Computer Science</option>\n        <option value=\"33\">Information Systems</option>\n      </select>\n      <label for=\"gpa--0\">GPA</label>\n      <input type=\"text\" id=\"gpa--0\" name=\"job_application[educations_attributes][0][gpa]\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"Greenhouse\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-002",
+   "input": {
+    "name": "ARIA choice groups",
+    "body": "\n      <label for=\"fn\">First name</label><input id=\"fn\" name=\"fn\">\n      <label for=\"em\">Email</label><input id=\"em\" name=\"em\" type=\"email\">\n\n      <div id=\"authq\">Are you legally authorized to work in the United States?</div>\n      <div role=\"radiogroup\" aria-labelledby=\"authq\" id=\"auth\">\n        <div role=\"radio\" tabindex=\"0\" aria-checked=\"false\" data-v=\"Yes\">Yes</div>\n        <div role=\"radio\" tabindex=\"0\" aria-checked=\"false\" data-v=\"No\">No</div>\n      </div>\n\n      <div id=\"sponq\">Will you now or in the future require sponsorship?</div>\n      <div role=\"listbox\" aria-labelledby=\"sponq\" id=\"spon\">\n        <button type=\"button\" role=\"option\" aria-selected=\"false\" data-v=\"Yes\">Yes</button>\n        <button type=\"button\" role=\"option\" aria-selected=\"false\" data-v=\"No\">No</button>\n      </div>\n\n      <label id=\"stl\">State</label>\n      <button type=\"button\" aria-haspopup=\"listbox\" aria-controls=\"statelist\" aria-labelledby=\"stl\">Select…</button>\n      <div role=\"listbox\" id=\"statelist\" aria-labelledby=\"stl\">\n        <div role=\"option\" aria-selected=\"false\">Massachusetts</div>\n        <div role=\"option\" aria-selected=\"false\">California</div>\n      </div>\n\n      <label for=\"dobq\">Month of birth</label>\n      <select id=\"dobq\" name=\"dob_month\">\n        <option value=\"\">--</option><option>April</option><option>May</option>\n      </select>\n\n      <label for=\"q_why\">Why do you want to work here?</label>\n      <textarea id=\"q_why\"></textarea>\n      <script>\n        for (const group of document.querySelectorAll('#auth, #spon, #statelist')) {\n          group.addEventListener('click', (e) => {\n            const hit = e.target.closest('[role=radio], [role=option]');\n            if (!hit) return;\n            const attr = hit.getAttribute('role') === 'radio' ? 'aria-checked' : 'aria-selected';\n            for (const el of group.children) el.setAttribute(attr, 'false');\n            hit.setAttribute(attr, 'true');\n          });\n        }\n      </script>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"ARIA choice groups\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-003",
+   "input": {
+    "name": "Lever",
+    "body": "\n      <input type=\"text\" name=\"name\" placeholder=\"Full name\" required>\n      <input type=\"email\" name=\"email\" placeholder=\"Email\" required>\n      <input type=\"tel\" name=\"phone\" placeholder=\"Phone\">\n      <input type=\"text\" name=\"org\" placeholder=\"Current company\">\n      <input type=\"text\" name=\"urls[LinkedIn]\" placeholder=\"LinkedIn URL\">\n      <input type=\"text\" name=\"urls[GitHub]\" placeholder=\"GitHub URL\">\n      <input type=\"text\" name=\"urls[Portfolio]\" placeholder=\"Portfolio URL\">\n      <ul class=\"application-additional\">\n        <li class=\"application-question\">\n          <div class=\"application-label\"><div class=\"text\">What interests you about this role?</div></div>\n          <div class=\"application-field\">\n            <textarea name=\"cards[a1b2][field0]\" required></textarea>\n          </div>\n        </li>\n      </ul>\n      <div class=\"application-additional\">\n        <div class=\"application-label\"><div class=\"text\">Additional information</div></div>\n        <textarea name=\"comments\"></textarea>\n      </div>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"Lever\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-004",
+   "input": {
+    "name": "Ashby",
+    "body": "\n      <label id=\"_systemfield_name-label\" for=\"_systemfield_name\">Name</label>\n      <input id=\"_systemfield_name\" name=\"_systemfield_name\" type=\"text\">\n      <label id=\"_systemfield_email-label\" for=\"_systemfield_email\">Email</label>\n      <input id=\"_systemfield_email\" name=\"_systemfield_email\" type=\"email\">\n      <label for=\"_systemfield_phone\">Phone</label>\n      <input id=\"_systemfield_phone\" name=\"_systemfield_phone\" type=\"tel\">\n      <label for=\"c_linkedin\">LinkedIn</label>\n      <input id=\"c_linkedin\" name=\"c_linkedin\" type=\"text\">\n      <label for=\"c_location\">Location</label>\n      <input id=\"c_location\" name=\"c_location\" type=\"text\">\n      <label for=\"c_q1\">Tell us about a system you designed end to end.</label>\n      <textarea id=\"c_q1\" name=\"c_q1\"></textarea>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"Ashby\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-005",
+   "input": {
+    "name": "Workday",
+    "body": "\n      <div data-automation-id=\"legalNameSection_firstName\">\n        <label id=\"lbl-fn\">First Name</label>\n        <input aria-labelledby=\"lbl-fn\" data-automation-id=\"legalNameSection_firstName\" type=\"text\" id=\"wd-fn\">\n      </div>\n      <div data-automation-id=\"legalNameSection_lastName\">\n        <label id=\"lbl-ln\">Last Name</label>\n        <input aria-labelledby=\"lbl-ln\" data-automation-id=\"legalNameSection_lastName\" type=\"text\" id=\"wd-ln\">\n      </div>\n      <div data-automation-id=\"email\">\n        <label id=\"lbl-em\">Email Address</label>\n        <input aria-labelledby=\"lbl-em\" type=\"text\" id=\"wd-em\">\n      </div>\n      <div data-automation-id=\"phone-number\">\n        <label id=\"lbl-ph\">Phone Number</label>\n        <input aria-labelledby=\"lbl-ph\" type=\"text\" id=\"wd-ph\">\n      </div>\n      <div data-automation-id=\"addressSection_city\">\n        <label id=\"lbl-city\">City</label>\n        <input aria-labelledby=\"lbl-city\" type=\"text\" id=\"wd-city\">\n      </div>\n      <div>\n        <label id=\"lbl-country\">Country</label>\n        <button id=\"wd-country\" aria-haspopup=\"listbox\" aria-labelledby=\"lbl-country\"\n                data-automation-id=\"countryDropdown\">Select One</button>\n      </div>\n      <div>\n        <label id=\"lbl-auth\">Are you legally authorized to work in the United States?</label>\n        <button id=\"wd-auth\" aria-haspopup=\"listbox\" aria-labelledby=\"lbl-auth\">Select One</button>\n      </div>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"Workday\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-006",
+   "input": {
+    "name": "Taleo",
+    "body": "\n      <table><tbody>\n        <tr><td><span class=\"label\">First Name</span></td>\n            <td><input type=\"text\" id=\"ftlf_1\" name=\"descriptor1.value\"></td></tr>\n        <tr><td><span class=\"label\">Last Name</span></td>\n            <td><input type=\"text\" id=\"ftlf_2\" name=\"descriptor2.value\"></td></tr>\n        <tr><td><span class=\"label\">E-Mail Address</span></td>\n            <td><input type=\"text\" id=\"ftlf_3\" name=\"descriptor3.value\"></td></tr>\n        <tr><td><span class=\"label\">Primary Number</span></td>\n            <td><input type=\"text\" id=\"ftlf_4\" name=\"descriptor4.value\"></td></tr>\n        <tr><td><span class=\"label\">City</span></td>\n            <td><input type=\"text\" id=\"ftlf_5\" name=\"descriptor5.value\"></td></tr>\n      </tbody></table>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"Taleo\" (read on its host, taleo.net)",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-007",
+   "input": {
+    "name": "SmartRecruiters",
+    "body": "\n      <label for=\"sr-fn\">First name</label><input id=\"sr-fn\" name=\"candidate.firstName\" type=\"text\">\n      <label for=\"sr-ln\">Last name</label><input id=\"sr-ln\" name=\"candidate.lastName\" type=\"text\">\n      <label for=\"sr-em\">Email</label><input id=\"sr-em\" name=\"candidate.email\" type=\"email\">\n      <label for=\"sr-ph\">Phone number</label><input id=\"sr-ph\" name=\"candidate.phoneNumber\" type=\"tel\">\n      <label for=\"sr-loc\">Location</label><input id=\"sr-loc\" name=\"candidate.location.city\" type=\"text\">\n      <label for=\"sr-web\">Web / Social</label><input id=\"sr-web\" name=\"candidate.web.linkedin\" type=\"text\">\n      <label for=\"sr-q1\">What makes you a good fit for this position?</label>\n      <textarea id=\"sr-q1\"></textarea>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"SmartRecruiters\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-008",
+   "input": {
+    "name": "Workable",
+    "body": "\n      <label for=\"firstname\">First name *</label><input id=\"firstname\" name=\"firstname\" type=\"text\">\n      <label for=\"lastname\">Last name *</label><input id=\"lastname\" name=\"lastname\" type=\"text\">\n      <label for=\"email\">Email *</label><input id=\"email\" name=\"email\" type=\"email\">\n      <label for=\"phone\">Phone</label><input id=\"phone\" name=\"phone\" type=\"tel\">\n      <label for=\"address\">Location</label><input id=\"address\" name=\"address\" type=\"text\">\n      <label for=\"wk-li\">LinkedIn URL</label><input id=\"wk-li\" name=\"linkedin_url\" type=\"text\">\n      <label for=\"wk-cl\">Cover letter</label><textarea id=\"wk-cl\" name=\"cover_letter\"></textarea>\n      <label for=\"wk-q1\">Do you have experience running Kubernetes in production?</label>\n      <textarea id=\"wk-q1\"></textarea>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"Workable\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-009",
+   "input": {
+    "name": "BambooHR",
+    "body": "\n      <label for=\"bh-fn\">First Name<span class=\"required\">*</span></label>\n      <input id=\"bh-fn\" name=\"firstName\" type=\"text\">\n      <label for=\"bh-ln\">Last Name<span class=\"required\">*</span></label>\n      <input id=\"bh-ln\" name=\"lastName\" type=\"text\">\n      <label for=\"bh-em\">Email<span class=\"required\">*</span></label>\n      <input id=\"bh-em\" name=\"email\" type=\"email\">\n      <label for=\"bh-ph\">Phone<span class=\"required\">*</span></label>\n      <input id=\"bh-ph\" name=\"phone\" type=\"tel\">\n      <label for=\"bh-web\">Website, Blog, or Portfolio</label>\n      <input id=\"bh-web\" name=\"websiteUrl\" type=\"text\">\n      <label for=\"bh-li\">LinkedIn Profile URL</label>\n      <input id=\"bh-li\" name=\"linkedinUrl\" type=\"text\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"BambooHR\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-010",
+   "input": {
+    "name": "JazzHR",
+    "body": "\n      <label for=\"jz-fn\">First Name *</label><input id=\"jz-fn\" name=\"firstname\" type=\"text\">\n      <label for=\"jz-ln\">Last Name *</label><input id=\"jz-ln\" name=\"lastname\" type=\"text\">\n      <label for=\"jz-em\">Email *</label><input id=\"jz-em\" name=\"email\" type=\"email\">\n      <label for=\"jz-ph\">Phone *</label><input id=\"jz-ph\" name=\"phone\" type=\"text\">\n      <label for=\"jz-q1\">Describe your experience with distributed systems. *</label>\n      <textarea id=\"jz-q1\" name=\"answer_1\"></textarea>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"JazzHR\" (read on its host, applytojob.com)",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-011",
+   "input": {
+    "name": "Jobvite",
+    "body": "\n      <label for=\"jv-fn\">First Name</label><input id=\"jv-fn\" name=\"jvFirstName\" type=\"text\">\n      <label for=\"jv-ln\">Last Name</label><input id=\"jv-ln\" name=\"jvLastName\" type=\"text\">\n      <label for=\"jv-em\">Email</label><input id=\"jv-em\" name=\"jvEmail\" type=\"email\">\n      <label for=\"jv-ph\">Phone</label><input id=\"jv-ph\" name=\"jvPhone\" type=\"text\">\n      <label for=\"jv-cl\">Cover Letter</label><textarea id=\"jv-cl\" name=\"jvCoverLetter\"></textarea>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"Jobvite\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-012",
+   "input": {
+    "name": "Teamtailor",
+    "body": "\n      <label for=\"tt-name\">Name</label><input id=\"tt-name\" name=\"candidate[name]\" type=\"text\">\n      <label for=\"tt-em\">Email</label><input id=\"tt-em\" name=\"candidate[email]\" type=\"email\">\n      <label for=\"tt-ph\">Phone</label><input id=\"tt-ph\" name=\"candidate[phone]\" type=\"tel\">\n      <label for=\"tt-li\">LinkedIn</label><input id=\"tt-li\" name=\"candidate[linkedin_url]\" type=\"text\">\n      <label for=\"tt-q1\">Why would you like to join us?</label>\n      <textarea id=\"tt-q1\" name=\"answers[1]\"></textarea>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"Teamtailor\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-013",
+   "input": {
+    "name": "SAP SuccessFactors",
+    "body": "\n      <label for=\"sf-fn\">First Name</label><input id=\"sf-fn\" name=\"firstName\" type=\"text\">\n      <label for=\"sf-ln\">Last Name</label><input id=\"sf-ln\" name=\"lastName\" type=\"text\">\n      <label for=\"sf-em\">E-Mail</label><input id=\"sf-em\" name=\"email\" type=\"text\">\n      <label for=\"sf-ph\">Phone</label><input id=\"sf-ph\" name=\"cellPhone\" type=\"text\">\n      <label for=\"sf-country\">Country/Region</label>\n      <select id=\"sf-country\" name=\"country\">\n        <option value=\"\">Select One</option>\n        <option value=\"USA\">United States</option>\n        <option value=\"CAN\">Canada</option>\n      </select>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"SAP SuccessFactors\" (read on its host, successfactors.com)",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-014",
+   "input": {
+    "name": "Yes/no questions as radio buttons",
+    "body": "\n      <label for=\"rb-fn\">First Name</label><input id=\"rb-fn\" name=\"first_name\" type=\"text\">\n      <label for=\"rb-ln\">Last Name</label><input id=\"rb-ln\" name=\"last_name\" type=\"text\">\n      <label for=\"rb-em\">Email</label><input id=\"rb-em\" name=\"email\" type=\"email\">\n      <label for=\"rb-ph\">Phone</label><input id=\"rb-ph\" name=\"phone\" type=\"tel\">\n\n      <fieldset>\n        <legend>Are you legally authorized to work in the United States? *</legend>\n        <label><input type=\"radio\" name=\"work_auth\" value=\"Yes\"> Yes</label>\n        <label><input type=\"radio\" name=\"work_auth\" value=\"No\"> No</label>\n      </fieldset>\n\n      <fieldset>\n        <legend>Will you now or in the future require sponsorship?</legend>\n        <label><input type=\"radio\" name=\"sponsorship\" value=\"1\"> Yes</label>\n        <label><input type=\"radio\" name=\"sponsorship\" value=\"0\"> No</label>\n      </fieldset>\n\n      <!-- Already answered by hand, and not to be moved. -->\n      <fieldset>\n        <legend>Country</legend>\n        <label><input type=\"radio\" name=\"country\" value=\"Canada\" checked> Canada</label>\n        <label><input type=\"radio\" name=\"country\" value=\"United States\"> United States</label>\n      </fieldset>\n\n      <!-- The same question, worded so that neither option is the stored\n           answer. Getting this one wrong is a false declaration, so it has to\n           be reported rather than reasoned about. -->\n      <fieldset>\n        <legend>Do you require visa sponsorship now or in the future?</legend>\n        <label><input type=\"radio\" name=\"visa_status\" value=\"a\"> I will require sponsorship</label>\n        <label><input type=\"radio\" name=\"visa_status\" value=\"b\"> I will not require sponsorship</label>\n      </fieldset>\n\n      <!-- Consent. Never ours to tick. -->\n      <fieldset>\n        <legend>I agree to the processing of my personal data.</legend>\n        <label><input type=\"checkbox\" name=\"consent\" value=\"yes\"> I agree</label>\n      </fieldset>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"Yes/no questions as radio buttons\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-015",
+   "input": {
+    "name": "A combobox that is a text input",
+    "body": "\n      <label for=\"cb-fn\">First Name</label><input id=\"cb-fn\" name=\"first_name\" type=\"text\">\n      <label for=\"cb-em\">Email</label><input id=\"cb-em\" name=\"email\" type=\"email\">\n\n      <label for=\"cb-country\" id=\"cb-country-label\">Country</label>\n      <div class=\"select__control\">\n        <input id=\"cb-country\" role=\"combobox\" aria-autocomplete=\"list\" aria-expanded=\"false\"\n               aria-labelledby=\"cb-country-label\" autocomplete=\"off\">\n        <div class=\"select__placeholder\">Select…</div>\n      </div>\n      <input type=\"hidden\" name=\"country\" id=\"cb-country-value\">\n\n      <label for=\"cb-school\" id=\"cb-school-label\">School</label>\n      <div class=\"select__control\">\n        <input id=\"cb-school\" role=\"combobox\" aria-autocomplete=\"list\"\n               aria-labelledby=\"cb-school-label\" autocomplete=\"off\">\n      </div>\n      <input type=\"hidden\" name=\"school\" id=\"cb-school-value\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"A combobox that is a text input\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-016",
+   "input": {
+    "name": "A form inside a shadow root",
+    "body": "\n      <div id=\"host\"></div>\n      <script>\n        document.getElementById('host').attachShadow({ mode: 'open' }).innerHTML =\n          decodeURIComponent(escape(atob(\"PGxhYmVsIGZvcj0ic2QtZm4iPkZpcnN0IE5hbWU8L2xhYmVsPjxpbnB1dCBpZD0ic2QtZm4iIG5hbWU9ImZpcnN0X25hbWUiPjxsYWJlbCBmb3I9InNkLWxuIj5MYXN0IE5hbWU8L2xhYmVsPjxpbnB1dCBpZD0ic2QtbG4iIG5hbWU9Imxhc3RfbmFtZSI+PGxhYmVsIGZvcj0ic2QtZW0iPkVtYWlsPC9sYWJlbD48aW5wdXQgaWQ9InNkLWVtIiBuYW1lPSJlbWFpbCIgdHlwZT0iZW1haWwiPjxsYWJlbCBmb3I9InNkLXBoIj5QaG9uZTwvbGFiZWw+PGlucHV0IGlkPSJzZC1waCIgbmFtZT0icGhvbmUiPjxsYWJlbCBmb3I9InNkLWNsIj5Db3ZlciBMZXR0ZXI8L2xhYmVsPjx0ZXh0YXJlYSBpZD0ic2QtY2wiIG5hbWU9ImNvdmVyX2xldHRlciI+PC90ZXh0YXJlYT48bGFiZWwgZm9yPSJzZC1xMSI+V2h5IGRvIHlvdSB3YW50IHRvIHdvcmsgaGVyZT88L2xhYmVsPjx0ZXh0YXJlYSBpZD0ic2QtcTEiPjwvdGV4dGFyZWE+PGJ1dHRvbiB0eXBlPSJidXR0b24iPlN1Ym1pdCBBcHBsaWNhdGlvbjwvYnV0dG9uPg==\")));\n      </script>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"A form inside a shadow root\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-017",
+   "input": {
+    "name": "iCIMS",
+    "body": "\n      <label for=\"ic-fn\">First Name</label><input id=\"ic-fn\" name=\"icims_firstname\" type=\"text\">\n      <label for=\"ic-ln\">Last Name</label><input id=\"ic-ln\" name=\"icims_lastname\" type=\"text\">\n      <label for=\"ic-em\">Email Address</label><input id=\"ic-em\" name=\"icims_email\" type=\"text\">\n      <label for=\"ic-ph\">Phone Number</label><input id=\"ic-ph\" name=\"icims_phone\" type=\"text\">"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"iCIMS\" (read on its host, icims.com)",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-018",
+   "input": {
+    "name": "Rippling",
+    "body": "\n      <div class=\"field\"><div class=\"label\">First name</div><input name=\"firstName\" type=\"text\"></div>\n      <div class=\"field\"><div class=\"label\">Last name</div><input name=\"lastName\" type=\"text\"></div>\n      <div class=\"field\"><div class=\"label\">Email</div><input name=\"email\" type=\"email\"></div>\n      <div class=\"field\"><div class=\"label\">Phone</div><input name=\"phone\" type=\"tel\"></div>\n      <div class=\"field\"><div class=\"label\">LinkedIn</div><input name=\"linkedinUrl\" type=\"text\"></div>\n      <div class=\"field\"><div class=\"label\">Why are you a good fit?</div><textarea name=\"q_fit\"></textarea></div>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"Rippling\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-019",
+   "input": {
+    "name": "Breezy",
+    "body": "\n      <label for=\"bz-name\">Full Name</label><input id=\"bz-name\" name=\"name\" type=\"text\">\n      <label for=\"bz-em\">Email Address</label><input id=\"bz-em\" name=\"email_address\" type=\"email\">\n      <label for=\"bz-ph\">Phone Number</label><input id=\"bz-ph\" name=\"phone_number\" type=\"tel\">\n      <label for=\"bz-cl\">Cover Letter</label><textarea id=\"bz-cl\" name=\"cover_letter\"></textarea>\n      <label for=\"bz-rs\">Resume</label><input id=\"bz-rs\" name=\"resume\" type=\"file\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"Breezy\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-020",
+   "input": {
+    "name": "Recruitee",
+    "body": "\n      <input name=\"candidate[name]\" type=\"text\" aria-label=\"Your name\">\n      <input name=\"candidate[email]\" type=\"email\" aria-label=\"Your email\">\n      <input name=\"candidate[phone]\" type=\"tel\" aria-label=\"Your phone number\">\n      <div class=\"c-form__question\">\n        <span class=\"c-form__label\">What draws you to this team?</span>\n        <textarea name=\"open_question_1\"></textarea>\n      </div>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"Recruitee\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-021",
+   "input": {
+    "name": "Authorization and sponsorship asked as one question",
+    "body": "\n      <label for=\"one-fn\">First Name <span class=\"asterisk\">*</span></label>\n      <input type=\"text\" id=\"one-fn\" name=\"job_application[first_name]\">\n      <label for=\"one-ln\">Last Name <span class=\"asterisk\">*</span></label>\n      <input type=\"text\" id=\"one-ln\" name=\"job_application[last_name]\">\n      <label for=\"one-em\">Email <span class=\"asterisk\">*</span></label>\n      <input type=\"text\" id=\"one-em\" name=\"job_application[email]\">\n      <label for=\"one-auth\">\n        Are you legally authorized to work in the United States without sponsorship,\n        now or in the future? <span class=\"asterisk\">*</span>\n      </label>\n      <select id=\"one-auth\" name=\"job_application[answers_attributes][0][boolean_value]\">\n        <option value=\"\">--</option><option value=\"1\">Yes</option><option value=\"0\">No</option>\n      </select>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"Authorization and sponsorship asked as one question\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-022",
+   "input": {
+    "name": "A form that asks for references",
+    "body": "\n      <table><tbody>\n        <tr><td><label for=\"rr-fn\">First Name</label></td><td><input id=\"rr-fn\" name=\"TEXT1\" type=\"text\"></td></tr>\n        <tr><td><label for=\"rr-ln\">Last Name</label></td><td><input id=\"rr-ln\" name=\"TEXT2\" type=\"text\"></td></tr>\n        <tr><td><label for=\"rr-em\">E-mail Address</label></td><td><input id=\"rr-em\" name=\"TEXT3\" type=\"text\"></td></tr>\n        <tr><td><label for=\"rr-ph\">Home Phone</label></td><td><input id=\"rr-ph\" name=\"TEXT4\" type=\"text\"></td></tr>\n        <tr><td colspan=\"2\"><b>Professional references</b></td></tr>\n        <tr><td><label for=\"rr-rn\">Reference 1 Full Name</label></td><td><input id=\"rr-rn\" name=\"TEXT5\" type=\"text\"></td></tr>\n        <tr><td><label for=\"rr-re\">Reference 1 E-mail</label></td><td><input id=\"rr-re\" name=\"TEXT6\" type=\"text\"></td></tr>\n        <tr><td><label for=\"rr-rp\">Reference 1 Home Phone</label></td><td><input id=\"rr-rp\" name=\"TEXT7\" type=\"text\"></td></tr>\n        <tr><td colspan=\"2\"><b>In case of emergency</b></td></tr>\n        <tr><td><label for=\"rr-en\">Emergency Contact Name</label></td><td><input id=\"rr-en\" name=\"TEXT8\" type=\"text\"></td></tr>\n        <tr><td><label for=\"rr-ep\">Emergency Contact Number</label></td><td><input id=\"rr-ep\" name=\"TEXT9\" type=\"text\"></td></tr>\n      </tbody></table>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"A form that asks for references\" (read on its host, brassring.com)",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-023",
+   "input": {
+    "name": "Voluntary self-identification",
+    "body": "\n      <label for=\"vsi-fn\">First Name <span class=\"asterisk\">*</span></label>\n      <input type=\"text\" id=\"vsi-fn\" name=\"job_application[first_name]\">\n      <label for=\"vsi-ph\">Phone <span class=\"asterisk\">*</span></label>\n      <input type=\"text\" id=\"vsi-ph\" name=\"job_application[phone]\">\n      <label for=\"vsi-ctry\">Country <span class=\"asterisk\">*</span></label>\n      <select id=\"vsi-ctry\" name=\"job_application[country]\">\n        <option value=\"\">Please select</option><option>United States</option><option>India</option>\n      </select>\n\n      <h3>U.S. Equal Opportunity Employment Information (Completion is voluntary)</h3>\n      <label for=\"vsi-gender\">Gender</label>\n      <select id=\"vsi-gender\" name=\"job_application[gender]\">\n        <option value=\"\">Please select</option><option>Male</option><option>Female</option>\n        <option>Decline To Self Identify</option>\n      </select>\n      <label for=\"vsi-birth\">Country of Birth</label>\n      <select id=\"vsi-birth\" name=\"job_application[country_of_birth]\">\n        <option value=\"\">Please select</option><option>United States</option><option>India</option>\n      </select>\n\n      <h3>Voluntary Self-Identification of Disability</h3>\n      <label for=\"vsi-sig\">Your Name</label>\n      <input type=\"text\" id=\"vsi-sig\" name=\"job_application[disability_signature]\">\n      <label for=\"vsi-date\">Today's Date</label>\n      <input type=\"text\" id=\"vsi-date\" name=\"job_application[disability_date]\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"Voluntary self-identification\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-024",
+   "input": {
+    "name": "BrassRing",
+    "body": "\n      <table>\n        <tr><td><label for=\"br1\">First Name</label></td><td><input id=\"br1\" name=\"TEXT1\" type=\"text\"></td></tr>\n        <tr><td><label for=\"br2\">Last Name</label></td><td><input id=\"br2\" name=\"TEXT2\" type=\"text\"></td></tr>\n        <tr><td><label for=\"br3\">E-mail Address</label></td><td><input id=\"br3\" name=\"TEXT3\" type=\"text\"></td></tr>\n        <tr><td><label for=\"br4\">Home Phone</label></td><td><input id=\"br4\" name=\"TEXT4\" type=\"text\"></td></tr>\n      </table>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs SYSTEMS \"BrassRing\" (read on its host, brassring.com)",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-025",
+   "input": {
+    "name": "a personal-loan application",
+    "body": "\n    <h1>Apply for a personal loan</h1><p>Requirements: you must be 18+. Benefits: low APR.</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"inc\">Annual income</label><input id=\"inc\" name=\"income\">\n    <label for=\"emp\">Employer</label><input id=\"emp\" name=\"employer\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\">\n    <button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs NOT_FOR_A_JOB:1005 (42f794e)",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-026",
+   "input": {
+    "name": "a rental application",
+    "body": "\n    <h1>Rental application — 12 Elm Street, Apt 3</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" type=\"tel\" name=\"phone\">\n    <label for=\"cur\">Current address</label><input id=\"cur\" name=\"current_address\">\n    <label for=\"id\">Photo ID</label><input id=\"id\" type=\"file\" name=\"photo_id\">\n    <label for=\"pets\">Tell us about any pets</label><textarea id=\"pets\" name=\"pets\"></textarea>\n    <button type=\"button\">Start your application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r13",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs NOT_FOR_A_JOB:1015 (42f794e)",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-027",
+   "input": {
+    "name": "a personal-loan application with \"Resume a saved application\" and an upload",
+    "body": "\n    <h1>Apply for a personal loan</h1>\n    <p>Requirements: you must be 18+. Benefits: low APR. <a href=\"/bank/resume\">Resume a saved application</a></p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"inc\">Annual income</label><input id=\"inc\" name=\"income\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\">\n    <label for=\"ps\">Upload your two most recent pay stubs</label><input id=\"ps\" type=\"file\" name=\"paystubs\">\n    <button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r14",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs NOT_FOR_A_JOB:1032 (4ad4bc9)",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-028",
+   "input": {
+    "name": "a personal-loan application with a box about your job and \"our team\"",
+    "body": "\n    <h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"emp\">Tell us about your job at your current employer</label><textarea id=\"emp\" name=\"emp\"></textarea>\n    <p>Our team will contact you within two business days.</p>\n    <button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r14",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs NOT_FOR_A_JOB:1032 (4ad4bc9)",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-029",
+   "input": {
+    "name": "a personal-loan application with \"Resume your application\" beside the upload",
+    "body": "\n    <h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <h3>Resume the application you started</h3>\n    <div class=\"field\"><a href=\"/bank/resume\">Resume your application</a>\n      <label for=\"ps\">Upload file</label><input id=\"ps\" type=\"file\" name=\"paystubs\"></div>\n    <button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r14",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs NOT_FOR_A_JOB:1032 (4ad4bc9)",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-030",
+   "input": {
+    "name": "a personal-loan application with \"Our team will contact you\" over a comments box",
+    "body": "\n    <h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <p>Our team will contact you within two business days.</p>\n    <label for=\"c\">Comments</label><textarea id=\"c\" name=\"comments\"></textarea>\n    <button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r14",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs NOT_FOR_A_JOB:1032 (4ad4bc9)",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-031",
+   "input": {
+    "name": "a health enrolment with a pharmacy \"(e.g. CVS)\"",
+    "body": "\n    <h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\">\n    <label for=\"rx\">Preferred pharmacy (e.g. CVS)</label><input id=\"rx\" name=\"pharmacy\">\n    <button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r16",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs NOT_FOR_A_JOB:1101 (bfe3495)",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-032",
+   "input": {
+    "name": "a loan form asking for a \"CVS ExtraCare card number\"",
+    "body": "\n    <h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\">\n    <label for=\"x\">CVS ExtraCare card number</label><input id=\"x\" name=\"x\">\n    <button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r16",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs NOT_FOR_A_JOB:1104 (bfe3495)",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-033",
+   "input": {
+    "name": "a school enrolment with a \"Curriculum\" box",
+    "body": "\n    <h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\">\n    <label for=\"c\">Curriculum</label><input id=\"c\" name=\"curriculum\">\n    <button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r16",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs NOT_FOR_A_JOB:1107 (bfe3495)",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-034",
+   "input": {
+    "name": "a loan form with a \"Resume application\" button beside the upload",
+    "body": "\n    <h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\">\n    <div class=\"f\"><button type=\"button\">Resume application</button>\n      <label for=\"ps\">Upload file</label><input id=\"ps\" type=\"file\" name=\"paystubs\"></div>\n    <button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r16",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs NOT_FOR_A_JOB:1110 (bfe3495)",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-035",
+   "input": {
+    "name": "a loan form with \"Resume an existing application\" above the upload",
+    "body": "\n    <h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\">\n    <p>Resume an existing application</p>\n    <label for=\"ps\">Upload your pay stubs</label><input id=\"ps\" type=\"file\" name=\"paystubs\">\n    <button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r16",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs NOT_FOR_A_JOB:1114 (bfe3495)",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-036",
+   "input": {
+    "name": "a loan form with \"Questions? Our team is available 24/7.\" over a comments box",
+    "body": "\n    <h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\">\n    <p>Questions? Our team is available 24/7.</p>\n    <label for=\"c\">Comments</label><textarea id=\"c\" name=\"comments\"></textarea>\n    <button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r16",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs NOT_FOR_A_JOB:1118 (bfe3495)",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-037",
+   "input": {
+    "name": "a heading \"Resume\" over an upload labelled \"Attach\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <h3>Resume</h3><label for=\"f\">Attach</label><input id=\"f\" type=\"file\" name=\"attachment\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs FOR_A_JOB_BY_WHAT_IS_ROUND:1144 (2a1a9fd)",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-038",
+   "input": {
+    "name": "a heading \"Resume *\" over \"Upload file\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <h3>Resume *</h3><label for=\"f\">Upload file</label><input id=\"f\" type=\"file\" name=\"file\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs FOR_A_JOB_BY_WHAT_IS_ROUND:1146 (2a1a9fd)",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-039",
+   "input": {
+    "name": "a heading \"Your resume\" over \"Drop files here\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <h3>Your resume</h3><label for=\"f\">Drop files here or browse</label><input id=\"f\" type=\"file\" name=\"files\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs FOR_A_JOB_BY_WHAT_IS_ROUND:1148 (2a1a9fd)",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-040",
+   "input": {
+    "name": "a span \"Resume/CV\" beside a button \"Attach\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <div class=\"field\"><span class=\"lbl\">Resume/CV</span><button type=\"button\">Attach</button><input type=\"file\" name=\"file\" style=\"display:none\"></div>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs FOR_A_JOB_BY_WHAT_IS_ROUND:1150 (2a1a9fd)",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-041",
+   "input": {
+    "name": "Workday's \"Resume/CV\" over \"Select files\"",
+    "body": "<h3>Resume/CV</h3>\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <div data-automation-id=\"attachments-FileUpload\"><label for=\"wd\">Select files</label><input id=\"wd\" type=\"file\" data-automation-id=\"file-upload-input-ref\"></div>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs FOR_A_JOB_BY_WHAT_IS_ROUND:1132 (2a1a9fd)",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-042",
+   "input": {
+    "name": "\"Attach your CV\" at the top, the upload labelled \"Documents\"",
+    "body": "<p>Attach your CV and any other documents.</p>\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"f\">Documents</label><input id=\"f\" type=\"file\" name=\"documents\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs FOR_A_JOB_BY_WHAT_IS_ROUND:1154 (2a1a9fd)",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-043",
+   "input": {
+    "name": "an upload labelled \"Résumé (optional)\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"f\">Résumé (optional)</label><input id=\"f\" type=\"file\" name=\"f1\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs FOR_A_JOB_BY_WHAT_IS_ROUND:1156 (2a1a9fd)",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-044",
+   "input": {
+    "name": "an upload labelled \"Upload Resumé\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"f\">Upload Resumé</label><input id=\"f\" type=\"file\" name=\"f1\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs FOR_A_JOB_BY_WHAT_IS_ROUND:1158 (2a1a9fd)",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-045",
+   "input": {
+    "name": "an upload labelled \"Resume - application documents\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"f\">Resume - application documents</label><input id=\"f\" type=\"file\" name=\"f1\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs FOR_A_JOB_BY_WHAT_IS_ROUND:1160 (2a1a9fd)",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-046",
+   "input": {
+    "name": "an upload labelled \"Resume: application documents\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"f\">Resume: application documents</label><input id=\"f\" type=\"file\" name=\"f1\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r16",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs FOR_A_JOB_BY_WHAT_IS_ROUND:1163 (bfe3495)",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-047",
+   "input": {
+    "name": "an upload labelled \"Resume\" named `application`",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"f\">Resume</label><input id=\"f\" type=\"file\" name=\"application\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r16",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs FOR_A_JOB_BY_WHAT_IS_ROUND:1165 (bfe3495)",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-048",
+   "input": {
+    "name": "an upload labelled \"Curriculum vitae\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"f\">Curriculum vitae</label><input id=\"f\" type=\"file\" name=\"f1\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r16",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs FOR_A_JOB_BY_WHAT_IS_ROUND:1167 (bfe3495)",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-049",
+   "input": {
+    "name": "an upload labelled \"Currículum\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"f\">Currículum</label><input id=\"f\" type=\"file\" name=\"f1\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r16",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs FOR_A_JOB_BY_WHAT_IS_ROUND:1169 (bfe3495)",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-050",
+   "input": {
+    "name": "an upload labelled \"CV\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"f\">CV</label><input id=\"f\" type=\"file\" name=\"f1\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r16",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs FOR_A_JOB_BY_WHAT_IS_ROUND:1171 (bfe3495)",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-051",
+   "input": {
+    "name": "a job question after another sentence, above \"Your answer\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <p>Questions? Read the FAQ. Why do you want to join our team?</p><label for=\"q\">Your answer</label><textarea id=\"q\" name=\"q1\"></textarea>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r16",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs FOR_A_JOB_BY_WHAT_IS_ROUND:1173 (bfe3495)",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-052",
+   "input": {
+    "name": "an upload labelled \"Lebenslauf hochladen\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"f\">Lebenslauf hochladen</label><input id=\"f\" type=\"file\" name=\"datei\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs FOR_A_JOB_BY_WHAT_IS_ROUND:1175 (2a1a9fd)",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-053",
+   "input": {
+    "name": "a job question above a box labelled \"Your answer\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <p>Why do you want to join our team?</p><label for=\"q\">Your answer</label><textarea id=\"q\" name=\"q1\"></textarea>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "test",
+     "where": "JobHelper tests/ats-forms.mjs FOR_A_JOB_BY_WHAT_IS_ROUND:1177 (2a1a9fd)",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-057",
+   "input": {
+    "name": "hunt14 german",
+    "body": "<h1>Softwareentwickler (m/w/d)</h1>\n  <label for=a>Vorname</label><input id=a name=vorname>\n  <label for=b>Nachname</label><input id=b name=nachname>\n  <label for=c>E-Mail</label><input id=c type=email name=email>\n  <label for=d>Telefon</label><input id=d type=tel name=telefon>\n  <label for=e>Lebenslauf</label><input id=e type=file name=lebenslauf>\n  <label for=f>Anschreiben</label><input id=f type=file name=anschreiben>\n  <button type=submit>Bewerbung absenden</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r14",
+     "basis": "report",
+     "where": "hunt14-jh/forms.mjs \"german\"",
+     "note": "r15 added Lebenslauf; r14 prompt asked for non-English forms",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-059",
+   "input": {
+    "name": "hunt14 spanish",
+    "body": "<h1>Ingeniero de software</h1>\n  <label for=a>Nombre</label><input id=a name=nombre>\n  <label for=b>Apellidos</label><input id=b name=apellidos>\n  <label for=c>Correo electrónico</label><input id=c type=email name=correo>\n  <label for=d>Teléfono</label><input id=d type=tel name=telefono>\n  <label for=e>Currículum</label><input id=e type=file name=curriculum>\n  <button type=submit>Enviar candidatura</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r14",
+     "basis": "report",
+     "where": "hunt14-jh/forms.mjs \"spanish\"",
+     "note": "r16 test: \"Currículum\" alone is a CV",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-061",
+   "input": {
+    "name": "hunt14 loan (control)",
+    "body": "<h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\">\n    <button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r14",
+     "basis": "report",
+     "where": "hunt14-jh/forms.mjs \"loan (control)\"",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-062",
+   "input": {
+    "name": "hunt14 loan with resume word",
+    "body": "<h1>Apply for a personal loan</h1><p>Resume your saved application any time.</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"up\">Upload pay stub</label><input id=\"up\" type=file name=\"paystub\">\n    <button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r14",
+     "basis": "report",
+     "where": "hunt14-jh/forms.mjs \"loan with resume word\"",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-063",
+   "input": {
+    "name": "hunt14 loan job-application words",
+    "body": "<h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"emp\">Tell us about your job at your current employer</label><textarea id=emp name=emp></textarea>\n    <label for=\"ln2\">Our team will contact you</label>\n    <button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r14",
+     "basis": "report",
+     "where": "hunt14-jh/forms.mjs \"loan job-application words\"",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-064",
+   "input": {
+    "name": "hunt15 heading Resume, label \"Attach\"",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><h3>Resume</h3><label for=\"f\">Attach</label><input id=\"f\" type=\"file\" name=\"attachment\"><button type=\"submit\">Submit</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"heading Resume, label \"Attach\"\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-065",
+   "input": {
+    "name": "hunt15 heading Resume, label \"Upload file\"",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><h3>Resume *</h3><label for=\"f\">Upload file</label><input id=\"f\" type=\"file\" name=\"file\"><button type=\"submit\">Submit</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"heading Resume, label \"Upload file\"\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-066",
+   "input": {
+    "name": "hunt15 heading Resume, label \"Drop files here\"",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><h3>Your resume</h3><label for=\"f\">Drop files here or browse</label><input id=\"f\" type=\"file\" name=\"files\"><button type=\"submit\">Submit</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"heading Resume, label \"Drop files here\"\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-067",
+   "input": {
+    "name": "hunt15 heading Resume, label \"Choose file\"",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><p>Please upload your resume (PDF)</p><label for=\"f\">Choose file</label><input id=\"f\" type=\"file\" name=\"upload\"><button type=\"submit\">Submit</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"heading Resume, label \"Choose file\"\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-068",
+   "input": {
+    "name": "hunt15 label \"Documents\"",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p><p>Attach your CV and any other documents.</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><label for=\"f\">Documents</label><input id=\"f\" type=\"file\" name=\"documents\"><button type=\"submit\">Submit</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"label \"Documents\"\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-069",
+   "input": {
+    "name": "hunt15 sibling div label \"Resume\", input unlabelled",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><div class=\"field\"><div class=\"lbl\">Resume</div><div><input type=\"file\" name=\"file\"></div></div><button type=\"submit\">Submit</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"sibling div label \"Resume\", input unlabelled\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-070",
+   "input": {
+    "name": "hunt15 sibling span \"Resume/CV\", button + hidden input",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><div class=\"field\"><span class=\"lbl\">Resume/CV</span><button type=\"button\">Attach</button><input type=\"file\" name=\"file\" style=\"display:none\"></div><button type=\"submit\">Submit</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"sibling span \"Resume/CV\", button + hidden input\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-071",
+   "input": {
+    "name": "hunt15 Workday \"Select files\"",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p><h3>Resume/CV</h3>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><div data-automation-id=\"attachments-FileUpload\"><label for=\"wd\">Select files</label><input id=\"wd\" type=\"file\" data-automation-id=\"file-upload-input-ref\"></div><button type=\"submit\">Submit</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"Workday \"Select files\"\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-072",
+   "input": {
+    "name": "hunt15 German Lebenslauf",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><label for=\"f\">Lebenslauf hochladen</label><input id=\"f\" type=\"file\" name=\"datei\"><button type=\"submit\">Submit</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"German Lebenslauf\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-073",
+   "input": {
+    "name": "hunt15 French Joindre votre CV",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><label for=\"f\">Joindre votre CV</label><input id=\"f\" type=\"file\" name=\"fichier\"><button type=\"submit\">Submit</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"French Joindre votre CV\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-074",
+   "input": {
+    "name": "hunt15 Spanish Adjuntar currículum",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><label for=\"f\">Adjuntar currículum</label><input id=\"f\" type=\"file\" name=\"archivo\"><button type=\"submit\">Submit</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"Spanish Adjuntar currículum\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-075",
+   "input": {
+    "name": "hunt15 label \"Resume / CV\"",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><label for=\"f\">Resume / CV</label><input id=\"f\" type=\"file\" name=\"f1\"><button type=\"submit\">Submit</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"label \"Resume / CV\"\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-076",
+   "input": {
+    "name": "hunt15 label \"Resume - Application documents\"",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><label for=\"f\">Resume - application documents</label><input id=\"f\" type=\"file\" name=\"f1\"><button type=\"submit\">Submit</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"label \"Resume - Application documents\"\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-077",
+   "input": {
+    "name": "hunt15 label \"Resume\", name application",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><label for=\"f\">Resume</label><input id=\"f\" type=\"file\" name=\"application\"><button type=\"submit\">Submit</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"label \"Resume\", name application\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-078",
+   "input": {
+    "name": "hunt15 label \"CV\", id \"the-file\"",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><label for=\"f\">CV</label><input id=\"f\" type=\"file\" name=\"upload\"><button type=\"submit\">Submit</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"label \"CV\", id \"the-file\"\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-079",
+   "input": {
+    "name": "hunt15 label \"Resume (your latest)\"",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><label for=\"f\">Resume your latest version</label><input id=\"f\" type=\"file\" name=\"f1\"><button type=\"submit\">Submit</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "list",
+     "where": "hunt15-jh/detect.mjs \"label \"Resume (your latest)\"\"",
+     "note": "fix15 known leftover: \"Resume your latest version stays false … reads exactly like the verb\"",
+     "expect": true
+    },
+    {
+     "round": "r15",
+     "basis": "decision",
+     "where": "fix15 report, known leftovers: kept false on purpose",
+     "expect": false
+    },
+    {
+     "round": "r17",
+     "basis": "decision",
+     "where": "fix17 brief",
+     "note": "\"Resume your latest version\" reads exactly like the verb; not a job (r15 decision stands).",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-080",
+   "input": {
+    "name": "hunt15 label \"Resume, where available\"",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><label for=\"f\">Resume where available</label><input id=\"f\" type=\"file\" name=\"f1\"><button type=\"submit\">Submit</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"label \"Resume, where available\"\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-081",
+   "input": {
+    "name": "hunt15 label \"Résumé (optional)\"",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><label for=\"f\">Résumé (optional)</label><input id=\"f\" type=\"file\" name=\"f1\"><button type=\"submit\">Submit</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"label \"Résumé (optional)\"\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-082",
+   "input": {
+    "name": "hunt15 label \"Resumes\"",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><label for=\"f\">Upload Resumé</label><input id=\"f\" type=\"file\" name=\"f1\"><button type=\"submit\">Submit</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"label \"Resumes\"\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-083",
+   "input": {
+    "name": "hunt15 label \"CVs\"",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><label for=\"f\">Upload CVs</label><input id=\"f\" type=\"file\" name=\"f1\"><button type=\"submit\">Submit</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "list",
+     "where": "hunt15-jh/detect.mjs \"label \"CVs\"\"",
+     "note": "review: \"Upload CVs is false in both\" (pre-existing); r16 then narrowed cvs? to cv",
+     "expect": true
+    },
+    {
+     "round": "r16",
+     "basis": "decision",
+     "where": "fix16 report: \"cvs? became cv\" (the pharmacy CVS)",
+     "expect": false
+    },
+    {
+     "round": "r17",
+     "basis": "decision",
+     "where": "fix17 brief",
+     "note": "\"Upload CVs\" alone is the pharmacy again; a job only when followed by and, & or / (see the r17 cases).",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-084",
+   "input": {
+    "name": "hunt15 loan \"Resume a saved application\" + pay stubs (must be false)",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p><a href=\"/r\">Resume a saved application</a>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><label for=\"f\">Upload your two most recent pay stubs</label><input id=\"f\" type=\"file\" name=\"paystubs\"><button type=\"submit\">Submit</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"loan \"Resume a saved application\" + pay stubs (must be false)\"",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-085",
+   "input": {
+    "name": "hunt15 loan \"Resume/CV\" not present, \"Resume the application\"",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p><a href=\"/r\">Resume the application</a>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><label for=\"f\">Proof of income</label><input id=\"f\" type=\"file\" name=\"proof\"><button type=\"submit\">Submit</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"loan \"Resume/CV\" not present, \"Resume the application\"\"",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-086",
+   "input": {
+    "name": "hunt15 textarea question in <p> above, label \"Your answer\"",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><p>Why do you want to join our team?</p><label for=\"q\">Your answer</label><textarea id=\"q\" name=\"q1\"></textarea><button type=\"submit\">Submit</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"textarea question in <p> above, label \"Your answer\"\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-087",
+   "input": {
+    "name": "hunt15 textarea question in <p> above, unlabelled",
+    "body": "<h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n  <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n  <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n  <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n  <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\"><p>Why do you want to work here?</p><textarea name=\"q1\"></textarea><button type=\"submit\">Submit</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r15",
+     "basis": "report",
+     "where": "hunt15-jh/detect.mjs \"textarea question in <p> above, unlabelled\"",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-088",
+   "input": {
+    "name": "hunt16 loan baseline",
+    "body": "<h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\"><button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r16",
+     "basis": "report",
+     "where": "hunt16-jh/detect.mjs \"loan baseline\"",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-089",
+   "input": {
+    "name": "hunt16 health enrollment: pharmacy \"CVS\"",
+    "body": "<h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\"><label for=\"rx\">Preferred pharmacy (e.g. CVS)</label><input id=\"rx\" name=\"pharmacy\"><button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r16",
+     "basis": "report",
+     "where": "hunt16-jh/detect.mjs \"health enrollment: pharmacy \"CVS\"\"",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-090",
+   "input": {
+    "name": "hunt16 loan: CVS ExtraCare number",
+    "body": "<h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\"><label for=\"x\">CVS ExtraCare card number</label><input id=\"x\" name=\"x\"><button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r16",
+     "basis": "report",
+     "where": "hunt16-jh/detect.mjs \"loan: CVS ExtraCare number\"",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-091",
+   "input": {
+    "name": "hunt16 school enrollment: \"Curriculum\"",
+    "body": "<h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\"><label for=\"c\">Curriculum</label><input id=\"c\" name=\"curriculum\"><button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r16",
+     "basis": "report",
+     "where": "hunt16-jh/detect.mjs \"school enrollment: \"Curriculum\"\"",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-092",
+   "input": {
+    "name": "hunt16 loan: \"Resume application\" button beside upload",
+    "body": "<h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\"><div class=\"f\"><button type=\"button\">Resume application</button><label for=\"ps\">Upload file</label><input id=\"ps\" type=\"file\" name=\"paystubs\"></div><button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r16",
+     "basis": "report",
+     "where": "hunt16-jh/detect.mjs \"loan: \"Resume application\" button beside upload\"",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-093",
+   "input": {
+    "name": "hunt16 loan: \"Resume an existing application\" above upload",
+    "body": "<h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\"><p>Resume an existing application</p><label for=\"ps\">Upload your pay stubs</label><input id=\"ps\" type=\"file\" name=\"paystubs\"><button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r16",
+     "basis": "report",
+     "where": "hunt16-jh/detect.mjs \"loan: \"Resume an existing application\" above upload\"",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-094",
+   "input": {
+    "name": "hunt16 loan: input submit \"Resume application\"",
+    "body": "<h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\"><input type=\"submit\" value=\"Resume application\"><button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r16",
+     "basis": "report",
+     "where": "hunt16-jh/detect.mjs \"loan: input submit \"Resume application\"\"",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-095",
+   "input": {
+    "name": "hunt16 loan: \"Questions? Our team...\" over comments",
+    "body": "<h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\"><p>Questions? Our team is available 24/7.</p><label for=\"c\">Comments</label><textarea id=\"c\" name=\"comments\"></textarea><button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r16",
+     "basis": "report",
+     "where": "hunt16-jh/detect.mjs \"loan: \"Questions? Our team...\" over comments\"",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-r17-001",
+   "input": {
+    "name": "an upload labelled \"Upload CVs and cover letters\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"f\">Upload CVs and cover letters</label><input id=\"f\" type=\"file\" name=\"f1\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r17",
+     "basis": "review",
+     "where": "hunt17 review / fix17 brief",
+     "note": "r17 review 6: cvs followed by and",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-r17-002",
+   "input": {
+    "name": "an upload labelled \"CVs & portfolios\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"f\">CVs &amp; portfolios</label><input id=\"f\" type=\"file\" name=\"f1\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r17",
+     "basis": "review",
+     "where": "hunt17 review / fix17 brief",
+     "note": "r17 review 6: cvs followed by &",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-r17-003",
+   "input": {
+    "name": "an upload labelled \"CVs/Résumés\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"f\">CVs/Résumés</label><input id=\"f\" type=\"file\" name=\"f1\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r17",
+     "basis": "review",
+     "where": "hunt17 review / fix17 brief",
+     "note": "r17 review 6: cvs followed by /",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-r17-004",
+   "input": {
+    "name": "a health enrolment with \"CVS/pharmacy\" over a card upload",
+    "body": "\n    <h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\">\n    <label for=\"p\">Preferred pharmacy (e.g. CVS/pharmacy)</label><input id=\"p\" name=\"pharmacy\"><label for=\"f\">Insurance card</label><input id=\"f\" type=\"file\" name=\"f1\">\n    <button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r17",
+     "basis": "review",
+     "where": "hunt17 review / fix17 brief",
+     "note": "r17: the pharmacy as it writes itself",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-r17-005",
+   "input": {
+    "name": "an upload labelled \"Curriculum\" (Italian)",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"f\">Curriculum</label><input id=\"f\" type=\"file\" name=\"f1\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r17",
+     "basis": "review",
+     "where": "hunt17 review / fix17 brief",
+     "note": "r17 review 6: Curriculum alone on the upload's own label",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-r17-006",
+   "input": {
+    "name": "an upload labelled \"Carica il curriculum\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"f\">Carica il curriculum</label><input id=\"f\" type=\"file\" name=\"f1\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r17",
+     "basis": "review",
+     "where": "hunt17 review / fix17 brief",
+     "note": "r17 review 6: Curriculum alone on the upload's own label",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-r17-007",
+   "input": {
+    "name": "a loan form with a \"Curriculum\" heading over an upload",
+    "body": "\n    <h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\">\n    <h3>Curriculum</h3><label for=\"f\">Attach</label><input id=\"f\" type=\"file\" name=\"f1\">\n    <button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r17",
+     "basis": "review",
+     "where": "hunt17 review / fix17 brief",
+     "note": "r17 review 6: Curriculum round an upload is still the school's",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-r17-008",
+   "input": {
+    "name": "an upload labelled \"Resume - an up-to-date copy\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"f\">Resume - an up-to-date copy</label><input id=\"f\" type=\"file\" name=\"f1\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r17",
+     "basis": "review",
+     "where": "hunt17 review / fix17 brief",
+     "note": "r17 review 6: an only after a plain space",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-r17-009",
+   "input": {
+    "name": "an upload labelled \"CV application form\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"f\">CV application form</label><input id=\"f\" type=\"file\" name=\"f1\">"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r17",
+     "basis": "review",
+     "where": "hunt17 review / fix17 brief",
+     "note": "r17 review 6: a CV is never resumed",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-r17-010",
+   "input": {
+    "name": "a loan form with an upload labelled \"Resume application\"",
+    "body": "\n    <h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\">\n    <label for=\"f\">Resume application</label><input id=\"f\" type=\"file\" name=\"f1\">\n    <button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r17",
+     "basis": "review",
+     "where": "hunt17 review / fix17 brief",
+     "note": "r17 review 6: the verb, with a space",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-r17-011",
+   "input": {
+    "name": "a loan form with an upload labelled \"Resume an application\"",
+    "body": "\n    <h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\">\n    <label for=\"f\">Resume an application</label><input id=\"f\" type=\"file\" name=\"f1\">\n    <button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r17",
+     "basis": "review",
+     "where": "hunt17 review / fix17 brief",
+     "note": "r17 review 6: the verb, with a space",
+     "expect": false
+    }
+   ]
+  },
+  {
+   "id": "jobforms-r17-012",
+   "input": {
+    "name": "\"Why do you want to join our team?*\" above \"Your answer\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <p>Why do you want to join our team?*</p><label for=\"q\">Your answer</label><textarea id=\"q\" name=\"q1\"></textarea>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r17",
+     "basis": "review",
+     "where": "hunt17 review / fix17 brief",
+     "note": "r17 review 5",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-r17-013",
+   "input": {
+    "name": "\"Why are you interested in this role (e.g. growth, mission)?\" above \"Your answer\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <p>Why are you interested in this role (e.g. growth, mission)?</p><label for=\"q\">Your answer</label><textarea id=\"q\" name=\"q1\"></textarea>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r17",
+     "basis": "review",
+     "where": "hunt17 review / fix17 brief",
+     "note": "r17 review 5",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-r17-014",
+   "input": {
+    "name": "\"What draws you to this role?Max 300 words.\" above \"Your answer\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <p>What draws you to this role?Max 300 words.</p><label for=\"q\">Your answer</label><textarea id=\"q\" name=\"q1\"></textarea>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r17",
+     "basis": "review",
+     "where": "hunt17 review / fix17 brief",
+     "note": "r17 review 5",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-r17-015",
+   "input": {
+    "name": "\"\\\"Why this role?\\\"\" above \"Your answer\"",
+    "body": "\n    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <p>\"Why this role?\"</p><label for=\"q\">Your answer</label><textarea id=\"q\" name=\"q1\"></textarea>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r17",
+     "basis": "review",
+     "where": "hunt17 review / fix17 brief",
+     "note": "r17 review 5",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-r17-016",
+   "input": {
+    "name": "a loan form with \"Questions? our team is here.\" over comments",
+    "body": "\n    <h1>Apply for a personal loan</h1>\n    <label for=\"fn\">First name</label><input id=\"fn\" name=\"first_name\">\n    <label for=\"ln\">Last name</label><input id=\"ln\" name=\"last_name\">\n    <label for=\"em\">Email</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Phone</label><input id=\"ph\" name=\"phone\">\n    <label for=\"ssn\">Social Security number</label><input id=\"ssn\" name=\"ssn\">\n    <p>Questions? Call us. Our team is available 24/7.</p><label for=\"c\">Comments</label><textarea id=\"c\" name=\"comments\"></textarea>\n    <button type=\"button\">Submit application</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r17",
+     "basis": "review",
+     "where": "hunt17 review / fix17 brief",
+     "note": "r17 review 5: still refused",
+     "expect": false
+    }
+   ]
+  }
+ ]
+}

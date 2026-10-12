@@ -7357,6 +7357,65 @@ async function main() {
     JSON.stringify(composed),
   );
 
+  /*
+   * And a page that calls `preventDefault` on every Escape and Enter, as a
+   * rich-text editor on an ATS form does at the window, does not take the
+   * card's keys with it. Those keys were treated as already used: the card
+   * would not fold on Escape, and the rename box could be neither saved with
+   * Enter nor given up with Escape. Round 17's review, `card.mjs`.
+   */
+  const taken = await inPage(async (createCard, A11Y_CARD) => {
+    const swallow = (e) => {
+      if (e.key === 'Escape' || e.key === 'Enter') e.preventDefault();
+    };
+    window.addEventListener('keydown', swallow, true);
+    try {
+      const c = (0, eval)(`(${A11Y_CARD})`)(createCard);
+      await c.wait(80);
+      const key = (target, init) =>
+        target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, composed: true, cancelable: true, ...init }));
+      const box = c.root.querySelector('textarea[data-field^="answer:"]');
+      box.focus();
+      key(box, { key: 'Escape' });
+      const out = { folded: c.card.classList.contains('folded') };
+      if (out.folded) c.root.querySelector('button[aria-label="Unfold JobHelper"]')?.click();
+      await c.wait(50);
+      c.build().click();
+      await c.until(() => c.root.querySelector('.file.liftable .rename .open-file'));
+      await c.wait(100);
+      c.root.querySelector('.file.liftable .rename .open-file').click();
+      const renameItem = () => [...c.root.querySelectorAll('.rename-menu:not(.hidden) button')].find((b) => /^Rename/.test(b.textContent));
+      renameItem()?.click();
+      let rename = c.root.querySelector('.rename-box:not(.hidden)');
+      out.renameOpen = Boolean(rename);
+      if (rename) {
+        key(rename, { key: 'Escape' });
+        out.givenUp = rename.classList.contains('hidden');
+        // Again from the menu, still open, and this time a name is saved: a
+        // saved name closes the menu with the box (see `put`).
+        renameItem()?.click();
+        rename = c.root.querySelector('.rename-box:not(.hidden)');
+        out.openAgain = Boolean(rename);
+        if (rename) {
+          rename.value = 'Morgan-Acme';
+          rename.dispatchEvent(new Event('input', { bubbles: true }));
+          key(rename, { key: 'Enter' });
+          await c.wait(150);
+          out.saved = !c.root.querySelector('.rename-menu:not(.hidden)') && !c.root.querySelector('.rename-box:not(.hidden)');
+        }
+      }
+      return out;
+    } finally {
+      window.removeEventListener('keydown', swallow, true);
+    }
+  }, A11Y_CARD.toString());
+  check('a page that calls preventDefault on Escape still lets Escape fold the card', taken.folded, JSON.stringify(taken));
+  check(
+    'nor takes the rename box’s Escape (given up) and Enter (saved)',
+    taken.renameOpen && taken.givenUp && taken.saved,
+    JSON.stringify(taken),
+  );
+
   {
     const askSource = fs.readFileSync(new URL('../src/content/ask.js', import.meta.url), 'utf8');
     const asked = await page.evaluate(async (code) => {
@@ -7374,11 +7433,25 @@ async function main() {
       key({});
       out.laterPlain = later;
       removeAsk();
+      // And on a page that calls preventDefault on every Escape first.
+      const swallow = (e) => e.key === 'Escape' && e.preventDefault();
+      window.addEventListener('keydown', swallow, true);
+      createAsk({ site: 'example.com', onYes: () => {}, onNo: () => {}, onLater: () => later++ });
+      key({});
+      out.laterTaken = later;
+      out.upAfterTaken = Boolean(chip());
+      window.removeEventListener('keydown', swallow, true);
+      removeAsk();
       return out;
     }, askSource);
     check(
       'the "is this a job?" chip stays up for an input method’s Escape, and goes for a plain one',
       asked.laterComposing === 0 && asked.stillUp && asked.laterPlain === 1,
+      JSON.stringify(asked),
+    );
+    check(
+      'and goes for a plain one on a page that has called preventDefault on it',
+      asked.laterTaken === 2 && !asked.upAfterTaken,
       JSON.stringify(asked),
     );
   }
