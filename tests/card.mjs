@@ -4178,14 +4178,17 @@ async function main() {
       { question: 'Tell us about yourself (no more than 200 words).', fieldId: 'jh-q-3', answer: '', confident: false },
     ]);
     const counts = () => [...root.querySelectorAll('.q .wordcount')].map((c) => ({ text: c.textContent, over: c.classList.contains('over') }));
-    const before = counts();
-    // The saved answer is drawn shut until opened: see `keptShut`.
+    // The saved answer is drawn shut until opened, and its length with it:
+    // see `keptShut`. Counted once it is open.
+    const shut = root.querySelectorAll('.q .wordcount').length;
     root.querySelector('.kept-shut button')?.click();
+    const before = counts();
     const box = root.querySelector('textarea[data-field^="answer:Please provide"]');
     box.value = Array.from({ length: 151 }, (_, i) => `word${i}`).join(' ');
     box.dispatchEvent(new Event('input', { bubbles: true }));
-    return { before, after: counts() };
+    return { shut, before, after: counts() };
   });
+  check('shut, the saved answer is not counted where the page can read it', wordCounts.shut === 2, String(wordCounts.shut));
   check('an answer is counted against the limit its question states', wordCounts.before[0]?.text === '6 / 150 words', JSON.stringify(wordCounts.before[0]));
   check('and a question with no limit still shows how long the answer is', wordCounts.before[1]?.text === '0 words', JSON.stringify(wordCounts.before[1]));
   check('"no more than 200 words" is a limit too', wordCounts.before[2]?.text === '0 / 200 words', JSON.stringify(wordCounts.before[2]));
@@ -4602,10 +4605,11 @@ async function main() {
     const root = document.querySelector('#jobhelper-card-host').shadowRoot;
     await new Promise((r) => setTimeout(r, 120));
     const counters = () => [...root.querySelectorAll('.q .count')];
-    const before = counters().map((c) => ({ text: c.textContent, over: c.classList.contains('over') }));
-
-    // The saved answer is drawn shut until opened: see `keptShut`.
+    // The saved answer is drawn shut until opened, and its length with it:
+    // see `keptShut`. Counted once it is open.
+    const shut = counters().length;
     root.querySelector('.kept-shut button')?.click();
+    const before = counters().map((c) => ({ text: c.textContent, over: c.classList.contains('over') }));
     const box = root.querySelector('textarea[data-field="answer:Why us?"]');
     box.value = 'x'.repeat(52);
     box.dispatchEvent(new Event('input', { bubbles: true }));
@@ -4619,12 +4623,14 @@ async function main() {
     both?.click();
     await new Promise((r) => setTimeout(r, 150));
     return {
+      shut,
       before,
       after,
       one: sent.find((c) => c.action === 'answer:Why us?')?.payload ?? null,
       all: sent.find((c) => c.action === 'writeApplication')?.payload?.questions ?? null,
     };
   });
+  check('shut, its length is not drawn', limits.shut === 0, String(limits.shut));
   check('a box with a limit is counted against it', limits.before.length === 1 && limits.before[0].text === '10 / 40' && !limits.before[0].over, JSON.stringify(limits.before));
   check(
     'and says so, in red, once an answer runs past it',

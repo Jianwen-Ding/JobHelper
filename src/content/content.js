@@ -2438,27 +2438,58 @@
    * records nothing.
    */
   let sentQuestion = null;
+  /*
+   * How long a question may wait for a card. A Submit pressed a while ago is
+   * no longer "just" sent, and a card raised much later is as likely to be
+   * about something else.
+   */
+  const SENT_QUESTION_KEEPS_MS = 2 * 60 * 1000;
+  /**
+   * Stamped with where it was asked and when, and with the job it is about.
+   *
+   * It was kept bare, and a question queued behind a card closed with × was
+   * still waiting when a single-page board moved on to the next posting: that
+   * posting's card asked "Did you just send your application to <the posting
+   * you left>?", and "Yes" filed an application to the one you were now
+   * looking at as sent. So it is named for the job it was asked on, dropped
+   * on a route change (`startOver`) or once it is a page or two minutes
+   * behind, and "Yes" says which job it meant — the worker refuses it when
+   * the tab's work is a different one.
+   */
   function askIfSent(said) {
-    sentQuestion = { note: String(said?.note ?? ''), url: String(said?.url ?? location.href) };
+    sentQuestion = {
+      note: String(said?.note ?? ''),
+      url: String(said?.url ?? location.href),
+      pageUrl: location.href,
+      at: Date.now(),
+      company: companyHere(),
+      // The role only as the work names it — a page's own reading of its
+      // title is another spelling, and a refusal over spelling is no help.
+      role: analysis?.spec?.generatedFor?.role || '',
+    };
     putSentQuestion();
   }
   function putSentQuestion() {
     if (!sentQuestion || !cardHandle?.askIfSent) return;
     const said = sentQuestion;
     sentQuestion = null;
+    if (said.pageUrl !== location.href || !(Date.now() - said.at <= SENT_QUESTION_KEEPS_MS)) return;
     cardHandle.askIfSent({
-      company: companyHere(),
+      company: said.company,
       onAnswer: (yes) => {
         if (yes) void recordSaidSent(said);
       },
     });
   }
-  async function recordSaidSent({ note, url }) {
+  async function recordSaidSent({ note, url, company, role }) {
     cardHandle?.markSent?.(true);
     saveWorkNow?.();
     const reply = await send('applicationSentHere', {
       note: note ? `${note} (confirmed on the card)` : 'Said to be sent, on the card',
       url,
+      confirmed: true,
+      company,
+      role,
     }).catch(() => null);
     if (!reply || reply.ok === false) {
       cardHandle?.markSent?.(false);
@@ -3464,6 +3495,10 @@
     // And the one send this document's watcher had to give, which the
     // posting you have just left may already have spent.
     restartSending?.();
+
+    // And a frame's "did you just send?" still waiting for a card: it was
+    // about the posting you have just left. See `askIfSent`.
+    sentQuestion = null;
 
     /*
      * And the second look, for the page this is now.

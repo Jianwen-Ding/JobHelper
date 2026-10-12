@@ -484,6 +484,114 @@ async function main() {
   );
   check('and can be found like anything else on screen', findable.opened.saved === true, JSON.stringify(findable.opened));
 
+  /*
+   * Nor its length. A box with a stated limit counts against it, and every
+   * box counts its words — "33 / 500", "6 words" — and those counters were
+   * drawn under a shut answer, where `window.find` reads them: the saved
+   * answer's length, a guess at a time. They come with the box.
+   */
+  console.log('\nA shut saved answer does not say how long it is');
+  const counted = await inPage(async (createCard) => {
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [{ question: 'Why us?', answer: 'I admire the zebrafish lab deeply', confident: true, limit: 500, fieldId: 'jh-q-1' }],
+      needsCoverLetter: false,
+      onAction: async (action) => (action === 'render' ? { pages: 1, fits: true } : {}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const settle = (ms = 50) => new Promise((r) => setTimeout(r, ms));
+    const find = (text) => {
+      getSelection().removeAllRanges();
+      return window.find(text, false, false, true);
+    };
+    await settle();
+    const shut = {
+      row: Boolean(root.querySelector('.q .kept-shut')),
+      question: find('Why us?'),
+      limit: find('/ 500'),
+      words: find('6 words'),
+      counters: root.querySelectorAll('.q .count, .q .wordcount').length,
+    };
+    root.querySelector('.q .kept-shut button')?.click();
+    await settle();
+    const opened = { limit: find('33 / 500'), words: find('6 words') };
+    return { shut, opened };
+  });
+  check('find reaches the question, so the rest means something', counted.shut.row && counted.shut.question === true, JSON.stringify(counted.shut));
+  check(
+    'shut, neither its length against the limit nor its words can be found',
+    counted.shut.limit === false && counted.shut.words === false && counted.shut.counters === 0,
+    JSON.stringify(counted.shut),
+  );
+  check('opened, both are counted', counted.opened.limit === true && counted.opened.words === true, JSON.stringify(counted.opened));
+
+  /*
+   * A bank refresh that changes only how sure the store is.
+   *
+   * `setMatches` took a match as unchanged when its words were, and a
+   * confident match that came back as only a close one — the same words —
+   * stayed in the box, staged and filed as this question's answer. Not
+   * sure, it is offered beside the box instead (`offeredOnly`).
+   */
+  console.log('\nA match that is no longer sure, with the same words');
+  const unsure = await inPage(async (createCard) => {
+    const sent = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [{ question: 'Why this team?', answer: 'Because of the work', confident: true, fieldId: 'jh-q-1' }],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        if (action === 'render') return { pages: 1, fits: true };
+        if (action === 'stage') return { currentDir: '/tmp/x' };
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const settle = (ms = 50) => new Promise((r) => setTimeout(r, ms));
+    await settle();
+    const before = { shut: Boolean(root.querySelector('.kept-shut')) };
+    handle.setMatches([{ question: 'Why this team?', answer: 'Because of the work', confident: false }]);
+    await settle();
+    [...root.querySelectorAll('button')].find((b) => b.textContent === 'Build resume')?.click();
+    await settle(150);
+    const staged = sent.filter((c) => c.action === 'stage').at(-1)?.payload?.answers ?? null;
+    return {
+      before,
+      shut: Boolean(root.querySelector('.kept-shut')),
+      offered: /closest answer/.test(root.textContent),
+      badge: root.querySelector('.q .badge')?.textContent ?? null,
+      staged,
+    };
+  });
+  check('sure, it is in the box', unsure.before.shut === true, JSON.stringify(unsure.before));
+  check(
+    'no longer sure, it is offered rather than filled in',
+    unsure.shut === false && unsure.offered === true && unsure.badge === 'close match',
+    JSON.stringify(unsure),
+  );
+  check(
+    'and is not staged as the answer',
+    Array.isArray(unsure.staged) && !unsure.staged.some((a) => a.question === 'Why this team?' && a.answer),
+    JSON.stringify(unsure.staged),
+  );
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);

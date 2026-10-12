@@ -392,6 +392,81 @@ async function main() {
     check('both files are what the form asks for', r.asked.length === 2, JSON.stringify(r));
   }
 
+  /* ------------------------------------------------------------------ */
+  console.log('\nA box ticked while the saved copy is still being fetched');
+  {
+    /*
+     * Coming back to a posting with a copy already filed, the card asks the
+     * store for it (`fresh`) and goes on from there — `takeSavedCopy`. Its
+     * only guard was a build being asked for, so a box ticked while the
+     * answer was out — 1.5 seconds here, a slow store — was put back under
+     * the copy when it came, with nothing said. The change made on the card
+     * is newer than the copy, and stays.
+     */
+    const r = await page.evaluate(
+      async ([code]) => {
+        globalThis.__JOBHELPER_HARNESS__ = true;
+        const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+        const { createCard, removeCard } = await import(url);
+        removeCard();
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const job = { title: 'Platform Engineer', company: 'Acme' };
+        const copy = {
+          id: 'job-acme-platform-engineer', label: 'PE — Acme', tier: 'temporary', copiedFrom: 'intern',
+          generatedFor: { company: 'Acme', role: 'Platform Engineer' },
+          choices: { b_pipeline: 'v_base', b_own: 'v_mine' },
+        };
+        let freshAnswered = false;
+        const handle = createCard({
+          analysis: null,
+          resumes: [{ id: 'intern', label: 'Intern resume', tier: 'base' }, { ...copy }],
+          settings: {}, questions: [], needsCoverLetter: false, isForm: true,
+          onAction: async (action) => {
+            if (action === 'fresh') {
+              await wait(1500);
+              freshAnswered = true;
+              return { stored: JSON.parse(JSON.stringify(copy)), storedPrint: 'p', version: 'v7' };
+            }
+            if (action === 'render') return { pages: 1, fits: true };
+            return {};
+          },
+        });
+        handle.update({
+          isJobPosting: true, job, application: { id: 'app-acme', resumeId: copy.id },
+          spec: { id: copy.id, label: copy.label, copiedFrom: 'intern', choices: { b_pipeline: 'v_base', b_own: 'v_theirs' } },
+          baseResumeId: 'intern', baseLabel: 'Intern resume', tailor: 'match', aiUsed: false, diff: [],
+          rationale: [{ key: 'b_pipeline', from: 'v_base', to: 'v_kafka', toText: 'Built a Kafka pipeline', because: ['kafka'] }],
+        });
+        handle.restoreWork(null);
+        const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+        await wait(100);
+        root.querySelector('.fold-changes')?.click();
+        await wait(400);
+        const box = root.querySelector('.pick input');
+        if (!box) return { error: 'no box to tick' };
+        const answeredAtTick = freshAnswered;
+        box.click();
+        await wait(100);
+        const ticked = handle.takeWork().spec?.choices?.b_pipeline;
+        await wait(1800);
+        return {
+          answeredAtTick,
+          freshAnswered,
+          ticked,
+          after: handle.takeWork().spec?.choices?.b_pipeline,
+          boxAfter: root.querySelector('.pick input')?.checked ?? null,
+        };
+      },
+      [source],
+    );
+    check('the box is ticked before the store has answered', r.answeredAtTick === false && r.ticked === 'v_kafka', JSON.stringify(r));
+    check(
+      'and is still ticked once it has',
+      r.freshAnswered === true && r.after === 'v_kafka' && r.boxAfter === true,
+      JSON.stringify(r),
+    );
+  }
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   process.exit(failed ? 1 : 0);

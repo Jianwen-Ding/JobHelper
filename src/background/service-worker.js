@@ -20,6 +20,7 @@ import {
   lighten,
   sameApplication,
   carriesOn,
+  titleKey,
   summarise,
   trimForStorage,
   wasExpected,
@@ -3425,7 +3426,7 @@ const handlers = {
    * application in flight, so the worst this can do is finish something that
    * had already started.
    */
-  async applicationSentHere({ note, url, receipt = false, above = [] }, tab) {
+  async applicationSentHere({ note, url, receipt = false, above = [], confirmed = false, company = '', role = '' }, tab) {
     /*
      * A receipt is often the page after the form, and the form's last save
      * of the work is sent as it unloads — so the two cross: measured on the
@@ -3441,8 +3442,8 @@ const handlers = {
      * say which job this is.
      */
     const inFrame = above.length > 0;
-    let saving = receipt ? savesInFlight.get(tab?.id) : null;
-    if (receipt && !saving && inFrame && tab?.id !== undefined) {
+    let saving = receipt || confirmed ? savesInFlight.get(tab?.id) : null;
+    if ((confirmed || (receipt && inFrame)) && !saving && tab?.id !== undefined) {
       await chrome.tabs.sendMessage(tab.id, { type: 'jh-flush-work' }, { frameId: 0 }).catch(() => undefined);
       saving = savesInFlight.get(tab.id);
     }
@@ -3487,6 +3488,29 @@ const handlers = {
       const here = [url, ...above].map((u) => rootOf(hostOf(u))).filter(Boolean);
       if (!here.some((r) => been.has(r))) return { ok: false };
       return handlers.applicationSent({ company: named.company, role: named.role, url, note }, tab);
+    }
+    /*
+     * "Yes" on the card's "Did you just send your application to …?" — a
+     * Submit in a frame that could not tell for itself (see `askIfSent` in
+     * content.js). Filed under the tab's work and nothing else, and only when
+     * that work is the job the question named.
+     *
+     * The question can be answered a while after the press, on a card that
+     * is not the one that was up when it was asked: a single-page board that
+     * moved on to the next posting put it on that posting's card, and "Yes"
+     * filed the posting being looked at as sent. So no asking the page, as
+     * the automatic path below does — the page answers for whatever it shows
+     * now, which is exactly the job the question may not have been about —
+     * and a question that named a different job from the work is refused.
+     * The work was flushed with the answer and waited for above, so a tab
+     * with work has it written by now.
+     */
+    if (confirmed) {
+      const work = trail?.work?.spec?.generatedFor;
+      if (!work?.company || !work?.role) return { ok: false };
+      if (String(company ?? '').trim() && employerKey(company) !== employerKey(work.company)) return { ok: false };
+      if (String(role ?? '').trim() && titleKey(role) !== titleKey(work.role)) return { ok: false };
+      return handlers.applicationSent({ company: work.company, role: work.role, url, note }, tab);
     }
     /*
      * The trail first, and the page itself when the trail has nothing yet.

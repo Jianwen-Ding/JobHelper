@@ -2635,6 +2635,71 @@ async function main() {
       check('the trail really is out of reach by now', (held.reply?.data?.pages ?? []).length === 0, JSON.stringify(held.reply?.data));
       check('and the tooltip no longer says the writing is held', !/writing is being held/.test(after), after);
     }
+
+    /*
+     * "Yes" on the card's "Did you just send your application to …?" is filed
+     * under the tab's work, and only when the question was about that work.
+     *
+     * The question can be answered on a card that is not the one it was asked
+     * on — a single-page board that moved on to the next posting — and "Yes"
+     * then filed whichever job the tab was on now. So the answer says which
+     * job it meant, and one that names a different job from the work is
+     * refused; and a tab with no work is refused too, rather than filed under
+     * whatever the page in front of it says it is. See `applicationSentHere`.
+     */
+    group('A send said on the card is filed only under the job it named');
+    {
+      store.save = 'work';
+      const sent = () => store.sentTo('/api/extension/sent').length;
+      await ask(driver, 'clearTrail', {});
+      /*
+       * And the page answering for itself when asked what it is, as a card's
+       * page does — which says what it shows now, not what the question was
+       * about. The automatic path may still ask it; this one must not.
+       */
+      await driver.evaluate(() => {
+        if (window.__answersWhatItIs) return;
+        window.__answersWhatItIs = true;
+        chrome.runtime.onMessage.addListener((message, _sender, reply) => {
+          if (message?.type !== 'jh-what-is-this') return false;
+          reply({ ok: true, data: { company: 'Helios', role: 'Platform Engineer' } });
+          return false;
+        });
+      });
+      const nothing = await ask(driver, 'applicationSentHere', {
+        confirmed: true, company: 'Helios', role: 'Platform Engineer', url: 'http://said.example/review', note: 'Said to be sent, on the card',
+      });
+      check('with no work in the tab it is refused', nothing.reply?.data?.ok === false && sent() === 0, JSON.stringify(nothing.reply));
+      await ask(driver, 'analyze', { url: 'http://said.example/jobs/1', title: 'Helios', html: '<p>one</p>', company: 'Helios' });
+      await ask(driver, 'saveWork', {
+        work: { spec: { id: 'job-helios', generatedFor: { company: 'Helios', role: 'Platform Engineer' }, choices: {} } },
+      });
+      const before = sent();
+      const other = await ask(driver, 'applicationSentHere', {
+        confirmed: true, company: 'Quillon Haulage', role: 'Platform Engineer', url: 'http://said.example/review', note: 'Said to be sent, on the card',
+      });
+      check('a question about another employer is refused', other.reply?.data?.ok === false && sent() === before, JSON.stringify(other.reply));
+      const role = await ask(driver, 'applicationSentHere', {
+        confirmed: true, company: 'Helios', role: 'Data Scientist', url: 'http://said.example/review', note: 'Said to be sent, on the card',
+      });
+      check('and one about another role there', role.reply?.data?.ok === false && sent() === before, JSON.stringify(role.reply));
+      await ask(driver, 'applicationSentHere', {
+        confirmed: true, company: 'Helios, Inc.', role: 'Platform engineer', url: 'http://said.example/review', note: 'Said to be sent, on the card',
+      });
+      const filed = store.sentTo('/api/extension/sent').slice(before);
+      const body = (() => {
+        try {
+          return JSON.parse(filed.at(-1)?.body ?? 'null');
+        } catch {
+          return null;
+        }
+      })();
+      check(
+        'the job it named is filed, under the work',
+        filed.length === 1 && body?.company === 'Helios' && body?.role === 'Platform Engineer',
+        JSON.stringify(body),
+      );
+    }
   } finally {
     await context.close();
     store.close();

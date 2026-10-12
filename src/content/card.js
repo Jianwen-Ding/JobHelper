@@ -1819,6 +1819,16 @@ export function createCard({
      */
     if (!id || id !== analysis?.spec?.id || state.askedFor || state.onCopy?.id === id) return;
     const token = rebuildToken;
+    /*
+     * And the resume as it stands, to see whether it is still that when the
+     * answer comes. A box ticked, a line switched or a skill taken while
+     * `fresh` was out is a change made on the card, and the copy put over it
+     * reverted it without a word — the token above moves only for a build.
+     * Every change to the resume replaces `state.spec` rather than editing
+     * it, so the same object back is the same resume, whichever path made a
+     * change: no list of them to keep in step.
+     */
+    const specWas = state.spec;
     const asked = Promise.resolve(onAction('fresh', { spec: { ...analysis.spec, id } })).catch(() => null);
     adopting = asked;
     let reply = null;
@@ -1831,6 +1841,7 @@ export function createCard({
     // Gone from the store, or overtaken by a press or a carried resume: the
     // card stays on what it has.
     if (!stored || stored.id !== id || state.askedFor || token !== rebuildToken || leftBehind()) return;
+    if (state.spec !== specWas) return;
 
     const from = stored.copiedFrom ?? null;
     state.onCopy = { id, from };
@@ -7505,7 +7516,14 @@ export function createCard({
        * put in whole — a script is not held to `maxlength` — and refused when
        * the form is sent, so it is counted here while it can still be cut.
        */
-      const counter = q.limit ? h('div', { className: 'count faint' }) : null;
+      /*
+       * None while the answer is kept shut: "412 / 500" and "87 words" are
+       * the saved answer's length, put where `window.find` reads it — what
+       * `keptShut` keeps away from the page, a guess at a time. They come
+       * with the box, when it is opened.
+       */
+      const shut = keptShut(q, value);
+      const counter = q.limit && !shut ? h('div', { className: 'count faint' }) : null;
       /*
        * What the AI left unfilled in this answer, beside it — so a draft with
        * "[Company Name]" in it is not taken for one to paste into the form.
@@ -7515,7 +7533,7 @@ export function createCard({
         : null;
       countAgainst(counter, value, q.limit);
       const wordLimit = statedWordLimit(q.question);
-      const words = h('div', { className: 'wordcount faint' });
+      const words = shut ? null : h('div', { className: 'wordcount faint' });
       countWords(words, value, wordLimit);
 
       const box = h('div', { className: 'q' }, [
@@ -7540,7 +7558,7 @@ export function createCard({
               }),
             ])
           : null,
-        keptShut(q, value)
+        shut
           ? h('div', { className: 'kept-shut' }, [
               h('span', { textContent: 'Saved answer:' }),
               h('button', {
@@ -8838,7 +8856,19 @@ export function createCard({
       let moved = false;
       state.questions = (state.questions ?? []).map((q) => {
         const n = fresh.get(q.question);
-        if (!n || ((n.answer ?? '') === (q.answer ?? '') && n.namesAnother === q.namesAnother)) return q;
+        /*
+         * The store's confidence is part of what came back: the same words,
+         * now only a close match, are offered rather than filled in (see
+         * `offeredOnly`), and a refresh that kept the old `confident` left
+         * them in the box as though nothing had changed.
+         */
+        if (
+          !n ||
+          ((n.answer ?? '') === (q.answer ?? '') &&
+            n.namesAnother === q.namesAnother &&
+            Boolean(n.confident) === Boolean(q.confident))
+        )
+          return q;
         moved = true;
         return { ...q, answer: n.answer, confident: n.confident, score: n.score, itemId: n.itemId, namesAnother: n.namesAnother };
       });
