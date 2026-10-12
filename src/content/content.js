@@ -2246,9 +2246,14 @@
       // And whose it was, where the worker could not check it against this
       // page — see `takeWork`. A page it cannot name is exactly the page you
       // cannot tell a wrong rescue from a right one on.
+      // And in this tab too, when the title it was written for is not this
+      // page's: "for this job" about another job's letter is the hand-off
+      // nobody notices.
       cardHandle?.setStatus(
         carried.recovered === 'job'
-          ? 'Brought back what you had written for this job.'
+          ? carried.recoveredFor
+            ? `Brought back what you had written for ${carried.recoveredFor}.`
+            : 'Brought back what you had written for this job.'
           : carried.recoveredFor
             ? `Recovered what you had written for ${carried.recoveredFor} before this tab closed.`
             : 'Recovered what you had written before this tab closed.',

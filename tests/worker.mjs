@@ -129,7 +129,14 @@ function fakeStore() {
           kind: 'posting',
           save: state.save,
           // `company` set on the state is a page the analysis could not name.
-          job: { company: state.company ?? page.company ?? 'Helios', title: state.role, description: 'A job.', keywords: [] },
+          job: {
+            company: state.company ?? page.company ?? 'Helios',
+            title: state.role,
+            // The requisition the store cut off the title, when the test says there is one.
+            ...(state.requisition ? { requisition: state.requisition } : {}),
+            description: 'A job.',
+            keywords: [],
+          },
           // Built from the base that was asked for, and said to be, as the
           // store does — so a proposal can be told apart by where it came from.
           spec: { id: 'job-fake', tier: 'temporary', copiedFrom: page.baseResumeId ?? 'newgrad' },
@@ -795,6 +802,118 @@ async function main() {
         matched.reply?.data?.work?.letter === 'FOR-HELIOS' && matched.reply?.data?.recoveredFor === undefined,
         JSON.stringify(matched.reply?.data),
       );
+    }
+
+    /*
+     * Another job's letter at the same address is never handed over as this
+     * job's.
+     *
+     * A board that keeps every posting at one address — Indeed's results
+     * pane — parks each job's writing under that address. `sameJob` read two
+     * roles at one employer as one job unless they had no word in common, so
+     * the letter for "Data Engineer Intern" came back into the card for
+     * "Software Engineer Intern", the Summer 2026 letter into the Summer 2027
+     * posting and the intern letter into the new grad one — each with no word
+     * on the card that it was written for another job. Now only the same
+     * title is the same job; any other title is named on the way in.
+     */
+    group('Another job at the same employer and address is left parked for its own tab');
+    {
+      const BOARD = 'https://www.indeed.com/q-software-intern-jobs.html';
+      const cases = [
+        ['another role', { role: 'Data Engineer Intern', company: 'Coinbase' }, 'Software Engineer Intern', undefined],
+        ['another season', { role: 'Software Engineer Intern (Summer 2026)', company: 'Coinbase' }, 'Software Engineer Intern (Summer 2027)', undefined],
+        ['intern against new grad', { role: 'Software Engineer Intern', company: 'Coinbase' }, 'Software Engineer, New Grad', undefined],
+        ['another requisition under the same title', { role: 'Software Engineer Intern', company: 'Coinbase', requisition: 'R-1001' }, 'Software Engineer Intern', 'R-2002'],
+      ];
+      store.save = 'work';
+      for (const [what, parkedJob, role, requisition] of cases) {
+        await ask(driver, 'clearTrail', {});
+        await driver.evaluate(
+          ([key, job]) =>
+            chrome.storage.session.set({
+              [key]: { parked: [{ work: { letter: `FOR ${job.role}` }, save: 'work', job, tab: 987654, at: Date.now() }], at: Date.now() },
+            }),
+          [`jh-orphan:${BOARD}`, parkedJob],
+        );
+        store.role = role;
+        store.company = 'Coinbase';
+        store.requisition = requisition;
+        await ask(driver, 'analyze', { url: BOARD, title: role, html: '<p>posting</p>', company: 'Coinbase' });
+        const got = await ask(driver, 'takeWork', { page: { url: BOARD, title: role } });
+        const data = got.reply?.data ?? {};
+        check(`${what}: its letter is not handed to this page`, !data.work, JSON.stringify({ letter: data.work?.letter, recoveredFor: data.recoveredFor }));
+        const still = await driver.evaluate(
+          (key) => chrome.storage.session.get(key).then((got) => (got[key]?.parked ?? []).map((p) => p.work?.letter)),
+          `jh-orphan:${BOARD}`,
+        );
+        check(`${what}: and it is still parked for its own tab`, still.includes(`FOR ${parkedJob.role}`), JSON.stringify(still));
+      }
+
+      /*
+       * A park that names no role — a tab closed before its page was read —
+       * is still offered on the loose reading, which is the rescue this is
+       * for, and says whose it was.
+       */
+      await ask(driver, 'clearTrail', {});
+      await driver.evaluate(
+        ([key]) =>
+          chrome.storage.session.set({
+            [key]: { parked: [{ work: { letter: 'FOR-UNNAMED' }, save: 'work', job: { role: null, company: 'Coinbase' }, tab: 987654, at: Date.now() }], at: Date.now() },
+          }),
+        [`jh-orphan:${BOARD}`],
+      );
+      store.role = 'Software Engineer Intern';
+      store.requisition = undefined;
+      await ask(driver, 'analyze', { url: BOARD, title: 'Software Engineer Intern', html: '<p>posting</p>', company: 'Coinbase' });
+      const unnamed = await ask(driver, 'takeWork', { page: { url: BOARD, title: 'Software Engineer Intern' } });
+      check(
+        'a park that names no role is still rescued, and says whose it was',
+        unnamed.reply?.data?.work?.letter === 'FOR-UNNAMED' && unnamed.reply?.data?.recoveredFor === 'Coinbase',
+        JSON.stringify(unnamed.reply?.data),
+      );
+
+      // The same title, the same requisition: this job's own, said as nothing more.
+      await ask(driver, 'clearTrail', {});
+      await driver.evaluate(
+        ([key]) =>
+          chrome.storage.session.set({
+            [key]: {
+              parked: [{ work: { letter: 'FOR-THIS-ONE' }, save: 'work', job: { role: 'Software Engineer Intern', company: 'Coinbase', requisition: 'R-1001' }, tab: 987654, at: Date.now() }],
+              at: Date.now(),
+            },
+          }),
+        [`jh-orphan:${BOARD}`],
+      );
+      store.role = 'Software Engineer Intern';
+      store.requisition = 'R-1001';
+      await ask(driver, 'analyze', { url: BOARD, title: 'Software Engineer Intern', html: '<p>posting</p>', company: 'Coinbase' });
+      const same = await ask(driver, 'takeWork', { page: { url: BOARD, title: 'Software Engineer Intern' } });
+      check(
+        'while this job\'s own letter comes back unlabelled',
+        same.reply?.data?.work?.letter === 'FOR-THIS-ONE' && same.reply?.data?.recoveredFor === undefined,
+        JSON.stringify(same.reply?.data),
+      );
+
+      // And another employer's is never taken at all.
+      await ask(driver, 'clearTrail', {});
+      await driver.evaluate(
+        ([key]) =>
+          chrome.storage.session.set({
+            [key]: {
+              parked: [{ work: { letter: 'FOR-RAMP' }, save: 'work', job: { role: 'Software Engineer Intern', company: 'Ramp' }, tab: 987654, at: Date.now() }],
+              at: Date.now(),
+            },
+          }),
+        [`jh-orphan:${BOARD}`],
+      );
+      store.requisition = undefined;
+      await ask(driver, 'analyze', { url: BOARD, title: 'Software Engineer Intern', html: '<p>posting</p>', company: 'Coinbase' });
+      const other = await ask(driver, 'takeWork', { page: { url: BOARD, title: 'Software Engineer Intern' } });
+      check('and another employer\'s letter is left where it is', !other.reply?.data?.work, JSON.stringify(other.reply?.data));
+      store.company = undefined;
+      store.role = 'Platform Engineer';
+      await ask(driver, 'clearTrail', {});
     }
 
     /*

@@ -491,9 +491,33 @@ function plainlyOtherJob(job, other) {
   return plainlyAnotherRole(job.role, other.role);
 }
 
-/** The same job, said well enough to put writing back into. */
-const sameJob = (job, other) =>
-  Boolean(job && other) && companyOf(job) === companyOf(other) && !plainlyAnotherRole(job.role, other.role);
+/**
+ * The same job, said well enough to put writing back into.
+ *
+ * The same title, by `titleKey`, as the card's own `sameJob` in content.js
+ * compares a late reply with the posting on screen — not "no plainly different
+ * word". That let any two roles at one employer that share a word be one job,
+ * and on a board that keeps every posting at one address (Indeed's results
+ * pane) the letter parked for "Data Engineer Intern" was put back into the
+ * card for "Software Engineer Intern", the Summer 2026 letter into the Summer
+ * 2027 posting, and the intern letter into the new grad one, each with no word
+ * to say it was another job's. And not two requisitions under one title, when
+ * both readings carry one.
+ *
+ * A park that names no role is still read loosely — a tab closed before its
+ * page was ever analysed has nothing better to go on, and that is the rescue
+ * this is for.
+ */
+const sameJob = (job, other) => {
+  if (!job || !other || companyOf(job) !== companyOf(other)) return false;
+  const role = String(job.role ?? '').trim();
+  const otherRole = String(other.role ?? '').trim();
+  if (!role || !otherRole) return !plainlyAnotherRole(job.role, other.role);
+  if (titleKey(role) !== titleKey(otherRole)) return false;
+  const req = String(job.requisition ?? '').trim().toLowerCase();
+  const otherReq = String(other.requisition ?? '').trim().toLowerCase();
+  return !(req && otherReq && req !== otherReq);
+};
 
 /**
  * Put an application's writing aside under an address, without displacing
@@ -648,7 +672,8 @@ async function parkWork(url, entry) {
  *
  * A park that names a plainly different job is refused and left where it is:
  * it is not this job's to take, and the tab that comes back to *its* job
- * still needs to find it. Ones that name nothing — a tab closed before the
+ * still needs to find it. So is one whose role is not this page's, when both
+ * name one (`sameJob`). Ones that name nothing — a tab closed before the
  * page was ever analysed — are still offered, newest first, because that is
  * the case this rescue was built for and it has no better evidence to go on.
  */
@@ -677,7 +702,18 @@ function pickParked(parked, job, tabId, openTabs = new Set()) {
   const mine = held.filter((p) => sameJob(p.job, job));
   const ownMine = mine.filter((p) => p.tab !== undefined && p.tab === tabId);
   if (mine.length > 0) return ownMine[ownMine.length - 1] ?? mine[mine.length - 1];
-  const possible = held.filter((p) => !plainlyOtherJob(p.job, job));
+  /*
+   * And never one that names a role when this page names one too: then
+   * `sameJob` has already said whether it is this job, and it is not. Offered
+   * as "not plainly another job", the letter parked for "Data Engineer
+   * Intern" on a board that keeps every posting at one address was taken
+   * into the card for "Software Engineer Intern", and the tab coming back to
+   * the Data Engineer job found nothing. Left parked, it is there for that
+   * tab. Only a park or a page with no role is still offered on the loose
+   * reading, and `takeWork` says whose it was.
+   */
+  const named = (j) => Boolean(String(j?.role ?? '').trim());
+  const possible = held.filter((p) => !plainlyOtherJob(p.job, job) && !(named(p.job) && named(job)));
   return possible[possible.length - 1] ?? null;
 }
 
@@ -1769,7 +1805,13 @@ async function holdTheSpace(key, save, company, role, trail, work, tabId) {
 function nameOfTrail(trail) {
   const last = [...(trail?.pages ?? [])].reverse().find((p) => p?.role || p?.company);
   if (!last) return null;
-  return { role: last.role ?? null, company: last.company ?? null };
+  return {
+    role: last.role ?? null,
+    company: last.company ?? null,
+    // The requisition the store cut off the title, so two under one title
+    // stay two to `sameJob`. Only when the page carried one.
+    ...(last.requisition ? { requisition: last.requisition } : {}),
+  };
 }
 
 /**
@@ -1777,7 +1819,15 @@ function nameOfTrail(trail) {
  * already say it: "Platform Engineer at Helios".
  */
 function sayJob(job) {
-  const role = job?.role?.trim();
+  /*
+   * With the requisition when the park has one: two of them under one title
+   * are told apart by nothing else, and "Software Engineer Intern at
+   * Coinbase" said of the other one's letter, on that title's page, says
+   * nothing.
+   */
+  const requisition = String(job?.requisition ?? '').trim();
+  const titled = job?.role?.trim();
+  const role = titled && requisition ? `${titled} (${requisition})` : titled;
   const company = job?.company?.trim();
   if (role && company) return `${role} at ${company}`;
   return role || company || null;
@@ -1889,6 +1939,8 @@ async function remember(tab, page) {
        * moved on.
        */
       role: page.role,
+      // And the requisition cut off it, when the analysis read one: see `sameJob`.
+      ...(page.requisition ? { requisition: page.requisition } : {}),
       kind: page.kind,
       html: trimForStorage(page.html, TRAIL_HTML_MAX),
       at: Date.now(),
@@ -2346,10 +2398,21 @@ const handlers = {
          * Only in that branch. Everywhere else the park was matched against
          * the job on screen, and the card's own heading already names it.
          */
+        /*
+         * And in the branch that did check, whenever the check was the loose
+         * one. `pickParked` no longer hands over a park naming another role
+         * than the page's (`sameJob`), so what is left to name is a park or a
+         * page with no role, matched on the employer alone — another job's
+         * letter as often as not on a board that keeps every posting at one
+         * address. Named, it is a letter somebody can see is not this one's.
+         * Only a match on both roles, or this tab's own park with nothing to
+         * check it against, goes unnamed.
+         */
+        const sure = Boolean(looking?.role?.trim() && rescued.job?.role?.trim()) && sameJob(rescued.job, looking);
         return {
           work: rescued.work,
           recovered: mine ? 'job' : true,
-          recoveredFor: mine || looking ? undefined : sayJob(rescued.job) ?? undefined,
+          recoveredFor: sure || (mine && !looking) ? undefined : sayJob(rescued.job) ?? undefined,
         };
       }
       // Claimed or expired, this one goes either way. Leaving the stale ones
@@ -3060,6 +3123,7 @@ const handlers = {
         title,
         company: result.job?.company,
         role: result.job?.title,
+        requisition: result.job?.requisition,
         kind: result.kind,
         // The frames are part of the page: a posting inside an embed is an
         // empty shell at the top level, and the next page would be written
