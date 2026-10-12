@@ -10,13 +10,26 @@
  * The privacy rule lives on its own, away from everything that reads a form,
  * because it is the part that has to be reviewable without reading this file.
  */
-import {
+/*
+ * By `chrome.runtime.getURL` where there is one, rather than by a relative
+ * path. The extension's files are reachable from a page only at a per-session
+ * address (`use_dynamic_url` in the manifest), so no page can fetch them to
+ * learn the extension is installed; but Chrome resolves this module's own
+ * address to the extension's fixed one, and a relative import from it was
+ * refused as a page reaching a file it may not. Relative where there is no
+ * extension, which is the test harness serving these files itself.
+ */
+const {
   dependsOnEmployer,
   mayRememberTyped,
   neverRemember,
   worthRemembering,
   worthRememberingTyped,
-} from '../shared/remembering.js';
+} = await import(
+  globalThis.chrome?.runtime?.getURL
+    ? globalThis.chrome.runtime.getURL('src/shared/remembering.js')
+    : new URL('../shared/remembering.js', import.meta.url).href
+);
 
 /** Map a stored profile key to the label/name patterns that mean it. */
 const FIELD_PATTERNS = [
@@ -66,6 +79,21 @@ const FIELD_PATTERNS = [
   ['middle_name', /\bname[\s_-]*\([\s_-]*middle([\s_-]*name)?[\s_-]*\)/i],
   ['first_name', /\b(first[\s_-]?name|given[\s_-]?name|forename|fname)\b/i],
   ['last_name', /\b(last[\s_-]?name|family[\s_-]?name|surname|lname)\b/i],
+  /*
+   * And the same halves on a form in German, French, Spanish, Dutch or
+   * Italian. Only English was read, so "Vorname" and "Nachname" matched
+   * nothing and the bare "Name" beside them was given the whole name — the
+   * surname box, on a German form, holding "Morgan Testwell". Both halves
+   * asked in one box ("Vor- und Nachname", "nombre y apellidos", "nome e
+   * cognome", "nom complet") are the whole name, so they come first.
+   */
+  [
+    'full_name',
+    /\bvor-?\s*(?:und|&)\s*(?:nach|zu)name\b|\bvollst(?:ä|ae)ndiger\s+name\b|\bpr(?:é|e)nom\s+(?:et|&)\s+nom\b|\bnom\s+(?:et|&)\s+pr(?:é|e)nom\b|\bnom\s+complet\b|\bnombres?\s+(?:y|e|&)\s+apellidos?\b|\bnombre\s+completo\b|\bnome\s+(?:e|&)\s+cognome\b|\bnome\s+completo\b|\bvolledige\s+naam\b/i,
+  ],
+  // Not "Nombre de la empresa" or "Nome dell'azienda", which are a thing's name.
+  ['first_name', /\b(vorname|pr(?:é|e)nom|voornaam|(?:nombres?|nome)(?![\s_-]+(?:de|del|della|dell|da|do|di)\b|[\s_-]*dell['’]))\b/i],
+  ['last_name', /\b(nachname|familienname|apellidos?|achternaam|nom\s+de\s+famille|cognome)\b/i],
   /*
    * Not the full name *of* something. Datadog's Greenhouse board asks "Please
    * share the full name of your major/final year specialization(s) as it
@@ -878,7 +906,96 @@ const handBack = (description, skipped, el, label) => {
  * of the label alone, and kept here so that everything asking "which profile
  * field is this" agrees.
  */
-const BARE_NAME = /^(full\s+)?name$/i;
+const BARE_NAME = /^(full\s+)?(name|nom)$/i;
+
+/**
+ * Which name a bare "Name" box wants: the surname, on a form that asks for
+ * the first name in a box of its own; otherwise all of it.
+ *
+ * German forms ask "Vorname" and then "Name", and French ones "Prénom" and
+ * then "Nom", and in both the second box is the family name — the form has
+ * a box for the first name and none for the last. The whole name
+ * went into it, after the first name had gone into the box before. "Full
+ * name" is never only the surname.
+ *
+ * `others` is the boxes of the form it is on, where the caller has them.
+ */
+function bareNameKey(input, others) {
+  const label = withoutMarkers(labelFor(input));
+  if (!BARE_NAME.test(label)) return null;
+  if (/^full\s/i.test(label)) return 'full_name';
+  const scope = others ?? (input.form ? [...input.form.elements] : deepQueryAll('input, textarea, select'));
+  const asks = new Set();
+  for (const other of scope) {
+    if (other === input || !(other instanceof HTMLElement)) continue;
+    const description = describeField(other);
+    const key = withStandardHint(other, description ? FIELD_PATTERNS.find(([, re]) => re.test(description)) : undefined)?.[0];
+    if (key) asks.add(key);
+  }
+  /*
+   * Only where the surname has no box of its own. An English form that asks
+   * "Name", "First Name" and "Last Name" means the whole of it by the first.
+   */
+  return asks.has('first_name') && !asks.has('last_name') ? 'last_name' : 'full_name';
+}
+
+/**
+ * What the page's own markup says a box is, where it says it in the
+ * vocabulary the browser's own autofill reads.
+ *
+ * `autocomplete="given-name"` and `type="email"` are the most reliable thing
+ * on a form — written for exactly this — and they were ignored: a box
+ * labelled in a language the patterns do not read, or labelled "Name" and
+ * marked `family-name`, went unfilled or was filled with the wrong half.
+ * Only the tokens a profile key answers; a postal code or a street line is
+ * not something the profile holds, so those say nothing here.
+ */
+const AUTOCOMPLETE_KEYS = {
+  'given-name': 'first_name',
+  'family-name': 'last_name',
+  name: 'full_name',
+  email: 'email',
+  tel: 'phone',
+  'tel-national': 'phone',
+  'country-name': 'address_country',
+  'address-level2': 'address_city',
+  organization: 'current_company',
+};
+function standardHint(input) {
+  const said = String(input.getAttribute?.('autocomplete') ?? '')
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    // "section-x shipping given-name webauthn": the field's own token is the
+    // last one that is not "webauthn".
+    .filter((t) => t && t !== 'webauthn');
+  const token = said.at(-1);
+  if (token && Object.hasOwn(AUTOCOMPLETE_KEYS, token)) return AUTOCOMPLETE_KEYS[token];
+  if (input instanceof HTMLInputElement) {
+    if (input.type === 'email') return 'email';
+    if (input.type === 'tel') return 'phone';
+  }
+  return null;
+}
+
+/**
+ * The patterns' reading of a box, with the markup's where it has one.
+ *
+ * The patterns win where they say something, because they say more: a box
+ * marked `given-name` and labelled "Preferred first name" asks for the
+ * preferred one, and one marked `email` and labelled "LinkedIn" is a form
+ * author's slip, not a request for an address. The markup wins where the
+ * patterns found nothing, and where they found only the whole name and the
+ * markup names one half of it — "Legal name" marked `family-name` is the
+ * surname as it is on the passport.
+ */
+function withStandardHint(input, found) {
+  const hinted = standardHint(input);
+  if (!hinted) return found;
+  if (!found) return [hinted];
+  if (found[0] === 'full_name' && (hinted === 'first_name' || hinted === 'last_name')) return [hinted];
+  return found;
+}
 
 /**
  * A label without the punctuation a form puts round it.
@@ -1058,6 +1175,12 @@ const rootOf = (node) => {
   const root = node.getRootNode?.();
   return root?.querySelector ? root : document;
 };
+
+/**
+ * Whether a node is the card or in it. The card's root is closed, so from the
+ * document a press inside it arrives as a press on its host.
+ */
+const inOurCard = (node) => node?.id === OURS || rootOf(node)?.host?.id === OURS;
 
 /**
  * The component a node is drawn in, where it is drawn in one — never the
@@ -3397,10 +3520,27 @@ export function graduationFor(input, value) {
    * refuses — and "dd/mm/yy" was given "05/27". A day is not on the resume,
    * and a guessed one is a guess: `null`, and the caller leaves the box.
    */
-  if (/\bdd(?:\b|mm)|mm[\s/.-]*dd\b/.test(hint)) return null;
-  if (/yyyy\s*-\s*mm/.test(hint)) return `${year}-${mm}`;
-  if (/mm\s*\/\s*yyyy/.test(hint)) return `${mm}/${year}`;
-  if (/mm\s*\/\s*yy\b/.test(hint)) return `${mm}/${year.slice(2)}`;
+  /*
+   * And a day in the other languages' letters for it: German "TT.MM.JJJJ"
+   * and French "JJ/MM/AAAA" said nothing this read as a day, and their
+   * "MM.JJJJ" and "MM/AAAA" nothing it read as a shape — so the first kind
+   * was given "December 2026" in a box asking for a date, and so was the
+   * second. "JJ" is a day here, as the French write it; a German "MM/JJ"
+   * that means the year is left to the person rather than guessed at.
+   */
+  if (/\b(?:dd|tt|jj)(?:\b|mm)|mm[\s/.-]*(?:dd|tt|jj)\b/.test(hint)) return null;
+  /*
+   * The year and the month either way round, with whatever the form puts
+   * between them — "MM.YYYY" is how much of Europe writes it, and was given
+   * the readable form. The year in four letters as English, German, French,
+   * Spanish and Italian write it.
+   */
+  const yearFirst = /(?:yyyy|jjjj|aaaa)\s*([./-])\s*mm\b/.exec(hint);
+  if (yearFirst) return `${year}${yearFirst[1]}${mm}`;
+  const monthFirst = /\bmm\s*([./-])\s*(?:yyyy|jjjj|aaaa)/.exec(hint);
+  if (monthFirst) return `${mm}${monthFirst[1]}${year}`;
+  const shortYear = /\bmm\s*([./-])\s*(?:yy|aa)\b/.exec(hint);
+  if (shortYear) return `${mm}${shortYear[1]}${year.slice(2)}`;
   return value;
 }
 
@@ -4053,13 +4193,16 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     // The degree's dates first: see `educationDateKey`. They read as nothing
     // at all to the patterns, so this can only claim what was going unclaimed.
     const dated = educationDateKey(input, description);
-    const found = dated ? [dated] : FIELD_PATTERNS.find(([, re]) => re.test(description));
-    const named = found && !dated ? [addressPartByLabel(clean(labelFor(input)), found[0])] : found;
+    const patterned = FIELD_PATTERNS.find(([, re]) => re.test(description));
+    const found = dated ? [dated] : withStandardHint(input, patterned);
+    const named = found && !dated && found === patterned ? [addressPartByLabel(clean(labelFor(input)), found[0])] : found;
     const answers = MOST_RECENT.test(labelFor(input)) ? lately : fields;
     let match = named && answers[named[0]] ? named : undefined;
 
-    if (!match && fields.full_name && BARE_NAME.test(withoutMarkers(labelFor(input)))) {
-      match = ['full_name'];
+    // A bare "Name": the surname beside a first-name box, or all of it. See `bareNameKey`.
+    if (!match) {
+      const bare = bareNameKey(input, inputs);
+      if (bare && fields[bare]) match = [bare];
     }
     if (!match) {
       const half = nameHalf(input);
@@ -5913,9 +6056,10 @@ function profileKeyOf(input, description) {
   if (negative) return negative;
   if (isNotAboutYou(description, label, surroundingWords(input), boundedSection(input))) return null;
   const dated = educationDateKey(input, description);
-  const found = dated ? [dated] : FIELD_PATTERNS.find(([, re]) => re.test(description));
-  let key = found ? (dated ? found[0] : addressPartByLabel(label, found[0])) : null;
-  if (!key && BARE_NAME.test(withoutMarkers(labelFor(input)))) key = 'full_name';
+  const patterned = FIELD_PATTERNS.find(([, re]) => re.test(description));
+  const found = dated ? [dated] : withStandardHint(input, patterned);
+  let key = found ? (found === patterned ? addressPartByLabel(label, found[0]) : found[0]) : null;
+  if (!key) key = bareNameKey(input);
   if (!key) key = nameHalf(input);
   if (!key) return null;
   key = wholeDateKey(input, key, description);
@@ -6207,7 +6351,7 @@ function watchWidgetPicks(write, watching) {
    */
   let opened = null;
   const onPlainPress = (target) => {
-    if (!target || rootOf(target)?.host?.id === OURS) return;
+    if (!target || inOurCard(target)) return;
     let control = null;
     for (let at = target, up = 0; at && up < 6 && !control; at = at.parentElement, up++) {
       control = PLAIN.has(at) ? at : plainControlOver(at);
@@ -7967,7 +8111,7 @@ export function watchChoices(tell) {
     // Autofill's own filling, not a choice. See `OUR_EVENTS`.
     if (OUR_EVENTS.has(event)) return;
     const target = event.composedPath?.()?.[0] ?? event.target;
-    if (!target || rootOf(target)?.host?.id === OURS) return;
+    if (!target || inOurCard(target)) return;
     let said;
     try {
       said = seen(target);
@@ -8437,7 +8581,7 @@ export function looksLikeApplicationForm() {
     if (match) keys.add(match[0]);
     // The same bare "Name" that `fillForm` fills — a real part of a person,
     // and on several systems the only place the name is asked for.
-    else if (BARE_NAME.test(withoutMarkers(labelFor(input)))) keys.add('full_name');
+    else if (BARE_NAME.test(withoutMarkers(labelFor(input)))) keys.add(bareNameKey(input) ?? 'full_name');
   }
 
   let telltales = 0;

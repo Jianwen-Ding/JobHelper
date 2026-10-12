@@ -151,6 +151,8 @@ async function main() {
   const setUp = (opts = {}) =>
     page.evaluate(
       async ([code, store, analysis, opts]) => {
+        // A harness, not a page: the card takes untrusted presses here. See `HARNESS` in card.js.
+        globalThis.__JOBHELPER_HARNESS__ = true;
         const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
         const { createCard, removeCard } = await import(url);
         removeCard();

@@ -80,10 +80,17 @@ const saveOf = new Map();
 function letterId(company, role, at = new Date()) {
   const pad = (n) => String(n).padStart(2, '0');
   const day = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+  /*
+   * Letters and digits in any script, exactly as the server's rule does it.
+   * ASCII only, an employer written in Japanese, Cyrillic, Arabic or Hebrew
+   * slugged to nothing, so two such letters on one day were both the bare
+   * date and the second was saved over the first.
+   */
   const slug = (s) =>
     String(s)
+      .normalize('NFKC')
       .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/[^\p{L}\p{N}]+/gu, '-')
       .replace(/^-|-$/g, '')
       .slice(0, 30);
   return [day, company && slug(company), role && slug(role)].filter(Boolean).join('-');
@@ -2108,6 +2115,17 @@ const handlers = {
     };
   },
 
+  /**
+   * Whether this tab has an application under way at all. Reads only — no
+   * inheriting, unlike `openHere` — because it is asked by every page as it
+   * loads, to decide whether to watch for a receipt; see `wantReceipt` in
+   * content.js.
+   */
+  async applicationInTab(_payload, tab) {
+    const trail = await readTrail(tab?.id);
+    return { open: (trail?.pages ?? []).length > 0 };
+  },
+
   /** Forget the trail — "this is a different application from the last one". */
   // Named tab honoured on the same terms as `getTrail`.
   /**
@@ -2656,12 +2674,22 @@ const handlers = {
     return serverFetch('/api/extension/fresh', { method: 'POST', body: JSON.stringify({ spec }) });
   },
 
-  async render({ spec }) {
-    const result = await serverFetch('/api/render', {
-      method: 'POST',
-      timeoutMs: SLOW_TIMEOUT_MS,
-      body: JSON.stringify({ spec }),
-    });
+  /*
+   * Stoppable, like the other long runs. A compile is seconds when it works,
+   * but one that hangs had nothing to let go of it but the ten-minute
+   * deadline, and for those ten minutes the card's compile lane was held:
+   * "Build resume" read "Compiling…" and there was no way out short of
+   * closing the card. See `stoppable`.
+   */
+  async render({ spec }, tab) {
+    const result = await stoppably(tab, 'render', (signal) =>
+      serverFetch('/api/render', {
+        method: 'POST',
+        timeoutMs: SLOW_TIMEOUT_MS,
+        signal,
+        body: JSON.stringify({ spec }),
+      }),
+    );
     const { serverUrl } = await getSettings();
     return { ...result, absolutePdfUrl: `${serverUrl.replace(/\/$/, '')}${result.pdfUrl}` };
   },
@@ -2673,12 +2701,16 @@ const handlers = {
    * — which is why the resume's id travels with it. A preview compile: the
    * copy that gets attached is built again when the folder is.
    */
-  async renderLetter({ body, company, role, resumeId, spec }) {
-    const result = await serverFetch('/api/render/letter', {
-      method: 'POST',
-      timeoutMs: SLOW_TIMEOUT_MS,
-      body: JSON.stringify({ body, company, role, ...(spec ? writingFrom(spec) : { resumeId }) }),
-    });
+  async renderLetter({ body, company, role, resumeId, spec }, tab) {
+    // Stoppable for the same reason as `render`.
+    const result = await stoppably(tab, 'renderLetter', (signal) =>
+      serverFetch('/api/render/letter', {
+        method: 'POST',
+        timeoutMs: SLOW_TIMEOUT_MS,
+        signal,
+        body: JSON.stringify({ body, company, role, ...(spec ? writingFrom(spec) : { resumeId }) }),
+      }),
+    );
     const { serverUrl } = await getSettings();
     return { ...result, absolutePdfUrl: `${serverUrl.replace(/\/$/, '')}${result.pdfUrl}` };
   },

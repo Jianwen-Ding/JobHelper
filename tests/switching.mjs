@@ -92,6 +92,8 @@ async function main() {
     await page.goto(at(4401));
     return page.evaluate(
       async ([code, store, analysis]) => {
+        // A harness, not a page: the card takes untrusted presses here. See `HARNESS` in card.js.
+        globalThis.__JOBHELPER_HARNESS__ = true;
         const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
         const mod = await import(url);
         const s = (0, eval)(store);

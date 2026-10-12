@@ -14,7 +14,13 @@ const STYLE = `
  * shadow root inherits nothing. Everything is scoped to :host, so no job
  * board's stylesheet can reach in and nothing here leaks out.
  */
-:host { all: initial; }
+/*
+ * \`all: initial\` leaves \`direction\` and \`unicode-bidi\` alone, so on a page
+ * written right to left the card was laid out right to left too: its
+ * buttons, its lists and its English text mirrored. The card is written in
+ * English, so it says so, and isolates itself from the page's bidi.
+ */
+:host { all: initial; direction: ltr; unicode-bidi: isolate; }
 /*
  * What goes into the top layer above a page's modal (see \`raise\` in
  * \`createCard\`). Elsewhere it is no box at all, and the card is laid out as
@@ -747,6 +753,81 @@ a { color: var(--accent); }
 const HOST_ID = 'jobhelper-card-host';
 
 /*
+ * The page cannot reach into the card, and cannot press its buttons.
+ *
+ * The root was open, so any script on the page could find it through
+ * `host.shadowRoot`, read the card's text — the resume, the letter, the
+ * answers — and `.click()` "Autofill this form", then read the profile back
+ * out of its own form. Measured by a page script on a posting: the card's
+ * text came back, and so did every value the autofill put into the page's
+ * inputs. So the root is closed, which takes `shadowRoot` away from the page
+ * (the card keeps its own reference, `root` in `createCard`), and every
+ * event the browser did not raise for a person — `isTrusted` false — is
+ * stopped at the root before a single handler of the card hears it.
+ *
+ * Two ways the tests see inside, neither of which a page can use:
+ *
+ *   - The card-only harnesses (tests/card.mjs and friends) load this file
+ *     into an ordinary page with no extension at all, set
+ *     `__JOBHELPER_HARNESS__`, and drive the card with `.click()` and
+ *     synthetic `input` events. That flag is read only where there is no
+ *     extension runtime: in the extension, this module runs in the content
+ *     script's isolated world, whose globals a page cannot write.
+ *   - The suites that load the real extension set `jobhelperTestOpenShadow`
+ *     in the extension's own storage (see `pointExtensionAt` in
+ *     tests/fixtures.mjs), which a page cannot write either. That only opens
+ *     the root, so Playwright can find things in it; untrusted events are
+ *     refused there exactly as they are in use.
+ */
+const HARNESS = (() => {
+  try {
+    return !globalThis.chrome?.runtime?.id && globalThis.__JOBHELPER_HARNESS__ === true;
+  } catch {
+    return false;
+  }
+})();
+const OPEN_FOR_TESTS =
+  HARNESS ||
+  (await (async () => {
+    try {
+      const got = await globalThis.chrome?.storage?.local?.get?.('jobhelperTestOpenShadow');
+      return got?.jobhelperTestOpenShadow === true;
+    } catch {
+      return false;
+    }
+  })());
+
+/**
+ * Events a page could raise on the card to work it, and the card ignores
+ * unless a person did.
+ *
+ * Not `change`. A page cannot make one that means anything without reaching
+ * into the closed root to set a value first, and a checkbox's comes from a
+ * click, which is refused here and cancelled. Choosing an option the way a
+ * test driver does it (Playwright's `selectOption`) raises an untrusted
+ * `change`, so refusing it would refuse the base-resume picker to every
+ * suite that drives the real extension, and protect nothing.
+ */
+const REFUSED_UNLESS_TRUSTED = ['click', 'dblclick', 'auxclick', 'keydown', 'keypress', 'keyup', 'beforeinput', 'input', 'submit'];
+
+function refuseUntrusted(root) {
+  if (HARNESS) return;
+  for (const type of REFUSED_UNLESS_TRUSTED) {
+    root.addEventListener(
+      type,
+      (event) => {
+        if (event.isTrusted) return;
+        event.stopImmediatePropagation();
+        // And no default either: a synthetic click still ticks a checkbox or
+        // submits a form unless it is cancelled.
+        if (event.cancelable) event.preventDefault();
+      },
+      true,
+    );
+  }
+}
+
+/*
  * The card on the page now, and how to stop what it listens to. Kept by
  * reference because the host is not always where an id finds it: above a
  * modal it lives inside the modal, and a modal in a shadow root is out of
@@ -912,12 +993,22 @@ export function createCard({
       node.localName === 'textarea' ||
       node.localName === 'select' ||
       (node.localName === 'input' && !/^(button|checkbox|radio|submit|reset|image|file|range|color)$/i.test(node.type)));
+  /*
+   * The card's own reference to its root; nothing else has one. See
+   * `refuseUntrusted`, which is the first thing to hear any event in it.
+   */
+  const root = host.attachShadow({ mode: OPEN_FOR_TESTS ? 'open' : 'closed' });
+  refuseUntrusted(root);
+  /*
+   * Heard on the root rather than the host: the root is closed, and from the
+   * host a closed root's insides are hidden, so `composedPath()[0]` there is
+   * the host itself and nothing typed would ever look editable.
+   */
   for (const type of ['keydown', 'keypress', 'keyup']) {
-    host.addEventListener(type, (event) => {
+    root.addEventListener(type, (event) => {
       if (editable(event.composedPath()[0])) event.stopPropagation();
     });
   }
-  const root = host.attachShadow({ mode: 'open' });
   root.append(Object.assign(document.createElement('style'), { textContent: STYLE }));
   /*
    * Somebody working on the card again after the application went out.
@@ -1707,6 +1798,13 @@ export function createCard({
     // all — silently, which is the worst way for it to not work.
     const { dataset, ...rest } = props;
     const n = Object.assign(document.createElement(tag), rest);
+    /*
+     * A box takes its direction from what is typed into it. The card is left
+     * to right (see `:host`), but an answer or a letter written in Arabic or
+     * Hebrew is not, and in a left-to-right box its punctuation landed at the
+     * wrong end.
+     */
+    if (tag === 'textarea' && !('dir' in rest)) n.dir = 'auto';
     for (const [k, v] of Object.entries(dataset ?? {})) n.dataset[k] = v;
     for (const k of [].concat(kids)) if (k != null && k !== false) n.append(k);
     return n;
@@ -3465,6 +3563,7 @@ export function createCard({
     setBase: [1, 'Starting from that resume…'],
     refine: [1, 'Applying your feedback…'],
     coverLetter: [2, 'Drafting the letter…'],
+    renderLetter: [2, 'Typesetting the letter…'],
     saveLetter: [2, 'Saving the letter…'],
     answerQuestion: [3, 'Writing an answer…'],
     matchAnswers: [3, 'Looking through your answers…'],
@@ -3498,11 +3597,18 @@ export function createCard({
   /**
    * Runs the worker can be told to let go of, and what it calls each one.
    *
-   * Only the long ones. A compile or a save is over before the button could be
-   * found, and offering to stop something that is already finished is how you
-   * end up with a button that does nothing when pressed.
+   * Only the long ones. A save is over before the button could be found, and
+   * offering to stop something that is already finished is how you end up
+   * with a button that does nothing when pressed.
+   *
+   * The two preview compiles are here although a compile is seconds when it
+   * works: one that hangs held the compile lane for the worker's whole
+   * ten-minute deadline, "Compiling…" with no way out of it. The bar only
+   * offers Stop while the run is going, so a quick one never shows it long.
    */
   const STOPPABLE = {
+    render: 'render',
+    renderLetter: 'renderLetter',
     rebuild: 'rebuild',
     /*
      * Switching base is the same run under another name.

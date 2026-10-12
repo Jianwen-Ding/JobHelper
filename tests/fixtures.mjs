@@ -2258,7 +2258,27 @@ export async function useServer(context, serverUrl) {
   const page = await context.newPage();
   await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
   await page.evaluate((url) => chrome.storage.sync.set({ serverUrl: url }), serverUrl);
+  await page.evaluate((key) => chrome.storage.local.set({ [key]: true }), OPEN_SHADOW_FLAG);
   await page.close();
+}
+
+/**
+ * The card's shadow root is closed in use, so no page script can read the
+ * card or reach its buttons (see `HARNESS` in src/content/card.js). These
+ * suites look inside it from the page, as a person's eyes would, so they ask
+ * the extension — through its own storage, which no page can write — to
+ * leave it open. Untrusted events are refused all the same: presses have to
+ * be Playwright's, which are real input.
+ *
+ * Set before any page the card could appear on is opened; each content
+ * script reads it once, when it loads the card.
+ */
+export const OPEN_SHADOW_FLAG = 'jobhelperTestOpenShadow';
+export async function openCardForTests(worker, open = true) {
+  await worker.evaluate(
+    ([key, on]) => (on ? chrome.storage.local.set({ [key]: true }) : chrome.storage.local.remove(key)),
+    [OPEN_SHADOW_FLAG, open],
+  );
 }
 
 /** Locate the Chromium this environment provides. */
@@ -2425,6 +2445,7 @@ export async function pointExtensionAt(context, worker, server) {
   const setup = await context.newPage();
   await setup.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
   await setup.evaluate((s) => chrome.storage.sync.set({ serverUrl: s }), server);
+  await setup.evaluate((key) => chrome.storage.local.set({ [key]: true }), OPEN_SHADOW_FLAG);
   await setup.close();
 }
 

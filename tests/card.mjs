@@ -34,6 +34,8 @@ async function main() {
   // everything written before it takes one argument and ignores this.
   const inPage = (fn, given) => page.evaluate(
     async ([code, body, arg]) => {
+      // A harness, not a page: the card takes untrusted presses here. See `HARNESS` in card.js.
+      globalThis.__JOBHELPER_HARNESS__ = true;
       const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
       const { createCard, removeCard } = await import(url);
       removeCard();
@@ -2929,6 +2931,90 @@ async function main() {
     'a reply that crossed the stop is dropped, not applied late',
     stopped.lateClaimed === 'Use Original',
     String(stopped.lateClaimed),
+  );
+
+  console.log('\nA compile that hangs can be stopped');
+
+  /*
+   * The two preview compiles, the resume's and the letter's, were left off
+   * the list of runs with a Stop on the grounds that a compile is seconds.
+   * One that hangs is not: the worker gave it ten minutes, and for those ten
+   * minutes "Build resume" read "Compiling…" with no way out but closing the
+   * card and everything written on it.
+   */
+  const hungCompiles = await inPage((createCard) => {
+    const seen = [];
+    const held = {};
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: true,
+      onAction: async (action, payload) => {
+        seen.push([action, payload]);
+        if (action === 'render' || action === 'renderLetter') {
+          return new Promise((resolve, reject) => {
+            held[action] = { resolve, reject };
+          });
+        }
+        if (action === 'cancelWork') {
+          for (const what of payload?.what ?? []) {
+            const err = new Error('Stopped.');
+            err.jobhelper = { stopped: true };
+            held[what]?.reject(err);
+            delete held[what];
+          }
+          return { stopped: 1 };
+        }
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (re) => [...root.querySelectorAll('button')].find((b) => re.test(b.textContent.trim()));
+    const stop = () => root.querySelector('.progress-label .stop');
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    return (async () => {
+      await wait(20);
+      const out = {};
+      byText(/^Build resume$/).click();
+      await wait(20);
+      out.resumeHeld = Boolean(held.render);
+      out.resumeStop = Boolean(stop());
+      stop()?.click();
+      await wait(40);
+      out.resumeFree = byText(/^Build resume$/)?.disabled === false;
+      out.resumeBar = Boolean(root.querySelector('.progress'));
+
+      const box = root.querySelector('textarea[data-field="letter"]');
+      box.value = 'Dear Acme, I would like to build your platform.';
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+      await wait(20);
+      byText(/^See it typeset$/).click();
+      await wait(20);
+      out.letterHeld = Boolean(held.renderLetter);
+      out.letterStop = Boolean(stop());
+      stop()?.click();
+      await wait(40);
+      out.letterFree = byText(/^See it typeset$/)?.disabled === false;
+      out.errored = root.querySelector('.err')?.textContent ?? null;
+      out.asked = seen.filter(([a]) => a === 'cancelWork').map(([, p]) => JSON.stringify(p?.what));
+      return out;
+    })();
+  });
+  check('a hung resume compile offers a Stop', hungCompiles.resumeHeld && hungCompiles.resumeStop, JSON.stringify(hungCompiles));
+  check('and stopping it frees Build resume at once', hungCompiles.resumeFree && !hungCompiles.resumeBar, JSON.stringify(hungCompiles));
+  check('so does a hung letter typeset', hungCompiles.letterHeld && hungCompiles.letterStop && hungCompiles.letterFree, JSON.stringify(hungCompiles));
+  check(
+    'the worker is told which compile, and neither is called a failure',
+    JSON.stringify(hungCompiles.asked) === JSON.stringify(['["render"]', '["renderLetter"]']) && hungCompiles.errored === null,
+    JSON.stringify(hungCompiles),
   );
 
   console.log('\nDrafting does not lock what you already wrote');
@@ -6581,6 +6667,53 @@ async function main() {
     document.querySelector('#jobhelper-card-host')?.remove();
     delete window.chrome.runtime;
   });
+
+  /*
+   * A page written right to left. `all: initial` resets nearly everything a
+   * shadow host inherits, but not `direction`: on an Arabic or Hebrew page
+   * the card came out mirrored, its English sentences with their full stops
+   * at the wrong end. The card is left to right whatever the page is, and
+   * its writing boxes follow what is typed into them.
+   */
+  console.log('\nOn a page written right to left');
+  {
+    const rtl = await inPage((createCard) => {
+      document.documentElement.dir = 'rtl';
+      try {
+        createCard({
+          analysis: {
+            isJobPosting: true,
+            job: { title: 'Platform Engineer', company: 'Acme' },
+            spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+            rationale: [],
+          },
+          resumes: [],
+          settings: {},
+          questions: [{ question: 'Why us?', answer: '', confident: false }],
+          needsCoverLetter: true,
+          onAction: async () => ({}),
+        });
+        const host = document.querySelector('#jobhelper-card-host');
+        const root = host.shadowRoot;
+        const card = root.querySelector('.card');
+        const boxes = [...root.querySelectorAll('textarea')];
+        return {
+          page: getComputedStyle(document.body).direction,
+          host: getComputedStyle(host).direction,
+          card: getComputedStyle(card).direction,
+          isolated: getComputedStyle(host).unicodeBidi,
+          boxes: boxes.length,
+          auto: boxes.filter((b) => b.dir === 'auto').length,
+        };
+      } finally {
+        document.documentElement.removeAttribute('dir');
+      }
+    });
+    check('the page really is right to left', rtl.page === 'rtl', JSON.stringify(rtl));
+    check('the card is left to right', rtl.host === 'ltr' && rtl.card === 'ltr', JSON.stringify(rtl));
+    check('and isolated from the page around it', rtl.isolated === 'isolate', JSON.stringify(rtl));
+    check('every writing box takes its direction from what is typed', rtl.boxes > 0 && rtl.auto === rtl.boxes, JSON.stringify(rtl));
+  }
 
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);

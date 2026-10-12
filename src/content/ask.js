@@ -36,8 +36,33 @@
 
 const HOST_ID = 'jobhelper-ask-host';
 
+/*
+ * Closed to the page, and deaf to presses the page makes up — the same rule as
+ * the card, for the same reason; see the note above `HARNESS` in card.js. A
+ * page that could `.click()` "Yes" would be choosing, for the person, to have
+ * itself read and sent to the store.
+ */
+const HARNESS = (() => {
+  try {
+    return !globalThis.chrome?.runtime?.id && globalThis.__JOBHELPER_HARNESS__ === true;
+  } catch {
+    return false;
+  }
+})();
+const OPEN_FOR_TESTS =
+  HARNESS ||
+  (await (async () => {
+    try {
+      const got = await globalThis.chrome?.storage?.local?.get?.('jobhelperTestOpenShadow');
+      return got?.jobhelperTestOpenShadow === true;
+    } catch {
+      return false;
+    }
+  })());
+
 const STYLE = `
-:host { all: initial; }
+/* Left to right whatever the page is; see the same rule in card.js. */
+:host { all: initial; direction: ltr; unicode-bidi: isolate; }
 * { box-sizing: border-box; }
 
 .ask {
@@ -117,7 +142,20 @@ export function createAsk({ site, onYes, onNo, onLater }) {
 
   const host = document.createElement('div');
   host.id = HOST_ID;
-  const root = host.attachShadow({ mode: 'open' });
+  const root = host.attachShadow({ mode: OPEN_FOR_TESTS ? 'open' : 'closed' });
+  if (!HARNESS) {
+    for (const type of ['click', 'dblclick', 'auxclick', 'keydown', 'keypress', 'keyup', 'submit']) {
+      root.addEventListener(
+        type,
+        (event) => {
+          if (event.isTrusted) return;
+          event.stopImmediatePropagation();
+          if (event.cancelable) event.preventDefault();
+        },
+        true,
+      );
+    }
+  }
   root.append(Object.assign(document.createElement('style'), { textContent: STYLE }));
 
   const chip = document.createElement('div');

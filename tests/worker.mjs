@@ -20,7 +20,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import { findChromium } from './fixtures.mjs';
+import { OPEN_SHADOW_FLAG, findChromium } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -247,6 +247,8 @@ async function main() {
     const driver = await context.newPage();
     await driver.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
     await driver.evaluate((s) => chrome.storage.sync.set({ serverUrl: s, autoPrompt: false }), store.base);
+    // The card left open for reading here; see `openCardForTests`.
+    await driver.evaluate((key) => chrome.storage.local.set({ [key]: true }), OPEN_SHADOW_FLAG);
 
     const lastSaveFor = (p) => store.sentTo(p).slice(-1)[0]?.project ?? '(none)';
 
@@ -401,6 +403,30 @@ async function main() {
         );
         const noCompany = await lettersSaved({ title: 'Platform Engineer' });
         check('a missing employer is left out, not called "letter"', noCompany === '2026-03-01-platform-engineer', String(noCompany));
+        /*
+         * Employers named in other scripts. Slugged to ASCII they were all
+         * the bare date, so a second letter that day replaced the first.
+         * The server's rule, letter for letter: NFKC, lowercase, runs of
+         * anything but a letter or a digit become "-", ends trimmed, each
+         * part cut to 30.
+         */
+        const scripts = [];
+        for (const company of ['株式会社ソニー', 'Яндекс', 'شركة أرامكو', 'אלביט מערכות', 'ＡＣＭＥ Ｇｍｂｈ']) {
+          scripts.push(await lettersSaved({ company }));
+        }
+        check(
+          'employers in any script keep their names in the id',
+          JSON.stringify(scripts) ===
+            JSON.stringify([
+              '2026-03-01-株式会社ソニー',
+              '2026-03-01-яндекс',
+              '2026-03-01-شركة-أرامكو',
+              '2026-03-01-אלביט-מערכות',
+              '2026-03-01-acme-gmbh',
+            ]),
+          JSON.stringify(scripts),
+        );
+        check('so two of them on one day are two letters', new Set(scripts).size === scripts.length, JSON.stringify(scripts));
         // Those were a store too old to say; one that can is asked.
         store.letterId = '2026-03-01-helios-platform-engineer';
         const told = await lettersSaved({ company: 'Helios', title: 'Platform Engineer' });
@@ -1527,6 +1553,36 @@ async function main() {
     }
 
     /*
+     * A compile that hangs. The preview compiles had the worker's ten-minute
+     * deadline and no Stop: a wedged compile held the card's compile lane,
+     * "Compiling…", for ten minutes with no way out short of closing it.
+     */
+    group('A preview compile that hangs can be stopped');
+    for (const [route, type, payload] of [
+      ['/api/render', 'render', { spec: { id: 'job-helios' } }],
+      ['/api/render/letter', 'renderLetter', { body: 'Dear Helios,', spec: { id: 'job-helios' } }],
+    ]) {
+      store.routes[route] = 'silent';
+      const before = store.hits.length;
+      const began = Date.now();
+      const running = ask(driver, type, payload);
+      // Until the request is at the store, so the stop is of a compile in the air.
+      for (let i = 0; i < 100 && !store.hits.slice(before).some((h) => h.url === route); i++) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const told = await ask(driver, 'cancelWork', { what: [type] });
+      const stopped = await Promise.race([running, new Promise((r) => setTimeout(() => r(null), 5000))]);
+      check(`${type}: Stop lets go of it`, told.reply?.data?.stopped === 1, JSON.stringify(told.reply));
+      check(
+        `${type}: and it comes back as a stop, at once`,
+        stopped !== null && stopped.reply?.ok === false && !/did not answer/i.test(stopped.reply?.error ?? '') && Date.now() - began < 5000,
+        stopped ? JSON.stringify(stopped.reply).slice(0, 160) : 'still waiting after 5s',
+      );
+      store.routes[route] = 'ok';
+      for (const res of store.open.splice(0)) res.destroy();
+    }
+
+    /*
      * And the same window without a Stop: a server that answers and then
      * wedges got the "not JSON" sentence twenty seconds later, with no button
      * on it, instead of the "did not answer" message that carries one.
@@ -1858,6 +1914,182 @@ async function main() {
       check('the page really did throw the card out', seen.thrownOut === true, JSON.stringify(seen));
       check('and it is back on the page', seen.after?.back === true, JSON.stringify(seen));
       check('the same card, with whatever was in it', seen.after?.same === true, JSON.stringify(seen));
+    }
+
+    /*
+     * The page cannot work the card, or read it.
+     *
+     * The card's root was open and it ran any click it was given, so a page
+     * script could find "Autofill this form" through `host.shadowRoot`,
+     * `.click()` it, and read the person's profile back out of its own
+     * inputs — and read the resume and the letter off the card's text on the
+     * way. A press here is "Build resume", because the store sees it: a
+     * page's `.click()` must not reach the store, and Playwright's, which is
+     * real input, must.
+     */
+    group('A page script cannot press the card, or see into it');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1><p>Helios is hiring a Platform Engineer. Responsibilities: build the
+          platform. Requirements: Kubernetes, Go. Apply now to join our team.</p>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/jobs/platform-engineer`;
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+
+      const seen = {};
+      const page = await context.newPage();
+      try {
+        await page.goto(where);
+        const build = page.locator('#jobhelper-card-host button', { hasText: /^Build resume$/ });
+        await build.waitFor({ timeout: 15_000 });
+        await page.waitForFunction(
+          () => {
+            const root = document.querySelector('#jobhelper-card-host')?.shadowRoot;
+            return [...(root?.querySelectorAll('button') ?? [])].some((b) => /^Build resume$/.test(b.textContent.trim()) && !b.disabled);
+          },
+          null,
+          { timeout: 15_000 },
+        );
+        const renders = () => store.sentTo('/api/render').length;
+        const before = renders();
+        // The page's own script, pressing the button the way any script can.
+        seen.pressedByPage = await page.evaluate(() => {
+          const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+          const button = [...root.querySelectorAll('button')].find((b) => /^Build resume$/.test(b.textContent.trim()));
+          button.click();
+          button.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
+          button.focus();
+          button.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true }));
+          return button.textContent.trim();
+        });
+        await page.waitForTimeout(1500);
+        seen.afterPage = renders() - before;
+        /*
+         * And the extension's files are not at an address a page can know:
+         * at the fixed one, any page could fetch them and so tell that this
+         * extension is installed, and which version.
+         */
+        seen.fetchedByPage = await page.evaluate(async (id) => {
+          try {
+            const res = await fetch(`chrome-extension://${id}/src/shared/sites.js`);
+            return `fetched ${res.status}`;
+          } catch (err) {
+            return `refused: ${err.message}`;
+          }
+        }, extensionId);
+        // And a person, pressing the same button.
+        await build.click();
+        for (let i = 0; i < 100 && renders() === before; i++) await page.waitForTimeout(50);
+        seen.afterPerson = renders() - before;
+      } finally {
+        await page.close();
+      }
+
+      /*
+       * And, as it is in use rather than under test, the root is closed: the
+       * page finds the host and nothing under it.
+       */
+      await driver.evaluate((key) => chrome.storage.local.remove(key), OPEN_SHADOW_FLAG);
+      const closed = await context.newPage();
+      try {
+        await closed.goto(where);
+        await closed.waitForSelector('#jobhelper-card-host', { state: 'attached', timeout: 15_000 });
+        // Long enough for the card to be drawn into the root it keeps to itself.
+        await closed.waitForTimeout(1500);
+        seen.closed = await closed.evaluate(() => {
+          const host = document.querySelector('#jobhelper-card-host');
+          return { host: Boolean(host), root: host?.shadowRoot ?? null, text: host?.textContent ?? '', drawn: host?.getBoundingClientRect().height ?? 0 };
+        });
+      } finally {
+        await closed.close();
+        site.close();
+        await driver.evaluate((key) => chrome.storage.local.set({ [key]: true }), OPEN_SHADOW_FLAG);
+        await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: false }));
+      }
+
+      check('the page could find the button (the root is open for this test)', seen.pressedByPage === 'Build resume', JSON.stringify(seen));
+      check("a page script's .click(), click event and Enter do nothing", seen.afterPage === 0, JSON.stringify(seen));
+      check('while a real press of the same button does', seen.afterPerson >= 1, JSON.stringify(seen));
+      check("and a page cannot fetch the extension's files by its fixed address", /^refused/.test(seen.fetchedByPage ?? ''), String(seen.fetchedByPage));
+      check(
+        'in use, the card is on the page and its root is closed to it',
+        seen.closed?.host === true && seen.closed.root === null && seen.closed.text === '',
+        JSON.stringify(seen.closed),
+      );
+    }
+
+    /*
+     * The receipt watcher, only in a tab that is applying.
+     *
+     * It ran on every top-level page anybody opened, for a quarter of an
+     * hour, re-reading the page's headings on every change of it, to find a
+     * sentence that only means anything in a tab with an application in it.
+     * Heard from here as the message it sends: a content script's messages
+     * reach the extension's own pages as well as the worker.
+     */
+    group('Watching for a receipt only where there is an application');
+    {
+      const site = http.createServer((req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        if (req.url.startsWith('/thanks')) {
+          res.end('<!doctype html><title>Acme</title><h1>Thank you for applying</h1><p>We will be in touch.</p>');
+          return;
+        }
+        res.end(`<!doctype html><title>Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1><p>Helios is hiring a Platform Engineer. Responsibilities: build the
+          platform. Requirements: Kubernetes, Go. Apply now to join our team.</p>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const origin = `http://127.0.0.1:${site.address().port}`;
+      await driver.evaluate(() => {
+        window.heardTypes = [];
+        chrome.runtime.onMessage.addListener((message) => {
+          window.heardTypes.push(message?.type);
+        });
+      });
+      const heard = () => driver.evaluate(() => window.heardTypes.splice(0));
+      const seen = {};
+      const stranger = await context.newPage();
+      try {
+        await heard();
+        await stranger.goto(`${origin}/thanks`);
+        await stranger.waitForTimeout(2000);
+        seen.noApplication = await heard();
+      } finally {
+        await stranger.close();
+      }
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+      const applying = await context.newPage();
+      try {
+        await applying.goto(`${origin}/jobs/platform-engineer`);
+        await applying.locator('#jobhelper-card-host .card').waitFor({ timeout: 15_000 });
+        await heard();
+        // The same document saying it, as Workday's dialog does.
+        await applying.evaluate(() => {
+          const said = document.createElement('h1');
+          said.textContent = 'Thank you for applying';
+          document.body.append(said);
+        });
+        await applying.waitForTimeout(2000);
+        seen.applying = await heard();
+      } finally {
+        await applying.close();
+        site.close();
+        await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: false }));
+      }
+      check(
+        'a page that says "Thank you for applying" in a tab with no application is not watched',
+        !seen.noApplication.includes('applicationSentHere'),
+        JSON.stringify(seen.noApplication),
+      );
+      check('while one with a card on it is, and says so', seen.applying.includes('applicationSentHere'), JSON.stringify(seen.applying));
     }
 
     /*

@@ -553,6 +553,29 @@
   let stopSending = null;
   let stopReceipt = null;
   let restartSending = null;
+  /** Starts the receipt watcher, once `watchForSending` has loaded it. */
+  let startReceipt = null;
+  let receiptWanted = false;
+  /**
+   * Watch this page for a receipt from now on. Called when a card goes up,
+   * and when the tab turns out to have an application under way.
+   */
+  function wantReceipt() {
+    if (receiptWanted) return;
+    receiptWanted = true;
+    startReceipt?.();
+  }
+  /** Ask the worker whether this tab is applying, once the page is shown. */
+  function wantReceiptIfApplying() {
+    const ask = () =>
+      send('applicationInTab', {})
+        .then((reply) => {
+          if (reply?.open) wantReceipt();
+        })
+        .catch(() => undefined);
+    if (document.prerendering) document.addEventListener('prerenderingchange', ask, { once: true });
+    else ask();
+  }
 
   /** The questions on this page, wherever on it they are. */
   async function findEverywhere() {
@@ -996,7 +1019,9 @@
          * looks like a drop zone and the file would be dispatched at our own
          * panel.
          */
-        if (target?.getRootNode?.()?.host?.id === 'jobhelper-card-host') {
+        // The host itself as well: the card's root is closed, and a closed
+        // root's insides reach the document retargeted to it.
+        if (target?.id === 'jobhelper-card-host' || target?.getRootNode?.()?.host?.id === 'jobhelper-card-host') {
           inTheAir = null;
           return;
         }
@@ -1894,6 +1919,8 @@
         cardHandle.putBack?.();
         return cardHandle;
       }
+      // A card on the page is an application its receipt may follow.
+      wantReceipt();
       cardHandle = createCard({
         analysis: null,
         resumes: [],
@@ -2461,7 +2488,19 @@
     };
 
     stopSending = watch(document, took);
-    stopReceipt = watchReceipt(document, sayReceived);
+    /*
+     * The receipt only once there is an application for it to be the
+     * receipt of: a card has been up on this page, or the tab already has
+     * an application under way. It used to watch every page anybody opened,
+     * every change to it, for a quarter of an hour — reading the whole text
+     * of a busy page on each — to find a sentence that can only ever mean
+     * something in a tab that is applying. See `wantReceipt`.
+     */
+    startReceipt = () => {
+      stopReceipt?.();
+      stopReceipt = watchReceipt(document, sayReceived);
+    };
+    if (receiptWanted) startReceipt();
     /*
      * And begun again at each posting, because the watcher is one send per
      * document and a single-page board is one document for the afternoon.
@@ -2476,7 +2515,8 @@
       stopSending?.();
       stopSending = watch(document, took);
       stopReceipt?.();
-      stopReceipt = watchReceipt(document, sayReceived);
+      stopReceipt = null;
+      if (receiptWanted) startReceipt();
     };
     teardown.push(() => stopSending?.());
     teardown.push(() => stopReceipt?.());
@@ -2748,14 +2788,41 @@
          * around it stays exactly as it was. Sent with the origins above it,
          * because this frame's own address is the board's, not the employer's.
          */
-        watchForReceipt(document, (how) =>
-          send('applicationSentHere', {
-            note: how,
-            url: location.href,
-            receipt: true,
-            above: [...(location.ancestorOrigins ?? [])],
-          }).catch(() => undefined),
-        );
+        /*
+         * Only in a tab that is applying, as at the top; see `wantReceipt`.
+         * A frame has no card of its own, so the trail is the only sign.
+         */
+        let watching = false;
+        const onPress = (event) => {
+          const pressed = event.composedPath?.()?.[0] ?? event.target;
+          if (pressed?.closest?.('button, input[type=submit], [role=button]')) askThenWatch();
+        };
+        const askThenWatch = () =>
+          send('applicationInTab', {})
+            .then((reply) => {
+              if (!reply?.open || watching) return;
+              watching = true;
+              document.removeEventListener('click', onPress, true);
+              teardown.push(
+                watchForReceipt(document, (how) =>
+                  send('applicationSentHere', {
+                    note: how,
+                    url: location.href,
+                    receipt: true,
+                    above: [...(location.ancestorOrigins ?? [])],
+                  }).catch(() => undefined),
+                ),
+              );
+            })
+            .catch(() => undefined);
+        askThenWatch();
+        /*
+         * And again at a press, until the answer is yes: an embedded form on
+         * the first page of a tab loads before the page around it has started
+         * the application, and its receipt is drawn in place after Submit.
+         * Only a press of something button-shaped, which is what sends.
+         */
+        document.addEventListener('click', onPress, true);
       })
       .catch(() => undefined);
 
@@ -3383,6 +3450,7 @@
   watchForApplyClicks();
   keepWorkSafe();
   watchForSending().catch(() => undefined);
+  wantReceiptIfApplying();
 
   // And once the card exists, orphaning takes it off the page: a card whose
   // buttons all throw is worse than no card.

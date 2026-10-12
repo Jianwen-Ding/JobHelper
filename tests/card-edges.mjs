@@ -145,6 +145,8 @@ async function main() {
   const setUp = (opts = {}) =>
     page.evaluate(
       async ([code, store, analysis, opts]) => {
+        // A harness, not a page: the card takes untrusted presses here. See `HARNESS` in card.js.
+        globalThis.__JOBHELPER_HARNESS__ = true;
         const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
         const { createCard, removeCard } = await import(url);
         removeCard();
@@ -247,6 +249,8 @@ async function main() {
       });
     </script>`);
     await keys.evaluate(async (code) => {
+      // A harness, not a page: the card takes untrusted presses here. See `HARNESS` in card.js.
+      globalThis.__JOBHELPER_HARNESS__ = true;
       const { createCard } = await import(URL.createObjectURL(new Blob([code], { type: 'text/javascript' })));
       createCard({
         analysis: { isJobPosting: true, job: { title: 'Platform Engineer', company: 'Acme' }, spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' }, rationale: [] },
