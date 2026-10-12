@@ -7114,7 +7114,10 @@ export function createCard({
                    */
                   onclick: () => {
                     const sent = state.letter;
-                    act('saveLetter', { body: sent }, () => {
+                    // Which application this letter is for, as the drag chips
+                    // name it: see `saveLetter` in the service worker.
+                    const applicationId = state.staged?.application?.id ?? analysis?.application?.id ?? undefined;
+                    act('saveLetter', { body: sent, applicationId }, () => {
                       state.letterSavedAs = sent;
                       state.letterSaved = sent === state.letter;
                       prepareSoon();

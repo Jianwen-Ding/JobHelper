@@ -3451,7 +3451,7 @@ const handlers = {
     );
   },
 
-  async saveLetter({ body, job }, tab) {
+  async saveLetter({ body, job, applicationId }, tab) {
     const save = await saveFor(tab?.id);
     /*
      * The store's own id for this employer, role and day, which is the id
@@ -3459,12 +3459,25 @@ const handlers = {
      * worked out, so the two cannot drift. A store too old to answer gets the
      * same rule worked out here: see `letterId`. The PUT merges over a letter
      * already filed under the id, so its link to the application is kept.
+     *
+     * Asked with the application the card has for this page and the page's
+     * address, which is all this knows about which application it is. By
+     * the name alone the store handed back the name another application's
+     * letter was filed under — a second job with the same title on the same
+     * day — and this wrote over it. Told which, the store answers with this
+     * application's own letter, or a name no other application's letter
+     * has, and says which application it found. That goes with the save,
+     * which the store refuses (409) if the letter under the name turns out
+     * to be another application's.
      */
     const query = new URLSearchParams();
     if (job?.company) query.set('company', job.company);
     if (job?.title) query.set('role', job.title);
+    if (applicationId) query.set('applicationId', applicationId);
+    if (job?.url) query.set('url', job.url);
     const asked = await serverFetch(`/api/letters/id?${query}`, { save }).catch(() => null);
     const id = typeof asked?.id === 'string' && asked.id ? asked.id : letterId(job?.company, job?.title);
+    const linked = typeof asked?.applicationId === 'string' && asked.applicationId ? asked.applicationId : undefined;
     return serverFetch(`/api/letters/${encodeURIComponent(id)}`, {
       method: 'PUT',
       save,
@@ -3475,6 +3488,7 @@ const handlers = {
         role: job?.title,
         createdAt: new Date().toISOString(),
         body,
+        ...(linked ? { applicationId: linked } : {}),
       }),
     });
   },

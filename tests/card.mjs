@@ -2594,11 +2594,13 @@ async function main() {
    */
   const savedLie = await inPage((createCard) => {
     let release;
+    let savedFor;
     const handle = createCard({
       analysis: {
         isJobPosting: true,
         job: { title: 'Platform Engineer', company: 'Acme' },
         spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        application: { id: 'app-acme' },
         rationale: [],
         diff: [],
       },
@@ -2608,7 +2610,7 @@ async function main() {
       needsCoverLetter: true,
       onAction: async (action, payload) =>
         action === 'saveLetter'
-          ? new Promise((r) => { release = () => r({ ok: true, sent: payload.body }); })
+          ? new Promise((r) => { savedFor = payload.applicationId; release = () => r({ ok: true, sent: payload.body }); })
           : action === 'aiStatus'
             ? { active: true, state: 'on' }
             : {},
@@ -2643,9 +2645,21 @@ async function main() {
         inTheBox: root.querySelector('textarea[data-field="letter"]')?.value ?? '',
         label: now?.textContent?.trim() ?? '(gone)',
         disabled: now?.disabled ?? null,
+        savedFor,
       };
     })();
   });
+
+  /*
+   * And it says which application the letter is for. Saved by the job's
+   * name alone, the store handed back the name another application's letter
+   * was filed under, and the save wrote over it.
+   */
+  check(
+    'the letter is saved for the application on the card',
+    savedLie.savedFor === 'app-acme',
+    String(savedLie.savedFor),
+  );
 
   check(
     'a letter typed on while the save was out is not called saved',

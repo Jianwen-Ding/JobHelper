@@ -1388,14 +1388,19 @@
       // letter lands on that application's id: the page's bare title would
       // give two requisitions under one title — "Engineer (12345678)" and
       // "(87654321)" — one letter id, the second writing over the first.
+      // And with the application it is for and the page's address, which is
+      // the address the application is filed under (see `bundle` above), so
+      // the store can tell this job's letter from another's of the same name.
       case 'saveLetter': {
         const named = analysis?.spec?.generatedFor;
         return send('saveLetter', {
           body: payload.body,
+          applicationId: payload.applicationId || analysis?.application?.id || undefined,
           job: {
             ...analysis?.job,
             company: named?.company || analysis?.job?.company,
             title: named?.role || analysis?.job?.title,
+            url: analysis?.job?.url || location.href,
           },
         });
       }

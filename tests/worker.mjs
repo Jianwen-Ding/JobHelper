@@ -166,7 +166,9 @@ function fakeStore() {
     // tracker row's status, a kept phrasing, the AI switch.
     // The store's letter id, only when the test has said what it is: a store
     // from before the route answers 404, and the worker works it out itself.
-    if (url === '/api/letters/id' && state.letterId) return send({ id: state.letterId });
+    if (url === '/api/letters/id' && state.letterId) {
+      return send({ id: state.letterId, ...(state.letterFor ? { applicationId: state.letterFor } : {}) });
+    }
     if (
       url === '/api/answers/save' ||
       url === '/api/config' ||
@@ -437,8 +439,43 @@ async function main() {
           asked?.query.get('company') === 'Helios' && asked?.query.get('role') === 'Platform Engineer',
           asked ? asked.query.toString() : 'not asked',
         );
+        /*
+         * By the name alone, the store answered with the name another
+         * application's letter was filed under — a second job with the same
+         * title on the same day — and this wrote over it. So it is asked
+         * with the application the card has and the page's address, and the
+         * application the store found goes with the save, for the store to
+         * refuse a save that lands on another's letter.
+         */
+        store.letterId = '2026-03-01-helios-platform-engineer-2';
+        store.letterFor = 'app-helios-2';
+        const before = store.hits.length;
+        await ask(driver, 'saveLetter', {
+          body: 'Dear Helios,',
+          applicationId: 'app-helios-2',
+          job: { company: 'Helios', title: 'Platform Engineer', url: 'https://jobs.example.com/helios/2222' },
+        });
+        const which = store.sentTo('/api/letters/id').at(-1);
+        check(
+          'asked with the application and the address it is for',
+          which?.query.get('applicationId') === 'app-helios-2' && which?.query.get('url') === 'https://jobs.example.com/helios/2222',
+          which ? which.query.toString() : 'not asked',
+        );
+        const put = store.hits.slice(before).find((h) => h.method === 'PUT' && h.url.startsWith('/api/letters/'));
+        let sent = {};
+        try {
+          sent = JSON.parse(put?.body ?? '{}');
+        } catch {
+          /* checked below */
+        }
+        check(
+          'saved under the name the store gave, linked to the application it found',
+          put?.url === '/api/letters/2026-03-01-helios-platform-engineer-2' && sent.applicationId === 'app-helios-2',
+          `${put?.url} ${put?.body}`,
+        );
       } finally {
         store.letterId = undefined;
+        store.letterFor = undefined;
         await sw.evaluate(() => {
           if (globalThis.__jhRealDate) globalThis.Date = globalThis.__jhRealDate;
         }).catch(() => undefined);
