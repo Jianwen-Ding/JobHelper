@@ -313,8 +313,51 @@
    * `<pod>.fa.<dc>.oraclecloud.com`, which also serves the rest of Oracle's
    * cloud, and only the candidate side lives under `/CandidateExperience/`.
    */
-  const ON_A_TRACKER =
-    /\b(greenhouse|lever|workday|myworkdayjobs|ashby|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite|bamboohr|rippling|breezy|recruitee|teamtailor|jazzhr|successfactors|brassring|candidateexperience|myjobs\.adp|workforcenow\.adp)\b/i;
+  /*
+   * By the host, as a whole domain or a subdomain of one, and never by the
+   * rest of the address. Matched against the whole address this read a blog
+   * post at `/blog/greenhouse-gardening-tips`, or any page whose query named
+   * one, and sent it to be classified without the chip asking first — the
+   * very thing `ask.js` promises does not happen.
+   */
+  const TRACKER_HOSTS = [
+    'greenhouse.io',
+    'lever.co',
+    'myworkdayjobs.com',
+    'myworkdaysite.com',
+    'myworkday.com',
+    'workday.com',
+    'ashbyhq.com',
+    'workable.com',
+    'smartrecruiters.com',
+    'icims.com',
+    'taleo.net',
+    'jobvite.com',
+    'bamboohr.com',
+    'rippling.com',
+    'rippling-ats.com',
+    'breezy.hr',
+    'recruitee.com',
+    'teamtailor.com',
+    'jazzhr.com',
+    'applytojob.com',
+    'successfactors.com',
+    'successfactors.eu',
+    'sapsf.com',
+    'sapsf.eu',
+    'brassring.com',
+    'myjobs.adp.com',
+    'workforcenow.adp.com',
+  ];
+  // Oracle's, by the comment above, as a whole path segment.
+  const TRACKER_PATH = /\/CandidateExperience(\/|$)/i;
+  function onATracker() {
+    const host = location.hostname.toLowerCase().replace(/\.$/, '');
+    return (
+      TRACKER_HOSTS.some((suffix) => host === suffix || host.endsWith(`.${suffix}`)) ||
+      TRACKER_PATH.test(location.pathname)
+    );
+  }
   const ON_A_BOARD = /\b(indeed|linkedin|glassdoor|monster|ziprecruiter|dice|wellfound|otta|builtin|simplyhired|seek)\b/i;
 
   /*
@@ -345,7 +388,7 @@
         break;
       }
     }
-    if (ON_A_TRACKER.test(url)) {
+    if (onATracker()) {
       score += 4;
     }
     // By the host: ADP, Lever and Greenhouse all tag a board's links with the
@@ -1824,7 +1867,7 @@
      */
     const worthReading = async () =>
       showNow ||
-      ON_A_TRACKER.test(location.href) ||
+      onATracker() ||
       // The host, not the address: any page shared from LinkedIn carries
       // `utm_source=linkedin`, and that is no reason to read it unasked.
       ON_A_BOARD.test(location.hostname) ||

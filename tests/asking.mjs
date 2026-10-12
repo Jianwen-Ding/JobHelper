@@ -30,6 +30,8 @@ import {
   pointExtensionAt,
   requireOpenSave,
   serveFixtures,
+  serveSlowProxy,
+  useServer,
 } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -96,12 +98,15 @@ async function pressTheButton(context, worker, url) {
   await page.close();
 }
 
+/** The forum thread again, at an address that names a tracker in its path and nowhere else. */
+const GREENHOUSE_BLOG = { ...FORUM_THREAD, name: 'greenhouse-blog', path: '/blog/greenhouse-gardening-tips' };
+
 /** A button inside the chip's shadow root. */
 const inChip = (page, cls) => page.locator(`${ASK} button.${cls}`);
 
 async function main() {
   await requireOpenSave(SERVER);
-  const fixtures = await serveFixtures([FORUM_THREAD, HELIOS_ROLE]);
+  const fixtures = await serveFixtures([FORUM_THREAD, HELIOS_ROLE, GREENHOUSE_BLOG]);
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-asking-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     executablePath: findChromium(),
@@ -120,7 +125,10 @@ async function main() {
        * question the user actually reported — "it still pops up on reddit" —
        * rather than a unit test of the matcher standing in for it.
        */
-      '--host-resolver-rules=MAP old.reddit.com 127.0.0.1, MAP reddit.com 127.0.0.1, MAP jobs.example.test 127.0.0.1',
+      // And a tracker's own host, and a name that only looks like one. See
+      // "A tracker's name in the path is not a tracker".
+      '--host-resolver-rules=MAP old.reddit.com 127.0.0.1, MAP reddit.com 127.0.0.1, MAP jobs.example.test 127.0.0.1, ' +
+        'MAP boards.greenhouse.io 127.0.0.1, MAP greenhouse.io.example.test 127.0.0.1',
     ],
   });
 
@@ -207,6 +215,72 @@ async function main() {
       check('and the page was never sent to the store', !askedTheStore);
       check('the chip offers both answers', (await inChip(page, 'yes').count()) === 1 && (await inChip(page, 'no').count()) === 1);
       await page.close();
+    }
+
+    /* ---------------------------------------------------------------- *
+     * A tracker's name in the path is not a tracker                     *
+     * ---------------------------------------------------------------- */
+
+    /*
+     * Being on an applicant tracker reads the page unasked, and that was
+     * decided by testing the whole address: a blog post at
+     * `/blog/greenhouse-gardening-tips` — or any page whose query named
+     * Lever, Workday, Taleo — was read and sent to the store with no chip in
+     * front of it. Only the host says which system serves the page.
+     *
+     * Watched at the store's end, through a proxy that notes every analysis
+     * it is asked for, because the worker's own requests are not the page's.
+     */
+    console.log('\nA tracker\u2019s name in the path is not a tracker');
+    {
+      const port = new URL(fixtures.base).port;
+      const analysed = [];
+      const watch = await serveSlowProxy(SERVER, {
+        ms: 0,
+        respondInstead: (url, body) => {
+          if (/analy[sz]e/.test(url)) analysed.push(body);
+          return undefined;
+        },
+      });
+      const sentFor = (needle) => analysed.some((body) => body.includes(needle));
+      try {
+        await useServer(context, watch.base);
+
+        const blogUrl = `http://jobs.example.test:${port}${GREENHOUSE_BLOG.path}`;
+        {
+          const page = await context.newPage();
+          await page.goto(blogUrl, { waitUntil: 'domcontentloaded' });
+          check('a page with "greenhouse" in its path gets the chip', await appears(page, ASK));
+          check('and no card', await neverAppears(page, CARD, 1500));
+          check('and is not sent to the store before the chip is answered', !sentFor('greenhouse-gardening-tips'), `${analysed.length} sent`);
+          await inChip(page, 'yes').click();
+          check('pressing yes puts the card up', await appears(page, `${CARD} .card`));
+          check('and only then is it sent to the store', sentFor('greenhouse-gardening-tips'));
+          await page.close();
+        }
+
+        {
+          const page = await context.newPage();
+          await page.goto(`http://greenhouse.io.example.test:${port}${FORUM_THREAD.path}`, { waitUntil: 'domcontentloaded' });
+          check('a host that only starts with a tracker\u2019s name is asked about', await appears(page, ASK));
+          check('and not sent to the store', !sentFor('greenhouse.io.example.test'));
+          await page.close();
+        }
+
+        // And the control: the same page on the tracker's own host is read unasked.
+        {
+          const page = await context.newPage();
+          await page.goto(`http://boards.greenhouse.io:${port}${FORUM_THREAD.path}`, { waitUntil: 'domcontentloaded' });
+          const until = Date.now() + APPEAR_MS;
+          while (Date.now() < until && !sentFor('boards.greenhouse.io')) await page.waitForTimeout(150);
+          check('on the tracker\u2019s own host the page is read without asking', sentFor('boards.greenhouse.io'));
+          check('and no chip is put in front of it', (await page.locator(ASK).count()) === 0);
+          await page.close();
+        }
+      } finally {
+        await useServer(context, SERVER);
+        watch.close();
+      }
     }
 
     /* ---------------------------------------------------------------- *
