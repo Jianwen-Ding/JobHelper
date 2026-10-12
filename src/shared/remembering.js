@@ -585,6 +585,25 @@ export function mayRememberTyped(question, company) {
   return { keep: true };
 }
 
+
+/*
+ * An ORCID iD in a link's path, set aside before the path is read for
+ * private shapes. "0000-0002-1825-0097" is four groups of four digits, which
+ * is a card number to `looksPrivate`, so the one link a researcher's resume
+ * most often carries was never remembered. Only a real iD is set aside — the
+ * last character is the ISO 7064 11,2 check digit ORCID uses — so sixteen
+ * digits that merely look like one are still read as they are.
+ */
+function withoutOrcid(path) {
+  return path.replace(/(?<=\/)(\d{4}-\d{4}-\d{4}-\d{3}[\dX])(?=\/|$)/gi, (id) => {
+    const digits = id.replace(/-/g, '');
+    let total = 0;
+    for (const d of digits.slice(0, 15)) total = (total + Number(d)) * 2;
+    const check = (12 - (total % 11)) % 11;
+    return digits[15].toUpperCase() === (check === 10 ? 'X' : String(check)) ? 'orcid' : id;
+  });
+}
+
 /**
  * Whether a typed answer is worth keeping for next time — and if not, why.
  *
@@ -611,7 +630,7 @@ export function worthRememberingTyped({ question, answer, company } = {}) {
    * alone. Read here as well, a Scholar `cluster=` id was a card number to
    * `looksPrivate`, whatever was decided there.
    */
-  const place = oneLink ? said.replace(/[?#].*$/, '') : said;
+  const place = oneLink ? withoutOrcid(said.replace(/[?#].*$/, '')) : said;
   if (looksPrivate(place) || (oneLink ? linkCarriesPrivate(said) : CONTACT_SHAPE.some((re) => re.test(said)))) {
     return { keep: false, why: 'the answer looks personal, so it is not kept' };
   }

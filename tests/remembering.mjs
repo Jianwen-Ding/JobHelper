@@ -606,3 +606,11 @@ test('a link’s parameters are read by whole names and by shapes that mean some
     assert.match(said.why, /personal/, `${answer}: ${said.why}`);
   }
 });
+
+test('an ORCID link is kept, and only a real ORCID iD is let through', () => {
+  for (const link of ['https://orcid.org/0000-0002-1825-0097', 'https://orcid.org/0000-0001-5109-3700/', 'https://orcid.org/0000-0002-1694-233X']) {
+    assert.equal(worthRememberingTyped({ question: 'ORCID iD', answer: link, company: 'Helios Systems' }).keep, true, link);
+  }
+  // Sixteen digits in fours with a check digit that does not add up are not an iD.
+  assert.equal(worthRememberingTyped({ question: 'ORCID iD', answer: 'https://orcid.org/4111-1111-1111-1111', company: 'Helios Systems' }).keep, false);
+});
