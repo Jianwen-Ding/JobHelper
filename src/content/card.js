@@ -1765,6 +1765,17 @@ export function createCard({
        */
       answersByQuestion: Object.fromEntries(collectedAnswers().map(({ question, answer }) => [question, answer])),
       answerGaps: state.answerGaps,
+      /*
+       * And the store's question about an application that may be this one,
+       * with its answer. Answered on the posting — "It's a different job" —
+       * the question came back on the form and again on the confirmation
+       * page: the answer lived in this card, and the card is made anew on
+       * every page, while the store went on matching the sent row by name.
+       * Carried with the row it was asked about, so a question on the next
+       * page about another sent row is still asked. See `restoreWork`.
+       */
+      maybeSent: state.maybeSent,
+      anotherJob: state.anotherJob,
     };
   }
 
@@ -1921,6 +1932,19 @@ export function createCard({
     if (work.priorLetters?.length) state.priorLetters = work.priorLetters;
     state.carriedOver = work.answersByQuestion ?? {};
     if (work.answerGaps && typeof work.answerGaps === 'object') state.answerGaps = { ...work.answerGaps, ...state.answerGaps };
+    /*
+     * The question the store asked, and its answer, from the page before —
+     * see `takeWork`. Only when it is the same question: this page's own
+     * reading names the sent row it is asking about (`analysis.applied`),
+     * and an answer given about one row is not an answer about another. With
+     * no row named on either side, the answer stands.
+     */
+    const carriedAsk = work.maybeSent?.id ? work.maybeSent : null;
+    const askedHere = analysis?.applied?.maybe ? (analysis.applied.id ?? null) : null;
+    if (!askedHere || !carriedAsk || askedHere === carriedAsk.id) {
+      if (carriedAsk && !state.maybeSent) state.maybeSent = { ...carriedAsk };
+      if (work.anotherJob) state.anotherJob = true;
+    }
     applyCarriedAnswers();
     maybeAutoDraft();
     /*

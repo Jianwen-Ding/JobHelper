@@ -2668,6 +2668,71 @@ async function main() {
   check('and the question goes, with nothing marked sent', maybeSent.afterSaid === null && !maybeSent.sentMark, JSON.stringify(maybeSent));
 
   /*
+   * And the answer travels. Said on the posting, "It's a different job" was
+   * asked again on the form and on the confirmation page: the answer lived
+   * in the card, which is made anew on every page. Carried with the work,
+   * with the row it was given for, the next page's card stands down and
+   * stages with `evenIfSent`; a question there about another sent row is
+   * still asked.
+   */
+  const carriedAnswer = await inPage((createCard) => {
+    const asked = { id: 'stripe-1', at: '2026-09-24T15:00:00.000Z', status: 'applied', maybe: true, url: 'https://www.linkedin.com/jobs/view/4462047454/' };
+    const make = (applied) => {
+      const sent = [];
+      const handle = createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Software Engineer Intern', company: 'Stripe' },
+          spec: { id: 'job-stripe', label: 'Stripe', tier: 'temporary' },
+          rationale: [],
+          diff: [],
+          applied,
+        },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async (action, payload) => {
+          sent.push({ action, payload });
+          if (action === 'render') return { pages: 1, fits: true };
+          if (action === 'stage') {
+            if (!payload?.evenIfSent) return { alreadySent: true, maybe: true, application: { id: applied.id, url: applied.url, appliedAt: applied.at, status: 'applied' } };
+            return { currentDir: '/tmp/x', application: { id: 'stripe-2' } };
+          }
+          return {};
+        },
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      return {
+        handle,
+        sent,
+        said: () => root.querySelector('.maybe-sent')?.textContent ?? null,
+        build: () => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Build resume')?.click(),
+      };
+    };
+    // The form page of the job the person said is different: the posting's card carried its answer.
+    const form = make(asked);
+    const askedBefore = form.said();
+    form.handle.restoreWork({ letter: 'Dear Stripe,', maybeSent: { ...asked, held: true }, anotherJob: true }, false);
+    const askedAfter = form.said();
+    form.build();
+    return new Promise((resolve) =>
+      setTimeout(() => {
+        const stages = form.sent.filter((c) => c.action === 'stage').map((c) => Boolean(c.payload?.evenIfSent));
+        const carriedOn = form.handle.takeWork?.() ?? {};
+        // Another sent row named on the next page: a question of its own.
+        const other = make({ ...asked, id: 'stripe-7', url: 'https://www.linkedin.com/jobs/view/7777777777/' });
+        other.handle.restoreWork({ maybeSent: { ...asked, held: true }, anotherJob: true }, false);
+        resolve({ askedBefore, askedAfter, stages, carriedOn: { anotherJob: carriedOn.anotherJob, maybeSent: carriedOn.maybeSent?.id }, otherAsked: other.said() });
+      }, 2600),
+    );
+  });
+  check('the answer "another job" is carried to the next page, which does not ask again', carriedAnswer.askedBefore !== null && carriedAnswer.askedAfter === null, JSON.stringify(carriedAnswer));
+  check('and its stage goes with evenIfSent, without a refusal first', carriedAnswer.stages.length >= 1 && carriedAnswer.stages.every(Boolean), JSON.stringify(carriedAnswer.stages));
+  check('and travels on with the row it was given for', carriedAnswer.carriedOn.anotherJob === true && carriedAnswer.carriedOn.maybeSent === 'stripe-1', JSON.stringify(carriedAnswer.carriedOn));
+  check('a question about another sent row is still asked', carriedAnswer.otherAsked !== null && carriedAnswer.otherAsked.includes('7777777777'), JSON.stringify(carriedAnswer.otherAsked));
+
+  /*
    * "Saved" has to be about the text that was saved.
    *
    * The request carries a snapshot of the box, which is right. The callback
