@@ -375,8 +375,25 @@
    * is not a reason to read the page unasked. Jenkins serves every page under
    * `/job/`, build logs included. See `worthReading` in `show`.
    */
+  /*
+   * And the same segment in the languages a careers site is served in — the
+   * words ResumeM-M's `ELSEWHERE_CAREERS` already refuses as an employer's
+   * name. A German employer's own posting lives at `/karriere/…`, a French
+   * one at `/emplois/…` or `/offres/…`, a Dutch one at `/vacatures/…`, a
+   * Japanese one at `/採用/…` (percent-encoded in the address, so the address
+   * is decoded before it is read). Each scored two points under its English
+   * twin, and with no English words on the page either the chip never came.
+   * The server's `JOB_PATH` in extract.ts carries the same words.
+   */
   const IN_A_JOBS_AREA =
-    /\/(jobs?|careers?|opening|openings|position|positions|vacanc(y|ies)|apply|application|hiring|req|requisition)(\/|$|[?#])/i;
+    /\/(jobs?|careers?|opening|openings|position|positions|vacanc(y|ies)|apply|application|hiring|req|requisition|karriere|stellenangebote?|stellen|bewerben|bewerbung|emplois?|offres|carri[eè]res?|empleos?|vacantes|vagas|carreiras?|vacatures|werken-bij|採用|求人)(\/|$|[?#])/iu;
+  const decodedHref = (href) => {
+    try {
+      return decodeURIComponent(href);
+    } catch {
+      return href;
+    }
+  };
 
   function localScore() {
     let score = 0;
@@ -400,7 +417,7 @@
     if (ON_A_BOARD.test(location.hostname)) {
       score += 3;
     }
-    if (IN_A_JOBS_AREA.test(url)) {
+    if (IN_A_JOBS_AREA.test(decodedHref(url))) {
       score += 2;
     }
 
@@ -413,6 +430,27 @@
       'about the role', 'we are looking for', "we're looking for", 'join our team',
       'requirements', 'benefits', 'compensation', 'salary range',
       'full-time', 'part-time', 'internship', 'new grad', 'employment type', 'requisition',
+      /*
+       * And the same headings in the languages postings come in. A German
+       * posting with no JSON-LD — "Deine Aufgaben", "Dein Profil", "Wir
+       * bieten", "Jetzt bewerben" — had none of a posting's words by this
+       * list and scored two for its address alone, under `minScore`, so the
+       * chip never came up on it while it did on the same page in English.
+       * Lower-cased, as `readableText` is. The server's `DESCRIPTION_WORDS`
+       * in extract.ts carries the same words.
+       */
+      // German
+      'aufgaben', 'dein profil', 'ihr profil', 'wir bieten', 'jetzt bewerben', 'stellenbeschreibung', 'anforderungen', 'wir suchen', 'praktikum',
+      // French
+      'missions', 'profil recherché', 'postuler', 'vos missions', 'votre profil', 'nous recherchons',
+      // Spanish
+      'requisitos', 'ofrecemos', 'inscribirse', 'funciones', 'buscamos', 'prácticas',
+      // Portuguese
+      'benefícios', 'candidatar-se', 'responsabilidades', 'procuramos', 'estágio',
+      // Dutch
+      'functie-eisen', 'wij bieden', 'solliciteer', 'functieomschrijving', 'wij zoeken', 'stagiair',
+      // Japanese
+      '応募資格', '勤務地', '応募する', '仕事内容', '雇用形態', '募集',
     ].filter((w) => text.includes(w)).length;
     if (described) score += Math.min(described, 5);
 

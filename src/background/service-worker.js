@@ -21,6 +21,7 @@ import {
   sameApplication,
   carriesOn,
   titleKey,
+  withoutGenderTag,
   summarise,
   trimForStorage,
   wasExpected,
@@ -529,27 +530,74 @@ function plainlyOtherJob(job, other) {
  * titles that each name a season and not the same one are still two jobs:
  * the Summer 2026 letter is not the Summer 2027 posting's.
  */
-const WORK_MODE_SUFFIX = /(?:\s*\(\s*(?:remote|hybrid|on-?site|in[- ]office)\s*\)|\s+[-–—|]\s+(?:remote|hybrid|on-?site|in[- ]office))\s*$/i;
+/*
+ * But not two live postings that differ in how the job is worked. The work
+ * mode came off both sides before they were compared, so "Software Engineer
+ * - Remote" and "Software Engineer - Hybrid" — two postings an employer runs
+ * side by side — were one job, and the remote one's letter was handed to the
+ * hybrid one's card. The suffix comes off when one side has it and the other
+ * does not, which is the one page writing it and the other not; when both
+ * name a mode and the modes differ, they are two jobs.
+ *
+ * And a season on one side only — "Software Engineer Intern" against
+ * "Software Engineer Intern (Summer 2027)" — is the same job only for this
+ * tab's own park, where the same tab went from the board to the form and
+ * back and the two pages wrote the title differently (`ownPark`). For
+ * another tab's park it is as likely the next intake's posting, and that
+ * letter is not this one's.
+ *
+ * The suffixes come off as often as they are there, in whatever order the
+ * title carries them, so "(Remote) (Summer 2027)" and "(Summer 2027)
+ * (Remote)" read alike — and a gender tag ("(m/w/d)", "(H/F)"), which says
+ * who may apply and nothing about the job, comes off wherever it is
+ * (`withoutGenderTag`).
+ */
+const WORK_MODE_SUFFIX = /(?:\s*\(\s*(remote|hybrid|on-?site|in[- ]office)\s*\)|\s+[-–—|]\s+(remote|hybrid|on-?site|in[- ]office))\s*$/i;
 const YEAR_THEN_SEASON = /\b((?:19|20)\d\d)\s+(summer|fall|autumn|winter|spring)\b/gi;
 const SEASON_SUFFIX =
-  /\s*\(\s*(?:(?:summer|fall|autumn|winter|spring)\s+(?:19|20)\d\d|(?:19|20)\d\d(?:\s+(?:summer|fall|autumn|winter|spring))?)\s*\)\s*$/i;
+  /\s*\(\s*((?:summer|fall|autumn|winter|spring)\s+(?:19|20)\d\d|(?:19|20)\d\d(?:\s+(?:summer|fall|autumn|winter|spring))?)\s*\)\s*$/i;
 
-function sameTitle(title, other) {
-  const plain = (t) => String(t ?? '').replace(WORK_MODE_SUFFIX, '').trim();
-  const key = (t) => titleKey(t.replace(YEAR_THEN_SEASON, '$2 $1'));
-  const one = plain(title);
-  const two = plain(other);
-  if (key(one) === key(two)) return true;
-  const withSeason = (longer, shorter) => SEASON_SUFFIX.test(longer) && key(longer.replace(SEASON_SUFFIX, '')) === key(shorter);
-  return withSeason(one, two) || withSeason(two, one);
+/** The title with every trailing suffix off, and which work mode and bracketed season it carried. */
+function peelTitle(title) {
+  let rest = withoutGenderTag(title);
+  let mode;
+  let season;
+  for (;;) {
+    let m = WORK_MODE_SUFFIX.exec(rest);
+    if (m) {
+      // "On-site" and "in office" are one way of working, written two ways.
+      mode ??= (m[1] ?? m[2]).toLowerCase().replace(/[-\s]/g, '').replace(/^inoffice$/, 'onsite');
+      rest = rest.slice(0, m.index).trim();
+      continue;
+    }
+    m = SEASON_SUFFIX.exec(rest);
+    if (m) {
+      season ??= titleKey(m[1].replace(YEAR_THEN_SEASON, '$2 $1'));
+      rest = rest.slice(0, m.index).trim();
+      continue;
+    }
+    break;
+  }
+  return { rest, mode, season };
 }
 
-const sameJob = (job, other) => {
+function sameTitle(title, other, { ownPark = false } = {}) {
+  const one = peelTitle(title);
+  const two = peelTitle(other);
+  if (one.mode && two.mode && one.mode !== two.mode) return false;
+  const key = (t) => titleKey(t.replace(YEAR_THEN_SEASON, '$2 $1'));
+  if (key(one.rest) !== key(two.rest)) return false;
+  if (one.season && two.season) return one.season === two.season;
+  if (one.season || two.season) return ownPark;
+  return true;
+}
+
+const sameJob = (job, other, { ownPark = false } = {}) => {
   if (!job || !other || companyOf(job) !== companyOf(other)) return false;
   const role = String(job.role ?? '').trim();
   const otherRole = String(other.role ?? '').trim();
   if (!role || !otherRole) return !plainlyAnotherRole(job.role, other.role);
-  if (!sameTitle(role, otherRole)) return false;
+  if (!sameTitle(role, otherRole, { ownPark })) return false;
   const req = String(job.requisition ?? '').trim().toLowerCase();
   const otherReq = String(other.requisition ?? '').trim().toLowerCase();
   return !(req && otherReq && req !== otherReq);
@@ -697,7 +745,7 @@ async function parkWork(url, entry) {
      * tab it is another application — two tabs open on one posting, both
      * writing — and replacing it handed the first tab the second one's letter.
      */
-    const kept = [...held.filter((p) => !(sameJob(p.job, entry.job) && p.tab === entry.tab)), entry].slice(-PARK_MAX);
+    const kept = [...held.filter((p) => !(p.tab === entry.tab && sameJob(p.job, entry.job, { ownPark: true }))), entry].slice(-PARK_MAX);
     return { parked: kept, at: Date.now() };
   });
 }
@@ -735,8 +783,9 @@ function pickParked(parked, job, tabId, openTabs = new Set()) {
    */
   const thisTabs = held.filter((p) => p.tab !== undefined && p.tab === tabId);
   if (!job) return thisTabs[thisTabs.length - 1] ?? held[held.length - 1];
-  const mine = held.filter((p) => sameJob(p.job, job));
-  const ownMine = mine.filter((p) => p.tab !== undefined && p.tab === tabId);
+  const own = (p) => p.tab !== undefined && p.tab === tabId;
+  const mine = held.filter((p) => sameJob(p.job, job, { ownPark: own(p) }));
+  const ownMine = mine.filter(own);
   if (mine.length > 0) return ownMine[ownMine.length - 1] ?? mine[mine.length - 1];
   /*
    * And this tab's own whatever its page is called, short of plainly another
@@ -2464,7 +2513,7 @@ const handlers = {
          * Only a match on both roles, or this tab's own park with nothing to
          * check it against, goes unnamed.
          */
-        const sure = Boolean(looking?.role?.trim() && rescued.job?.role?.trim()) && sameJob(rescued.job, looking);
+        const sure = Boolean(looking?.role?.trim() && rescued.job?.role?.trim()) && sameJob(rescued.job, looking, { ownPark: mine });
         return {
           work: rescued.work,
           recovered: mine ? 'job' : true,
@@ -2744,7 +2793,7 @@ const handlers = {
      * the same address, are still somebody's only copy.
      */
     const leftJob = nameOfTrail(held.trail);
-    const ours = (p) => p.tab === id && (leftJob ? sameJob(p.job, leftJob) : !p.job);
+    const ours = (p) => p.tab === id && (leftJob ? sameJob(p.job, leftJob, { ownPark: true }) : !p.job);
     for (const url of new Set((held.trail.pages ?? []).map((p) => p?.url).filter(Boolean))) {
       await unpark(orphanKey(url), ours);
     }

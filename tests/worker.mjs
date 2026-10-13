@@ -1011,7 +1011,8 @@ async function main() {
       const PAIRS = [
         ['the work mode on one side', 'CrowdStrike', 'Software Engineer – Sensor, Sensor Performance and Stability (Hybrid)', 'Software Engineer – Sensor, Sensor Performance and Stability'],
         ['the season and year in either order', 'Careers Americas', 'Software Engineer Intern, 2027 Summer U.S.', 'Software Engineer Intern, Summer 2027 U.S.'],
-        ['a bracketed season on one side', 'Figma', 'Software Engineer Intern', 'Software Engineer Intern (Summer 2027)'],
+        ['a gender tag on one side', 'Müller & Söhne GmbH', 'Werkstudent Softwareentwicklung (m/w/d)', 'Werkstudent Softwareentwicklung'],
+        ['a French gender tag written two ways', 'Société Générale', 'Stagiaire Ingénieur Logiciel F/H', 'Stagiaire Ingénieur Logiciel (H/F)'],
         ['the employer’s spelling of a dash and an apostrophe', 'Intel', 'Software Engineering - Intern, Bachelor’s', "Software Engineering Intern, Bachelor's"],
       ];
       const thisTab = await driver.evaluate(async () => (await chrome.tabs.getCurrent()).id);
@@ -1058,6 +1059,64 @@ async function main() {
             : got.reply?.data?.work?.letter !== 'OWN-LETTER',
           JSON.stringify(got.reply?.data ?? null),
         );
+      }
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+    }
+
+    /*
+     * Round 24: two live postings that differ in how the job is worked, and a
+     * season on one side only.
+     *
+     * The work mode came off both titles before they were compared, so
+     * "Software Engineer - Remote" and "Software Engineer - Hybrid" — two
+     * postings one employer runs side by side — were one job, and the remote
+     * one's letter was handed to the hybrid one's card. And "Software
+     * Engineer Intern" against "… (Summer 2027)" was the same job for any
+     * tab's park, where it is the next intake's as often as not: only this
+     * tab's own, which went from the board to the form and back, may read
+     * them as one. The suffixes come off in either order, so "(Remote)
+     * (Summer 2027)" and "(Summer 2027) (Remote)" behave alike.
+     */
+    group('Two work modes are two jobs, and a season on one side is the same job only for this tab');
+    {
+      const WHERE = 'https://www.linkedin.com/jobs/view/4888888888/';
+      const thisTab = await driver.evaluate(async () => (await chrome.tabs.getCurrent()).id);
+      const CASES = [
+        ['two work modes, from a closed tab', 'Software Engineer - Remote', 'Software Engineer - Hybrid', 987654, false],
+        // This tab's own still comes back, as `pickParked` gives a tab its own whatever the page is
+        // called — but named as the other job's, because to `sameJob` it is not this one.
+        ['two work modes, from this tab', 'Software Engineer (Remote)', 'Software Engineer - Hybrid', 'this', 'named'],
+        ['a work mode on one side only', 'Software Engineer - Remote', 'Software Engineer', 987654, true],
+        ['a bracketed season on one side, from a closed tab', 'Software Engineer Intern', 'Software Engineer Intern (Summer 2027)', 987654, false],
+        ['a bracketed season on one side, from this tab', 'Software Engineer Intern', 'Software Engineer Intern (Summer 2027)', 'this', true],
+        ['a mode and a season in one order', 'Software Engineer Intern (Remote) (Summer 2027)', 'Software Engineer Intern (Summer 2027)', 987654, true],
+        ['a mode and a season in the other order', 'Software Engineer Intern (Summer 2027) (Remote)', 'Software Engineer Intern (Summer 2027)', 987654, true],
+        ['a mode, a season and nothing, from a closed tab', 'Software Engineer Intern (Remote) (Summer 2027)', 'Software Engineer Intern', 987654, false],
+        ['a season and a mode and nothing, from a closed tab', 'Software Engineer Intern (Summer 2027) (Remote)', 'Software Engineer Intern', 987654, false],
+      ];
+      store.save = 'work';
+      for (const [what, parkedRole, role, tab, back] of CASES) {
+        await ask(driver, 'clearTrail', {});
+        await driver.evaluate(
+          ([key, job, tab]) =>
+            chrome.storage.session.set({ [key]: { parked: [{ work: { letter: 'MODE-LETTER' }, save: 'work', job, tab, at: Date.now() }], at: Date.now() } }),
+          [`jh-orphan:${WHERE}`, { company: 'Figma', role: parkedRole }, tab === 'this' ? thisTab : tab],
+        );
+        store.role = role;
+        store.company = 'Figma';
+        await ask(driver, 'analyze', { url: WHERE, title: role, html: '<p>posting</p>', company: 'Figma' });
+        const got = await ask(driver, 'takeWork', { page: { url: WHERE, title: role } });
+        const letter = got.reply?.data?.work?.letter;
+        if (back === 'named') {
+          check(
+            `${what}: the letter comes back named as the other job's`,
+            letter === 'MODE-LETTER' && got.reply?.data?.recoveredFor === `${parkedRole} at Figma`,
+            JSON.stringify(got.reply?.data ?? null),
+          );
+        } else {
+          check(`${what}: ${back ? 'the letter comes back' : 'the letter is left parked'}`, (letter === 'MODE-LETTER') === back, JSON.stringify(got.reply?.data ?? null));
+        }
       }
       store.role = 'Platform Engineer';
       store.company = undefined;

@@ -914,6 +914,23 @@ const ASKS_WHEN_YOU_START_CASES = [
   ['Start date', false],
   ['Job start date', false],
   ['End date', false],
+  // Round 24: the rest of what German, Spanish, Portuguese, Dutch and Japanese forms ask.
+  ['Gewünschtes Startdatum', true],
+  ['Startdatum', true],
+  ['Verfügbar ab', true],
+  ['Wann könnten Sie bei uns anfangen?', true],
+  ['Disponibilidad para incorporarse', true],
+  ['Data de início', true],
+  ['Quando você pode começar?', true],
+  ['Quando pode começar?', true],
+  ['Per wanneer ben je beschikbaar?', true],
+  ['Beschikbaar vanaf', true],
+  ['Gewenste startdatum', true],
+  ['入社可能日', true],
+  ['入社希望日', true],
+  ['Verfügbarkeit am Wochenende', false],
+  ['Disponibilidad para viajar', false],
+  ['Geburtsdatum', false],
 ];
 test('the common ways of asking when somebody can start are read, and availability for other things is not', () => {
   for (const [q, asks] of ASKS_WHEN_YOU_START_CASES) assert.equal(asksWhenYouStart(q), asks, q);
@@ -925,6 +942,24 @@ test('the common ways of asking when somebody can start are read, and availabili
  * last month: Spring to May, Summer to August, Fall or Autumn to December,
  * and Winter to February of the year after.
  */
+/*
+ * Round 24: a month as German, French, Spanish, Portuguese and Dutch forms
+ * write it, and as Japanese does. "Juni 2025" for "Gewünschtes Startdatum"
+ * was no date at all, and was kept and typed back eighteen months on.
+ * ResumeM-M's answers.test.ts asks the same of `namesPassedDate`.
+ */
+test('a month written in another language, or in Japanese, is not typed back once it has passed', () => {
+  const october = new Date(2026, 9, 12, 12).getTime();
+  for (const answer of ['Juni 2025', 'juin 2025', 'junio de 2025', 'junho de 2025', 'juni 2025', 'mei 2025', 'März 2026', 'août 2026', '2025年6月']) {
+    assert.equal(onlyAPassedDate(answer, october), true, answer);
+  }
+  for (const answer of ['Juni 2027', 'juillet 2027', 'Oktober 2026', '2026年10月', 'diciembre de 2026']) {
+    assert.equal(onlyAPassedDate(answer, october), false, answer);
+  }
+  const said = worthRememberingTyped({ question: 'Gewünschtes Startdatum', answer: 'Juni 2025', company: 'Helios Systems', now: october });
+  assert.equal(said.keep, false, JSON.stringify(said));
+});
+
 test('a season or a numeric month and year is not typed back once it has passed', () => {
   const october = new Date(2026, 9, 12, 12).getTime();
   for (const answer of ['Fall 2025', 'Autumn 2025', 'Summer 2026', 'Spring 2026', 'Winter 2025', '11/2025', '2025-11', '09/2026']) {

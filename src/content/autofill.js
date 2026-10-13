@@ -112,7 +112,13 @@ const FIELD_PATTERNS = [
    * are "Home Number" and "Mobile Number". So it counts only behind a word
    * that makes it a telephone.
    */
-  ['phone', /\b(phone|mobile|telephone|cell)\b|\b(primary|contact|day(?:time)?|home|work|alternate)[\s_-]*number\b/i],
+  /*
+   * And the telephone as the forms of employers elsewhere label it: "Telefon",
+   * "Telefonnummer", "Handy", "Teléfono", "Telefone", "Telefoon". A German or
+   * Spanish form asked for one and was neither filled in nor, for want of
+   * it, recognised as an application at all.
+   */
+  ['phone', /\b(phone|mobile|telephone|cell|telefon(?:nummer)?|handy(?:nummer)?|mobilnummer|tel[ée]fono|telefone|telefoon(?:nummer)?)\b|\b(primary|contact|day(?:time)?|home|work|alternate)[\s_-]*number\b/i],
   ['linkedin', /\b(linked-?in)\b/i],
   ['github', /\b(git-?hub)\b/i],
   ['website', /\b(website|portfolio|personal[\s_-]?site|homepage)\b/i],
@@ -8775,8 +8781,17 @@ export function looksLikeApplicationForm() {
  * read — through the chip, or when the tab is plainly carrying an
  * application on — but it is not read on its own say-so.
  */
+/*
+ * And the same words as the forms of employers elsewhere write them: the
+ * cover letter as "Anschreiben", "lettre de motivation", "carta de
+ * presentación", "carta de apresentação", "motivatiebrief" and "志望動機", a
+ * work permit as "Arbeitserlaubnis" or "permis de travail". A German form
+ * asking for a Lebenslauf and an Anschreiben had none of an employer's words
+ * by this list. `\b` reads nothing round a Japanese word, so that one is
+ * outside it.
+ */
 const JOB_WORDS =
-  /\b(cover letter|work authoriz\w*|legally authorized to work|require sponsorship|equal opportunity employer|voluntary self-identification|job application)\b/i;
+  /\b(cover letter|work authoriz\w*|legally authorized to work|require sponsorship|equal opportunity employer|voluntary self-identification|job application|anschreiben|motivationsschreiben|arbeitserlaubnis|lettre de motivation|permis de travail|carta de (?:presentaci[óo]n|apresenta[çc][ãa]o)|permiso de trabajo|motivatiebrief|werkvergunning)\b|志望動機|職務経歴書/i;
 /*
  * Written out rather than borrowed from the test above, which is
  * `/\b(resum|cv)\b/` and matches neither "resume" nor "résumé" — `\b` after

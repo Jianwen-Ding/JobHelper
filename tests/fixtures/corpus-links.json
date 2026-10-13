@@ -9183,6 +9183,142 @@
      "expect": "refuse"
     }
    ]
+  },
+  {
+   "id": "links-r24-01",
+   "input": {
+    "answer": "Juni 2025",
+    "question": "Gewünschtes Startdatum"
+   },
+   "expect": "refuse",
+   "sources": [
+    {
+     "round": "r24",
+     "basis": "review",
+     "where": "hunt24-i18n start.mjs / fix24i brief",
+     "note": "a German start date that has passed",
+     "expect": "refuse"
+    }
+   ]
+  },
+  {
+   "id": "links-r24-02",
+   "input": {
+    "answer": "juin 2025",
+    "question": "Date de début souhaitée"
+   },
+   "expect": "refuse",
+   "sources": [
+    {
+     "round": "r24",
+     "basis": "review",
+     "where": "hunt24-i18n start.mjs / fix24i brief",
+     "note": "a French month that has passed",
+     "expect": "refuse"
+    }
+   ]
+  },
+  {
+   "id": "links-r24-03",
+   "input": {
+    "answer": "junio de 2025",
+    "question": "Disponibilidad para incorporarse"
+   },
+   "expect": "refuse",
+   "sources": [
+    {
+     "round": "r24",
+     "basis": "review",
+     "where": "hunt24-i18n start.mjs / fix24i brief",
+     "note": "a Spanish month with \"de\" that has passed",
+     "expect": "refuse"
+    }
+   ]
+  },
+  {
+   "id": "links-r24-04",
+   "input": {
+    "answer": "junho de 2025",
+    "question": "Data de início"
+   },
+   "expect": "refuse",
+   "sources": [
+    {
+     "round": "r24",
+     "basis": "review",
+     "where": "hunt24-i18n start.mjs / fix24i brief",
+     "note": "a Portuguese month that has passed",
+     "expect": "refuse"
+    }
+   ]
+  },
+  {
+   "id": "links-r24-05",
+   "input": {
+    "answer": "mei 2025",
+    "question": "Beschikbaar vanaf"
+   },
+   "expect": "refuse",
+   "sources": [
+    {
+     "round": "r24",
+     "basis": "review",
+     "where": "hunt24-i18n start.mjs / fix24i brief",
+     "note": "a Dutch month that has passed",
+     "expect": "refuse"
+    }
+   ]
+  },
+  {
+   "id": "links-r24-06",
+   "input": {
+    "answer": "2025年6月",
+    "question": "入社希望日"
+   },
+   "expect": "refuse",
+   "sources": [
+    {
+     "round": "r24",
+     "basis": "review",
+     "where": "hunt24-i18n start.mjs / fix24i brief",
+     "note": "a Japanese year and month that has passed",
+     "expect": "refuse"
+    }
+   ]
+  },
+  {
+   "id": "links-r24-07",
+   "input": {
+    "answer": "Juni 2025",
+    "question": "Abschlussdatum"
+   },
+   "expect": "keep",
+   "sources": [
+    {
+     "round": "r24",
+     "basis": "review",
+     "where": "hunt24-i18n start.mjs / fix24i brief",
+     "note": "a past month for a graduation date is still true",
+     "expect": "keep"
+    }
+   ]
+  },
+  {
+   "id": "links-r24-08",
+   "input": {
+    "answer": "Juni 2099",
+    "question": "Gewünschtes Startdatum"
+   },
+   "expect": "keep",
+   "sources": [
+    {
+     "round": "r24",
+     "basis": "review",
+     "where": "hunt24-i18n start.mjs / fix24i brief",
+     "note": "a start date still to come is kept",
+     "expect": "keep"
+    }
+   ]
   }
  ]
 }

@@ -1024,13 +1024,41 @@ const withoutIds = (place) => place.replace(UUID, 'uuid').replace(SNOWFLAKE_ID, 
  * shape secrets come in before this is reached (see `SENSITIVE_SHAPE`), so
  * this is the date that gets as far as the bank.
  */
-const MONTH_YEAR =
-  /^(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?,?\s+(\d{4})$/i;
+/*
+ * And the months as German, French, Spanish, Portuguese and Dutch forms write
+ * them — "Juni 2025" for "Gewünschtes Startdatum" was no date at all, so a
+ * start eighteen months gone was kept and typed back. Whole words, keyed as
+ * written, because the first three letters no longer tell them apart: "juin"
+ * and "juillet" both open "jui", and "mai" is May in three languages while
+ * "maio" is May and "mars" is March. ResumeM-M's `MONTHS_ELSEWHERE` in
+ * answers.ts is the same table.
+ */
+const MONTHS_ELSEWHERE = {
+  // German
+  januar: 1, februar: 2, märz: 3, maerz: 3, april: 4, mai: 5, juni: 6, juli: 7, august: 8, september: 9, oktober: 10, november: 11, dezember: 12,
+  // French
+  janvier: 1, février: 2, fevrier: 2, mars: 3, avril: 4, juin: 6, juillet: 7, août: 8, aout: 8, septembre: 9, octobre: 10, novembre: 11, décembre: 12, decembre: 12,
+  // Spanish
+  enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12,
+  // Portuguese
+  janeiro: 1, fevereiro: 2, março: 3, marco: 3, maio: 5, junho: 6, julho: 7, setembro: 9, outubro: 10, novembro: 11, dezembro: 12,
+  // Dutch
+  januari: 1, februari: 2, maart: 3, mei: 5, augustus: 8, december: 12,
+};
+// "junio de 2025", "junho de 2025": Spanish and Portuguese put "de" between.
+const MONTH_YEAR = new RegExp(
+  String.raw`^(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|${Object.keys(MONTHS_ELSEWHERE).join('|')})\.?,?(?:\s+de)?\s+(\d{4})$`,
+  'iu',
+);
+// And as Japanese writes it: 2025年6月 is June 2025.
+const JP_MONTH_YEAR = /^(\d{4})年\s*(\d{1,2})月$/;
 const SEASON_YEAR = /^(spring|summer|fall|autumn|winter)\s+(?:of\s+)?(\d{4})$/i;
 const SEASON_ENDS = { spring: 5, summer: 8, fall: 12, autumn: 12, winter: 2 };
 const NUMERIC_MONTH_YEAR = /^(\d{1,2})\/(\d{4})$/;
 const ISO_MONTH = /^(\d{4})-(\d{1,2})$/;
 const MONTH_NUMBER = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+/** The month a word names: whole, as the other languages write it, or by its first three letters in English. */
+const monthNumber = (word) => MONTHS_ELSEWHERE[word.normalize('NFC').toLowerCase()] ?? MONTH_NUMBER[word.slice(0, 3).toLowerCase()];
 
 /*
  * A question about when somebody can start: the only kind a passing date
@@ -1079,6 +1107,23 @@ const ASKS_WHEN_YOU_START = new RegExp(
     String.raw`(^|[^a-zà-ÿ])[àa]\s+partir\s+de\s+quand\b`,
     String.raw`^\s*((quelle\s+est\s+)?votre\s+)?disponibilit[ée](\s*\(\s*date\s*\)|\s*(\/|et|&)\s*pr[ée]avis)?[\s:?*]*$`,
     String.raw`\b(fecha\s+de\s+(inicio|incorporaci[óo]n|disponibilidad)|cu[áa]ndo\s+(puede|puedes|podr[íi]as?)\s+(usted\s+)?(empezar|comenzar|incorporarse|incorporarte))`,
+    /*
+     * And the rest of what German, Spanish, Portuguese, Dutch and Japanese
+     * forms write: "Startdatum" and "Gewünschtes Startdatum", "Verfügbar
+     * ab", "bei uns anfangen", "Disponibilidad para incorporarse", "Data de
+     * início", "Quando (você) pode começar?", "Beschikbaar vanaf", "Per
+     * wanneer", "Gewenste startdatum", 入社可能日 and 入社希望日. "Startdatum"
+     * on its own is read, unlike "Start date": a German work-history block
+     * asks "Von" and "Bis", not "Startdatum". No `\b` round a Japanese word,
+     * which has no word characters for one to sit between.
+     */
+    String.raw`\bstartdatum\b`,
+    String.raw`\bverf[üu]gbar\s+ab\b`,
+    String.raw`\bbei\s+uns\s+(anfangen|beginnen|starten|einsteigen)\b`,
+    String.raw`\bdisponibilidad\s+para\s+(incorporar(se|te|me)|empezar|comenzar)\b`,
+    String.raw`\b(data\s+de\s+in[íi]cio|disponibilidade\s+para\s+(come[çc]ar|iniciar)|quando\s+(voc[êe]\s+)?(pode(ria)?|poderia)\s+(come[çc]ar|iniciar))\b`,
+    String.raw`\b(beschikbaar\s+vanaf|per\s+wanneer|vanaf\s+wanneer)\b`,
+    String.raw`入社(可能|希望)日|いつから(勤務|就業|入社)?(可能|できます)`,
   ].join('|'),
   'i',
 );
@@ -1100,7 +1145,8 @@ export function onlyAPassedDate(answer, now = Date.now()) {
   let month;
   let year;
   let m;
-  if ((m = MONTH_YEAR.exec(said))) [month, year] = [MONTH_NUMBER[m[1].slice(0, 3).toLowerCase()], Number(m[2])];
+  if ((m = MONTH_YEAR.exec(said))) [month, year] = [monthNumber(m[1]), Number(m[2])];
+  else if ((m = JP_MONTH_YEAR.exec(said))) [month, year] = [Number(m[2]), Number(m[1])];
   else if ((m = SEASON_YEAR.exec(said))) {
     month = SEASON_ENDS[m[1].toLowerCase()];
     // Winter 2026 is the one that starts in December 2026.
