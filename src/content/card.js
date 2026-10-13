@@ -5795,7 +5795,15 @@ export function createCard({
       ]);
     }
     const adj = r.adjustments?.length ? ` Auto-fit: ${r.adjustments.join('; ')}.` : '';
-    return h('div', { className: 'fit ok', textContent: `Fits on one page.${adj}` });
+    /*
+     * With the count the PDF really has. "Fits on one page" was said of every
+     * resume that fitted, a two-page resume allowed two pages included.
+     * ResumeM-M says how many it allowed beside the count; an older one that
+     * does not is taken to allow the one the tool is named for.
+     */
+    const allowed = r.maxPages ?? 1;
+    const pages = r.pages > 1 ? plural(r.pages, 'page') : 'one page';
+    return h('div', { className: 'fit ok', textContent: `Fits on ${pages}${allowed > 1 ? ` (${allowed} allowed)` : ''}.${adj}` });
   }
 
   /* ---- Main view ---- */

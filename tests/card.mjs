@@ -7708,6 +7708,44 @@ async function main() {
     check('the popup and the panel use the darker faint grey', faintIn(popupHtml) === '#6b7075' && faintIn(panelCss) === '#6b7075', `${faintIn(popupHtml)} ${faintIn(panelCss)}`);
   }
 
+  /*
+   * The fit line, with the count the PDF really has. It said "Fits on one
+   * page" of everything that fitted, a two-page resume allowed two included —
+   * the one case where the count is news to the person about to send it.
+   */
+  console.log('\nSaying how many pages it fits on');
+  const fitSaid = async (render) =>
+    inPage(async (createCard, given) => {
+      createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Platform Engineer', company: 'Acme' },
+          spec: { id: 'job-acme', label: 'Acme', choices: {} },
+          baseLabel: 'New grad resume',
+          tailor: 'match',
+          diff: [],
+          rationale: [],
+        },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async (action) => (action === 'render' ? given : action === 'stage' ? { currentDir: '/tmp/x' } : {}),
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      [...root.querySelectorAll('button')].find((b) => /Build resume/.test(b.textContent)).click();
+      await new Promise((r) => setTimeout(r, 200));
+      return root.querySelector('.fit')?.textContent ?? null;
+    }, render);
+  const onePage = await fitSaid({ pages: 1, fits: true, maxPages: 1 });
+  check('a one-page resume fits on one page', onePage === 'Fits on one page.', onePage);
+  const twoPages = await fitSaid({ pages: 2, fits: true, maxPages: 2 });
+  check('a two-page resume allowed two fits on two, and says they were allowed', twoPages === 'Fits on 2 pages (2 allowed).', twoPages);
+  const oneOfTwo = await fitSaid({ pages: 1, fits: true, maxPages: 2 });
+  check('and one page of the two allowed is said as one', oneOfTwo === 'Fits on one page (2 allowed).', oneOfTwo);
+  const older = await fitSaid({ pages: 1, fits: true });
+  check('a server that does not say how many were allowed is taken to allow one', older === 'Fits on one page.', older);
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);
