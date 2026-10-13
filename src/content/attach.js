@@ -330,13 +330,43 @@ function willTake(input, file) {
     });
 }
 
-/** Which of the kinds above a file is, from the name it will be uploaded as. */
+/**
+ * Which of the kinds above a file is, from the name it will be uploaded as.
+ *
+ * The last kind named, not the first in `WANTS` order. The store writes the
+ * kind at the end — `Name-Role-Cover-Letter.pdf` — and the role sits before
+ * it, so a role of "Computer Vision (CV) Engineer" read both the resume and
+ * the letter as resumes: the letter went in the resume box, or nowhere.
+ * Whatever kind word comes last is the one that names the document.
+ */
 export function kindOf(name) {
   const text = wordsOf(name);
+  let found = 'other';
+  let end = -1;
   for (const [kind, pattern] of Object.entries(WANTS)) {
-    if (pattern.test(text)) return kind;
+    for (const match of text.matchAll(new RegExp(pattern.source, 'g'))) {
+      const at = match.index + match[0].length;
+      if (at > end) {
+        end = at;
+        found = kind;
+      }
+    }
   }
-  return 'other';
+  return found;
+}
+
+/** Where a kind comes in `WANTS`: the resume first, anything unnamed last. */
+function priorityOf(kind) {
+  const at = Object.keys(WANTS).indexOf(kind);
+  return at < 0 ? Object.keys(WANTS).length : at;
+}
+
+/** Files in the order they should be offered a box: see `attachFiles`. */
+function byPriority(files) {
+  return [...(files ?? [])]
+    .map((spec, i) => ({ spec, i, rank: priorityOf(kindOf(spec?.name)) }))
+    .sort((a, b) => a.rank - b.rank || a.i - b.i)
+    .map(({ spec }) => spec);
 }
 
 /**
@@ -432,6 +462,13 @@ async function putIn(box, file, { alongside = false, ours } = {}) {
    * theirs has no room to keep it, and handing two files to a non-`multiple`
    * input is not a thing a page would accept anyway.
    */
+  /*
+   * A box that takes one file is not given a second. Handing two to a
+   * non-`multiple` input is accepted by the browser and refused by the form,
+   * and the first one — the one somebody aimed at it — is what gets lost.
+   * Callers check first so they can say why; this is the backstop.
+   */
+  if (alongside && !box.multiple) return false;
   const held = [...(box.files ?? [])];
   const had = alongside ? held : box.multiple ? held.filter((f) => !ours?.has(f.name)) : [];
   for (const already of had) carrier.items.add(already);
@@ -684,7 +721,16 @@ export async function attachFiles(files) {
     return ok;
   };
 
-  for (const spec of files ?? []) {
+  /*
+   * The resume first, then the letter, and so on down `WANTS`.
+   *
+   * The store lists files alphabetically, so "…-Cover-Letter.pdf" always came
+   * before "…-Resume.pdf" — and on a form with one box that names nothing,
+   * the fallback below gave that box to whichever file reached it first. The
+   * letter went in, the resume was left out, every time. A lone box is the
+   * resume's; the order here is what says so.
+   */
+  for (const spec of byPriority(files)) {
     let file;
     try {
       file = fileFrom(spec);
@@ -864,22 +910,65 @@ export async function dropOnto(target, files) {
    * pointer — a drop on the panel around a single input means that input.
    * Only when neither is there is the drop read as a drop on a zone.
    */
+  /*
+   * Only as far as the upload widget the pointer is in.
+   *
+   * The walk used to run to `<body>`, and on a page with one upload box
+   * every ancestor eventually "contains exactly one box" — so a chip let go
+   * of anywhere at all went into that box. Measured: the cover letter
+   * dropped on the "paste your cover letter" textarea replaced the resume
+   * already in the resume box. So it stops at a text field (a drop there is
+   * a drop on that field), at a region holding other fields, at a label for
+   * something else, at a drop zone, and at the form itself.
+   */
+  const OTHER_FIELD = 'input:not([type="hidden"]):not([type="file"]), select, textarea';
   const near = (el) => {
+    if (el?.closest?.(OTHER_FIELD)) return null;
+    if (el instanceof HTMLLabelElement && el.control && el.control.type !== 'file') return null;
     for (let at = el; at; at = at.parentElement ?? at.getRootNode?.()?.host) {
       if (at instanceof HTMLInputElement && at.type === 'file' && boxes.includes(at)) return at;
+      if (at instanceof HTMLLabelElement && at.control) return boxes.includes(at.control) ? at.control : null;
+      // The form, or the page: the whole of it is not one upload widget.
+      if (at.matches?.('form, body, html, dialog')) return null;
       const inside = [...(at.querySelectorAll?.('input[type="file"]') ?? [])].filter((b) => boxes.includes(b));
-      if (inside.length === 1) return inside[0];
       if (inside.length > 1) return null;
+      // A region with other fields in it is a part of the form, not the box's.
+      if (at.querySelector?.(OTHER_FIELD)) return null;
+      if (inside.length === 1) return inside[0];
+      if (zones.includes(at)) return null;
     }
     return null;
   };
 
+  const zones = dropZones();
   const box = target ? near(target) : null;
-  const zone = box ? null : target?.closest?.('div,section,label,form') ?? null;
+  /*
+   * A drop area, when that is what the pointer was over — one the page has
+   * marked as taking drops. Not just the nearest `<div>`: on a text field, or
+   * a paragraph of the form, there is nothing to drop on and saying "placed,
+   * not sure" about it would be a claim about nothing.
+   */
+  const zone = box || !target || target.closest?.(OTHER_FIELD) ? null : zones.find((z) => z.contains(target)) ?? null;
+  /*
+   * What the box is for, when it says one thing only. A file of another
+   * known kind is refused rather than put there: "the letter in the resume
+   * box" is the failure this file exists to prevent, however it was aimed.
+   */
+  const boxKinds = box ? Object.entries(WANTS).filter(([, p]) => p.test(saysWhat(box))).map(([k]) => k) : [];
+  const boxKind = boxKinds.length === 1 ? boxKinds[0] : null;
+  const KIND_WORDS = { resume: 'resume', letter: 'cover letter', transcript: 'transcript', portfolio: 'portfolio' };
+  /*
+   * The file the box asks for first, then the rest by `WANTS` order — so the
+   * all-files chip let go of over a one-file resume box puts the resume in
+   * it, not whichever the store listed first.
+   */
+  const ordered = byPriority(files).sort(
+    (a, b) => Number(kindOf(b?.name) === boxKind) - Number(kindOf(a?.name) === boxKind),
+  );
   const written = new Set();
   const ours = new Set((files ?? []).map((f) => f?.name).filter(Boolean));
 
-  for (const spec of files ?? []) {
+  for (const spec of ordered) {
     let file;
     try {
       file = fileFrom(spec);
@@ -896,6 +985,17 @@ export async function dropOnto(target, files) {
       // `.doc` is not a box a PDF goes in, however deliberately it was aimed at.
       if (!willTake(box, file)) {
         unplaced.push({ name: spec.name, why: `this form only takes ${box.getAttribute('accept')} there` });
+        continue;
+      }
+      const kind = kindOf(spec.name);
+      if (boxKind && kind !== 'other' && kind !== boxKind) {
+        unplaced.push({ name: spec.name, why: `that box is for the ${KIND_WORDS[boxKind]}` });
+        continue;
+      }
+      // The all-files chip over a box that takes one: the first file is
+      // placed, and the rest are said, not crammed in beside it. See `putIn`.
+      if (written.has(box) && !box.multiple) {
+        unplaced.push({ name: spec.name, why: 'this box takes one file' });
         continue;
       }
       if (await putIn(box, file, { alongside: written.has(box), ours })) {

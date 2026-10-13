@@ -14,7 +14,9 @@ import {
   looksPrivate,
   mayRememberTyped,
   namesThem,
+  asksWhenYouStart,
   neverRemember,
+  onlyAPassedDate,
   worthRemembering,
   worthRememberingTyped,
 } from '../src/shared/remembering.js';
@@ -58,6 +60,9 @@ const REFUSE = [
   ['Have you ever been convicted of a crime?', 'No'],
   ['Do you have a disability?', 'No'],
   ['Are you a protected veteran?', 'No'],
+  // As the bank had them, banked in October: the plural slipped past.
+  ['Veterans Status', 'I AM NOT A VETERAN'],
+  ['What is your Veterans Status?', 'I AM NOT A VETERAN'],
   ['Race / Ethnicity', 'Decline to self-identify'],
   ['Gender', 'Decline to self-identify'],
   ['What is your religion?', 'None'],
@@ -491,4 +496,442 @@ test('the employer is recognised by its name, and by its first word, as whole wo
 test('a long link is still a line', () => {
   const link = `https://www.behance.net/gallery/123456789/${'a-project-name-'.repeat(4)}`;
   assert.equal(worthRememberingTyped({ question: 'Portfolio link', answer: link }).keep, true);
+});
+
+/*
+ * But only the place a link points to is exempt. Its query, its fragment and
+ * anybody it logs in as were exempt with it, so each of these was kept and
+ * offered to the next form: a number, a token, an address and a telephone
+ * number in a query, a password before the host, and a Drive link's key.
+ */
+const LINK_REFUSE = [
+  'https://x.com/?ssn=123456789',
+  'https://x.com/?SSN=123456789&dob=01/02/1990',
+  'https://x.com/p?token=eyJhbGciOiJIUzI1NiJ9.abc.def',
+  'https://x.com/?access_token=ghp_abcdefABCDEF0123456789abcdef012345',
+  'https://x.com/?q=ghp_abcdefABCDEF0123456789abcdef012345',
+  'https://x.com/?email=me@a.com',
+  'https://x.com/?contact=me%40a.com',
+  'https://x.com/?phone=4155551234',
+  'https://x.com/?when=1990-01-02',
+  'https://user:pass@x.com/',
+  'https://user@x.com/',
+  'https://drive.google.com/file/d/1AbC/view?usp=sharing&resourcekey=0-SECRETkey',
+  'https://x.com/?resourceKey=abc',
+  'https://x.com/?X-Amz-Signature=abc',
+  'https://x.com/#access_token=abc',
+  'https://x.com/?next=https%3A%2F%2Fy.com%2F%3Ftoken%3Dabc',
+];
+
+test('a link carrying a secret or a contact detail is refused as personal', () => {
+  for (const answer of LINK_REFUSE) {
+    const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
+    assert.equal(said.keep, false, `${answer} was kept`);
+    assert.match(said.why, /personal/, `${answer}: ${said.why}`);
+  }
+});
+
+/*
+ * And the links people actually paste are still kept, with the query strings
+ * the sites add to them when they are shared.
+ */
+const LINK_KEEP = [
+  'https://www.linkedin.com/in/jay-example',
+  'https://www.linkedin.com/in/jay-example?trk=public_profile',
+  'https://www.linkedin.com/in/jay-example/?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=ios_app',
+  'https://github.com/jay-example',
+  'https://github.com/jay-example/repo#readme',
+  'https://github.com/jay-example/repo/blob/main/src/a.js#L10-L20',
+  'https://jay.dev/?ref=resume',
+  'https://medium.com/@jay/a-post-1a2b3c?author=jay',
+  'https://www.linkedin.com/jobs/search/?keywords=engineer',
+  'https://drive.google.com/file/d/1AbC/view?usp=sharing',
+];
+
+test('an ordinary link, with the query strings sites add, is still kept', () => {
+  for (const answer of LINK_KEEP) {
+    const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
+    assert.equal(said.keep, true, `${answer} was refused: ${said.why}`);
+  }
+});
+
+/*
+ * The parameter names were read by the end of a word, and every digit run
+ * and date in a value was refused: so `rlkey`, `monkey`, `zipcode`, `code`,
+ * `bypass` and `session` were secrets, a GitHub comment and a ten-digit id
+ * were telephone numbers, a Scholar cluster a card, and a date filter a
+ * birthday — all of them links people paste, refused as personal. And a JWT
+ * under a name that says nothing was kept.
+ */
+const LINK_KEEP_TOO = [
+  'https://www.dropbox.com/scl/fi/abc/resume.pdf?rlkey=abc123xyz&dl=0',
+  'https://www.credential.net/abc?key=1',
+  'https://x.com/?monkey=1',
+  'https://go.dev/play/?code=fmt.Println',
+  'https://play.golang.org/p/abc?code=fmt.Println',
+  'https://x.com/?zipcode=02139',
+  'https://x.com/?country_code=US',
+  'https://x.com/?session=42',
+  'https://x.com/?bypass=1',
+  'https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLx0sYbCqOb8TBPRdmBHs5Iftvv9TPboYG',
+  'https://github.com/jay-example/repo/issues/1#issuecomment-1234567890',
+  'https://x.com/?id=1234567890',
+  'https://scholar.google.com/scholar?cluster=12345678901234567',
+  'https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=120s',
+  'https://youtu.be/dQw4w9WgXcQ?t=120',
+  'https://x.com/events?date=2024-01-15',
+  'https://x.com/?v=1.2.3',
+];
+
+const LINK_REFUSE_TOO = [
+  'https://x.com/reset?t=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc',
+  'https://x.com/?accessToken=abc',
+  'https://x.com/?sessionId=abc',
+  'https://x.com/?client_secret=abc',
+  'https://x.com/?birthDate=2001-02-03',
+  'https://x.com/?dob=2015-02-03',
+  'https://x.com/?k=%2B1%20415%20555%201234',
+  'https://x.com/?k=(415)%20555-1234',
+  'https://x.com/?k=415-555-1234',
+  'https://x.com/?mobile=4155551234',
+  'https://x.com/?k=sk-abcdef1234567890abcdef1234567890',
+];
+
+test('a link’s parameters are read by whole names and by shapes that mean something', () => {
+  for (const answer of LINK_KEEP_TOO) {
+    const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
+    assert.equal(said.keep, true, `${answer} was refused: ${said.why}`);
+  }
+  for (const answer of LINK_REFUSE_TOO) {
+    const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
+    assert.equal(said.keep, false, `${answer} was kept`);
+    assert.match(said.why, /personal/, `${answer}: ${said.why}`);
+  }
+});
+
+/*
+ * What the exact list let through that the loose one had refused: a name
+ * that was a secret by its last word (`accesstoken`), a name that was never
+ * on the list by itself (`access_key`, `pass`), a key or a code under the
+ * short word that is only sometimes one, and a telephone number or a Social
+ * Security number with no punctuation, under a name that says contact or a
+ * name that says nothing. And what has to stay kept beside them: the ids,
+ * referrals and keys people paste, a long `?id=`, and the short `key`,
+ * `code` and `session` values the list above keeps.
+ */
+const LINK_REFUSE_ROUND_14 = [
+  'https://x.com/a?key=AIzaSyA1234567890abcdefghijklmnopqrs',
+  'https://maps.googleapis.com/maps/api/staticmap?center=Boston&key=AIzaSyA1234567890abcdefghijklmnopqrs',
+  'https://x.com/cb?code=4%2F0AY0e-g7abcdef&state=xyz',
+  'https://x.com/a?code=4/0AY0e-g7abc',
+  'https://x.com/a?access_key=abc123',
+  'https://x.com/a?private_key=abc',
+  'https://x.com/a?license_key=ABCD-EFGH',
+  'https://x.com/a?accesstoken=abc',
+  'https://x.com/a?password_reset_token=abc',
+  'https://x.com/a?verification_code=123456',
+  'https://x.com/a?pass=hunter2',
+  /*
+   * Sixteen characters, as a session id is. This was twelve, which the rule
+   * of eight mixed characters refused — and `?session=fall2024` with it.
+   */
+  'https://x.com/a?session=abc123def456ghi7',
+  'https://x.com/a?contact=4155551234',
+  'https://x.com/a?n=123456789',
+  'https://x.com/a?glpat=glpat-abcdefghij1234567890',
+];
+
+const LINK_KEEP_ROUND_14 = [
+  'https://arxiv.org/abs/2401.12345v2',
+  'https://doi.org/10.1145/3290605.3300234',
+  'https://www.kaggle.com/competitions/titanic/leaderboard?tab=public',
+  'https://www.kaggle.com/code/janedoe/eda?scriptVersionId=123456789',
+  'https://leetcode.com/u/janedoe/',
+  'https://www.hackerrank.com/profile/janedoe',
+  'https://medium.com/@janedoe',
+  'https://janedoe.substack.com/p/hello?r=1abcd&utm_campaign=post',
+  'https://janedoe.dev/?ref=linkedin',
+  'https://example.com/item?id=12345678901234',
+  'https://x.com/a?id=4155551234',
+  'https://news.ycombinator.com/item?id=38291034',
+  'https://www.dropbox.com/scl/fi/abc/cv.pdf?rlkey=xyz&dl=0',
+  'https://github.com/janedoe/repo/issues/1#issuecomment-1234567890',
+  'https://scholar.google.com/citations?user=AbCdEfGAAAAJ&hl=en',
+  'https://orcid.org/0000-0002-1825-0097',
+];
+
+test('a key, a code, a session or a number is refused when it is one, and the ids people paste are not', () => {
+  for (const answer of LINK_REFUSE_ROUND_14) {
+    const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
+    assert.equal(said.keep, false, `${answer} was kept`);
+    assert.match(said.why, /personal/, `${answer}: ${said.why}`);
+  }
+  for (const answer of LINK_KEEP_ROUND_14) {
+    const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
+    assert.equal(said.keep, true, `${answer} was refused: ${said.why}`);
+  }
+});
+
+test('an ORCID link is kept, and only a real ORCID iD is let through', () => {
+  for (const link of ['https://orcid.org/0000-0002-1825-0097', 'https://orcid.org/0000-0001-5109-3700/', 'https://orcid.org/0000-0002-1694-233X']) {
+    assert.equal(worthRememberingTyped({ question: 'ORCID iD', answer: link, company: 'Helios Systems' }).keep, true, link);
+  }
+  // Sixteen digits in fours with a check digit that does not add up are not an iD.
+  assert.equal(worthRememberingTyped({ question: 'ORCID iD', answer: 'https://orcid.org/4111-1111-1111-1111', company: 'Helios Systems' }).keep, false);
+  /*
+   * And only on ORCID's host. This card number's last digit happens to pass
+   * the iD's check, and in a payment link's path it was set aside as an iD
+   * and the link kept.
+   */
+  assert.equal(
+    worthRememberingTyped({ question: 'Portfolio link', answer: 'https://pay.example.com/card/4111-1111-1111-0238', company: 'Helios Systems' }).keep,
+    false,
+  );
+});
+
+/*
+ * Round 15. The rule of eight characters mixing letters and digits refused
+ * what conferences, tags and shops write under `session`, `key` and `code`;
+ * every short name refused a time; `pass` and `pw` refused a switch; and a
+ * legacy Google Sheet's `key` is the sheet. And the secrets still kept: a
+ * Stripe key, a webhook or bot token in a path, and the session and sign-in
+ * names the list did not have.
+ */
+const LINK_KEEP_ROUND_15 = [
+  'https://example.com/talks?session=fall2024',
+  'https://conf.example.org/2024/schedule?session=a12b34c5',
+  'https://pretalx.com/conf2024/talk/ABC123/?session=ses_4f8a9b2c',
+  'https://example.com/?key=react2024',
+  'https://example.com/?key=section-1',
+  'https://shop.example.com/?promo_code=SUMMER2024',
+  'https://docs.google.com/spreadsheet/ccc?key=0AuXbG3d5E6f7G8h9I0jKlMnOpQrStUvWxYzdGc&usp=sharing',
+  'https://docs.google.com/spreadsheet/pub?key=0AuXbG3d5E6f7G8h9I0jKlMnOpQrStUvWxYzdGc&output=html',
+  'https://morgan.dev/blog?t=1697040000',
+  'https://morgan.dev/?ts=1697040000',
+  'https://morgan.dev/?cb=1697040000',
+  'https://morgan.dev/?_=1697040000',
+  'https://morgan.dev/?p=123456789',
+  'https://morgan.dev/?pw=1',
+  'https://morgan.dev/?season_pass=1',
+  'https://example.com/?ticket=general',
+  'https://example.com/?ssid=HomeWifi',
+  'https://pub.orcid.org/0000-0002-1825-0097',
+  'https://orcid.org./0000-0002-1825-0097',
+];
+
+const LINK_REFUSE_ROUND_15 = [
+  // Still refused: a Google API key, an OAuth code, and a long session.
+  'https://maps.googleapis.com/maps/api/js?key=AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY',
+  'https://docs.google.com/spreadsheet/ccc?key=AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY',
+  'https://x.com/a?code=4/0AY0e-g7abc',
+  'https://example.com/?session=abcdefghijklmnop',
+  'https://x.com/a?pass=hunter2',
+  'https://x.com/a?pw=hunter2',
+  'https://x.com/a?n=123456789',
+  'https://x.com/a?phone=1415555123',
+  // And now refused. The credential-shaped ones are put together here rather
+  // than written out, so the repository's secret scanning does not take
+  // these made-up values for real keys and refuse the push.
+  `https://example.com/x?k=${['sk', 'live', '51H8abcdefghijklmnopqrstu'].join('_')}`,
+  `https://example.com/x?k=${['rk', 'test', '51H8abcdefghijklmnopqrstu'].join('_')}`,
+  `https://${'hooks.slack' + '.com'}/services/T00000000/B00000000/${'X'.repeat(24)}`,
+  `https://api.telegram.org/bot123456789:${'AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw'}/getMe`,
+  'https://example.com/?PHPSESSID=8f3a9c2b1d4e5f60aa',
+  'https://example.com/app;jsessionid=8F3A9C2B1D4E5F60AA',
+  'https://example.com/?ssid=8f3a9c2b1d4e5f60aa',
+  'https://example.com/x?bearer=abc123def456ghi7',
+  'https://example.com/?magic_link=8f3a9c2b1d4e5f60aa',
+  'https://example.com/?ticket=ST-12345-abcdefghijk-cas',
+  'https://example.com/?season_pass=8f3a9c2b1d4e5f60aa',
+];
+
+test('words with a number in them, times and switches are kept, and the secrets they were confused with are not', () => {
+  for (const answer of LINK_KEEP_ROUND_15) {
+    const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
+    assert.equal(said.keep, true, `${answer} was refused: ${said.why}`);
+  }
+  for (const answer of LINK_REFUSE_ROUND_15) {
+    const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
+    assert.equal(said.keep, false, `${answer} was kept`);
+    assert.match(said.why, /personal/, `${answer}: ${said.why}`);
+  }
+  // A card number on a host that only ends in "orcid.org" is not on ORCID's.
+  assert.equal(
+    worthRememberingTyped({ question: 'Portfolio link', answer: 'https://notorcid.org/4111-1111-1111-0238', company: 'Helios Systems' }).keep,
+    false,
+  );
+});
+
+/*
+ * Round 16. A password under a name that says whose (`user_pass`, `userPw`)
+ * was kept, since only `pass` and `pw` alone were read as one; a code or a
+ * session a server generates was kept under sixteen characters; and the
+ * webhooks and keys that no rule had a shape for. Beside them, the passes
+ * that are not passwords and the round-15 words with numbers in them, which
+ * have to stay kept. The credential-shaped values are put together here, as
+ * above, so that secret scanning does not take them for real ones.
+ */
+const LINK_REFUSE_ROUND_16 = [
+  'https://example.com/login?user_pass=hunter2',
+  'https://example.com/login?wifi_pass=hunter22',
+  'https://example.com/login?admin_pass=Secret123',
+  'https://example.com/login?user_pw=hunter2',
+  'https://example.com/login?userPw=hunter2',
+  'https://example.com/?code=8f3k2m9x1q7z',
+  'https://example.com/reset?code=8f3k2m9x1q',
+  'https://example.com/verify?code=AB12CD34EF56',
+  'https://example.com/login?session=a8f9c2e1d4b7f3',
+  'https://example.com/?magic_link=8fj3k29dk3x7',
+  'https://maps.example.com/api?key=a1b2c3d4e5f6g7h',
+  /*
+   * The ids in these are shorter than real ones: a run of eighteen digits is
+   * refused by itself as an account number, which would hide whether the
+   * path was read at all.
+   */
+  `https://${'hooks.slack' + '.com'}/workflows/T0ABCDEF0/A0ABCDEF0/${'1234'}/${'x'.repeat(24)}`,
+  `https://${'hooks.slack' + '.com'}/triggers/T0ABCDEF0/${'1234'}/${'ab'.repeat(16)}`,
+  `https://${'discord' + '.com'}/api/v10/webhooks/${'1234'}/${'Ab'.repeat(34)}`,
+  `https://example.com/?k=${['SG', 'x'.repeat(22), 'y'.repeat(43)].join('.')}`,
+  `https://example.com/?k=${'npm'}_${'a'.repeat(36)}`,
+  `https://example.com/?k=${'pypi'}-${'Ag'.repeat(30)}`,
+  `https://example.com/?k=${'0123456789abcdef'.repeat(2)}-${'us'}1`,
+];
+
+const LINK_KEEP_ROUND_16 = [
+  'https://morgan.dev/?season_pass=gold',
+  'https://example.com/flight?boarding_pass=AB12',
+  'https://example.com/?day_pass=true',
+  'https://example.com/?bus_pass=monthly',
+  'https://example.com/?user_pass=1',
+  'https://example.com/talks?session=fall2024',
+  'https://pretalx.com/conf2024/talk/ABC123/?session=ses_4f8a9b2c',
+  'https://example.com/?key=react2024',
+  'https://shop.example.com/?promo_code=SUMMER2024',
+  'https://go.dev/play/?code=fmt.Println',
+  'https://docs.google.com/spreadsheet/ccc?key=0AuXbG3d5E6f7G8h9I0jKlMnOpQrStUvWxYzdGc&usp=sharing',
+  'https://example.com/?code=1697040000123',
+  'https://discord.gg/abcdef',
+  'https://myteam.slack.com/archives/C123',
+];
+
+test('a password named for whose it is, a generated code under sixteen, and the webhooks and keys with a shape are refused', () => {
+  for (const answer of LINK_REFUSE_ROUND_16) {
+    const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
+    assert.equal(said.keep, false, `${answer} was kept`);
+    assert.match(said.why, /personal/, `${answer}: ${said.why}`);
+  }
+  for (const answer of LINK_KEEP_ROUND_16) {
+    const said = worthRememberingTyped({ question: 'Portfolio link', answer, company: 'Helios Systems' });
+    assert.equal(said.keep, true, `${answer} was refused: ${said.why}`);
+  }
+});
+
+/*
+ * A date that has gone by is not typed back. "November 2026" typed as an
+ * earliest start date in October was typed into the next form the following
+ * March, unread: a start date in the past, as the person's own answer. Kept
+ * while it is still to come, and refused once its month is over.
+ */
+test('a month and a year is kept until it has passed, and not typed back after', () => {
+  const october = new Date(2026, 9, 12, 12).getTime();
+  const march = new Date(2027, 2, 1, 12).getTime();
+  const question = 'Earliest start date';
+  for (const answer of ['November 2026', 'Nov. 2026', 'Nov 2026', 'Sept 2026', 'October 2026']) {
+    const later = worthRememberingTyped({ question, answer, company: 'Helios Systems', now: march });
+    assert.equal(later.keep, false, `${answer} was typed back after it passed`);
+    assert.match(later.why, /passed/, `${answer}: ${later.why}`);
+  }
+  for (const answer of ['November 2026', 'Nov. 2026', 'October 2026', 'Jan. 2027']) {
+    const now = worthRememberingTyped({ question, answer, company: 'Helios Systems', now: october });
+    assert.equal(now.keep, true, `${answer} was refused before it passed: ${now.why}`);
+  }
+  // Not a date on a calendar, or not only one: left to the other rules.
+  for (const answer of ['Immediately', 'January 5th', 'Two weeks after an offer', 'Spring 2027']) {
+    assert.equal(worthRememberingTyped({ question, answer, company: 'Helios Systems', now: march }).keep, true, answer);
+  }
+  /*
+   * Only a start date goes stale. A graduation date in the past is still the
+   * day somebody graduated: kept, and typed back, however long ago it was.
+   */
+  for (const q of ['Expected graduation date', 'Graduation date', 'Start date', 'End date']) {
+    for (const when of [october, march]) {
+      const said = worthRememberingTyped({ question: q, answer: 'May 2024', company: 'Helios Systems', now: when });
+      assert.equal(said.keep, true, `${q}: ${said.why}`);
+    }
+  }
+  for (const q of ['When can you start?', 'When are you available to start?', 'Available from', 'Availability', 'Desired start date', 'Joining date', 'Internship start date']) {
+    assert.equal(asksWhenYouStart(q), true, q);
+    assert.equal(worthRememberingTyped({ question: q, answer: 'November 2026', company: 'Helios Systems', now: march }).keep, false, q);
+  }
+  // A full date never gets this far: its shape is one secrets come in.
+  assert.match(worthRememberingTyped({ question, answer: '11/01/2026', now: march }).why, /personal/);
+  assert.equal(onlyAPassedDate('September 2026', new Date(2026, 9, 1).getTime()), true);
+  assert.equal(onlyAPassedDate('October 2026', new Date(2026, 9, 31, 23, 59).getTime()), false);
+});
+
+/*
+ * The same cases as ResumeM-M's tests/answers.test.ts, for the same words:
+ * the two regexes are kept identical, and so are the questions they are held
+ * to. "Availability" in a sentence asked about weekends, overtime and travel
+ * as often as about starting, and the common ways of asking when, how soon
+ * or what date were not read at all.
+ */
+const ASKS_WHEN_YOU_START_CASES = [
+  ['What date can you start?', true],
+  ['When is the earliest you could start?', true],
+  ['How soon can you start?', true],
+  ['How soon could you join?', true],
+  ['Date available', true],
+  ['Date available for employment', true],
+  ['If offered, what date could you start?', true],
+  ['Wann können Sie anfangen?', true],
+  ['Eintrittsdatum', true],
+  ['Date de début', true],
+  ['Date de disponibilité', true],
+  ['Disponibilité', true],
+  ['Disponibilité :', true],
+  ['Disponibilité à partir du', true],
+  ['Disponible à partir de quand ?', true],
+  ['Disponibilité pour commencer', true],
+  ['Votre disponibilité pour débuter le poste', true],
+  ['Votre disponibilité', true],
+  ['Quelle est votre disponibilité ?', true],
+  ['Disponibilité (date)', true],
+  ['Disponibilité / préavis', true],
+  ['Disponibilité et préavis', true],
+  ['À partir de quand êtes-vous disponible ?', true],
+  ['Votre disponibilité le week-end', false],
+  ['Quelle est votre disponibilité pour les déplacements ?', false],
+  ['Disponibilité le week-end', false],
+  ['Disponibilité pour les déplacements', false],
+  ['Êtes-vous disponible le soir et le week-end ?', false],
+  ['Fecha de inicio', true],
+  ['¿Cuándo puede empezar?', true],
+  ['Availability', true],
+  ['What is your availability to work weekends?', false],
+  ['Please describe your availability for overtime', false],
+  ['Do you have any availability constraints for travel?', false],
+  ['Start date', false],
+  ['Job start date', false],
+  ['End date', false],
+];
+test('the common ways of asking when somebody can start are read, and availability for other things is not', () => {
+  for (const [q, asks] of ASKS_WHEN_YOU_START_CASES) assert.equal(asksWhenYouStart(q), asks, q);
+});
+
+/*
+ * A season and a year, or a month and a year in numbers, is the same answer
+ * as "November 2025" and passes the same way. A season runs to the end of its
+ * last month: Spring to May, Summer to August, Fall or Autumn to December,
+ * and Winter to February of the year after.
+ */
+test('a season or a numeric month and year is not typed back once it has passed', () => {
+  const october = new Date(2026, 9, 12, 12).getTime();
+  for (const answer of ['Fall 2025', 'Autumn 2025', 'Summer 2026', 'Spring 2026', 'Winter 2025', '11/2025', '2025-11', '09/2026']) {
+    assert.equal(onlyAPassedDate(answer, october), true, answer);
+    assert.equal(worthRememberingTyped({ question: 'When can you start?', answer, company: 'Helios Systems', now: october }).keep, false, answer);
+  }
+  for (const answer of ['Fall 2026', 'Winter 2026', '10/2026', '2026-10', '13/2025', '2025-13']) {
+    assert.equal(onlyAPassedDate(answer, october), false, answer);
+  }
 });

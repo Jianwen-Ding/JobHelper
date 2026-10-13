@@ -1650,6 +1650,87 @@ benchmarked against the Boston market, the company said.</p>
 
 
 /*
+ * Pages that must not be read unless somebody asks.
+ *
+ * Not the same list as `QUIET`, which is about the card: each of these scores
+ * high enough for the chip to ask, and the chip asking is right. What is wrong
+ * is reading the page before anybody answers it — sending its text to the
+ * store to be classified — and every one of these was read on sight. Each
+ * carries `NOT-FOR-THE-STORE` so a suite can tell whether its text left.
+ *
+ * Three were read for their address alone, because `/job/` or `/jobs/` in it
+ * counted as reason enough: a Jenkins build's console, which is where a
+ * build prints its secrets; a CI job's log; and a newspaper's Jobs section.
+ * Two were read because they are application forms, for a loan.
+ */
+export const JENKINS_CONSOLE = {
+  name: 'jenkins-console',
+  path: '/jenkins/job/payments-service/1234/console',
+  html: `<!doctype html><html><head><title>payments-service #1234 Console [Jenkins]</title><style>${CHROME}</style></head>
+<body><div class="wrap"><pre>Started by user admin
++ pip install -r requirements.txt
++ export DB_URL=postgres://svc:NOT-FOR-THE-STORE-hunter2@db.internal/payments
++ pytest -q
+${Array.from({ length: 60 }, (_, i) => `test_${i} PASSED`).join('\n')}
+Finished: SUCCESS</pre></div></body></html>`,
+};
+
+export const CI_JOB_LOG = {
+  name: 'ci-job-log',
+  path: '/acme/api/actions/runs/987/job/654',
+  html: `<!doctype html><html><head><title>CI · acme/api@1a2b3c</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h2>build (ubuntu-latest)</h2><pre>Run pip install -r requirements.txt
+NOT-FOR-THE-STORE token=ghs_0000
+${Array.from({ length: 60 }, (_, i) => `line ${i}`).join('\n')}</pre></div></body></html>`,
+};
+
+export const NEWS_JOBS_SECTION = {
+  name: 'news-jobs-section',
+  path: '/daily-news/jobs/',
+  html: `<!doctype html><html><head><title>Jobs - Daily News</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Jobs</h1>
+${Array.from({ length: 6 }, (_, i) => `<h2>Unemployment falls in month ${i + 1}</h2>
+<p>Employers report a higher salary range on offer, better benefits and more full-time staff.</p>`).join('')}
+<p>Reader comments: NOT-FOR-THE-STORE my private note</p></div></body></html>`,
+};
+
+const LOAN_FORM_HTML = `<!doctype html><html><head><title>Personal loan application | Example Bank</title><style>${CHROME}</style></head>
+<body><div class="wrap"><h1>Apply for a personal loan</h1><p>Requirements: you must be 18+. Benefits: low APR.</p>
+<form><label for="fn">First name</label><input id="fn" name="first_name">
+<label for="ln">Last name</label><input id="ln" name="last_name">
+<label for="em">Email</label><input id="em" type="email" name="email">
+<label for="ph">Phone</label><input id="ph" name="phone">
+<label for="inc">Annual income</label><input id="inc" name="income">
+<label for="emp">Employer</label><input id="emp" name="employer">
+<label for="ssn">Social Security number</label><input id="ssn" name="ssn">
+<p>NOT-FOR-THE-STORE account 4111-1111</p>
+<button type="button">Submit application</button></form></div></body></html>`;
+
+export const LOAN_APPLICATION = { name: 'loan-application', path: '/bank/application/personal-loan', html: LOAN_FORM_HTML };
+export const LOAN_FORM = { name: 'loan-form', path: '/bank/loans/personal', html: LOAN_FORM_HTML };
+
+/*
+ * And the same bank's form as banks actually serve it, with a link back to a
+ * saved application and an upload for pay stubs. That was enough to undo the
+ * fix for the two above: "Resume" was looked for anywhere on the page once
+ * there was a file input, and the verb in "Resume a saved application"
+ * passed for the noun, so the page was read on sight and its text sent away.
+ */
+export const LOAN_FORM_WITH_UPLOAD = {
+  name: 'loan-form-with-upload',
+  path: '/bank/application/personal-loan-docs',
+  html: LOAN_FORM_HTML.replace(
+    '<p>Requirements: you must be 18+. Benefits: low APR.</p>',
+    '<p>Requirements: you must be 18+. Benefits: low APR. <a href="/bank/resume">Resume a saved application</a></p>',
+  ).replace(
+    '<p>NOT-FOR-THE-STORE',
+    '<label for="ps">Upload your two most recent pay stubs</label><input id="ps" type="file" name="paystubs">\n<p>NOT-FOR-THE-STORE',
+  ),
+};
+
+export const NOT_READ = [JENKINS_CONSOLE, CI_JOB_LOG, NEWS_JOBS_SECTION, LOAN_APPLICATION, LOAN_FORM, LOAN_FORM_WITH_UPLOAD];
+
+/*
  * A pull request, on the repository of a tool for job applications.
  *
  * Reported from life: the extension put a card up on
@@ -2258,7 +2339,81 @@ export async function useServer(context, serverUrl) {
   const page = await context.newPage();
   await page.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
   await page.evaluate((url) => chrome.storage.sync.set({ serverUrl: url }), serverUrl);
+  await page.evaluate((key) => chrome.storage.local.set({ [key]: true }), OPEN_SHADOW_FLAG);
+  await pairExtension(page, serverUrl);
   await page.close();
+}
+
+/**
+ * Pair the extension with the server it now points at, as a person would.
+ *
+ * ResumeM-M answers only the extension it has been paired with. The code is
+ * asked for here the way the editor asks — a local process with no browser
+ * headers may make one, as it may read the save off the disk — and then
+ * typed in through the extension's own `pair` message, which is what the
+ * popup's Pair button sends. So the token is the real one, in the real place.
+ *
+ * Only when the extension says it needs to. A fake store, an older
+ * ResumeM-M, a proxy that forwards no headers, or a server that is down on
+ * purpose all answer the ping some other way, and there is nothing to pair.
+ * Retried, because two suites pairing with one server at the same moment
+ * replace each other's code.
+ */
+export async function pairExtension(page, server) {
+  const ask = (type, payload) =>
+    page.evaluate(
+      ([t, p]) => new Promise((done) => chrome.runtime.sendMessage({ type: t, payload: p }, done)),
+      [type, payload],
+    );
+  let last;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const ping = await ask('ping');
+    if (ping?.ok || ping?.fix?.fix !== 'pair') return;
+    const res = await fetch(`${server.replace(/\/$/, '')}/api/extension/pairings/code`, { method: 'POST' });
+    if (!res.ok) throw new Error(`${server} would not make a pairing code: ${res.status} ${await res.text()}`);
+    const { code } = await res.json();
+    last = await ask('pair', { code });
+    // Looked at again at the top: another server sharing this machine's
+    // pairings may have written over it in the same instant.
+    if (last?.ok) continue;
+    await new Promise((go) => setTimeout(go, 200 + Math.random() * 400));
+  }
+  throw new Error(`Could not pair the extension with ${server}: ${last?.error ?? 'no answer'}`);
+}
+
+/**
+ * The card's shadow root is closed in use, so no page script can read the
+ * card or reach its buttons (see `HARNESS` in src/content/card.js). These
+ * suites look inside it from the page, as a person's eyes would, so they ask
+ * the extension — through its own storage, which no page can write — to
+ * leave it open. Untrusted events are refused all the same: presses have to
+ * be Playwright's, which are real input.
+ *
+ * Set before any page the card could appear on is opened; each content
+ * script reads it once, when it loads the card.
+ */
+/**
+ * Answer "Yes" on the "Job posting?" chip, the way a person would.
+ *
+ * For the pages that are asked about before they are read: a careers home or
+ * a list of openings on a site no pattern here knows. Those used to be read
+ * on sight for `/careers/` or `/openings/` in their address, and the address
+ * is not reason enough — Jenkins serves every build log under `/job/`. So the
+ * card on such a page now comes after the chip, and the suites that walk
+ * through one press its Yes, which is what somebody applying would do.
+ */
+export async function sayYesToTheChip(page, { timeout = 20_000 } = {}) {
+  const yes = page.locator('#jobhelper-ask-host button.yes');
+  await yes.waitFor({ timeout });
+  await yes.click();
+}
+
+export const OPEN_SHADOW_FLAG = 'jobhelperTestOpenShadow';
+export async function openCardForTests(worker, open = true) {
+  await worker.evaluate(
+    ([key, on]) => (on ? chrome.storage.local.set({ [key]: true }) : chrome.storage.local.remove(key)),
+    [OPEN_SHADOW_FLAG, open],
+  );
 }
 
 /** Locate the Chromium this environment provides. */
@@ -2425,6 +2580,8 @@ export async function pointExtensionAt(context, worker, server) {
   const setup = await context.newPage();
   await setup.goto(`chrome-extension://${new URL(worker.url()).host}/src/popup/popup.html`);
   await setup.evaluate((s) => chrome.storage.sync.set({ serverUrl: s }), server);
+  await setup.evaluate((key) => chrome.storage.local.set({ [key]: true }), OPEN_SHADOW_FLAG);
+  await pairExtension(setup, server);
   await setup.close();
 }
 

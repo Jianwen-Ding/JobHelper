@@ -21,7 +21,9 @@ import {
   lighten,
   judgeApplication,
   plainlyAnotherRole,
+  pressedOnAnotherJob,
   relatedPath,
+  boardOf,
   sameApplication,
   summarise,
   trimForStorage,
@@ -460,6 +462,14 @@ describe('a late AI result, against the posting on screen', async () => {
       assert.equal(sameJob(job('Acme', a), job('Acme', b)), false, `${a} / ${b}`);
       assert.equal(sameJob(job('Acme', b), job('Acme', a)), false, `${b} / ${a}`);
     }
+  });
+  it('but not on another requisition under the same title', () => {
+    const req = (requisition) => ({ job: { company: 'Acme', title: 'Software Engineer Intern', requisition } });
+    assert.equal(sameJob(req('12345678'), req('87654321')), false);
+    assert.equal(sameJob(req('12345678'), req('12345678')), true);
+    // A reading without the number is still the same posting.
+    assert.equal(sameJob(req('12345678'), req(undefined)), true);
+    assert.equal(sameJob(req(undefined), req('87654321')), true);
   });
 });
 
@@ -921,6 +931,24 @@ describe('a job id at the end of the path, and the view of it before', () => {
     assert.equal(rp('/blog/news/2024', '/blog/apply/2024'), false);
     // And more than one segment changed is more than one view.
     assert.equal(rp('/a/job_details/1609178343953401', '/b/create_application/1609178343953401'), false);
+  });
+
+  /*
+   * Years written as words of their own are when, not which job. A GitHub
+   * repository of internship lists has eight digits in its name and read as a
+   * job's id. The same rule as ResumeM-M's `jobNumberIn`.
+   */
+  it('does not take years in a name for a job id', () => {
+    const rp = (a, b) => relatedPath(`https://x.example${a}`, `https://x.example${b}`);
+    const repo = 'Automated-List-Of-Summer-2027-and-Fall-2026-Tech-Internships';
+    assert.equal(rp(`/view/${repo}`, `/apply/${repo}`), false);
+    // A requisition with a year beside it still has its own number.
+    const req = 'Software-Engineer-Summer-2027_R171666';
+    assert.equal(rp(`/view/${req}`, `/apply/${req}`), true);
+    // And a year beside another number is part of the id, not a date.
+    assert.equal(rp('/view/req_2026_1234', '/apply/req_2026_1234'), true);
+    assert.equal(rp('/jobs/view?jobId=JR-2026-0412', '/apply/start?jobId=JR-2026-0412'), true);
+    assert.equal(rp('/jobdetail.ftl?job=2026-1234', '/jobapply.ftl?job=2026-1234'), true);
   });
 });
 
@@ -2048,5 +2076,128 @@ describe('an application that is so far only lists of jobs', () => {
     assert.equal(onlyLists(trailOf({ url: 'https://vireo.example/jobs/1' })), false);
     assert.equal(onlyLists(trailOf()), false);
     assert.equal(onlyLists(undefined), false);
+  });
+});
+
+/*
+ * A carried application, and a page that is plainly another employer's.
+ *
+ * From the store: on LinkedIn's search results the tab's application was
+ * Exegy (`currentJobId=4474780927`); the next job in the list was Kodiak's,
+ * and its Apply opened Kodiak's Greenhouse form. That form was asked about
+ * before it had been read — address, title, referrer — and the referrer from
+ * linkedin.com vouched for it, so Exegy's LinkedIn page was read as part of
+ * it, the merge named Exegy as the employer, and the card staged Exegy's
+ * resume under Kodiak's address: "Apply: Exegy — Software Engineer Intern"
+ * with `url: job-boards.greenhouse.io/kodiak/jobs/4430607009`.
+ */
+describe("a carried application, and another employer's page", () => {
+  const now = Date.now();
+  const linkedin = 'https://www.linkedin.com/jobs/search-results/?currentJobId=4474780927&keywords=C%2B%2B%20Intern';
+  const kodiak = 'https://job-boards.greenhouse.io/kodiak/jobs/4430607009?gh_src=1ix0299r9us&t=3253f722teu';
+  const exegy = { pages: [{ url: linkedin, company: 'Exegy', role: 'Software Engineer Intern', kind: 'posting', at: now }], at: now };
+
+  it("refuses an ATS board named for another employer, before the page is read", () => {
+    // What `trailPages` asks with: no company, no role.
+    const unread = { url: kodiak, title: 'Job Application for Winter 2027 Intern, Security at Kodiak', referrerHost: 'linkedin.com' };
+    assert.equal(judgeApplication(exegy, unread, now), 'different');
+    assert.equal(sameApplication(exegy, unread, now), false);
+    // And after, even when the analysis has taken the trail's employer for this page's.
+    assert.equal(judgeApplication(exegy, { ...unread, company: 'Exegy' }, now), 'different');
+  });
+
+  it('even when the click vouches for the address', () => {
+    const pressed = { ...exegy, expecting: { to: kodiak, at: now } };
+    assert.equal(judgeApplication(pressed, { url: kodiak }, now), 'different');
+  });
+
+  it('and the other pairs the store holds', () => {
+    const cases = [
+      ['GITAI', 'https://job-boards.greenhouse.io/cloudflare/jobs/8199958?gh_jid=8199958'],
+      ['Oceaneering', 'https://job-boards.greenhouse.io/figma/jobs/6143238004?gh_jid=6143238004'],
+      ['Snapchat', 'https://jobs.ashbyhq.com/claylabs/16778e12-31cb-4ca1-a321-7f629a7cf273/application'],
+      ['Hendrickson', 'https://job-boards.greenhouse.io/formlabsinternships/jobs/8223362'],
+      ['Syska Hennessy Group', 'https://jobs.ashbyhq.com/rivianvw.tech/13eeb795-a5dd-4b5a-9b98-808e5ec357c2/application'],
+    ];
+    for (const [company, url] of cases) {
+      const trail = { pages: [{ url: linkedin, company, at: now }], at: now };
+      assert.equal(judgeApplication(trail, { url, referrerHost: 'linkedin.com' }, now), 'different', `${company} at ${url}`);
+    }
+  });
+
+  it("still hands a posting on a board to that employer's own ATS form", () => {
+    const cases = [
+      ['Kodiak', kodiak],
+      ['Kodiak Robotics', kodiak],
+      ['Cloudflare, Inc.', 'https://job-boards.greenhouse.io/cloudflare/jobs/8199958'],
+      ['Formlabs', 'https://job-boards.greenhouse.io/formlabsinternships/jobs/8223362'],
+      ['Rivian and Volkswagen Group Technologies', 'https://jobs.ashbyhq.com/rivianvw.tech/13eeb795/application'],
+      ['2K', 'https://job-boards.greenhouse.io/2kearlycareers/jobs/7992138003'],
+      ['Snap Inc.', 'https://jobs.ashbyhq.com/snapchat/abc/application'],
+      ['Demiurge Studios', 'https://jobs.lever.co/demiurgestudios/85f401d2/apply?source=LinkedIn'],
+      ['Areté', 'https://boards.greenhouse.io/arete/jobs/12345'],
+      ['Acme', 'https://boards.greenhouse.io/embed/job_app?for=acme&token=12345'],
+    ];
+    for (const [company, url] of cases) {
+      const trail = { pages: [{ url: linkedin, company, role: 'Software Engineer Intern', at: now }], at: now };
+      assert.equal(judgeApplication(trail, { url, referrerHost: 'linkedin.com' }, now), 'same', `${company} at ${url}`);
+    }
+  });
+
+  it('and a form on a host that names nobody, as before', () => {
+    const trail = { pages: [{ url: linkedin, company: 'Exegy', at: now }], at: now };
+    assert.equal(judgeApplication(trail, { url: 'https://apply.example-ats.com/form/77', referrerHost: 'linkedin.com' }, now), 'same');
+  });
+
+  it('and has no opinion where the trail names no employer, or is already on that board', () => {
+    const nameless = { pages: [{ url: linkedin, at: now }], at: now };
+    assert.equal(judgeApplication(nameless, { url: kodiak, referrerHost: 'linkedin.com' }, now), 'same');
+    const onBoard = { pages: [{ url: 'https://job-boards.greenhouse.io/kodiak/jobs/4430607009', company: 'Kodiak Robotics, Inc. (Careers)', at: now }], at: now };
+    assert.equal(judgeApplication(onBoard, { url: 'https://job-boards.greenhouse.io/kodiak/jobs/4430607009?gh_src=1ix0299r9us' }, now), 'same');
+  });
+
+  it('reads the board out of the address', () => {
+    assert.equal(boardOf(kodiak)?.slug, 'kodiak');
+    assert.equal(boardOf('https://boards.greenhouse.io/embed/job_app?for=acme&token=1')?.slug, 'acme');
+    assert.equal(boardOf('https://jobs.lever.co/vega/8f21')?.slug, 'vega');
+    assert.equal(boardOf('https://lyra.recruitee.com/o/engineer')?.slug, 'lyra');
+    // Workday tenants are not the employer's chosen name: `myhrabc` is AmerisourceBergen.
+    assert.equal(boardOf('https://myhrabc.wd5.myworkdayjobs.com/en-US/Global/job/X_R2614039'), null);
+    assert.equal(boardOf(linkedin), null);
+  });
+});
+
+/*
+ * Apply pressed on the next job in a board's list, before the card has moved
+ * the tab's application on to it.
+ */
+describe('Apply pressed on another job than the one the tab is holding', () => {
+  const now = Date.now();
+  const held = 'https://www.linkedin.com/jobs/search-results/?currentJobId=4474780927&keywords=C%2B%2B';
+  const next = 'https://www.linkedin.com/jobs/search-results/?currentJobId=4475000001&keywords=C%2B%2B';
+  const trail = { pages: [{ url: held, company: 'AmerisourceBergen', at: now }], at: now };
+
+  it('is told apart from a press on the job itself', () => {
+    assert.equal(pressedOnAnotherJob(trail, next), true);
+    assert.equal(pressedOnAnotherJob(trail, held), false);
+    // The same job, its tracking parameters rearranged.
+    assert.equal(pressedOnAnotherJob(trail, `${held}&refId=abc`), false);
+    // The same job in the other view of it.
+    assert.equal(pressedOnAnotherJob(trail, 'https://www.linkedin.com/jobs/view/4474780927/'), false);
+    assert.equal(pressedOnAnotherJob(trail, 'https://www.linkedin.com/jobs/view/4475000001/'), true);
+    // Another site, or a page that names no job, says nothing.
+    assert.equal(pressedOnAnotherJob(trail, 'https://careers.example.com/jobs/12345'), false);
+    assert.equal(pressedOnAnotherJob(trail, 'https://www.linkedin.com/feed/'), false);
+    assert.equal(pressedOnAnotherJob({ pages: [] }, next), false);
+  });
+
+  it("and the site's referrer no longer vouches for the page it leads to", () => {
+    const waymo = 'https://careers.withwaymo.com/jobs/2027-summer-intern-bs-software-engineer?gh_jid=8224900';
+    const page = { url: waymo, referrerHost: 'linkedin.com' };
+    assert.equal(judgeApplication(trail, page, now), 'same', 'before: the referrer is all there is');
+    const strayed = { ...trail, strayed: { from: next, at: now } };
+    assert.equal(judgeApplication(strayed, page, now), 'different');
+    // For as long as a click is believed, and no longer.
+    assert.equal(judgeApplication({ ...trail, strayed: { from: next, at: now - EXPECTATION_MS - 1 } }, page, now), 'same');
   });
 });

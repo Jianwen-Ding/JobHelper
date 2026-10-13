@@ -31,7 +31,24 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extensionWorker, findChromium } from './fixtures.mjs';
 
-const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const realRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/*
+ * A copy of the extension that may run scripts in a tab, which the real one
+ * no longer asks to: nothing it ships calls `chrome.scripting`, and this
+ * suite is the only thing that wanted it — to reach the content script's
+ * isolated world and draw through pdfview.js there. Everything else is the
+ * extension as it is.
+ */
+function withScripting() {
+  const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-csp-ext-'));
+  for (const part of ['src', 'vendor', 'icons']) fs.cpSync(path.join(realRoot, part), path.join(copy, part), { recursive: true });
+  const manifest = JSON.parse(fs.readFileSync(path.join(realRoot, 'manifest.json'), 'utf8'));
+  manifest.permissions = [...new Set([...(manifest.permissions ?? []), 'scripting'])];
+  fs.writeFileSync(path.join(copy, 'manifest.json'), JSON.stringify(manifest, null, 2));
+  return copy;
+}
+const extensionRoot = withScripting();
 
 let passed = 0;
 let failed = 0;

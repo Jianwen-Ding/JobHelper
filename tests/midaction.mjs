@@ -58,7 +58,7 @@ const STORE = `(() => {
   s.onAction = async (action, payload) => {
     s.sent.push({ action, payload: payload && JSON.parse(JSON.stringify(payload)) });
     const failing = s.fail[action];
-    if (failing) {
+    if (failing && failing !== 'lost') {
       delete s.fail[action];
       if (failing === 'throw') throw new Error('The store did not answer');
       return null;
@@ -71,15 +71,34 @@ const STORE = `(() => {
       }
       case 'stage':
       case 'bundle': {
+        // \`s.versions\`: each write of the copy numbered, and a filing based
+        // on any write but the last refused with the copy the store holds.
+        if (s.versions && s.copyVersion && payload.basedOn !== s.copyVersion) {
+          return { conflict: { current: JSON.parse(JSON.stringify(s.copy)), version: s.copyVersion } };
+        }
         s.copy = JSON.parse(JSON.stringify(payload.spec));
+        if (s.versions) s.copyVersion = (s.copyVersion ?? 0) + 1;
+        // 'lost': written, and the reply never reaches the card — the worker
+        // was stopped while it was on its way.
+        if (failing === 'lost') {
+          delete s.fail[action];
+          await gated(action);
+          throw new Error('The message channel closed before a response was received.');
+        }
         const built = { printed: 'p' + s.version, choices: payload.spec?.choices ?? null, as: action };
         await gated(action);
         s.folder.push(built);
-        return { currentDir: '/tmp/upload', application: { id: 'app-acme' }, files: ['Jane-Resume.pdf'] };
+        return {
+          currentDir: '/tmp/upload',
+          application: { id: 'app-acme' },
+          files: ['Jane-Resume.pdf'],
+          ...(s.versions ? { resumeVersion: s.copyVersion } : {}),
+        };
       }
       case 'fresh':
         await gated(action);
         return {
+          ...(s.versions ? { version: s.copyVersion ?? null } : {}),
           printed: 'p' + s.version,
           stored: s.copy,
           storedPrint: s.copy ? JSON.stringify(s.copy) : null,
@@ -151,12 +170,15 @@ async function main() {
   const setUp = (opts = {}) =>
     page.evaluate(
       async ([code, store, analysis, opts]) => {
+        // A harness, not a page: the card takes untrusted presses here. See `HARNESS` in card.js.
+        globalThis.__JOBHELPER_HARNESS__ = true;
         const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
         const { createCard, removeCard } = await import(url);
         removeCard();
         document.querySelector('#zone')?.remove();
         // eslint-disable-next-line no-eval
         const s = (0, eval)(store);
+        s.versions = Boolean(opts.versions);
         s.resumes = opts.resumes ?? [
           { id: 'base', label: 'New grad resume', tier: 'base' },
           { id: 'kept', label: 'Systems resume', tier: 'base' },
@@ -242,10 +264,15 @@ async function main() {
       ]);
       await wait(50);
       const now = jh.root.activeElement;
+      const typed = { field: now?.dataset?.field ?? null, value: now?.value ?? null, caret: now?.selectionStart ?? null };
+      // The untouched one is the bank's, drawn shut until opened (`keptShut`
+      // in card.js): read after the caret above, since opening it moves focus.
+      [...jh.root.querySelectorAll('.q')]
+        .find((q) => q.textContent.includes('Tell us about a project.'))
+        ?.querySelector('.kept-shut button')
+        ?.click();
       return {
-        field: now?.dataset?.field ?? null,
-        value: now?.value ?? null,
-        caret: now?.selectionStart ?? null,
+        ...typed,
         other: jh.root.querySelector('textarea[data-field="answer:Tell us about a project."]')?.value ?? null,
       };
     });
@@ -640,6 +667,208 @@ async function main() {
       return { said: note(), renders: renders().length };
     });
     check('nor is filing it as applied', !/Updated from ResumeM-M/.test(filed.said) && filed.renders === 1, JSON.stringify(filed));
+  }
+
+  /*
+   * A write of the card's own that it never heard back about.
+   *
+   * The worker was stopped while a stage was out: the store wrote the copy,
+   * and the reply, and the worker's note of the filing, went with the
+   * worker. The card's next filing, based on the write before, was refused
+   * over that one, and nobody could say it was the card's — so it read as an
+   * edit made in ResumeM-M, was taken over the switch just made here, and
+   * was said to be one.
+   */
+  console.log('\nA write of the card\'s own whose reply was lost');
+  {
+    await setUp({ versions: true });
+    const lost = await inPage(async () => {
+      const stages = () => jh.s.sent.filter((c) => c.action === 'stage');
+      const first = ticks();
+      jh.s.fail.stage = 'lost';
+      const stopped = jh.s.hold('stage');
+      const before = stages().length;
+      jh.root.querySelectorAll('.pick input')[0].click();
+      await until(() => stages().length > before && !jh.s.fail.stage, 4000);
+      // Switched back while that stage is out, then the worker stops.
+      jh.root.querySelectorAll('.pick input')[0].click();
+      await wait(300);
+      stopped();
+      await wait(2500);
+      return {
+        first,
+        ticks: ticks(),
+        said: note(),
+        stored: jh.s.copy?.choices ?? null,
+        mine: jh.handle.takeWork()?.spec?.choices ?? null,
+        basedOn: stages().map((c) => c.payload.basedOn ?? null),
+      };
+    });
+    check(
+      'the switch made after it is kept on the card',
+      JSON.stringify(lost.ticks) === JSON.stringify(lost.first),
+      JSON.stringify(lost),
+    );
+    check('and filed', JSON.stringify(lost.stored) === JSON.stringify(lost.mine), JSON.stringify(lost));
+    check('and the card does not say the copy was edited elsewhere', !/edited in/.test(lost.said), lost.said);
+  }
+
+  /* ------------------------------------------------------------------ */
+  console.log('\nThe keeper\'s filing of the card\'s copy, whose reply was lost');
+  {
+    /*
+     * The same, through the keeper. `takeWork` hands the card's copy to the
+     * keeper to file with the application, and the keeper's write landed with
+     * its reply lost — but only the card's own stages were counted as
+     * unconfirmed, so on the card's next filing the keeper's write read as an
+     * edit made in ResumeM-M: taken over the two switches made here since,
+     * and said to be one.
+     */
+    await setUp({ versions: true });
+    const kept = await inPage(async () => {
+      const stages = () => jh.s.sent.filter((c) => c.action === 'stage');
+      const settle = async (n) => {
+        await until(() => stages().length >= n, 4000);
+        await wait(600);
+      };
+      const picks = () => jh.root.querySelectorAll('.pick input');
+      let n = stages().length;
+      picks()[0].click();
+      await settle(++n);
+      // A second switch, and in the same moment the keeper files the card's copy.
+      picks()[1].click();
+      await wait(150);
+      const work = jh.handle.takeWork();
+      // Landed in the store; the reply and the worker's note of it lost.
+      jh.s.copy = JSON.parse(JSON.stringify(work.spec));
+      jh.s.copyVersion += 1;
+      // Both switched back on the card.
+      picks()[0].click();
+      await wait(150);
+      picks()[1].click();
+      const meant = ticks();
+      await wait(3500);
+      return {
+        meant,
+        ticks: ticks(),
+        said: note(),
+        stored: jh.s.copy?.choices ?? null,
+        mine: jh.handle.takeWork()?.spec?.choices ?? null,
+      };
+    });
+    check('the switches made after it are kept on the card', JSON.stringify(kept.ticks) === JSON.stringify(kept.meant), JSON.stringify(kept));
+    check(
+      'and filed',
+      JSON.stringify(kept.stored) === JSON.stringify(kept.mine) && kept.stored.b_pipeline === 'v_base' && kept.stored['edu_neu.subtitle'] === 'v_plain',
+      JSON.stringify(kept),
+    );
+    check('and the card does not say the copy was edited elsewhere', !/edited in/.test(kept.said), kept.said);
+  }
+
+  /* ------------------------------------------------------------------ */
+  console.log('\nA copy the card filed earlier, put back in ResumeM-M');
+  {
+    /*
+     * The card's own copies are known by content, and one the store had
+     * already confirmed came back as an undo in ResumeM-M: taken as the
+     * card's own, and the person's undo filed over with nothing said.
+     */
+    await setUp({ versions: true });
+    const undone = await inPage(async () => {
+      const stages = () => jh.s.sent.filter((c) => c.action === 'stage');
+      const settle = async (n) => {
+        await until(() => stages().length >= n, 4000);
+        await wait(600);
+      };
+      const picks = () => jh.root.querySelectorAll('.pick input');
+      let n = stages().length;
+      picks()[0].click();
+      await settle(++n);
+      const first = JSON.parse(JSON.stringify(jh.s.copy));
+      picks()[1].click();
+      await settle(++n);
+      // In ResumeM-M the second switch is undone: the copy is the first one again.
+      jh.s.copy = JSON.parse(JSON.stringify(first));
+      jh.s.copyVersion += 1;
+      // Back on the card, the first switch is switched back.
+      picks()[0].click();
+      await until(() => stages().length > n, 4000);
+      await wait(1500);
+      return { stored: jh.s.copy.choices, ticks: ticks(), said: note() };
+    });
+    check(
+      'the undo made there is kept under the switch made here',
+      undone.stored['edu_neu.subtitle'] === 'v_plain' && undone.stored.b_pipeline === 'v_base',
+      JSON.stringify(undone),
+    );
+    check('and the card says the copy was edited there', /edited in ResumeM-M/.test(undone.said), undone.said);
+  }
+
+  /* ------------------------------------------------------------------ */
+  console.log('\nResumeM-M\'s copy, taken back after the application went out');
+  {
+    /*
+     * The keeper is handed the card's copy every two seconds, and `takeWork`
+     * counted every copy it handed over as a filing of the card's own the
+     * store had not confirmed — whether or not the keeper ever filed it, and
+     * with nothing to clear the list once staging had stopped. So after
+     * "Edit in ResumeM-M" on a card whose application had gone out, the copy
+     * taken back from ResumeM-M (`cameBack`) was on that list by the next
+     * tick, and when ResumeM-M later put that copy back — an undo there — the
+     * card's next filing was refused over it, took it for its own, and wrote
+     * the undo away with nothing said.
+     */
+    await setUp({ versions: true });
+    const back = await inPage(async () => {
+      const stages = () => jh.s.sent.filter((c) => c.action === 'stage');
+      const picks = () => jh.root.querySelectorAll('.pick input');
+      const n = stages().length;
+      picks()[0].click();
+      await until(() => stages().length > n, 4000);
+      await wait(600);
+      const filed = JSON.parse(JSON.stringify(jh.s.copy));
+      button(/Edit in ResumeM-M/).click();
+      await wait(300);
+      // The application goes out, from the page after, while the editor is open.
+      jh.handle.restoreWork({ sent: true });
+      // In ResumeM-M the second line is switched too, and the card comes back to it.
+      const there = { ...filed, choices: { ...filed.choices, 'edu_neu.subtitle': 'v_systems' } };
+      jh.s.copy = JSON.parse(JSON.stringify(there));
+      jh.s.copyVersion += 1;
+      jh.s.resumes = [...jh.s.resumes, JSON.parse(JSON.stringify(there))];
+      // The keeper ticks while the copy taken back is being compiled, before
+      // the card has asked the store which write of it that is.
+      const compiled = jh.s.hold('render');
+      const renders = jh.s.sent.filter((c) => c.action === 'render').length;
+      const returned = jh.handle.cameBack();
+      await until(() => jh.s.sent.filter((c) => c.action === 'render').length > renders, 4000);
+      jh.handle.takeWork();
+      await wait(100);
+      jh.handle.takeWork();
+      compiled();
+      await returned;
+      await wait(300);
+      // Then the first line is switched back there, and the watcher sees it.
+      jh.s.copy = { ...there, choices: { ...there.choices, b_pipeline: 'v_base' } };
+      jh.s.copyVersion += 1;
+      await jh.handle.storeChanged();
+      await wait(600);
+      // And undone again there: the copy is the one the card took back.
+      jh.s.copy = JSON.parse(JSON.stringify(there));
+      jh.s.copyVersion += 1;
+      // On the card, the second line is switched back.
+      const m = stages().length;
+      picks()[1].click();
+      await until(() => stages().length > m, 4000);
+      await wait(1500);
+      return { stored: jh.s.copy.choices, said: note(), stages: stages().length - m };
+    });
+    check(
+      'the undo made in ResumeM-M is kept under the switch made here',
+      back.stored.b_pipeline === 'v_kafka' && back.stored['edu_neu.subtitle'] === 'v_plain',
+      JSON.stringify(back),
+    );
+    check('and the card says the copy was edited there', /edited in ResumeM-M/.test(back.said), back.said);
   }
 
   /* ------------------------------------------------------------------ */

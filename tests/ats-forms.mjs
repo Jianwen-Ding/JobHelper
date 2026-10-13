@@ -360,6 +360,7 @@ export const SYSTEMS = [
 
   {
     name: 'Taleo',
+    vouchedForBy: 'taleo.net',
     /*
      * A table, with the label in the cell before the field and no `for`. The
      * ids and names are opaque, as Taleo's really are — so the only thing that
@@ -463,6 +464,7 @@ export const SYSTEMS = [
 
   {
     name: 'JazzHR',
+    vouchedForBy: 'applytojob.com',
     html: `
       <label for="jz-fn">First Name *</label><input id="jz-fn" name="firstname" type="text">
       <label for="jz-ln">Last Name *</label><input id="jz-ln" name="lastname" type="text">
@@ -519,6 +521,7 @@ export const SYSTEMS = [
 
   {
     name: 'SAP SuccessFactors',
+    vouchedForBy: 'successfactors.com',
     html: `
       <label for="sf-fn">First Name</label><input id="sf-fn" name="firstName" type="text">
       <label for="sf-ln">Last Name</label><input id="sf-ln" name="lastName" type="text">
@@ -692,6 +695,7 @@ export const SYSTEMS = [
 
   {
     name: 'iCIMS',
+    vouchedForBy: 'icims.com',
     // The whole form is in an iframe, which is how iCIMS serves it.
     frame: `
       <label for="ic-fn">First Name</label><input id="ic-fn" name="icims_firstname" type="text">
@@ -819,6 +823,7 @@ export const SYSTEMS = [
      * emergency contact who is the person having the emergency.
      */
     name: 'A form that asks for references',
+    vouchedForBy: 'brassring.com',
     html: `
       <table><tbody>
         <tr><td><label for="rr-fn">First Name</label></td><td><input id="rr-fn" name="TEXT1" type="text"></td></tr>
@@ -906,6 +911,7 @@ export const SYSTEMS = [
 
   {
     name: 'BrassRing',
+    vouchedForBy: 'brassring.com',
     // Old-school: a table, and labels in the cell to the left.
     html: `
       <table>
@@ -981,6 +987,197 @@ const NOT_APPLICATIONS = {
     <button type="button">Post</button>`,
 };
 
+/*
+ * Applications, and not for a job.
+ *
+ * A bank's personal-loan form is an application form by every rule above: a
+ * legal first and last name beside a telephone number, and a button that says
+ * "Submit application". It is meant to be — those rules decide whether a frame
+ * may be given the profile, and that is not the question this asks. But the
+ * card took a recognised form as reason enough to read the page unasked, so
+ * the loan form, Social Security number box and all, was sent to be analysed,
+ * the card went up over it, and Submit filed "Bank — Personal loan application"
+ * in the tracker as applied. `looksLikeJobApplication` is the test the card
+ * asks now, and every system above has to pass it too: see the check beside
+ * "is recognised as an application form".
+ */
+const NOT_FOR_A_JOB = {
+  'a personal-loan application': `
+    <h1>Apply for a personal loan</h1><p>Requirements: you must be 18+. Benefits: low APR.</p>
+    <label for="fn">First name</label><input id="fn" name="first_name">
+    <label for="ln">Last name</label><input id="ln" name="last_name">
+    <label for="em">Email</label><input id="em" type="email" name="email">
+    <label for="ph">Phone</label><input id="ph" name="phone">
+    <label for="inc">Annual income</label><input id="inc" name="income">
+    <label for="emp">Employer</label><input id="emp" name="employer">
+    <label for="ssn">Social Security number</label><input id="ssn" name="ssn">
+    <button type="button">Submit application</button>`,
+  'a rental application': `
+    <h1>Rental application — 12 Elm Street, Apt 3</h1>
+    <label for="fn">First name</label><input id="fn" name="first_name">
+    <label for="ln">Last name</label><input id="ln" name="last_name">
+    <label for="em">Email</label><input id="em" type="email" name="email">
+    <label for="ph">Phone</label><input id="ph" type="tel" name="phone">
+    <label for="cur">Current address</label><input id="cur" name="current_address">
+    <label for="id">Photo ID</label><input id="id" type="file" name="photo_id">
+    <label for="pets">Tell us about any pets</label><textarea id="pets" name="pets"></textarea>
+    <button type="button">Start your application</button>`,
+  /*
+   * The loan form again, with what every bank's has besides: a link back to
+   * a saved application and an upload. "Resume" was looked for anywhere on
+   * the page whenever there was a file input, and as a prefix, so the verb in
+   * "Resume a saved application" passed for the noun, the pay stubs passed
+   * for a résumé, and the page was read unasked and sent away.
+   */
+  'a personal-loan application with "Resume a saved application" and an upload': `
+    <h1>Apply for a personal loan</h1>
+    <p>Requirements: you must be 18+. Benefits: low APR. <a href="/bank/resume">Resume a saved application</a></p>
+    <label for="fn">First name</label><input id="fn" name="first_name">
+    <label for="ln">Last name</label><input id="ln" name="last_name">
+    <label for="em">Email</label><input id="em" type="email" name="email">
+    <label for="ph">Phone</label><input id="ph" name="phone">
+    <label for="inc">Annual income</label><input id="inc" name="income">
+    <label for="ssn">Social Security number</label><input id="ssn" name="ssn">
+    <label for="ps">Upload your two most recent pay stubs</label><input id="ps" type="file" name="paystubs">
+    <button type="button">Submit application</button>`,
+  /*
+   * And with a long answer about the applicant's own job beside the bank's
+   * "Our team will contact you". A textarea anywhere and "our team" anywhere
+   * were enough to count as an employer asking about the role.
+   */
+  'a personal-loan application with a box about your job and "our team"': `
+    <h1>Apply for a personal loan</h1>
+    <label for="fn">First name</label><input id="fn" name="first_name">
+    <label for="ln">Last name</label><input id="ln" name="last_name">
+    <label for="em">Email</label><input id="em" type="email" name="email">
+    <label for="ph">Phone</label><input id="ph" name="phone">
+    <label for="emp">Tell us about your job at your current employer</label><textarea id="emp" name="emp"></textarea>
+    <p>Our team will contact you within two business days.</p>
+    <button type="button">Submit application</button>`,
+};
+
+/*
+ * And two more a bank's form can look like, beside the shapes below that
+ * read the words round a field: a link to resume a saved application in the
+ * same box as the upload, and the bank's "Our team will contact you" over a
+ * box for comments, which is not a question.
+ */
+NOT_FOR_A_JOB['a personal-loan application with "Resume your application" beside the upload'] = `
+    <h1>Apply for a personal loan</h1>
+    <label for="fn">First name</label><input id="fn" name="first_name">
+    <label for="ln">Last name</label><input id="ln" name="last_name">
+    <label for="em">Email</label><input id="em" type="email" name="email">
+    <label for="ph">Phone</label><input id="ph" name="phone">
+    <h3>Resume the application you started</h3>
+    <div class="field"><a href="/bank/resume">Resume your application</a>
+      <label for="ps">Upload file</label><input id="ps" type="file" name="paystubs"></div>
+    <button type="button">Submit application</button>`;
+NOT_FOR_A_JOB['a personal-loan application with "Our team will contact you" over a comments box'] = `
+    <h1>Apply for a personal loan</h1>
+    <label for="fn">First name</label><input id="fn" name="first_name">
+    <label for="ln">Last name</label><input id="ln" name="last_name">
+    <label for="em">Email</label><input id="em" type="email" name="email">
+    <label for="ph">Phone</label><input id="ph" name="phone">
+    <p>Our team will contact you within two business days.</p>
+    <label for="c">Comments</label><textarea id="c" name="comments"></textarea>
+    <button type="button">Submit application</button>`;
+
+/*
+ * Round 16. A pharmacy called "CVS" and a school's "Curriculum" were each
+ * read as a CV; a "Resume application" button and "Resume an existing
+ * application" beside an upload as a résumé asked for; and the bank's
+ * "Questions? Our team is available 24/7." over a comments box as a question
+ * about the job, because the piece had a "?" in one sentence and "our team"
+ * in the next. Measured in the hunt's `detect.mjs`.
+ */
+const LOAN_FIELDS = `
+    <h1>Apply for a personal loan</h1>
+    <label for="fn">First name</label><input id="fn" name="first_name">
+    <label for="ln">Last name</label><input id="ln" name="last_name">
+    <label for="em">Email</label><input id="em" type="email" name="email">
+    <label for="ph">Phone</label><input id="ph" name="phone">
+    <label for="ssn">Social Security number</label><input id="ssn" name="ssn">`;
+Object.assign(NOT_FOR_A_JOB, {
+  'a health enrolment with a pharmacy "(e.g. CVS)"': `${LOAN_FIELDS}
+    <label for="rx">Preferred pharmacy (e.g. CVS)</label><input id="rx" name="pharmacy">
+    <button type="button">Submit application</button>`,
+  'a loan form asking for a "CVS ExtraCare card number"': `${LOAN_FIELDS}
+    <label for="x">CVS ExtraCare card number</label><input id="x" name="x">
+    <button type="button">Submit application</button>`,
+  'a school enrolment with a "Curriculum" box': `${LOAN_FIELDS}
+    <label for="c">Curriculum</label><input id="c" name="curriculum">
+    <button type="button">Submit application</button>`,
+  'a loan form with a "Resume application" button beside the upload': `${LOAN_FIELDS}
+    <div class="f"><button type="button">Resume application</button>
+      <label for="ps">Upload file</label><input id="ps" type="file" name="paystubs"></div>
+    <button type="button">Submit application</button>`,
+  'a loan form with "Resume an existing application" above the upload': `${LOAN_FIELDS}
+    <p>Resume an existing application</p>
+    <label for="ps">Upload your pay stubs</label><input id="ps" type="file" name="paystubs">
+    <button type="button">Submit application</button>`,
+  'a loan form with "Questions? Our team is available 24/7." over a comments box': `${LOAN_FIELDS}
+    <p>Questions? Our team is available 24/7.</p>
+    <label for="c">Comments</label><textarea id="c" name="comments"></textarea>
+    <button type="button">Submit application</button>`,
+});
+
+/*
+ * Job applications whose only sign of an employer is said round a field
+ * rather than in its label.
+ *
+ * "Résumé" was read off the label of the field that asks for it, and with
+ * `\b` — which without the `u` flag finds no edge after an "é" — so
+ * "Résumé (optional)" asked for nothing. And the word is very often not in
+ * the label at all: a heading over an upload labelled "Attach", a span
+ * "Resume/CV" beside a button, Workday's "Resume/CV" over "Select files", a
+ * job question in the paragraph above a box labelled "Your answer". Every
+ * one of these was a job application before the round that read only the
+ * label, and none was after it. Measured in the hunt's `detect.mjs`.
+ */
+const AROUND = `
+    <h1>Senior Backend Engineer</h1><p>Acme Corp careers</p>
+    <label for="fn">First name</label><input id="fn" name="first_name">
+    <label for="ln">Last name</label><input id="ln" name="last_name">
+    <label for="em">Email</label><input id="em" type="email" name="email">
+    <label for="ph">Phone</label><input id="ph" name="phone">`;
+const FOR_A_JOB_BY_WHAT_IS_ROUND = {
+  'a heading "Resume" over an upload labelled "Attach"': `${AROUND}
+    <h3>Resume</h3><label for="f">Attach</label><input id="f" type="file" name="attachment">`,
+  'a heading "Resume *" over "Upload file"': `${AROUND}
+    <h3>Resume *</h3><label for="f">Upload file</label><input id="f" type="file" name="file">`,
+  'a heading "Your resume" over "Drop files here"': `${AROUND}
+    <h3>Your resume</h3><label for="f">Drop files here or browse</label><input id="f" type="file" name="files">`,
+  'a span "Resume/CV" beside a button "Attach"': `${AROUND}
+    <div class="field"><span class="lbl">Resume/CV</span><button type="button">Attach</button><input type="file" name="file" style="display:none"></div>`,
+  'Workday\'s "Resume/CV" over "Select files"': `<h3>Resume/CV</h3>${AROUND}
+    <div data-automation-id="attachments-FileUpload"><label for="wd">Select files</label><input id="wd" type="file" data-automation-id="file-upload-input-ref"></div>`,
+  '"Attach your CV" at the top, the upload labelled "Documents"': `<p>Attach your CV and any other documents.</p>${AROUND}
+    <label for="f">Documents</label><input id="f" type="file" name="documents">`,
+  'an upload labelled "Résumé (optional)"': `${AROUND}
+    <label for="f">Résumé (optional)</label><input id="f" type="file" name="f1">`,
+  'an upload labelled "Upload Resumé"': `${AROUND}
+    <label for="f">Upload Resumé</label><input id="f" type="file" name="f1">`,
+  'an upload labelled "Resume - application documents"': `${AROUND}
+    <label for="f">Resume - application documents</label><input id="f" type="file" name="f1">`,
+  // A dash or a colon between is the noun, never the verb (round 16).
+  'an upload labelled "Resume: application documents"': `${AROUND}
+    <label for="f">Resume: application documents</label><input id="f" type="file" name="f1">`,
+  'an upload labelled "Resume" named `application`': `${AROUND}
+    <label for="f">Resume</label><input id="f" type="file" name="application">`,
+  'an upload labelled "Curriculum vitae"': `${AROUND}
+    <label for="f">Curriculum vitae</label><input id="f" type="file" name="f1">`,
+  'an upload labelled "Currículum"': `${AROUND}
+    <label for="f">Currículum</label><input id="f" type="file" name="f1">`,
+  'an upload labelled "CV"': `${AROUND}
+    <label for="f">CV</label><input id="f" type="file" name="f1">`,
+  'a job question after another sentence, above "Your answer"': `${AROUND}
+    <p>Questions? Read the FAQ. Why do you want to join our team?</p><label for="q">Your answer</label><textarea id="q" name="q1"></textarea>`,
+  'an upload labelled "Lebenslauf hochladen"': `${AROUND}
+    <label for="f">Lebenslauf hochladen</label><input id="f" type="file" name="datei">`,
+  'a job question above a box labelled "Your answer"': `${AROUND}
+    <p>Why do you want to join our team?</p><label for="q">Your answer</label><textarea id="q" name="q1"></textarea>`,
+};
+
 const shell = (body) =>
   `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>${body}</form></body></html>`;
 
@@ -1018,6 +1215,12 @@ const CONSTRAINED = `
   <input id="li" type="url" name="linkedin">
   <button type="submit">Submit Application</button>`;
 
+/** The hosts the card counts as a hiring system's, as written in content.js. */
+const TRACKED = (() => {
+  const content = fs.readFileSync(path.join(root, 'src/content/content.js'), 'utf8');
+  return content.match(/const TRACKER_HOSTS = \[([\s\S]*?)\];/)?.[1] ?? '';
+})();
+
 async function main() {
   const source = fs.readFileSync(path.join(root, 'src/content/autofill.js'), 'utf8');
   /*
@@ -1040,7 +1243,15 @@ async function main() {
       res.end(shell(CONSTRAINED));
       return;
     }
-    const negative = url.startsWith('/not/') && NOT_APPLICATIONS[decodeURIComponent(url.slice(5))];
+    const negative =
+      url.startsWith('/not/') &&
+      (NOT_APPLICATIONS[decodeURIComponent(url.slice(5))] ?? NOT_FOR_A_JOB[decodeURIComponent(url.slice(5))]);
+    const roundIt = url.startsWith('/round/') && FOR_A_JOB_BY_WHAT_IS_ROUND[decodeURIComponent(url.slice(7))];
+    if (roundIt) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(shell(roundIt));
+      return;
+    }
     if (negative) {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(shell(negative));
@@ -1105,6 +1316,7 @@ async function main() {
             questions: m.findQuestions().map((q) => q.question),
             wantsLetter: m.wantsCoverLetter(),
             isApplication: m.looksLikeApplicationForm(),
+            isJobApplication: m.looksLikeJobApplication?.() ?? '(no such test)',
             // Which option of each radio group ended up chosen, and whether
             // anything ticked a checkbox it had no business ticking.
             chosen: Object.fromEntries(
@@ -1284,6 +1496,28 @@ async function main() {
        * system — so every one of them has to be recognised.
        */
       check(`${system.name}: is recognised as an application form`, out.isApplication === true);
+      /*
+       * And as one for a job, by what is on the form alone — served from
+       * 127.0.0.1, no tracker's host vouches for it. This is what lets the
+       * card read the page unasked, so a system that fails it is one the card
+       * only offers on through the chip. See `NOT_FOR_A_JOB`.
+       */
+      if (system.vouchedForBy) {
+        /*
+         * Except where the form is a name, an email and a telephone number
+         * and nothing else, which is the loan form's shape exactly: nothing on
+         * it says job, and nothing could. These are read for the host they are
+         * served from, which the card counts on its own — so the host has to
+         * stay on its list.
+         */
+        check(
+          `${system.name}: is read on its own host instead, ${system.vouchedForBy}`,
+          out.isJobApplication === false && TRACKED.includes(`'${system.vouchedForBy}'`),
+          String(out.isJobApplication),
+        );
+      } else {
+        check(`${system.name}: and as an application for a job`, out.isJobApplication === true, String(out.isJobApplication));
+      }
 
       for (const key of system.reportsUnfillable ?? []) {
         check(
@@ -1379,6 +1613,30 @@ async function main() {
         base,
       );
       check(`${what} is left alone`, verdict === false);
+      await page.close();
+    }
+
+    console.log('\nAn application, but not for a job');
+    for (const what of Object.keys(NOT_FOR_A_JOB)) {
+      const page = await browser.newPage();
+      await page.goto(`${base}/not/${encodeURIComponent(what)}`, { waitUntil: 'load' });
+      const verdict = await page.evaluate(async (b) => {
+        const m = await import(`${b}/autofill.js`);
+        return { form: m.looksLikeApplicationForm(), job: m.looksLikeJobApplication?.() ?? '(no such test)' };
+      }, base);
+      check(`${what} is not taken for a job application`, verdict.job === false, JSON.stringify(verdict));
+      await page.close();
+    }
+
+    console.log('\nA job application, said round the field');
+    for (const what of Object.keys(FOR_A_JOB_BY_WHAT_IS_ROUND)) {
+      const page = await browser.newPage();
+      await page.goto(`${base}/round/${encodeURIComponent(what)}`, { waitUntil: 'load' });
+      const verdict = await page.evaluate(async (b) => {
+        const m = await import(`${b}/autofill.js`);
+        return { form: m.looksLikeApplicationForm(), job: m.looksLikeJobApplication?.() ?? '(no such test)' };
+      }, base);
+      check(`${what} is taken for a job application`, verdict.form === true && verdict.job === true, JSON.stringify(verdict));
       await page.close();
     }
   } finally {

@@ -2771,6 +2771,27 @@ const WORKDAY_SIGN_IN = `<!doctype html><html><head><meta charset="utf-8"><title
 </form></div>
 </body></html>`;
 /*
+ * A page that asks for more than it shows. Its visible part asks only for a
+ * first name and an email; beside them, boxes a person cannot see, each
+ * hidden a different way — a screen off to the left, faded to nothing, under
+ * `aria-hidden`, under `inert`, `visibility: hidden`, cut to a pixel by a box
+ * that hides what spills out of it — and one plainly below the fold, which a
+ * person scrolls to and which is filled.
+ */
+const HIDDEN_ASKS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <label for="x-fn">First Name</label><input id="x-fn">
+  <label for="x-em">Email</label><input id="x-em">
+  <div style="position:absolute;left:-10000px;top:0"><label for="x-ph">Phone</label><input id="x-ph"></div>
+  <div style="opacity:0"><label for="x-ci">City</label><input id="x-ci"></div>
+  <div aria-hidden="true"><label for="x-li">LinkedIn</label><input id="x-li"></div>
+  <div inert><label for="x-st">Street Address</label><input id="x-st"></div>
+  <div style="visibility:hidden"><label for="x-zp">Zip code</label><input id="x-zp"></div>
+  <div style="height:1px;overflow:hidden"><label for="x-gpa">GPA</label><input id="x-gpa"></div>
+  <div style="margin-top:3000px"><label for="x-gh">GitHub</label><input id="x-gh"></div>
+</form>
+</body></html>`;
+/*
  * Workday's Social Network URLs, as NVIDIA's and Salesforce's My Experience
  * draw it: one text box named `linkedInAccount`, which Save and Continue
  * refuses with "Invalid LinkedIn URL" unless it holds the whole address —
@@ -6346,7 +6367,215 @@ ${ashbyYesNo('ask-visa', 'Do you need visa sponsorship?')}
 </div>
 ${POLICY_SCRIPT}</body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/greenhouse-react-education': GREENHOUSE_REACT_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE, '/acknowledgements': ACKNOWLEDGEMENTS, '/sponsorship-policies': SPONSORSHIP_POLICIES, '/sponsorship-policy-pressed': SPONSORSHIP_POLICY_PRESSED, '/sponsorship-policy-aria': SPONSORSHIP_POLICY_ARIA };
+/*
+ * Questions as the answer bank was sent them, measured in a real bank: 185 of
+ * 540 ended in "*", LinkedIn's yes/no questions went in read twice with the
+ * screen reader's "Required" after them, and a Workday legend of several
+ * paragraphs went in with the paragraphs run together. Each of these shapes
+ * is the markup that wrote one of those rows.
+ */
+const BANK_SHAPES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title>
+<style>.visually-hidden{position:absolute!important;clip:rect(1px,1px,1px,1px);width:1px;height:1px;overflow:hidden}</style></head><body>
+<form>
+  <!-- LinkedIn's Easy Apply, a yes/no asked as a fieldset. -->
+  <fieldset data-test-form-builder-radio-button-form-component="true">
+    <legend><span class="fb-dash-form-element__label"><span aria-hidden="true"><!---->Are you legally authorized to work in the country where this position is located?<!----></span><span class="visually-hidden"><!---->Are you legally authorized to work in the country where this position is located?<!----></span></span><span class="visually-hidden">Required</span></legend>
+    <div><input type="radio" id="li-auth-yes" name="li-auth" value="Yes"><label for="li-auth-yes">Yes</label></div>
+    <div><input type="radio" id="li-auth-no" name="li-auth" value="No"><label for="li-auth-no">No</label></div>
+  </fieldset>
+  <!-- Greenhouse's, with the required marker in the label. -->
+  <label for="gh-disc">Discipline*</label>
+  <select id="gh-disc"><option value="">Select...</option><option>Computer Science</option><option>Economics</option></select>
+</form>
+<!-- Workday's questionnaire, a legend of rich text in paragraphs. -->
+<div data-automation-id="formField-arb"><fieldset><legend><div id="rich-arb"><div data-automation-id="richText"><p>Click on the link below to review the Arbitration Agreement.</p><p><a href="#arb">Mutual Arbitration Agreement</a></p><p>To be considered for employment, all applicants must agree to the Mutual Arbitration Agreement.<abbr title="required">*</abbr></p></div></div></legend>
+  <div><div><div><button aria-haspopup="listbox" type="button" value="" aria-label=" Select One Required" name="arb" id="primaryQuestionnaire--arb">Select One</button><input type="text" value="" style="display:none"><span>▾</span></div></div><div></div></div>
+</fieldset></div>
+</body></html>`;
+
+/*
+ * The right to work and sponsorship asked the other way up, beside the plain
+ * questions that must still be answered. Each of the first six was answered
+ * with the plain question's answer — the opposite of the truth.
+ */
+const NEGATED_QUESTIONS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+  <label for="n-require">Do you NOT require visa sponsorship now or in the future?</label>
+  <select id="n-require"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <label for="n-confirm">I confirm I will not require sponsorship</label>
+  <select id="n-confirm"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <fieldset><legend>Are you currently NOT authorized to work in the United States?</legend>
+    <label><input type="radio" name="n-auth" value="yes"> Yes</label><label><input type="radio" name="n-auth" value="no"> No</label></fieldset>
+  <fieldset><legend>Is it true that you will never need sponsorship?</legend>
+    <label><input type="radio" name="n-never" value="yes"> Yes</label><label><input type="radio" name="n-never" value="no"> No</label></fieldset>
+  <label for="n-text">Do you not need sponsorship?</label><input id="n-text">
+  <label for="n-unauth">Are you unauthorized to work in the US?</label>
+  <select id="n-unauth"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+
+  <label for="p-future">Will you now or in the future require sponsorship?</label>
+  <select id="p-future"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <fieldset><legend>Are you legally authorized to work in the United States?</legend>
+    <label><input type="radio" name="p-auth" value="yes"> Yes</label><label><input type="radio" name="p-auth" value="no"> No</label></fieldset>
+  <label for="p-policy">Do you require visa sponsorship? Please note we do not sponsor visas for this role.</label>
+  <select id="p-policy"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <label for="p-without">Can you work for us without the need for visa sponsorship?</label>
+  <select id="p-without"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+</form></body></html>`;
+
+/*
+ * Statements shaped like an acknowledgement that are not one: a right given
+ * up, a promise about other employers, a consent, and facts about the person.
+ * Each was ticked or answered Yes. And two that are still only read and
+ * acknowledged, which still are.
+ */
+const NOT_ONLY_ACKNOWLEDGED = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+  <div><input type="checkbox" id="x-arbitration" required><label for="x-arbitration">I have read and agree to the Mutual Arbitration Agreement, including the waiver of my right to a jury trial and to bring class actions. *</label></div>
+  <div><input type="checkbox" id="x-compete" required><label for="x-compete">I acknowledge that I am not bound by any non-compete or non-solicitation agreement with a current or former employer. *</label></div>
+  <div><input type="checkbox" id="x-official" required><label for="x-official">I acknowledge that I am not a current or former government official and have no conflicts of interest. *</label></div>
+  <div><input type="checkbox" id="x-transfer" required><label for="x-transfer">I hereby acknowledge that I consent to the transfer of my personal data outside the European Economic Area. *</label></div>
+  <div><input type="checkbox" id="x-terminated" required><label for="x-terminated">I acknowledge that I have never been terminated or asked to resign from any employment. *</label></div>
+  <div><input type="checkbox" id="x-age" required><label for="x-age">I understand that I am at least 18 years of age. *</label></div>
+  <div><input type="checkbox" id="x-fact" required><label for="x-fact">I acknowledge that I will be able to start within two weeks of an offer. *</label></div>
+  <fieldset><legend>I acknowledge that I have not previously been employed by Acme or any of its subsidiaries.</legend>
+    <label><input type="radio" name="x-before" value="yes"> Yes</label><label><input type="radio" name="x-before" value="no"> No</label></fieldset>
+
+  <div><input type="checkbox" id="y-privacy" required><label for="y-privacy">I acknowledge I have read the privacy notice describing how my personal data is used. *</label></div>
+  <label for="y-read">I confirm that I have read the job description.</label>
+  <select id="y-read"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+</form></body></html>`;
+
+/*
+ * A name asked for as a signature without the word "sign", beside the name
+ * boxes that are only the name.
+ */
+const SIGNED_WITHOUT_THE_WORD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+  <label for="s-typing">By typing your full name below you certify that the information above is true</label><input id="s-typing">
+  <label for="s-entering">By entering your full name below, you confirm that all information provided is accurate and complete.</label><input id="s-entering">
+  <label for="s-certification">Applicant certification: type your full name</label><input id="s-certification">
+  <label for="s-acknowledging">Full name (acknowledging the statement above)</label><input id="s-acknowledging">
+  <label for="s-agree">Your name (I agree to the terms above)</label><input id="s-agree">
+  <label for="s-full">Full name *</label><input id="s-full">
+  <label for="s-legal">Legal name</label><input id="s-legal">
+  <label for="s-first">First name</label><input id="s-first">
+</form></body></html>`;
+
+/*
+ * Education dates whose words for the end come after a "from", and date
+ * shapes that want a day. Plus the other things nothing in the profile is.
+ */
+const EDUCATION_WORDING = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+<section><h3>Education</h3>
+  <label for="e-school">School</label><input id="e-school">
+  <label for="e-graduation">Date of graduation from this school</label><input id="e-graduation">
+  <label for="e-graduated">Year you graduated from university</label><input id="e-graduated">
+  <label for="e-start">Start date</label><input id="e-start">
+  <label for="e-end">End date</label><input id="e-end">
+</section>
+</form></body></html>`;
+
+const DAY_SHAPES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+  <label for="d-ddmmyyyy">Graduation date (DD/MM/YYYY)</label><input id="d-ddmmyyyy">
+  <label for="d-ddmmyy">Expected graduation (dd/mm/yy)</label><input id="d-ddmmyy">
+  <label for="d-mmddyyyy">Graduation date</label><input id="d-mmddyyyy" placeholder="MM/DD/YYYY">
+  <label for="d-mmyyyy">Graduation date (MM/YYYY)</label><input id="d-mmyyyy">
+  <label for="d-visa">Visa status</label><input id="d-visa">
+  <label for="d-visa-yes-no">Visa status</label>
+  <select id="d-visa-yes-no"><option value="">Select...</option><option>Yes</option><option>No</option></select>
+  <label for="d-sponsor-text">Will you require sponsorship? (Yes/No)</label><input id="d-sponsor-text">
+  <label for="d-contact">Name of your university's career services contact</label><input id="d-contact">
+  <label for="d-university">University</label><input id="d-university">
+</form></body></html>`;
+
+/*
+ * The two halves of a name in somebody else's frame: a newsletter box and a
+ * job-alerts box, and a survey with a Submit. And the shapes an application
+ * asks them in, which are still applications.
+ */
+const NEWSLETTER_NAMES = `<!doctype html><html><head><meta charset="utf-8"><title>Newsletter</title></head><body><form>
+<h3>Get our weekly newsletter</h3>
+<label for="fn">First name</label><input id="fn"><label for="ln">Last name</label><input id="ln">
+<label for="em">Email</label><input id="em" type="email"><label for="co">Company</label><input id="co">
+<button>Subscribe</button></form></body></html>`;
+const ALERTS_NAMES = `<!doctype html><html><head><meta charset="utf-8"><title>Feedback</title></head><body>
+<form onsubmit="event.preventDefault()"><p>Get job alerts from Acme</p>
+<label>First name <input name="fn"></label><label>Last name <input name="ln"></label><label>Email <input name="em"></label>
+<button type="submit">Submit</button></form></body></html>`;
+const SURVEY_FRAME = `<!doctype html><html><head><meta charset="utf-8"><title>Survey</title></head><body>
+<form onsubmit="event.preventDefault()"><p>How was your visit today?</p>
+<label>Rating <select name="r"><option>5</option><option>4</option></select></label>
+<label>Comments <textarea name="c"></textarea></label><label>Email (optional) <input name="em"></label>
+<button type="submit">Submit</button></form></body></html>`;
+const NAMES_AND_PHONE = `<!doctype html><html><head><meta charset="utf-8"><title>Candidate</title></head><body><form>
+<label for="fn">First name</label><input id="fn"><label for="ln">Last name</label><input id="ln">
+<label for="em">Email</label><input id="em" type="email"><label for="ph">Phone</label><input id="ph" type="tel">
+<button>Next</button></form></body></html>`;
+const NAMES_AND_FILE = `<!doctype html><html><head><meta charset="utf-8"><title>Candidate</title></head><body><form>
+<label for="fn">First name</label><input id="fn"><label for="ln">Last name</label><input id="ln">
+<label for="em">Email</label><input id="em" type="email"><label for="up">Attachment</label><input id="up" type="file">
+<button>Next</button></form></body></html>`;
+
+/*
+ * The names on a form in another language. A German form asks "Vorname" and
+ * then "Name", and the second box is the surname: it was given the whole
+ * name, and nothing read "Vorname" at all. A French one asks "Prénom" and
+ * "Nom" the same way.
+ */
+const GERMAN_NAMES = `<!doctype html><html><head><meta charset="utf-8"><title>Bewerbung</title></head><body><form>
+<label for="de-first">Vorname *</label><input id="de-first">
+<label for="de-last">Name *</label><input id="de-last">
+<label for="de-mail">E-Mail</label><input id="de-mail">
+</form></body></html>`;
+const FRENCH_NAMES = `<!doctype html><html><head><meta charset="utf-8"><title>Candidature</title></head><body><form>
+<label for="fr-first">Prénom</label><input id="fr-first">
+<label for="fr-last">Nom</label><input id="fr-last">
+</form></body></html>`;
+const OTHER_NAMES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="f-de2"><label for="de2-first">Vorname</label><input id="de2-first"><label for="de2-last">Nachname</label><input id="de2-last"></form>
+<form id="f-de3"><label for="de3-last">Familienname</label><input id="de3-last"></form>
+<form id="f-es"><label for="es-first">Nombre</label><input id="es-first"><label for="es-last">Apellidos</label><input id="es-last"></form>
+<form id="f-es2"><label for="es-full">Nombre y apellidos</label><input id="es-full"><label for="es-co">Nombre de la empresa</label><input id="es-co"></form>
+<form id="f-nl"><label for="nl-first">Voornaam</label><input id="nl-first"><label for="nl-last">Achternaam</label><input id="nl-last"></form>
+<form id="f-it"><label for="it-first">Nome</label><input id="it-first"><label for="it-last">Cognome</label><input id="it-last"></form>
+<form id="f-fr2"><label for="fr2-last">Nom de famille</label><input id="fr2-last"></form>
+</body></html>`;
+
+/*
+ * What the markup says a box is, in the words the browser's own autofill
+ * reads. Every box here is labelled in a way no pattern reads, so only the
+ * `autocomplete` token or the `type` can say what it is — and one where the
+ * label says more than the token, which the label must win.
+ */
+const STANDARD_HINTS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+<label for="h-given">Rufname</label><input id="h-given" autocomplete="given-name">
+<label for="h-family">Name</label><input id="h-family" autocomplete="family-name">
+<label for="h-mail">Kontakt</label><input id="h-mail" type="email">
+<label for="h-tel">Erreichbar unter</label><input id="h-tel" type="tel">
+<label for="h-tel-national">Rückruf</label><input id="h-tel-national" autocomplete="section-a tel-national">
+<label for="h-land">Land</label><input id="h-land" autocomplete="country-name">
+<label for="h-ort">Ort</label><input id="h-ort" autocomplete="address-level2">
+<label for="h-plz">PLZ</label><input id="h-plz" autocomplete="postal-code">
+<label for="h-street">Straße</label><input id="h-street" autocomplete="address-line1">
+<label for="h-preferred">Preferred first name</label><input id="h-preferred" autocomplete="given-name">
+<label for="h-legal">Legal name</label><input id="h-legal" autocomplete="family-name">
+</form></body></html>`;
+
+/*
+ * Date shapes in the letters other languages write them in, and with the
+ * separators Europe uses. "TT.MM.JJJJ" and "JJ/MM/AAAA" want a day; the rest
+ * want the month and the year.
+ */
+const LOCALIZED_DATES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+<label for="ld-dots">Graduation date</label><input id="ld-dots" placeholder="MM.YYYY">
+<label for="ld-dash">Graduation date</label><input id="ld-dash" placeholder="MM-YYYY">
+<label for="ld-slash">Graduation date</label><input id="ld-slash" placeholder="MM/YYYY">
+<label for="ld-yfirst">Graduation date</label><input id="ld-yfirst" placeholder="YYYY/MM">
+<label for="ld-ydots">Graduation date</label><input id="ld-ydots" placeholder="YYYY.MM">
+<label for="ld-german">Graduation date</label><input id="ld-german" placeholder="MM.JJJJ">
+<label for="ld-french">Graduation date</label><input id="ld-french" placeholder="MM/AAAA">
+<label for="ld-tt">Graduation date</label><input id="ld-tt" placeholder="TT.MM.JJJJ">
+<label for="ld-jj">Graduation date</label><input id="ld-jj" placeholder="JJ/MM/AAAA">
+</form></body></html>`;
+
+const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/greenhouse-react-education': GREENHOUSE_REACT_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/hidden-asks': HIDDEN_ASKS, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE, '/acknowledgements': ACKNOWLEDGEMENTS, '/sponsorship-policies': SPONSORSHIP_POLICIES, '/sponsorship-policy-pressed': SPONSORSHIP_POLICY_PRESSED, '/sponsorship-policy-aria': SPONSORSHIP_POLICY_ARIA, '/bank-shapes': BANK_SHAPES, '/negated-questions': NEGATED_QUESTIONS, '/not-only-acknowledged': NOT_ONLY_ACKNOWLEDGED, '/signed-without-the-word': SIGNED_WITHOUT_THE_WORD, '/education-wording': EDUCATION_WORDING, '/day-shapes': DAY_SHAPES, '/newsletter-names': NEWSLETTER_NAMES, '/alerts-names': ALERTS_NAMES, '/survey-frame': SURVEY_FRAME, '/names-and-phone': NAMES_AND_PHONE, '/names-and-file': NAMES_AND_FILE, '/german-names': GERMAN_NAMES, '/french-names': FRENCH_NAMES, '/other-names': OTHER_NAMES, '/standard-hints': STANDARD_HINTS, '/localized-dates': LOCALIZED_DATES };
 
 const PROFILE = {
   first_name: 'Morgan',
@@ -10057,6 +10286,31 @@ async function main() {
       JSON.stringify(signIn),
     );
 
+    const asks = await page.goto(`${base}/hidden-asks`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(profile);
+        return {
+          values: Object.fromEntries([...document.querySelectorAll('input')].map((i) => [i.id, i.value])),
+          filled: report.filled.map((f) => f.key),
+        };
+      }, { b: base, profile: { ...PROFILE, address_street: '1 Main St', address_zip: '02110', gpa: '3.9' } }),
+    );
+    group('Boxes the page hides from the person');
+    check('the visible First Name and Email are filled', asks.values['x-fn'] === 'Morgan' && asks.values['x-em'] === 'morgan.testwell@example.com', JSON.stringify(asks));
+    check('one below the fold is filled too: the page scrolls there', asks.values['x-gh'] === 'github.com/x', JSON.stringify(asks.values));
+    check('one a screen off to the left is left empty', asks.values['x-ph'] === '', asks.values['x-ph']);
+    check('one faded to opacity 0 is left empty', asks.values['x-ci'] === '', asks.values['x-ci']);
+    check('one inside aria-hidden is left empty', asks.values['x-li'] === '', asks.values['x-li']);
+    check('one inside inert is left empty', asks.values['x-st'] === '', asks.values['x-st']);
+    check('one with visibility: hidden is left empty', asks.values['x-zp'] === '', asks.values['x-zp']);
+    check('one cut to a pixel by the box around it is left empty', asks.values['x-gpa'] === '', asks.values['x-gpa']);
+    check(
+      'and none of them is reported as filled',
+      !['phone', 'address_city', 'linkedin', 'address_street', 'address_zip', 'gpa'].some((k) => asks.filled.includes(k)),
+      JSON.stringify(asks.filled),
+    );
+
     const social = await page.goto(`${base}/workday-social`, { waitUntil: 'domcontentloaded' }).then(() =>
       page.evaluate(async ({ b }) => {
         const m = await import(`${b}/autofill.js`);
@@ -12299,6 +12553,268 @@ async function main() {
         leftFor(policyAria, 'I understand that we are unable to provide visa sponsorship now or in the future.'),
       JSON.stringify({ policies: policies.skipped, pressed: policyPressed.skipped, aria: policyAria.skipped }),
     );
+    /*
+     * What goes into the answer bank: the question as a person reads it.
+     * Not the required marker, not a label read twice, not paragraphs run
+     * together — each of which made the same question a second row.
+     */
+    const banked = await page.goto(`${base}/bank-shapes`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const asked = m.choiceQuestions();
+        const said = [];
+        const stop = m.watchChoices((x) => said.push(x));
+        document.getElementById('li-auth-yes').click();
+        const select = document.getElementById('gh-disc');
+        select.value = 'Computer Science';
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 50));
+        stop();
+        return { asked, said: said.map((x) => ({ question: x.question, answer: x.answer })) };
+      }, { b: base }),
+    );
+    group('Questions as the answer bank reads them');
+    /*
+     * The marker is the server's to drop (`tidyQuestion` in ResumeM-M), on the
+     * way in and when matching. Here the question is kept whole: the refusals
+     * that decide what is pressed and what is remembered read all of it.
+     */
+    const tidy = (q) => String(q).replace(/\s*(?:\*|\bRequired)\s*$/i, '').trim();
+    const authorized = 'Are you legally authorized to work in the country where this position is located?';
+    const arbitration =
+      'Click on the link below to review the Arbitration Agreement. Mutual Arbitration Agreement To be considered for employment, all applicants must agree to the Mutual Arbitration Agreement.';
+    check(
+      "LinkedIn's yes/no is asked once, without the screen reader's copy, and a pick in it kept under the same words",
+      banked.asked.some((q) => tidy(q) === authorized) && banked.said.some((x) => tidy(x.question) === authorized && x.answer === 'Yes'),
+      JSON.stringify(banked),
+    );
+    check(
+      'a label marked "Discipline*" is asked and kept as that one label',
+      banked.asked.some((q) => tidy(q) === 'Discipline') && banked.said.some((x) => tidy(x.question) === 'Discipline' && x.answer === 'Computer Science'),
+      JSON.stringify(banked),
+    );
+    check(
+      "Workday's legend of paragraphs is read with a space between them",
+      banked.asked.some((q) => tidy(q) === arbitration),
+      JSON.stringify(banked.asked),
+    );
+    check('nothing asked is read twice', !banked.asked.some((q) => /\?Are you|(\b\w{3,}\b)\1/.test(q)), JSON.stringify(banked.asked));
+
+    /* -------- The right to work and sponsorship, asked in the negative -------- */
+    const valuesOf = (where, fields, ids) =>
+      page.goto(`${base}${where}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, fields, ids }) => {
+          const m = await import(`${b}/autofill.js`);
+          const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 300 });
+          const valueOf = (id) => {
+            const el = document.getElementById(id);
+            if (el) return el.type === 'checkbox' ? el.checked : el.value;
+            return document.querySelector(`input[name="${id}"]:checked`)?.value ?? null;
+          };
+          return {
+            values: Object.fromEntries(ids.map((id) => [id, valueOf(id)])),
+            acknowledged: report.filled.filter((f) => f.acknowledged).map((f) => f.question),
+            filled: report.filled.map((f) => f.key),
+            skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`),
+          };
+        }, { b: base, fields, ids }),
+      );
+    const negated = await valuesOf('/negated-questions', PROFILE, [
+      'n-require', 'n-confirm', 'n-auth', 'n-never', 'n-text', 'n-unauth', 'p-future', 'p-auth', 'p-policy', 'p-without',
+    ]);
+    group('The right to work and sponsorship, asked in the negative');
+    check(
+      '"Do you NOT require…", "I confirm I will not require…", "Are you currently NOT authorized…", "…you will never need…", "Do you not need…" and "Are you unauthorized…" are none of them answered',
+      ['n-require', 'n-confirm', 'n-text', 'n-unauth'].every((id) => negated.values[id] === '') &&
+        negated.values['n-auth'] === null && negated.values['n-never'] === null,
+      JSON.stringify(negated.values),
+    );
+    check(
+      'and each is handed back, named as asked in the negative',
+      negated.skipped.filter((x) => x.endsWith('this one asks it in the negative')).length === 6,
+      JSON.stringify(negated.skipped),
+    );
+    check(
+      'while the plain questions are answered as before — "Will you now or in the future require sponsorship?", "Are you legally authorized…?", and one beside the employer\'s "we do not sponsor"',
+      negated.values['p-future'] === 'No' && negated.values['p-auth'] === 'yes' && negated.values['p-policy'] === 'No',
+      JSON.stringify(negated.values),
+    );
+    check(
+      '"…without the need for visa sponsorship?" is no negative question — it is still the two at once it always was',
+      negated.values['p-without'] === '' && negated.skipped.includes('work_authorization: this one asks two things at once'),
+      JSON.stringify(negated.skipped),
+    );
+
+    /* ------- Shaped like an acknowledgement, and a declaration instead ------- */
+    const asserted = await valuesOf('/not-only-acknowledged', { full_name: 'Morgan Testwell' }, [
+      'x-arbitration', 'x-compete', 'x-official', 'x-transfer', 'x-terminated', 'x-age', 'x-fact', 'x-before', 'y-privacy', 'y-read',
+    ]);
+    group('Statements shaped like an acknowledgement that are not one');
+    check(
+      'an arbitration agreement waiving a jury, a non-compete, "not a government official", a consent to send data abroad, "never been terminated" and "at least 18" are never ticked',
+      ['x-arbitration', 'x-compete', 'x-official', 'x-transfer', 'x-terminated', 'x-age'].every((id) => asserted.values[id] === false),
+      JSON.stringify(asserted.values),
+    );
+    check(
+      'nor any statement of what the person is or will do, nor "I have not previously been employed by Acme" as a Yes',
+      asserted.values['x-fact'] === false && asserted.values['x-before'] === null,
+      JSON.stringify(asserted.values),
+    );
+    check(
+      'while "I acknowledge I have read the privacy notice…" is still ticked and "I confirm that I have read the job description" still Yes',
+      asserted.values['y-privacy'] === true && asserted.values['y-read'] === 'Yes' && asserted.acknowledged.length === 2,
+      JSON.stringify(asserted),
+    );
+
+    /* ------------------- A signature without the word ------------------- */
+    const signed = await valuesOf('/signed-without-the-word', PROFILE, [
+      's-typing', 's-entering', 's-certification', 's-acknowledging', 's-agree', 's-full', 's-legal', 's-first',
+    ]);
+    group('A name asked for as a signature, without the word');
+    check(
+      '"By typing your full name below you certify…", "By entering your full name below…", "Applicant certification: type your full name", "Full name (acknowledging…)" and "Your name (I agree…)" are left for the person',
+      ['s-typing', 's-entering', 's-certification', 's-acknowledging', 's-agree'].every((id) => signed.values[id] === ''),
+      JSON.stringify(signed.values),
+    );
+    check(
+      'while "Full name", "Legal name" and "First name" are still filled',
+      signed.values['s-full'] === 'Morgan Testwell' && signed.values['s-legal'] === 'Morgan Testwell' && signed.values['s-first'] === 'Morgan',
+      JSON.stringify(signed.values),
+    );
+
+    /* ------------- Education dates, and shapes with a day in them ------------- */
+    const eduWording = await valuesOf(
+      '/education-wording',
+      {
+        school: 'Northeastern University',
+        graduation_date: 'May 2027',
+        graduation_year: '2027',
+        graduation_month: 'May',
+        education_start_date: 'August 2023',
+        education_start_year: '2023',
+        education_start_month: 'August',
+      },
+      ['e-school', 'e-graduation', 'e-graduated', 'e-start', 'e-end'],
+    );
+    group('Education dates and the shapes they are asked in');
+    check(
+      '"Date of graduation from this school" is the graduation, not the start, for all its "from"; so is "Year you graduated from university"',
+      eduWording.values['e-graduation'] === 'May 2027' && eduWording.values['e-graduated'] === '2027',
+      JSON.stringify(eduWording.values),
+    );
+    check(
+      'and "Start date" and "End date" are as they were',
+      eduWording.values['e-start'] === 'August 2023' && eduWording.values['e-end'] === 'May 2027',
+      JSON.stringify(eduWording.values),
+    );
+    const dayShapes = await valuesOf(
+      '/day-shapes',
+      { ...PROFILE, school: 'Northeastern University', graduation_date: 'May 2027' },
+      ['d-ddmmyyyy', 'd-ddmmyy', 'd-mmddyyyy', 'd-mmyyyy', 'd-visa', 'd-visa-yes-no', 'd-sponsor-text', 'd-contact', 'd-university'],
+    );
+    check(
+      'a graduation asked as DD/MM/YYYY, dd/mm/yy or MM/DD/YYYY is left for the person and said so, where MM/YYYY is still filled',
+      dayShapes.values['d-ddmmyyyy'] === '' && dayShapes.values['d-ddmmyy'] === '' && dayShapes.values['d-mmddyyyy'] === '' &&
+        dayShapes.values['d-mmyyyy'] === '05/2027' &&
+        dayShapes.skipped.filter((x) => x === 'graduation_date: the field would not accept it in that form').length === 3,
+      JSON.stringify(dayShapes),
+    );
+    check(
+      'a "Visa status" box is not typed "No", where a Yes/No list asking it and a box saying "sponsorship" still are',
+      dayShapes.values['d-visa'] === '' && dayShapes.values['d-visa-yes-no'] === 'No' && dayShapes.values['d-sponsor-text'] === 'No',
+      JSON.stringify(dayShapes.values),
+    );
+    check(
+      '"Name of your university\'s career services contact" is not the university, where "University" is',
+      dayShapes.values['d-contact'] === '' && dayShapes.values['d-university'] === 'Northeastern University',
+      JSON.stringify(dayShapes.values),
+    );
+
+    /* ------- A first and last name in somebody else's frame ------- */
+    const recognised = {};
+    for (const where of ['/newsletter-names', '/alerts-names', '/survey-frame', '/names-and-phone', '/names-and-file']) {
+      recognised[where] = await page.goto(`${base}${where}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b }) => {
+          const m = await import(`${b}/autofill.js`);
+          return { form: m.looksLikeApplicationForm(), fill: m.mayFillFrame(), send: m.maySendFromFrame() };
+        }, { b: base }),
+      );
+    }
+    group('A first and last name are not an application on their own');
+    check(
+      'a newsletter box and a job-alerts box asking First name, Last name and Email are not an application, so a frame of either is neither filled nor heard sending',
+      ['/newsletter-names', '/alerts-names'].every((w) => !recognised[w].form && !recognised[w].fill && !recognised[w].send),
+      JSON.stringify(recognised),
+    );
+    check(
+      'nor is a survey frame whose Submit would otherwise have marked the application sent',
+      !recognised['/survey-frame'].send,
+      JSON.stringify(recognised['/survey-frame']),
+    );
+    check(
+      'while the two halves of a name beside a telephone number or a file are still an application',
+      recognised['/names-and-phone'].form && recognised['/names-and-file'].form && recognised['/names-and-file'].send,
+      JSON.stringify(recognised),
+    );
+
+    /* ------- Names, hints and date shapes in other languages ------- */
+    const valuesAt = (where, ids, profile = PROFILE) =>
+      page.goto(`${base}${where}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, ids, profile }) => {
+          const m = await import(`${b}/autofill.js`);
+          m.fillForm(profile);
+          return Object.fromEntries(ids.map((id) => [id, document.getElementById(id).value]));
+        }, { b: base, ids, profile }),
+      );
+    group('A form in German, French, Spanish, Dutch or Italian');
+    const german = await valuesAt('/german-names', ['de-first', 'de-last']);
+    check('"Vorname" is the first name', german['de-first'] === 'Morgan', JSON.stringify(german));
+    check('and the bare "Name" beside it is the surname, not the whole name', german['de-last'] === 'Testwell', JSON.stringify(german));
+    const french = await valuesAt('/french-names', ['fr-first', 'fr-last']);
+    check('"Prénom" and "Nom" are the first name and the surname', french['fr-first'] === 'Morgan' && french['fr-last'] === 'Testwell', JSON.stringify(french));
+    const others = await valuesAt('/other-names', [
+      'de2-first', 'de2-last', 'de3-last', 'es-first', 'es-last', 'es-full', 'es-co', 'nl-first', 'nl-last', 'it-first', 'it-last', 'fr2-last',
+    ]);
+    check(
+      'each language\u2019s first and last name go to their own boxes',
+      others['de2-first'] === 'Morgan' && others['de2-last'] === 'Testwell' && others['de3-last'] === 'Testwell' &&
+        others['es-first'] === 'Morgan' && others['es-last'] === 'Testwell' &&
+        others['nl-first'] === 'Morgan' && others['nl-last'] === 'Testwell' &&
+        others['it-first'] === 'Morgan' && others['it-last'] === 'Testwell' && others['fr2-last'] === 'Testwell',
+      JSON.stringify(others),
+    );
+    check('both halves asked in one box are the whole name', others['es-full'] === 'Morgan Testwell', JSON.stringify(others));
+    check('and "Nombre de la empresa" is a company, not a first name', others['es-co'] === '', JSON.stringify(others));
+
+    group('What the markup says a box is');
+    const hinted = await valuesAt('/standard-hints', [
+      'h-given', 'h-family', 'h-mail', 'h-tel', 'h-tel-national', 'h-land', 'h-ort', 'h-plz', 'h-street', 'h-preferred', 'h-legal',
+    ], { ...PROFILE, preferred_first_name: 'Jay' });
+    check(
+      'given-name, family-name, email and tel are read from the markup',
+      hinted['h-given'] === 'Morgan' && hinted['h-family'] === 'Testwell' && hinted['h-mail'] === PROFILE.email &&
+        hinted['h-tel'] === PROFILE.phone && hinted['h-tel-national'] === PROFILE.phone,
+      JSON.stringify(hinted),
+    );
+    check('and the country and the city', hinted['h-land'] === 'United States' && hinted['h-ort'] === 'Boston', JSON.stringify(hinted));
+    check('a postal code and a street, which the profile does not hold, are left', hinted['h-plz'] === '' && hinted['h-street'] === '', JSON.stringify(hinted));
+    check('a label that says more than the token wins over it', hinted['h-preferred'] === 'Jay', JSON.stringify(hinted));
+    check('and a token naming one half of a "legal name" says which half', hinted['h-legal'] === 'Testwell', JSON.stringify(hinted));
+
+    group('Date shapes in other languages and separators');
+    const dates = await valuesAt(
+      '/localized-dates',
+      ['ld-dots', 'ld-dash', 'ld-slash', 'ld-yfirst', 'ld-ydots', 'ld-german', 'ld-french', 'ld-tt', 'ld-jj'],
+      { ...PROFILE, graduation_date: 'May 2026' },
+    );
+    check(
+      'MM.YYYY, MM-YYYY and MM/YYYY each get their own separator',
+      dates['ld-dots'] === '05.2026' && dates['ld-dash'] === '05-2026' && dates['ld-slash'] === '05/2026',
+      JSON.stringify(dates),
+    );
+    check('the year first, either way', dates['ld-yfirst'] === '2026/05' && dates['ld-ydots'] === '2026.05', JSON.stringify(dates));
+    check('MM.JJJJ and MM/AAAA are the same shape', dates['ld-german'] === '05.2026' && dates['ld-french'] === '05/2026', JSON.stringify(dates));
+    check('TT.MM.JJJJ and JJ/MM/AAAA want a day, so they are left', dates['ld-tt'] === '' && dates['ld-jj'] === '', JSON.stringify(dates));
   } finally {
     await browser.close();
     server.close();

@@ -1,3 +1,5 @@
+import { imageKind, refused, screenshotCount } from '../shared/bug-reports.js';
+
 const $ = (id) => document.getElementById(id);
 const send = async (type, payload) => {
   const response = await chrome.runtime.sendMessage({ type, payload });
@@ -27,13 +29,17 @@ function addImages(files) {
     for (const file of files) {
       if (busy) return;
       if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw new Error('Choose PNG, JPEG or WebP images.');
+      // By what the bytes are, not what the name says: ResumeM-M checks the
+      // bytes, and a JPEG named .png was refused there after it was saved.
+      const kind = imageKind(new Uint8Array(await file.slice(0, 12).arrayBuffer()));
+      if (!kind) throw new Error(`${file.name || 'That file'} is not a PNG, JPEG or WebP image.`);
       if (screenshots.length >= 3 || screenshots.reduce((sum, image) => sum + image.size, 0) + file.size > 4 * 1024 * 1024) {
         throw new Error('Use up to three screenshots totaling at most 4 MB.');
       }
       const data = await new Promise((resolve, reject) => {
         const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = () => reject(new Error('Could not read that image.'));
         reader.readAsDataURL(file);
-      });
+      }).then((url) => String(url).replace(/^data:[^;,]*;base64,/, `data:image/${kind};base64,`));
       screenshots.push({ data, size: file.size }); previews();
     }
     status('Screenshot added.');
@@ -52,19 +58,45 @@ async function inbox() {
   for (const report of reports) {
     const row = document.createElement('article'); row.className = 'report';
     const info = document.createElement('p'); info.className = 'hint';
-    info.textContent = `${new Date(report.createdAt).toLocaleString()} · JobHelper ${report.version} · ${report.screenshots.length} screenshot(s) · ${report.id}`;
+    // A report in the inbox is kept here without its screenshots (they are
+    // in the inbox), so the count is the one it was saved with, said as such.
+    const count = screenshotCount(report);
+    const shots = count && !report.screenshots.length ? `${count} screenshot(s), in the file inbox` : `${count} screenshot(s)`;
+    info.textContent = `${new Date(report.createdAt).toLocaleString()} · JobHelper ${report.version} · ${shots} · ${report.id}`;
     const notes = document.createElement('p'); notes.textContent = report.text;
     const place = document.createElement('p'); place.className = 'hint';
-    place.textContent = report.receipt ? `File inbox: ${report.receipt.directory}` : `Saved in this browser; waiting for the file inbox. ${report.syncError ?? ''}`;
+    const turnedDown = refused(report);
+    place.textContent = report.receipt ? `File inbox: ${report.receipt.directory}`
+      : turnedDown ? `Saved in this browser only. ResumeM-M refused it (${report.syncStatus}): ${report.syncError ?? ''} Retrying will not change that.`
+      : `Saved in this browser; waiting for the file inbox. ${report.syncError ?? ''}`;
     row.append(info, notes, place);
     if (!report.receipt) {
       const retry = document.createElement('button'); retry.textContent = 'Retry copying to inbox';
+      /*
+       * Delete waits while a retry is out. Deleting during one was answered
+       * "Report deleted", and then the retry finished and wrote the report
+       * back. bug-reports.js no longer writes back a deleted report, but the
+       * row should not offer both at once either.
+       */
       retry.onclick = async () => {
-        retry.disabled = true;
+        retry.disabled = true; discard.disabled = true;
         try { await send('syncBugReport', { id: report.id }); await inbox(); }
-        catch (error) { status(error.message, true); retry.disabled = false; }
+        catch (error) { status(error.message, true); retry.disabled = false; discard.disabled = false; }
       };
-      row.append(retry);
+      /*
+       * And a way to let go of it. A report the inbox never took could not be
+       * cleared, and a few of them fill the browser's storage for reports.
+       * Asked first, because this is the only copy there is.
+       */
+      const discard = document.createElement('button'); discard.textContent = 'Delete from browser';
+      discard.title = 'This report was never copied to the file inbox. Deleting it removes the only copy.';
+      discard.onclick = async () => {
+        if (!confirm('This report was never copied to the file inbox, so this is its only copy. Delete it anyway?')) return;
+        discard.disabled = true; retry.disabled = true;
+        try { await send('clearBugReport', { id: report.id, discard: true }); await inbox(); status('Report deleted from this browser.'); }
+        catch (error) { status(error.message, true); discard.disabled = false; retry.disabled = false; }
+      };
+      row.append(retry, discard);
     } else {
       const clear = document.createElement('button'); clear.textContent = 'Clear browser copy';
       clear.title = 'Free browser storage. The report and screenshots stay in the file inbox.';

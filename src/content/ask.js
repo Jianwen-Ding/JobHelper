@@ -36,8 +36,33 @@
 
 const HOST_ID = 'jobhelper-ask-host';
 
+/*
+ * Closed to the page, and deaf to presses the page makes up — the same rule as
+ * the card, for the same reason; see the note above `HARNESS` in card.js. A
+ * page that could `.click()` "Yes" would be choosing, for the person, to have
+ * itself read and sent to the store.
+ */
+const HARNESS = (() => {
+  try {
+    return !globalThis.chrome?.runtime?.id && globalThis.__JOBHELPER_HARNESS__ === true;
+  } catch {
+    return false;
+  }
+})();
+const OPEN_FOR_TESTS =
+  HARNESS ||
+  (await (async () => {
+    try {
+      const got = await globalThis.chrome?.storage?.local?.get?.('jobhelperTestOpenShadow');
+      return got?.jobhelperTestOpenShadow === true;
+    } catch {
+      return false;
+    }
+  })());
+
 const STYLE = `
-:host { all: initial; }
+/* Left to right whatever the page is; see the same rule in card.js. */
+:host { all: initial; direction: ltr; unicode-bidi: isolate; }
 * { box-sizing: border-box; }
 
 .ask {
@@ -117,11 +142,27 @@ export function createAsk({ site, onYes, onNo, onLater }) {
 
   const host = document.createElement('div');
   host.id = HOST_ID;
-  const root = host.attachShadow({ mode: 'open' });
+  const root = host.attachShadow({ mode: OPEN_FOR_TESTS ? 'open' : 'closed' });
+  if (!HARNESS) {
+    for (const type of ['click', 'dblclick', 'auxclick', 'keydown', 'keypress', 'keyup', 'submit']) {
+      root.addEventListener(
+        type,
+        (event) => {
+          if (event.isTrusted) return;
+          event.stopImmediatePropagation();
+          if (event.cancelable) event.preventDefault();
+        },
+        true,
+      );
+    }
+  }
   root.append(Object.assign(document.createElement('style'), { textContent: STYLE }));
 
   const chip = document.createElement('div');
   chip.className = 'ask';
+  // Named, so a screen reader says whose question "Job posting?" is.
+  chip.setAttribute('role', 'group');
+  chip.setAttribute('aria-label', 'JobHelper');
   root.append(chip);
 
   const answer = (fn) => () => {
@@ -158,6 +199,27 @@ export function createAsk({ site, onYes, onNo, onLater }) {
   later.setAttribute('aria-label', 'Not now');
   later.onclick = answer(onLater);
   chip.append(later);
+
+  /*
+   * Escape is "not now". It is the key everybody presses to get something
+   * off the screen, and it did nothing here — so the only keyboard way to
+   * dismiss the chip was to Tab to a button marked "×". Not "No", which
+   * mutes the whole site and outlives the page.
+   *
+   * But not an Escape that cancels a word an input method is composing:
+   * that Escape is the input method's, and the chip went away under it.
+   *
+   * One the page has called `preventDefault` on is still the chip's. That
+   * was refused too, and an ATS editor that swallows Escape at the window,
+   * as rich-text editors do, left the chip with no keyboard way off the
+   * screen but Tab to "×". The Escape was pressed on the chip.
+   */
+  chip.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || event.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    event.stopPropagation();
+    answer(onLater)();
+  });
 
   document.documentElement.append(host);
   return { remove: removeAsk };

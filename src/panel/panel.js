@@ -25,7 +25,7 @@
  * active tab of that window and `?tab=<id>` stays on one tab.
  */
 
-import { getSettings } from '../shared/config.js';
+import { getSettings, NOT_PAIRED_MESSAGE, pairingHeaders } from '../shared/config.js';
 
 const $ = (s) => document.querySelector(s);
 const params = new URLSearchParams(location.search);
@@ -142,7 +142,9 @@ const basename = (dir) => String(dir ?? '').split(/[\\/]/).filter(Boolean).pop()
 
 async function getJson(url, timeout = 3000) {
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(timeout), cache: 'no-store' });
+    // With the pairing token: ResumeM-M answers only the extension it paired with.
+    const headers = await pairingHeaders(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(timeout), cache: 'no-store', headers });
     if (!res.ok) return { failed: res.status };
     return await res.json();
   } catch {
@@ -236,15 +238,25 @@ async function refresh() {
   }
   model.down = false;
   model.health = health;
-  if (!health.projectOpen) return paint();
+  if (!health.projectOpen || health.paired === false) return paint();
 
   const [list, revision] = await Promise.all([
     getJson(`${serverUrl}/api/resumes`, 4000),
     getJson(`${serverUrl}/api/revision`, 2500),
   ]);
   if (mine !== refreshing) return;
-  model.resumes = Array.isArray(list) ? list : (list?.resumes ?? []);
-  model.revision = revision?.revision ?? model.revision;
+  /*
+   * A failed request is not an empty store. `getJson` answers null for a
+   * timeout or a 503, and reading that as "no resumes" told the person the
+   * copy they were editing had been deleted — after one slow answer. Kept as
+   * it was, the way `poll` keeps it, and the revision is not advanced either,
+   * so the next poll asks again rather than believing it is up to date.
+   */
+  const fresh = Array.isArray(list) ? list : Array.isArray(list?.resumes) ? list.resumes : null;
+  if (fresh) {
+    model.resumes = fresh;
+    model.revision = revision?.revision ?? model.revision;
+  }
   choose();
   paint();
   await navigate();
@@ -409,6 +421,15 @@ function paint() {
         },
       );
     }
+  } else if (model.health?.paired === false) {
+    note('');
+    cover = true;
+    message('JobHelper is not paired with ResumeM-M', NOT_PAIRED_MESSAGE, {
+      actions: [
+        ['Open ResumeM-M', () => chrome.tabs.create({ url: `${model.serverUrl.replace(/\/$/, '')}/#pair` }), true],
+        ['Try again', () => refresh()],
+      ],
+    });
   } else if (model.health && !model.health.projectOpen) {
     note('');
     cover = true;
@@ -727,14 +748,22 @@ async function poll() {
     }
     return;
   }
-  if (model.down || health.dataDir !== model.health?.dataDir || health.projectOpen !== model.health?.projectOpen) {
+  if (model.down || health.dataDir !== model.health?.dataDir || health.projectOpen !== model.health?.projectOpen || health.paired !== model.health?.paired) {
     return refresh();
   }
   const revision = (await getJson(`${model.serverUrl}/api/revision`, 2500))?.revision;
   if (!revision || revision === model.revision) return;
-  model.revision = revision;
+  /*
+   * The revision is taken only with a list to go with it, as `refresh` does.
+   * It was taken first, so one failed /api/resumes left the panel sure it was
+   * up to date while it showed the old list — a new copy for this posting
+   * missing from the picker until the store happened to change again.
+   */
   const list = await getJson(`${model.serverUrl}/api/resumes`, 4000);
-  if (Array.isArray(list)) model.resumes = list;
+  const fresh = Array.isArray(list) ? list : Array.isArray(list?.resumes) ? list.resumes : null;
+  if (!fresh) return;
+  model.revision = revision;
+  model.resumes = fresh;
   post({ rmm: 'refresh' });
   choose();
   paint();

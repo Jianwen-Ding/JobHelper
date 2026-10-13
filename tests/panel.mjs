@@ -35,6 +35,7 @@ import {
   cleanStore,
   extensionWorker,
   findChromium,
+  pairExtension,
   pointExtensionAt,
   requireOpenSave,
   serveFixtures,
@@ -984,6 +985,8 @@ async function main() {
     const OTHER = `http://127.0.0.1:${OTHER_PORT}`;
     await until(() => fetch(`${OTHER}/health`).then((r) => r.ok), { timeout: 20_000 });
     await setServer(OTHER);
+    // A second ResumeM-M answers only an extension paired with it.
+    await pairExtension(side, OTHER);
     const refused = await until(async () => /different save/i.test((await side.locator('#message').textContent()) ?? '') && (await side.locator('#message').isVisible()));
     check('the address changed to a server with another save: said, not edited', Boolean(refused), await side.locator('#message').textContent());
     await atWidths(wide, 'other-save');

@@ -129,7 +129,13 @@ export function nameOf(control) {
     control?.textContent ||
     control?.getAttribute?.('title') ||
     '';
-  return said.trim();
+  /*
+   * As one line. `textContent` keeps the markup's indentation, so a button
+   * whose label sits in nested spans came back as "Submit your application"
+   * followed by three lines of spaces — and that went into the tracker's
+   * history verbatim, as a note spread over four lines of applications.yaml.
+   */
+  return said.replace(/\s+/g, ' ').trim();
 }
 
 /**

@@ -41,7 +41,8 @@ function setStatus(text, kind = '', fix) {
    * checking the connection, and it was the one place the same failure was a
    * dead end.
    */
-  if (fix?.serverUrl) {
+  // Not for pairing, whose box above has the same button beside the code.
+  if (fix?.serverUrl && fix.fix !== 'pair') {
     const button = document.createElement('button');
     button.className = 'ai-fix';
     button.textContent = fix.fix === 'open-save' ? 'Open a save in ResumeM-M' : 'Open ResumeM-M';
@@ -54,7 +55,49 @@ function setStatus(text, kind = '', fix) {
 }
 
 /** Report a failure, carrying whatever it knows about how to get past it. */
-const failed = (err) => setStatus(err.message, 'err', err.jobhelper);
+const failed = (err) => {
+  // Not paired: the code box is the way past it, so it goes up as well.
+  if (err.jobhelper?.fix === 'pair') showPairing(err.jobhelper.serverUrl);
+  setStatus(err.message, 'err', err.jobhelper);
+};
+
+/**
+ * Ask for the pairing code.
+ *
+ * ResumeM-M answers only the JobHelper it has been paired with, so a fresh
+ * install — and every install from before pairing existed — lands here until
+ * somebody types the code its editor shows. Said in the words of the place
+ * the code is, with a button that goes there.
+ */
+function showPairing(pairUrl) {
+  const box = $('pairing');
+  if (!box) return;
+  box.hidden = false;
+  $('pairOpen').onclick = () => {
+    chrome.tabs.create({ url: pairUrl });
+  };
+  const go = acts(async () => {
+    $('pairSaid').textContent = '';
+    $('pairButton').disabled = true;
+    try {
+      await send('pair', { code: $('pairCode').value });
+    } catch (err) {
+      // The server's own sentence: a wrong code says how many tries are left.
+      $('pairSaid').textContent = err.message;
+      return;
+    } finally {
+      $('pairButton').disabled = false;
+    }
+    box.hidden = true;
+    $('pairCode').value = '';
+    setStatus('Paired with ResumeM-M.', 'ok');
+    await check();
+  });
+  $('pairButton').onclick = go;
+  $('pairCode').onkeydown = (event) => {
+    if (event.key === 'Enter') go();
+  };
+}
 
 /**
  * A control that does something, and says so when it cannot.
@@ -322,6 +365,11 @@ const AI_STATE = {
     hint: 'ResumeM-M has no AI command configured. Set one up and this switch starts working.',
     fix: 'Set one up',
   },
+  'not-paired': {
+    text: 'AI unknown',
+    className: 'ai off',
+    hint: 'ResumeM-M says what its AI setting is once JobHelper is paired with it.',
+  },
   offline: {
     text: 'AI unknown',
     className: 'ai off',
@@ -481,7 +529,17 @@ async function boot() {
     const wasMuted = ((await send('getSettings')).mutedHosts ?? []).includes(host);
     // Through the worker, which serialises it: this list is shared with every
     // tab's card and a read here plus a write there loses one of the two.
-    await send('muteHost', { host, muted: !wasMuted });
+    /*
+     * Said as this site's failure, not as "Muted". The worker used to answer
+     * ok for a write Chrome had refused, and this said "Muted <host>." for a
+     * site the card went on appearing on; now it says so, and why.
+     */
+    try {
+      await send('muteHost', { host, muted: !wasMuted });
+    } catch (err) {
+      setStatus(`${host} was not ${wasMuted ? 'unmuted' : 'muted'}. ${err.message}`, 'err');
+      return;
+    }
     await drawMute();
     setStatus(wasMuted ? `${host} is no longer muted — reload the page.` : `Muted ${host}.`, 'ok');
   });
@@ -541,6 +599,15 @@ async function check() {
    * seconds the fetch took to give up.
    */
   setStatus('Checking…');
+  /*
+   * And the pairing box goes with it, along with what the last code got told.
+   * It is put back up only by an answer that says "not paired" (see `failed`).
+   * Kept up, it went on asking for a code for the previous address — its
+   * "Open ResumeM-M" going to that server — under a status line saying the
+   * new one was not running.
+   */
+  $('pairing').hidden = true;
+  $('pairSaid').textContent = '';
   try {
     await send('ping');
     const resumes = await send('listResumes');

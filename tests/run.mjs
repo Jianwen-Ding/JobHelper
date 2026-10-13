@@ -85,6 +85,11 @@ const SUITES = [
   { name: 'controls', file: 'controls.mjs', cost: 82 },
   { name: 'quiet', file: 'quiet.mjs', cost: 46 },
   { name: 'attaching', file: 'attaching.mjs', cost: 6 },
+  { name: 'dropping', file: 'dropping.mjs', cost: 6 },
+  { name: 'card-answers', file: 'card-answers.mjs', cost: 4 },
+  { name: 'card-edges', file: 'card-edges.mjs', cost: 12 },
+  { name: 'panel-flaky', file: 'panel-flaky.mjs', cost: 8 },
+  { name: 'pairing', file: 'pairing.mjs', cost: 10 },
   { name: 'asking', file: 'asking.mjs', cost: 46 },
   { name: 'late', file: 'late.mjs', cost: 45 },
   { name: 'worker', file: 'worker.mjs', cost: 42 },
@@ -95,19 +100,26 @@ const SUITES = [
   { name: 'roundtrip', file: 'roundtrip.mjs', cost: 13 },
   { name: 'freshness', file: 'freshness.mjs', cost: 12 },
   { name: 'midaction', file: 'midaction.mjs', cost: 12 },
+  { name: 'switching', file: 'switching.mjs', cost: 14 },
   { name: 'joins', file: 'joins.mjs', cost: 8 },
   { name: 'ats-forms', file: 'ats-forms.mjs', cost: 7 },
+  // Every round's job and not-a-job forms, settled; see its header.
+  { name: 'corpus-jobforms', file: 'corpus-jobforms.mjs', cost: 6 },
   { name: 'autofill', file: 'autofill.mjs', cost: 2 },
   { name: 'reusing', file: 'reusing.mjs', cost: 3 },
   { name: 'csp', file: 'csp.mjs', cost: 2 },
   { name: 'harness', file: 'harness.mjs', cost: 1, nodeTest: true },
   { name: 'ats', file: 'ats.mjs', cost: 1, nodeTest: true },
   { name: 'trail', file: 'trail.mjs', cost: 1, nodeTest: true },
+  { name: 'naming', file: 'naming.mjs', cost: 1, nodeTest: true },
   { name: 'sites', file: 'sites.mjs', cost: 1, nodeTest: true },
   { name: 'documents', file: 'documents.mjs', cost: 1, nodeTest: true },
   { name: 'reporting', file: 'reporting.mjs', cost: 1, nodeTest: true },
   { name: 'remembering', file: 'remembering.mjs', cost: 1, nodeTest: true },
+  // Every round's links, settled; see its header.
+  { name: 'corpus-links', file: 'corpus-links.mjs', cost: 1, nodeTest: true },
   { name: 'config', file: 'config.mjs', cost: 1, nodeTest: true },
+  { name: 'turns', file: 'turns.mjs', cost: 1, nodeTest: true },
 ];
 
 const pool = (process.env.RMM_SERVERS ?? process.env.RMM_SERVER ?? 'http://127.0.0.1:4600')

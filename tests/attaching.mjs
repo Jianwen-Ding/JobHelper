@@ -426,7 +426,19 @@ const RUN_TOGETHER = page(
     '<input id="u2" type="file" class="visually-hidden"></div></div>',
 );
 
+/*
+ * A resume box and a cover letter that is pasted, not uploaded. The only
+ * upload control on the page is the resume's, so a drop on the textarea that
+ * walked up to the form found "exactly one box" and put the letter in it.
+ */
+const PASTE_LETTER = page(`
+  <label for="rs">Resume</label><input id="rs" name="resume" type="file">
+  <label for="cl">Cover letter (paste)</label><textarea id="cl" name="cover_letter"></textarea>
+  <p id="note">We read every application.</p>
+`);
+
 const PAGES = {
+  '/paste-letter': PASTE_LETTER,
   '/run-together': RUN_TOGETHER,
   '/dropzone-js': DROPZONE_JS,
   '/refuses-by-name': REFUSES_BY_NAME,
@@ -1222,6 +1234,119 @@ async function main() {
         /no upload box where you dropped it/.test(report.unplaced[0]?.why ?? ''),
         report.unplaced[0]?.why ?? '',
       );
+    }
+
+    /* ---------------------------------------------------------------- *
+     * Regressions: order, aim, one-file boxes, roles that say CV         *
+     * ---------------------------------------------------------------- */
+
+    /*
+     * The store lists files alphabetically, so the letter always reached the
+     * lone unnamed box before the resume did, and took it.
+     */
+    group('One box that names nothing, the letter listed first');
+    {
+      const { report, inBoxes } = await run('/bare', [
+        filed('Morgan-Testwell-Cover-Letter.pdf'),
+        filed('Morgan-Testwell-Resume.pdf'),
+      ]);
+      check('the resume goes in it', JSON.stringify(inBoxes.only) === '["Morgan-Testwell-Resume.pdf"]', JSON.stringify(inBoxes));
+      check(
+        'and the letter is the one left out',
+        report.unplaced.length === 1 && /Cover-Letter/.test(report.unplaced[0]?.name ?? ''),
+        JSON.stringify(report),
+      );
+    }
+
+    /*
+     * Let go of on a textarea, a page with one upload box — the resume's,
+     * already holding the resume. The walk went up to the form, found that
+     * one box, and replaced the resume with the letter.
+     */
+    const dropOver = async (where, seed, selector, files) => {
+      await p.goto(`${base}${where}`, { waitUntil: 'domcontentloaded' });
+      return p.evaluate(
+        async ({ b, seed, sel, list }) => {
+          const m = await import(`${b}/attach.js`);
+          if (seed) {
+            const carrier = new DataTransfer();
+            carrier.items.add(new File(['x'], seed, { type: 'application/pdf' }));
+            document.querySelector(seed.box ?? 'input[type=file]').files = carrier.files;
+          }
+          const report = await m.dropOnto(document.querySelector(sel), list);
+          const inBoxes = {};
+          for (const input of document.querySelectorAll('input[type=file]')) {
+            inBoxes[input.id] = [...(input.files ?? [])].map((f) => f.name);
+          }
+          return { report, inBoxes };
+        },
+        { b: base, seed, sel: selector, list: files },
+      );
+    };
+
+    group('A letter let go of on the paste-your-letter textarea');
+    {
+      const { report, inBoxes } = await dropOver(
+        '/paste-letter',
+        'Morgan-Testwell-Resume.pdf',
+        '#cl',
+        [filed('Morgan-Testwell-Cover-Letter.pdf')],
+      );
+      check('the resume box keeps the resume', JSON.stringify(inBoxes.rs) === '["Morgan-Testwell-Resume.pdf"]', JSON.stringify(inBoxes));
+      check('and nothing is claimed', report.placed.length === 0, JSON.stringify(report));
+    }
+
+    group('A chip let go of on a paragraph of the form, nowhere near the box');
+    {
+      const { report, inBoxes } = await dropOver('/paste-letter', null, '#note', [filed('Morgan-Testwell-Resume.pdf')]);
+      check('it does not go in the only box on the page', (inBoxes.rs?.length ?? 0) === 0, JSON.stringify(inBoxes));
+      check('and nothing is claimed', report.placed.length === 0, JSON.stringify(report));
+    }
+
+    group('A letter let go of straight on a box that says Resume');
+    {
+      const { report, inBoxes } = await dropOver('/labelled', null, '#rs', [filed('Morgan-Testwell-Cover-Letter.pdf')]);
+      check('it is not put in', (inBoxes.rs?.length ?? 0) === 0, JSON.stringify(inBoxes));
+      check('and it says whose box it is', /resume/.test(report.unplaced[0]?.why ?? ''), JSON.stringify(report));
+    }
+
+    /*
+     * The all-files chip over a box without `multiple`: both went in, a
+     * thing a one-file box is not meant to hold and a form refuses on submit.
+     */
+    group('The all-files chip let go of on a box that takes one file');
+    {
+      const { report, inBoxes } = await dropOver('/bare', null, '#only', [
+        filed('Morgan-Testwell-Cover-Letter.pdf'),
+        filed('Morgan-Testwell-Resume.pdf'),
+      ]);
+      check('one file goes in, the resume', JSON.stringify(inBoxes.only) === '["Morgan-Testwell-Resume.pdf"]', JSON.stringify(inBoxes));
+      check(
+        'and the other is said to have had no room',
+        report.unplaced.length === 1 && /takes one file/.test(report.unplaced[0]?.why ?? ''),
+        JSON.stringify(report),
+      );
+    }
+
+    /*
+     * A role with "CV" in it. The store puts the role before the kind, and
+     * the first match read both files as resumes.
+     */
+    group('A role that says CV');
+    {
+      const role = 'Morgan-Testwell-Computer-Vision-CV-Engineer';
+      const { report, inBoxes } = await run('/labelled', [
+        filed(`${role}-Cover-Letter.pdf`),
+        filed(`${role}-Resume.pdf`),
+      ]);
+      check('the resume goes in the resume box', JSON.stringify(inBoxes.rs) === `["${role}-Resume.pdf"]`, JSON.stringify(inBoxes));
+      check('and the letter in the letter box', JSON.stringify(inBoxes.cl) === `["${role}-Cover-Letter.pdf"]`, JSON.stringify(inBoxes));
+      check('with nothing left over', report.unplaced.length === 0, JSON.stringify(report.unplaced));
+      const kinds = await p.evaluate(async ({ b, names }) => {
+        const m = await import(`${b}/attach.js`);
+        return names.map((n) => m.kindOf(n));
+      }, { b: base, names: [`${role}-Cover-Letter.pdf`, `${role}-Resume.pdf`, 'Resume-Writer-Cover-Letter.pdf'] });
+      check('each reads as the kind its name ends with', JSON.stringify(kinds) === '["letter","resume","letter"]', JSON.stringify(kinds));
     }
 
     group('Reading a name for what kind of document it is');

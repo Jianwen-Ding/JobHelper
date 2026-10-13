@@ -183,8 +183,25 @@ async function main() {
 
         /* 5. Filed, with the files a portal would ask for. */
         await card.getByRole('button', { name: 'Mark as applied' }).click();
-        // Filing folds the card away; the panel is underneath. See `state.folded`.
-        await card.getByRole('button', { name: 'Unfold JobHelper' }).click({ timeout: 120_000 });
+        /*
+         * Filing folds the card away; the panel is underneath. See
+         * `state.folded`. Except when the filing replaced the files of an
+         * application already sent: every system here files the same one
+         * (the last check below wants one application, not one per system),
+         * so a system with no letter box, after one that had a letter,
+         * replaces the letter that went out. The card then stays open over
+         * the warning saying so, and that is what is checked instead.
+         */
+        await card.locator('.folded-title, .done-box').first().waitFor({ timeout: 120_000 });
+        if (await card.locator('.folded-title').count()) {
+          await card.getByRole('button', { name: 'Unfold JobHelper' }).click({ timeout: 120_000 });
+        } else {
+          check(
+            'a filing that replaced what was sent stays open and says so',
+            (await card.locator('[data-note="replaced"]').count()) > 0,
+            (await card.locator('.done-box').innerText()).split('\n')[0],
+          );
+        }
         await card.locator('.done-box').waitFor({ timeout: 120_000 });
         const done = await card.locator('.done-box').innerText();
         // Suffixed when another application staged within twenty minutes holds the plain name; suites share a server.

@@ -36,6 +36,7 @@ import {
   pointExtensionAt,
   requireOpenSave,
   serveFixtures,
+  sayYesToTheChip,
 } from './fixtures.mjs';
 
 
@@ -139,11 +140,16 @@ async function main() {
      * ------------------------------------------------------------------ */
 
     console.log('\nTime to a usable card, by shape of posting');
-    for (const [label, fixture, budget] of [
+    for (const [label, fixture, budget, how] of [
       ['structured posting (JSON-LD)', STREAMLY, 12_000],
       ['plain careers page', CYGNUS_ROLE_A, 12_000],
       ['an applicant tracking system', LEVER_ROLE, 12_000],
-      ['a board of several roles', CYGNUS_BOARD, 12_000],
+      /*
+       * Asked about first, on a site nothing here knows: a list of openings
+       * is read once Yes is pressed, and timed from there. See
+       * `sayYesToTheChip`.
+       */
+      ['a board of several roles', CYGNUS_BOARD, 12_000, { asked: true }],
       ['a posting rendered by script', WORKDAY, 15_000],
       ['half a megabyte of application shell', HEAVY_POSTING, 15_000],
       ['an Ashby-shaped posting', ASHBY_ROLE, 12_000],
@@ -153,6 +159,7 @@ async function main() {
     ]) {
       const page = await context.newPage();
       await page.goto(fixtures.urlFor(fixture), { waitUntil: 'domcontentloaded' });
+      if (how?.asked) await sayYesToTheChip(page);
       await timed(label, budget, () => settled(page));
       await page.close();
     }
@@ -242,15 +249,12 @@ async function main() {
     // What the card would hand over. Asserted through the server rather than
     // by opening a tab, because the hand-off is the part that used to lose it.
     const before = await (await fetch(`${SERVER}/api/workspace`)).json();
-    const openWorkspace = await page.evaluate(async () => {
-      const host = document.querySelector('#jobhelper-card-host');
-      const button = [...host.shadowRoot.querySelectorAll('button')].find((b) =>
-        /Write these in ResumeM-M/.test(b.textContent),
-      );
-      if (!button) return 'no button';
-      button.click();
-      return 'clicked';
-    });
+    // A real press: the card refuses clicks a page's script makes (see
+    // card.js on untrusted events), so a button.click() from page.evaluate
+    // did nothing and the auto-held draft, with no questions, was read instead.
+    const writeThese = formCard.locator('button', { hasText: 'Write these in ResumeM-M' }).first();
+    const openWorkspace = (await writeThese.count()) ? (await writeThese.click(), 'clicked') : 'no button';
+    check('"Write these in ResumeM-M" was pressed', openWorkspace === 'clicked', openWorkspace);
 
     if (openWorkspace === 'clicked') {
       await page.waitForTimeout(4000);

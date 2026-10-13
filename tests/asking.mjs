@@ -30,6 +30,8 @@ import {
   pointExtensionAt,
   requireOpenSave,
   serveFixtures,
+  serveSlowProxy,
+  useServer,
 } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -96,12 +98,15 @@ async function pressTheButton(context, worker, url) {
   await page.close();
 }
 
+/** The forum thread again, at an address that names a tracker in its path and nowhere else. */
+const GREENHOUSE_BLOG = { ...FORUM_THREAD, name: 'greenhouse-blog', path: '/blog/greenhouse-gardening-tips' };
+
 /** A button inside the chip's shadow root. */
 const inChip = (page, cls) => page.locator(`${ASK} button.${cls}`);
 
 async function main() {
   await requireOpenSave(SERVER);
-  const fixtures = await serveFixtures([FORUM_THREAD, HELIOS_ROLE]);
+  const fixtures = await serveFixtures([FORUM_THREAD, HELIOS_ROLE, GREENHOUSE_BLOG]);
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-asking-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     executablePath: findChromium(),
@@ -120,7 +125,10 @@ async function main() {
        * question the user actually reported — "it still pops up on reddit" —
        * rather than a unit test of the matcher standing in for it.
        */
-      '--host-resolver-rules=MAP old.reddit.com 127.0.0.1, MAP reddit.com 127.0.0.1, MAP jobs.example.test 127.0.0.1',
+      // And a tracker's own host, and a name that only looks like one. See
+      // "A tracker's name in the path is not a tracker".
+      '--host-resolver-rules=MAP old.reddit.com 127.0.0.1, MAP reddit.com 127.0.0.1, MAP jobs.example.test 127.0.0.1, ' +
+        'MAP boards.greenhouse.io 127.0.0.1, MAP greenhouse.io.example.test 127.0.0.1',
     ],
   });
 
@@ -210,6 +218,78 @@ async function main() {
     }
 
     /* ---------------------------------------------------------------- *
+     * A tracker's name in the path is not a tracker                     *
+     * ---------------------------------------------------------------- */
+
+    /*
+     * Being on an applicant tracker reads the page unasked, and that was
+     * decided by testing the whole address: a blog post at
+     * `/blog/greenhouse-gardening-tips` — or any page whose query named
+     * Lever, Workday, Taleo — was read and sent to the store with no chip in
+     * front of it. Only the host says which system serves the page.
+     *
+     * Watched at the store's end, through a proxy that notes every analysis
+     * it is asked for, because the worker's own requests are not the page's.
+     */
+    console.log('\nA tracker\u2019s name in the path is not a tracker');
+    {
+      const port = new URL(fixtures.base).port;
+      const analysed = [];
+      const watch = await serveSlowProxy(SERVER, {
+        ms: 0,
+        respondInstead: (url, body) => {
+          if (/analy[sz]e/.test(url)) analysed.push(body);
+          return undefined;
+        },
+      });
+      const sentFor = (needle) => analysed.some((body) => body.includes(needle));
+      try {
+        await useServer(context, watch.base);
+
+        const blogUrl = `http://jobs.example.test:${port}${GREENHOUSE_BLOG.path}`;
+        {
+          const page = await context.newPage();
+          await page.goto(blogUrl, { waitUntil: 'domcontentloaded' });
+          check('a page with "greenhouse" in its path gets the chip', await appears(page, ASK));
+          check('and no card', await neverAppears(page, CARD, 1500));
+          check('and is not sent to the store before the chip is answered', !sentFor('greenhouse-gardening-tips'), `${analysed.length} sent`);
+          await inChip(page, 'yes').click();
+          check('pressing yes puts the card up', await appears(page, `${CARD} .card`));
+          // The card can be up a moment before its analysis request lands.
+          let sent = false;
+          for (let waited = 0; waited < 5000 && !sent; waited += 100) {
+            sent = sentFor('greenhouse-gardening-tips');
+            if (!sent) await new Promise((go) => setTimeout(go, 100));
+          }
+          check('and only then is it sent to the store', sent);
+          await page.close();
+        }
+
+        {
+          const page = await context.newPage();
+          await page.goto(`http://greenhouse.io.example.test:${port}${FORUM_THREAD.path}`, { waitUntil: 'domcontentloaded' });
+          check('a host that only starts with a tracker\u2019s name is asked about', await appears(page, ASK));
+          check('and not sent to the store', !sentFor('greenhouse.io.example.test'));
+          await page.close();
+        }
+
+        // And the control: the same page on the tracker's own host is read unasked.
+        {
+          const page = await context.newPage();
+          await page.goto(`http://boards.greenhouse.io:${port}${FORUM_THREAD.path}`, { waitUntil: 'domcontentloaded' });
+          const until = Date.now() + APPEAR_MS;
+          while (Date.now() < until && !sentFor('boards.greenhouse.io')) await page.waitForTimeout(150);
+          check('on the tracker\u2019s own host the page is read without asking', sentFor('boards.greenhouse.io'));
+          check('and no chip is put in front of it', (await page.locator(ASK).count()) === 0);
+          await page.close();
+        }
+      } finally {
+        await useServer(context, SERVER);
+        watch.close();
+      }
+    }
+
+    /* ---------------------------------------------------------------- *
      * "Not now" leaves the site alone                                   *
      * ---------------------------------------------------------------- */
 
@@ -223,6 +303,29 @@ async function main() {
       check('and the site is not recorded anywhere', (await mutedHosts(context, worker)).length === 0);
       await page.reload({ waitUntil: 'domcontentloaded' });
       check('and it asks again on the next visit', await appears(page, ASK));
+      /*
+       * And Escape is "not now", the key people press first to get something
+       * off the screen. It did nothing, and from the keyboard the only way
+       * out was to Tab to the ×.
+       */
+      await inChip(page, 'yes').focus();
+      await page.keyboard.press('Escape');
+      const gone = await neverAppears(page, ASK, 1200);
+      const muted = await mutedHosts(context, worker);
+      check('Escape dismisses the chip, as not now: the site is not recorded', gone && muted.length === 0, JSON.stringify({ gone, muted }));
+      /*
+       * And on a page that calls preventDefault on every Escape at the
+       * window, as an ATS's rich-text editor does. The chip took such an
+       * Escape for one already used, and stayed up.
+       */
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await appears(page, ASK);
+      await page.evaluate(() =>
+        window.addEventListener('keydown', (e) => e.key === 'Escape' && e.preventDefault(), true),
+      );
+      await inChip(page, 'yes').focus();
+      await page.keyboard.press('Escape');
+      check('and on a page that calls preventDefault on Escape too', await neverAppears(page, ASK, 1200));
       await page.close();
     }
 
@@ -305,9 +408,25 @@ async function main() {
       const page = await context.newPage();
       await page.goto(forumUrl, { waitUntil: 'domcontentloaded' });
       check('the chip is back now the site is not muted', await appears(page, ASK));
-      await inChip(page, 'yes').click();
+      // From the keyboard, which is where losing focus is felt.
+      await inChip(page, 'yes').focus();
+      await page.keyboard.press('Enter');
       check('pressing yes puts the card up', await appears(page, `${CARD} .card`));
       check('and the chip is gone', (await page.locator(ASK).count()) === 0);
+      /*
+       * And focus goes to the card. The chip, and the Yes that had focus,
+       * left the page, so focus fell to <body> and somebody on the keyboard
+       * was put back at the top of the page with the card somewhere else.
+       */
+      let onCard = false;
+      for (let i = 0; i < 40 && !onCard; i++) {
+        onCard = await page.evaluate((sel) => {
+          const host = document.querySelector(sel);
+          return Boolean(host && document.activeElement === host && host.shadowRoot?.activeElement?.classList.contains('card'));
+        }, CARD);
+        if (!onCard) await page.waitForTimeout(150);
+      }
+      check('and focus is on the card', onCard);
       await page.close();
     }
 

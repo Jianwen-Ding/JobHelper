@@ -32,12 +32,14 @@ import {
   DOCS,
   HELIOS_ROLE,
   HELIOS_FORM,
+  LEVER_ROLE,
   cleanStore,
   findChromium,
   serveFixtures,
   requireOpenSave,
   pointExtensionAt,
   serveSlowProxy,
+  sayYesToTheChip,
 } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -72,7 +74,7 @@ const cardOf = (page) => page.locator(`${HOST} .card`);
  * starts is not testing the extension; it is testing what was left lying
  * around.
  */
-const MINE = ['Helios', 'Cygnus', 'Larkspur'];
+const MINE = ['Helios', 'Cygnus', 'Larkspur', 'Vega'];
 
 /** What the store has filed under a company, as the editor would show it. */
 async function filed(company) {
@@ -697,6 +699,8 @@ async function main() {
     {
       const home = await context.newPage();
       await home.goto(fixtures.urlFor(CAREERS_HOME), { waitUntil: 'domcontentloaded' });
+      // Asked about first: a careers home on a site nothing here knows. See `sayYesToTheChip`.
+      await sayYesToTheChip(home);
       await settled(home);
       const card = cardOf(home);
       await card.getByRole('button', { name: /^(Build resume|Recompile)$/ }).click();
@@ -827,6 +831,109 @@ async function main() {
         /wanted to work on this for years/i.test(back),
         back.slice(0, 60),
       );
+    }
+
+    /*
+     * Apply pressed straight after a build, with nothing saved on the way out.
+     *
+     * The keeper saves the card's work every two seconds, so a resume compiled
+     * inside that window had reached the worker only through the save fired as
+     * the page unloads — a message from a page being torn down, which a busy
+     * machine can lose or deliver late. Lost, the form restored the spec
+     * without its render and drew no resume at all: "0 pages", "0px", on the
+     * most ordinary walk there is.
+     *
+     * So here the timing is fixed rather than hoped for. The unload-time saves
+     * are stopped in the page before the content script hears them; every
+     * compile's answer is held in the worker until a keeper tick has just
+     * carried the spec without a render; and Apply is pressed as soon as the
+     * resume is on the card, well inside the next tick. The only way left for
+     * the render to reach the form is the save made as Apply is pressed.
+     */
+    group('Apply pressed straight after a build, with nothing saved on the way out');
+    {
+      // The suite's own tab, off its form: its keeper is not this one's.
+      await page.goto(fixtures.urlFor(BLOG), { waitUntil: 'domcontentloaded' });
+      const vega = await context.newPage();
+      // Capture phase on window, so ahead of the content script's own
+      // listeners whatever order they were added in.
+      await vega.addInitScript(() => {
+        const swallow = (event) => event.stopImmediatePropagation();
+        window.addEventListener('pagehide', swallow, true);
+        window.addEventListener('visibilitychange', swallow, true);
+      });
+      // Every `saveWork` the worker is sent, and a gate on compiles' answers.
+      await worker.evaluate(() => {
+        const t = (globalThis.__carryingTest ??= {});
+        Object.assign(t, { saves: [], hold: true, gate: null, release: null });
+        if (t.installed) return;
+        t.installed = true;
+        const real = globalThis.fetch;
+        globalThis.fetch = async (input, init) => {
+          const res = await real(input, init);
+          const url = typeof input === 'string' ? input : (input?.url ?? '');
+          if (t.hold && /\/api\/render$/.test(new URL(url, location.href).pathname)) {
+            await (t.gate ??= new Promise((go) => (t.release = go)));
+          }
+          return res;
+        };
+        chrome.runtime.onMessage.addListener((message, sender) => {
+          if (message?.type !== 'saveWork') return;
+          t.saves.push({ tab: sender?.tab?.id, at: Date.now(), render: Boolean(message.payload?.work?.render) });
+        });
+      });
+      const letGo = () =>
+        worker.evaluate(() => {
+          const t = globalThis.__carryingTest;
+          t.hold = false;
+          t.release?.();
+        });
+      const savesOf = (tab, before = Infinity) =>
+        worker.evaluate(
+          ([tab, before]) => globalThis.__carryingTest.saves.filter((s) => s.tab === tab && s.at < before),
+          [tab, before],
+        );
+
+      try {
+        await vega.goto(fixtures.urlFor(LEVER_ROLE), { waitUntil: 'domcontentloaded' });
+        await settled(vega);
+        const tab = await worker.evaluate(async (url) => (await chrome.tabs.query({ url }))[0]?.id, vega.url());
+        const card = cardOf(vega);
+        if (await card.locator('.changes.shut').count()) await card.locator('button.fold-changes').click();
+        // One suggestion switched on, which compiles on its own — and holds
+        // the rest of the list still until it is back.
+        await card.locator('.change:has(.pick) .pick').first().click();
+        await vega.waitForTimeout(300);
+        // And built, unless that compile is still on its way.
+        const build = card.getByRole('button', { name: /^(Build resume|Recompile)$/ });
+        if (await build.isEnabled({ timeout: 1000 }).catch(() => false)) await build.click();
+
+        // Let the compiles answer the moment a keeper tick has gone by with
+        // the spec in it, so the next is two seconds off.
+        const ticks = (await savesOf(tab)).length;
+        const until = Date.now() + 10_000;
+        while ((await savesOf(tab)).length === ticks && Date.now() < until) await vega.waitForTimeout(25);
+        await letGo();
+        await card.locator('.fit.ok, .fit.bad').waitFor({ timeout: 30_000 });
+        const pressedAt = Date.now();
+        await vega.click('a[href*="apply"]');
+
+        const before = await savesOf(tab, pressedAt);
+        check(
+          '(a keeper tick carried the spec without the resume, and none carried the resume, before Apply)',
+          before.length > ticks && !before.some((s) => s.render),
+          before.map((s) => `${s.at - pressedAt}ms${s.render ? ' render' : ''}`).join(', '),
+        );
+
+        await vega.waitForURL(/\/apply$/, { timeout: 15_000 });
+        await settled(vega);
+        const drawn = await drawnWithin(vega, 20_000);
+        check('the form still draws the resume just built', drawn > 0, `${drawn} pages`);
+        check('in a pane a page tall', (await paneHeight(vega)) > 100, `${await paneHeight(vega)}px`);
+      } finally {
+        await letGo().catch(() => undefined);
+        await vega.close();
+      }
     }
 
     /*

@@ -4,7 +4,7 @@
   --accent-soft: #e8f0fe;
   --ink: #202124;
   --muted: #5f6368;
-  --faint: #80868b;
+  --faint: #6b7075; /* 4.5:1 or better on white and --bg; see card.js */
   --line: #dadce0;
   --line-soft: #f1f3f4;
   --bg: #f8f9fa;

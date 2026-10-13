@@ -20,7 +20,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import { findChromium } from './fixtures.mjs';
+import { OPEN_SHADOW_FLAG, findChromium } from './fixtures.mjs';
 
 const extensionRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -61,7 +61,15 @@ function fakeStore() {
     const raw = await readBody(req);
     // The query as well: `/api/autofill` carries the resume's choices in it.
     const query = new URLSearchParams(req.url.split('?')[1] ?? '');
-    state.hits.push({ url, query, method: req.method, project: req.headers['x-rmm-project'] ?? null, body: raw });
+    state.hits.push({
+      url,
+      query,
+      method: req.method,
+      project: req.headers['x-rmm-project'] ?? null,
+      // Whether the pairing header was there at all, empty or not: see "The pairing header".
+      pair: 'x-rmm-pair' in req.headers ? req.headers['x-rmm-pair'] : null,
+      body: raw,
+    });
 
     const mode = state.routes[url] ?? 'ok';
     if (mode === 'silent') {
@@ -121,7 +129,14 @@ function fakeStore() {
           kind: 'posting',
           save: state.save,
           // `company` set on the state is a page the analysis could not name.
-          job: { company: state.company ?? page.company ?? 'Helios', title: state.role, description: 'A job.', keywords: [] },
+          job: {
+            company: state.company ?? page.company ?? 'Helios',
+            title: state.role,
+            // The requisition the store cut off the title, when the test says there is one.
+            ...(state.requisition ? { requisition: state.requisition } : {}),
+            description: 'A job.',
+            keywords: [],
+          },
           // Built from the base that was asked for, and said to be, as the
           // store does — so a proposal can be told apart by where it came from.
           spec: { id: 'job-fake', tier: 'temporary', copiedFrom: page.baseResumeId ?? 'newgrad' },
@@ -161,7 +176,31 @@ function fakeStore() {
         })),
       });
     }
+    // A stage refused as (maybe) sent, when the test says so: ResumeM-M's 409.
+    if (url === '/api/applications/bundle' && state.refuseStage) {
+      const body = JSON.parse(raw || '{}');
+      if (!body.evenIfSent) return send(state.refuseStage, 409);
+    }
     if (url === '/api/applications/bundle') return send({ ok: true, id: 'app-1', folder: '/tmp/x' });
+    // The writes the card makes outside filing: the answer bank, a letter, a
+    // tracker row's status, a kept phrasing, the AI switch.
+    // The store's letter id, only when the test has said what it is: a store
+    // from before the route answers 404, and the worker works it out itself.
+    if (url === '/api/letters/id' && state.letterId) {
+      return send({ id: state.letterId, ...(state.letterFor ? { applicationId: state.letterFor } : {}) });
+    }
+    // A store from before that route: 404 for it, and a list of its letters.
+    if (url === '/api/letters/id' && state.oldLetters) return send({ error: 'no route' }, 404);
+    if (url === '/api/letters' && req.method === 'GET') return send(state.oldLetters ?? []);
+    if (
+      url === '/api/answers/save' ||
+      url === '/api/config' ||
+      /^\/api\/letters\/[^/]+$/.test(url) ||
+      /^\/api\/applications\/[^/]+\/status$/.test(url) ||
+      /^\/api\/entries\/[^/]+\/bullets\/[^/]+\/variants$/.test(url)
+    ) {
+      return send({ ok: true });
+    }
     if (url === '/api/workspace') return send({ ok: true, id: 'ws-1', url: '/workspace/ws-1' });
     // A bare list, which is what ResumeM-M's `/api/resumes` answers and what
     // the card's picker reads.
@@ -214,6 +253,12 @@ async function main() {
     headless: true,
     viewport: { width: 1200, height: 800 },
     args: ['--no-sandbox', `--disable-extensions-except=${extensionRoot}`, `--load-extension=${extensionRoot}`],
+    /*
+     * West of Greenwich, whatever the machine running this is set to, so an
+     * evening is a day behind UTC — which is where a letter id built from the
+     * UTC date stops agreeing with the store's. See "The letter's id".
+     */
+    env: { ...process.env, TZ: 'America/Los_Angeles' },
   });
 
   try {
@@ -227,6 +272,8 @@ async function main() {
     const driver = await context.newPage();
     await driver.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
     await driver.evaluate((s) => chrome.storage.sync.set({ serverUrl: s, autoPrompt: false }), store.base);
+    // The card left open for reading here; see `openCardForTests`.
+    await driver.evaluate((key) => chrome.storage.local.set({ [key]: true }), OPEN_SHADOW_FLAG);
 
     const lastSaveFor = (p) => store.sentTo(p).slice(-1)[0]?.project ?? '(none)';
 
@@ -269,6 +316,34 @@ async function main() {
     }
 
     /*
+     * A stage the store held because the application may already have gone
+     * out (409 `already-sent` with `maybe`): handed to the card as that, with
+     * which application, so it asks rather than marking anything sent; and
+     * asked again with `evenIfSent`, it goes through. A plain `already-sent`
+     * is still just that.
+     */
+    group('A stage held as maybe sent');
+    {
+      store.save = 'work';
+      await ask(driver, 'analyze', { url: 'http://m.example/jobs/9', title: 'Stripe', html: '<p>nine</p>', company: 'Stripe' });
+      const application = { id: 'stripe-1', url: 'https://www.linkedin.com/jobs/view/4462047454/', appliedAt: '2026-09-24T15:00:00.000Z', status: 'applied' };
+      store.refuseStage = { kind: 'already-sent', maybe: true, error: 'You may have applied to this already', application: { ...application, company: 'Stripe' } };
+      const held = await ask(driver, 'stage', { company: 'Stripe' });
+      check(
+        'is handed back as maybe sent, naming the application',
+        held.reply?.data?.alreadySent === true && held.reply?.data?.maybe === true && held.reply?.data?.application?.id === 'stripe-1' &&
+          held.reply?.data?.application?.url === application.url,
+        JSON.stringify(held.reply).slice(0, 300),
+      );
+      const again = await ask(driver, 'stage', { company: 'Stripe', evenIfSent: true });
+      check('and told it is another job, goes through', again.reply?.ok === true && !again.reply?.data?.alreadySent, JSON.stringify(again.reply).slice(0, 200));
+      store.refuseStage = { kind: 'already-sent', error: 'already sent', application };
+      const sure = await ask(driver, 'stage', { company: 'Stripe' });
+      check('while a sure one is still only already sent', sure.reply?.data?.alreadySent === true && !sure.reply?.data?.maybe, JSON.stringify(sure.reply).slice(0, 200));
+      store.refuseStage = undefined;
+    }
+
+    /*
      * "Start a new application here" removes the trail. The map was left
      * holding the save that application came from, and `saveFor` falls back
      * to the map when the trail has nothing — so the next application in the
@@ -288,6 +363,256 @@ async function main() {
         lastSaveFor('/api/applications/bundle') === 'personal',
         lastSaveFor('/api/applications/bundle'),
       );
+    }
+
+    /* ---------------------------------------------------------------- *
+     * Every write says which save it means                              *
+     * ---------------------------------------------------------------- */
+
+    /*
+     * Filing and `/extension/sent` sent the save header; the answer bank,
+     * "Save to store", a tracker row's status, a kept phrasing and the AI
+     * switch did not. The store only refuses a header it disagrees with, so
+     * after the editor switched saves those writes went into the other save
+     * with a 200 — an answer for a work application in the personal bank.
+     */
+    group('Every write says which save it means');
+    {
+      store.save = 'work';
+      await ask(driver, 'clearTrail', {});
+      await ask(driver, 'analyze', { url: 'http://saves.example/jobs/1', title: 'Helios', html: '<p>one</p>', company: 'Helios' });
+      const writes = [
+        ['rememberChoice', { question: 'Will you relocate?', answer: 'Yes' }, '/api/answers/save'],
+        ['rememberTyped', { answers: [{ question: 'Notice period?', answer: 'Two weeks' }] }, '/api/answers/save'],
+        ['saveAnswer', { question: 'Why us?', answer: 'Helios builds what I use.', label: 'Helios' }, '/api/answers/save'],
+        ['saveLetter', { body: 'Dear Helios,', job: { company: 'Helios', title: 'Platform Engineer' } }, null],
+        ['trackStatus', { id: 'app-1', status: 'withdrawn' }, '/api/applications/app-1/status'],
+        ['addVariant', { entryId: 'e1', bulletId: 'b1', variant: { text: 'Built it.' } }, '/api/entries/e1/bullets/b1/variants'],
+        ['setAiEnabled', { enabled: true }, '/api/config'],
+      ];
+      for (const [type, payload, route] of writes) {
+        const before = store.hits.length;
+        const r = await ask(driver, type, payload);
+        const hit = store.hits.slice(before).find((h) => (route ? h.url === route : h.method === 'PUT' && h.url.startsWith('/api/letters/')));
+        check(`${type} names the save it was built in`, hit?.project === 'work', `${hit ? (hit.project ?? 'no save header') : 'no request'} ${JSON.stringify(r.reply).slice(0, 80)}`);
+      }
+
+      // The editor is pointed at another save; the application is still work's.
+      store.save = 'personal';
+      const before = store.hits.length;
+      const refused = await ask(driver, 'saveAnswer', { question: 'Why us?', answer: 'Helios again.', label: 'Helios' });
+      const hit = store.hits.slice(before).find((h) => h.url === '/api/answers/save');
+      check('after a switch, an answer is refused rather than put in the other save', hit?.project === 'work' && refused.reply?.ok !== true, JSON.stringify(refused.reply).slice(0, 160));
+
+      // No save known at all: the write goes as it always did, unheadered.
+      await ask(driver, 'clearTrail', {});
+      const before2 = store.hits.length;
+      const plain = await ask(driver, 'rememberChoice', { question: 'Will you relocate?', answer: 'Yes' });
+      const hit2 = store.hits.slice(before2).find((h) => h.url === '/api/answers/save');
+      check('with no save known, it is sent without one and taken', hit2 && hit2.project === null && plain.reply?.data?.ok === true, `${hit2?.project} ${JSON.stringify(plain.reply).slice(0, 120)}`);
+    }
+
+    /*
+     * The letter's id, as a ResumeM-M too old to be asked makes it.
+     *
+     * The id was the employer cut at 30 and the role at 40, with "letter" for
+     * a missing employer; the store files the same letter with both cut at
+     * 30, the missing one left out. So the letter saved here and the one
+     * filed with the application were two rows. And dated as that store
+     * dates it, by the day in UTC: worked out here by the local day, in an
+     * evening west of Greenwich it was another day from the letter it was
+     * meant to find.
+     */
+    group('The letter’s id');
+    {
+      const sw = context.serviceWorkers()[0] ?? worker;
+      // 19:00 on 1 March in Los Angeles, which is already 2 March in UTC.
+      await sw.evaluate(() => {
+        const Real = Date;
+        const at = Real.parse('2026-03-02T03:00:00Z');
+        globalThis.__jhRealDate = Real;
+        globalThis.Date = class extends Real {
+          constructor(...a) {
+            super(...(a.length ? a : [at]));
+          }
+          static now() {
+            return at;
+          }
+        };
+      });
+      const lettersSaved = async (job) => {
+        const before = store.hits.length;
+        await ask(driver, 'saveLetter', { body: 'Dear team,', job });
+        const hit = store.hits.slice(before).find((h) => h.method === 'PUT' && h.url.startsWith('/api/letters/'));
+        return hit ? decodeURIComponent(hit.url.slice('/api/letters/'.length)) : null;
+      };
+      try {
+        const long = await lettersSaved({
+          company: 'Acme Corporation International Holdings',
+          title: 'Senior Staff Software Engineer, Machine Learning Platform',
+        });
+        check(
+          'it is dated the UTC day that store files by, with employer and role each cut to 30',
+          long === '2026-03-02-acme-corporation-international-senior-staff-software-engineer',
+          String(long),
+        );
+        const noCompany = await lettersSaved({ title: 'Platform Engineer' });
+        check('a missing employer is left out, not called "letter"', noCompany === '2026-03-02-platform-engineer', String(noCompany));
+        /*
+         * Employers named in other scripts. Slugged to ASCII they were all
+         * the bare date, so a second letter that day replaced the first.
+         * The server's rule, letter for letter: NFKC, lowercase, runs of
+         * anything but a letter or a digit become "-", ends trimmed, each
+         * part cut to 30.
+         */
+        const scripts = [];
+        for (const company of ['株式会社ソニー', 'Яндекс', 'شركة أرامكو', 'אלביט מערכות', 'ＡＣＭＥ Ｇｍｂｈ']) {
+          scripts.push(await lettersSaved({ company }));
+        }
+        check(
+          'employers in any script keep their names in the id',
+          JSON.stringify(scripts) ===
+            JSON.stringify([
+              '2026-03-02-株式会社ソニー',
+              '2026-03-02-яндекс',
+              '2026-03-02-شركة-أرامكو',
+              '2026-03-02-אלביט-מערכות',
+              '2026-03-02-acme-gmbh',
+            ]),
+          JSON.stringify(scripts),
+        );
+        check('so two of them on one day are two letters', new Set(scripts).size === scripts.length, JSON.stringify(scripts));
+        // Those were a store too old to say; one that can is asked.
+        store.letterId = '2026-03-01-helios-platform-engineer';
+        const told = await lettersSaved({ company: 'Helios', title: 'Platform Engineer' });
+        const asked = store.sentTo('/api/letters/id').at(-1);
+        check('a store that names the id is asked, and its id is used', told === store.letterId, String(told));
+        check(
+          'asked with the employer and the role',
+          asked?.query.get('company') === 'Helios' && asked?.query.get('role') === 'Platform Engineer',
+          asked ? asked.query.toString() : 'not asked',
+        );
+        /*
+         * By the name alone, the store answered with the name another
+         * application's letter was filed under — a second job with the same
+         * title on the same day — and this wrote over it. So it is asked
+         * with the application the card has and the page's address, and the
+         * application the store found goes with the save, for the store to
+         * refuse a save that lands on another's letter.
+         */
+        store.letterId = '2026-03-01-helios-platform-engineer-2';
+        store.letterFor = 'app-helios-2';
+        const before = store.hits.length;
+        await ask(driver, 'saveLetter', {
+          body: 'Dear Helios,',
+          applicationId: 'app-helios-2',
+          job: { company: 'Helios', title: 'Platform Engineer', url: 'https://jobs.example.com/helios/2222' },
+        });
+        const which = store.sentTo('/api/letters/id').at(-1);
+        check(
+          'asked with the application and the address it is for',
+          which?.query.get('applicationId') === 'app-helios-2' && which?.query.get('url') === 'https://jobs.example.com/helios/2222',
+          which ? which.query.toString() : 'not asked',
+        );
+        const put = store.hits.slice(before).find((h) => h.method === 'PUT' && h.url.startsWith('/api/letters/'));
+        let sent = {};
+        try {
+          sent = JSON.parse(put?.body ?? '{}');
+        } catch {
+          /* checked below */
+        }
+        check(
+          'saved under the name the store gave, linked to the application it found',
+          put?.url === '/api/letters/2026-03-01-helios-platform-engineer-2' && sent.applicationId === 'app-helios-2',
+          `${put?.url} ${put?.body}`,
+        );
+
+        /*
+         * A store too old to name the id replaces a letter whole on a PUT.
+         * Measured against one: the letter filed with the application — its
+         * link, its tags, its date and its text — was replaced by the card's
+         * draft. So what is under the id is looked at in the list first.
+         */
+        store.letterId = undefined;
+        store.letterFor = undefined;
+        const savedOld = async () => {
+          const at = store.hits.length;
+          await ask(driver, 'saveLetter', {
+            body: 'Dear Acme, a re-save from the card.',
+            applicationId: 'app-acme',
+            job: { company: 'Acme', title: 'Software Engineer Intern', url: 'https://acme.example/jobs/1' },
+          });
+          const hit = store.hits.slice(at).find((h) => h.method === 'PUT' && h.url.startsWith('/api/letters/'));
+          let said = {};
+          try {
+            said = JSON.parse(hit?.body ?? '{}');
+          } catch {
+            /* checked below */
+          }
+          return { url: hit ? decodeURIComponent(hit.url) : null, said, listed: store.hits.slice(at).some((h) => h.url === '/api/letters') };
+        };
+        const filedId = '2026-03-02-acme-software-engineer-intern';
+        store.oldLetters = [
+          { id: filedId, title: 'Software Engineer Intern — Acme', applicationId: 'app-acme', tags: ['swe'], voice: false, createdAt: '2026-03-01T10:00:00.000Z', body: 'The letter that was sent.' },
+          { id: `${filedId}-2`, title: 'Another', createdAt: '2026-03-01T11:00:00.000Z', body: 'Another.' },
+        ];
+        const beside = await savedOld();
+        check('a store too old to name the id is looked at before it is written to', beside.listed, JSON.stringify(beside));
+        check(
+          'a letter filed with an application is left alone, and this goes onto the next name no application has',
+          beside.url === `/api/letters/${filedId}-2` &&
+            beside.said.applicationId === undefined &&
+            beside.said.createdAt === '2026-03-01T11:00:00.000Z' &&
+            beside.said.body === 'Dear Acme, a re-save from the card.',
+          `${beside.url} ${JSON.stringify(beside.said)}`,
+        );
+
+        /*
+         * Saved again, it goes onto the letter it made the first time. It
+         * skipped every name that was taken, its own `-2` among them, and
+         * each "Save to store" for a sent application made another letter.
+         */
+        store.oldLetters = [
+          { id: filedId, title: 'Software Engineer Intern — Acme', applicationId: 'app-acme', createdAt: '2026-03-01T10:00:00.000Z', body: 'The letter that was sent.' },
+          { id: `${filedId}-2`, title: 'Software Engineer Intern — Acme', createdAt: '2026-03-02T08:00:00.000Z', body: 'Dear Acme, a re-save from the card.' },
+          { id: `${filedId}-3`, title: 'Another application', applicationId: 'app-other', body: 'Another one sent.' },
+        ];
+        const again = await savedOld();
+        check(
+          'saved again for a sent application, it goes onto its own letter from before, not a new one',
+          again.url === `/api/letters/${filedId}-2` && again.said.createdAt === '2026-03-02T08:00:00.000Z',
+          `${again.url} ${JSON.stringify(again.said)}`,
+        );
+        store.oldLetters = [
+          { id: filedId, applicationId: 'app-acme', body: 'The letter that was sent.' },
+          { id: `${filedId}-2`, applicationId: 'app-other', body: 'Another one sent.' },
+        ];
+        const past = await savedOld();
+        check('and past every letter an application has', past.url === `/api/letters/${filedId}-3`, String(past.url));
+
+        store.oldLetters = [{ id: filedId, title: 'Saved before', tags: ['mine'], voice: true, createdAt: '2026-01-05T09:00:00.000Z', body: 'Older draft.' }];
+        const over = await savedOld();
+        check(
+          'one belonging to no application is saved over, keeping its tags, voice and date',
+          over.url === `/api/letters/${filedId}` &&
+            JSON.stringify(over.said.tags) === '["mine"]' &&
+            over.said.voice === true &&
+            over.said.createdAt === '2026-01-05T09:00:00.000Z' &&
+            over.said.body === 'Dear Acme, a re-save from the card.',
+          `${over.url} ${JSON.stringify(over.said)}`,
+        );
+
+        store.oldLetters = [];
+        const fresh = await savedOld();
+        check('and with nothing there, it is saved under the id that store would give it', fresh.url === `/api/letters/${filedId}`, String(fresh.url));
+      } finally {
+        store.letterId = undefined;
+        store.letterFor = undefined;
+        store.oldLetters = undefined;
+        await sw.evaluate(() => {
+          if (globalThis.__jhRealDate) globalThis.Date = globalThis.__jhRealDate;
+        }).catch(() => undefined);
+      }
     }
 
     /* ---------------------------------------------------------------- *
@@ -513,6 +838,118 @@ async function main() {
     }
 
     /*
+     * Another job's letter at the same address is never handed over as this
+     * job's.
+     *
+     * A board that keeps every posting at one address — Indeed's results
+     * pane — parks each job's writing under that address. `sameJob` read two
+     * roles at one employer as one job unless they had no word in common, so
+     * the letter for "Data Engineer Intern" came back into the card for
+     * "Software Engineer Intern", the Summer 2026 letter into the Summer 2027
+     * posting and the intern letter into the new grad one — each with no word
+     * on the card that it was written for another job. Now only the same
+     * title is the same job; any other title is named on the way in.
+     */
+    group('Another job at the same employer and address is left parked for its own tab');
+    {
+      const BOARD = 'https://www.indeed.com/q-software-intern-jobs.html';
+      const cases = [
+        ['another role', { role: 'Data Engineer Intern', company: 'Coinbase' }, 'Software Engineer Intern', undefined],
+        ['another season', { role: 'Software Engineer Intern (Summer 2026)', company: 'Coinbase' }, 'Software Engineer Intern (Summer 2027)', undefined],
+        ['intern against new grad', { role: 'Software Engineer Intern', company: 'Coinbase' }, 'Software Engineer, New Grad', undefined],
+        ['another requisition under the same title', { role: 'Software Engineer Intern', company: 'Coinbase', requisition: 'R-1001' }, 'Software Engineer Intern', 'R-2002'],
+      ];
+      store.save = 'work';
+      for (const [what, parkedJob, role, requisition] of cases) {
+        await ask(driver, 'clearTrail', {});
+        await driver.evaluate(
+          ([key, job]) =>
+            chrome.storage.session.set({
+              [key]: { parked: [{ work: { letter: `FOR ${job.role}` }, save: 'work', job, tab: 987654, at: Date.now() }], at: Date.now() },
+            }),
+          [`jh-orphan:${BOARD}`, parkedJob],
+        );
+        store.role = role;
+        store.company = 'Coinbase';
+        store.requisition = requisition;
+        await ask(driver, 'analyze', { url: BOARD, title: role, html: '<p>posting</p>', company: 'Coinbase' });
+        const got = await ask(driver, 'takeWork', { page: { url: BOARD, title: role } });
+        const data = got.reply?.data ?? {};
+        check(`${what}: its letter is not handed to this page`, !data.work, JSON.stringify({ letter: data.work?.letter, recoveredFor: data.recoveredFor }));
+        const still = await driver.evaluate(
+          (key) => chrome.storage.session.get(key).then((got) => (got[key]?.parked ?? []).map((p) => p.work?.letter)),
+          `jh-orphan:${BOARD}`,
+        );
+        check(`${what}: and it is still parked for its own tab`, still.includes(`FOR ${parkedJob.role}`), JSON.stringify(still));
+      }
+
+      /*
+       * A park that names no role — a tab closed before its page was read —
+       * is still offered on the loose reading, which is the rescue this is
+       * for, and says whose it was.
+       */
+      await ask(driver, 'clearTrail', {});
+      await driver.evaluate(
+        ([key]) =>
+          chrome.storage.session.set({
+            [key]: { parked: [{ work: { letter: 'FOR-UNNAMED' }, save: 'work', job: { role: null, company: 'Coinbase' }, tab: 987654, at: Date.now() }], at: Date.now() },
+          }),
+        [`jh-orphan:${BOARD}`],
+      );
+      store.role = 'Software Engineer Intern';
+      store.requisition = undefined;
+      await ask(driver, 'analyze', { url: BOARD, title: 'Software Engineer Intern', html: '<p>posting</p>', company: 'Coinbase' });
+      const unnamed = await ask(driver, 'takeWork', { page: { url: BOARD, title: 'Software Engineer Intern' } });
+      check(
+        'a park that names no role is still rescued, and says whose it was',
+        unnamed.reply?.data?.work?.letter === 'FOR-UNNAMED' && unnamed.reply?.data?.recoveredFor === 'Coinbase',
+        JSON.stringify(unnamed.reply?.data),
+      );
+
+      // The same title, the same requisition: this job's own, said as nothing more.
+      await ask(driver, 'clearTrail', {});
+      await driver.evaluate(
+        ([key]) =>
+          chrome.storage.session.set({
+            [key]: {
+              parked: [{ work: { letter: 'FOR-THIS-ONE' }, save: 'work', job: { role: 'Software Engineer Intern', company: 'Coinbase', requisition: 'R-1001' }, tab: 987654, at: Date.now() }],
+              at: Date.now(),
+            },
+          }),
+        [`jh-orphan:${BOARD}`],
+      );
+      store.role = 'Software Engineer Intern';
+      store.requisition = 'R-1001';
+      await ask(driver, 'analyze', { url: BOARD, title: 'Software Engineer Intern', html: '<p>posting</p>', company: 'Coinbase' });
+      const same = await ask(driver, 'takeWork', { page: { url: BOARD, title: 'Software Engineer Intern' } });
+      check(
+        'while this job\'s own letter comes back unlabelled',
+        same.reply?.data?.work?.letter === 'FOR-THIS-ONE' && same.reply?.data?.recoveredFor === undefined,
+        JSON.stringify(same.reply?.data),
+      );
+
+      // And another employer's is never taken at all.
+      await ask(driver, 'clearTrail', {});
+      await driver.evaluate(
+        ([key]) =>
+          chrome.storage.session.set({
+            [key]: {
+              parked: [{ work: { letter: 'FOR-RAMP' }, save: 'work', job: { role: 'Software Engineer Intern', company: 'Ramp' }, tab: 987654, at: Date.now() }],
+              at: Date.now(),
+            },
+          }),
+        [`jh-orphan:${BOARD}`],
+      );
+      store.requisition = undefined;
+      await ask(driver, 'analyze', { url: BOARD, title: 'Software Engineer Intern', html: '<p>posting</p>', company: 'Coinbase' });
+      const other = await ask(driver, 'takeWork', { page: { url: BOARD, title: 'Software Engineer Intern' } });
+      check('and another employer\'s letter is left where it is', !other.reply?.data?.work, JSON.stringify(other.reply?.data));
+      store.company = undefined;
+      store.role = 'Platform Engineer';
+      await ask(driver, 'clearTrail', {});
+    }
+
+    /*
      * One employer written two ways is still one job to put writing back into.
      *
      * A park is named after the application's last page, and a posting's
@@ -560,6 +997,70 @@ async function main() {
       const other = await ask(driver, 'takeWork', { page: { url: WHERE, title: 'Platform Engineer' } });
       store.company = undefined;
       check('while another employer’s is not', other.reply?.data?.work?.letter !== 'FOR-ALTAIR', JSON.stringify(other.reply?.data));
+    }
+
+    /*
+     * One job, its title written two ways: by the employer's form, where the
+     * trail ended, and by LinkedIn's posting. `titleKey` alone read each pair
+     * below as two jobs, so the letter came back to neither another tab nor
+     * this one. Real pairs from a tracker.
+     */
+    group('A letter comes back when LinkedIn and the form spell the title differently');
+    {
+      const WHERE = 'https://www.linkedin.com/jobs/view/4999999999/';
+      const PAIRS = [
+        ['the work mode on one side', 'CrowdStrike', 'Software Engineer – Sensor, Sensor Performance and Stability (Hybrid)', 'Software Engineer – Sensor, Sensor Performance and Stability'],
+        ['the season and year in either order', 'Careers Americas', 'Software Engineer Intern, 2027 Summer U.S.', 'Software Engineer Intern, Summer 2027 U.S.'],
+        ['a bracketed season on one side', 'Figma', 'Software Engineer Intern', 'Software Engineer Intern (Summer 2027)'],
+        ['the employer’s spelling of a dash and an apostrophe', 'Intel', 'Software Engineering - Intern, Bachelor’s', "Software Engineering Intern, Bachelor's"],
+      ];
+      const thisTab = await driver.evaluate(async () => (await chrome.tabs.getCurrent()).id);
+      store.save = 'work';
+      for (const [what, company, parkedRole, role] of PAIRS) {
+        for (const [whose, tab] of [['a closed tab’s', 987654], ['this tab’s own', thisTab]]) {
+          await ask(driver, 'clearTrail', {});
+          await driver.evaluate(
+            ([key, job, tab]) =>
+              chrome.storage.session.set({ [key]: { parked: [{ work: { letter: 'THE-LETTER' }, save: 'work', job, tab, at: Date.now() }], at: Date.now() } }),
+            [`jh-orphan:${WHERE}`, { company, role: parkedRole }, tab],
+          );
+          store.role = role;
+          store.company = company;
+          await ask(driver, 'analyze', { url: WHERE, title: role, html: '<p>posting</p>', company });
+          const got = await ask(driver, 'takeWork', { page: { url: WHERE, title: role } });
+          check(`${what}: ${whose} letter comes back`, got.reply?.data?.work?.letter === 'THE-LETTER', JSON.stringify(got.reply?.data ?? null));
+        }
+      }
+
+      /*
+       * This tab's own, under a title `sameTitle` does not know, comes back
+       * too — said as whose it was — while another tab's under it stays
+       * parked for that tab. Two seasons are still two jobs to any tab but
+       * this one's.
+       */
+      for (const [whose, tab, back] of [['this tab’s own', thisTab, true], ['a closed tab’s', 987654, false]]) {
+        await ask(driver, 'clearTrail', {});
+        await driver.evaluate(
+          ([key, tab]) =>
+            chrome.storage.session.set({
+              [key]: { parked: [{ work: { letter: 'OWN-LETTER' }, save: 'work', job: { company: 'Figma', role: 'Software Engineer Intern, Platform' }, tab, at: Date.now() }], at: Date.now() },
+            }),
+          [`jh-orphan:${WHERE}`, tab],
+        );
+        store.role = 'Software Engineer Intern - Platform Team';
+        store.company = 'Figma';
+        await ask(driver, 'analyze', { url: WHERE, title: store.role, html: '<p>posting</p>', company: 'Figma' });
+        const got = await ask(driver, 'takeWork', { page: { url: WHERE, title: store.role } });
+        check(
+          `under a title written another way, ${whose} letter ${back ? 'comes back, named' : 'is left for its tab'}`,
+          back
+            ? got.reply?.data?.work?.letter === 'OWN-LETTER' && got.reply?.data?.recoveredFor === 'Software Engineer Intern, Platform at Figma'
+            : got.reply?.data?.work?.letter !== 'OWN-LETTER',
+          JSON.stringify(got.reply?.data ?? null),
+        );
+      }
+      store.role = 'Platform Engineer';
+      store.company = undefined;
     }
 
     /*
@@ -1107,6 +1608,58 @@ async function main() {
       check('taking one off leaves the other', JSON.stringify(left) === JSON.stringify(['second.example']), JSON.stringify(left));
     }
 
+    /*
+     * A mute Chrome refused is not reported as a mute.
+     *
+     * `chrome.storage.sync` holds 8KB per item, and a long enough `mutedHosts`
+     * is over it. The write chain swallowed the refusal so that one failure
+     * would not jam every later change, and swallowed it from the caller too:
+     * `muteHost` answered ok, and the popup said "Muted <host>." for a site
+     * that was not muted.
+     */
+    group('A mute the synced settings have no room for');
+    {
+      const full = Array.from({ length: 229 }, (_, i) => `careers-${i}.example-job-board.com`);
+      await ask(driver, 'setSettings', { patch: { mutedHosts: full } });
+      const host = 'jobs.another-board-with-a-long-name.example.org';
+      const refusedMute = await ask(driver, 'muteHost', { host, muted: true });
+      check('the mute is answered as failed', refusedMute.reply?.ok === false, refusedMute.reply?.error ?? 'answered ok');
+      check('in words, not Chrome’s', /no room for another muted site/.test(refusedMute.reply?.error ?? ''), refusedMute.reply?.error);
+      const after = (await ask(driver, 'getSettings', {})).reply?.data?.mutedHosts ?? [];
+      check('and the site is not muted', !after.includes(host) && after.length === full.length, `${after.length} hosts`);
+      // The chain is not jammed by the refusal: the next change still lands.
+      const freed = await ask(driver, 'muteHost', { host: full[0], muted: false });
+      check('a later change still goes through', freed.reply?.ok === true && !freed.reply.data.mutedHosts.includes(full[0]), JSON.stringify(freed.reply?.error));
+      await ask(driver, 'setSettings', { patch: { mutedHosts: [] } });
+
+      /*
+       * Chrome's limit on writes a minute says "quota" too. Any message
+       * with the word in it was read as a full list, so an unmute refused by
+       * that limit was told there was no room for another muted site.
+       */
+      const sw = context.serviceWorkers()[0] ?? worker;
+      await sw.evaluate(() => {
+        const sync = chrome.storage.sync;
+        globalThis.__jhRealSyncSet = sync.set;
+        sync.set = async () => {
+          throw new Error('This request exceeds the MAX_WRITE_OPERATIONS_PER_MINUTE quota.');
+        };
+      });
+      try {
+        const limited = await ask(driver, 'muteHost', { host: full[1], muted: false });
+        check('an unmute refused for writing too often is failed', limited.reply?.ok === false, JSON.stringify(limited.reply));
+        check(
+          'and not said to be out of room',
+          !/no room/.test(limited.reply?.error ?? '') && /MAX_WRITE_OPERATIONS_PER_MINUTE/.test(limited.reply?.error ?? ''),
+          limited.reply?.error,
+        );
+      } finally {
+        await sw.evaluate(() => {
+          chrome.storage.sync.set = globalThis.__jhRealSyncSet;
+        });
+      }
+    }
+
     /* ---------------------------------------------------------------- *
      * Holding a space in the editor                                     *
      * ---------------------------------------------------------------- */
@@ -1398,6 +1951,36 @@ async function main() {
     }
 
     /*
+     * A compile that hangs. The preview compiles had the worker's ten-minute
+     * deadline and no Stop: a wedged compile held the card's compile lane,
+     * "Compiling…", for ten minutes with no way out short of closing it.
+     */
+    group('A preview compile that hangs can be stopped');
+    for (const [route, type, payload] of [
+      ['/api/render', 'render', { spec: { id: 'job-helios' } }],
+      ['/api/render/letter', 'renderLetter', { body: 'Dear Helios,', spec: { id: 'job-helios' } }],
+    ]) {
+      store.routes[route] = 'silent';
+      const before = store.hits.length;
+      const began = Date.now();
+      const running = ask(driver, type, payload);
+      // Until the request is at the store, so the stop is of a compile in the air.
+      for (let i = 0; i < 100 && !store.hits.slice(before).some((h) => h.url === route); i++) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const told = await ask(driver, 'cancelWork', { what: [type] });
+      const stopped = await Promise.race([running, new Promise((r) => setTimeout(() => r(null), 5000))]);
+      check(`${type}: Stop lets go of it`, told.reply?.data?.stopped === 1, JSON.stringify(told.reply));
+      check(
+        `${type}: and it comes back as a stop, at once`,
+        stopped !== null && stopped.reply?.ok === false && !/did not answer/i.test(stopped.reply?.error ?? '') && Date.now() - began < 5000,
+        stopped ? JSON.stringify(stopped.reply).slice(0, 160) : 'still waiting after 5s',
+      );
+      store.routes[route] = 'ok';
+      for (const res of store.open.splice(0)) res.destroy();
+    }
+
+    /*
      * And the same window without a Stop: a server that answers and then
      * wedges got the "not JSON" sentence twenty seconds later, with no button
      * on it, instead of the "did not answer" message that carries one.
@@ -1594,7 +2177,15 @@ async function main() {
     {
       const site = http.createServer((_req, res) => {
         res.writeHead(200, { 'content-type': 'text/html' });
+        /*
+         * Read because the board says what its results are, in the JobPosting
+         * data boards put beside them. It used to be read for `/jobs/` in its
+         * address, which is no longer reason enough to read a page unasked —
+         * Jenkins puts every build log under `/job/` — and a page the chip asks
+         * about is not read at all, failed or not.
+         */
         res.end(`<!doctype html><title>Engineering jobs in Boston | Board</title>
+          <script type="application/ld+json">{"@context":"https://schema.org","@type":"ItemList","itemListElement":[{"@type":"JobPosting","title":"Engineer"}]}</script>
           <h1>Search results</h1><div class="count">24 jobs found</div>
           <ul>${'<li>Engineer, full-time. Responsibilities and requirements inside. <time>1 day ago</time></li>'.repeat(24)}</ul>
           <script>let n = 0; setInterval(() => { document.querySelector('time').textContent = (++n) + ' seconds ago'; }, 100);</script>`);
@@ -1729,6 +2320,248 @@ async function main() {
       check('the page really did throw the card out', seen.thrownOut === true, JSON.stringify(seen));
       check('and it is back on the page', seen.after?.back === true, JSON.stringify(seen));
       check('the same card, with whatever was in it', seen.after?.same === true, JSON.stringify(seen));
+    }
+
+    /*
+     * The page cannot work the card, or read it.
+     *
+     * The card's root was open and it ran any click it was given, so a page
+     * script could find "Autofill this form" through `host.shadowRoot`,
+     * `.click()` it, and read the person's profile back out of its own
+     * inputs — and read the resume and the letter off the card's text on the
+     * way. A press here is "Build resume", because the store sees it: a
+     * page's `.click()` must not reach the store, and Playwright's, which is
+     * real input, must.
+     */
+    group('A page script cannot press the card, or see into it');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1><p>Helios is hiring a Platform Engineer. Responsibilities: build the
+          platform. Requirements: Kubernetes, Go. Apply now to join our team.</p>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = `http://127.0.0.1:${site.address().port}/jobs/platform-engineer`;
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+
+      const seen = {};
+      const page = await context.newPage();
+      try {
+        await page.goto(where);
+        const build = page.locator('#jobhelper-card-host button', { hasText: /^Build resume$/ });
+        await build.waitFor({ timeout: 15_000 });
+        await page.waitForFunction(
+          () => {
+            const root = document.querySelector('#jobhelper-card-host')?.shadowRoot;
+            return [...(root?.querySelectorAll('button') ?? [])].some((b) => /^Build resume$/.test(b.textContent.trim()) && !b.disabled);
+          },
+          null,
+          { timeout: 15_000 },
+        );
+        const renders = () => store.sentTo('/api/render').length;
+        const before = renders();
+        // The page's own script, pressing the button the way any script can.
+        seen.pressedByPage = await page.evaluate(() => {
+          const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+          const button = [...root.querySelectorAll('button')].find((b) => /^Build resume$/.test(b.textContent.trim()));
+          button.click();
+          button.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
+          button.focus();
+          button.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true }));
+          return button.textContent.trim();
+        });
+        await page.waitForTimeout(1500);
+        seen.afterPage = renders() - before;
+        /*
+         * And the extension's files are not at an address a page can know:
+         * at the fixed one, any page could fetch them and so tell that this
+         * extension is installed, and which version.
+         */
+        seen.fetchedByPage = await page.evaluate(async (id) => {
+          try {
+            const res = await fetch(`chrome-extension://${id}/src/shared/sites.js`);
+            return `fetched ${res.status}`;
+          } catch (err) {
+            return `refused: ${err.message}`;
+          }
+        }, extensionId);
+        // And a person, pressing the same button.
+        await build.click();
+        for (let i = 0; i < 100 && renders() === before; i++) await page.waitForTimeout(50);
+        seen.afterPerson = renders() - before;
+      } finally {
+        await page.close();
+      }
+
+      /*
+       * And, as it is in use rather than under test, the root is closed: the
+       * page finds the host and nothing under it.
+       */
+      await driver.evaluate((key) => chrome.storage.local.remove(key), OPEN_SHADOW_FLAG);
+      const closed = await context.newPage();
+      try {
+        await closed.goto(where);
+        await closed.waitForSelector('#jobhelper-card-host', { state: 'attached', timeout: 15_000 });
+        // Long enough for the card to be drawn into the root it keeps to itself.
+        await closed.waitForTimeout(1500);
+        seen.closed = await closed.evaluate(() => {
+          const host = document.querySelector('#jobhelper-card-host');
+          return { host: Boolean(host), root: host?.shadowRoot ?? null, text: host?.textContent ?? '', drawn: host?.getBoundingClientRect().height ?? 0 };
+        });
+      } finally {
+        await closed.close();
+        site.close();
+        await driver.evaluate((key) => chrome.storage.local.set({ [key]: true }), OPEN_SHADOW_FLAG);
+        await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: false }));
+      }
+
+      check('the page could find the button (the root is open for this test)', seen.pressedByPage === 'Build resume', JSON.stringify(seen));
+      check("a page script's .click(), click event and Enter do nothing", seen.afterPage === 0, JSON.stringify(seen));
+      check('while a real press of the same button does', seen.afterPerson >= 1, JSON.stringify(seen));
+      check("and a page cannot fetch the extension's files by its fixed address", /^refused/.test(seen.fetchedByPage ?? ''), String(seen.fetchedByPage));
+      check(
+        'in use, the card is on the page and its root is closed to it',
+        seen.closed?.host === true && seen.closed.root === null && seen.closed.text === '',
+        JSON.stringify(seen.closed),
+      );
+    }
+
+    /*
+     * The receipt watcher, only in a tab that is applying.
+     *
+     * It ran on every top-level page anybody opened, for a quarter of an
+     * hour, re-reading the page's headings on every change of it, to find a
+     * sentence that only means anything in a tab with an application in it.
+     * Heard from here as the message it sends: a content script's messages
+     * reach the extension's own pages as well as the worker.
+     */
+    /*
+     * A tab that once held a job, and the next page opened in it.
+     *
+     * Looking at a posting with a form leaves work in the tab without anybody
+     * writing a word: the card stages its files as soon as it knows what the
+     * form wants, and the answer bank fills in the questions it recognises.
+     * `openHere` took that for "something written", and "something written"
+     * was enough on its own — so the next page in the tab, a chat client
+     * typed into the address bar, was read whole and sent to be analysed,
+     * past the score gate and without the chip, and so was every page after
+     * it for the trail's two hours. And `applicationInTab` said yes to every
+     * one of them, so each ran the receipt watcher over its every change for
+     * a quarter of an hour, for a receipt the worker refuses anyway for being
+     * on another site. Measured in the hunt's `carry.mjs`.
+     *
+     * Asked of the worker directly, because the answer is the whole of it:
+     * the content script reads the page exactly when `open` and either of
+     * `made` or `carriesOn` are true.
+     */
+    group('A tab that once held a job does not carry it onto every page after');
+    {
+      store.save = 'work';
+      store.role = 'Platform Engineer';
+      store.company = 'Streamly';
+      await ask(driver, 'clearTrail', {});
+      await ask(driver, 'analyze', {
+        url: 'http://jobs.example/streamly/jobs/123',
+        title: 'Platform Engineer at Streamly',
+        html: '<h1>Platform Engineer</h1><form><input name="email"></form>',
+        company: 'Streamly',
+      });
+      // What the card leaves behind on its own on a posting with a form.
+      await ask(driver, 'saveWork', {
+        work: {
+          spec: { id: 'job-fake', generatedFor: { company: 'Streamly', role: 'Platform Engineer' } },
+          staged: { currentDir: '/tmp/streamly' },
+          answersByQuestion: { 'Why are you interested in this role?': 'answer to it' },
+        },
+      });
+      const carried = (reply) => Boolean(reply?.open && (reply?.made || reply?.carriesOn));
+      const chat = { url: 'http://chat.example/client/T1/C1', title: 'general - Workspace - Chat' };
+      const atChat = (await ask(driver, 'openHere', { page: chat })).reply?.data;
+      check('the trail is there to be carried', atChat?.open === true, JSON.stringify(atChat));
+      check("an unrelated page next in the tab is not read on the application's account", !carried(atChat), JSON.stringify(atChat));
+
+      // The ways an application really does carry on, which must still.
+      const sentOn = (await ask(driver, 'openHere', {
+        page: { url: 'https://acme.bytedance.example/n/c/8f2a1b', title: 'Apply', referrerHost: 'jobs.example' },
+      })).reply?.data;
+      check('a form on another site, reached from the posting, still is', carried(sentOn), JSON.stringify(sentOn));
+      const ownSteps = (await ask(driver, 'openHere', {
+        page: { url: 'http://jobs.example/streamly/jobs/123/apply', title: 'Apply' },
+      })).reply?.data;
+      check("and so is the next step down the posting's own address", carried(ownSteps), JSON.stringify(ownSteps));
+
+      const watched = async (payload) => (await ask(driver, 'applicationInTab', payload)).reply?.data?.open;
+      check('the chat client is not watched for a receipt', (await watched({ url: chat.url })) === false);
+      check('a page on the posting\'s own site is', (await watched({ url: 'http://jobs.example/streamly/thanks' })) === true);
+      check(
+        'and so is a frame of another host inside it',
+        (await watched({ url: 'https://boards.greenhouse.io/streamly/jobs/1', above: ['http://jobs.example'] })) === true,
+      );
+      await ask(driver, 'clearTrail', {});
+      store.company = undefined;
+    }
+
+    group('Watching for a receipt only where there is an application');
+    {
+      const site = http.createServer((req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        if (req.url.startsWith('/thanks')) {
+          res.end('<!doctype html><title>Acme</title><h1>Thank you for applying</h1><p>We will be in touch.</p>');
+          return;
+        }
+        res.end(`<!doctype html><title>Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1><p>Helios is hiring a Platform Engineer. Responsibilities: build the
+          platform. Requirements: Kubernetes, Go. Apply now to join our team.</p>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const origin = `http://127.0.0.1:${site.address().port}`;
+      await driver.evaluate(() => {
+        window.heardTypes = [];
+        chrome.runtime.onMessage.addListener((message) => {
+          window.heardTypes.push(message?.type);
+        });
+      });
+      const heard = () => driver.evaluate(() => window.heardTypes.splice(0));
+      const seen = {};
+      const stranger = await context.newPage();
+      try {
+        await heard();
+        await stranger.goto(`${origin}/thanks`);
+        await stranger.waitForTimeout(2000);
+        seen.noApplication = await heard();
+      } finally {
+        await stranger.close();
+      }
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+      const applying = await context.newPage();
+      try {
+        await applying.goto(`${origin}/jobs/platform-engineer`);
+        await applying.locator('#jobhelper-card-host .card').waitFor({ timeout: 15_000 });
+        await heard();
+        // The same document saying it, as Workday's dialog does.
+        await applying.evaluate(() => {
+          const said = document.createElement('h1');
+          said.textContent = 'Thank you for applying';
+          document.body.append(said);
+        });
+        await applying.waitForTimeout(2000);
+        seen.applying = await heard();
+      } finally {
+        await applying.close();
+        site.close();
+        await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: false }));
+      }
+      check(
+        'a page that says "Thank you for applying" in a tab with no application is not watched',
+        !seen.noApplication.includes('applicationSentHere'),
+        JSON.stringify(seen.noApplication),
+      );
+      check('while one with a card on it is, and says so', seen.applying.includes('applicationSentHere'), JSON.stringify(seen.applying));
     }
 
     /*
@@ -2273,6 +3106,89 @@ async function main() {
       const held = await ask(driver, 'getTrail', {});
       check('the trail really is out of reach by now', (held.reply?.data?.pages ?? []).length === 0, JSON.stringify(held.reply?.data));
       check('and the tooltip no longer says the writing is held', !/writing is being held/.test(after), after);
+    }
+
+    /*
+     * "Yes" on the card's "Did you just send your application to …?" is filed
+     * under the tab's work, and only when the question was about that work.
+     *
+     * The question can be answered on a card that is not the one it was asked
+     * on — a single-page board that moved on to the next posting — and "Yes"
+     * then filed whichever job the tab was on now. So the answer says which
+     * job it meant, and one that names a different job from the work is
+     * refused; and a tab with no work is refused too, rather than filed under
+     * whatever the page in front of it says it is. See `applicationSentHere`.
+     */
+    group('A send said on the card is filed only under the job it named');
+    {
+      store.save = 'work';
+      const sent = () => store.sentTo('/api/extension/sent').length;
+      await ask(driver, 'clearTrail', {});
+      /*
+       * And the page answering for itself when asked what it is, as a card's
+       * page does — which says what it shows now, not what the question was
+       * about. The automatic path may still ask it; this one must not.
+       */
+      await driver.evaluate(() => {
+        if (window.__answersWhatItIs) return;
+        window.__answersWhatItIs = true;
+        chrome.runtime.onMessage.addListener((message, _sender, reply) => {
+          if (message?.type !== 'jh-what-is-this') return false;
+          reply({ ok: true, data: { company: 'Helios', role: 'Platform Engineer' } });
+          return false;
+        });
+      });
+      const nothing = await ask(driver, 'applicationSentHere', {
+        confirmed: true, company: 'Helios', role: 'Platform Engineer', url: 'http://said.example/review', note: 'Said to be sent, on the card',
+      });
+      check('with no work in the tab it is refused', nothing.reply?.data?.ok === false && sent() === 0, JSON.stringify(nothing.reply));
+      await ask(driver, 'analyze', { url: 'http://said.example/jobs/1', title: 'Helios', html: '<p>one</p>', company: 'Helios' });
+      await ask(driver, 'saveWork', {
+        work: { spec: { id: 'job-helios', generatedFor: { company: 'Helios', role: 'Platform Engineer' }, choices: {} } },
+      });
+      const before = sent();
+      const other = await ask(driver, 'applicationSentHere', {
+        confirmed: true, company: 'Quillon Haulage', role: 'Platform Engineer', url: 'http://said.example/review', note: 'Said to be sent, on the card',
+      });
+      check('a question about another employer is refused', other.reply?.data?.ok === false && sent() === before, JSON.stringify(other.reply));
+      const role = await ask(driver, 'applicationSentHere', {
+        confirmed: true, company: 'Helios', role: 'Data Scientist', url: 'http://said.example/review', note: 'Said to be sent, on the card',
+      });
+      check('and one about another role there', role.reply?.data?.ok === false && sent() === before, JSON.stringify(role.reply));
+      await ask(driver, 'applicationSentHere', {
+        confirmed: true, company: 'Helios, Inc.', role: 'Platform engineer', url: 'http://said.example/review', note: 'Said to be sent, on the card',
+      });
+      const filed = store.sentTo('/api/extension/sent').slice(before);
+      const body = (() => {
+        try {
+          return JSON.parse(filed.at(-1)?.body ?? 'null');
+        } catch {
+          return null;
+        }
+      })();
+      check(
+        'the job it named is filed, under the work',
+        filed.length === 1 && body?.company === 'Helios' && body?.role === 'Platform Engineer',
+        JSON.stringify(body),
+      );
+    }
+
+    /*
+     * The pairing header, on every request to the store, empty while this
+     * extension is not paired. Its absence is how ResumeM-M tells a JobHelper
+     * from before pairing, which has nowhere to enter a code, and tells it to
+     * update rather than to make one.
+     */
+    group('The pairing header');
+    {
+      const toStore = store.hits.filter((h) => h.url.startsWith('/api') || h.url === '/health');
+      const without = toStore.filter((h) => h.pair === null);
+      check(
+        'every request this run made to the store carried it',
+        toStore.length > 20 && without.length === 0,
+        `${toStore.length} requests, ${without.length} without: ${[...new Set(without.map((h) => h.url))].slice(0, 5).join(', ')}`,
+      );
+      check('empty, since nothing here was ever paired', toStore.every((h) => h.pair === ''), [...new Set(toStore.map((h) => h.pair))].join(','));
     }
   } finally {
     await context.close();

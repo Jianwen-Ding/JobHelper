@@ -12,7 +12,8 @@
     --accent-soft: #e8f0fe;
     --ink: #202124;
     --muted: #5f6368;
-    --faint: #80868b;
+    /* #80868b was 3.5:1 on the sunk panel at 11px; this is 4.7:1. See card.js. */
+    --faint: #6b7075;
     --line: #dadce0;
     --line-soft: #f1f3f4;
     --panel-sunk: #f8f9fa;
@@ -81,7 +82,7 @@
   .ai-line { display: flex; align-items: center; gap: 7px; }
   .ai-command {
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 11px; color: var(--faint, #80868b); margin-top: 3px;
+    font-size: 11px; color: var(--faint, #6b7075); margin-top: 3px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .ai-command:empty { display: none; }
@@ -135,6 +136,19 @@
   .open-app .what { font-size: 11px; color: var(--muted); margin-top: 2px; line-height: 1.5; }
   .open-app .row { margin-top: 9px; }
   .open-app button { background: #fff; }
+
+  /*
+   * Pairing with ResumeM-M: shown only when the server says this extension is
+   * not paired, and then first, because nothing else here works until it is.
+   */
+  .pairing {
+    margin: 0 0 14px; padding: 10px 12px; border-radius: 8px;
+    background: var(--warn-bg); color: var(--ink); line-height: 1.5;
+  }
+  .pairing .what { font-size: 12px; margin-bottom: 8px; }
+  .pairing input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }
+  .pairing .said { font-size: 11px; margin-top: 6px; color: var(--warn); }
+  .pairing .said:empty { display: none; }
 </style>
 </head>
 <body>
@@ -151,6 +165,16 @@
     <button id="backToApplication">Back to it</button>
     <button id="dropApplication">Start fresh</button>
   </div>
+</div>
+
+<div class="pairing" id="pairing" hidden>
+  <div class="what" id="pairingWhat">JobHelper is not paired with ResumeM-M yet. Open ResumeM-M → Save &amp; Files → Pair JobHelper, and enter the code here.</div>
+  <input type="text" id="pairCode" placeholder="ABCD-EFGH" autocomplete="off" spellcheck="false" maxlength="12" aria-label="Pairing code">
+  <div class="row">
+    <button id="pairButton" class="primary">Pair</button>
+    <button id="pairOpen">Open ResumeM-M</button>
+  </div>
+  <div class="said" id="pairSaid" role="status"></div>
 </div>
 
 <label>
@@ -213,7 +237,9 @@
   <button id="openBeside" title="The resume editor in the side panel, beside this page">Edit resume beside this page</button>
 </div>
 
-<div class="status" id="status">Checking server…</div>
+<!-- A status: what it says changes as the server answers, and a screen
+     reader was never told, so "Connected" or "not running" went unheard. -->
+<div class="status" id="status" role="status">Checking server…</div>
 <div class="row"><button id="reportBug">Report a bug</button></div>
 
 <script src="popup.js" type="module"></script>

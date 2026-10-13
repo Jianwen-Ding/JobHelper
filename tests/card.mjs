@@ -34,6 +34,8 @@ async function main() {
   // everything written before it takes one argument and ignores this.
   const inPage = (fn, given) => page.evaluate(
     async ([code, body, arg]) => {
+      // A harness, not a page: the card takes untrusted presses here. See `HARNESS` in card.js.
+      globalThis.__JOBHELPER_HARNESS__ = true;
       const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
       const { createCard, removeCard } = await import(url);
       removeCard();
@@ -2580,6 +2582,92 @@ async function main() {
   );
 
   /*
+   * "You may have applied to this already."
+   *
+   * A sent application the store ties to this posting by the names alone —
+   * the same job seen on its other page, or another job with the same title —
+   * holds a stage with `maybe` (409 `already-sent`). The card says when and
+   * where that one went, stages nothing more until it is answered, and
+   * "It's a different job" sends the stage again with `evenIfSent`, which
+   * the store files as a new application. Nothing is marked sent.
+   */
+  const maybeSent = await inPage((createCard) => {
+    const sent = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Software Engineer Intern', company: 'Stripe' },
+        spec: { id: 'job-stripe', label: 'Stripe', tier: 'temporary' },
+        rationale: [],
+        diff: [],
+        applied: { id: 'stripe-1', at: '2026-09-24T15:00:00.000Z', status: 'applied', maybe: true, url: 'https://www.linkedin.com/jobs/view/4462047454/' },
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        if (action === 'render') return { pages: 1, fits: true };
+        if (action === 'stage') {
+          if (!payload?.evenIfSent) {
+            return {
+              alreadySent: true,
+              maybe: true,
+              application: { id: 'stripe-1', url: 'https://www.linkedin.com/jobs/view/4462047454/', appliedAt: '2026-09-24T15:00:00.000Z', status: 'applied' },
+              error: 'You may have applied to this already',
+            };
+          }
+          return { currentDir: '/tmp/x', application: { id: 'stripe-2' } };
+        }
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
+    const said = () => root.querySelector('.maybe-sent')?.textContent ?? null;
+    const stages = () => sent.filter((c) => c.action === 'stage');
+    const first = said();
+    byText('Build resume').click();
+    return new Promise((resolve) =>
+      setTimeout(() => {
+        const held = stages().length;
+        const heldSaid = said();
+        // More changes: nothing more is staged while it is unanswered.
+        handle.restoreWork({ letter: 'Dear Stripe,' }, false);
+        setTimeout(() => {
+          const stillHeld = stages().length;
+          const button = [...root.querySelectorAll('button')].find((b) => /different job/.test(b.textContent));
+          button?.click();
+          setTimeout(
+            () =>
+              resolve({
+                first,
+                heldSaid,
+                held,
+                stillHeld,
+                hadButton: Boolean(button),
+                after: stages().map((c) => Boolean(c.payload?.evenIfSent)),
+                afterSaid: said(),
+                sentMark: Boolean(handle.takeWork?.()?.sent),
+              }),
+            2600,
+          );
+        }, 2600);
+      }, 2600),
+    );
+  });
+  check(
+    'a maybe-sent application is said with when and where',
+    /You may have applied to this already, on 24 September|You may have applied to this already, on September 24/.test(maybeSent.first ?? '') &&
+      (maybeSent.first ?? '').includes('linkedin.com/jobs/view/4462047454'),
+    JSON.stringify(maybeSent.first),
+  );
+  check('its stage is held once, and not sent again until it is answered', maybeSent.held === 1 && maybeSent.stillHeld === 1, JSON.stringify(maybeSent));
+  check('saying it is another job stages with evenIfSent', maybeSent.hadButton && maybeSent.after.length === 2 && maybeSent.after[1] === true, JSON.stringify(maybeSent.after));
+  check('and the question goes, with nothing marked sent', maybeSent.afterSaid === null && !maybeSent.sentMark, JSON.stringify(maybeSent));
+
+  /*
    * "Saved" has to be about the text that was saved.
    *
    * The request carries a snapshot of the box, which is right. The callback
@@ -2592,11 +2680,13 @@ async function main() {
    */
   const savedLie = await inPage((createCard) => {
     let release;
+    let savedFor;
     const handle = createCard({
       analysis: {
         isJobPosting: true,
         job: { title: 'Platform Engineer', company: 'Acme' },
         spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        application: { id: 'app-acme' },
         rationale: [],
         diff: [],
       },
@@ -2606,7 +2696,7 @@ async function main() {
       needsCoverLetter: true,
       onAction: async (action, payload) =>
         action === 'saveLetter'
-          ? new Promise((r) => { release = () => r({ ok: true, sent: payload.body }); })
+          ? new Promise((r) => { savedFor = payload.applicationId; release = () => r({ ok: true, sent: payload.body }); })
           : action === 'aiStatus'
             ? { active: true, state: 'on' }
             : {},
@@ -2641,9 +2731,21 @@ async function main() {
         inTheBox: root.querySelector('textarea[data-field="letter"]')?.value ?? '',
         label: now?.textContent?.trim() ?? '(gone)',
         disabled: now?.disabled ?? null,
+        savedFor,
       };
     })();
   });
+
+  /*
+   * And it says which application the letter is for. Saved by the job's
+   * name alone, the store handed back the name another application's letter
+   * was filed under, and the save wrote over it.
+   */
+  check(
+    'the letter is saved for the application on the card',
+    savedLie.savedFor === 'app-acme',
+    String(savedLie.savedFor),
+  );
 
   check(
     'a letter typed on while the save was out is not called saved',
@@ -2929,6 +3031,90 @@ async function main() {
     'a reply that crossed the stop is dropped, not applied late',
     stopped.lateClaimed === 'Use Original',
     String(stopped.lateClaimed),
+  );
+
+  console.log('\nA compile that hangs can be stopped');
+
+  /*
+   * The two preview compiles, the resume's and the letter's, were left off
+   * the list of runs with a Stop on the grounds that a compile is seconds.
+   * One that hangs is not: the worker gave it ten minutes, and for those ten
+   * minutes "Build resume" read "Compiling…" with no way out but closing the
+   * card and everything written on it.
+   */
+  const hungCompiles = await inPage((createCard) => {
+    const seen = [];
+    const held = {};
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: true,
+      onAction: async (action, payload) => {
+        seen.push([action, payload]);
+        if (action === 'render' || action === 'renderLetter') {
+          return new Promise((resolve, reject) => {
+            held[action] = { resolve, reject };
+          });
+        }
+        if (action === 'cancelWork') {
+          for (const what of payload?.what ?? []) {
+            const err = new Error('Stopped.');
+            err.jobhelper = { stopped: true };
+            held[what]?.reject(err);
+            delete held[what];
+          }
+          return { stopped: 1 };
+        }
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const byText = (re) => [...root.querySelectorAll('button')].find((b) => re.test(b.textContent.trim()));
+    const stop = () => root.querySelector('.progress-label .stop');
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    return (async () => {
+      await wait(20);
+      const out = {};
+      byText(/^Build resume$/).click();
+      await wait(20);
+      out.resumeHeld = Boolean(held.render);
+      out.resumeStop = Boolean(stop());
+      stop()?.click();
+      await wait(40);
+      out.resumeFree = byText(/^Build resume$/)?.disabled === false;
+      out.resumeBar = Boolean(root.querySelector('.progress'));
+
+      const box = root.querySelector('textarea[data-field="letter"]');
+      box.value = 'Dear Acme, I would like to build your platform.';
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+      await wait(20);
+      byText(/^See it typeset$/).click();
+      await wait(20);
+      out.letterHeld = Boolean(held.renderLetter);
+      out.letterStop = Boolean(stop());
+      stop()?.click();
+      await wait(40);
+      out.letterFree = byText(/^See it typeset$/)?.disabled === false;
+      out.errored = root.querySelector('.err')?.textContent ?? null;
+      out.asked = seen.filter(([a]) => a === 'cancelWork').map(([, p]) => JSON.stringify(p?.what));
+      return out;
+    })();
+  });
+  check('a hung resume compile offers a Stop', hungCompiles.resumeHeld && hungCompiles.resumeStop, JSON.stringify(hungCompiles));
+  check('and stopping it frees Build resume at once', hungCompiles.resumeFree && !hungCompiles.resumeBar, JSON.stringify(hungCompiles));
+  check('so does a hung letter typeset', hungCompiles.letterHeld && hungCompiles.letterStop && hungCompiles.letterFree, JSON.stringify(hungCompiles));
+  check(
+    'the worker is told which compile, and neither is called a failure',
+    JSON.stringify(hungCompiles.asked) === JSON.stringify(['["render"]', '["renderLetter"]']) && hungCompiles.errored === null,
+    JSON.stringify(hungCompiles),
   );
 
   console.log('\nDrafting does not lock what you already wrote');
@@ -4084,18 +4270,25 @@ async function main() {
         question: 'Please provide a short description (150 words or less) of any hands-on technical project in which you participated.',
         fieldId: 'jh-q-1',
         answer: 'I built a rocket avionics board.',
-        confident: false,
+        // Confident: a loose match is offered, not put in the box, so there
+        // would be nothing in it to count. See `offeredOnly`.
+        confident: true,
       },
       { question: 'What technical skills do you hope to use in this position?', fieldId: 'jh-q-2', answer: '', confident: false },
       { question: 'Tell us about yourself (no more than 200 words).', fieldId: 'jh-q-3', answer: '', confident: false },
     ]);
     const counts = () => [...root.querySelectorAll('.q .wordcount')].map((c) => ({ text: c.textContent, over: c.classList.contains('over') }));
+    // The saved answer is drawn shut until opened, and its length with it:
+    // see `keptShut`. Counted once it is open.
+    const shut = root.querySelectorAll('.q .wordcount').length;
+    root.querySelector('.kept-shut button')?.click();
     const before = counts();
     const box = root.querySelector('textarea[data-field^="answer:Please provide"]');
     box.value = Array.from({ length: 151 }, (_, i) => `word${i}`).join(' ');
     box.dispatchEvent(new Event('input', { bubbles: true }));
-    return { before, after: counts() };
+    return { shut, before, after: counts() };
   });
+  check('shut, the saved answer is not counted where the page can read it', wordCounts.shut === 2, String(wordCounts.shut));
   check('an answer is counted against the limit its question states', wordCounts.before[0]?.text === '6 / 150 words', JSON.stringify(wordCounts.before[0]));
   check('and a question with no limit still shows how long the answer is', wordCounts.before[1]?.text === '0 words', JSON.stringify(wordCounts.before[1]));
   check('"no more than 200 words" is a limit too', wordCounts.before[2]?.text === '0 / 200 words', JSON.stringify(wordCounts.before[2]));
@@ -4512,8 +4705,11 @@ async function main() {
     const root = document.querySelector('#jobhelper-card-host').shadowRoot;
     await new Promise((r) => setTimeout(r, 120));
     const counters = () => [...root.querySelectorAll('.q .count')];
+    // The saved answer is drawn shut until opened, and its length with it:
+    // see `keptShut`. Counted once it is open.
+    const shut = counters().length;
+    root.querySelector('.kept-shut button')?.click();
     const before = counters().map((c) => ({ text: c.textContent, over: c.classList.contains('over') }));
-
     const box = root.querySelector('textarea[data-field="answer:Why us?"]');
     box.value = 'x'.repeat(52);
     box.dispatchEvent(new Event('input', { bubbles: true }));
@@ -4527,12 +4723,14 @@ async function main() {
     both?.click();
     await new Promise((r) => setTimeout(r, 150));
     return {
+      shut,
       before,
       after,
       one: sent.find((c) => c.action === 'answer:Why us?')?.payload ?? null,
       all: sent.find((c) => c.action === 'writeApplication')?.payload?.questions ?? null,
     };
   });
+  check('shut, its length is not drawn', limits.shut === 0, String(limits.shut));
   check('a box with a limit is counted against it', limits.before.length === 1 && limits.before[0].text === '10 / 40' && !limits.before[0].over, JSON.stringify(limits.before));
   check(
     'and says so, in red, once an answer runs past it',
@@ -4884,6 +5082,204 @@ async function main() {
     'and the finished screen says it is not finished',
     /The cover letter is not finished\..*The draft still has \[Company Name\] and \[Your Name\] in it/.test(gappyFolder.filed.done ?? ''),
     String(gappyFolder.filed.done),
+  );
+
+  /*
+   * A card with no letter at all says nothing about the letter.
+   *
+   * The store reads `coverLetter: null` as "take the letter away". A page
+   * reloaded while its letter was still being filed, with the browser's
+   * storage too full to carry the letter across, came back with no letter,
+   * staged on its own — and removed the one just filed. Measured in
+   * tests/adverse.mjs, "the letter is kept even so", about one run in two.
+   */
+  const noLetter = await inPage(async (createCard) => {
+    const sent = [];
+    createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme', description: 'Kafka and Go.' },
+        spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+        rationale: [],
+        diff: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: true,
+      onAction: async (action, payload) => {
+        sent.push({ action, payload });
+        if (action === 'aiStatus') return { active: true, state: 'on' };
+        if (action === 'render') return { pages: 1, fits: true };
+        if (action === 'stage') return { currentDir: '/tmp/x', dir: '/tmp/x', files: ['Resume.pdf'] };
+        if (action === 'bundle') return { currentDir: '/tmp/x', dir: '/tmp/x', files: ['Resume.pdf'] };
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => new RegExp(t).test(b.textContent));
+    await wait(120);
+    byText('Build resume')?.click();
+    await wait(1600);
+    const staged = sent.filter((c) => c.action === 'stage').at(-1)?.payload;
+    byText('Mark as applied')?.click();
+    await wait(200);
+    const bundled = sent.filter((c) => c.action === 'bundle').at(-1)?.payload;
+    const shape = (p) => (p ? (p.coverLetter === null ? 'null' : p.coverLetter === undefined ? 'nothing' : JSON.stringify(p.coverLetter)) : 'not sent');
+    return { staged: shape(staged), bundled: shape(bundled) };
+  });
+  check('a card with no letter stages without one, not with null', noLetter.staged === 'nothing', JSON.stringify(noLetter));
+  check('and files without one, not with null', noLetter.bundled === 'nothing', JSON.stringify(noLetter));
+
+  console.log('\nA build that replaced the files of an application already sent');
+
+  /*
+   * The store answers a build with `warnings`, and since it started keeping
+   * the resume an already-sent application went out with, with `replaced`
+   * too: "had already been sent, and this build replaced the resume …". The
+   * card read neither. "Mark as applied" pressed again with another resume
+   * folded the card away over a folder whose files were no longer the ones
+   * the employer had, and said nothing. Said first, in amber, and the card
+   * left open; the other notes quiet under one line; and nothing at all for
+   * a build with nothing to say.
+   */
+  const rebuiltSent = await inPage(async (createCard, given) => {
+    const REPLACED =
+      'Acme — Platform Engineer had already been sent, and this build replaced the resume (Summer intern → Acme) in its folder: ' +
+      'the files there are no longer the ones that went out. The resume that was sent, Summer intern, is kept.';
+    const card = (bundleReply) =>
+      createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Platform Engineer', company: 'Acme', description: 'Kafka and Go.' },
+          spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+          rationale: [],
+          diff: [],
+        },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async (action) => {
+          if (action === 'aiStatus') return { active: false, state: 'off' };
+          if (action === 'render') return { pages: 1, fits: true };
+          if (action === 'stage') return { currentDir: '/tmp/x', dir: '/tmp/x', files: ['Resume.pdf'], warnings: [] };
+          if (action === 'bundle') return bundleReply;
+          return {};
+        },
+      });
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const file = async (reply) => {
+      card(reply);
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      const byText = (t) => [...root.querySelectorAll('button')].find((b) => new RegExp(t).test(b.textContent));
+      await wait(120);
+      byText('Build resume')?.click();
+      await wait(300);
+      byText('Mark as applied')?.click();
+      await wait(300);
+      const folded = Boolean(root.querySelector('button[aria-label="Unfold JobHelper"]'));
+      root.querySelector('button[aria-label="Unfold JobHelper"]')?.click();
+      await wait(100);
+      return {
+        folded,
+        replaced: root.querySelector('.done-missing[data-note="replaced"]')?.textContent ?? null,
+        first: root.querySelector('.body')?.firstElementChild?.dataset?.note ?? null,
+        notes: root.querySelector('[data-note="build-notes"]')?.textContent ?? null,
+        notesOpen: root.querySelector('[data-note="build-notes"]')?.open ?? null,
+      };
+    };
+    const base = { currentDir: '/tmp/x', dir: '/tmp/x', files: ['Resume.pdf'] };
+    return {
+      REPLACED,
+      replacing: await file({
+        ...base,
+        replaced: REPLACED,
+        warnings: [REPLACED, 'The resume was squeezed to fit: tighter margins.'],
+      }),
+      quiet: await file({ ...base, warnings: [] }),
+    };
+  });
+  check(
+    'a filing that replaced sent files says so, first and in amber',
+    rebuiltSent.replacing.replaced?.includes(rebuiltSent.REPLACED) &&
+      /The files that were sent have been replaced\./.test(rebuiltSent.replacing.replaced) &&
+      rebuiltSent.replacing.first === 'replaced',
+    JSON.stringify(rebuiltSent.replacing),
+  );
+  check('and the card is not folded away over it', rebuiltSent.replacing.folded === false, JSON.stringify(rebuiltSent.replacing));
+  check(
+    'the other notes are there, shut, under one line',
+    /A note from the build/.test(rebuiltSent.replacing.notes ?? '') &&
+      /squeezed to fit/.test(rebuiltSent.replacing.notes ?? '') &&
+      !/already been sent/.test(rebuiltSent.replacing.notes ?? '') &&
+      rebuiltSent.replacing.notesOpen === false,
+    JSON.stringify(rebuiltSent.replacing),
+  );
+  check(
+    'a filing with nothing to say shows nothing, and folds as before',
+    rebuiltSent.quiet.replaced === null && rebuiltSent.quiet.notes === null && rebuiltSent.quiet.folded === true,
+    JSON.stringify(rebuiltSent.quiet),
+  );
+
+  /*
+   * And only on the page whose build said it. The stage's reply travels to
+   * the next page with the work, for its folder — and its warnings went with
+   * it, so a replacement said once was said again in amber on every page of
+   * the application after, though nothing was built there.
+   */
+  const carriedWarning = await inPage(async (createCard) => {
+    const REPLACED = 'Acme — Platform Engineer had already been sent, and this build replaced the resume in its folder.';
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const card = () =>
+      createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Platform Engineer', company: 'Acme', description: 'Kafka and Go.' },
+          spec: { id: 'job-acme', label: 'Acme', extends: 'base' },
+          rationale: [],
+          diff: [],
+        },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async (action) => {
+          if (action === 'aiStatus') return { active: false, state: 'off' };
+          if (action === 'render') return { pages: 1, fits: true };
+          if (action === 'stage') {
+            return { currentDir: '/tmp/x', dir: '/tmp/x', files: ['Resume.pdf'], replaced: REPLACED, warnings: [REPLACED, 'Squeezed.'] };
+          }
+          return {};
+        },
+      });
+    const shown = () => {
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      return {
+        replaced: Boolean(root.querySelector('[data-note="replaced"]')),
+        notes: Boolean(root.querySelector('[data-note="build-notes"]')),
+        folder: root.textContent.includes('/tmp/x'),
+      };
+    };
+    const first = card();
+    await wait(120);
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    [...root.querySelectorAll('button')].find((b) => /Build resume/.test(b.textContent))?.click();
+    await wait(400);
+    const built = shown();
+    const work = JSON.parse(JSON.stringify(first.takeWork()));
+    // The next page of the application: a new card, given the work.
+    const next = card();
+    next.restoreWork({ ...work, sent: true }, true);
+    await wait(300);
+    return { built, next: shown() };
+  });
+  check('the page that built it says so', carriedWarning.built.replaced && carriedWarning.built.notes, JSON.stringify(carriedWarning));
+  check(
+    'the next page, given the work, does not say it again',
+    !carriedWarning.next.replaced && !carriedWarning.next.notes,
+    JSON.stringify(carriedWarning),
   );
 
   console.log('\nAn AI answer with placeholders left in it');
@@ -6581,6 +6977,736 @@ async function main() {
     document.querySelector('#jobhelper-card-host')?.remove();
     delete window.chrome.runtime;
   });
+
+  /*
+   * A page written right to left. `all: initial` resets nearly everything a
+   * shadow host inherits, but not `direction`: on an Arabic or Hebrew page
+   * the card came out mirrored, its English sentences with their full stops
+   * at the wrong end. The card is left to right whatever the page is, and
+   * its writing boxes follow what is typed into them.
+   */
+  console.log('\nOn a page written right to left');
+  {
+    const rtl = await inPage((createCard) => {
+      document.documentElement.dir = 'rtl';
+      try {
+        createCard({
+          analysis: {
+            isJobPosting: true,
+            job: { title: 'Platform Engineer', company: 'Acme' },
+            spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' },
+            rationale: [],
+          },
+          resumes: [],
+          settings: {},
+          questions: [{ question: 'Why us?', answer: '', confident: false }],
+          needsCoverLetter: true,
+          onAction: async () => ({}),
+        });
+        const host = document.querySelector('#jobhelper-card-host');
+        const root = host.shadowRoot;
+        const card = root.querySelector('.card');
+        const boxes = [...root.querySelectorAll('textarea')];
+        return {
+          page: getComputedStyle(document.body).direction,
+          host: getComputedStyle(host).direction,
+          card: getComputedStyle(card).direction,
+          isolated: getComputedStyle(host).unicodeBidi,
+          boxes: boxes.length,
+          auto: boxes.filter((b) => b.dir === 'auto').length,
+        };
+      } finally {
+        document.documentElement.removeAttribute('dir');
+      }
+    });
+    check('the page really is right to left', rtl.page === 'rtl', JSON.stringify(rtl));
+    check('the card is left to right', rtl.host === 'ltr' && rtl.card === 'ltr', JSON.stringify(rtl));
+    check('and isolated from the page around it', rtl.isolated === 'isolate', JSON.stringify(rtl));
+    check('every writing box takes its direction from what is typed', rtl.boxes > 0 && rtl.auto === rtl.boxes, JSON.stringify(rtl));
+  }
+
+  console.log('\nComing back to a posting whose copy is already filed');
+
+  /*
+   * A new tab on a posting days later carries nothing, and the card started a
+   * fresh proposal from the default base; the first stage then filed that over
+   * the copy already made for the job, taking the base chosen for it and every
+   * change made since. The analysis names the application's resume, and the
+   * card now starts from it: the copy's content, the copy's base in the
+   * picker, and a stage that files it as it is. Run twice: the opening read
+   * made from the copy's own base, and from the default, which is read again
+   * from the copy's base with the copy kept on screen.
+   */
+  const revisit = (createCard, given) =>
+    (async () => {
+      const sent = [];
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const job = { title: 'Platform Engineer', company: 'Acme' };
+      const copy = {
+        id: 'job-acme-platform-engineer',
+        label: 'Platform Engineer — Acme',
+        tier: 'temporary',
+        copiedFrom: 'intern',
+        generatedFor: { company: 'Acme', role: 'Platform Engineer' },
+        // `b_pipeline` is the suggestion, taken; `b_own` was switched by hand.
+        choices: { b_pipeline: 'v_kafka', b_own: 'v_mine' },
+      };
+      const reading = (base) => ({
+        isJobPosting: true,
+        job,
+        application: { id: 'app-acme', resumeId: copy.id },
+        spec: { id: copy.id, label: copy.label, copiedFrom: base, choices: { b_pipeline: 'v_base', b_own: 'v_theirs' } },
+        baseResumeId: base,
+        baseLabel: base === 'intern' ? 'Intern resume' : 'New grad resume',
+        tailor: 'match',
+        aiUsed: false,
+        diff: [],
+        rationale: [{ key: 'b_pipeline', from: 'v_base', to: 'v_kafka', toText: 'Built a Kafka pipeline', because: ['kafka'] }],
+      });
+      let handle = null;
+      handle = createCard({
+        analysis: null,
+        resumes: [
+          { id: 'newgrad', label: 'New grad resume', tier: 'base' },
+          { id: 'intern', label: 'Intern resume', tier: 'base' },
+          { ...copy },
+        ],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        isForm: true,
+        onAction: async (action, payload) => {
+          sent.push({ action, payload: JSON.parse(JSON.stringify(payload ?? {})) });
+          if (action === 'fresh') {
+            // Slow, so a stage asked for meanwhile has to wait for it.
+            if (payload.spec?.id !== copy.id) return {};
+            if (!sent.some((c, i) => c.action === 'fresh' && i < sent.length - 1)) await wait(given.slow ?? 0);
+            return { stored: JSON.parse(JSON.stringify(copy)), storedPrint: 'print-1', version: 'v7', base: null };
+          }
+          if (action === 'rebuild') {
+            const next = reading(payload.baseResumeId);
+            handle.update(next);
+            return next;
+          }
+          if (action === 'stage') return { currentDir: '/tmp/x', application: { id: 'app-acme' }, resumeVersion: 'v8' };
+          if (action === 'render') return { pages: 1, fits: true };
+          return {};
+        },
+      });
+      handle.update(reading(given.base));
+      handle.restoreWork(null);
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      /*
+       * Build resume pressed while the store's copy is still being asked
+       * for: its stage, the first, waits for the answer and files the copy.
+       */
+      await wait(20);
+      [...root.querySelectorAll('button')].find((b) => b.textContent === 'Build resume')?.click();
+      await wait((given.slow ?? 0) + 600);
+      root.querySelector('.fold-changes')?.click();
+      const stages = sent.filter((c) => c.action === 'stage');
+      return {
+        asked: sent.filter((c) => c.action === 'fresh').map((c) => c.payload.spec?.id),
+        rebuilt: sent.filter((c) => c.action === 'rebuild').map((c) => c.payload.baseResumeId),
+        stages: stages.map((c) => ({ choices: c.payload.spec?.choices, copiedFrom: c.payload.spec?.copiedFrom, basedOn: c.payload.basedOn })),
+        picker: root.querySelector('select[title="Which resume to start from"]')?.value ?? null,
+        ticks: [...root.querySelectorAll('.pick input')].map((b) => b.checked),
+        rows: root.querySelector('.changes')?.textContent ?? '',
+        carried: handle.takeWork(),
+        copy,
+      };
+    })();
+
+  for (const [name, given] of [
+    ['read from the copy’s own base', { base: 'intern', slow: 1500 }],
+    ['read from the default base', { base: 'newgrad', slow: 300 }],
+  ]) {
+    const back = await inPage(revisit, given);
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    check(`${name}: the card asks the store for the posting’s copy`, back.asked[0] === back.copy.id, JSON.stringify(back.asked));
+    check(
+      `${name}: and starts from it, with the change made by hand still in it`,
+      same(back.carried.spec?.choices, back.copy.choices),
+      JSON.stringify(back.carried.spec?.choices),
+    );
+    check(`${name}: the picker says the base it was made from`, back.picker === 'intern', String(back.picker));
+    check(`${name}: and that base goes with the work`, back.carried.baseResumeId === 'intern', String(back.carried.baseResumeId));
+    check(
+      `${name}: the first stage files the copy unchanged, over the write it was read at`,
+      back.stages.length >= 1 &&
+        same(back.stages[0].choices, back.copy.choices) &&
+        back.stages[0].copiedFrom === 'intern' &&
+        back.stages[0].basedOn === 'v7',
+      JSON.stringify(back.stages),
+    );
+    check(
+      `${name}: the suggestion is still offered, ticked because the copy has it`,
+      /Kafka pipeline/.test(back.rows) && same(back.ticks, [true]),
+      `${JSON.stringify(back.ticks)} ${back.rows.slice(0, 120)}`,
+    );
+    check(
+      `${name}: read again from the copy’s base only when the opening read was not`,
+      given.base === 'intern' ? back.rebuilt.length === 0 : same(back.rebuilt, ['intern']),
+      JSON.stringify(back.rebuilt),
+    );
+  }
+
+  console.log('\nA send the card is not sure of is asked about');
+
+  /*
+   * A Submit in a frame on a hiring system's host, with no form recognised,
+   * is asked about rather than recorded (see `askIfSent` in content.js). The
+   * card's half: the question, in the strip the card asks its other question
+   * in, and each answer handed back once.
+   */
+  const askedSend = await inPage(async (createCard) => {
+    const answers = [];
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme' },
+        rationale: [],
+      },
+      resumes: [],
+      settings: {},
+      questions: [],
+      needsCoverLetter: false,
+      onAction: async () => ({}),
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const strip = () => root.querySelector('.sent-question');
+    const press = (name) => [...(strip()?.querySelectorAll('button') ?? [])].find((b) => b.textContent === name)?.click();
+    const before = Boolean(strip());
+    handle.askIfSent({ company: 'Acme', onAnswer: (yes) => answers.push(yes) });
+    const said = strip()?.textContent ?? '';
+    const buttons = [...(strip()?.querySelectorAll('button') ?? [])].map((b) => b.textContent);
+    press('Yes');
+    const afterYes = Boolean(strip());
+    handle.askIfSent({ company: '', onAnswer: (yes) => answers.push(yes) });
+    const unnamed = strip()?.textContent ?? '';
+    press('Not yet');
+    return { before, said, buttons, afterYes, unnamed, after: Boolean(strip()), answers };
+  });
+  check('nothing is asked until a frame asks', askedSend.before === false, JSON.stringify(askedSend));
+  check(
+    'it asks whether the application went to the employer',
+    /^Did you just send your application to Acme\?/.test(askedSend.said),
+    askedSend.said,
+  );
+  check('with Yes and Not yet', JSON.stringify(askedSend.buttons) === '["Yes","Not yet"]', JSON.stringify(askedSend.buttons));
+  check(
+    'with no name from the frame, the posting’s',
+    /^Did you just send your application to Acme\?/.test(askedSend.unnamed),
+    askedSend.unnamed,
+  );
+  check(
+    'each answer is handed back once, and the question goes',
+    JSON.stringify(askedSend.answers) === '[true,false]' && askedSend.afterYes === false && askedSend.after === false,
+    JSON.stringify(askedSend),
+  );
+
+  /* ------------------------------------------------------------------ */
+  console.log('\nThe card from the keyboard and a screen reader');
+
+  /*
+   * A card made for these checks: a posting with two suggestions, one
+   * question, the AI off in both places (so its chip is something to press),
+   * and every compile held until the test lets it go.
+   */
+  const A11Y_CARD = (createCard) => {
+    let releaseRender = null;
+    const handle = createCard({
+      analysis: {
+        isJobPosting: true,
+        job: { title: 'Platform Engineer', company: 'Acme' },
+        spec: { id: 'job-acme', label: 'Acme', choices: { b_pipeline: 'v_kafka' } },
+        baseLabel: 'New grad resume',
+        tailor: 'match',
+        diff: [{ kind: 'changed', where: 'Acme Co.', from: 'Built a pipeline', to: 'Built a Kafka pipeline' }],
+        rationale: [{ key: 'b_pipeline', from: 'v_base', to: 'v_kafka', toText: 'Built a Kafka pipeline', because: ['kafka'] }],
+      },
+      resumes: [],
+      settings: {},
+      questions: [{ question: 'Why do you want to work here?', answer: '', confident: false, fieldId: 'q1' }],
+      needsCoverLetter: false,
+      onAction: async (action) => {
+        if (action === 'aiStatus') return { active: false, state: 'off', serverEnabled: false };
+        if (action === 'render') {
+          if (window.__holdRender) await new Promise((r) => (releaseRender = r));
+          return { pages: 1, fits: true };
+        }
+        if (action === 'stage') return { currentDir: '/tmp/x', files: ['Jane-Resume.pdf'], application: { id: 'app-1' } };
+        if (action === 'attachmentFiles') return { files: [{ name: 'Jane-Resume.pdf', base64: 'JVBERi0xLjQK', type: 'application/pdf' }] };
+        if (action === 'autofill') return { filled: [{ label: 'Email' }], skipped: [] };
+        return {};
+      },
+    });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const card = root.querySelector('.card');
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const until = async (test, ms = 3000) => {
+      for (const end = Date.now() + ms; Date.now() < end; await wait(20)) if (test()) return true;
+      return false;
+    };
+    const byText = (t) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
+    const active = () => {
+      const a = root.activeElement;
+      if (!a) return { outside: document.activeElement?.id || document.activeElement?.tagName || null };
+      return { tag: a.tagName, label: a.getAttribute('aria-label'), text: a.textContent.trim().slice(0, 30), focus: a.dataset?.focus ?? null, isCard: a === card };
+    };
+    // Whatever it says at the moment: "Recompile" once something has compiled.
+    const build = () => [...root.querySelectorAll('button')].find((b) => /^(Build resume|Recompile|Compiling…)$/.test(b.textContent.trim()));
+    return { handle, root, card, wait, until, byText, build, active, release: () => releaseRender?.() };
+  };
+
+  /*
+   * Focus after a redraw. The card rebuilds every child on each redraw, and
+   * only text boxes were put back: a button pressed from the keyboard took
+   * focus down with it to the page's <body>.
+   */
+  const refocus = await inPage(async (createCard, A11Y_CARD) => {
+    const c = (0, eval)(`(${A11Y_CARD})`)(createCard);
+    await c.wait(80);
+    const out = {};
+    // Fold, then Unfold: one control with two faces.
+    const fold = c.root.querySelector('button[aria-label="Fold JobHelper out of the way"]');
+    fold.focus();
+    fold.click();
+    out.afterFold = c.active();
+    const unfold = c.root.querySelector('button[aria-label="Unfold JobHelper"]');
+    unfold.focus();
+    unfold.click();
+    out.afterUnfold = c.active();
+    // The "›" toggle.
+    const chev = c.root.querySelector('.fold-changes');
+    chev.focus();
+    chev.click();
+    out.afterChevron = { ...c.active(), expanded: c.root.activeElement?.getAttribute('aria-expanded') ?? null };
+    // Keyword match and Use Original, which redraw and recompile.
+    for (const name of ['Use Original', 'Keyword match']) {
+      const b = c.byText(name);
+      b.focus();
+      b.click();
+      await c.wait(150);
+      out[name] = c.active();
+    }
+    // Build resume, held while it compiles: the button is disabled and
+    // relabelled, so the card holds focus, and gives it back after.
+    window.__holdRender = true;
+    // "Recompile" by now: the mode buttons above compiled.
+    const build = c.build();
+    build.focus();
+    build.click();
+    await c.wait(50);
+    out.whileBuilding = c.active();
+    out.progressLabel = c.root.querySelector('.progress')?.getAttribute('aria-label') ?? null;
+    window.__holdRender = false;
+    c.release();
+    await c.until(() => c.build() && !c.build().disabled);
+    await c.wait(100);
+    out.afterBuild = c.active();
+    out.said = c.root.querySelector('[role="status"]')?.textContent ?? null;
+
+    // Somebody typing in the page's own form is never pulled into the card.
+    const theirs = document.createElement('textarea');
+    theirs.id = 'their-form-box';
+    document.body.append(theirs);
+    theirs.focus();
+    c.handle.setQuestions([
+      { question: 'Why do you want to work here?', answer: '', confident: false, fieldId: 'q1' },
+      { question: 'Tell us about a project.', answer: '', confident: false, fieldId: 'q2' },
+    ]);
+    c.handle.say('Something landed');
+    await c.wait(100);
+    out.pageForm = { doc: document.activeElement?.id ?? document.activeElement?.tagName, inCard: c.root.activeElement !== null };
+    theirs.remove();
+    return out;
+  }, A11Y_CARD.toString());
+  check('Fold pressed from the keyboard leaves focus on the button, now Unfold', refocus.afterFold.label === 'Unfold JobHelper', JSON.stringify(refocus.afterFold));
+  check('and Unfold leaves it on Fold', refocus.afterUnfold.label === 'Fold JobHelper out of the way', JSON.stringify(refocus.afterUnfold));
+  check('the "›" toggle keeps focus, and says it is open', refocus.afterChevron.text === '⌄' && refocus.afterChevron.expanded === 'true', JSON.stringify(refocus.afterChevron));
+  check('Use Original keeps focus', refocus['Use Original'].text === 'Use Original', JSON.stringify(refocus['Use Original']));
+  check('Keyword match keeps focus', refocus['Keyword match'].text === 'Keyword match', JSON.stringify(refocus['Keyword match']));
+  check('while Build resume works, focus is on the card, not the page', refocus.whileBuilding.isCard === true, JSON.stringify(refocus.whileBuilding));
+  check('and the progress bar is named for what it waits on', /Compiling/.test(refocus.progressLabel ?? ''), String(refocus.progressLabel));
+  check('and back on the button when the build is done', refocus.afterBuild.text === 'Recompile', JSON.stringify(refocus.afterBuild));
+  check('the build finishing is said out loud', /Resume built/.test(refocus.said ?? ''), String(refocus.said));
+  check(
+    'a redraw while somebody types in the page’s form leaves focus in their form',
+    refocus.pageForm.doc === 'their-form-box' && refocus.pageForm.inCard === false,
+    JSON.stringify(refocus.pageForm),
+  );
+
+  /*
+   * What a screen reader is told: names, roles, and announcements made only
+   * when work finishes.
+   */
+  const told = await inPage(async (createCard, A11Y_CARD) => {
+    const c = (0, eval)(`(${A11Y_CARD})`)(createCard);
+    await c.wait(80);
+    const status = c.root.querySelector('[role="status"]');
+    const out = {
+      region: { role: c.card.getAttribute('role'), label: c.card.getAttribute('aria-label') },
+      statusOutsideCard: Boolean(status) && !c.card.contains(status),
+      statusCount: c.root.querySelectorAll('[role="status"]').length,
+    };
+    // The AI chip is a button where it does something.
+    const chip = c.root.querySelector('.ai');
+    out.chip = { tag: chip?.tagName, tabIndex: chip?.tabIndex };
+    // `h` sets aria-* as attributes.
+    const chev = c.root.querySelector('.fold-changes');
+    out.chevron = { label: chev.getAttribute('aria-label'), expanded: chev.getAttribute('aria-expanded') };
+    // Names on the boxes and on the buttons there is one of per question.
+    out.answerName = c.root.querySelector('textarea[data-field^="answer:"]')?.getAttribute('aria-label') ?? null;
+    out.feedbackName = c.root.querySelector('textarea[data-field="feedback"]')?.getAttribute('aria-label') ?? null;
+    out.changeName = c.root.querySelector('input[data-field^="change:"]')?.getAttribute('aria-label') ?? null;
+    out.insertName = c.byText('Insert into form')?.getAttribute('aria-label') ?? null;
+    out.saveName = c.byText('Save for next time')?.getAttribute('aria-label') ?? null;
+    // Redraws say nothing.
+    c.handle.setQuestions([{ question: 'Why do you want to work here?', answer: '', confident: false, fieldId: 'q1' }]);
+    await c.wait(150);
+    out.quietAfterRedraw = status?.textContent ?? null;
+    // An autofill's result is said.
+    const autofill = [...c.root.querySelectorAll('button')].find((b) => /^Autofill/.test(b.textContent.trim()));
+    autofill?.click();
+    await c.wait(200);
+    out.afterAutofill = autofill ? status?.textContent ?? '' : '(no Autofill button)';
+    // The "Did you just send…" question is said.
+    c.handle.askIfSent({ company: 'Acme', onAnswer: () => {} });
+    await c.wait(150);
+    out.afterAsk = status?.textContent ?? '';
+    // An error is an alert, once.
+    c.handle.setStatus('ResumeM-M is not running.');
+    out.errRole = c.root.querySelector('.err')?.getAttribute('role') ?? null;
+    c.handle.say('Redrawn');
+    out.errRoleAgain = c.root.querySelector('.err')?.getAttribute('role') ?? null;
+    // Build, for the file chips and their rename buttons.
+    c.build().click();
+    await c.until(() => c.root.querySelector('.file.liftable .rename .open-file'));
+    out.renameName = c.root.querySelector('.file.liftable .rename .open-file')?.getAttribute('aria-label') ?? null;
+    return out;
+  }, A11Y_CARD.toString());
+  check('the card is a region named JobHelper', told.region.role === 'region' && told.region.label === 'JobHelper', JSON.stringify(told.region));
+  check('with one status line, kept outside what a redraw replaces', told.statusOutsideCard && told.statusCount === 1, JSON.stringify(told));
+  check('the AI chip is a button, reachable by Tab', told.chip.tag === 'BUTTON' && told.chip.tabIndex === 0, JSON.stringify(told.chip));
+  check('the "›" toggle has a name and says whether it is open', told.chevron.label === 'What was changed' && told.chevron.expanded === 'false', JSON.stringify(told.chevron));
+  check('an answer box is named for its question', told.answerName === 'Why do you want to work here?', String(told.answerName));
+  check('the feedback box and the "what to change" line have names', Boolean(told.feedbackName) && /Why do you want/.test(told.changeName ?? ''), JSON.stringify(told));
+  check(
+    'Insert into form and Save for next time say which question they are for',
+    told.insertName === 'Insert into form: Why do you want to work here?' && told.saveName === 'Save for next time: Why do you want to work here?',
+    JSON.stringify([told.insertName, told.saveName]),
+  );
+  check('a redraw announces nothing', told.quietAfterRedraw === '', JSON.stringify(told.quietAfterRedraw));
+  check('an autofill’s result is announced', /Email|filled/i.test(told.afterAutofill), told.afterAutofill);
+  check('the "Did you just send" question is announced', /Did you just send your application to Acme\?/.test(told.afterAsk), told.afterAsk);
+  check('an error is an alert', told.errRole === 'alert', String(told.errRole));
+  check('and not alerted again by the next redraw', told.errRole === 'alert' && told.errRoleAgain === null, String(told.errRoleAgain));
+  check('a file’s "⋯" says which file it renames', told.renameName === 'Rename Jane-Resume.pdf', String(told.renameName));
+
+  /* Escape: a menu shuts first, then the card folds. */
+  const escape = await inPage(async (createCard, A11Y_CARD) => {
+    const c = (0, eval)(`(${A11Y_CARD})`)(createCard);
+    await c.wait(80);
+    const esc = (target) => target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true, cancelable: true }));
+    c.build().click();
+    await c.until(() => c.root.querySelector('.file.liftable .rename .open-file'));
+    await c.wait(100);
+    const opener = c.root.querySelector('.file.liftable .rename .open-file');
+    opener.focus();
+    opener.click();
+    const menuOpen = !c.root.querySelector('.rename-menu').classList.contains('hidden');
+    esc(c.root.activeElement);
+    const out = {
+      menuOpen,
+      menuShut: c.root.querySelector('.rename-menu').classList.contains('hidden'),
+      focusAfterMenu: c.active(),
+      foldedAfterMenu: c.card.classList.contains('folded'),
+    };
+    esc(c.root.activeElement);
+    out.folded = c.card.classList.contains('folded');
+    out.focusAfterFold = c.active();
+    return out;
+  }, A11Y_CARD.toString());
+  check('Escape shuts an open menu first', escape.menuOpen && escape.menuShut && !escape.foldedAfterMenu, JSON.stringify(escape));
+  check('and gives focus back to its button', /^Rename /.test(escape.focusAfterMenu.label ?? ''), JSON.stringify(escape.focusAfterMenu));
+  check('then folds the card, with focus on Unfold', escape.folded && escape.focusAfterFold.label === 'Unfold JobHelper', JSON.stringify(escape));
+
+  /*
+   * But not an Escape that an input method is using. Typing Japanese, Escape
+   * cancels the half-made word, and the keydown reaches the card marked
+   * `isComposing`: the card folded under the person mid-word, with the
+   * half-composed text left in the answer box. Driven here with a real
+   * composition through the DevTools protocol, as the hunt's `cardprobe.mjs`
+   * measured it, and then with the shapes of the event other browsers send
+   * (key code 229), on the card, on the rename box and on the "is this a
+   * job?" chip.
+   */
+  await inPage(async (createCard, A11Y_CARD) => {
+    window.__c = (0, eval)(`(${A11Y_CARD})`)(createCard);
+    await window.__c.wait(80);
+    window.__c.root.querySelector('textarea[data-field^="answer:"]').focus();
+  }, A11Y_CARD.toString());
+  const ime = await page.context().newCDPSession(page);
+  await page.keyboard.type('I like ');
+  await ime.send('Input.imeSetComposition', { text: 'にほ', selectionStart: 2, selectionEnd: 2 });
+  await page.keyboard.press('Escape');
+  const composing = await page.evaluate(() => ({
+    folded: window.__c.card.classList.contains('folded'),
+    stillTyping: window.__c.root.activeElement?.dataset?.field ?? null,
+  }));
+  await ime.send('Input.imeCommitComposition', { text: 'にほ' }).catch(() => {});
+  await ime.detach();
+  check(
+    'an Escape that cancels an input method’s word leaves the card open, the box still being typed in',
+    !composing.folded && /^answer:/.test(composing.stillTyping ?? ''),
+    JSON.stringify(composing),
+  );
+
+  const composed = await inPage(async (createCard, A11Y_CARD) => {
+    const c = (0, eval)(`(${A11Y_CARD})`)(createCard);
+    await c.wait(80);
+    const key = (target, init) =>
+      target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, composed: true, cancelable: true, ...init }));
+    const box = c.root.querySelector('textarea[data-field^="answer:"]');
+    box.focus();
+    key(box, { key: 'Escape', isComposing: true });
+    const out = { foldedComposing: c.card.classList.contains('folded') };
+    key(box, { key: 'Escape', keyCode: 229 });
+    out.folded229 = c.card.classList.contains('folded');
+    // Unfolded again if either folded it, so that what follows is measured too.
+    if (c.card.classList.contains('folded')) c.root.querySelector('button[aria-label="Unfold JobHelper"]')?.click();
+    await c.wait(50);
+    // The rename box: an Enter or an Escape inside a composition is not the name.
+    c.build().click();
+    await c.until(() => c.root.querySelector('.file.liftable .rename .open-file'));
+    await c.wait(100);
+    c.root.querySelector('.file.liftable .rename .open-file').click();
+    [...c.root.querySelectorAll('.rename-menu button')].find((b) => /^Rename/.test(b.textContent))?.click();
+    const rename = c.root.querySelector('.rename-box:not(.hidden)');
+    out.renameOpen = Boolean(rename);
+    if (rename) {
+      rename.value = 'Jane-にほ';
+      rename.dispatchEvent(new Event('input', { bubbles: true }));
+      key(rename, { key: 'Escape', isComposing: true });
+      out.renameAfterEscape = !rename.classList.contains('hidden');
+      key(rename, { key: 'Enter', isComposing: true });
+      await c.wait(150);
+      out.namedMidWord = [...c.root.querySelectorAll('.file')].some((f) => /にほ/.test(f.textContent));
+      out.menuAfter = Boolean(c.root.querySelector('.rename-menu:not(.hidden)'));
+    }
+    return out;
+  }, A11Y_CARD.toString());
+  check('nor does one marked isComposing, or key code 229', !composed.foldedComposing && !composed.folded229, JSON.stringify(composed));
+  check(
+    'and the rename box keeps an Escape or an Enter that is the input method’s',
+    composed.renameOpen && composed.renameAfterEscape && !composed.namedMidWord && composed.menuAfter,
+    JSON.stringify(composed),
+  );
+
+  /*
+   * And a page that calls `preventDefault` on every Escape and Enter, as a
+   * rich-text editor on an ATS form does at the window, does not take the
+   * card's keys with it. Those keys were treated as already used: the card
+   * would not fold on Escape, and the rename box could be neither saved with
+   * Enter nor given up with Escape. Round 17's review, `card.mjs`.
+   */
+  const taken = await inPage(async (createCard, A11Y_CARD) => {
+    const swallow = (e) => {
+      if (e.key === 'Escape' || e.key === 'Enter') e.preventDefault();
+    };
+    window.addEventListener('keydown', swallow, true);
+    try {
+      const c = (0, eval)(`(${A11Y_CARD})`)(createCard);
+      await c.wait(80);
+      const key = (target, init) =>
+        target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, composed: true, cancelable: true, ...init }));
+      const box = c.root.querySelector('textarea[data-field^="answer:"]');
+      box.focus();
+      key(box, { key: 'Escape' });
+      const out = { folded: c.card.classList.contains('folded') };
+      if (out.folded) c.root.querySelector('button[aria-label="Unfold JobHelper"]')?.click();
+      await c.wait(50);
+      c.build().click();
+      await c.until(() => c.root.querySelector('.file.liftable .rename .open-file'));
+      await c.wait(100);
+      c.root.querySelector('.file.liftable .rename .open-file').click();
+      const renameItem = () => [...c.root.querySelectorAll('.rename-menu:not(.hidden) button')].find((b) => /^Rename/.test(b.textContent));
+      renameItem()?.click();
+      let rename = c.root.querySelector('.rename-box:not(.hidden)');
+      out.renameOpen = Boolean(rename);
+      if (rename) {
+        key(rename, { key: 'Escape' });
+        out.givenUp = rename.classList.contains('hidden');
+        // Again from the menu, still open, and this time a name is saved: a
+        // saved name closes the menu with the box (see `put`).
+        renameItem()?.click();
+        rename = c.root.querySelector('.rename-box:not(.hidden)');
+        out.openAgain = Boolean(rename);
+        if (rename) {
+          rename.value = 'Morgan-Acme';
+          rename.dispatchEvent(new Event('input', { bubbles: true }));
+          key(rename, { key: 'Enter' });
+          await c.wait(150);
+          out.saved = !c.root.querySelector('.rename-menu:not(.hidden)') && !c.root.querySelector('.rename-box:not(.hidden)');
+        }
+      }
+      return out;
+    } finally {
+      window.removeEventListener('keydown', swallow, true);
+    }
+  }, A11Y_CARD.toString());
+  check('a page that calls preventDefault on Escape still lets Escape fold the card', taken.folded, JSON.stringify(taken));
+  check(
+    'nor takes the rename box’s Escape (given up) and Enter (saved)',
+    taken.renameOpen && taken.givenUp && taken.saved,
+    JSON.stringify(taken),
+  );
+
+  {
+    const askSource = fs.readFileSync(new URL('../src/content/ask.js', import.meta.url), 'utf8');
+    const asked = await page.evaluate(async (code) => {
+      globalThis.__JOBHELPER_HARNESS__ = true;
+      const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+      const { createAsk, removeAsk } = await import(url);
+      let later = 0;
+      createAsk({ site: 'example.com', onYes: () => {}, onNo: () => {}, onLater: () => later++ });
+      const chip = () => document.getElementById('jobhelper-ask-host')?.shadowRoot?.querySelector('.later')?.parentElement;
+      const key = (init) =>
+        chip()?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true, cancelable: true, ...init }));
+      key({ isComposing: true });
+      key({ keyCode: 229 });
+      const out = { laterComposing: later, stillUp: Boolean(chip()) };
+      key({});
+      out.laterPlain = later;
+      removeAsk();
+      // And on a page that calls preventDefault on every Escape first.
+      const swallow = (e) => e.key === 'Escape' && e.preventDefault();
+      window.addEventListener('keydown', swallow, true);
+      createAsk({ site: 'example.com', onYes: () => {}, onNo: () => {}, onLater: () => later++ });
+      key({});
+      out.laterTaken = later;
+      out.upAfterTaken = Boolean(chip());
+      window.removeEventListener('keydown', swallow, true);
+      removeAsk();
+      return out;
+    }, askSource);
+    check(
+      'the "is this a job?" chip stays up for an input method’s Escape, and goes for a plain one',
+      asked.laterComposing === 0 && asked.stillUp && asked.laterPlain === 1,
+      JSON.stringify(asked),
+    );
+    check(
+      'and goes for a plain one on a page that has called preventDefault on it',
+      asked.laterTaken === 2 && !asked.upAfterTaken,
+      JSON.stringify(asked),
+    );
+  }
+
+  /* Contrast, focus rings and motion. */
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const looks = await inPage(async (createCard, A11Y_CARD) => {
+    const c = (0, eval)(`(${A11Y_CARD})`)(createCard);
+    await c.wait(80);
+    const lum = (rgb) => {
+      if (!/\d/.test(rgb)) throw new Error(`not a colour: "${rgb}"`);
+      const [r, g, b] = rgb.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number).map((v) => {
+        v /= 255;
+        return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const ratio = (a, b) => {
+      const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
+      return (x + 0.05) / (y + 0.05);
+    };
+    const hex = getComputedStyle(c.card).getPropertyValue('--faint').trim();
+    const faint = `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(',')})`;
+    // Read now: a computed style is live, and the build below redraws these away.
+    const n = getComputedStyle(c.root.querySelector('.step-head .n'));
+    const stepNumber = ratio(n.color, n.backgroundColor);
+    /*
+     * Blue and green on the question box's grey. The accent was 4.27:1 there
+     * (the "Save for next time" link and the ✦) and the "answered before"
+     * badge 4.42:1 on its pale green. This card's question is new, so the
+     * badge and an enabled ✦ are put in its box to be measured where the
+     * real ones sit.
+     */
+    const q = c.root.querySelector('.q');
+    const sunk = getComputedStyle(q).backgroundColor;
+    const save = [...q.querySelectorAll('button.link')].find((b) => b.textContent.trim() === 'Save for next time');
+    const mark = q.appendChild(Object.assign(document.createElement('span'), { className: 'ai-mark', textContent: '✦' }));
+    const badge = q.appendChild(Object.assign(document.createElement('span'), { className: 'badge', textContent: 'answered before' }));
+    const answeredBefore = getComputedStyle(badge);
+    const inTheBox = {
+      save: save ? ratio(getComputedStyle(save).color, sunk) : 0,
+      mark: ratio(getComputedStyle(mark).color, sunk),
+      badge: ratio(answeredBefore.color, answeredBefore.backgroundColor),
+    };
+    mark.remove();
+    badge.remove();
+    /*
+     * The base resume picker was named only by its title, which a screen
+     * reader may or may not fall back to. Its name, as the accessibility tree
+     * builds it before the title: aria-labelledby, aria-label, a <label>.
+     */
+    const picker = c.root.querySelector('select[title="Which resume to start from"]');
+    const byIds = (picker?.getAttribute('aria-labelledby') ?? '').split(/\s+/).filter(Boolean)
+      .map((id) => c.root.getElementById(id)?.textContent.trim() ?? '').join(' ').trim();
+    const pickerName = {
+      found: Boolean(picker),
+      title: picker?.title ?? null,
+      name: byIds || picker?.getAttribute('aria-label')?.trim() || [...(picker?.labels ?? [])].map((l) => l.textContent.trim()).join(' ').trim(),
+    };
+    const box = c.root.querySelector('textarea[data-field^="answer:"]');
+    box.focus();
+    const ring = { style: getComputedStyle(box).outlineStyle, width: getComputedStyle(box).outlineWidth };
+    window.__holdRender = true;
+    c.build().click();
+    await c.wait(50);
+    const spinner = c.root.querySelector('.spinner');
+    const bar = c.root.querySelector('.progress');
+    const out = {
+      faintOnWhite: ratio(faint, 'rgb(255,255,255)'),
+      faintOnSunk: ratio(faint, 'rgb(248,249,250)'),
+      stepNumber,
+      inTheBox,
+      pickerName,
+      ring,
+      spinner: spinner ? getComputedStyle(spinner).animationName : '(none)',
+      bar: bar ? getComputedStyle(bar, '::before').animationName : '(none)',
+    };
+    window.__holdRender = false;
+    c.release();
+    return out;
+  }, A11Y_CARD.toString());
+  await page.emulateMedia({ reducedMotion: null });
+  check('faint text is 4.5:1 on white and on the sunk panels', looks.faintOnWhite >= 4.5 && looks.faintOnSunk >= 4.5, JSON.stringify(looks));
+  check('so are the step numbers', looks.stepNumber >= 4.5, String(looks.stepNumber));
+  check(
+    'and the blue "Save for next time" and ✦ on a question box’s grey',
+    looks.inTheBox.save >= 4.5 && looks.inTheBox.mark >= 4.5,
+    JSON.stringify(looks.inTheBox),
+  );
+  check('and the "answered before" badge', looks.inTheBox.badge >= 4.5, JSON.stringify(looks.inTheBox));
+  check(
+    'the base resume picker has a name of its own, not just its title, and says it picks a resume',
+    looks.pickerName.found && Boolean(looks.pickerName.name) && looks.pickerName.name !== looks.pickerName.title && /resume/i.test(looks.pickerName.name),
+    JSON.stringify(looks.pickerName),
+  );
+  check('a focused text box has a solid 2px ring', looks.ring.style === 'solid' && looks.ring.width === '2px', JSON.stringify(looks.ring));
+  check('with less motion asked for, the spinner and the bar stand still', looks.spinner === 'none' && looks.bar === 'none', JSON.stringify(looks));
+
+  /* The popup and the panel use the same faint grey, and the popup's status line is one. */
+  {
+    const popupHtml = fs.readFileSync(new URL('../src/popup/popup.html', import.meta.url), 'utf8');
+    const panelCss = fs.readFileSync(new URL('../src/panel/panel.css', import.meta.url), 'utf8');
+    const faintIn = (text) => /--faint:\s*(#[0-9a-f]{6})/i.exec(text)?.[1]?.toLowerCase() ?? null;
+    const status = /<[^>]*id="status"[^>]*>/.exec(popupHtml)?.[0] ?? '';
+    check('the popup’s status line is a status', /role="status"/.test(status), status);
+    check('the popup and the panel use the darker faint grey', faintIn(popupHtml) === '#6b7075' && faintIn(panelCss) === '#6b7075', `${faintIn(popupHtml)} ${faintIn(panelCss)}`);
+  }
 
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);

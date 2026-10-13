@@ -902,6 +902,29 @@ async function main() {
       check('and taking it puts it in the box', after.trim().length > 0, after.slice(0, 40));
 
       /*
+       * Saved under the names its application is filed under. It went under
+       * the page's bare title, so two requisitions sharing one — "Engineer
+       * (12345678)" and "(87654321)" — saved their letters to one id, the
+       * second over the first, and neither under its application's.
+       */
+      await card.getByRole('button', { name: 'Save to store', exact: true }).click();
+      await card.getByRole('button', { name: 'Saved', exact: true }).waitFor({ timeout: 30_000 }).catch(() => {});
+      const filedRow = ((await (await fetch(`${SERVER}/api/applications`)).json()).applications ?? []).find((a) =>
+        /streamly/i.test(a.company ?? ''),
+      );
+      const letters = await (await fetch(`${SERVER}/api/letters`)).json();
+      // The text taken is the offered letter's, so that one has it too: the
+      // save is the one made today, the newest.
+      const saved = (Array.isArray(letters) ? letters : letters.letters ?? [])
+        .filter((l) => l.body?.trim() === after.trim())
+        .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')))[0];
+      check(
+        'a saved letter is filed under its application\'s names',
+        Boolean(saved && filedRow && saved.company === filedRow.company && saved.role === filedRow.role),
+        `${saved?.company} / ${saved?.role} vs ${filedRow?.company} / ${filedRow?.role}`,
+      );
+
+      /*
        * And the letter as a document, not as a box of text.
        *
        * It is typeset through the same LaTeX as the resume and attached as a

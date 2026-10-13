@@ -10,13 +10,26 @@
  * The privacy rule lives on its own, away from everything that reads a form,
  * because it is the part that has to be reviewable without reading this file.
  */
-import {
+/*
+ * By `chrome.runtime.getURL` where there is one, rather than by a relative
+ * path. The extension's files are reachable from a page only at a per-session
+ * address (`use_dynamic_url` in the manifest), so no page can fetch them to
+ * learn the extension is installed; but Chrome resolves this module's own
+ * address to the extension's fixed one, and a relative import from it was
+ * refused as a page reaching a file it may not. Relative where there is no
+ * extension, which is the test harness serving these files itself.
+ */
+const {
   dependsOnEmployer,
   mayRememberTyped,
   neverRemember,
   worthRemembering,
   worthRememberingTyped,
-} from '../shared/remembering.js';
+} = await import(
+  globalThis.chrome?.runtime?.getURL
+    ? globalThis.chrome.runtime.getURL('src/shared/remembering.js')
+    : new URL('../shared/remembering.js', import.meta.url).href
+);
 
 /** Map a stored profile key to the label/name patterns that mean it. */
 const FIELD_PATTERNS = [
@@ -66,6 +79,21 @@ const FIELD_PATTERNS = [
   ['middle_name', /\bname[\s_-]*\([\s_-]*middle([\s_-]*name)?[\s_-]*\)/i],
   ['first_name', /\b(first[\s_-]?name|given[\s_-]?name|forename|fname)\b/i],
   ['last_name', /\b(last[\s_-]?name|family[\s_-]?name|surname|lname)\b/i],
+  /*
+   * And the same halves on a form in German, French, Spanish, Dutch or
+   * Italian. Only English was read, so "Vorname" and "Nachname" matched
+   * nothing and the bare "Name" beside them was given the whole name — the
+   * surname box, on a German form, holding "Morgan Testwell". Both halves
+   * asked in one box ("Vor- und Nachname", "nombre y apellidos", "nome e
+   * cognome", "nom complet") are the whole name, so they come first.
+   */
+  [
+    'full_name',
+    /\bvor-?\s*(?:und|&)\s*(?:nach|zu)name\b|\bvollst(?:ä|ae)ndiger\s+name\b|\bpr(?:é|e)nom\s+(?:et|&)\s+nom\b|\bnom\s+(?:et|&)\s+pr(?:é|e)nom\b|\bnom\s+complet\b|\bnombres?\s+(?:y|e|&)\s+apellidos?\b|\bnombre\s+completo\b|\bnome\s+(?:e|&)\s+cognome\b|\bnome\s+completo\b|\bvolledige\s+naam\b/i,
+  ],
+  // Not "Nombre de la empresa" or "Nome dell'azienda", which are a thing's name.
+  ['first_name', /\b(vorname|pr(?:é|e)nom|voornaam|(?:nombres?|nome)(?![\s_-]+(?:de|del|della|dell|da|do|di)\b|[\s_-]*dell['’]))\b/i],
+  ['last_name', /\b(nachname|familienname|apellidos?|achternaam|nom\s+de\s+famille|cognome)\b/i],
   /*
    * Not the full name *of* something. Datadog's Greenhouse board asks "Please
    * share the full name of your major/final year specialization(s) as it
@@ -312,6 +340,12 @@ function addressPartByLabel(label, key) {
  * `full_name` matches, so the applicant's legal name was being typed onto the
  * signature line of a form they had not chosen to complete.
  */
+/*
+ * The words that make a typed name a signature — see the rule in
+ * `NOT_ABOUT_YOU` that uses them.
+ */
+const ATTESTING = String.raw`\b(?:certif(?:y|ies|ied|ying|ication)|attest\w*|acknowledg\w*|i\s+agree|agree(?:s|d)?\s+to|accurate|true\s+and\s+(?:correct|complete|accurate))\b`;
+
 const NOT_ABOUT_YOU = [
   /*
    * Somebody else's name, telephone number or address.
@@ -376,7 +410,11 @@ const NOT_ABOUT_YOU = [
    * university located in?" were each given the university's *name* — in a
    * box asking where it is.
    */
-  /\b(school|university|college|institution)['’]?s?[\s_-]+(address|location|city|town|state|province|country|zip|postal)\b|\b(school|university|college|institution)\b[\s\S]{0,24}\blocated\b/i,
+  /*
+   * And somebody at the school: "Name of your university's career services
+   * contact" was given the university's name.
+   */
+  /\b(school|university|college|institution)['’]?s?[\s_-]+(address|location|city|town|state|province|country|zip|postal)\b|\b(school|university|college|institution)\b[\s\S]{0,24}\blocated\b|\b(school|university|college|institution)\b[\s\S]{0,40}\bcontacts?\b(?![\s_-]+(?:you|your|them|us)\b)/i,
   /*
    * Permission to contact an employer, which is a yes or a no and not the
    * employer's name — "Can we contact your current employer?" took
@@ -502,6 +540,22 @@ const NOT_ABOUT_YOU = [
    * "sign up" are not signing.
    */
   /\b(e-?)?signatures?\b|\be-?sign(ed|ing)?\b|\bsign(ed|ing)?\b(?![\s_-]+(?:in|up|on|out)\b)/i,
+  /*
+   * And a name asked for as a signature without the word. "By typing your
+   * full name below you certify that the information above is true", "By
+   * entering your full name below, you confirm that all information
+   * provided is accurate", "Applicant certification: type your full name",
+   * "Full name (acknowledging the statement above)" and "Your name (I agree
+   * to the terms above)" were each given the applicant's name — signing, in
+   * all but the word, whatever they attest to. A name beside a certifying,
+   * attesting, acknowledging or agreeing word, or one asked for "by typing"
+   * it, is the same signature. "Full name" and "Legal name" alone say none
+   * of these and are still filled.
+   */
+  new RegExp(
+    String.raw`${ATTESTING}[\s\S]{0,80}\bnames?\b|\bnames?\b[\s\S]{0,80}${ATTESTING}|\bby\s+(?:typing|entering|writing|providing|inputting)\b[\s\S]{0,40}\bnames?\b`,
+    'i',
+  ),
   // Where you heard about the job, which is not a profile of yours.
   /\b(did[\s_-]you[\s_-](?:first[\s_-])?hear|hear[\s_-](?:about|of)[\s_-](us|this)|referral)\b/i,
   // Citizenship, birth and residence are different questions with the same
@@ -734,6 +788,50 @@ const asksBothAtOnce = (description) =>
   (AUTHORIZATION.test(description) || WITHOUT_SPONSORSHIP.test(description)) && SPONSORSHIP.test(description);
 
 /*
+ * The right to work or the need for sponsorship, asked in the negative.
+ *
+ * Every answer this file gives the two declarations is the answer to the
+ * plain question — "Do you require sponsorship?", "Are you authorized to work
+ * in the US?" — and a form is free to ask it the other way up. Measured
+ * against a profile that is authorized and needs no sponsorship: "Do you NOT
+ * require visa sponsorship now or in the future?" was answered "No" (that is,
+ * "I do require it"), "Are you currently NOT authorized to work in the United
+ * States?" "Yes", "I confirm I will not require sponsorship" "No", "Is it
+ * true that you will never need sponsorship?" "No", and a box asking "Do you
+ * not need sponsorship?" was typed "No" — each one the opposite of the truth,
+ * declared in the applicant's name on the question most likely to end an
+ * application unread.
+ *
+ * Turning the answer over to match is a guess about how a double negative
+ * was meant, and a wrong guess here is a false legal declaration. So it is
+ * handed back, as `TWO_AT_ONCE` is, and the card names it.
+ *
+ * Only a denial the asker puts in the person's own mouth — after "you" or
+ * "I", in the same sentence, and close in front of the need, the right or
+ * the sponsorship itself. "We do not sponsor visas" beside an ordinary
+ * question is the employer's policy and changes nothing, and "without" is
+ * not read here at all: "…without the need for sponsorship?" asks whether
+ * somebody can work unsponsored, which `asksBothAtOnce` already hands back
+ * as the two questions it is. "Are you unauthorized…" is the same question
+ * in one word, which `AUTHORIZATION` does not read.
+ */
+const DENIED = String.raw`(?:\b(?:not|never|no\s+longer)\b|n['’]t\b)`;
+const ASKED_OF_YOU = String.raw`\b(?:you|i)\b[^.?!;]{0,40}?`;
+const NEGATIVE_QUESTION = new RegExp(
+  String.raw`${ASKED_OF_YOU}${DENIED}[^.?!;]{0,20}?\b(?:require|need|authori[sz]|eligib|sponsor|permitted|allowed)` +
+    String.raw`|${ASKED_OF_YOU}\b(?:unauthori[sz]ed|ineligible)\b`,
+  'i',
+);
+const IN_THE_NEGATIVE = 'this one asks it in the negative';
+/** The declaration a question asked in the negative is about, or null. */
+function askedInTheNegative(description) {
+  if (!NEGATIVE_QUESTION.test(description)) return null;
+  if (SPONSORSHIP.test(description)) return 'requires_sponsorship';
+  if (AUTHORIZATION.test(description) || /\b(?:unauthori[sz]ed|ineligible)\b/i.test(description)) return 'work_authorization';
+  return null;
+}
+
+/*
  * Which field each row of `skipped` is about, and what that field is called.
  *
  * The card said "3 fields still for you to answer" and nothing else, so the
@@ -782,13 +880,16 @@ const handBack = (description, skipped, el, label) => {
    * is still unanswered.
    */
   if (acknowledgesWorkRights(description)) return true;
-  if (!asksBothAtOnce(description)) return false;
+  const both = asksBothAtOnce(description);
+  // And the same question asked the other way up. See `askedInTheNegative`.
+  const negative = both ? null : askedInTheNegative(description);
+  if (!both && !negative) return false;
   skipped.push(
     leftAt(
       el,
       {
-        key: 'work_authorization',
-        reason: TWO_AT_ONCE,
+        key: both ? 'work_authorization' : negative,
+        reason: both ? TWO_AT_ONCE : IN_THE_NEGATIVE,
         description: description.slice(0, 60),
       },
       label,
@@ -805,7 +906,96 @@ const handBack = (description, skipped, el, label) => {
  * of the label alone, and kept here so that everything asking "which profile
  * field is this" agrees.
  */
-const BARE_NAME = /^(full\s+)?name$/i;
+const BARE_NAME = /^(full\s+)?(name|nom)$/i;
+
+/**
+ * Which name a bare "Name" box wants: the surname, on a form that asks for
+ * the first name in a box of its own; otherwise all of it.
+ *
+ * German forms ask "Vorname" and then "Name", and French ones "Prénom" and
+ * then "Nom", and in both the second box is the family name — the form has
+ * a box for the first name and none for the last. The whole name
+ * went into it, after the first name had gone into the box before. "Full
+ * name" is never only the surname.
+ *
+ * `others` is the boxes of the form it is on, where the caller has them.
+ */
+function bareNameKey(input, others) {
+  const label = withoutMarkers(labelFor(input));
+  if (!BARE_NAME.test(label)) return null;
+  if (/^full\s/i.test(label)) return 'full_name';
+  const scope = others ?? (input.form ? [...input.form.elements] : deepQueryAll('input, textarea, select'));
+  const asks = new Set();
+  for (const other of scope) {
+    if (other === input || !(other instanceof HTMLElement)) continue;
+    const description = describeField(other);
+    const key = withStandardHint(other, description ? FIELD_PATTERNS.find(([, re]) => re.test(description)) : undefined)?.[0];
+    if (key) asks.add(key);
+  }
+  /*
+   * Only where the surname has no box of its own. An English form that asks
+   * "Name", "First Name" and "Last Name" means the whole of it by the first.
+   */
+  return asks.has('first_name') && !asks.has('last_name') ? 'last_name' : 'full_name';
+}
+
+/**
+ * What the page's own markup says a box is, where it says it in the
+ * vocabulary the browser's own autofill reads.
+ *
+ * `autocomplete="given-name"` and `type="email"` are the most reliable thing
+ * on a form — written for exactly this — and they were ignored: a box
+ * labelled in a language the patterns do not read, or labelled "Name" and
+ * marked `family-name`, went unfilled or was filled with the wrong half.
+ * Only the tokens a profile key answers; a postal code or a street line is
+ * not something the profile holds, so those say nothing here.
+ */
+const AUTOCOMPLETE_KEYS = {
+  'given-name': 'first_name',
+  'family-name': 'last_name',
+  name: 'full_name',
+  email: 'email',
+  tel: 'phone',
+  'tel-national': 'phone',
+  'country-name': 'address_country',
+  'address-level2': 'address_city',
+  organization: 'current_company',
+};
+function standardHint(input) {
+  const said = String(input.getAttribute?.('autocomplete') ?? '')
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    // "section-x shipping given-name webauthn": the field's own token is the
+    // last one that is not "webauthn".
+    .filter((t) => t && t !== 'webauthn');
+  const token = said.at(-1);
+  if (token && Object.hasOwn(AUTOCOMPLETE_KEYS, token)) return AUTOCOMPLETE_KEYS[token];
+  if (input instanceof HTMLInputElement) {
+    if (input.type === 'email') return 'email';
+    if (input.type === 'tel') return 'phone';
+  }
+  return null;
+}
+
+/**
+ * The patterns' reading of a box, with the markup's where it has one.
+ *
+ * The patterns win where they say something, because they say more: a box
+ * marked `given-name` and labelled "Preferred first name" asks for the
+ * preferred one, and one marked `email` and labelled "LinkedIn" is a form
+ * author's slip, not a request for an address. The markup wins where the
+ * patterns found nothing, and where they found only the whole name and the
+ * markup names one half of it — "Legal name" marked `family-name` is the
+ * surname as it is on the passport.
+ */
+function withStandardHint(input, found) {
+  const hinted = standardHint(input);
+  if (!hinted) return found;
+  if (!found) return [hinted];
+  if (found[0] === 'full_name' && (hinted === 'first_name' || hinted === 'last_name')) return [hinted];
+  return found;
+}
 
 /**
  * A label without the punctuation a form puts round it.
@@ -985,6 +1175,12 @@ const rootOf = (node) => {
   const root = node.getRootNode?.();
   return root?.querySelector ? root : document;
 };
+
+/**
+ * Whether a node is the card or in it. The card's root is closed, so from the
+ * document a press inside it arrives as a press on its host.
+ */
+const inOurCard = (node) => node?.id === OURS || rootOf(node)?.host?.id === OURS;
 
 /**
  * The component a node is drawn in, where it is drawn in one — never the
@@ -1189,7 +1385,7 @@ function fromLabelledBy(element) {
      * description of anything.
      */
     .filter((id) => id !== element.id)
-    .map((id) => byIdAround(element, id)?.textContent ?? '')
+    .map((id) => labelWords(byIdAround(element, id)))
     .join(' ');
   return clean(text);
 }
@@ -1354,6 +1550,15 @@ const LEVELS_OUTSIDE = 3;
  * else, as assistive technology leaves it out, and an element boundary is a
  * word boundary. A label that is nothing but hidden text keeps it, rather than
  * becoming no label at all.
+ *
+ * And so is every other element a question is read from: a group's
+ * `<legend>`, its row header, the heading over it, what `aria-labelledby`
+ * names. Those were still read by `textContent`, and went into the answer
+ * bank the same ways — LinkedIn's yes/no fieldsets as "Are you legally
+ * authorized …?Are you legally authorized …? Required", and Workday's
+ * questionnaire, whose legend is paragraphs of rich text, as "Click on the
+ * link below to review the Arbitration Agreement.Mutual Arbitration
+ * AgreementTo be considered for employment…".
  */
 /*
  * And the words a `<slot>` shows, which are not its children.
@@ -1598,7 +1803,7 @@ function labelFor(input) {
     if (fieldsDrawnIn(group, oneField, 2) > 1) break;
     const heading = group.querySelector('label,legend,th,.label,[class*="label"]');
     // A label a component draws round a slot says what is put in it, as in `optionLabelFor`.
-    if (heading && !heading.contains(from)) return hostOf(heading) && heading.querySelector('slot') ? drawnText(heading) : clean(heading.textContent);
+    if (heading && !heading.contains(from)) return hostOf(heading) && heading.querySelector('slot') ? drawnText(heading) : labelWords(heading);
     let lead = group.firstElementChild;
     while (lead?.matches(NEVER_SHOWN)) lead = lead.nextElementSibling;
     const said = lead && !lead.contains(from) && !fieldsDrawnIn(lead, ANOTHER_FIELD, 1) ? shownText(lead) : '';
@@ -2199,8 +2404,125 @@ function isFillable(input) {
   // page is the question actually being asked. For a select Chosen has
   // hidden, that is asked of what Chosen drew in its place.
   if (input.getClientRects().length === 0 && !(chosenOf(input)?.getClientRects().length > 0)) return false;
-  if (BOT_TRAP.test(labelFor(input))) return false;
+  if (isTrap(input)) return false;
   return true;
+}
+
+/*
+ * A box a person cannot see is a box a person was never asked.
+ *
+ * Occupying space is not the same as being shown. A page can put a box a
+ * screen to the left, fade it to nothing, cut it to a pixel, or hide it from
+ * everything that reads the page aloud, and every one of those still has a
+ * box: measured, a form whose visible part asked only First Name and Email
+ * had its off-screen Phone, Street and Zip and its `opacity: 0` GPA and City
+ * filled in as well — the applicant's details handed to a page that never
+ * asked for them where they could see it. The same trick as a bot trap
+ * (`BOT_TRAP`), aimed at people instead of robots; caught the same way,
+ * whatever the label says.
+ *
+ * A dropdown is asked about through what is drawn for it. A styled select —
+ * bootstrap-select, select2, Radix — fades or clips its own `<select>` to
+ * nothing behind the button the applicant presses, which is the ordinary
+ * shape and not a trap; so it is the select's surroundings that must be on
+ * the page, or what Chosen drew in its place when Chosen has hidden it.
+ * Radios, checkboxes, file inputs and combobox inputs, the other things
+ * pages hide behind a drawing, never come through here: they are answered by
+ * their own code, which reads what was drawn for them.
+ *
+ * A step not yet reached — a collapsed accordion, `height: 0` — is left alone
+ * like a `display: none` one, and filled when it is open and asked again.
+ */
+function isTrap(input) {
+  if (BOT_TRAP.test(labelFor(input))) return true;
+  let shown = input;
+  if (input instanceof HTMLSelectElement) {
+    shown = input.getClientRects().length > 0 ? parentAround(input) : chosenOf(input);
+    if (!shown) return false;
+  }
+  return hiddenFromPerson(shown);
+}
+
+/** The width and height left of `rect` after a CSS `clip: rect(...)`. */
+function clippedSize(style, rect) {
+  const m = /^rect\((.*)\)$/.exec(style.clip ?? '');
+  if (!m) return null;
+  const [top, right, bottom, left] = m[1].split(/[\s,]+/).map((v) => (v === 'auto' ? null : parseFloat(v)));
+  const w = (right ?? rect.width) - (left ?? 0);
+  const h = (bottom ?? rect.height) - (top ?? 0);
+  return { w, h };
+}
+
+/** Whether a `clip-path` leaves nothing: `inset(50%)`, or a polygon of one point. */
+function clipPathEmpties(clipPath) {
+  if (!clipPath || clipPath === 'none') return false;
+  const inset = /^inset\(([^)]*)\)/.exec(clipPath);
+  if (inset) {
+    const p = inset[1].split(/\s+round\s+/)[0].trim().split(/\s+/).map((v) => (v.endsWith('%') ? parseFloat(v) : NaN));
+    const [t, r = t, b = t, l = r] = p;
+    return t + b >= 100 || l + r >= 100;
+  }
+  const poly = /^polygon\(([^)]*)\)/.exec(clipPath);
+  if (poly) {
+    const points = poly[1].replace(/^\s*(nonzero|evenodd)\s*,/, '').split(',').map((s) => s.trim().replace(/\s+/g, ' '));
+    return new Set(points).size <= 1;
+  }
+  return false;
+}
+
+/*
+ * Whether `el` is on the page but not for a person: faded out, hidden,
+ * aria-hidden or inert, cut to a pixel, or put outside anywhere the page can
+ * be scrolled to. Below the fold is not outside: the page scrolls there.
+ */
+function hiddenFromPerson(el) {
+  const style = getComputedStyle(el);
+  if (style.visibility !== 'visible') return true;
+  const rect = el.getBoundingClientRect();
+  if (rect.width <= 1 || rect.height <= 1) return true;
+
+  // Outside the document: left of or above its start, or past its end.
+  const doc = document.documentElement;
+  const x = rect.left + window.scrollX;
+  const y = rect.top + window.scrollY;
+  if (x + rect.width <= 0 || y + rect.height <= 0) return true;
+  const across = [doc, document.body].filter(Boolean).map((e) => getComputedStyle(e).overflowX);
+  const width = across.some((o) => o === 'hidden' || o === 'clip') ? doc.clientWidth : Math.max(doc.scrollWidth, doc.clientWidth);
+  if (x >= width || y >= Math.max(doc.scrollHeight, doc.clientHeight)) return true;
+
+  // What it can be seen through, out to the page: each box it sits in.
+  let left = rect.left;
+  let top = rect.top;
+  let right = rect.right;
+  let bottom = rect.bottom;
+  for (let node = el; node && node !== document.body && node !== doc; node = parentAround(node)) {
+    const s = node === el ? style : getComputedStyle(node);
+    if (parseFloat(s.opacity) === 0) return true;
+    if (node.getAttribute('aria-hidden') === 'true' && node !== el) return true;
+    if (node.hasAttribute('inert')) return true;
+    if (s.display === 'contents') continue;
+    const box = node === el ? rect : node.getBoundingClientRect();
+    const clip = s.position === 'absolute' || s.position === 'fixed' ? clippedSize(s, box) : null;
+    if (clip && (clip.w <= 1 || clip.h <= 1)) return true;
+    if (clipPathEmpties(s.clipPath)) return true;
+    // A box that hides what spills out of it shows only what is inside it.
+    // One that scrolls shows the rest when scrolled, unless it is itself a pixel.
+    const cutX = s.overflowX === 'hidden' || s.overflowX === 'clip';
+    const cutY = s.overflowY === 'hidden' || s.overflowY === 'clip';
+    if (node !== el && s.overflowX !== 'visible' && box.width <= 1) return true;
+    if (node !== el && s.overflowY !== 'visible' && box.height <= 1) return true;
+    if (node !== el && cutX) {
+      left = Math.max(left, box.left);
+      right = Math.min(right, box.right);
+    }
+    if (node !== el && cutY) {
+      top = Math.max(top, box.top);
+      bottom = Math.min(bottom, box.bottom);
+    }
+    if (right - left <= 1 || bottom - top <= 1) return true;
+  }
+  if (document.body?.hasAttribute('inert') || document.body?.getAttribute('aria-hidden') === 'true') return true;
+  return false;
 }
 
 /*
@@ -2797,7 +3119,7 @@ function graduationPartKey(input) {
    * a First name box and a box labelled Month beside it filled nothing and
    * reported nothing.
    */
-  const asked = clean(legend?.textContent) || clean(group?.getAttribute('aria-label')) || (group ? fromLabelledBy(group) : '');
+  const asked = labelWords(legend) || clean(group?.getAttribute('aria-label')) || (group ? fromLabelledBy(group) : '');
   const found = asked ? FIELD_PATTERNS.find(([, re]) => re.test(asked))?.[0] : null;
   return /^graduation_(month|year|date)$/.test(found ?? '') ? `graduation_${part}` : null;
 }
@@ -2816,11 +3138,23 @@ function educationDatePart(description) {
    * left empty. First and last only beside "attended", so "First name" and a
    * "Last updated" note are not dates of a degree.
    */
-  const which = /\b(start\w*|from|began|begin\w*)\b|\bfirst\b.{0,20}\battend/i.test(description)
-    ? 'start'
-    : /\b(end\w*|to|until|finish\w*|complet\w*)\b|\blast\b.{0,20}\battend/i.test(description)
-      ? 'end'
-      : null;
+  /*
+   * The words that can only mean the end first. "Date of graduation from
+   * this school" was read for "from" before anything else, and was given
+   * the date the applicant *started* — a graduation date four years early,
+   * on the line an employer checks against a transcript. "From" and "to"
+   * are the weakest words here, so each counts only where nothing plainer
+   * has spoken.
+   */
+  const which = /\b(graduat\w*|finish\w*|complet(?:ed|ion)|until)\b|\blast\b.{0,20}\battend/i.test(description)
+    ? 'end'
+    : /\b(start\w*|began|begin\w*)\b|\bfirst\b.{0,20}\battend/i.test(description)
+      ? 'start'
+      : /\b(end\w*|to)\b/i.test(description)
+        ? 'end'
+        : /\bfrom\b/i.test(description)
+          ? 'start'
+          : null;
   if (!which) return null;
   const part = /\bmonth\b/i.test(description) ? 'month' : /\byear\b/i.test(description) ? 'year' : 'date';
   return which === 'start' ? `education_start_${part}` : `graduation_${part}`;
@@ -3280,7 +3614,8 @@ function gpaOption(options, value, textOf = (o) => o.textContent) {
  * readable form leaves it empty and raises nothing. A box whose placeholder
  * says MM/YYYY will usually be checked against that shape when the form is
  * sent. Anything else gets the readable form, which a person would type.
- * Never a day: `type=date` wants one, and a guessed day is a guess.
+ * Never a day: `type=date` wants one, and a guessed day is a guess. `null`
+ * where the box says it wants one, which is the caller's to leave.
  */
 export function graduationFor(input, value) {
   const hit = /^([a-z]+)\s+(\d{4})$/i.exec(String(value).trim());
@@ -3295,9 +3630,34 @@ export function graduationFor(input, value) {
    * reported as filled — the one shape its own label said it would not take.
    */
   const hint = `${input.placeholder ?? ''} ${input.getAttribute?.('aria-label') ?? ''} ${labelFor(input)}`.toLowerCase();
-  if (/yyyy\s*-\s*mm/.test(hint)) return `${year}-${mm}`;
-  if (/mm\s*\/\s*yyyy/.test(hint)) return `${mm}/${year}`;
-  if (/mm\s*\/\s*yy\b/.test(hint)) return `${mm}/${year.slice(2)}`;
+  /*
+   * Unless the shape wants a day. "Graduation date (DD/MM/YYYY)" holds
+   * "MM/YYYY" inside it, so it was given "05/2027" — a month where its day
+   * goes, and a date the form reads as the 5th of the 27th month, or
+   * refuses — and "dd/mm/yy" was given "05/27". A day is not on the resume,
+   * and a guessed one is a guess: `null`, and the caller leaves the box.
+   */
+  /*
+   * And a day in the other languages' letters for it: German "TT.MM.JJJJ"
+   * and French "JJ/MM/AAAA" said nothing this read as a day, and their
+   * "MM.JJJJ" and "MM/AAAA" nothing it read as a shape — so the first kind
+   * was given "December 2026" in a box asking for a date, and so was the
+   * second. "JJ" is a day here, as the French write it; a German "MM/JJ"
+   * that means the year is left to the person rather than guessed at.
+   */
+  if (/\b(?:dd|tt|jj)(?:\b|mm)|mm[\s/.-]*(?:dd|tt|jj)\b/.test(hint)) return null;
+  /*
+   * The year and the month either way round, with whatever the form puts
+   * between them — "MM.YYYY" is how much of Europe writes it, and was given
+   * the readable form. The year in four letters as English, German, French,
+   * Spanish and Italian write it.
+   */
+  const yearFirst = /(?:yyyy|jjjj|aaaa)\s*([./-])\s*mm\b/.exec(hint);
+  if (yearFirst) return `${year}${yearFirst[1]}${mm}`;
+  const monthFirst = /\bmm\s*([./-])\s*(?:yyyy|jjjj|aaaa)/.exec(hint);
+  if (monthFirst) return `${mm}${monthFirst[1]}${year}`;
+  const shortYear = /\bmm\s*([./-])\s*(?:yy|aa)\b/.exec(hint);
+  if (shortYear) return `${mm}${shortYear[1]}${year.slice(2)}`;
   return value;
 }
 
@@ -3950,13 +4310,16 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     // The degree's dates first: see `educationDateKey`. They read as nothing
     // at all to the patterns, so this can only claim what was going unclaimed.
     const dated = educationDateKey(input, description);
-    const found = dated ? [dated] : FIELD_PATTERNS.find(([, re]) => re.test(description));
-    const named = found && !dated ? [addressPartByLabel(clean(labelFor(input)), found[0])] : found;
+    const patterned = FIELD_PATTERNS.find(([, re]) => re.test(description));
+    const found = dated ? [dated] : withStandardHint(input, patterned);
+    const named = found && !dated && found === patterned ? [addressPartByLabel(clean(labelFor(input)), found[0])] : found;
     const answers = MOST_RECENT.test(labelFor(input)) ? lately : fields;
     let match = named && answers[named[0]] ? named : undefined;
 
-    if (!match && fields.full_name && BARE_NAME.test(withoutMarkers(labelFor(input)))) {
-      match = ['full_name'];
+    // A bare "Name": the surname beside a first-name box, or all of it. See `bareNameKey`.
+    if (!match) {
+      const bare = bareNameKey(input, inputs);
+      if (bare && fields[bare]) match = [bare];
     }
     if (!match) {
       const half = nameHalf(input);
@@ -3970,6 +4333,13 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     if (!(input instanceof HTMLSelectElement) && NOT_LISTED.test(description)) continue;
     if (anotherLevelOfStudy(input, key, fields)) continue;
     if (asksYesOrNo(input, key)) continue;
+    /*
+     * "Visa status" is in the sponsorship pattern for the Yes and No lists
+     * that ask it that way, and nowhere else: typed into a box, the stored
+     * "No" is no visa status at all. Measured: a free-text "Visa status" was
+     * given "No". A box that says "sponsor" is still asked the question.
+     */
+    if (key === 'requires_sponsorship' && !(input instanceof HTMLSelectElement) && !/\bsponsor/i.test(description)) continue;
     let value = answers[key];
     // The legal name or the one the resume prints. See `NAME_FOR_THE_FORM`.
     if (NAME_FOR_THE_FORM[key] && !asksPreferred && !asksForLegalName(input)) value = answers[NAME_FOR_THE_FORM[key]] || value;
@@ -4144,6 +4514,11 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
       value = monthAsNumber(value);
     } else if (key === 'linkedin' && isWorkdayLinkedIn(input)) {
       value = wholeLinkedInAddress(value);
+    }
+    // A shape with a day in it. See `graduationFor`.
+    if (value === null) {
+      skipped.push(leftAt(input, { key, reason: 'the field would not accept it in that form', description: description.slice(0, 60) }));
+      continue;
     }
     /*
      * Never more than the box has room for. See `fitsIn`: the same answer
@@ -4539,6 +4914,11 @@ function fillJob(block, job, overwrite, filled, skipped) {
     if (isWidgetChoice(input)) return;
     if (input.value && !overwrite) return;
     const written = slot === 'start' || slot === 'end' ? graduationFor(input, value) : String(value);
+    // A shape with a day in it. See `graduationFor`.
+    if (written === null) {
+      skipped.push(leftAt(input, { key, reason: 'the field would not accept it in that form', description: clean(labelFor(input)).slice(0, 60) }));
+      return;
+    }
     setValue(input, written);
     /*
      * The same month without its leading zero is the month. Workday's month
@@ -4940,10 +5320,10 @@ function choiceQuestionFor(group) {
   if (said) return said;
 
   // Out of the components the group is drawn in: see `closestAround`.
-  const legend = clean(closestAround(group, 'fieldset')?.querySelector('legend')?.textContent);
+  const legend = labelWords(closestAround(group, 'fieldset')?.querySelector('legend'));
   if (legend) return legend;
 
-  const header = clean(closestAround(group, 'tr')?.querySelector('th')?.textContent);
+  const header = labelWords(closestAround(group, 'tr')?.querySelector('th'));
   if (header) return header;
 
   /*
@@ -4977,7 +5357,7 @@ function choiceQuestionFor(group) {
   for (let up = 0; at && up < 3; ) {
     const put = putInto.has(at instanceof ShadowRoot ? at : at.getRootNode());
     const drawn = put && headingDrawnBefore(at, (el) => el === group, HEADINGS);
-    const heading = put ? (drawn ? shownText(drawn) : '') : clean(at.querySelector(HEADINGS)?.textContent);
+    const heading = put ? (drawn ? shownText(drawn) : '') : labelWords(at.querySelector(HEADINGS));
     if (heading) return heading;
     if (at instanceof ShadowRoot) {
       const others = deepQueryAll(A_CHOICE_GROUP, at).filter((g) => g !== group && !drawnInside(g, group) && !drawnInside(group, g));
@@ -5059,7 +5439,7 @@ function headingDrawnBefore(scope, ours, selector) {
  */
 function groupLabelFor(radios) {
   const first = radios[0];
-  const legend = clean(closestAround(first, 'fieldset')?.querySelector('legend')?.textContent);
+  const legend = labelWords(closestAround(first, 'fieldset')?.querySelector('legend'));
   if (legend) return legend;
 
   /*
@@ -5105,7 +5485,7 @@ function groupLabelFor(radios) {
    * reach the table and could take a column heading from some other row as
    * the question for this one.
    */
-  const header = clean(closestAround(first, 'tr')?.querySelector('th')?.textContent);
+  const header = labelWords(closestAround(first, 'tr')?.querySelector('th'));
   if (header) return header;
 
   /*
@@ -5161,7 +5541,7 @@ function groupLabelFor(radios) {
       const heading = shared
         ? headings.filter((el) => el.compareDocumentPosition(from) & Node.DOCUMENT_POSITION_FOLLOWING).pop()
         : headings[0];
-      if (heading) return clean(heading.textContent);
+      if (heading) return labelWords(heading);
     }
     if (group instanceof ShadowRoot) {
       if (group.host.id === OURS) break;
@@ -5616,6 +5996,34 @@ const NOT_ACKNOWLEDGED = [
   /\b(?:background|drug|credit|reference)\s+(?:check|screen|test|investigation)\w*|\bconsumer\s+reports?\b|\bfingerprint\w*|\b(criminal|convict\w*|felon\w*|arrest\w*|misdemeanou?r)\b/i,
   /\b(gender|race|racial|ethnic\w*|veterans?|disabilit\w*|disabled|eeoc?|self[\s-]?identif\w*|sexual\s+orientation|pronouns|demographic\w*|equal\s+(?:employment|opportunity))\b/i,
   /\b(certify|attest\w*|to\s+the\s+best\s+of\s+my\s+knowledge|falsif\w*|misrepresent\w*|omissions?|grounds\s+for|at[\s-]will|signature|e-?sign\w*)\b|\btrue\s*(?:,|and)?\s*(?:complete|correct|accurate)\b|\b(?:complete|correct|accurate)\s+and\s+(?:true|complete|correct|accurate)\b/i,
+  /*
+   * A right given up, a promise about other employers, and a fact about the
+   * person's past or their age. Each had the shape of an acknowledgement and
+   * none is one, and each was ticked or answered Yes, measured: "I have read
+   * and agree to the Mutual Arbitration Agreement, including the waiver of my
+   * right to a jury trial", "I acknowledge that I am not bound by any
+   * non-compete or non-solicitation agreement", "…I am not a current or former
+   * government official and have no conflicts of interest", "I hereby
+   * acknowledge that I consent to the transfer of my personal data outside the
+   * European Economic Area", "…I have never been terminated or asked to
+   * resign", "I understand that I am at least 18 years of age", and "I
+   * acknowledge that I have not previously been employed by Acme" as a Yes.
+   * The first gives away a legal right; the rest are statements of fact the
+   * employer will hold the person to, and can be false. A consent is the
+   * person's to give whatever it is to.
+   */
+  /\b(arbitrat\w*|waive\w*|waiver|jury|class[\s-]+actions?|non[\s-]?compet\w*|non[\s-]?solicit\w*|conflicts?\s+of\s+interest|government\s+officials?|public\s+officials?|consent\w*|terminat\w*|dismiss\w*|years\s+of\s+age|of\s+legal\s+age|at\s+least\s+(?:1[68]|21)|(?:previously|formerly|ever)\s+(?:been\s+)?employed)\b|\b(?:transfer\w*|export\w*)\b[^.]{0,40}\b(?:data|information)\b|\bcross[\s-]border\b/i,
+  /*
+   * And, whatever it is about, a statement of fact about the person: "that I
+   * am…", "that I have…", "that I will…". What an acknowledgement asks is
+   * that something was read or understood — "I have read and understand the
+   * Candidate Privacy Notice", "I acknowledge that this role requires
+   * working from the office" — and those still are; one that goes on to say
+   * what the person is, has done or will do is a declaration in their name,
+   * and the list above can never name every one. "That I have read" is
+   * still the reading.
+   */
+  /\bthat\s+i(?:\s+|['’])(?:am|m|was|were|will|ll|would|have|ve|had|do|did|can|hold|meet|possess|consent|agree)\b(?!\s+(?:read|reviewed|received|been\s+(?:given|provided|informed)))/i,
 ];
 
 const statementOf = (statement) => clean(statement).replace(/^[*\s]+/, '');
@@ -5761,11 +6169,14 @@ const OTHER_PEOPLE = NOT_ABOUT_YOU[0];
 function profileKeyOf(input, description) {
   const label = clean(labelFor(input));
   if (asksBothAtOnce(description)) return 'work_authorization';
+  const negative = askedInTheNegative(description);
+  if (negative) return negative;
   if (isNotAboutYou(description, label, surroundingWords(input), boundedSection(input))) return null;
   const dated = educationDateKey(input, description);
-  const found = dated ? [dated] : FIELD_PATTERNS.find(([, re]) => re.test(description));
-  let key = found ? (dated ? found[0] : addressPartByLabel(label, found[0])) : null;
-  if (!key && BARE_NAME.test(withoutMarkers(labelFor(input)))) key = 'full_name';
+  const patterned = FIELD_PATTERNS.find(([, re]) => re.test(description));
+  const found = dated ? [dated] : withStandardHint(input, patterned);
+  let key = found ? (found === patterned ? addressPartByLabel(label, found[0]) : found[0]) : null;
+  if (!key) key = bareNameKey(input);
   if (!key) key = nameHalf(input);
   if (!key) return null;
   key = wholeDateKey(input, key, description);
@@ -6057,7 +6468,7 @@ function watchWidgetPicks(write, watching) {
    */
   let opened = null;
   const onPlainPress = (target) => {
-    if (!target || rootOf(target)?.host?.id === OURS) return;
+    if (!target || inOurCard(target)) return;
     let control = null;
     for (let at = target, up = 0; at && up < 6 && !control; at = at.parentElement, up++) {
       control = PLAIN.has(at) ? at : plainControlOver(at);
@@ -6282,6 +6693,12 @@ function widgetChoices(fields, filled) {
       found.push({ key: 'work_authorization', description: description.slice(0, 60), el: widget, both: true });
       continue;
     }
+    // And asked in the negative, as `handBack` hands it back. See `askedInTheNegative`.
+    const negative = askedInTheNegative(description);
+    if (negative) {
+      found.push({ key: negative, description: description.slice(0, 60), el: widget, negative: true });
+      continue;
+    }
     if (isNotAboutYou(description, clean(labelFor(widget)), surroundingWords(widget), boundedSection(widget))) continue;
 
     /*
@@ -6381,10 +6798,10 @@ function widgetShowsThisAnswer(widget, key, value) {
 }
 
 function unfillableChoices(fields, filled) {
-  return widgetChoices(fields, filled).map(({ key, description, both, elsewhere, policy, el }) =>
+  return widgetChoices(fields, filled).map(({ key, description, both, negative, elsewhere, policy, el }) =>
     leftAt(el, {
       key,
-      reason: policy ? FOR_YOU_TO_ACKNOWLEDGE : both ? TWO_AT_ONCE : elsewhere ? ANOTHER_COUNTRY : PICK_BY_HAND,
+      reason: policy ? FOR_YOU_TO_ACKNOWLEDGE : both ? TWO_AT_ONCE : negative ? IN_THE_NEGATIVE : elsewhere ? ANOTHER_COUNTRY : PICK_BY_HAND,
       description,
     }),
   );
@@ -7074,8 +7491,8 @@ export async function fillComboboxes(fields, report, { patience = 4000, history 
   const done = [];
   // Which question each choice answered: a key can now be asked twice.
   const chose = new Set();
-  for (const { key, el: widget, both, elsewhere, policy, asked, description } of widgetChoices(fields, report.filled)) {
-    if (both || elsewhere || policy || !pending.has(key)) continue;
+  for (const { key, el: widget, both, negative, elsewhere, policy, asked, description } of widgetChoices(fields, report.filled)) {
+    if (both || negative || elsewhere || policy || !pending.has(key)) continue;
     const value = String(fields[key]);
     const how = await chooseInWidget(widget, key, value, { patience, fields, asked });
     // Looked for in a list that opened, and not in it. See `NOT_LISTED`.
@@ -7464,6 +7881,8 @@ async function fillEducationPart(control, key, value, f, patience) {
   else if (key.startsWith('education_start_') && control.type === 'month' && f.education_start_date) written = graduationFor(control, f.education_start_date);
   else if (key === 'graduation_date' || key === 'education_start_date') written = graduationFor(control, written);
   else if ((key === 'graduation_month' || key === 'education_start_month') && asksMonthAsNumber(control)) written = monthAsNumber(written);
+  // A shape with a day in it. See `graduationFor`.
+  if (written === null) return leftAt(control, { key, reason: 'the field would not accept it in that form', description: description.slice(0, 60) });
   const before = control.value;
   setValue(control, written);
   if (control.value !== written || browserWouldRefuse(control)) {
@@ -7809,7 +8228,7 @@ export function watchChoices(tell) {
     // Autofill's own filling, not a choice. See `OUR_EVENTS`.
     if (OUR_EVENTS.has(event)) return;
     const target = event.composedPath?.()?.[0] ?? event.target;
-    if (!target || rootOf(target)?.host?.id === OURS) return;
+    if (!target || inOurCard(target)) return;
     let said;
     try {
       said = seen(target);
@@ -8268,9 +8687,8 @@ function watchChosenPicks(write, watching) {
   };
 }
 
-export function looksLikeApplicationForm() {
-  const text = deepText();
-
+/** Which parts of a person this document's fields ask for, by profile key. */
+function fieldsAskedFor() {
   const keys = new Set();
   for (const input of deepQueryAll('input, textarea, select')) {
     const description = describeField(input);
@@ -8279,8 +8697,15 @@ export function looksLikeApplicationForm() {
     if (match) keys.add(match[0]);
     // The same bare "Name" that `fillForm` fills — a real part of a person,
     // and on several systems the only place the name is asked for.
-    else if (BARE_NAME.test(withoutMarkers(labelFor(input)))) keys.add('full_name');
+    else if (BARE_NAME.test(withoutMarkers(labelFor(input)))) keys.add(bareNameKey(input) ?? 'full_name');
   }
+  return keys;
+}
+
+export function looksLikeApplicationForm() {
+  const text = deepText();
+
+  const keys = fieldsAskedFor();
 
   let telltales = 0;
   for (const key of keys) if (TELLTALE.has(key)) telltales++;
@@ -8311,11 +8736,252 @@ export function looksLikeApplicationForm() {
     // labelled inputs and nothing else — so there has to be a route that reads
     // the fields rather than the copy.
     telltales >= 1 ||
-    (keys.has('first_name') && keys.has('last_name'));
+    /*
+     * And a legal first and last name — with something more. On their own
+     * they are a mailing list's too: a newsletter frame of First name, Last
+     * name, Email and Company with a Subscribe button, and a "Get job alerts"
+     * box of the first three, were each recognised and given the person's
+     * name and address. What iCIMS and Taleo ask beside the two halves of the
+     * name is a telephone number or a file, which an alerts box does not.
+     */
+    (keys.has('first_name') && keys.has('last_name') && (keys.has('phone') || deepQueryAll('input[type=file]').length > 0));
 
   // And in every case, enough of a form to be one. Evidence alone let a frame
   // through that merely talked about applying.
   return evidence && keys.size >= 2;
+}
+
+/**
+ * Whether the form here is an application for a *job*, rather than for
+ * anything else that is applied for.
+ *
+ * `looksLikeApplicationForm` answers the question it was written for — may a
+ * frame be given the profile — and it is generous on purpose about what an
+ * application is: a legal first and last name beside a telephone number, or
+ * a button saying "Submit application". A bank asks both. Its personal-loan
+ * form at `/application/personal-loan` (name, email, phone, income, employer,
+ * Social Security number, "Submit application") passed, and since the card
+ * took a recognised form as reason enough to read a page unasked, the page —
+ * account number and all — was sent to be analysed, the card came up, and
+ * Submit filed "Bank — Personal loan application" in the tracker as applied
+ * and kept "Annual income" in the answer bank. Measured in the hunt's
+ * `loan.mjs`, and on `/loans/personal` the same.
+ *
+ * So this asks the form for something only an employer wants: a résumé or a
+ * CV, the words a hiring form uses and a loan form never does, a question
+ * about this role or team, a field only an employer asks for, or the form
+ * being served by a hiring system. Every real application form in the suites
+ * has at least one; the loan form has none. A form with none can still be
+ * read — through the chip, or when the tab is plainly carrying an
+ * application on — but it is not read on its own say-so.
+ */
+const JOB_WORDS =
+  /\b(cover letter|work authoriz\w*|legally authorized to work|require sponsorship|equal opportunity employer|voluntary self-identification|job application)\b/i;
+/*
+ * Written out rather than borrowed from the test above, which is
+ * `/\b(resum|cv)\b/` and matches neither "resume" nor "résumé" — `\b` after
+ * "resum" wants a non-word character and finds the "e". Every spelling
+ * anyone writes counts, with and without the accents.
+ */
+/*
+ * And read off the field that asks, never off the page. This was tested
+ * against the whole page's text whenever there was any file input at all,
+ * and as a prefix, so the verb counted as much as the noun: the same bank's
+ * loan form with a "Resume a saved application" link and an "Upload your two
+ * most recent pay stubs" box was taken for a job application, read unasked
+ * and sent away, account number and all — the fix above undone by one link
+ * and one upload. Measured in the hunt's `loan.mjs`.
+ *
+ * So the noun alone, as a whole word, and not where it is followed by what
+ * the verb is followed by: "Resume your application", "resume a saved
+ * draft", "resume application" are a bank's and a council's as much as an
+ * employer's, while "Resume/CV", "Upload résumé" and a box named
+ * `resume_file` are only ever an employer's.
+ */
+/*
+ * And with edges that know what a letter is. `\b` without the `u` flag
+ * counts only A-Z, 0-9 and `_` as word characters, so after the last "é" of
+ * "résumé" it found no edge at all, and "Résumé (optional)" and "Upload
+ * Resumé" asked for nothing. Nor did a box named `resume_file`, which this
+ * comment promised: `_` is a word character to `\b`, so "resume" in it had
+ * no edge either. The edges here are a letter or a digit on either side;
+ * an underscore or a hyphen is a gap between words, as it is in a name.
+ *
+ * "application" was taken off the words that make it the verb, because
+ * "Resume - application documents" is an employer's upload, and so is a box
+ * named `application` labelled "Resume" (it is back, straight after only:
+ * see below). Nor is "where" alone: "Resume
+ * where available" is the noun, and the verb is "resume where you left off".
+ *
+ * And in the other languages the server reads a posting in: "Lebenslauf",
+ * "currículum", and "简历", which is written with no spaces round it and so
+ * has no edges to ask for.
+ */
+/*
+ * But "CVS" is a pharmacy, and "Curriculum" alone is a school's. A health
+ * plan's "Preferred pharmacy (e.g. CVS)", a "CVS ExtraCare card number" and
+ * a school enrolment's "Curriculum" box each made a loan or an enrolment
+ * form a job application. So `cv` alone, and "curriculum" only with "vitae"
+ * after it — except "currículum" with its accent, which is how Spanish
+ * writes a CV with nothing after it, and no school's form in English does.
+ *
+ * And the verb has more words after it than "your" and "a". "Resume an
+ * existing application", "Resume previous", "Resume pending", "Resume
+ * incomplete" are a bank's links, and a "Resume application" button beside
+ * the pay-stub upload made the loan form a job application again. So
+ * "application" is back among them — but only straight after, with a space:
+ * "Resume - application documents" and "Resume: application documents" are
+ * an employer's upload with a dash or a colon between, which the verb is
+ * never written with.
+ */
+/*
+ * But the verb is only ever "resume", and its words only ever follow it
+ * after a plain space. Read after every spelling with any gap, "CV
+ * application form" was the verb, and so was "Resume - an up-to-date copy":
+ * a CV is never resumed, and the verb is not written with a dash after it.
+ * So the words that make it the verb are read after "resume" alone, and
+ * "an" and "application" — the two an employer's label also follows the
+ * noun with — only after a space and nothing else. "Resume application" is
+ * still the bank's button.
+ *
+ * And "CVs", when what follows makes it a list of documents: "Upload CVs and
+ * cover letters", "CVs & portfolios", "CVs/Résumés". Alone it is the pharmacy
+ * again, and so is "CVS/pharmacy", which is how the pharmacy writes itself.
+ */
+const ASKS_FOR_A_RESUME =
+  /(?:(?<![\p{L}\p{N}])(?:resumes?(?![\s_-]+(?:your|my|the|a|saved|draft|later|existing|previous|pending|incomplete|where[\s_-]+you)\b| (?:an|application)\b)|r[ée]sum[ée]s?(?<!resumes?)|cv|cvs(?=\s*(?:and\b|&|\/(?!\s*pharmacy)))|curr[ií]culum[\s_-]+vitae|currículum|lebensl(?:auf|äufe))(?![\p{L}\p{N}])|简历)/iu;
+/*
+ * "Curriculum" alone is a school's word, and a school enrolment's
+ * "Curriculum" box made a loan form a job application (see above). But in
+ * Italian, as in Spanish, it is the CV with nothing after it, and an upload
+ * labelled "Curriculum" is that: a school's curriculum is something it
+ * writes, not a file it asks somebody to send. So it counts on a file
+ * input's own label, and nowhere else.
+ */
+const ASKS_FOR_A_CURRICULUM = /(?<![\p{L}\p{N}])curr[ií]culum(?![\p{L}\p{N}])/iu;
+
+/*
+ * The same, said so that it can only be the noun, for reading the page as a
+ * whole. A résumé is very often asked for once, over the section, and the
+ * upload itself labelled "Select files" or "Documents": Workday's heading
+ * "Resume/CV" sits above an `attachments-FileUpload` whose input says
+ * "Select files", and "Attach your CV and any other documents" can be the
+ * form's opening line. Neither is near the box. The page is not read for the
+ * bare word — that is how "Resume a saved application" made a bank's loan
+ * form a job application — only for a résumé that is somebody's ("your CV")
+ * or one being sent ("upload a résumé"), or "Resume/CV", none of which the
+ * verb can be.
+ */
+const A_RESUME_ON_THE_PAGE =
+  /(?<![\p{L}\p{N}])((your|upload|attach|submit|include|send)[\s_-]+((your|a|an|the|updated|current|latest)[\s_-]+)?(r[ée]sum[ée]|cv|curriculum vitae)|r[ée]sum[ée][\s]*\/[\s]*cv|cv[\s]*\/[\s]*r[ée]sum[ée])(?![\p{L}\p{N}])/iu;
+
+/**
+ * The words round a field, other than its label: what is drawn in its own
+ * group, and what is drawn before that group up to the field before it.
+ *
+ * A résumé upload very often says "résumé" only there. Its own label is the
+ * button's — "Attach", "Upload file", "Drop files here or browse" — and the
+ * word is a heading over it (`<h3>Resume</h3>`), a span beside the button
+ * (`<span>Resume/CV</span><button>Attach</button>`), or a line above
+ * ("Please upload your resume (PDF)"). `describeField` gives the box one
+ * label, the nearest, and that is the button's; when the whole page was read
+ * it did not matter, and once only the label was read, every one of these
+ * forms stopped being a job application.
+ *
+ * The group is the highest element holding this field and no other, as
+ * `labelFor` climbs it — anything wider holds another field's words. And
+ * what comes before it, as `labelFor` looks back: three things drawn, and
+ * never past another field. Each piece is read as it is drawn, an element's
+ * edge a space (`drawnText`), not by `textContent`, which runs a heading and
+ * a label together into "ResumeAttach", one word that is neither. And each
+ * on its own, so that what one piece ends with is never taken for what
+ * follows another's "résumé".
+ */
+function wordsAround(field) {
+  const pieces = [];
+  const putInto = new Set();
+  let own = field;
+  for (let group = groupDrawnAround(field, putInto), i = 0; group && i < 7; i++) {
+    if (fieldsDrawnIn(group, ANOTHER_FIELD, 2) > 1) break;
+    own = group instanceof ShadowRoot ? group.host : group;
+    group = groupDrawnAround(own, putInto);
+  }
+  if (own !== field) pieces.push(drawnText(own).slice(0, 600));
+  let node = drawnBefore(own);
+  for (let i = 0; i < 3 && node; node = drawnBefore(node)) {
+    if (node.matches(NEVER_SHOWN)) continue;
+    i++;
+    if (fieldsDrawnIn(node, ANOTHER_FIELD, 1)) break;
+    const text = drawnText(node);
+    if (text) pieces.push(text.slice(0, 600));
+  }
+  return pieces;
+}
+
+export function looksLikeJobApplication() {
+  if (!looksLikeApplicationForm()) return false;
+  if (ON_A_TRACKER_HOST.test(location.hostname)) return true;
+  const text = deepText();
+  if (JOB_WORDS.test(text)) return true;
+  /*
+   * A long-form question about this role, read off the question itself. On
+   * the page's text, as `looksLikeApplicationForm` reads it, any textarea
+   * anywhere let "Our team will contact you" under a loan form count as an
+   * employer asking about the job. The question the employer asks is the
+   * label of the box it is to be answered in — Recruitee's "What draws you to
+   * this team?" is that box's own `aria-label` — so that is where to look.
+   */
+  /*
+   * Or by the words round it, when the box's own label is only "Your answer"
+   * and the question is the paragraph above (`wordsAround`). Only what reads
+   * as a question, though: what is round a box is not all asked of it, and a
+   * bank's "Our team will contact you" above a box for comments is not about
+   * the job.
+   */
+  /*
+   * And a sentence at a time. The whole piece was asked whether it had a
+   * "?" anywhere and the job's words anywhere, so a bank's "Questions? Our
+   * team is available 24/7." over a box for comments was an employer asking
+   * about the role: the question was "Questions?" and "our team" was in the
+   * next sentence. Only a sentence that is itself a question and itself
+   * about the job counts.
+   */
+  /*
+   * But a question does not always end at its "?", nor a sentence at every
+   * full stop. "Why do you want to join our team?*" ends in the mark that
+   * says it is required, "\"Why this role?\"" in a quote, and "What draws you
+   * to this role?Max 300 words." runs on into the limit with no space; and
+   * "Why are you interested in this role (e.g. growth, mission)?" was cut at
+   * "e.g." into two pieces, neither of them both a question and about the
+   * job. So a sentence asks when it has a "?" in it, and sentences are split
+   * only where the next one starts with a capital, as "Our team" does after
+   * "Questions?" and "growth" after "e.g." does not.
+   */
+  const asksAboutTheJob = (said) =>
+    said
+      .split(/(?<=[.?!])\s+(?=[A-Z])|\n+/)
+      .some((sentence) => sentence.includes('?') && ASKS_ABOUT_THE_JOB.test(sentence));
+  for (const box of deepQueryAll('textarea')) {
+    if (ASKS_ABOUT_THE_JOB.test(describeField(box) ?? '')) return true;
+    if (wordsAround(box).some(asksAboutTheJob)) return true;
+  }
+  // A résumé asked for by a field of its own: a file input, or a box for a
+  // link to one, labelled or named for it.
+  for (const field of deepQueryAll('input, textarea')) {
+    const label = describeField(field) ?? '';
+    if (ASKS_FOR_A_RESUME.test(label)) return true;
+    if (field.type === 'file' && ASKS_FOR_A_CURRICULUM.test(label)) return true;
+  }
+  // An upload with "résumé" round it rather than in its label, and the page
+  // asking for one in words only the noun can be. See `wordsAround` and
+  // `A_RESUME_ON_THE_PAGE`.
+  const uploads = deepQueryAll('input[type=file]');
+  for (const upload of uploads) {
+    if (wordsAround(upload).some((said) => ASKS_FOR_A_RESUME.test(said))) return true;
+  }
+  if (uploads.length > 0 && A_RESUME_ON_THE_PAGE.test(drawnText(document.body))) return true;
+  for (const key of fieldsAskedFor()) if (TELLTALE.has(key)) return true;
+  return false;
 }
 
 /**
@@ -8343,6 +9009,21 @@ export function looksLikeApplicationForm() {
  */
 const ON_A_TRACKER_HOST =
   /\b(greenhouse|lever|workday|myworkdayjobs|ashby|ashbyhq|workable|smartrecruiters|icims|taleo|jobvite|bamboohr|rippling|breezy|recruitee|teamtailor|jazzhr|successfactors|brassring|myjobs\.adp|workforcenow\.adp)\b/i;
+
+/**
+ * Whether a send pressed in this frame can be an application going out.
+ *
+ * A frame tells the worker of every press that looks like a send, and the
+ * worker has no way to look inside it — so a feedback survey's "Submit" in
+ * an iframe of the careers page marked the application as sent, measured,
+ * and took it off the list of things to finish. An application by the rules
+ * above, or any page of a hiring system's own host: the last step of a form
+ * served a page at a time, iCIMS's above all, can be a review with nothing
+ * left to fill, and is still the one that sends it.
+ */
+export function maySendFromFrame() {
+  return looksLikeApplicationForm() || ON_A_TRACKER_HOST.test(location.hostname);
+}
 
 export function mayFillFrame() {
   if (looksLikeApplicationForm()) return true;
