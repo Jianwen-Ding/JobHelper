@@ -303,6 +303,9 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
    than dressed as a warning — reapplying is allowed, and often right. */
 .job .before { margin-top: 6px; font-size: 12px; color: var(--muted); }
 .job .before b { font-weight: 500; color: var(--ink); }
+/* At any width: an address in it is one long word, and ran past the card's edge. */
+.job .before { overflow-wrap: anywhere; }
+.job .before a.sent-at { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 
 /* The pages one application is spread across. */
 /*
@@ -939,6 +942,28 @@ function noteForErrorLog(message) {
   } catch {
     // The extension was reloaded under the page; nothing to tell.
   }
+}
+
+/**
+ * An address as a person reads it: the host without "www.", and the path —
+ * its first and last parts with "…" between when it is long. No query, no
+ * fragment: on a posting those are tracking, and they are what ran past the
+ * card's edge. Anything that is not an address comes back cut to length.
+ */
+export function shortAddress(url, max = 32) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    const text = String(url ?? '');
+    return text.length > 60 ? `${text.slice(0, 59)}…` : text;
+  }
+  const host = u.host.replace(/^www\./, '');
+  const parts = u.pathname.split('/').filter(Boolean);
+  let path = parts.length ? `/${parts.join('/')}` : '';
+  if (path.length > max && parts.length > 2) path = `/${parts[0]}/…/${parts[parts.length - 1]}`;
+  if (path.length > max) path = `${path.slice(0, max - 1)}…`;
+  return `${host}${path}`;
 }
 
 export function removeCard() {
@@ -4163,6 +4188,14 @@ export function createCard({
     ]);
   }
 
+  /** A sent application's address, short, linking to the whole of it when it is a web page. */
+  function sentAddress(url) {
+    const shown = shortAddress(url);
+    return /^https?:\/\//i.test(url)
+      ? h('a', { className: 'sent-at', href: url, title: url, target: '_blank', rel: 'noopener noreferrer', textContent: shown })
+      : h('span', { className: 'sent-at', title: url, textContent: shown });
+  }
+
   /*
    * The question, and its answer. "It's another job" is the existing
    * `evenIfSent`, said on purpose: the stage goes again, and the store files
@@ -4182,7 +4215,13 @@ export function createCard({
     return h('div', { className: 'before maybe-sent' }, [
       document.createTextNode('You may have applied to this already'),
       ...(said ? [document.createTextNode(', on '), h('b', { textContent: said })] : []),
-      ...(past.url ? [document.createTextNode(` (${past.url})`)] : []),
+      /*
+       * Where it went, as a host and a short path: the whole tracking address
+       * ran past the card's right edge, and the part that says which job is
+       * the host and the posting's own path. The full address is the link and
+       * its title.
+       */
+      ...(past.url ? [document.createTextNode(' ('), sentAddress(past.url), document.createTextNode(')')] : []),
       document.createTextNode(
         past.held ? '. Nothing has been prepared for it yet, in case it is the same job. ' : '. ',
       ),

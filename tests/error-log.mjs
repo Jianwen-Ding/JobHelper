@@ -44,7 +44,7 @@ async function waitFor(fn, ms = 10_000) {
 
 /** A store that takes error-log entries, and can fail, or be gone, on command. */
 function fakeStore() {
-  const state = { down: false, broken: new Set(), entries: [], hits: [] };
+  const state = { down: false, refuse: null, broken: new Set(), entries: [], hits: [] };
   const server = http.createServer((req, res) => {
     const url = req.url.split('?')[0];
     if (state.down) {
@@ -61,6 +61,7 @@ function fakeStore() {
         res.end(JSON.stringify(obj));
       };
       if (state.broken.has(url)) return send({ error: 'broken on purpose' }, 500);
+      if (url === '/api/error-log' && req.method === 'POST' && state.refuse) return send({ error: state.refuse }, 400);
       if (url === '/health') return send({ ok: true, projectOpen: true, ai: { enabled: false, configured: false, command: '' } });
       if (url === '/api/extension/pair') return send({ token: 'fake-token', origin: req.headers.origin });
       if (url === '/api/resumes') return send([{ id: 'newgrad', label: 'New grad', base: true }]);
@@ -181,6 +182,39 @@ async function main() {
       const status = await popup.textContent('#errorLogSaid');
       check('the popup says it is logged', /Logged to ResumeM-M’s error log \(not pushed yet\)/.test(status ?? ''), status);
       check('and empties the form for the next one', (await popup.inputValue('#errorDescription')) === '' && (await popup.locator('#errorShots img').count()) === 0);
+
+      /*
+       * Round 26: what is taken out, said as ResumeM-M's dialog says it; an
+       * email or a phone in the description said as it is typed, and kept.
+       * And the two buttons, which wrapped to two lines each, on one line.
+       */
+      const hint = await popup.textContent('#errorLogHint');
+      check(
+        'the form says what is taken out, as ResumeM-M does',
+        hint === 'Contact details and tokens are taken out of the automatic logs; tokens are also taken out of your description.',
+        hint,
+      );
+      check('nothing to warn about in an empty box', await popup.isHidden('#errorLogContact'));
+      await popup.fill('#errorDescription', 'Autofill put jane.doe@example.com in the phone box and 617-555-0134 in the email box');
+      const contact = await popup.textContent('#errorLogContact');
+      check(
+        'an email and a phone in the description are warned about, and kept',
+        (await popup.isVisible('#errorLogContact')) && contact === 'Your description has an email and a phone number in it — it will be kept as written.',
+        contact,
+      );
+      await popup.fill('#errorDescription', 'Nothing personal here');
+      check('and the warning goes with them', await popup.isHidden('#errorLogContact'));
+      await popup.fill('#errorDescription', '');
+      const lines = await popup.evaluate(() =>
+        ['#captureTab', '#saveErrorLog'].map((sel) => {
+          const button = document.querySelector(sel);
+          const range = document.createRange();
+          range.selectNodeContents(button);
+          const tops = new Set([...range.getClientRects()].map((r) => Math.round(r.top)));
+          return { sel, lines: tops.size, width: Math.round(button.getBoundingClientRect().width) };
+        }),
+      );
+      check('each button’s label fits on one line', lines.every((b) => b.lines === 1), JSON.stringify(lines));
     }
 
     group('ResumeM-M out of reach');
@@ -195,6 +229,12 @@ async function main() {
         return /kept in the browser/.test(text ?? '') && text;
       });
       check('the entry is kept in the browser, and the popup says so', Boolean(said), said);
+      // Round 26: kept is not refused — said in the queue's amber, not in red.
+      const tone = await popup.evaluate(() => {
+        const said = document.querySelector('#errorLogSaid');
+        return { className: said.className, color: getComputedStyle(said).color, queued: getComputedStyle(document.querySelector('#errorLogQueued')).color };
+      });
+      check('and says it in amber, as the queue line is, not in red', /\bwarn\b/.test(tone.className) && tone.color === tone.queued, JSON.stringify(tone));
       const queued = await popup.textContent('#errorLogQueued');
       check('and how many are waiting', /1 error-log entry is waiting/.test(queued ?? ''), queued);
       const kept = await popup.evaluate(async () => (await chrome.storage.local.get('jh-error-log-queue'))['jh-error-log-queue']);
@@ -212,6 +252,46 @@ async function main() {
       });
       check('and no longer kept', Boolean(left));
       check('only once', store.entries.filter((e) => e.description === 'Logged while the store was down').length === 1);
+    }
+
+    /*
+     * Round 26: an entry kept while ResumeM-M was out of reach, and refused
+     * when it was sent, was let go of with nothing said. The popup says so,
+     * and offers its words to copy before they go.
+     */
+    group('Refused on the way back');
+    {
+      await context.grantPermissions(['clipboard-read', 'clipboard-write']).catch(() => undefined);
+      store.down = true;
+      if (await popup.isHidden('#errorLogForm')) await popup.click('#logError');
+      await popup.fill('#errorDescription', 'Kept, then refused');
+      await popup.click('#saveErrorLog');
+      await waitFor(async () => /kept in the browser/.test((await popup.textContent('#errorLogSaid')) ?? ''));
+      store.down = false;
+      store.refuse = 'Keep the description under 4,000 characters; put the rest in a screenshot.';
+      await popup.reload();
+      const said = await waitFor(async () => {
+        const text = await popup.textContent('#errorLogRefused');
+        return /refused/.test(text ?? '') && text;
+      });
+      check(
+        'the popup says the entry was refused, and why',
+        /^1 entry was refused by ResumeM-M: Keep the description under 4,000 characters/.test(said || ''),
+        said,
+      );
+      check('and it is no longer waiting', !/waiting/.test((await popup.textContent('#errorLogQueued')) ?? ''));
+      await popup.click('#copyRefused');
+      const copied = await waitFor(async () => {
+        const text = await popup.evaluate(() => navigator.clipboard.readText()).catch(() => '');
+        return /Kept, then refused/.test(text) && text;
+      });
+      check('Copy text puts what was written on the clipboard, with the reason', /^Kept, then refused\n[\s\S]*ResumeM-M refused it: Keep the description/.test(copied || ''), JSON.stringify(copied));
+      const left = await waitFor(async () => {
+        const kept = await popup.evaluate(async () => (await chrome.storage.local.get('jh-error-log-refused'))['jh-error-log-refused']);
+        return Array.isArray(kept) && kept.length === 0;
+      });
+      check('and once copied it is let go of', Boolean(left) && (await popup.textContent('#errorLogRefused')) === '');
+      store.refuse = null;
     }
 
     group('The keyboard shortcut');

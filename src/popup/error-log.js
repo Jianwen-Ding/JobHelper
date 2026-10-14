@@ -14,9 +14,17 @@
  * at `#log-error`.
  */
 
-import { MAX_SCREENSHOTS, MAX_SCREENSHOT_BYTES, OPEN_FORM_KEY, bytesIn } from '../shared/error-log.js';
+import { MAX_SCREENSHOTS, MAX_SCREENSHOT_BYTES, OPEN_FORM_KEY, SCRUB_HINT, bytesIn, refusedText } from '../shared/error-log.js';
 
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+
+const EMAIL_IN = /[^\s@<>()[\],;:"']+@[^\s@<>()[\],;:"']+\.[A-Za-z]{2,}/;
+const PHONE_IN = /(?<![\w])(?:\+?\d{1,3}[\s.-]?)?(?:\(\d{3}\)\s?|\d{3}[\s.-])\d{3}[\s.-]\d{4}(?![\w])/;
+
+/** "an email", "a phone number", both, or '' — as ResumeM-M's own dialog says it. */
+export function contactIn(text) {
+  return [EMAIL_IN.test(text) && 'an email', PHONE_IN.test(text) && 'a phone number'].filter(Boolean).join(' and ');
+}
 
 /** The same small builder as the card's: a tag, its properties, its children. */
 function h(tag, props = {}, kids = []) {
@@ -105,6 +113,56 @@ export function setupErrorLogForm({ send, activeTab }) {
     $('errorDescription').focus();
   }
 
+  /*
+   * Entries ResumeM-M read and refused, when the queue was sent. Said, with
+   * their words to copy, and let go of only once the person has them or says
+   * so — the queue dropped them with nothing said.
+   */
+  function showRefused(entries) {
+    const box = $('errorLogRefused');
+    if (!box) return;
+    const list = Array.isArray(entries) ? entries : [];
+    if (list.length === 0) {
+      box.replaceChildren();
+      return;
+    }
+    const reasons = [...new Set(list.map((e) => e.reason).filter(Boolean))].join('; ');
+    const text = list.map(refusedText).join('\n\n---\n\n');
+    const ids = list.map((e) => e.id);
+    const note = h('div', { className: 'refused-said', role: 'status' });
+    const dismiss = async () => {
+      await send('dismissRefusedErrorLogs', { ids }).catch(() => undefined);
+      box.replaceChildren();
+    };
+    box.replaceChildren(
+      h('div', {
+        textContent: `${list.length} ${list.length === 1 ? 'entry was' : 'entries were'} refused by ResumeM-M: ${reasons}`,
+      }),
+      h('div', { className: 'row' }, [
+        h('button', {
+          id: 'copyRefused',
+          textContent: 'Copy text',
+          title: 'Copy what you wrote, to keep it somewhere else',
+          onclick: async () => {
+            try {
+              await navigator.clipboard.writeText(text);
+            } catch {
+              // No clipboard here: the words, selected, for Ctrl+C.
+              const area = h('textarea', { readOnly: true, value: text, rows: 4, 'aria-label': 'The refused entries' });
+              note.replaceChildren(area);
+              area.select();
+              return;
+            }
+            await dismiss();
+            say('Copied the refused entry’s text.', 'ok');
+          },
+        }),
+        h('button', { id: 'dismissRefused', textContent: 'Dismiss', onclick: () => dismiss() }),
+      ]),
+      note,
+    );
+  }
+
   async function showQueued() {
     let state;
     try {
@@ -112,6 +170,7 @@ export function setupErrorLogForm({ send, activeTab }) {
     } catch {
       return;
     }
+    showRefused(state.refusedEntries);
     $('errorLogQueued').textContent = state.queued
       ? `${state.queued} error-log ${state.queued === 1 ? 'entry is' : 'entries are'} waiting in the browser for ResumeM-M, and will be sent the next time it answers.`
       : state.sent
@@ -140,10 +199,12 @@ export function setupErrorLogForm({ send, activeTab }) {
         say(
           `ResumeM-M could not take it just now (${result.why}) — so it is kept in the browser, and will be sent the next time ResumeM-M answers.` +
             (result.screenshotsKept === false ? ' The browser had no room for its screenshots, so they were left out.' : ''),
-          'err',
+          // Kept, not refused: said in the queue's amber, red being for what will not go at all.
+          'warn',
         );
       }
       $('errorDescription').value = '';
+      if ($('errorLogContact')) $('errorLogContact').hidden = true;
       shots = [];
       drawShots();
       await showQueued();
@@ -154,6 +215,20 @@ export function setupErrorLogForm({ send, activeTab }) {
       $('saveErrorLog').disabled = false;
     }
   }
+
+  /*
+   * The description is kept as written (it is the person's own), so an email
+   * or a phone in it stays: said as it is typed, and not in the way of saving.
+   */
+  const hint = $('errorLogHint');
+  if (hint) hint.textContent = SCRUB_HINT;
+  $('errorDescription').addEventListener('input', () => {
+    const what = contactIn($('errorDescription').value);
+    const warn = $('errorLogContact');
+    if (!warn) return;
+    warn.hidden = !what;
+    warn.textContent = what ? `Your description has ${what} in it — it will be kept as written.` : '';
+  });
 
   $('logError').onclick = () => (form.hidden ? open() : (form.hidden = true));
   $('saveErrorLog').onclick = () => save();

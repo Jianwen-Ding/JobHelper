@@ -8,9 +8,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  MAX_DESCRIPTION,
   QUEUE_KEY,
   QUEUE_MAX,
+  REFUSED_KEY,
+  bodyOf,
   createLogBuffer,
+  dismissRefusedErrorLogs,
+  refusedErrorLogs,
+  refusedText,
   queuedErrorLogs,
   routeOf,
   saveErrorLog,
@@ -161,4 +167,49 @@ test('the queue keeps the newest few, and keeps an entry without its screenshots
     throw refusedWith(400, 'not readable');
   }, tight);
   assert.deepEqual([refused.sent, refused.queued, refused.refused], [0, 0, ['not readable']]);
+});
+
+/*
+ * Round 26: an entry refused on the way back was let go of with nothing said.
+ * Its words and the reason are kept apart, without its screenshots, until the
+ * popup has said so and the person has copied them or let them go.
+ */
+test('an entry refused on the way back is kept to be said, with its words, until it is dismissed', async () => {
+  const local = storage();
+  const down = async () => {
+    throw offline();
+  };
+  await saveErrorLog(
+    { description: 'Refused later', screenshots: [PNG], page: { url: 'https://jobs.example/1', title: 'Engineer' } },
+    { serverFetch: down, storage: local, events: async () => [] },
+  );
+  await saveErrorLog({ description: 'Goes fine' }, { serverFetch: down, storage: local, events: async () => [] });
+  let n = 0;
+  const result = await sendQueuedErrorLogs(async () => {
+    if (n++ === 0) throw refusedWith(400, 'Keep the description under 4,000 characters.');
+    return { committed: true };
+  }, local);
+  assert.deepEqual([result.sent, result.queued, result.refused], [1, 0, ['Keep the description under 4,000 characters.']]);
+  assert.equal(result.refusedEntries.length, 1);
+  const [kept] = await refusedErrorLogs(local);
+  assert.equal(kept.description, 'Refused later');
+  assert.equal(kept.reason, 'Keep the description under 4,000 characters.');
+  assert.equal(kept.page.url, 'https://jobs.example/1');
+  assert.equal(kept.screenshots, undefined);
+  assert.match(refusedText(kept), /^Refused later\n\nLogged .* on https:\/\/jobs\.example\/1\.\nResumeM-M refused it: Keep the description/);
+  // Still there the next time anything asks, until it is dismissed.
+  assert.equal((await sendQueuedErrorLogs(async () => ({}), local)).refusedEntries.length, 1);
+  assert.equal(await dismissRefusedErrorLogs(local, [kept.id]), 0);
+  assert.deepEqual(local.values[REFUSED_KEY], []);
+});
+
+// Round 26: the note about screenshots left out took a description near the limit over it, and it was refused.
+test('the note about screenshots left out never takes the description past the limit', () => {
+  const long = 'x'.repeat(MAX_DESCRIPTION);
+  const body = JSON.parse(bodyOf({ id: '1', description: long, droppedScreenshots: 2 }));
+  assert.ok(body.description.length <= MAX_DESCRIPTION, String(body.description.length));
+  assert.match(body.description, /x…\n\n\(2 screenshots could not be kept while ResumeM-M was out of reach\.\)$/);
+  // Short ones are untouched, the note after them.
+  assert.equal(JSON.parse(bodyOf({ id: '2', description: 'Short', droppedScreenshots: 1 })).description, 'Short\n\n(1 screenshot could not be kept while ResumeM-M was out of reach.)');
+  assert.equal(JSON.parse(bodyOf({ id: '3', description: long })).description, long);
 });

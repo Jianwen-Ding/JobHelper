@@ -10,7 +10,9 @@ import { saveBugReport, listBugReports, syncBugReport, clearBugReport, extension
 import {
   OPEN_FORM_KEY,
   createLogBuffer,
+  dismissRefusedErrorLogs,
   queuedErrorLogs,
+  refusedErrorLogs,
   routeOf,
   saveErrorLog,
   sendQueuedErrorLogs,
@@ -2353,8 +2355,15 @@ const handlers = {
   },
   /** What is waiting to be sent, after trying to send it. */
   async errorLogQueue() {
-    if ((await queuedErrorLogs(chrome.storage.local)) === 0) return { queued: 0, sent: 0, refused: [], lastError: null };
+    if ((await queuedErrorLogs(chrome.storage.local)) === 0) {
+      // Nothing to send; but one refused earlier — sent from the background — is still to be said.
+      return { queued: 0, sent: 0, refused: [], lastError: null, refusedEntries: await refusedErrorLogs(chrome.storage.local) };
+    }
     return sendQueuedErrorLogs(serverFetch, chrome.storage.local);
+  },
+  /** The refused entries have been seen, or their text copied: let go of them. */
+  async dismissRefusedErrorLogs({ ids } = {}) {
+    return { left: await dismissRefusedErrorLogs(chrome.storage.local, Array.isArray(ids) ? ids.map(String) : null) };
   },
   async openErrorLog() {
     return openErrorLogForm();
@@ -4457,6 +4466,7 @@ const OWN_PAGES_ONLY = new Set([
   // The error log's form: an entry may hold screenshots of whatever was on screen.
   'saveErrorLog',
   'errorLogQueue',
+  'dismissRefusedErrorLogs',
   'openErrorLog',
   'syncBugReport',
   'listBugReports',
@@ -4505,7 +4515,7 @@ const ACTIONS = {
   pair: 'pair',
 };
 /** Never noted: the error log's own messages, and a page announcing itself. */
-const NOT_NOTED = new Set(['logEvents', 'saveErrorLog', 'errorLogQueue', 'frameReady', 'ping', 'getSettings', 'getTrail']);
+const NOT_NOTED = new Set(['logEvents', 'saveErrorLog', 'errorLogQueue', 'dismissRefusedErrorLogs', 'frameReady', 'ping', 'getSettings', 'getTrail']);
 function noteAction(type, ok, ms, err) {
   if (NOT_NOTED.has(type) && ok) return;
   if (!ok && type === 'logEvents') return;

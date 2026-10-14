@@ -182,6 +182,19 @@
   .error-log .said:empty { display: none; }
   .queued { font-size: 11px; color: var(--warn); margin-top: 8px; }
   .queued:empty { display: none; }
+  /* Kept in the browser is not refused: amber, as the queue line is. */
+  .error-log .said.warn { color: var(--warn); }
+  /* Two labels side by side wrapped to two lines each in the popup's width: one above the other, full width. */
+  .error-log .row.actions { flex-direction: column; }
+  .error-log .row.actions button { width: 100%; white-space: nowrap; }
+  .error-log .contact { font-size: 11px; color: var(--warn); margin-top: 4px; line-height: 1.5; }
+  .error-log .contact[hidden] { display: none; }
+  .error-log .hint { font-size: 11px; color: var(--muted); margin: 8px 0 0; line-height: 1.5; }
+  /* Refused by ResumeM-M: said in red, with its words to copy before they go. */
+  .refused { font-size: 11px; color: var(--bad); margin-top: 8px; line-height: 1.5; overflow-wrap: anywhere; }
+  .refused:empty { display: none; }
+  .refused .row { margin-top: 6px; }
+  .refused textarea { margin-top: 6px; font-size: 11px; }
 </style>
 </head>
 <body>
@@ -275,6 +288,7 @@
 <div class="status" id="status" role="status">Checking server…</div>
 <div class="row"><button id="logError" title="Alt+Shift+E">Log an error</button><button id="reportBug">Report a bug</button></div>
 <div class="queued" id="errorLogQueued" role="status"></div>
+<div class="refused" id="errorLogRefused"></div>
 
 <!-- Logged to ResumeM-M's error log, with this extension's own record of the
      minutes before. Kept in the browser, and sent later, when ResumeM-M cannot
@@ -282,6 +296,7 @@
 <section class="error-log" id="errorLogForm" aria-labelledby="errorLogTitle" hidden>
   <div class="lbl" id="errorLogTitle">Log an error</div>
   <textarea id="errorDescription" rows="2" placeholder="What went wrong, in a line or two" aria-label="What went wrong"></textarea>
+  <div class="contact" id="errorLogContact" aria-live="polite" hidden></div>
   <div class="paste" id="errorPaste" tabindex="0" role="button" aria-label="Add screenshots: paste, drop, or choose a file">Paste a screenshot (Ctrl+V), drop one here, or click to choose</div>
   <input type="file" id="errorFile" accept="image/png,image/jpeg,image/webp" multiple hidden>
   <div class="shots" id="errorShots" aria-live="polite"></div>
@@ -292,11 +307,12 @@
       <option value="30">the last 30 minutes</option>
     </select>
   </label>
-  <div class="row">
+  <div class="row actions">
     <button id="captureTab" title="A screenshot of the page in front of you">Capture this tab</button>
     <button id="saveErrorLog" class="primary">Save to error log</button>
   </div>
   <div class="said" id="errorLogSaid" role="status"></div>
+  <p class="hint" id="errorLogHint">Contact details and tokens are taken out of the automatic logs; tokens are also taken out of your description.</p>
 </section>
 
 <script src="popup.js" type="module"></script>

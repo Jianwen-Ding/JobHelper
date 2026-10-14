@@ -170,9 +170,11 @@ async function main() {
     const used = await fetch(`${SERVER}/api/extension/pairings`).then((r) => r.json());
     check('the editor lists it', used.paired.some((p) => p.id === id) && used.code === null, JSON.stringify(used));
 
+    // By name, "JobHelper" and the start of its id; the whole origin is the row's title.
     const row = await waitFor(async () => {
-      const text = await editor.textContent('#pair-list').catch(() => null);
-      return text?.includes(id) ? text : undefined;
+      const named = editor.locator(`#pair-list [title="chrome-extension://${id}"]`);
+      const text = (await named.count()) ? await named.first().textContent() : null;
+      return text?.startsWith(`JobHelper ${id.slice(0, 6)}`) ? text : undefined;
     });
     check('the editor lists it under Paired extensions, and the code is gone', Boolean(row) && !(await editor.isVisible('#pair-code')), row);
 

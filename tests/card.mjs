@@ -2668,6 +2668,61 @@ async function main() {
   check('and the question goes, with nothing marked sent', maybeSent.afterSaid === null && !maybeSent.sentMark, JSON.stringify(maybeSent));
 
   /*
+   * Round 26: where it went, inside the card. The whole tracking address was
+   * one long word, and at wide widths (where `.body` does not wrap) it ran
+   * past the card's right edge. Now the host and a short path, linking to the
+   * whole address, and wrapped at any width.
+   */
+  const LONG_SENT = 'https://boards.greenhouse.io/streamlyinc/jobs/4462047454?gh_src=linkedin&utm_source=linkedin_jobs_board_very_long_tracking_parameter_value_that_goes_on';
+  for (const width of [1440, 1024, 360]) {
+    await page.setViewportSize({ width, height: 900 });
+    const placed = await inPage((createCard, url) => {
+      createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Software Engineer Intern, Data Platform', company: 'Streamly' },
+          spec: { id: 'job-streamly', label: 'Streamly', tier: 'temporary' },
+          rationale: [],
+          diff: [],
+          applied: { id: 'streamly-1', at: '2026-09-24T15:00:00.000Z', status: 'applied', maybe: true, url },
+        },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async () => ({}),
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      const said = root.querySelector('.maybe-sent');
+      const link = said?.querySelector('a.sent-at');
+      const card = said?.closest('.job')?.getBoundingClientRect();
+      const box = said?.getBoundingClientRect();
+      // Every line of it, the link's own boxes included, within the card's sides.
+      const rights = [...said.querySelectorAll('*'), said].flatMap((n) => [...n.getClientRects()].map((r) => r.right));
+      return {
+        text: said?.textContent ?? '',
+        shown: link?.textContent,
+        href: link?.getAttribute('href'),
+        title: link?.title,
+        overflow: Math.max(...rights) - (card?.right ?? 0),
+        scroll: said.scrollWidth - said.clientWidth,
+        boxRight: box.right - card.right,
+      };
+    }, LONG_SENT);
+    check(
+      `at ${width}px the maybe-sent address stays inside the card`,
+      placed.overflow <= 1 && placed.scroll <= 1 && placed.boxRight <= 1,
+      JSON.stringify({ overflow: placed.overflow, scroll: placed.scroll, boxRight: placed.boxRight }),
+    );
+    check(
+      `at ${width}px it shows the host and the path, and links to the whole address`,
+      placed.shown === 'boards.greenhouse.io/streamlyinc/jobs/4462047454' && placed.href === LONG_SENT && placed.title === LONG_SENT && !placed.text.includes('utm_source'),
+      JSON.stringify({ shown: placed.shown, text: placed.text }),
+    );
+  }
+  await page.setViewportSize({ width: 1280, height: 720 });
+
+  /*
    * And the answer travels. Said on the posting, "It's a different job" was
    * asked again on the form and on the confirmation page: the answer lived
    * in the card, which is made anew on every page. Carried with the work,

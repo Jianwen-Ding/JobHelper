@@ -42,6 +42,16 @@ export const QUEUE_KEY = 'jh-error-log-queue';
 export const BUFFER_KEY = 'jh-log-buffer';
 /** How many of the buffer's events outlive the worker. */
 export const PERSIST_EVENTS = 500;
+/** Entries ResumeM-M read and refused, kept so the popup can say so and offer their text. See `sendQueuedErrorLogs`. */
+export const REFUSED_KEY = 'jh-error-log-refused';
+/** The longest description ResumeM-M takes (its `MAX_DESCRIPTION`). */
+export const MAX_DESCRIPTION = 4000;
+/**
+ * What the error log takes out, as ResumeM-M's own dialog says it: the
+ * automatic logs lose contact details and tokens; the description is the
+ * person's own words, and loses tokens only.
+ */
+export const SCRUB_HINT = 'Contact details and tokens are taken out of the automatic logs; tokens are also taken out of your description.';
 /** Set by the keyboard command, read by the popup: open on the form. */
 export const OPEN_FORM_KEY = 'jh-open-error-log';
 
@@ -193,12 +203,58 @@ export async function queuedErrorLogs(storage) {
   return (await readQueue(storage)).length;
 }
 
-/** The body ResumeM-M's `POST /api/error-log` takes, from an entry as the browser keeps it. */
-function bodyOf(entry) {
+/**
+ * The body ResumeM-M's `POST /api/error-log` takes, from an entry as the browser keeps it.
+ *
+ * The note about screenshots left out goes on the end of the description,
+ * and the description is cut to leave room for it: a description near the
+ * limit with the note added was over it, refused, and let go of.
+ */
+export function bodyOf(entry) {
   const dropped = entry.droppedScreenshots
     ? `\n\n(${entry.droppedScreenshots} screenshot${entry.droppedScreenshots === 1 ? '' : 's'} could not be kept while ResumeM-M was out of reach.)`
     : '';
-  return JSON.stringify({ ...entry, description: `${entry.description}${dropped}` });
+  const room = MAX_DESCRIPTION - dropped.length;
+  const said = String(entry.description ?? '');
+  const description = said.length > room ? `${said.slice(0, room - 1).trimEnd()}…` : said;
+  return JSON.stringify({ ...entry, description: `${description}${dropped}` });
+}
+
+async function readRefused(storage) {
+  try {
+    const { [REFUSED_KEY]: list } = await storage.get(REFUSED_KEY);
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Entries ResumeM-M refused, newest last: what was said and why it was
+ * refused, without the screenshots. Kept until the person has seen them —
+ * `dismissRefusedErrorLogs` — so the words are not lost with the entry.
+ */
+export async function refusedErrorLogs(storage) {
+  return readRefused(storage);
+}
+
+/** Let go of the refused entries, once the person has seen them (or copied their text). */
+export function dismissRefusedErrorLogs(storage, ids = null) {
+  return inTurn(async () => {
+    const keep = ids ? (await readRefused(storage)).filter((e) => !ids.includes(e.id)) : [];
+    await storage.set({ [REFUSED_KEY]: keep });
+    return keep.length;
+  });
+}
+
+/** An entry's words, to copy somewhere else when ResumeM-M would not take it. */
+export function refusedText(entry) {
+  return [
+    entry.description,
+    '',
+    `Logged ${entry.at}${entry.page?.url ? ` on ${entry.page.url}` : ''}.`,
+    `ResumeM-M refused it: ${entry.reason}`,
+  ].join('\n');
 }
 
 let sending = null;
@@ -207,7 +263,8 @@ let sending = null;
  * Send whatever is waiting, oldest first, and stop at the first that cannot
  * go yet. One at a time, however many things ask. An entry the server reads
  * and refuses is let go of — it would be refused again every time — and the
- * refusal is the answer's `refused`.
+ * refusal is the answer's `refused`; its words and the reason are kept for
+ * the popup to show (`refusedEntries`, `refusedErrorLogs`).
  */
 export function sendQueuedErrorLogs(serverFetch, storage) {
   sending ??= (async () => {
@@ -218,6 +275,7 @@ export function sendQueuedErrorLogs(serverFetch, storage) {
       for (;;) {
         const [first] = await readQueue(storage);
         if (!first) break;
+        let reason = null;
         try {
           await serverFetch('/api/error-log', { method: 'POST', body: bodyOf(first), timeoutMs: 60_000 });
           sent++;
@@ -226,9 +284,21 @@ export function sendQueuedErrorLogs(serverFetch, storage) {
             lastError = err.message;
             break;
           }
-          refused.push(err.message);
+          reason = err.message;
+          refused.push(reason);
         }
         await inTurn(async () => {
+          /*
+           * A refused one leaves the queue, and its words are kept apart
+           * (`refusedErrorLogs`), without the screenshots, until the popup
+           * has said so and offered to copy them. Dropped outright, it went
+           * with nothing said: the popup never showed `refused`.
+           */
+          if (reason !== null) {
+            const { id, at, description, page = null } = first;
+            const kept = [...(await readRefused(storage)), { id, at, description, page, reason }].slice(-QUEUE_MAX);
+            await Promise.resolve(storage.set({ [REFUSED_KEY]: kept })).catch(() => undefined);
+          }
           const queue = await readQueue(storage);
           await storage.set({ [QUEUE_KEY]: queue.filter((e) => e.id !== first.id) });
         });
@@ -236,7 +306,7 @@ export function sendQueuedErrorLogs(serverFetch, storage) {
     } finally {
       sending = null;
     }
-    return { sent, refused, lastError, queued: await queuedErrorLogs(storage) };
+    return { sent, refused, lastError, queued: await queuedErrorLogs(storage), refusedEntries: await readRefused(storage) };
   })();
   return sending;
 }
