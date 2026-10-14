@@ -35,11 +35,33 @@ const {
 /** Map a stored profile key to the label/name patterns that mean it. */
 /*
  * The first or the last name as what a box is, not a hint about it: said in
- * the label's own words — before its first bracket, dash or semicolon — and
- * not after a "not", "do not", "leave", "without" or "other than". See
+ * the label's own words — before its first bracket, dash or semicolon — or
+ * in the same part of it as the middle name or the suffix, and not after a
+ * "not", "do not", "leave", "without" or "other than" in that part. See
  * `middle_name` and `name_suffix` in `FIELD_PATTERNS`.
+ *
+ * The same part too, because a label can open with what the whole name is
+ * before saying which half: "Legal Name - Last Name, including suffix (Jr.,
+ * III)" and "Legal Name – Last Name Suffix" stopped at the dash, read as a
+ * suffix, and the last-name box was left empty.
  */
-const NAME_IS_THE_SUBJECT = String.raw`(?:(?!\(|\[|;|\s[-–—]\s|\b(?:not?|don['’]?t|never|leave|exclud\w*|without|except|other\s+than|different|separate)\b)[^])*?(?:\b(?:first|given|last|family)[\s_-]?name\b|\b(?:surname|forename)\b)`;
+const NAME_IN_A_LABEL = /\b(?:first|given|last|family)[\s_-]?name\b|\b(?:surname|forename)\b/i;
+const NAME_SET_ASIDE = /\b(?:not?|don['’]?t|never|leave|exclud\w*|without|except|other\s+than|different|separate)\b/i;
+const LABEL_PARTS = /[()[\];]|\s[-–—]\s/;
+function namesTheName(part) {
+  const before = part.search(NAME_SET_ASIDE);
+  return NAME_IN_A_LABEL.test(before < 0 ? part : part.slice(0, before));
+}
+/** A middle-name or suffix pattern, matching only where the first or the last name is not the box's subject. */
+function unlessTheNameIsTheSubject(re) {
+  const test = (label) => {
+    const said = String(label ?? '');
+    if (!re.test(said)) return false;
+    const parts = said.split(LABEL_PARTS);
+    return !namesTheName(parts[0]) && !parts.some((part) => re.test(part) && namesTheName(part));
+  };
+  return { test, source: re.source, flags: re.flags };
+}
 
 const FIELD_PATTERNS = [
   /*
@@ -112,8 +134,8 @@ const FIELD_PATTERNS = [
    * suffix (do not include in Last Name field)" — fell through too, and the
    * middle-name or the suffix box was given the surname. Left blank instead.
    */
-  ['middle_name', new RegExp(`^(?!${NAME_IS_THE_SUBJECT})[^]*\\bmiddle[\\s_-]?(name|initial)\\b`, 'i')],
-  ['name_suffix', new RegExp(`^(?!${NAME_IS_THE_SUBJECT})[^]*(?:\\bsuffix\\b|\\blegal[\\s_-]*name[\\s_-]*social\\b)`, 'i')],
+  ['middle_name', unlessTheNameIsTheSubject(/\bmiddle[\s_-]?(name|initial)\b/i)],
+  ['name_suffix', unlessTheNameIsTheSubject(/\bsuffix\b|\blegal[\s_-]*name[\s_-]*social\b/i)],
   ['first_name', /\b(first[\s_-]?name|given[\s_-]?name|forename|fname)\b/i],
   ['last_name', /\b(last[\s_-]?name|family[\s_-]?name|surname|lname)\b/i],
   /*
@@ -2038,12 +2060,26 @@ const DATE_SHAPE = /^\s*(?:(?:dd?|mm?|yy(?:yy)?|tt|jj(?:jj)?|aa(?:aa)?)\s*[./-]\
 function isTypedDate(element) {
   if (!(element instanceof HTMLInputElement)) return false;
   if (/^(?:date|datetime|month)(?:picker|timepicker|input)$/i.test(element.getAttribute('data-role') ?? '')) return true;
-  if (/^(?:dialog|grid)$/i.test(element.getAttribute('aria-haspopup') ?? '')) return true;
   if (DATE_SHAPE.test(element.getAttribute('placeholder') ?? '')) return true;
+  /*
+   * A popup that is a dialog or a grid, or a pattern with a year in it, only
+   * where the box is also called a date. A `role="combobox"` School search
+   * whose popup was a dialog was typed into as a date and nothing chosen,
+   * and a ZIP+4 pattern, "\d{5}(-\d{4})?", passed for a year's.
+   */
   const pattern = element.getAttribute('pattern') ?? '';
   // A year's four digits and a separator, and not a telephone's three.
-  return /\\d\{4\}/.test(pattern) && !/\\d\{3\}/.test(pattern) && /[./-]/.test(pattern.replace(/\\[dDwWsS]/g, ''));
+  const yearShaped = /\\d\{4\}/.test(pattern) && !/\\d\{3\}/.test(pattern) && /[./-]/.test(pattern.replace(/\\[dDwWsS]/g, ''));
+  if (!yearShaped && !/^(?:dialog|grid)$/i.test(element.getAttribute('aria-haspopup') ?? '')) return false;
+  return CALLED_A_DATE.test(
+    [labelFor(element), element.getAttribute('aria-label'), element.name, element.id]
+      .filter(Boolean)
+      .join(' ')
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/[_-]+/g, ' '),
+  );
 }
+const CALLED_A_DATE = /\b(?:date\w*|start(?:ed|ing|s)?|end(?:ed|ing|s)?|from|to|graduat\w*|birth\w*|dob|available|availability|months?|years?|when)\b/i;
 
 /** A choice dressed as something else: a button, or a text box that is a list. */
 function isWidgetChoice(element) {
@@ -2827,10 +2863,24 @@ const changeEvent = () => ours(new Event('change', { bubbles: true, composed: tr
  * after the last box of its date, the way a person tabs through it. Measured
  * live after on Intel: Save and Continue took the From and To.
  */
+/*
+ * And a box that takes its value on leaving is written without taking the
+ * person's place. Focused and blurred for real, as it was, the focus ended on
+ * the page's body and the page scrolled to the box: measured on an Oracle JET
+ * form, someone typing in "Anything else?" was moved 658px down and their
+ * next keys went nowhere. So the box is focused without scrolling, and where
+ * the person's focus is in another box it stays there: the box is told it
+ * was entered and left, which is what the toolkit reads it into its model on.
+ */
 function setValue(input, value) {
   const spin = input.getAttribute?.('role') === 'spinbutton';
   const onLeaving = takesItsValueOnLeaving(input);
-  if (spin || onLeaving) input.focus?.();
+  const had = deepActiveElement();
+  const theirs = onLeaving && had && had !== input && had !== document.body && had !== document.documentElement;
+  if (theirs) {
+    input.dispatchEvent(ours(new FocusEvent('focus', { composed: true })));
+    input.dispatchEvent(ours(new FocusEvent('focusin', { bubbles: true, composed: true })));
+  } else if (spin || onLeaving) input.focus?.({ preventScroll: true });
   nativeSet(input, 'value', value);
   input.dispatchEvent(inputEventFor(input, value));
   input.dispatchEvent(changeEvent());
@@ -4347,6 +4397,24 @@ function withoutTrunkZero(code, number) {
   return dropped === said.trim() ? said : dropped;
 }
 
+/*
+ * A national number written behind its own country's code, for an
+ * intl-tel-input preset to another country. Not the code twice: "1-617-555-
+ * 0134" went in as "+1 1-617-555-0134", and "00…" is already international.
+ * And not the trunk 0 behind it: a UK "07700 900123" went in as "+44 07700
+ * 900123". See `withoutTrunkZero`.
+ */
+function withHomeCode(home, number) {
+  if (/^\(?00/.test(number)) return number;
+  const digits = home.replace(/\D/g, '');
+  const own = new RegExp(String.raw`^${digits}(?:[\s.-]+|(?=\())`);
+  const allDigits = number.replace(/\D/g, '');
+  if (own.test(number) || (home === '+1' && allDigits.length === 11 && allDigits.startsWith('1'))) {
+    return `${home} ${number.replace(new RegExp(String.raw`^${digits}[\s.-]*`), '')}`;
+  }
+  return `${home} ${withoutTrunkZero(home, number)}`;
+}
+
 /** A number stored with its code and its trunk 0 both: "+44 07700 900123", "+44 (0)7700 900123". */
 function withoutTrunkZeroAfterCode(number) {
   const m = /^\s*(\+\d{1,4})[\s.-]+(.*)$/.exec(String(number));
@@ -4887,7 +4955,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
       const home = diallingCodeFor(fields.address_country);
       if (beside && home && beside !== home && itiDiallingCode(input)) {
         abroad = { national: value, code: beside, home };
-        value = `${home} ${String(value).trim()}`;
+        value = withHomeCode(home, String(value).trim());
       } else if (beside) value = withoutTrunkZero(beside, value);
     }
 
@@ -5401,9 +5469,18 @@ function jobTyped(history, used, typedCompany, flat, typedText = typedCompany) {
   const words = (text) => String(text ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
   const leads = (whole, part) => part.length > 0 && part.length < whole.length && part.every((word, i) => whole[i] === word);
   const typedWords = words(typedText);
-  const whole = history.findIndex((job, i) => {
+  /*
+   * The one sharing the most of those words. The first on the resume took a
+   * block showing "Amazon Web Services Inc" for Amazon, with Amazon Web
+   * Services after it, and "Google DeepMind Ltd" for Google.
+   */
+  let whole = -1;
+  let wholeShares = 0;
+  history.forEach((job, i) => {
     const companyWords = words(job.company);
-    return !used.has(i) && (leads(companyWords, typedWords) || leads(typedWords, companyWords));
+    if (used.has(i) || !(leads(companyWords, typedWords) || leads(typedWords, companyWords))) return;
+    const shares = Math.min(companyWords.length, typedWords.length);
+    if (shares > wholeShares) [whole, wholeShares] = [i, shares];
   });
   if (whole >= 0) return whole;
   let best = -1;
@@ -7854,12 +7931,53 @@ function widgetChoices(fields, filled) {
  * not a "Select…", and not text typed beside a hidden input left empty —
  * that is a search never chosen from (see `widgetShowsThisAnswer`), and still
  * the widget's to answer.
+ *
+ * And, with no hidden input to say, only text that is a choice: an option
+ * the widget marks chosen, a chip drawn beside the box, the whole of an
+ * option in a list already on the page, or a whole place, "Cambridge, MA",
+ * as Indeed and LinkedIn arrive with. Text in the box alone is no answer.
+ * Measured, a School box saying "Type to search" — or "Northea", half typed
+ * by the person — and a City box saying "Bost" were all reported "already
+ * filled", where before they were chosen in: Northeastern University and
+ * Boston were never picked.
  */
 function boxAlreadyHolds(widget) {
-  const typed = clean(typingBoxOf(widget)?.value);
+  const box = typingBoxOf(widget);
+  const typed = clean(box?.value);
   if (!typed || NOTHING_CHOSEN.test(typed)) return false;
   const hidden = hiddenPartner(widget);
-  return !hidden || Boolean(hidden.value);
+  if (hidden) return Boolean(hidden.value);
+  if (typed.toLowerCase() === clean(labelFor(widget)).toLowerCase()) return false;
+  if (typed === clean(box.placeholder)) return false;
+  if (aChoiceIsMarked(widget, box)) return true;
+  const options = namedListsOf(widget).flatMap((l) => [...l.querySelectorAll('[role="option"], [role="menuitem"]')]);
+  if (options.some((o) => clean(o.textContent).toLowerCase() === typed.toLowerCase())) return true;
+  return A_WHOLE_PLACE.test(typed);
+}
+
+/*
+ * A place written whole: a town and its state, region or country, each a
+ * word of two letters or more. "Cambridge, MA"; "Cambridge, Massachusetts,
+ * United States". Never "Bost".
+ */
+const A_WHOLE_PLACE = /^\p{L}[\p{L}.'’ -]*\p{L},\s*\p{L}[\p{L}.'’ -]*\p{L}(?:,\s*\p{L}[\p{L}.'’ -]*\p{L})*$/u;
+
+/**
+ * Whether a widget marks one of its options chosen without a list opened:
+ * the option its `aria-activedescendant` names, marked selected, or a chip or
+ * selected value drawn beside its typing box.
+ */
+function aChoiceIsMarked(widget, box) {
+  const root = widget.getRootNode();
+  for (const el of new Set([widget, box])) {
+    const id = el?.getAttribute('aria-activedescendant');
+    const option = id ? (root.getElementById?.(id) ?? document.getElementById(id)) : null;
+    if (option && isMarkedChosen(option)) return true;
+  }
+  const control = controlOf(widget);
+  return [...(control.querySelectorAll?.('[class*="chip" i], [class*="selected-value" i], [class*="selectedValue"], [aria-selected="true"]') ?? [])].some(
+    (el) => !el.contains(box) && el !== box && Boolean(clean(el.textContent)),
+  );
 }
 
 /** Whether a listbox has one of its own options, as `choiceGroupOf` counts them, marked chosen. */
@@ -8376,7 +8494,10 @@ function drawnValue(control) {
  * What a dropdown says while nothing is chosen.
  */
 // Any kind of dash: BambooHR's says "–Select–", and iCIMS's "— Make a Selection —".
-const NOTHING_CHOSEN = /^(?:select|choose|pick|search)\b|^please\s+(?:select|choose)\b|^[-–—]+|^none\s+selected$|^…$/i;
+// And what a typeahead says before anything is typed: "Type to search",
+// "Start typing...", "Enter a city", "e.g. Boston", "Search…", "Loading…".
+const NOTHING_CHOSEN =
+  /^(?:select|choose|pick|search|enter|loading)\b|^please\s+(?:select|choose|type|enter|search)\b|^type\s+(?:to|here|in|or|a|an|your|the|and)\b|^(?:start|begin)\s+typing\b|^e\.\s?g\.|^[-–—]+|^none\s+selected$|^(?:…|\.\.\.)$/i;
 
 /**
  * Whether a widget already shows a choice: a pill or a single value drawn
@@ -9004,12 +9125,48 @@ const SCHOOL_GENERIC_TAIL = /^(?:(?:university|college|institute|school|academy|
  * (Georgia Tech)" is "Georgia Tech". Compared whole, by `schoolKey`, the
  * brackets' words were simply more words and neither matched.
  */
+/*
+ * Only where the bracket is that: the initials of the name outside it, or a
+ * short form made of its words. A bracket holding a degree, a campus or a
+ * school within it is part of which school it is, and taken apart it made
+ * "Stanford University (MS)" "Boston University (MS)", "University of
+ * California (Berkeley)" the one in Los Angeles, Purdue's West Lafayette its
+ * Fort Wayne, and "Harvard University (Extension School)" Harvard
+ * University. Those are compared whole.
+ */
 function schoolNames(text) {
   const said = clean(text);
   const names = [said];
   const bracket = said.match(/^(.*?)\s*[(\[]([^()[\]]+)[)\]]\s*$/);
-  if (bracket) names.push(bracket[1], bracket[2]);
+  if (bracket && bracketIsAnAlias(bracket[1], bracket[2])) names.push(bracket[1], bracket[2]);
   return names.filter(Boolean);
+}
+
+const DEGREE_IN_A_BRACKET = /^(?:[ab]\.?[as]\.?|m\.?[as]\.?|b\.?sc|m\.?sc|ph\.?d|mba|m\.?eng|b\.?eng|bfa|mfa|jd|md|llb|llm|ed\.?d|aa|as|bba|mph|mpp|ms|bs|online|hons?)\.?$/i;
+
+/** Whether a school's bracket is another name for what is outside it: "MIT", "Georgia Tech", "Virginia Tech". */
+function bracketIsAnAlias(outside, inside) {
+  const words = schoolKey(outside).split(' ').filter(Boolean);
+  const said = clean(inside);
+  if (!words.length || !said || DEGREE_IN_A_BRACKET.test(said)) return false;
+  const short = schoolKey(said).split(' ').filter(Boolean);
+  if (short.length === 1 && /^[a-z]{2,8}$/.test(short[0])) {
+    // Initials, in order, starting with the first word's: MIT, UCLA, RPI.
+    const initials = clean(outside).split(/[^\p{L}\p{N}]+/u).filter(Boolean).map((w) => w[0].toLowerCase()).join('');
+    let at = 0;
+    for (const letter of short[0]) {
+      at = initials.indexOf(letter, at);
+      if (at < 0) break;
+      at++;
+    }
+    if (at > 0 && short[0][0] === initials[0] && /^\p{Lu}+$/u.test(said.replace(/[.\s]/g, ''))) return true;
+  }
+  // A short form: its first word the name's, and each word one of the name's or part of one ("Tech").
+  return (
+    short.length >= 2 &&
+    short[0] === words[0] &&
+    short.every((w) => words.includes(w) || (w.length >= 3 && words.some((x) => x.includes(w))))
+  );
 }
 
 function sameSchool(a, b) {
@@ -9927,6 +10084,7 @@ function lookForEmptied() {
   // Choosing in one takes the focus, so not while somebody is typing somewhere; it waits for a later look.
   const typing = typingElsewhere();
   for (const [entry, at] of emptied) {
+    // A box written by entering and leaving it is told so, and the focus stays where the person has it: see `setValue`.
     if (entry.kind === 'widget' && typing) continue;
     entry.arm = arms;
     entry.refills++;

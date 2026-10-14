@@ -7292,6 +7292,120 @@ const ADD_AT_LIMIT = `<!doctype html><html><head><meta charset="utf-8"><title>Ap
 </script></body></html>`;
 PAGES['/add-at-limit'] = ADD_AT_LIMIT;
 
+/*
+ * Typeaheads with no hidden input behind them, holding what is no answer:
+ * City "Bost" and School "Type to search" by default, or what `?a=` and `?b=`
+ * say — "Northea" half typed, "Start typing...", or a whole "Cambridge, MA".
+ */
+const TYPED_NOT_CHOSEN = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="a-l">City</label><div class="pick"><input id="a" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="a-l" autocomplete="off"></div></div>
+  <div class="q"><label id="b-l">School</label><div class="pick"><input id="b" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="b-l" autocomplete="off"></div></div>
+</form>
+<script>
+  window.log = [];
+  function widget(id, options) {
+    const box = document.getElementById(id); let list = null;
+    const shut = () => { list?.remove(); list = null; box.setAttribute('aria-expanded', 'false'); };
+    const open = () => { if (list) list.remove();
+      list = document.createElement('ul'); list.id = id + '-list'; list.setAttribute('role', 'listbox');
+      for (const text of options.filter((t) => t.toLowerCase().includes(box.value.toLowerCase().slice(0, 3)) || !box.value)) {
+        const o = document.createElement('li'); o.setAttribute('role', 'option'); o.textContent = text;
+        o.addEventListener('mousedown', (e) => e.preventDefault());
+        o.addEventListener('click', () => { box.value = text; window.log.push(id + ' chose ' + text); shut(); });
+        list.append(o); }
+      document.body.append(list); box.setAttribute('aria-controls', list.id); box.setAttribute('aria-expanded', 'true'); };
+    box.addEventListener('mousedown', open); box.addEventListener('input', open);
+  }
+  widget('a', ['Boston, MA', 'Cambridge, MA']);
+  widget('b', ['Northeastern University', 'Tufts University']);
+  const q = new URLSearchParams(location.search);
+  document.getElementById('a').value = q.get('a') ?? 'Bost';
+  document.getElementById('b').value = q.get('b') ?? 'Type to search';
+  window.__readback = () => ({ city: document.getElementById('a').value, school: document.getElementById('b').value, log: window.log });
+</script></body></html>`;
+PAGES['/typed-not-chosen'] = TYPED_NOT_CHOSEN;
+
+/*
+ * Oracle JET boxes far down the page, and a textarea at the top the person
+ * is typing in.
+ */
+const JET_WHILE_TYPING = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+<div style="height:1500px"><label for="notes">Anything else?</label><textarea id="notes"></textarea></div>
+<div class="oj-inputtext oj-form-control"><label for="fn">First Name</label><input id="fn" class="oj-inputtext-input oj-component-initnode"></div>
+<div class="oj-inputtext oj-form-control"><label for="em">Email</label><input id="em" class="oj-inputtext-input"></div>
+</form>
+<script>
+window.__events = [];
+for (const id of ['fn', 'em', 'notes']) for (const t of ['focus', 'blur']) document.getElementById(id).addEventListener(t, () => window.__events.push(id + ':' + t));
+window.__readback = () => ({ active: document.activeElement?.id || document.activeElement?.localName, scrollY: Math.round(scrollY), events: window.__events.slice() });
+</script></body></html>`;
+PAGES['/jet-while-typing'] = JET_WHILE_TYPING;
+
+/* One box for each label in the JSON array in the address's #. */
+const NAMES_BY_HASH = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="f"></form>
+<script>
+const labels = JSON.parse(decodeURIComponent(location.hash.slice(1)));
+document.getElementById('f').innerHTML = labels.map((l, i) => '<div><label for="n' + i + '">' + l + '</label><input id="n' + i + '"></div>').join('');
+window.__readback = () => labels.map((l, i) => [l, document.getElementById('n' + i).value]);
+</script></body></html>`;
+PAGES['/names-by-hash'] = NAMES_BY_HASH;
+
+/*
+ * A ZIP+4 combobox with a pattern, and a School combobox whose popup is
+ * called a dialog: neither is a date.
+ */
+const POPUP_A_DIALOG = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="a-l">Zip code</label><div class="pick"><input id="a" role="combobox" pattern="\\d{5}(-\\d{4})?" aria-autocomplete="list" aria-expanded="false" aria-labelledby="a-l" autocomplete="off"></div></div>
+  <div class="q"><label id="b-l">School</label><div class="pick"><input id="b" role="combobox" aria-haspopup="dialog" aria-autocomplete="list" aria-expanded="false" aria-labelledby="b-l" autocomplete="off"></div><input type="hidden" id="bh" name="school_id" value=""></div>
+</form>
+<script>
+  window.log = [];
+  function widget(id, options) {
+    const box = document.getElementById(id); let list = null;
+    const shut = () => { list?.remove(); list = null; box.setAttribute('aria-expanded', 'false'); };
+    const open = () => { if (list) list.remove();
+      list = document.createElement('ul'); list.id = id + '-list'; list.setAttribute('role', 'listbox');
+      for (const text of options.filter((t) => t.toLowerCase().includes(box.value.toLowerCase().slice(0, 3)) || !box.value)) {
+        const o = document.createElement('li'); o.setAttribute('role', 'option'); o.textContent = text;
+        o.addEventListener('mousedown', (e) => e.preventDefault());
+        o.addEventListener('click', () => { box.value = text; const h = box.parentElement.querySelector('input[type=hidden]'); if (h) h.value = 'id:' + text; window.log.push(id + ' chose ' + text); shut(); });
+        list.append(o); }
+      document.body.append(list); box.setAttribute('aria-controls', list.id); box.setAttribute('aria-expanded', 'true'); };
+    box.addEventListener('mousedown', open); box.addEventListener('input', open);
+  }
+  widget('a', ['02115', '02139']);
+  widget('b', ['Northeastern University', 'Tufts University']);
+  const q = new URLSearchParams(location.search);
+  document.getElementById('a').value = q.get('a') ?? '';
+  document.getElementById('b').value = q.get('b') ?? '';
+  window.__readback = () => ({ schoolHidden: document.getElementById('bh').value, city: document.getElementById('a').value, school: document.getElementById('b').value, log: window.log });
+</script></body></html>`;
+PAGES['/popup-a-dialog'] = POPUP_A_DIALOG;
+
+/*
+ * An intl-tel-input preset to Sweden that moves its flag to +1, +44 or +46
+ * when a number is typed with one.
+ */
+const ITI_FOLLOWS_CODES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+<label for="fn">First name</label><input id="fn">
+<label for="ph">Phone</label>
+<div class="iti iti--allow-dropdown"><div class="iti__flag-container"><div class="iti__selected-flag" role="combobox" aria-haspopup="listbox" title="Sweden (Sverige): +46"><div class="iti__flag iti__se"></div><div class="iti__arrow"></div></div></div>
+<input id="ph" type="tel" name="phone" autocomplete="off" placeholder="070-123 45 67"></div>
+</form>
+<script>
+const ph = document.getElementById('ph'); const flag = document.querySelector('.iti__selected-flag');
+const C = { '+1': 'United States: +1', '+46': 'Sweden (Sverige): +46', '+44': 'United Kingdom: +44' };
+// like intl-tel-input: a number typed with a leading +code moves the flag
+ph.addEventListener('input', () => { const m = /^\\+(1|44|46)\\b/.exec(ph.value.trim()); if (m) flag.title = C['+' + m[1]]; });
+window.__readback = () => ({ phone: ph.value, flag: flag.title });
+</script></body></html>`;
+PAGES['/iti-follows-codes'] = ITI_FOLLOWS_CODES;
+
 const PROFILE = {
   first_name: 'Morgan',
   last_name: 'Testwell',
@@ -14300,6 +14414,161 @@ async function main() {
       'and in a list that says nothing of itself, are not passed over',
       plainPills.state.join() === 'Yes' && plainPills.filled.includes('work_authorization=Authorized to work in the US'),
       JSON.stringify(plainPills),
+    );
+
+    group('A typeahead holding a hint or a half-typed search is not already filled');
+    const r29notChosen = async (q) => {
+      await page.goto(`${base}/typed-not-chosen${q}`, { waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { address_city: 'Boston', city: 'Boston', location: 'Boston, MA', school: 'Northeastern University' };
+        const rep = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 1500 });
+        return { ...window.__readback(), filled: rep.filled.map((f) => `${f.key}=${f.value}`), skipped: rep.skipped.map((x) => `${x.key}: ${x.reason}`) };
+      }, { b: base });
+    };
+    for (const [q, said] of [['', '"Type to search"'], ['?b=Northea', 'a half-typed "Northea"'], ['?b=Start%20typing...', '"Start typing..."'], ['?b=e.g.%20MIT', '"e.g. MIT"']]) {
+      const got = await r29notChosen(q);
+      check(
+        `a School box holding ${said} and no hidden input is chosen in, not reported already filled`,
+        got.school === 'Northeastern University' && got.filled.includes('school=Northeastern University') && !got.skipped.includes('school: already filled'),
+        JSON.stringify(got),
+      );
+    }
+    const r29bost = await r29notChosen('');
+    check('and a City box holding "Bost" is not reported already filled', !r29bost.skipped.includes('address_city: already filled'), JSON.stringify(r29bost));
+    const r29wholePlace = await r29notChosen('?a=Cambridge,%20MA');
+    check(
+      'but one holding a whole place, "Cambridge, MA", is left as it is',
+      r29wholePlace.city === 'Cambridge, MA' && r29wholePlace.skipped.includes('address_city: already filled') && !r29wholePlace.log.some((l) => l.startsWith('a ')),
+      JSON.stringify(r29wholePlace),
+    );
+
+    group('A box taken on leaving is written without moving the person');
+    await page.goto(`${base}/jet-while-typing`, { waitUntil: 'domcontentloaded' });
+    await page.click('#notes');
+    await page.keyboard.type('I am typing her');
+    const r29jetFill = await page.evaluate(async ({ b }) => {
+      const m = await import(`${b}/autofill.js`);
+      const r = m.fillForm({ first_name: 'Morgan', email: 'morgan@example.com' });
+      return { ...window.__readback(), filled: r.filled.map((f) => `${f.key}=${f.value}`), fn: document.getElementById('fn').value };
+    }, { b: base });
+    await page.keyboard.type('e');
+    const r29jetAfter = await page.evaluate(() => document.getElementById('notes').value);
+    check(
+      'an Oracle JET box filled while somebody types elsewhere is told it was entered and left, and their focus and scroll stay',
+      r29jetFill.active === 'notes' && r29jetFill.scrollY === 0 && r29jetFill.fn === 'Morgan' && r29jetFill.events.includes('fn:blur') && !r29jetFill.events.includes('notes:blur'),
+      JSON.stringify(r29jetFill),
+    );
+    check('and their next key lands where they were typing', r29jetAfter === 'I am typing here', r29jetAfter);
+    await page.goto(`${base}/jet-while-typing`, { waitUntil: 'domcontentloaded' });
+    await page.evaluate(async ({ b }) => {
+      const m = await import(`${b}/autofill.js`);
+      m.fillForm({ first_name: 'Morgan', email: 'morgan@example.com' });
+      m.watchForEmptied(() => {});
+      document.activeElement.blur?.();
+    }, { b: base });
+    await page.waitForTimeout(300);
+    await page.click('#notes');
+    await page.keyboard.type('Hello th');
+    await page.evaluate(() => { const fn = document.getElementById('fn'); fn.value = ''; fn.dispatchEvent(new Event('input', { bubbles: true })); });
+    await page.waitForTimeout(3000);
+    await page.keyboard.type('ere');
+    const r29jetRefill = await page.evaluate(() => ({ ...window.__readback(), notes: document.getElementById('notes').value, fn: document.getElementById('fn').value }));
+    check(
+      'and one the page empties is put back without taking the keys being typed elsewhere',
+      r29jetRefill.notes === 'Hello there' && r29jetRefill.active === 'notes' && r29jetRefill.scrollY === 0 && r29jetRefill.fn === 'Morgan',
+      JSON.stringify(r29jetRefill),
+    );
+
+    group('A last name with a suffix allowed, after a dash');
+    const r29byHash = async (labels) => {
+      await page.goto(`${base}/names-by-hash#${encodeURIComponent(JSON.stringify(labels))}`, { waitUntil: 'domcontentloaded' });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm({ first_name: 'Morgan', last_name: 'Lee', middle_name: 'Ann', name_suffix: '', preferred_name: 'Mo' });
+        return Object.fromEntries(window.__readback());
+      }, { b: base });
+    };
+    const r29dashed = await r29byHash(['First Name', 'Legal Name - Last Name, including suffix (Jr., III)', 'Legal Name – Last Name Suffix']);
+    check(
+      '"Legal Name - Last Name, including suffix (Jr., III)" and "Legal Name – Last Name Suffix" are given the last name',
+      r29dashed['Legal Name - Last Name, including suffix (Jr., III)'] === 'Lee' && r29dashed['Legal Name – Last Name Suffix'] === 'Lee',
+      JSON.stringify(r29dashed),
+    );
+    const r29hinted = await r29byHash(['First Name', 'Middle Name (do not repeat your last name)', 'Last Name', 'Suffix (Jr., Sr.) - not part of your last name', 'Name suffix (do not include in Last Name field)']);
+    check(
+      'but a middle name or a suffix that only mentions the last name in a hint is still a middle name or a suffix',
+      r29hinted['Middle Name (do not repeat your last name)'] === 'Ann' && r29hinted['Last Name'] === 'Lee' &&
+        r29hinted['Suffix (Jr., Sr.) - not part of your last name'] === '' && r29hinted['Name suffix (do not include in Last Name field)'] === '',
+      JSON.stringify(r29hinted),
+    );
+    const r29alongside = await r29byHash(['First name and middle initial', 'First Name (include middle name)', 'Last name / Suffix', 'Legal last name, including suffix (Jr., III)']);
+    check(
+      'and "First name and middle initial", "First Name (include middle name)", "Last name / Suffix" are still the first or the last name',
+      r29alongside['First name and middle initial'] === 'Morgan' && r29alongside['First Name (include middle name)'] === 'Morgan' &&
+        r29alongside['Last name / Suffix'] === 'Lee' && r29alongside['Legal last name, including suffix (Jr., III)'] === 'Lee',
+      JSON.stringify(r29alongside),
+    );
+
+    group('A number behind an intl-tel-input preset to another country gets its own code once');
+    const r29itiWith = async (fields) => {
+      await page.goto(`${base}/iti-follows-codes`, { waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm(fields);
+        return document.getElementById('ph').value;
+      }, { b: base, fields });
+    };
+    const r29withOne = await r29itiWith({ phone: '1-617-555-0134', address_country: 'United States' });
+    check('"1-617-555-0134" goes in as "+1 617-555-0134", not "+1 1-617-555-0134"', r29withOne === '+1 617-555-0134', r29withOne);
+    const r29ukTrunk = await r29itiWith({ phone: '07700 900123', address_country: 'United Kingdom' });
+    check('and a UK "07700 900123" as "+44 7700 900123", without its trunk 0', r29ukTrunk === '+44 7700 900123', r29ukTrunk);
+    const r29usPlain = await r29itiWith({ phone: '(617) 555-0134', address_country: 'United States' });
+    check('and "(617) 555-0134" still as "+1 (617) 555-0134"', r29usPlain === '+1 (617) 555-0134', r29usPlain);
+
+    group('A school is another by its bracket only when the bracket is its short name');
+    for (const [profileSchool, typed] of [
+      ['Boston University (MS)', 'Stanford University (MS)'],
+      ['University of California (Los Angeles)', 'University of California (Berkeley)'],
+      ['Purdue University (Fort Wayne)', 'Purdue University (West Lafayette)'],
+      ['Harvard University', 'Harvard University (Extension School)'],
+    ]) {
+      const got = await shownAs(profileSchool, typed);
+      check(`"${profileSchool}" is not "${typed}"`, got.major === '' && got.gpa === '', JSON.stringify(got));
+    }
+
+    group('A typed employer is the job sharing the most of its first words');
+    const r29leading = async (shown, history) => {
+      await page.goto(`${base}/workday-experience-begun`, { waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b, shown, history }) => {
+        const m = await import(`${b}/autofill.js`);
+        const blocks = [...document.querySelectorAll('[id$="--companyName"]')];
+        for (const box of blocks) box.value = '';
+        blocks[0].value = shown;
+        m.fillForm({}, { history });
+        return [...document.querySelectorAll('[id$="--jobTitle"]')].map((t) => t.value);
+      }, { b: base, shown, history });
+    };
+    const r29job = (company, title) => ({ company, title, description: `Work at ${company}.`, start: { year: 2021, month: 6 }, end: { year: 2022, month: 5 } });
+    const r29aws = await r29leading('Amazon Web Services Inc', [r29job('Amazon', 'Retail Engineer'), r29job('Amazon Web Services', 'Cloud Engineer')]);
+    check('a block showing "Amazon Web Services Inc" gets Amazon Web Services’ title, not Amazon’s', r29aws[0] === 'Cloud Engineer', JSON.stringify(r29aws));
+    const r29deepmind = await r29leading('Google DeepMind Ltd', [r29job('Google', 'Search Engineer'), r29job('Google DeepMind', 'Research Engineer')]);
+    check('and "Google DeepMind Ltd" Google DeepMind’s, not Google’s', r29deepmind[0] === 'Research Engineer', JSON.stringify(r29deepmind));
+
+    group('A combobox whose popup is a dialog is a date only when it is called one');
+    await page.goto(`${base}/popup-a-dialog`, { waitUntil: 'domcontentloaded' });
+    const r29dialogSchool = await page.evaluate(async ({ b }) => {
+      const m = await import(`${b}/autofill.js`);
+      const fields = { address_zip: '02115', postal_code: '02115', zip: '02115', school: 'Northeastern University' };
+      const rep = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 1500 });
+      await m.fillEducation([{ school: 'Northeastern University', degree: 'BS' }], fields, rep, { patience: 1500 });
+      return window.__readback();
+    }, { b: base });
+    check(
+      'a School combobox with aria-haspopup="dialog" is chosen in, not typed into as a date',
+      r29dialogSchool.school === 'Northeastern University' && r29dialogSchool.log.includes('b chose Northeastern University'),
+      JSON.stringify(r29dialogSchool),
     );
   } finally {
     await browser.close();
