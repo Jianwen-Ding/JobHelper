@@ -106,3 +106,23 @@ test('what went in and what did not are both said in one sentence', () => {
   assert.match(said, /Attached Morgan-Testwell-Resume\.pdf/);
   assert.match(said, /Transcript\.pdf had nowhere to go/);
 });
+
+/*
+ * A file the form was already showing is left alone by `attachFiles` and
+ * reported `already`. Saying "Attached" again over it read as a second copy
+ * going in — which, before it was checked for, is what happened.
+ */
+test('a file the form already had is said to have been there already', () => {
+  const said = describeAttach({
+    placed: [
+      { name: 'Morgan-Testwell-Resume.pdf', already: true },
+      { name: 'Morgan-Testwell-Cover-Letter.pdf' },
+    ],
+    unplaced: [],
+  });
+  assert.match(said, /^Attached Morgan-Testwell-Cover-Letter\.pdf\. Morgan-Testwell-Resume\.pdf was already attached\.$/);
+  assert.equal(
+    describeAttach({ placed: [{ name: 'Morgan-Testwell-Resume.pdf', already: true }], unplaced: [] }),
+    'Morgan-Testwell-Resume.pdf was already attached.',
+  );
+});

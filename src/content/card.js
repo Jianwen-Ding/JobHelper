@@ -8016,10 +8016,20 @@ export function createCard({
      * is how somebody submits a form with no resume in it, on the strength of
      * a sentence from here.
      */
-    const sure = placed.filter((p) => p.sure !== false);
+    const sure = placed.filter((p) => p.sure !== false && !p.already);
     const dropped = placed.filter((p) => p.sure === false);
+    /*
+     * And the ones the form was already showing, which were left alone
+     * rather than uploaded a second time. "Attached" again over them read as
+     * though a second copy had gone in — which, until it was checked for, it
+     * had.
+     */
+    const already = placed.filter((p) => p.already);
     if (sure.length > 0) parts.push(`Attached ${sure.map((p) => p.name).join(' and ')}`);
-    else if (dropped.length === 0) parts.push('Nothing was attached');
+    else if (dropped.length === 0 && already.length === 0) parts.push('Nothing was attached');
+    if (already.length > 0) {
+      parts.push(`${already.map((p) => p.name).join(' and ')} ${already.length === 1 ? 'was' : 'were'} already attached`);
+    }
     if (dropped.length > 0) {
       parts.push(
         `${dropped.map((p) => p.name).join(' and ')} went to this form’s drop area, which does not say ` +
