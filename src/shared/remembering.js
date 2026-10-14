@@ -294,6 +294,31 @@ export function looksPrivate(answer) {
   return SENSITIVE_SHAPE.some((re) => re.test(text)) || labelledIdentifier(text);
 }
 
+/*
+ * A dropdown's prompt, which is what it shows before anything is chosen and
+ * so is never an answer: "Select…", "Choose one", "— Please Specify —",
+ * "- Select -", "[Select]", "< Select >". Read without the dashes, brackets
+ * and angle brackets drawn round it, which is what let "— Please Specify —"
+ * be kept as the answer to "Willingness to Travel" and typed back into the
+ * next form's. Only a prompt and nothing else: "Please see my portfolio" is
+ * an answer. ResumeM-M's `isPrompt` is the same test, on the bank's side.
+ */
+const PROMPT_ENDS = /^[\s\-–—_=*.:|[\]<>(){}]+|[\s\-–—_=*.:|[\]<>(){}]+$/g;
+const PROMPT =
+  /^(?:(?:please\s+)?(?:select|choose|pick|specify)(?:\s+(?:one|an?\s+(?:option|answer|value|item)|from\s+(?:the\s+)?list|below))?|)$/i;
+
+/** The text with what is drawn round a prompt taken off it. */
+export function promptWithout(text) {
+  return String(text ?? '').replace(PROMPT_ENDS, '').replace(/\s+/g, ' ').trim();
+}
+
+/** Whether this is a dropdown's prompt rather than an answer. */
+export function looksLikeAPrompt(answer) {
+  const said = String(answer ?? '').trim();
+  if (!said) return false;
+  return said === '…' || PROMPT.test(promptWithout(said));
+}
+
 /**
  * Whether a chosen answer is worth keeping for next time — and if not, why.
  *
@@ -320,6 +345,9 @@ export function worthRemembering({ question, answer } = {}) {
    */
   if (neverRemember(asked)) return { keep: false, why: 'this one is personal, so it is not kept' };
   if (looksPrivate(said)) return { keep: false, why: 'the answer looks personal, so it is not kept' };
+  if (looksLikeAPrompt(said)) return { keep: false, why: 'nothing was chosen, so there is nothing to keep' };
+  // A tick box's own words read as its question: no question at all.
+  if (asked.toLowerCase() === said.toLowerCase()) return { keep: false, why: 'the question is one of its own answers, so it is not kept' };
   if (dependsOnEmployer(asked)) return { keep: false, why: 'the answer depends on the employer, so it is not kept' };
 
   /*
@@ -1172,6 +1200,7 @@ export function worthRememberingTyped({ question, answer, company, now = Date.no
   if (!said) return { keep: false, why: 'there is no answer here' };
   // The question's refusal first, for the reason given in `worthRemembering`.
   if (!asked.keep) return asked;
+  if (looksLikeAPrompt(said)) return { keep: false, why: 'nothing was chosen, so there is nothing to keep' };
   /*
    * A link is one word however long it is — and its digits are an id in a
    * path, not a telephone number, so it is read for the shapes that are

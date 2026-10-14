@@ -2254,6 +2254,7 @@ const GREENHOUSE_REACT_EDUCATION = `<!doctype html><html><head><meta charset="ut
   }
   const query = new URLSearchParams(location.search);
   const DELAY = Number(query.get('delay') || 450);
+  const COMMIT_LATER = query.has('commit-later');
   const components = [];
   window.__renders = 0;
   // The whole form rendering again from its state, as a Formik-style form does on every change.
@@ -2347,7 +2348,19 @@ const GREENHOUSE_REACT_EDUCATION = `<!doctype html><html><head><meta charset="ut
       else if (!onBox) { s.open = false; renderAll(); }
       if (!onBox) e.preventDefault();
     });
-    input.addEventListener('focus', () => { s.focused = true; if (s.afterFocus) openMenu(); s.afterFocus = false; renderAll(); });
+    /*
+     * \`?commit-later\`: React 18 under createRoot, which commits what a focus
+     * set on a later turn. The handler runs at once — a press that came first
+     * opens the menu — but \`isFocused\`, which the control's mousedown reads,
+     * is still false for whatever else happens in the same turn.
+     */
+    input.addEventListener('focus', () => {
+      if (s.afterFocus) openMenu();
+      s.afterFocus = false;
+      const commit = () => { s.focused = true; renderAll(); };
+      if (COMMIT_LATER) queueMicrotask(commit);
+      else commit();
+    });
     input.addEventListener('blur', () => { s.focused = false; s.inputValue = ''; s.open = false; s.asked++; s.loading = false; renderAll(); });
     input.addEventListener('input', () => {
       if (tracker.changed()) { s.inputValue = PROTO.get.call(input); s.open = true; fetchFor(s.inputValue); }
@@ -6575,7 +6588,186 @@ const LOCALIZED_DATES = `<!doctype html><html><head><meta charset="utf-8"><title
 <label for="ld-jj">Graduation date</label><input id="ld-jj" placeholder="JJ/MM/AAAA">
 </form></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/greenhouse-react-education': GREENHOUSE_REACT_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/hidden-asks': HIDDEN_ASKS, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE, '/acknowledgements': ACKNOWLEDGEMENTS, '/sponsorship-policies': SPONSORSHIP_POLICIES, '/sponsorship-policy-pressed': SPONSORSHIP_POLICY_PRESSED, '/sponsorship-policy-aria': SPONSORSHIP_POLICY_ARIA, '/bank-shapes': BANK_SHAPES, '/negated-questions': NEGATED_QUESTIONS, '/not-only-acknowledged': NOT_ONLY_ACKNOWLEDGED, '/signed-without-the-word': SIGNED_WITHOUT_THE_WORD, '/education-wording': EDUCATION_WORDING, '/day-shapes': DAY_SHAPES, '/newsletter-names': NEWSLETTER_NAMES, '/alerts-names': ALERTS_NAMES, '/survey-frame': SURVEY_FRAME, '/names-and-phone': NAMES_AND_PHONE, '/names-and-file': NAMES_AND_FILE, '/german-names': GERMAN_NAMES, '/french-names': FRENCH_NAMES, '/other-names': OTHER_NAMES, '/standard-hints': STANDARD_HINTS, '/localized-dates': LOCALIZED_DATES };
+/*
+ * Radio groups whose question is written above them, not as a label, and
+ * whose options are labels: `<label for>` beside each button, or a label
+ * after it. The first option label was taken for the question — "Yes", "No,
+ * I don't have an agreement", "Yes, and I would require relocation
+ * assistance" — and banked as one. Shapes from a form that did it.
+ */
+const RADIO_OPTION_LABELS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+<label for="ol-name">First Name</label><input id="ol-name" name="first_name">
+<div class="question">
+  <span class="q-title">Will you now or in the future require sponsorship?</span>
+  <div class="opts">
+    <input type="radio" id="ol-a1" name="ol-qa" value="1"><label for="ol-a1">Yes</label>
+    <input type="radio" id="ol-a2" name="ol-qa" value="0"><label for="ol-a2">No</label>
+  </div>
+  <span class="error">Required</span>
+</div>
+<div class="question">
+  <p>Would you need to relocate for this role?</p>
+  <div><input type="radio" id="ol-c1" name="ol-qc"><label class="option-label" for="ol-c1">Yes, and I would require relocation assistance</label></div>
+  <div><input type="radio" id="ol-c2" name="ol-qc"><label class="option-label" for="ol-c2">Yes, but I am planning to relocate on my own</label></div>
+  <div><input type="radio" id="ol-c3" name="ol-qc"><label class="option-label" for="ol-c3">No</label></div>
+</div>
+<div class="question">
+  <h3>Are you bound by any confidentiality or non-solicitation agreement with a current employer?</h3>
+  <input type="radio" id="ol-d1" name="ol-qd"><label for="ol-d1">No, I don't have an agreement</label>
+  <input type="radio" id="ol-d2" name="ol-qd"><label for="ol-d2">Yes, I have an agreement</label>
+</div>
+<div class="question">
+  <span>Do you have reliable transportation to the office?</span>
+  <div><input type="radio" id="ol-e1" name="ol-qe"><span class="radio-label">Yes, my own car</span></div>
+  <div><input type="radio" id="ol-e2" name="ol-qe"><span class="radio-label">No, I do not</span></div>
+</div>
+<div class="f"><p>Are you legally authorized to work in the US? <abbr title="required">*</abbr></p>
+<label><input type="radio" name="ol-r2" value="y">Yes</label><label><input type="radio" name="ol-r2" value="n">No</label></div>
+<div class="f">
+<input type="radio" id="ol-f1" name="ol-qf"><label for="ol-f1">Yes, I live in the U.S.</label>
+<input type="radio" id="ol-f2" name="ol-qf"><label for="ol-f2">No, I live elsewhere</label></div>
+<div class="field"><label class="question">Are you open to relocation?</label>
+ <div class="radio-group"><div><input type="radio" id="ol-g1" name="ol-qg" value="yes"><label for="ol-g1">Yes</label></div>
+ <div><input type="radio" id="ol-g2" name="ol-qg" value="no"><label for="ol-g2">No</label></div></div></div>
+</form></body></html>`;
+
+/*
+ * What a label carries beside its question: a tooltip's "(?)", a hint, text
+ * hidden or kept for a screen reader, the description `aria-describedby`
+ * names — and a box with no label but a placeholder that asks.
+ */
+const LABEL_NOISE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply - Acme</title>
+<style>.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}</style></head><body><form>
+<div class="f"><label for="ln-t1">Why do you want to work here?<span class="req" aria-hidden="true">*</span> <button type="button" class="tip" aria-label="More info">(?)</button></label><textarea id="ln-t1"></textarea></div>
+<div class="f"><label>Describe a project you are proud of <span class="help">Include your role and the outcome.</span><textarea id="ln-t2"></textarea></label></div>
+<div class="f"><textarea id="ln-t5" placeholder="What are you looking to learn this summer?"></textarea></div>
+<div class="f"><label for="ln-t8">Why this team? <span style="display:none">This field is required</span><span class="sr">Required</span></label><textarea id="ln-t8"></textarea></div>
+<div class="f"><div id="ln-d13" class="note">Optional. Max 1000 characters.</div><textarea id="ln-t13" aria-describedby="ln-d13"></textarea></div>
+<div class="f"><label for="ln-s1">How did you hear about us? <span class="tooltip" title="Pick one">(?)</span></label><select id="ln-s1"><option value="">Select...</option><option>LinkedIn</option><option>Other</option></select><small>We use this to improve outreach.</small></div>
+<div class="f"><label for="ln-i1">Earliest start date <span class="hint">(MM/YYYY)</span></label><input id="ln-i1"></div>
+<div class="f"><input id="ln-i4" placeholder="How did you hear about this job?"></div>
+<div class="f"><input id="ln-i6" placeholder="e.g. 2 weeks"></div>
+<div class="f"><label for="ln-i7"><span aria-hidden="true">School</span><span class="visually-hidden">School</span></label><input id="ln-i7"></div>
+</form></body></html>`;
+
+/*
+ * Dropdowns whose prompt is drawn round with dashes or brackets. Read as an
+ * answer, the select counted as answered and was never filled, and the
+ * prompt was kept as the answer chosen.
+ */
+const DRAWN_PROMPTS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply - Globex</title></head><body><form>
+<label for="dp-tr">Willingness to Travel</label>
+<select id="dp-tr" name="travel"><option value="0">— Please Specify —</option><option value="1">Up to 25%</option><option value="2">Up to 50%</option></select>
+<label for="dp-src">Candidate Source</label>
+<select id="dp-src" name="source"><option value="-">— Select —</option><option value="li">LinkedIn</option></select>
+<label for="dp-sh">Preferred shift</label>
+<select id="dp-sh" name="shift"><option value="x">[Select]</option><option>Days</option><option>Nights</option></select>
+<label for="dp-of">Preferred office</label>
+<select id="dp-of" name="office"><option value="x">&lt; Select &gt;</option><option>Austin</option></select>
+</form></body></html>`;
+
+/*
+ * Workday's Legal Name and Preferred Name as its markup names them:
+ * `name--legalName--middleName`, `name--preferredName--firstName`. The
+ * middle name was given the whole legal name, and each preferred box the
+ * whole preferred name. With a Suffix and a Middle initial beside them, as
+ * other systems ask.
+ */
+const WD_NAMES = `<!doctype html><html><head><meta charset="utf-8"><title>My Information</title></head><body>
+<div data-automation-id="applyFlowMyInfoPage"><h2>My Information</h2>
+<div role="group" aria-labelledby="wn-ln-h"><h3 id="wn-ln-h">Legal Name</h3>
+ <div><label for="name--legalName--firstName">First Name<abbr title="required">*</abbr></label><input type="text" id="name--legalName--firstName" name="legalName--firstName"></div>
+ <div><label for="name--legalName--middleName">Middle Name</label><input type="text" id="name--legalName--middleName" name="legalName--middleName"></div>
+ <div><label for="name--legalName--lastName">Last Name<abbr title="required">*</abbr></label><input type="text" id="name--legalName--lastName" name="legalName--lastName"></div>
+ <div><label for="name--legalName--social">Suffix</label><select id="name--legalName--social" name="legalName--social"><option value="">Select One</option><option>Jr.</option><option>Sr.</option></select></div>
+</div>
+<div role="group" aria-labelledby="wn-pn-h"><h3 id="wn-pn-h">Preferred Name</h3>
+ <div><label for="name--preferredName--firstName">First Name</label><input type="text" id="name--preferredName--firstName" name="preferredName--firstName"></div>
+ <div><label for="name--preferredName--lastName">Last Name</label><input type="text" id="name--preferredName--lastName" name="preferredName--lastName"></div>
+</div>
+<div><label for="wn-mi">Middle initial</label><input type="text" id="wn-mi" name="middle_initial"></div>
+<div><label for="wn-em">Email Address</label><input type="text" id="wn-em" name="emailAddress"></div>
+</div></body></html>`;
+
+/*
+ * An Education section already showing two blocks, with "Add another
+ * education" under them. The second was given a copy of the first.
+ */
+const EDU_SHOWN = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+<label for="es-fn">First name</label><input id="es-fn" name="firstName">
+<section id="edu"><h3>Education</h3>
+${[0, 1].map((n) => `<div class="edu-block" id="es-b${n}"><h4>Education ${n + 1}</h4>
+ <label for="es-s${n}">School name</label><input id="es-s${n}" name="education[${n}][school]">
+ <label for="es-d${n}">Degree</label><select id="es-d${n}" name="education[${n}][degree]"><option value="">Select</option><option>Associate's</option><option>Bachelor's</option><option>Master's</option></select>
+ <label for="es-m${n}">Major</label><input id="es-m${n}" name="education[${n}][major]">
+ <label for="es-g${n}">GPA</label><input id="es-g${n}" name="education[${n}][gpa]">
+ <label for="es-y${n}">Graduation year</label><input id="es-y${n}" name="education[${n}][grad_year]">
+</div>`).join('')}
+<button type="button" id="es-add">Add another education</button>
+</section>
+<button type="button">Submit application</button>
+</form></body></html>`;
+
+/*
+ * Lists that spell an answer their own way: a question in a table cell beside
+ * its buttons, whose answers are the words after each button; a degree by its
+ * letters and one "or equivalent"; and a telephone's country code.
+ */
+const SPELLED_OTHERWISE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+<label for="so-fn">First name</label><input id="so-fn" name="first_name">
+<table><tr><td class="qtext">Will you require visa sponsorship now or in the future?</td><td></td><td><input type="radio" name="so_q102" value="Y"> Yes <input type="radio" name="so_q102" value="N"> No</td></tr></table>
+<label for="so-deg2">Degree</label><select id="so-deg2" name="deg2"><option value="">Select</option><option>B.A.</option><option>B.S.</option><option>M.S.</option></select>
+<label for="so-deg3">Level of education</label><select id="so-deg3" name="deg3"><option value="">Select</option><option>Some college</option><option>Bachelor's degree or equivalent</option><option>Master's degree</option></select>
+<div class="phone-row"><label for="so-cc">Country code</label><select id="so-cc" name="phone_country_code"><option value="">Code</option><option value="+1c">Canada (+1)</option><option value="+44">United Kingdom (+44)</option><option value="+1">United States (+1)</option></select>
+<label for="so-ph">Phone number</label><input id="so-ph" type="tel" name="phone_number"></div>
+</form></body></html>`;
+
+/*
+ * Workday's My Experience as it opens: a Work Experience and an Education
+ * section with no block in either, each with an "Add" labelled "Add Work
+ * Experience" and "Add Education". `?max=N` lets the page add only N jobs;
+ * `?begun` opens with two blocks, the second already holding a company.
+ */
+const WD_ADD = `<!doctype html><html><head><meta charset="utf-8"><title>My Experience</title></head><body>
+<h2>My Experience</h2>
+<div role="group" aria-labelledby="wa-we-h"><h3 id="wa-we-h">Work Experience</h3><div id="wa-jobs"></div>
+  <button type="button" id="wa-add-job" aria-label="Add Work Experience">Add</button></div>
+<div role="group" aria-labelledby="wa-ed-h"><h3 id="wa-ed-h">Education</h3><div id="wa-schools"></div>
+  <button type="button" id="wa-add-school" aria-label="Add Education">Add</button></div>
+<script>
+  const JOB = ${JSON.stringify(workdayJob('NN'))};
+  const SCHOOL = '<div role="group" aria-labelledby="wa-ed-NN"><h4 id="wa-ed-NN">Education NN</h4>' +
+    '<label for="wa-school-NN">School or University</label><input type="text" id="wa-school-NN">' +
+    '<label for="wa-degree-NN">Degree</label><select id="wa-degree-NN"><option value="">Select One</option><option>Associate Degree</option><option>Bachelor\\'s Degree</option><option>Master\\'s Degree</option></select>' +
+    '<label for="wa-major-NN">Field of Study</label><input type="text" id="wa-major-NN"></div>';
+  const q = new URLSearchParams(location.search);
+  const MAX = Number(q.get('max') || 9);
+  const counts = { job: 0, school: 0 };
+  const add = (kind, box, html, again) => {
+    if (kind === 'job' && counts.job >= MAX) return;
+    counts[kind]++;
+    document.getElementById(box).insertAdjacentHTML('beforeend', html.replace(/NN/g, String(counts[kind])));
+    const button = document.getElementById('wa-add-' + kind);
+    button.textContent = 'Add Another';
+    button.setAttribute('aria-label', again);
+  };
+  document.getElementById('wa-add-job').addEventListener('click', () => setTimeout(() => add('job', 'wa-jobs', JOB, 'Add Another Work Experience'), 60));
+  document.getElementById('wa-add-school').addEventListener('click', () => setTimeout(() => add('school', 'wa-schools', SCHOOL, 'Add Another Education'), 60));
+  if (q.has('begun')) {
+    add('job', 'wa-jobs', JOB, 'Add Another Work Experience');
+    add('job', 'wa-jobs', JOB, 'Add Another Work Experience');
+    document.getElementById('workExperience-2--companyName').value = 'Acme Robotics';
+  }
+  window.__jobs = () => [...document.querySelectorAll('#wa-jobs [data-automation-id^="workExperience-"]')].map((b) => ({
+    title: b.querySelector('[id$="--jobTitle"]').value, company: b.querySelector('[id$="--companyName"]').value,
+  }));
+  window.__schools = () => [...document.querySelectorAll('#wa-schools [role="group"]')].map((b) => ({
+    school: b.querySelector('[id^="wa-school-"]').value, degree: b.querySelector('select').value, major: b.querySelector('[id^="wa-major-"]').value,
+  }));
+</script>
+</body></html>`;
+
+const PAGES = { '/wd-names': WD_NAMES, '/edu-shown': EDU_SHOWN, '/spelled-otherwise': SPELLED_OTHERWISE, '/wd-add': WD_ADD, '/radio-option-labels': RADIO_OPTION_LABELS, '/label-noise': LABEL_NOISE, '/drawn-prompts': DRAWN_PROMPTS, '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/greenhouse-react-education': GREENHOUSE_REACT_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/hidden-asks': HIDDEN_ASKS, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE, '/acknowledgements': ACKNOWLEDGEMENTS, '/sponsorship-policies': SPONSORSHIP_POLICIES, '/sponsorship-policy-pressed': SPONSORSHIP_POLICY_PRESSED, '/sponsorship-policy-aria': SPONSORSHIP_POLICY_ARIA, '/bank-shapes': BANK_SHAPES, '/negated-questions': NEGATED_QUESTIONS, '/not-only-acknowledged': NOT_ONLY_ACKNOWLEDGED, '/signed-without-the-word': SIGNED_WITHOUT_THE_WORD, '/education-wording': EDUCATION_WORDING, '/day-shapes': DAY_SHAPES, '/newsletter-names': NEWSLETTER_NAMES, '/alerts-names': ALERTS_NAMES, '/survey-frame': SURVEY_FRAME, '/names-and-phone': NAMES_AND_PHONE, '/names-and-file': NAMES_AND_FILE, '/german-names': GERMAN_NAMES, '/french-names': FRENCH_NAMES, '/other-names': OTHER_NAMES, '/standard-hints': STANDARD_HINTS, '/localized-dates': LOCALIZED_DATES };
 
 const PROFILE = {
   first_name: 'Morgan',
@@ -9988,7 +10180,19 @@ async function main() {
       const onlyCampuses = await reactEducation(...at('University of Example'), '?delay=250');
       const lookalikes = await reactEducation(...at('Example State Polytechnic'), '?delay=250');
       const second = await reactEducation(ESU_FIELDS, [ESU, { school: 'Example University', degree: 'Associate of Arts', major: 'Mathematics', start: { year: 2019, month: 8 }, end: { year: 2021, month: 6 } }], '?delay=250');
+      const later = await reactEducation(ESU_FIELDS, [ESU], '?commit-later&delay=250');
       group('Greenhouse: the education block as React keeps it, with the school spelled the board\'s way');
+      /*
+       * React 18 commits what a focus set on a later turn, and react-select's
+       * mousedown, pressed in the same turn as the focus, found the menu not
+       * focused yet and opened nothing: the School, the Degree and the
+       * Discipline left on "Select..." as for the person to pick.
+       */
+      check(
+        'a react-select that commits its focus on a later turn is still opened and answered',
+        later.sent[0]?.school === 'Example State Univ.' && later.sent[0]?.degree === "Bachelor's Degree" && later.sent[0]?.discipline === 'Computer Science',
+        JSON.stringify({ sent: later.sent[0], left: later.left }),
+      );
       check(
         'the school is chosen under the board\'s spelling ("Example State Univ." for "Example State University"), found by searching as the list is searched, with either kind of date box',
         [boxes, lists].every((r) => r.sent[0]?.school === 'Example State Univ.' && r.shows[0]?.school === 'Example State Univ.' && r.filled.includes('school') &&
@@ -12756,6 +12960,229 @@ async function main() {
       recognised['/names-and-phone'].form && recognised['/names-and-file'].form && recognised['/names-and-file'].send,
       JSON.stringify(recognised),
     );
+
+    /* ------- Names, schools, jobs and lists, as the hiring systems ask them ------- */
+    group('Workday’s Legal Name and Preferred Name, by their markup');
+    const RICH = {
+      first_name: 'José', last_name: 'García', full_name: 'José Antonio Núñez García', email: 'jose@example.com',
+      preferred_name: 'Pepe Núñez', preferred_first_name: 'Pepe', preferred_last_name: 'Núñez',
+    };
+    const wdNames = (profile) =>
+      page.goto(`${base}/wd-names`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, profile }) => {
+          const m = await import(`${b}/autofill.js`);
+          m.fillForm(profile);
+          return Object.fromEntries([...document.querySelectorAll('input, select')].map((el) => [el.id, el.value]));
+        }, { b: base, profile }),
+      );
+    const wdNamed = await wdNames(RICH);
+    check(
+      'the middle name and the suffix are left, never given the whole legal name',
+      wdNamed['name--legalName--middleName'] === '' && wdNamed['name--legalName--social'] === '' && wdNamed['wn-mi'] === '' &&
+        wdNamed['name--legalName--firstName'] === 'José' && wdNamed['name--legalName--lastName'] === 'García',
+      JSON.stringify(wdNamed),
+    );
+    check(
+      'and each preferred box gets its half of the preferred name',
+      wdNamed['name--preferredName--firstName'] === 'Pepe' && wdNamed['name--preferredName--lastName'] === 'Núñez',
+      JSON.stringify(wdNamed),
+    );
+    const wholeOnly = await wdNames({ ...RICH, preferred_first_name: undefined, preferred_last_name: undefined });
+    check(
+      'a preferred name held only whole is split for them when it is two words',
+      wholeOnly['name--preferredName--firstName'] === 'Pepe' && wholeOnly['name--preferredName--lastName'] === 'Núñez',
+      JSON.stringify(wholeOnly),
+    );
+
+    group('An Education section already showing two blocks');
+    const TWO_SCHOOLS = [
+      { school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science', gpa: '3.8', start: { year: 2022, month: 9 }, end: { year: 2026, month: 5 } },
+      { school: 'Bunker Hill Community College', degree: 'Associate of Science', major: 'Mathematics', start: { year: 2020, month: 9 }, end: { year: 2022, month: 5 } },
+    ];
+    const SCHOOL_FIELDS = { first_name: 'José', school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science', gpa: '3.8', graduation_year: '2026' };
+    const shownSchools = await page.goto(`${base}/edu-shown`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields, education }) => {
+        const m = await import(`${b}/autofill.js`);
+        const read = () => [0, 1].map((n) => Object.fromEntries(['s', 'd', 'm', 'g', 'y'].map((k) => [k, document.getElementById(`es-${k}${n}`).value])));
+        await m.fillEducation(education, fields, await m.fillComboboxes(fields, m.fillForm(fields)));
+        const once = read();
+        // Again, with the second block's GPA empty, as a second Autofill finds it.
+        await m.fillEducation(education, fields, await m.fillComboboxes(fields, m.fillForm(fields)));
+        return { once, twice: read() };
+      }, { b: base, fields: SCHOOL_FIELDS, education: TWO_SCHOOLS }),
+    );
+    check(
+      'the first block gets the profile’s school and the second the next school, not a copy of the first',
+      shownSchools.once[0].s === 'Northeastern University' && shownSchools.once[0].g === '3.8' &&
+        shownSchools.once[1].s === 'Bunker Hill Community College' && shownSchools.once[1].m === 'Mathematics' && shownSchools.once[1].y === '2022',
+      JSON.stringify(shownSchools.once),
+    );
+    check(
+      'and the newest school’s GPA is never put in the other school’s empty GPA box, on either pass',
+      shownSchools.once[1].g === '' && shownSchools.twice[1].g === '',
+      JSON.stringify(shownSchools.twice),
+    );
+
+    group('Lists that spell the answer their own way');
+    const spelled = await page.goto(`${base}/spelled-otherwise`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(profile);
+        const value = (id) => document.getElementById(id).value;
+        return {
+          spon: document.querySelector('[name="so_q102"]:checked')?.value ?? '',
+          asked: m.choiceQuestions(),
+          deg2: value('so-deg2'), deg3: value('so-deg3'), cc: value('so-cc'), phone: value('so-ph'),
+          skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`),
+        };
+      }, { b: base, profile: { ...PROFILE, degree: 'Bachelor of Science' } }),
+    );
+    check('a question in the cell beside its buttons is read, and answered by the words after them', spelled.spon === 'N', JSON.stringify(spelled));
+    check('a Bachelor of Science is "B.S." — not "B.A." — and "Bachelor’s degree or equivalent"', spelled.deg2 === 'B.S.' && spelled.deg3 === "Bachelor's degree or equivalent", JSON.stringify(spelled));
+    check('a telephone’s country code is the country the person lives in, not another with the same code', spelled.cc === '+1' && spelled.phone === PROFILE.phone, JSON.stringify(spelled));
+
+    group('Workday’s My Experience, opened with only an "Add"');
+    const RICH_JOBS = [
+      { company: 'Acme Robotics', title: 'Backend Engineer Intern', location: 'Cambridge, MA', start: { year: 2025, month: 1 }, current: true, description: 'Built the fleet telemetry API.' },
+      { company: 'Example Co.', title: 'Software Engineer Co-op', location: 'Boston, MA', start: { year: 2024, month: 7 }, end: { year: 2024, month: 12 }, current: false, description: 'Built a pipeline.' },
+      { company: 'Globex', title: 'IT Assistant', location: 'Boston, MA', start: { year: 2023, month: 6 }, end: { year: 2023, month: 8 }, current: false, description: 'Supported laptops.' },
+    ];
+    const added = (query) =>
+      page.goto(`${base}/wd-add${query}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, fields, history, education }) => {
+          const m = await import(`${b}/autofill.js`);
+          const report = await m.fillEducation(education, fields, await m.fillComboboxes(fields, m.fillForm(fields, { history }), { history, patience: 1500 }), { patience: 1500 });
+          return { jobs: window.__jobs(), schools: window.__schools(), skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`) };
+        }, { b: base, fields: SCHOOL_FIELDS, history: RICH_JOBS, education: TWO_SCHOOLS }),
+      );
+    const opened = await added('');
+    check(
+      'a block is added for each job, and each job put in its own',
+      JSON.stringify(opened.jobs.map((j) => j.company)) === '["Acme Robotics","Example Co.","Globex"]' && opened.jobs[2]?.title === 'IT Assistant',
+      JSON.stringify(opened),
+    );
+    check(
+      'and one for each school, the first given the whole of its education',
+      opened.schools.length === 2 && opened.schools[0].school === 'Northeastern University' && opened.schools[0].degree === "Bachelor's Degree" &&
+        opened.schools[0].major === 'Computer Science' && opened.schools[1].school === 'Bunker Hill Community College',
+      JSON.stringify(opened),
+    );
+    const capped = await added('?max=2');
+    check(
+      'a job the page would not add a block for is said, by name',
+      capped.jobs.length === 2 && capped.skipped.some((x) => /^work_history: 1 job not entered: Globex/.test(x)),
+      JSON.stringify(capped),
+    );
+    const begunHere = await added('?begun');
+    check(
+      'a block somebody began keeps its job, and the empty block above it takes the next one rather than the same',
+      JSON.stringify(begunHere.jobs.map((j) => j.company)) === '["Example Co.","Acme Robotics","Globex"]' && begunHere.jobs[1]?.title === 'Backend Engineer Intern',
+      JSON.stringify(begunHere),
+    );
+
+    /* ------- A question read as what it asks, not as its answers or its hints ------- */
+    group('A radio group whose question is written above it');
+    const optionLabels = await page.goto(`${base}/radio-option-labels`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const asked = m.choiceQuestions();
+        const said = [];
+        const stop = m.watchChoices((x) => said.push(x));
+        for (const id of ['ol-a2', 'ol-c2', 'ol-d1', 'ol-f1']) document.getElementById(id).click();
+        await new Promise((r) => setTimeout(r, 50));
+        stop();
+        return { asked, said: said.map((x) => `${x.question} = ${x.answer}`) };
+      }, { b: base }),
+    );
+    check(
+      'each group is asked of the bank by the words above it, never by its first option',
+      JSON.stringify(optionLabels.asked) === JSON.stringify([
+        'Will you now or in the future require sponsorship?',
+        'Would you need to relocate for this role?',
+        'Are you bound by any confidentiality or non-solicitation agreement with a current employer?',
+        'Do you have reliable transportation to the office?',
+        'Are you legally authorized to work in the US? *',
+        'Are you open to relocation?',
+      ]),
+      JSON.stringify(optionLabels.asked),
+    );
+    check(
+      'and a group with nothing but its options has no question, so nothing is kept under one of them',
+      !optionLabels.said.some((x) => /^Yes, I live/.test(x)),
+      JSON.stringify(optionLabels.said),
+    );
+    check(
+      'a pick is kept under the question it answers',
+      optionLabels.said.includes('Will you now or in the future require sponsorship? = No') &&
+        optionLabels.said.includes('Would you need to relocate for this role? = Yes, but I am planning to relocate on my own') &&
+        optionLabels.said.includes("Are you bound by any confidentiality or non-solicitation agreement with a current employer? = No, I don't have an agreement"),
+      JSON.stringify(optionLabels.said),
+    );
+
+    group('A question without the words beside it');
+    const noise = await page.goto(`${base}/label-noise`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const ids = ['ln-t1', 'ln-t2', 'ln-t5', 'ln-t8', 'ln-t13', 'ln-s1', 'ln-i1', 'ln-i4', 'ln-i6', 'ln-i7'];
+        return {
+          asked: Object.fromEntries(ids.map((id) => [id, m.questionFor(document.getElementById(id))])),
+          found: m.findQuestions().map((q) => q.question),
+          typed: m.typedQuestions({}, 'Acme'),
+          choices: m.choiceQuestions(),
+        };
+      }, { b: base }),
+    );
+    check('a tooltip’s "(?)" is not part of the question', noise.asked['ln-t1'] === 'Why do you want to work here?' && noise.asked['ln-s1'] === 'How did you hear about us?', JSON.stringify(noise.asked));
+    check('nor is a hint inside the label', noise.asked['ln-t2'] === 'Describe a project you are proud of' && noise.asked['ln-i1'] === 'Earliest start date', JSON.stringify(noise.asked));
+    check('nor what is hidden, or kept for a screen reader', noise.asked['ln-t8'] === 'Why this team?', JSON.stringify(noise.asked));
+    check('nor the description the box points at', noise.asked['ln-t13'] === '', JSON.stringify(noise.asked));
+    check(
+      'a placeholder that asks is the question of a box with no label, and one that only shows an example is not',
+      noise.asked['ln-t5'] === 'What are you looking to learn this summer?' && noise.asked['ln-i4'] === 'How did you hear about this job?' && noise.asked['ln-i6'] === '',
+      JSON.stringify(noise.asked),
+    );
+    check('while a label that is only words for a screen reader keeps them', noise.asked['ln-i7'] === 'School', JSON.stringify(noise.asked));
+    check(
+      'and the questions offered and asked of the bank are the clean ones',
+      noise.found.includes('Why do you want to work here?') && noise.found.includes('Why this team?') &&
+        noise.typed.includes('How did you hear about this job?') && noise.typed.includes('Earliest start date') &&
+        noise.choices.includes('How did you hear about us?'),
+      JSON.stringify({ found: noise.found, typed: noise.typed, choices: noise.choices }),
+    );
+
+    group('A dropdown prompt drawn round with dashes or brackets');
+    const drawnPrompts = await page.goto(`${base}/drawn-prompts`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const asked = m.choiceQuestions();
+        const said = [];
+        const stop = m.watchChoices((x) => said.push(x));
+        // The page's own script re-validating its form, as many do on load.
+        for (const sel of document.querySelectorAll('select')) sel.dispatchEvent(new Event('change', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 50));
+        stop();
+        const report = m.fillForm(profile, {
+          remembered: [
+            { question: 'Willingness to Travel', answer: 'Up to 25%' },
+            { question: 'Preferred office', answer: 'Austin' },
+          ],
+        });
+        return {
+          asked,
+          said: said.map((x) => `${x.question} = ${x.answer}`),
+          travel: document.getElementById('dp-tr').selectedOptions[0].textContent,
+          office: document.getElementById('dp-of').selectedOptions[0].textContent,
+          fromMemory: report.filled.filter((f) => f.remembered).map((f) => f.question),
+        };
+      }, { b: base, profile: PROFILE }),
+    );
+    check(
+      'each select still on its prompt is unanswered, and asked of the bank',
+      ['Willingness to Travel', 'Candidate Source', 'Preferred shift', 'Preferred office'].every((q) => drawnPrompts.asked.includes(q)),
+      JSON.stringify(drawnPrompts.asked),
+    );
+    check('a prompt is never kept as the answer chosen', drawnPrompts.said.length === 0, JSON.stringify(drawnPrompts.said));
+    check('and the answer given before is put in its place', drawnPrompts.travel === 'Up to 25%' && drawnPrompts.office === 'Austin', JSON.stringify(drawnPrompts));
 
     /* ------- Names, hints and date shapes in other languages ------- */
     const valuesAt = (where, ids, profile = PROFILE) =>

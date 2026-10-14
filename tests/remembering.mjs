@@ -970,3 +970,23 @@ test('a season or a numeric month and year is not typed back once it has passed'
     assert.equal(onlyAPassedDate(answer, october), false, answer);
   }
 });
+
+/*
+ * A dropdown left on its prompt, kept as though the prompt had been chosen:
+ * "— Please Specify —" as the answer to "Willingness to Travel", and typed
+ * back into the next form's. And a tick box's own words read as its question.
+ */
+test('a dropdown prompt is never kept as an answer, however it is drawn', () => {
+  for (const answer of ['— Please Specify —', '— Select —', '- Select -', '[Select]', '< Select >', '-- Choose one --', 'Select...']) {
+    assert.equal(worthRemembering({ question: 'Willingness to Travel', answer }).keep, false, answer);
+    assert.equal(worthRememberingTyped({ question: 'Willingness to Travel', answer, company: 'Globex' }).keep, false, answer);
+  }
+  for (const answer of ['Up to 25%', 'LinkedIn', 'Please see my portfolio']) {
+    assert.equal(worthRemembering({ question: 'Willingness to Travel', answer }).keep, true, answer);
+  }
+});
+
+test('a question that is its own answer is not kept', () => {
+  assert.equal(worthRemembering({ question: 'Yes, I live in the U.S.', answer: 'Yes, I live in the U.S.' }).keep, false);
+  assert.equal(worthRemembering({ question: 'CA - Santa Barbara', answer: 'CA - Santa Barbara' }).keep, false);
+});

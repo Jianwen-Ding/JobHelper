@@ -23,6 +23,7 @@ const {
   dependsOnEmployer,
   mayRememberTyped,
   neverRemember,
+  promptWithout,
   worthRemembering,
   worthRememberingTyped,
 } = await import(
@@ -49,8 +50,14 @@ const FIELD_PATTERNS = [
    * last name?", and "preferred first name" claimed it for the first name.
    */
   ['preferred_name', /\b(preferred|chosen)[\s_-]*first[\s_-]*(name[\s_-]*)?(and|&|\+)[\s_-]*last[\s_-]*name\b/i],
-  ['preferred_first_name', /\b(preferred|nick|chosen)[\s_-]*(first|given)[\s_-]*name\b/i],
-  ['preferred_last_name', /\b(preferred|chosen)[\s_-]*(last|family|sur)[\s_-]*name\b/i],
+  /*
+   * With "name" between them too, as Workday writes the halves of its
+   * Preferred Name: `name--preferredName--firstName`, read as words
+   * "preferred Name first Name". Only the whole preferred name matched it,
+   * so the first-name box and the last-name box were each given "Pepe Núñez".
+   */
+  ['preferred_first_name', /\b(preferred|nick|chosen)[\s_-]*(name[\s_-]*)?(first|given)[\s_-]*name\b/i],
+  ['preferred_last_name', /\b(preferred|chosen)[\s_-]*(name[\s_-]*)?(last|family|sur)[\s_-]*name\b/i],
   ['preferred_middle_name', /\b(preferred|chosen)[\s_-]*middle[\s_-]*name\b/i],
   /*
    * And "the name you'd prefer", which is how GitLab's Greenhouse board asks
@@ -77,6 +84,15 @@ const FIELD_PATTERNS = [
   ['first_name', /\bname[\s_-]*\([\s_-]*(first|given)([\s_-]*name)?[\s_-]*\)/i],
   ['last_name', /\bname[\s_-]*\([\s_-]*(last|family|surname)([\s_-]*name)?[\s_-]*\)/i],
   ['middle_name', /\bname[\s_-]*\([\s_-]*middle([\s_-]*name)?[\s_-]*\)/i],
+  /*
+   * And a middle name or a suffix however it is asked, above `legal name`
+   * below. Workday's Middle Name is `name--legalName--middleName`, which
+   * says "legal Name" whole, and was given the whole legal name — "José
+   * Antonio Núñez García" as somebody's middle name. Neither is in a profile,
+   * so both boxes are left as they are.
+   */
+  ['middle_name', /\bmiddle[\s_-]?(name|initial)\b/i],
+  ['name_suffix', /\bsuffix\b|\blegal[\s_-]*name[\s_-]*social\b/i],
   ['first_name', /\b(first[\s_-]?name|given[\s_-]?name|forename|fname)\b/i],
   ['last_name', /\b(last[\s_-]?name|family[\s_-]?name|surname|lname)\b/i],
   /*
@@ -1581,22 +1597,67 @@ const LEVELS_OUTSIDE = 3;
  * The assigned nodes when there are any, flattened through a slot passed on
  * into another component, and the fallback otherwise, as the browser draws it.
  */
+/*
+ * And without what is beside the question rather than part of it: a hint, a
+ * tooltip's "(?)", text the page hides or keeps for a screen reader alone
+ * ("Required", "This field is required"), and the description
+ * `aria-describedby` points at. Each went into the question, and so into the
+ * bank: "Why do you want to work here? (?)", "Why this team? This field is
+ * required Required", "Earliest start date (MM/YYYY)". Left out only while
+ * the label still says something else in words; a label that is nothing but
+ * those keeps them, as LinkedIn's — whose only words for a screen reader are
+ * the question — must.
+ */
 function labelWords(el) {
   if (!el) return '';
-  const parts = [];
-  const walk = (node) => {
-    const shown = node.localName === 'slot' ? node.assignedNodes({ flatten: true }) : [];
-    for (const child of shown.length ? shown : node.childNodes) {
-      if (child.nodeType === Node.TEXT_NODE) parts.push(child.nodeValue);
-      else if (child.nodeType === Node.ELEMENT_NODE && child.getAttribute('aria-hidden') !== 'true') {
-        parts.push(' ');
-        walk(child);
-        parts.push(' ');
+  const read = (leaveOut) => {
+    const parts = [];
+    const walk = (node) => {
+      const shown = node.localName === 'slot' ? node.assignedNodes({ flatten: true }) : [];
+      for (const child of shown.length ? shown : node.childNodes) {
+        if (child.nodeType === Node.TEXT_NODE) parts.push(child.nodeValue);
+        else if (child.nodeType === Node.ELEMENT_NODE && child.getAttribute('aria-hidden') !== 'true' && !leaveOut(child)) {
+          parts.push(' ');
+          walk(child);
+          parts.push(' ');
+        }
       }
-    }
+    };
+    walk(el);
+    return clean(parts.join(''));
   };
-  walk(el);
-  return clean(parts.join('')) || clean(el.textContent);
+  const plain = read(asideFromTheQuestion);
+  if (/[\p{L}\p{N}]/u.test(plain)) return plain;
+  return read(() => false) || clean(el.textContent);
+}
+
+/*
+ * What a label carries beside its question. See `labelWords`.
+ *
+ * A hint or a tooltip by its class or its role, a button (a label holds one
+ * only to explain itself), a lone "(?)" or "ⓘ", what `aria-describedby`
+ * names, and what nobody sees: `display: none`, `visibility: hidden`, or cut
+ * to a pixel the way a screen-reader-only class does.
+ */
+const ASIDE_CLASS = /(?:^|[\s_-])(?:help|hint|helper|tooltip|tip|sr-only|visually-hidden|screen-reader-text|screenreader|a11y-hidden)(?=$|[\s_-])/i;
+const ASIDE = 'button, [role="button"], [role="tooltip"], script, style, template, noscript';
+
+function asideFromTheQuestion(el) {
+  if (el.matches?.(ASIDE)) return true;
+  if (ASIDE_CLASS.test(el.getAttribute?.('class') ?? '')) return true;
+  if (/^\(?\s*[?ⓘℹ]\s*\)?$/u.test(clean(el.textContent))) return true;
+  if (el.id && rootOf(el)?.querySelector?.(`[aria-describedby~="${CSS.escape(el.id)}"]`)) return true;
+  if (!el.isConnected) return false;
+  const style = getComputedStyle(el);
+  if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return true;
+  if (style.position === 'absolute' || style.position === 'fixed') {
+    const rect = el.getBoundingClientRect();
+    const clip = clippedSize(style, rect);
+    if (clip && (clip.w <= 1 || clip.h <= 1)) return true;
+    if (clipPathEmpties(style.clipPath)) return true;
+    if (rect.width <= 1 && rect.height <= 1 && style.overflow !== 'visible') return true;
+  }
+  return false;
 }
 
 /**
@@ -1727,6 +1788,8 @@ function labelFor(input) {
       if (node.matches(NEVER_SHOWN)) continue;
       i++;
       if (fieldsDrawnIn(node, ANOTHER_FIELD, 1)) break;
+      // A hint, a hidden error or the box's description is not its question. See `labelWords`.
+      if (asideFromTheQuestion(node)) continue;
       const text = shownText(node);
       if (text && text.length < 160) return text;
     }
@@ -1812,7 +1875,7 @@ function labelFor(input) {
     if (heading && !heading.contains(from)) return hostOf(heading) && heading.querySelector('slot') ? drawnText(heading) : labelWords(heading);
     let lead = group.firstElementChild;
     while (lead?.matches(NEVER_SHOWN)) lead = lead.nextElementSibling;
-    const said = lead && !lead.contains(from) && !fieldsDrawnIn(lead, ANOTHER_FIELD, 1) ? shownText(lead) : '';
+    const said = lead && !lead.contains(from) && !fieldsDrawnIn(lead, ANOTHER_FIELD, 1) && !asideFromTheQuestion(lead) ? shownText(lead) : '';
     if (said && said.length < 300) return said;
     const leaving = group instanceof ShadowRoot;
     const put = putInto.has(leaving ? group : group.getRootNode());
@@ -1894,8 +1957,20 @@ const alsoAsWords = (value) => {
 };
 
 /** The label alone, for cases where attribute noise would mislead. */
+/*
+ * Or, where there is no label at all, a placeholder that asks the question:
+ * `<input placeholder="How did you hear about this job?">` was no question,
+ * so it was neither looked up in the bank nor kept. Only one that reads as a
+ * question — a placeholder is more often an example ("e.g. 2 weeks") or a
+ * shape ("MM/YYYY"), and neither is what is being asked.
+ */
+const ASKED_AS_A_QUESTION = /\?\s*$|^(?:how|what|why|which|when|where|who|are|is|do|does|did|have|has|will|would|can|could)\b/i;
+
 function questionFor(input) {
-  return labelFor(input);
+  const label = labelFor(input);
+  if (label) return label;
+  const placeholder = clean(input.getAttribute?.('placeholder'));
+  return ASKED_AS_A_QUESTION.test(placeholder) ? placeholder : '';
 }
 
 /** A choice dressed as something else: a button, or a text box that is a list. */
@@ -2556,6 +2631,16 @@ const BOT_TRAP = /\bfor\s+(?:ro)?bots\b|\b(?:ro)?bots?\s+only\b|\bif\s+you(?:'|�
 const PLACEHOLDER = /^(|-+|—+|select.*|choose.*|pick.*|please\b.*|--.*--)$/i;
 
 /*
+ * Tested without what is drawn round it. "— Please Specify —", "— Select —",
+ * "- Select -", "[Select]" and "< Select >" are prompts in the same words as
+ * the ones above, and none was read as one: so a select still showing "—
+ * Please Specify —" counted as answered and was never filled, and the prompt
+ * was kept in the bank as the answer to "Willingness to Travel". See
+ * `promptWithout` in remembering.js, which the bank's gates use.
+ */
+const isPrompt = (text) => PLACEHOLDER.test(String(text ?? '').trim()) || PLACEHOLDER.test(promptWithout(text));
+
+/*
  * "None" and "N/A" are two things at once.
  *
  * In the slot a browser shows before anyone has chosen, they are a prompt. Two
@@ -2571,7 +2656,7 @@ function looksLikePlaceholder(option, select) {
   if (option.disabled) return true;
   const value = String(option.value ?? '').trim();
   const text = (option.textContent ?? '').trim();
-  if (PLACEHOLDER.test(value) || PLACEHOLDER.test(text)) return true;
+  if (isPrompt(value) || isPrompt(text)) return true;
   const first = select?.options?.[0] ?? option.parentElement?.querySelector?.('option');
   return (NONE.test(value) || NONE.test(text)) && first === option;
 }
@@ -3348,8 +3433,29 @@ function degreeLevel(text) {
  * its level — "Bachelor of Arts" is a degree of its own, and a Bachelor of
  * Science is not it.
  */
+/*
+ * "Or equivalent" too, which says the same level: "Bachelor's degree or
+ * equivalent" was no level at all, and a Bachelor of Science was left out of
+ * a list that offered it.
+ */
 const LEVEL_ONLY =
-  /^(?:associate|bachelor|master|doctorate|doctoral|ph\.?\s?d\.?|undergraduate)(?:'?s)?(?:\s+degree)?$/i;
+  /^(?:associate|bachelor|master|doctorate|doctoral|ph\.?\s?d\.?|undergraduate)(?:'?s)?(?:\s+degree)?(?:,?\s+(?:or|\/)\s+(?:an?\s+)?equivalent(?:\s+(?:degree|experience))?)?$/i;
+
+/*
+ * A degree by its letters, which is how many lists name them: "B.S.",
+ * "B.A.", "M.S.". Each is one degree — a B.S. is a Bachelor of Science and
+ * not a Bachelor of Arts — so the letters are read as that degree and
+ * compared with the resume's, never as a level.
+ */
+const DEGREE_LETTERS = [
+  ['bachelor of science', /^b\.?\s?sc?\.?$|^bachelor\s+of\s+science\b/i],
+  ['bachelor of arts', /^b\.?\s?a\.?$|^bachelor\s+of\s+arts\b/i],
+  ['bachelor of engineering', /^b\.?\s?eng\.?$|^bachelor\s+of\s+engineering\b/i],
+  ['master of science', /^m\.?\s?sc?\.?$|^master\s+of\s+science\b/i],
+  ['master of arts', /^m\.?\s?a\.?$|^master\s+of\s+arts\b/i],
+  ['master of engineering', /^m\.?\s?eng\.?$|^master\s+of\s+engineering\b/i],
+];
+const degreeNamed = (text) => DEGREE_LETTERS.find(([, re]) => re.test(clean(text)))?.[0] ?? null;
 
 /*
  * A school's name, written so that two lists spelling the same name their own
@@ -3472,6 +3578,8 @@ function sameAnswerSpelledOtherwise(key, option, value) {
     // Bachelor of Science", "College - Associates". Read without the heading.
     const said = clean(option).replace(/^(?:college|university)\s*[-–—:]\s+/i, '');
     if (said !== clean(option) && sameOption(said, value)) return true;
+    // "B.S." for a Bachelor of Science, and only for one. See `DEGREE_LETTERS`.
+    if (/^[a-z.\s]{2,6}$/i.test(said) && degreeNamed(said)) return degreeNamed(said) === degreeNamed(value);
     const level = degreeLevel(value);
     if (!level) return false;
     const plain = said.replace(/[’]/g, "'");
@@ -3483,6 +3591,18 @@ function sameAnswerSpelledOtherwise(key, option, value) {
      */
     const aside = /^(.*?)\s*\(([^()]+)\)$/.exec(plain);
     return Boolean(aside) && LEVEL_ONLY.test(aside[1]) && degreeLevel(aside[1]) === level && degreeLevel(aside[2]) === level;
+  }
+  /*
+   * A telephone's country code by the country it names, "United Kingdom
+   * (+44)", and only that country; or, where an option names no country,
+   * by the code alone, "+44". See `withPhoneCode`.
+   */
+  if (key === 'phone_country_code') {
+    const home = [...countriesIn(value)];
+    if (home.length !== 1 || !DIALLING_CODES[home[0]]) return false;
+    const named = [...countriesIn(option)];
+    if (named.length) return named.length === 1 && named[0] === home[0];
+    return clean(option).replace(/[()\s]/g, '') === DIALLING_CODES[home[0]];
   }
   // A school under the list's spelling of its name. See `schoolKey`.
   if (key === 'school') {
@@ -4230,6 +4350,28 @@ function mostRecentJob(history) {
  * The question decides whether it is asked of this country: see
  * `aboutAnotherCountry`.
  */
+/*
+ * A telephone's country code, asked as a list, is the country the person
+ * lives in: "United States (+1)", "United States of America (+1)". Left
+ * on "Code" before, as a dialling code this never typed — which is right for
+ * a box and not for a list of countries, which is chosen by the country. Only
+ * a country with a code of its own; see `sameAnswerSpelledOtherwise`.
+ */
+/*
+ * Only ever a list: typed into a box it is still one this leaves, as
+ * `DIALLING_CODE` says, and "Phone Number (include country code)" is the
+ * telephone. Asked of a control before `FIELD_PATTERNS`, which it is not in.
+ */
+const PHONE_CODE_ASKED = /\b(?:country[\s_-]*(?:phone[\s_-]*)?code|phone[\s_-]*country[\s_-]*code|dial(?:l?ing)?[\s_-]*code)\b/i;
+const PHONE_CODE = ['phone_country_code', PHONE_CODE_ASKED];
+const asksPhoneCodeAsAList = (control, description) =>
+  (control instanceof HTMLSelectElement || isWidgetChoice(control)) && PHONE_CODE_ASKED.test(String(description).replace(/\([^)]*\)/g, ' '));
+
+function withPhoneCode(fields) {
+  if (fields.phone_country_code || !diallingCodeFor(fields.address_country)) return fields;
+  return { ...fields, phone_country_code: fields.address_country };
+}
+
 function withResidence(fields) {
   return fields.address_country && !fields.lives_in_country ? { ...fields, lives_in_country: 'Yes' } : fields;
 }
@@ -4259,8 +4401,47 @@ const PREFERRED_NAME_BOX = { test: (label) => PREFERRED_NAME_BOXES.some((re) => 
 const LEGAL = /\blegal\b|\bas\s+(it\s+)?appears\s+on\s+(your\s+)?(passport|government|official|id\b)/i;
 const asksForLegalName = (input) => LEGAL.test(`${clean(labelFor(input))} ${surroundingWords(input)} ${boundedSection(input)}`);
 
+/*
+ * The controls of the education blocks the profile's school is not in.
+ *
+ * The profile's school, degree, major and GPA are one education's, the most
+ * recent, and `fillForm` put them into every box that asked for them: on a
+ * form already showing two education blocks, the second was given a copy of
+ * the first — the same school twice — and `fillEducation`, finding it
+ * answered, left the second education out. And on a second Autofill, a block
+ * showing another school with its GPA empty was given the newest school's
+ * GPA. So only the first block of the Education section is the profile's,
+ * and only while it does not show some other school; the rest are
+ * `fillEducation`'s, which puts each education in a block of its own.
+ */
+function notThisSchools(fields) {
+  const out = new Set();
+  const section = educationSection();
+  if (!section) return out;
+  (educationBlocks(section.box) ?? []).forEach((block, i) => {
+    const shown = schoolShown(block.get('school'));
+    if (i === 0 && !(shown && fields.school && !sameSchool(shown, fields.school))) return;
+    for (const control of block.values()) out.add(control);
+  });
+  return out;
+}
+
+/*
+ * The halves of a preferred name, for a form that asks them apart (Workday's
+ * Preferred Name: First Name, Last Name) and a profile holding only the
+ * whole. Only a name of two words: of three or more there is no telling
+ * where the surname starts, and a box left empty is better than one holding
+ * half of somebody's surname.
+ */
+function withPreferredHalves(fields) {
+  const whole = clean(fields?.preferred_name);
+  if (!whole || fields.preferred_first_name || fields.preferred_last_name) return fields;
+  const words = whole.split(' ');
+  return words.length === 2 ? { ...fields, preferred_first_name: words[0], preferred_last_name: words[1] } : fields;
+}
+
 export function fillForm(fields, { overwrite = false, remembered = [], history = [], company = '' } = {}) {
-  fields = withResidence(withCityAndState(fields));
+  fields = withPhoneCode(withPreferredHalves(withResidence(withCityAndState(fields))));
   // For a question asking about the most recent job. See `mostRecentJob`.
   const recent = mostRecentJob(history);
   const lately = {
@@ -4280,6 +4461,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
   // The boxes of a telephone number asked in parts, once one of them has
   // filled them all. See `phoneBoxes`.
   const numberBoxes = new WeakSet();
+  // The education blocks that are not the profile's school's. See `notThisSchools`.
+  const otherSchools = notThisSchools(fields);
   for (const input of inputs) {
     if (!isFillable(input) || numberBoxes.has(input)) continue;
 
@@ -4291,7 +4474,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     // Before the exclusions, which say nothing, and before the match, which
     // this question does not need. See `handBack`.
     if (handBack(description, skipped, input)) continue;
-    if (isNotAboutYou(description, clean(labelFor(input)), surroundingWords(input), boundedSection(input))) continue;
+    // A country code asked as a list is a country. See `PHONE_CODE_ASKED`.
+    if (!asksPhoneCodeAsAList(input, description) && isNotAboutYou(description, clean(labelFor(input)), surroundingWords(input), boundedSection(input))) continue;
     // A name is not writing, even asked in a paragraph box as a question:
     // Zoox's "What is your preferred first name and last name?" is a textarea.
     if (asksForWriting(input) && !PREFERRED_NAME_BOX.test(clean(labelFor(input)))) continue;
@@ -4316,7 +4500,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     // The degree's dates first: see `educationDateKey`. They read as nothing
     // at all to the patterns, so this can only claim what was going unclaimed.
     const dated = educationDateKey(input, description);
-    const patterned = FIELD_PATTERNS.find(([, re]) => re.test(description));
+    const patterned = asksPhoneCodeAsAList(input, description) ? PHONE_CODE : FIELD_PATTERNS.find(([, re]) => re.test(description));
     const found = dated ? [dated] : withStandardHint(input, patterned);
     const named = found && !dated && found === patterned ? [addressPartByLabel(clean(labelFor(input)), found[0])] : found;
     const answers = MOST_RECENT.test(labelFor(input)) ? lately : fields;
@@ -4338,6 +4522,7 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     // A box for the answer a list above it did not have. See `NOT_LISTED`.
     if (!(input instanceof HTMLSelectElement) && NOT_LISTED.test(description)) continue;
     if (anotherLevelOfStudy(input, key, fields)) continue;
+    if (EDUCATION_KEYS.test(key) && otherSchools.has(input)) continue;
     if (asksYesOrNo(input, key)) continue;
     /*
      * "Visa status" is in the sponsorship pattern for the Yes and No lists
@@ -4358,7 +4543,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
           !(LINKS.has(key) && onlyTheStartOfAnAddress(input.value)) &&
           !(key === 'phone' && ONLY_A_DIALLING_CODE.test(input.value));
     if (answered && !overwrite) {
-      skipped.push(leftAt(input, { key, reason: 'already filled', description: description.slice(0, 60) }));
+      // A country code a form opens on is its own guess, not a question asked; not remarked on.
+      if (key !== PHONE_CODE[0]) skipped.push(leftAt(input, { key, reason: 'already filled', description: description.slice(0, 60) }));
       continue;
     }
     // The dialling code the form put there stays, in front of a number that
@@ -4845,10 +5031,8 @@ export function fillWorkHistory(history, { overwrite = false } = {}) {
 const isMonthWidget = (input, found) => found.half === 'month' && isWidgetChoice(input) && !isDisabled(input) && input.getClientRects().length > 0;
 
 /** Each work-history block on the page, and the job on the resume it is for. */
-function jobBlocks(history, skipped = []) {
-  const pairs = [];
-  if (!Array.isArray(history) || history.length === 0) return pairs;
-
+/** The work-history blocks on the page, in the order it asks them. */
+function workBlocks() {
   const blocks = [];
   let block = null;
   for (const input of deepQueryAll('input, textarea')) {
@@ -4860,40 +5044,105 @@ function jobBlocks(history, skipped = []) {
     if (!block || block.has(slot)) blocks.push((block = new Map()));
     block.set(slot, input);
   }
+  return blocks;
+}
+
+function jobBlocks(history, skipped = []) {
+  const pairs = [];
+  if (!Array.isArray(history) || history.length === 0) return pairs;
+
+  const blocks = workBlocks();
 
   const flat = (text) => String(text ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
   const used = new Set();
+  /*
+   * The blocks somebody has begun first, then the empty ones from what is
+   * left. In one pass, an empty block above a begun one took the next job on
+   * the resume — the very job typed into the block below — so the same job
+   * was in the form twice, and the next one not at all. Measured on a
+   * Workday My Experience with "Acme Robotics" typed in its second block:
+   * the first block was given Acme Robotics too.
+   */
+  const given = new Map();
   for (const b of blocks) {
     const typedCompany = flat(b.get('company')?.value);
     const typedTitle = flat(b.get('title')?.value);
-    let index = -1;
-    if (typedCompany || typedTitle) {
-      index = history.findIndex(
-        (job, i) =>
-          !used.has(i) &&
-          (typedCompany
-            ? flat(job.company) && (flat(job.company).includes(typedCompany) || typedCompany.includes(flat(job.company)))
-            : flat(job.title) === typedTitle),
+    if (!typedCompany && !typedTitle) continue;
+    const index = history.findIndex(
+      (job, i) =>
+        !used.has(i) &&
+        (typedCompany
+          ? flat(job.company) && (flat(job.company).includes(typedCompany) || typedCompany.includes(flat(job.company)))
+          : flat(job.title) === typedTitle),
+    );
+    if (index < 0) {
+      // Named as the block, not by the employer typed in it. See `LEFT_AT`.
+      skipped.push(
+        leftAt(
+          b.get('company') ?? b.get('title') ?? [...b.values()][0],
+          { key: 'work_history', reason: 'this job is not on the resume', description: clean(b.get('company')?.value || b.get('title')?.value).slice(0, 60) },
+          'A job in the work history',
+        ),
       );
-      if (index < 0) {
-        // Named as the block, not by the employer typed in it. See `LEFT_AT`.
-        skipped.push(
-          leftAt(
-            b.get('company') ?? b.get('title') ?? [...b.values()][0],
-            { key: 'work_history', reason: 'this job is not on the resume', description: clean(b.get('company')?.value || b.get('title')?.value).slice(0, 60) },
-            'A job in the work history',
-          ),
-        );
-        continue;
-      }
-    } else {
-      index = history.findIndex((_, i) => !used.has(i));
-      if (index < 0) break;
+      continue;
     }
     used.add(index);
-    pairs.push({ block: b, job: history[index] });
+    given.set(b, index);
   }
+  for (const b of blocks) {
+    if (given.has(b) || flat(b.get('company')?.value) || flat(b.get('title')?.value)) continue;
+    const index = history.findIndex((_, i) => !used.has(i));
+    if (index < 0) break;
+    used.add(index);
+    given.set(b, index);
+  }
+  // In the page's order, as they were.
+  for (const b of blocks) if (given.has(b)) pairs.push({ block: b, job: history[given.get(b)] });
   return pairs;
+}
+
+/*
+ * Blocks for the jobs the page has no block for, by its add button.
+ *
+ * Workday's My Experience starts with no block at all and an "Add" button,
+ * and nothing pressed it: the work history was left empty and the report
+ * said nothing about it, which reads as a section with nothing to do. So the
+ * section's own add button is pressed — only in a section that says it is a
+ * work history (see `workSection`), never more times than the resume has
+ * jobs, and each time waiting for the block it adds. The new blocks are then
+ * filled as every block is (`fillWorkHistory`), and the jobs still without a
+ * block are said, by name.
+ */
+async function addJobBlocks(history, report) {
+  if (!Array.isArray(history) || history.length === 0) return report;
+  let section = workSection();
+  if (!section) return report;
+  let had = workBlocks().length;
+  let pressed = 0;
+  while (had < history.length && pressed < history.length) {
+    press(section.button);
+    pressed++;
+    const grown = await waitFor(() => (workBlocks().length > had ? workBlocks().length : 0), 3000);
+    if (!grown) break;
+    had = grown;
+    section = workSection() ?? section;
+  }
+  const said = new Set(report.skipped.map((s) => `${s.key} ${s.description}`));
+  const work = pressed ? fillWorkHistory(history) : { filled: [], skipped: [] };
+  const skipped = [...report.skipped, ...work.skipped.filter((s) => !said.has(`${s.key} ${s.description}`))];
+  const placed = new Set(jobBlocks(history).map(({ job }) => job));
+  const left = history.filter((job) => !placed.has(job));
+  if (left.length) {
+    const names = left.map((job) => clean(job.company || job.title)).filter(Boolean).join(', ');
+    skipped.push(
+      leftAt(
+        section.button,
+        { key: 'work_history', reason: `${left.length} ${left.length === 1 ? 'job' : 'jobs'} not entered: ${names}`.slice(0, 160), description: 'Work Experience' },
+        'Work Experience',
+      ),
+    );
+  }
+  return { ...report, filled: [...report.filled, ...work.filled], skipped };
 }
 
 /** The job months `fillJob` left to a widget, chosen the way every widget is. */
@@ -5443,7 +5692,66 @@ function headingDrawnBefore(scope, ours, selector) {
  * under its own label looked like one question's own, and the second group
  * took the first one's label.
  */
+/*
+ * And never one of its own answers. A group whose only words were its
+ * options' labels took the first option for its question — "Yes", "No, I
+ * don't have an agreement", "Yes, and I would require relocation
+ * assistance" — and that went into the bank as the question, so the next
+ * form's "Yes" was answered with whatever had been chosen under it. See
+ * `optionsOwnLabel` and `wordsBeforeTheButtons`.
+ */
 function groupLabelFor(radios) {
+  const question = groupQuestionFor(radios);
+  if (!question) return '';
+  const plain = (text) => clean(text).replace(/[*:\s]+$/, '').replace(/\s+required$/i, '').toLowerCase();
+  const asked = plain(question);
+  return radios.some((radio) => plain(optionLabelFor(radio)) === asked) ? '' : question;
+}
+
+/*
+ * A label, or something drawn as one, that belongs to one of the buttons:
+ * the label round a button, the label naming one by `for`, and the label or
+ * the span straight after a button, which is how a button's answer is
+ * written beside it without either.
+ */
+function optionsOwnLabel(el, radios) {
+  const label = el.closest?.('label');
+  for (const at of label && label !== el ? [el, label] : [el]) {
+    if (radios.some((radio) => at.contains(radio))) return true;
+    const named = at.localName === 'label' ? at.getAttribute('for') : null;
+    if (named && radios.some((radio) => radio.id === named)) return true;
+    if (radios.includes(at.previousElementSibling)) return true;
+  }
+  return false;
+}
+
+/*
+ * The words written before the first button, in the group that holds them:
+ * `<p>Would you need to relocate for this role?</p>` and then the buttons,
+ * or `<span class="q-title">` over a row of them. The outermost element
+ * saying anything, holding no field and being no button's label; nearest
+ * the buttons when the group holds somebody else's too.
+ */
+const WORDS_BEFORE = 'p, h1, h2, h3, h4, h5, h6, span, div, legend, label, strong, b';
+
+function wordsBeforeTheButtons(group, from, radios, nearest) {
+  const before = [...group.querySelectorAll(WORDS_BEFORE)].filter(
+    (el) =>
+      !el.contains(from) &&
+      el.compareDocumentPosition(from) & Node.DOCUMENT_POSITION_FOLLOWING &&
+      !fieldsIn(el, 'input, textarea, select', 1) &&
+      !optionsOwnLabel(el, radios) &&
+      !asideFromTheQuestion(el),
+  );
+  const outermost = before.filter((el) => !before.some((other) => other !== el && other.contains(el)));
+  for (const el of nearest ? outermost.reverse() : outermost) {
+    const said = labelWords(el);
+    if (said && said.length < 300) return said;
+  }
+  return '';
+}
+
+function groupQuestionFor(radios) {
   const first = radios[0];
   const legend = labelWords(closestAround(first, 'fieldset')?.querySelector('legend'));
   if (legend) return legend;
@@ -5491,8 +5799,25 @@ function groupLabelFor(radios) {
    * reach the table and could take a column heading from some other row as
    * the question for this one.
    */
-  const header = labelWords(closestAround(first, 'tr')?.querySelector('th'));
+  const row = closestAround(first, 'tr');
+  const header = labelWords(row?.querySelector('th'));
   if (header) return header;
+  /*
+   * Or a plain cell before the buttons' own, which is how the rest of them
+   * write it: `<td>Will you require visa sponsorship…?</td><td>Yes No</td>`.
+   * No `<th>`, so the question came back empty and the group was left. The
+   * first cell before the buttons that says something and holds no field,
+   * and only when every button is in this row.
+   */
+  if (row && radios.every((radio) => row.contains(radio))) {
+    const cells = [...row.children].filter((cell) => cell.localName === 'td');
+    const at = cells.findIndex((cell) => cell.contains(first));
+    for (const cell of cells.slice(0, Math.max(at, 0))) {
+      if (fieldsIn(cell, 'input, textarea, select', 1)) continue;
+      const said = labelWords(cell);
+      if (said && said.length < 300) return said;
+    }
+  }
 
   /*
    * And in through the slot the page's buttons are put in, as `labelFor`
@@ -5520,8 +5845,14 @@ function groupLabelFor(radios) {
       // What a component draws round the slot the buttons are put in. See `headingDrawnBefore`.
       const drawn = put && headingDrawnBefore(group, (el) => radios.includes(el), 'label,legend,.label,[class*="label"]');
       if (drawn && shownText(drawn)) return shownText(drawn);
+      /*
+       * Never a button's own label. `<label for="a1">Yes</label>` beside its
+       * button is a label holding no field, and was the first heading in a
+       * group whose question was a `<span>` or a `<p>` above: the question
+       * was read as "Yes". See `optionsOwnLabel`.
+       */
       const headings = put ? [] : [...group.querySelectorAll('label,legend,.label,[class*="label"]')].filter(
-        (el) => !fieldsIn(el, 'input, textarea, select', 1),
+        (el) => !fieldsIn(el, 'input, textarea, select', 1) && !optionsOwnLabel(el, radios),
       );
       /*
        * Somebody else's buttons are in here too.
@@ -5544,10 +5875,17 @@ function groupLabelFor(radios) {
        * buttons instead: the question text a person reads them under.
        */
       const shared = deepQueryAll('input[type=radio]', group).some((el) => !radios.includes(el));
-      const heading = shared
-        ? headings.filter((el) => el.compareDocumentPosition(from) & Node.DOCUMENT_POSITION_FOLLOWING).pop()
-        : headings[0];
+      /*
+       * What is written before the buttons first, a heading or not: the
+       * question is read before its answers. A heading after them only when
+       * nothing comes before, and only in a group of its own.
+       */
+      const above = headings.filter((el) => el.compareDocumentPosition(from) & Node.DOCUMENT_POSITION_FOLLOWING);
+      const heading = shared ? above.pop() : above[0];
       if (heading) return labelWords(heading);
+      const before = put ? '' : wordsBeforeTheButtons(group, from, radios, shared);
+      if (before) return before;
+      if (!shared && headings[0]) return labelWords(headings[0]);
     }
     if (group instanceof ShadowRoot) {
       if (group.host.id === OURS) break;
@@ -5611,6 +5949,13 @@ function optionLabelFor(radio) {
     const label = rootOf(radio).querySelector(`label[for="${CSS.escape(radio.id)}"]`);
     if (label) return words(label);
   }
+  /*
+   * Or the words written straight after it, with no label at all: `<input
+   * type="radio" value="Y"> Yes <input type="radio" value="N"> No`. Its
+   * value is a code, and "Y" matched no answer.
+   */
+  const after = radio.nextSibling?.nodeType === Node.TEXT_NODE ? clean(radio.nextSibling.nodeValue) : '';
+  if (after && after.length <= 80) return after;
   return clean(radio.value);
 }
 
@@ -6705,7 +7050,7 @@ function widgetChoices(fields, filled) {
       found.push({ key: negative, description: description.slice(0, 60), el: widget, negative: true });
       continue;
     }
-    if (isNotAboutYou(description, clean(labelFor(widget)), surroundingWords(widget), boundedSection(widget))) continue;
+    if (!asksPhoneCodeAsAList(widget, description) && isNotAboutYou(description, clean(labelFor(widget)), surroundingWords(widget), boundedSection(widget))) continue;
 
     /*
      * The first pattern that matches, and only then whether the profile has
@@ -6726,7 +7071,9 @@ function widgetChoices(fields, filled) {
      * answer, or that has been answered elsewhere, is simply not named.
      */
     const dated = educationDateKey(widget, description);
-    const key = dated || addressPartByLabel(clean(labelFor(widget)), FIELD_PATTERNS.find(([, re]) => re.test(description))?.[0]);
+    const key = asksPhoneCodeAsAList(widget, description)
+      ? PHONE_CODE[0]
+      : dated || addressPartByLabel(clean(labelFor(widget)), FIELD_PATTERNS.find(([, re]) => re.test(description))?.[0]);
     if (!key || !fields[key] || already.has(key)) continue;
     if (seen.some((other) => other.contains(widget) || widget.contains(other))) continue;
     seen.push(widget);
@@ -7126,7 +7473,7 @@ function exactOption(options, key, value, fields = {}, asked = '') {
       ? yesNoOption(
           key,
           value,
-          options.filter((o) => !PLACEHOLDER.test(clean(o.textContent))).map((o) => ({ label: o.textContent, el: o })),
+          options.filter((o) => !isPrompt(clean(o.textContent))).map((o) => ({ label: o.textContent, el: o })),
           asked,
         )?.el
       : null) ??
@@ -7479,12 +7826,14 @@ async function pickListedPlaces(fields) {
 export async function fillComboboxes(fields, report, { patience = 4000, history = [] } = {}) {
   // What `fillForm` pressed, now that the page has had its turn to draw it.
   report = await seePresses(report);
+  // A block for each job the page has none for. See `addJobBlocks`.
+  report = await addJobBlocks(history, report);
   // The months of the jobs `fillForm` put in, where the form asks them as lists.
   const months = await fillJobMonths(history, patience);
   if (months.length) report = { ...report, filled: [...report.filled, ...months] };
   // The same fields `fillForm` read, or a widget it named `city_state` has
   // no value here.
-  fields = withResidence(withCityAndState(fields));
+  fields = withPhoneCode(withResidence(withCityAndState(fields)));
   await pickListedPlaces(fields);
   const pending = new Set(report.skipped.filter((s) => s.reason === PICK_BY_HAND).map((s) => s.key));
   // The lists that were looked in and did not have the answer. See `NOT_LISTED`.
@@ -7565,6 +7914,15 @@ async function chooseInThisWidget(widget, key, value, { patience, fields, asked 
    */
   const openBefore = new Set(visibleListboxes());
   widget.focus?.();
+  /*
+   * And a turn for the page to hear it. React 18 under `createRoot` renders
+   * what a focus changed on a later turn, not during it; react-select's
+   * mousedown, pressed in the same turn, found the menu not yet focused and
+   * did nothing, so the menu never opened. Measured with react-select 5.8:
+   * "Are you legally authorized…?" and Degree left on "Select..." as to be
+   * picked by hand, where with the turn they are answered.
+   */
+  await pause(0);
   let option = null;
   if (box) {
     /*
@@ -7786,21 +8144,88 @@ function educationBlocks(box) {
   return blocks;
 }
 
+/*
+ * What a section's add button says, by its words and by its `aria-label`:
+ * Workday's says "Add" and is labelled "Add Education", and the words alone
+ * were all that was read.
+ */
+const buttonWords = (button) => [button.textContent || button.value, button.getAttribute('aria-label')].map(clean).filter((said) => said && said.length <= 40);
+
+/*
+ * "Add", "Add Work Experience", "Add Education": an add button that does not
+ * say "another", which is how Workday's says it before the section has any
+ * block at all. Only inside a section whose own heading says what it holds.
+ */
+const ADD_TO_SECTION =
+  /^\+?\s*add(?:\s+(?:another|more|new|an?))?(?:\s+(?:work\s+experience|experiences?|employment(?:\s+history)?|jobs?|positions?|work\s+history|education|schools?|degrees?))?\s*\+?$/i;
+const WORK_SECTION = /\b(work|employment|professional|job|career)[\s_-]*(experience|history)\b|^\s*(?:experience|employment)\s*$/i;
+
+/** Whether a button can be pressed without sending the form or leaving it. */
+const pressable = (button) =>
+  !isDisabled(button) && !wouldSubmit(button) && !button.closest('a[href]') && button.getClientRects().length > 0;
+
+/**
+ * The section a button sits in, by the name the section gives itself: its
+ * `aria-labelledby`, its `aria-label`, or the heading it opens with. A few
+ * levels up at most, and the first that names itself.
+ */
+function namedSectionOf(button) {
+  let box = button.parentElement;
+  for (let i = 0; i < 4 && box && !['form', 'body', 'html'].includes(box.localName); i++, box = box.parentElement) {
+    const ids = box.getAttribute('aria-labelledby');
+    const named =
+      (ids ? clean(ids.split(/\s+/).map((id) => byIdAround(box, id)?.textContent ?? '').join(' ')) : '') ||
+      clean(box.getAttribute('aria-label')) ||
+      clean(box.querySelector(':scope > h1, :scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > h6, :scope > legend, :scope > [role="heading"]')?.textContent);
+    if (named) return { box, named };
+  }
+  return null;
+}
+
 /** The page's one Education section with an "Add another", and that button. */
+/*
+ * Or with only an "Add", in a section that says it is Education and has no
+ * block yet — Workday's, which starts that way. Nothing was put in it, and
+ * nothing said so. See `fillEducation`, which then adds the blocks.
+ */
 function educationSection() {
   const found = [];
   for (const button of deepQueryAll('button, [role="button"], input[type="button"]')) {
-    const said = clean(button.textContent || button.value || button.getAttribute('aria-label'));
-    if (said.length > 40 || !ADD_ANOTHER.test(said)) continue;
-    if (isDisabled(button) || wouldSubmit(button) || button.closest('a[href]') || button.getClientRects().length === 0) continue;
-    let box = button.parentElement;
-    while (box && !box.querySelector(SECTION_CONTROLS)) box = box.parentElement;
-    if (!box || ['form', 'body', 'html'].includes(box.localName)) continue;
-    const blocks = educationBlocks(box);
-    if (!blocks?.some((b) => b.has('school'))) continue;
-    found.push({ box, button });
+    const words = buttonWords(button);
+    if (!words.length || !pressable(button)) continue;
+    if (words.some((said) => ADD_ANOTHER.test(said))) {
+      let box = button.parentElement;
+      while (box && !box.querySelector(SECTION_CONTROLS)) box = box.parentElement;
+      const blocks = box && !['form', 'body', 'html'].includes(box.localName) ? educationBlocks(box) : null;
+      if (blocks?.some((b) => b.has('school'))) {
+        found.push({ box, button });
+        continue;
+      }
+    }
+    if (!words.some((said) => ADD_TO_SECTION.test(said))) continue;
+    const section = namedSectionOf(button);
+    if (!section || !EDUCATION_SECTION.test(section.named) || WORK_SECTION.test(section.named)) continue;
+    const blocks = educationBlocks(section.box);
+    if (blocks && (blocks.length === 0 || blocks.some((b) => b.has('school')))) found.push({ box: section.box, button });
   }
   // Two of them is a page where pressing either is a guess.
+  return found.length === 1 ? found[0] : null;
+}
+
+/**
+ * The page's one work-history section with an add button, and that button:
+ * "Add", "Add Work Experience", "Add another", in a section that says it is
+ * one. See `addJobBlocks`.
+ */
+function workSection() {
+  const found = [];
+  for (const button of deepQueryAll('button, [role="button"], input[type="button"]')) {
+    const words = buttonWords(button);
+    if (!words.some((said) => ADD_TO_SECTION.test(said) || ADD_ANOTHER.test(said)) || !pressable(button)) continue;
+    const section = namedSectionOf(button);
+    if (!section || !WORK_SECTION.test(section.named) || EDUCATION_SECTION.test(section.named)) continue;
+    found.push({ box: section.box, button });
+  }
   return found.length === 1 ? found[0] : null;
 }
 
@@ -8037,9 +8462,14 @@ export async function fillEducation(education, fields, report, { patience = 4000
     used.add(index);
 
     const f = educationFields(schools[index]);
+    /*
+     * A first block this added is one the first pass never saw: the whole
+     * education goes in, not only the dates it would have left.
+     */
+    const unseen = added && n === 0;
     for (const [key, control] of block) {
-      if ((n === 0 && tried.has(key)) || !f[key] || !control.isConnected) continue;
-      if (onlyOne && !EDUCATION_DATE.test(key)) continue;
+      if ((n === 0 && !unseen && tried.has(key)) || !f[key] || !control.isConnected) continue;
+      if (onlyOne && !unseen && !EDUCATION_DATE.test(key)) continue;
       if (partAnswered(control) || anotherLevelOfStudy(control, key, f)) continue;
       const got = await fillEducationPart(control, key, f[key], f, patience);
       if (got.reason) skipped.push(got);
