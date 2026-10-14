@@ -155,6 +155,23 @@ export function worthKeeping(err) {
   return status >= 500 || status === 409;
 }
 
+/** Whether ResumeM-M refused an entry for its size: 413, "too large". */
+export const tooLarge = (err) => err?.status === 413;
+
+/**
+ * The entry without its automatic logs, for a ResumeM-M that found it too
+ * large with them. Its words and screenshots stay, and the description says
+ * the logs were left out (see `bodyOf`).
+ *
+ * A 413 is a refusal like any other to `worthKeeping` — the same entry would
+ * be refused every time — so an entry with a long window of busy logs was
+ * dropped, screenshots and all, though the logs were what made it too large
+ * and the server takes the rest.
+ */
+export function withoutEvents(entry) {
+  return { ...entry, events: [], droppedEvents: (entry.droppedEvents ?? 0) + (Array.isArray(entry.events) ? entry.events.length : 0) };
+}
+
 async function readQueue(storage) {
   try {
     const { [QUEUE_KEY]: queue } = await storage.get(QUEUE_KEY);
@@ -211,9 +228,13 @@ export async function queuedErrorLogs(storage) {
  * limit with the note added was over it, refused, and let go of.
  */
 export function bodyOf(entry) {
-  const dropped = entry.droppedScreenshots
-    ? `\n\n(${entry.droppedScreenshots} screenshot${entry.droppedScreenshots === 1 ? '' : 's'} could not be kept while ResumeM-M was out of reach.)`
-    : '';
+  const dropped =
+    (entry.droppedScreenshots
+      ? `\n\n(${entry.droppedScreenshots} screenshot${entry.droppedScreenshots === 1 ? '' : 's'} could not be kept while ResumeM-M was out of reach.)`
+      : '') +
+    (entry.droppedEvents
+      ? `\n\n(${entry.droppedEvents} automatic log event${entry.droppedEvents === 1 ? ' was' : 's were'} left out: the entry was too large to send with them.)`
+      : '');
   const room = MAX_DESCRIPTION - dropped.length;
   const said = String(entry.description ?? '');
   const description = said.length > room ? `${said.slice(0, room - 1).trimEnd()}…` : said;
@@ -280,6 +301,14 @@ export function sendQueuedErrorLogs(serverFetch, storage) {
           await serverFetch('/api/error-log', { method: 'POST', body: bodyOf(first), timeoutMs: 60_000 });
           sent++;
         } catch (err) {
+          // Too large with its logs: sent again straight away without them, before it is given up on.
+          if (tooLarge(err) && first.events?.length) {
+            await inTurn(async () => {
+              const queue = await readQueue(storage);
+              await storage.set({ [QUEUE_KEY]: queue.map((e) => (e.id === first.id ? withoutEvents(e) : e)) });
+            });
+            continue;
+          }
           if (worthKeeping(err)) {
             lastError = err.message;
             break;
@@ -336,12 +365,24 @@ export async function saveErrorLog({ description, minutes, screenshots = [], pag
     events: await events(window),
     ...versions,
   };
-  try {
-    const receipt = await serverFetch('/api/error-log', { method: 'POST', body: bodyOf(entry), timeoutMs: 60_000 });
-    return { sent: true, receipt };
-  } catch (err) {
-    if (!worthKeeping(err)) throw err;
-    const kept = await queueErrorLog(entry, storage);
-    return { sent: false, queued: kept.queued, screenshotsKept: kept.screenshotsKept, why: err.message, fix: err.jobhelper ?? null };
+  /*
+   * Refused as too large, it is sent again without its automatic logs — its
+   * words and screenshots are what the person made — and only given up on
+   * when even that is refused. Kept for later the same way, without them.
+   */
+  let attempt = entry;
+  for (;;) {
+    try {
+      const receipt = await serverFetch('/api/error-log', { method: 'POST', body: bodyOf(attempt), timeoutMs: 60_000 });
+      return { sent: true, receipt, ...(attempt.droppedEvents ? { eventsDropped: attempt.droppedEvents } : {}) };
+    } catch (err) {
+      if (tooLarge(err) && attempt.events?.length) {
+        attempt = withoutEvents(attempt);
+        continue;
+      }
+      if (!worthKeeping(err)) throw err;
+      const kept = await queueErrorLog(attempt, storage);
+      return { sent: false, queued: kept.queued, screenshotsKept: kept.screenshotsKept, why: err.message, fix: err.jobhelper ?? null };
+    }
   }
 }

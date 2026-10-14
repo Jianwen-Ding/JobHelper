@@ -213,3 +213,43 @@ test('the note about screenshots left out never takes the description past the l
   assert.equal(JSON.parse(bodyOf({ id: '2', description: 'Short', droppedScreenshots: 1 })).description, 'Short\n\n(1 screenshot could not be kept while ResumeM-M was out of reach.)');
   assert.equal(JSON.parse(bodyOf({ id: '3', description: long })).description, long);
 });
+
+/*
+ * Round 27: an entry the server refused as too large (413) was let go of,
+ * screenshots, words and all — though it was the automatic logs that made
+ * it too large. It is sent again without them, and given up on only when
+ * even that is refused.
+ */
+test('an entry too large with its logs is sent again without them, keeping its words and screenshots', async () => {
+  const local = storage();
+  const busy = Array.from({ length: 3 }, (_, i) => ({ at: new Date().toISOString(), source: 'jobhelper', kind: 'request', level: 'error', message: `failed ${i}` }));
+  const events = async () => busy;
+  const arrived = [];
+  const takesNoLogs = async (_path, options) => {
+    const body = JSON.parse(options.body);
+    if (body.events.length) throw refusedWith(413, 'That entry is too large to log.');
+    arrived.push(body);
+    return { committed: true };
+  };
+  const now = await saveErrorLog({ description: 'Card froze', screenshots: [PNG] }, { serverFetch: takesNoLogs, storage: local, events });
+  assert.equal(now.sent, true);
+  assert.equal(now.eventsDropped, 3);
+  assert.deepEqual(arrived[0].screenshots, [PNG]);
+  assert.deepEqual(arrived[0].events, []);
+  assert.match(arrived[0].description, /^Card froze\n\n\(3 automatic log events were left out: the entry was too large to send with them\.\)$/);
+
+  // Refused even without them: given up on, as any refusal is.
+  await assert.rejects(
+    saveErrorLog({ description: 'Still too big', screenshots: [PNG] }, { serverFetch: async () => { throw refusedWith(413, 'too large'); }, storage: local, events }),
+    /too large/,
+  );
+
+  // Queued while ResumeM-M was down, then too large when it answers: sent without the logs, not refused.
+  const later = await saveErrorLog({ description: 'Queued one', screenshots: [PNG] }, { serverFetch: async () => { throw offline(); }, storage: local, events });
+  assert.equal(later.queued, 1);
+  const done = await sendQueuedErrorLogs(takesNoLogs, local);
+  assert.deepEqual([done.sent, done.queued, done.refused], [1, 0, []]);
+  assert.equal(arrived[1].description.split('\n')[0], 'Queued one');
+  assert.deepEqual(arrived[1].screenshots, [PNG]);
+  assert.deepEqual(done.refusedEntries, []);
+});
