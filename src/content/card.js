@@ -924,6 +924,23 @@ function refuseUntrusted(root) {
  */
 let live = null;
 
+/**
+ * A red strip the card showed, for ResumeM-M's error log: the worker keeps
+ * it with the minutes before an entry (see shared/error-log.js). The card's
+ * own sentence, never anything typed into it. Nothing when the card is
+ * running anywhere but in the extension — a test page, a page without it.
+ */
+function noteForErrorLog(message) {
+  try {
+    const sent = globalThis.chrome?.runtime?.id
+      ? chrome.runtime.sendMessage({ type: 'logEvents', payload: { events: [{ kind: 'card-error', level: 'error', message: String(message).slice(0, 1000) }] } })
+      : null;
+    sent?.catch?.(() => undefined);
+  } catch {
+    // The extension was reloaded under the page; nothing to tell.
+  }
+}
+
 export function removeCard() {
   live?.stop();
   live?.host.remove();
@@ -7863,6 +7880,7 @@ export function createCard({
     if (fix?.fix === 'pair' && state.pairing && state.pairLater !== true) return null;
     const fresh = state.error !== alertedError;
     alertedError = state.error;
+    if (fresh) noteForErrorLog(state.error);
     /*
      * Put away with "Not now": one line, and the way back to the box. The
      * worker's sentence names the popup, which is true and further away

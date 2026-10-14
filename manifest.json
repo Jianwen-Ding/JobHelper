@@ -7,7 +7,8 @@
     "storage",
     "alarms",
     "tabs",
-    "sidePanel"
+    "sidePanel",
+    "activeTab"
   ],
   "host_permissions": [
     "http://127.0.0.1/*",
@@ -23,6 +24,14 @@
   "action": {
     "default_popup": "src/popup/popup.html",
     "default_title": "JobHelper"
+  },
+  "commands": {
+    "log-error": {
+      "suggested_key": {
+        "default": "Alt+Shift+E"
+      },
+      "description": "Log an error to ResumeM-M's error log"
+    }
   },
   "content_scripts": [
     {

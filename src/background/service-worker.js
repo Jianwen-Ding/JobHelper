@@ -6,7 +6,15 @@
  */
 
 import { getSettings, NOT_PAIRED_MESSAGE, pairingHeaders, rememberPairing } from '../shared/config.js';
-import { saveBugReport, listBugReports, syncBugReport, clearBugReport } from '../shared/bug-reports.js';
+import { saveBugReport, listBugReports, syncBugReport, clearBugReport, extensionBuild } from '../shared/bug-reports.js';
+import {
+  OPEN_FORM_KEY,
+  createLogBuffer,
+  queuedErrorLogs,
+  routeOf,
+  saveErrorLog,
+  sendQueuedErrorLogs,
+} from '../shared/error-log.js';
 import {
   EXPECTATION_MS,
   employerKey,
@@ -42,6 +50,41 @@ import {
  */
 const REQUEST_TIMEOUT_MS = 20_000;
 const SLOW_TIMEOUT_MS = 10 * 60_000;
+
+/*
+ * What went wrong lately, for ResumeM-M's error log (see shared/error-log.js):
+ * this worker's own errors, every call to ResumeM-M that failed, errors the
+ * content scripts and the card forward, and which actions ran and how they
+ * ended. Never a field's value or anything written. In session storage as
+ * well as memory, because this worker is stopped after half a minute idle
+ * and the error is usually noticed a minute after it happened.
+ */
+const workerLog = createLogBuffer({ storage: chrome.storage?.session ?? null });
+const noteEvent = (kind, level, message, detail) => workerLog.push({ kind, level, message, detail });
+globalThis.addEventListener?.('error', (event) => {
+  noteEvent('worker-error', 'error', `${event.message || 'An error with no message'}${event.filename ? ` (${String(event.filename).split('/').pop()}:${event.lineno ?? 0})` : ''}`);
+});
+globalThis.addEventListener?.('unhandledrejection', (event) => {
+  noteEvent('worker-error', 'error', `Nobody caught: ${event.reason?.message ?? String(event.reason)}`);
+});
+
+/*
+ * Entries logged while ResumeM-M could not be reached go the next time it
+ * answers anything. Assumed waiting when the worker starts, since this copy
+ * does not know what the last one queued; looked at once, it knows.
+ */
+let errorLogsMaybeQueued = true;
+function sendQueuedSoon(path) {
+  if (!errorLogsMaybeQueued || path === '/api/error-log') return;
+  errorLogsMaybeQueued = false;
+  sendQueuedErrorLogs(serverFetch, chrome.storage.local)
+    .then((r) => {
+      if (r.queued > 0) errorLogsMaybeQueued = true;
+    })
+    .catch(() => {
+      errorLogsMaybeQueued = true;
+    });
+}
 
 /**
  * Which save the application in hand was built from.
@@ -398,6 +441,11 @@ async function serverFetch(path, options = {}) {
       { cause },
     );
     offline.jobhelper = { fix: 'start-server', serverUrl };
+    noteEvent('server', 'error', `${init.method ?? 'GET'} ${routeOf(path)} ${wedged ? 'got no answer' : 'did not reach ResumeM-M'}`, {
+      method: init.method ?? 'GET',
+      route: routeOf(path),
+      status: null,
+    });
     throw offline;
   }
 
@@ -441,6 +489,11 @@ async function serverFetch(path, options = {}) {
   }
 
   if (!res.ok) {
+    noteEvent('server', res.status >= 500 ? 'error' : 'warn', `${init.method ?? 'GET'} ${routeOf(path)} → ${res.status}: ${body.error ?? res.statusText}`, {
+      method: init.method ?? 'GET',
+      route: routeOf(path),
+      status: res.status,
+    });
     // Not paired, or no longer: said as what to do, with the way to do it.
     if (body.kind === 'not-paired') throw notPaired(serverUrl);
     const failed = new Error(body.error ?? `${res.status} ${res.statusText}`);
@@ -468,6 +521,7 @@ async function serverFetch(path, options = {}) {
     if (body.kind === 'other-save') failed.jobhelper = { fix: 'open-save', serverUrl };
     throw failed;
   }
+  sendQueuedSoon(routeOf(path));
   return body;
 }
 
@@ -2265,6 +2319,46 @@ async function keepWork({ work, page }, tab) {
 
 const handlers = {
   async saveBugReport(payload) { return saveBugReport(payload, serverFetch); },
+  /*
+   * The error log. `logEvents` is the content script and the card telling
+   * the buffer what went wrong on the page; the rest are the popup's form.
+   */
+  async logEvents({ events } = {}, tab) {
+    let kept = 0;
+    for (const e of (Array.isArray(events) ? events : []).slice(0, 20)) {
+      if (!e || typeof e.message !== 'string' || !e.message.trim()) continue;
+      const kind = ['content-error', 'card-error', 'card-status'].includes(e.kind) ? e.kind : 'content';
+      noteEvent(kind, ['error', 'warn', 'info'].includes(e.level) ? e.level : 'error', e.message.slice(0, 1000), {
+        host: (() => {
+          try {
+            return new URL(tab?.url ?? '').host || null;
+          } catch {
+            return null;
+          }
+        })(),
+      });
+      kept++;
+    }
+    return { kept };
+  },
+  async saveErrorLog(payload) {
+    const result = await saveErrorLog(payload ?? {}, {
+      serverFetch,
+      storage: chrome.storage.local,
+      events: (minutes) => workerLog.since(minutes),
+      versions: { extensionVersion: chrome.runtime.getManifest().version, extensionBuild: await extensionBuild() },
+    });
+    if (!result.sent) errorLogsMaybeQueued = true;
+    return result;
+  },
+  /** What is waiting to be sent, after trying to send it. */
+  async errorLogQueue() {
+    if ((await queuedErrorLogs(chrome.storage.local)) === 0) return { queued: 0, sent: 0, refused: [], lastError: null };
+    return sendQueuedErrorLogs(serverFetch, chrome.storage.local);
+  },
+  async openErrorLog() {
+    return openErrorLogForm();
+  },
   async listBugReports() { return listBugReports(); },
   async syncBugReport({ id }) { return syncBugReport(id, serverFetch); },
   async clearBugReport({ id, discard }) { return clearBugReport(id, { discard: discard === true }); },
@@ -4360,6 +4454,10 @@ const OWN_PAGES_ONLY = new Set([
   'pair',
   'saveBugReport',
   'clearBugReport',
+  // The error log's form: an entry may hold screenshots of whatever was on screen.
+  'saveErrorLog',
+  'errorLogQueue',
+  'openErrorLog',
   'syncBugReport',
   'listBugReports',
   'panelFor',
@@ -4385,6 +4483,43 @@ const fromOwnPage = (sender) => Boolean(sender?.url?.startsWith(chrome.runtime.g
  */
 const PRERENDER_ALLOWED = new Set(['frameReady']);
 
+/**
+ * The actions worth a line in the error log when they run, under the names a
+ * person would give them. Every other message is noted only when it fails.
+ */
+const ACTIONS = {
+  analyze: 'analyze',
+  stage: 'stage',
+  bundle: 'stage',
+  autofillData: 'fill',
+  fillFrames: 'fill',
+  attachInFrames: 'attach',
+  applicationSent: 'send',
+  applicationSentHere: 'send',
+  writeApplication: 'write',
+  coverLetter: 'cover letter',
+  answerQuestion: 'answer',
+  saveLetter: 'save letter',
+  saveAnswer: 'save answer',
+  render: 'render',
+  pair: 'pair',
+};
+/** Never noted: the error log's own messages, and a page announcing itself. */
+const NOT_NOTED = new Set(['logEvents', 'saveErrorLog', 'errorLogQueue', 'frameReady', 'ping', 'getSettings', 'getTrail']);
+function noteAction(type, ok, ms, err) {
+  if (NOT_NOTED.has(type) && ok) return;
+  if (!ok && type === 'logEvents') return;
+  const named = ACTIONS[type];
+  if (ok && !named) return;
+  const stopped = Boolean(err?.jobhelper?.stopped);
+  noteEvent(
+    'action',
+    ok || stopped ? 'info' : 'error',
+    ok ? `${named} (${type}) worked, in ${ms} ms` : `${named ?? type} (${type}) ${stopped ? 'was stopped' : `failed: ${err?.message ?? 'no reason given'}`}`,
+    { action: type, ok, ms },
+  );
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const type = message?.type;
   // Own properties only: `toString` or `constructor` is not a message.
@@ -4404,11 +4539,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Which tab asked. The trail is per tab, and this is the only place that
   // knows which one — it used to be thrown away. The frame matters too, now
   // that the form is often not in the page the card is sitting on.
+  const started = Date.now();
   handler(message.payload ?? {}, sender?.tab, sender)
-    .then((data) => sendResponse({ ok: true, data }))
+    .then((data) => {
+      // Which action ran, and that it worked — its name only. See `noteAction`.
+      noteAction(type, true, Date.now() - started);
+      sendResponse({ ok: true, data });
+    })
     // The marker travels with the message: a card on a job page cannot see an
     // Error object, only what crosses as JSON.
-    .catch((err) => sendResponse({ ok: false, error: err.message, fix: err.jobhelper }));
+    .catch((err) => {
+      noteAction(type, false, Date.now() - started, err);
+      sendResponse({ ok: false, error: err.message, fix: err.jobhelper });
+    });
   // Keeps the message channel open for the async response above.
   return true;
 });
@@ -4708,6 +4851,26 @@ chrome.tabs?.onRemoved?.addListener(async (tabId) => {
  * chosen is treated as chosen.
  */
 const NEVER_CHOSEN = ['minScore'];
+
+/**
+ * The keyboard command (Alt+Shift+E; see manifest.json) and its message: the
+ * popup, opened on the error-log form. `openPopup` needs a focused browser
+ * window and a recent Chrome; where it cannot, the same page opens in a small
+ * window of its own, already on the form.
+ */
+async function openErrorLogForm() {
+  await chrome.storage.session.set({ [OPEN_FORM_KEY]: Date.now() }).catch(() => undefined);
+  try {
+    await chrome.action.openPopup();
+    return { opened: 'popup' };
+  } catch {
+    await chrome.windows.create({ url: chrome.runtime.getURL('src/popup/popup.html#log-error'), type: 'popup', width: 380, height: 680 });
+    return { opened: 'window' };
+  }
+}
+chrome.commands?.onCommand.addListener((command) => {
+  if (command === 'log-error') openErrorLogForm().catch((err) => noteEvent('worker-error', 'error', `The error-log form would not open: ${err?.message ?? err}`));
+});
 
 chrome.runtime.onInstalled.addListener(async () => {
   const stored = await chrome.storage.sync.get(NEVER_CHOSEN);

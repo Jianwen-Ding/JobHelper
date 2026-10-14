@@ -1,3 +1,5 @@
+import { setupErrorLogForm } from './error-log.js';
+
 const $ = (id) => document.getElementById(id);
 
 $('reportBug').onclick = () => {
@@ -718,5 +720,11 @@ async function check() {
     if (current()) await showAiState();
   }
 }
+
+/*
+ * The error-log form first, and apart from `boot`: an error is worth logging
+ * most of all when the rest of this window cannot reach ResumeM-M.
+ */
+setupErrorLogForm({ send, activeTab });
 
 boot().catch((err) => failed(err));

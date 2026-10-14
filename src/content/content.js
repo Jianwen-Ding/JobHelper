@@ -74,7 +74,42 @@
     if (err?.quiet || orphaned) return;
     if (/context invalidated/i.test(err?.message ?? '')) return orphan();
     console.debug('[JobHelper]', err?.message ?? err);
+    forwardError('content-error', 'warn', err?.message ?? String(err));
   };
+
+  /*
+   * Errors in this extension's own code on this page, told to the worker for
+   * ResumeM-M's error log (see shared/error-log.js). Only ours: the page's
+   * own scripts throw on every other site there is, and none of it is
+   * JobHelper's to keep. The same sentence once a minute at most, since a
+   * timer that fails fails every time it runs.
+   */
+  const forwarded = new Map();
+  function forwardError(kind, level, message) {
+    const said = String(message ?? '').slice(0, 1000);
+    if (!said || orphaned) return;
+    const last = forwarded.get(said) ?? 0;
+    if (Date.now() - last < 60_000) return;
+    forwarded.set(said, Date.now());
+    if (forwarded.size > 50) forwarded.delete(forwarded.keys().next().value);
+    send('logEvents', { events: [{ kind, level, message: said }] }).catch(() => undefined);
+  }
+  const ours = (text) => String(text ?? '').includes('chrome-extension://');
+  const onPageError = (event) => {
+    if (!ours(event.filename) && !ours(event.error?.stack)) return;
+    forwardError('content-error', 'error', `${event.message || 'An error with no message'} (${String(event.filename ?? '').split(/[?#]/)[0].split('/').pop()}:${event.lineno ?? 0})`);
+  };
+  const onPageRejection = (event) => {
+    const reason = event.reason;
+    if (reason?.quiet || !ours(reason?.stack)) return;
+    forwardError('content-error', 'error', `Nobody caught: ${reason?.message ?? String(reason)}`);
+  };
+  window.addEventListener('error', onPageError);
+  window.addEventListener('unhandledrejection', onPageRejection);
+  teardown.push(() => {
+    window.removeEventListener('error', onPageError);
+    window.removeEventListener('unhandledrejection', onPageRejection);
+  });
 
   const send = (type, payload) =>
     new Promise((resolve, reject) => {

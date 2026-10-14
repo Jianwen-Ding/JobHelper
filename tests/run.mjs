@@ -93,6 +93,7 @@ const SUITES = [
   { name: 'asking', file: 'asking.mjs', cost: 46 },
   { name: 'late', file: 'late.mjs', cost: 45 },
   { name: 'worker', file: 'worker.mjs', cost: 42 },
+  { name: 'error-log', file: 'error-log.mjs', cost: 4 },
   { name: 'stopping', file: 'stopping.mjs', cost: 37 },
   { name: 'tabs', file: 'tabs.mjs', cost: 22 },
   { name: 'journey', file: 'journey.mjs', cost: 17 },
@@ -120,6 +121,7 @@ const SUITES = [
   { name: 'corpus-links', file: 'corpus-links.mjs', cost: 1, nodeTest: true },
   { name: 'config', file: 'config.mjs', cost: 1, nodeTest: true },
   { name: 'turns', file: 'turns.mjs', cost: 1, nodeTest: true },
+  { name: 'error-log-unit', file: 'error-log-unit.mjs', cost: 1, nodeTest: true },
 ];
 
 const pool = (process.env.RMM_SERVERS ?? process.env.RMM_SERVER ?? 'http://127.0.0.1:4600')
