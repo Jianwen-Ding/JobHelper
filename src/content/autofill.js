@@ -1672,6 +1672,23 @@ function asideFromTheQuestion(el) {
   return false;
 }
 
+/*
+ * The element that names this id with `for`: a `<label>`, or a component's
+ * own label element. UI5's `<ui5-label for="co">Country</ui5-label>` names
+ * the `<ui5-select id="co">`, and SuccessFactors labels every field that way;
+ * asked only for `label[for]`, the select's box was described by the option
+ * it showed, "Select One", and the Country question was neither filled nor
+ * reported. Only a tag that says it is a label: `<output for>` is not one.
+ */
+function forLabelOf(root, id) {
+  const at = `[for="${CSS.escape(id)}"]`;
+  return (
+    root.querySelector?.(`label${at}`) ??
+    [...(root.querySelectorAll?.(at) ?? [])].find((el) => el.localName.includes('-') && /label/.test(el.localName)) ??
+    null
+  );
+}
+
 /**
  * The `<label>` the page gave the component a field is drawn in, when it gave
  * the component one rather than the field.
@@ -1710,7 +1727,7 @@ function componentLabel(input) {
     from = root.host;
     const around = rootOf(from);
     if (from.id && around.getElementById?.(from.id) === from) {
-      const named = around.querySelector(`label[for="${CSS.escape(from.id)}"]`);
+      const named = forLabelOf(around, from.id);
       if (named) return named;
     }
     const wrapping = from.closest('label');
@@ -1883,8 +1900,14 @@ function labelFor(input) {
   for (let i = 0, outside = 0; i < 7 && group && outside <= LEVELS_OUTSIDE; ) {
     if (fieldsDrawnIn(group, oneField, 2) > 1) break;
     const heading = group.querySelector('label,legend,th,.label,[class*="label"]');
+    /*
+     * Nor the field itself. UI5's `ui5-select` draws its box as `<div
+     * class="ui5-select-label-root" role="combobox">Select One</div>` in a
+     * wrapper; one level up, the box was its own heading, and the Country
+     * question was described as the option it showed.
+     */
     // A label a component draws round a slot says what is put in it, as in `optionLabelFor`.
-    if (heading && !heading.contains(from)) return hostOf(heading) && heading.querySelector('slot') ? drawnText(heading) : labelWords(heading);
+    if (heading && !heading.contains(from) && !heading.contains(input)) return hostOf(heading) && heading.querySelector('slot') ? drawnText(heading) : labelWords(heading);
     let lead = group.firstElementChild;
     while (lead?.matches(NEVER_SHOWN)) lead = lead.nextElementSibling;
     const said = lead && !lead.contains(from) && !fieldsDrawnIn(lead, ANOTHER_FIELD, 1) && !asideFromTheQuestion(lead) ? shownText(lead) : '';
@@ -2386,8 +2409,8 @@ function redrawStandIn(select) {
 function standInTookIt(select, before) {
   if (redrawStandIn(select)) return true;
   nativeSet(select, 'value', before);
-  select.dispatchEvent(ours(new Event('input', { bubbles: true })));
-  select.dispatchEvent(ours(new Event('change', { bubbles: true })));
+  select.dispatchEvent(inputEventFor(select));
+  select.dispatchEvent(changeEvent());
   redrawStandIn(select);
   return false;
 }
@@ -2714,6 +2737,38 @@ function nativeSet(element, property, value) {
   else element[property] = value;
 }
 
+/*
+ * The `input` and `change` a value written here is announced with.
+ *
+ * As the browser would send them for a person's typing, not a bare
+ * `new Event('input')`. UI5 Web Components — SAP SuccessFactors' forms —
+ * read `e.inputType` off the input event of the box inside each `ui5-input`;
+ * a bare Event has none, the handler threw, and the component drew itself
+ * again from its own empty value. Every box was reported filled and every box
+ * ended empty. And `composed`, so it is heard outside the shadow root the box
+ * is drawn in: a form that keeps its model from the `input` reaching it — a
+ * SmartRecruiters-style `<form>` round components with open roots — heard
+ * nothing, and sent the boxes it showed full as empty.
+ *
+ * An InputEvent only for what a person types into; a select, a radio and a
+ * box ticked send a plain Event, and so do these.
+ */
+const TYPED_INTO = (el) =>
+  el instanceof HTMLTextAreaElement ||
+  el?.isContentEditable === true ||
+  (el instanceof HTMLInputElement && !['checkbox', 'radio', 'file', 'range', 'color', 'submit', 'button', 'image', 'reset', 'hidden'].includes(el.type));
+
+function inputEventFor(el, value = el?.value) {
+  const init = { bubbles: true, composed: true };
+  if (!TYPED_INTO(el) || typeof InputEvent !== 'function') return ours(new Event('input', init));
+  const text = String(value ?? '');
+  return ours(
+    new InputEvent('input', text ? { ...init, inputType: 'insertText', data: text } : { ...init, inputType: 'deleteContentBackward', data: null }),
+  );
+}
+
+const changeEvent = () => ours(new Event('change', { bubbles: true, composed: true }));
+
 /** Set a value in a way React and friends actually notice. */
 /*
  * A date drawn as spin buttons is taken when focus leaves it, and only then.
@@ -2736,8 +2791,8 @@ function setValue(input, value) {
   const spin = input.getAttribute?.('role') === 'spinbutton';
   if (spin) input.focus?.();
   nativeSet(input, 'value', value);
-  input.dispatchEvent(ours(new Event('input', { bubbles: true })));
-  input.dispatchEvent(ours(new Event('change', { bubbles: true })));
+  input.dispatchEvent(inputEventFor(input, value));
+  input.dispatchEvent(changeEvent());
   if (spin && lastBoxOfItsDate(input)) input.blur?.();
 }
 
@@ -4722,8 +4777,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
         }
         // Both, because choosing from a list fires both. `change` alone is
         // what a script fires, and some widgets only listen for `input`.
-        input.dispatchEvent(ours(new Event('input', { bubbles: true })));
-        input.dispatchEvent(ours(new Event('change', { bubbles: true })));
+        input.dispatchEvent(inputEventFor(input));
+        input.dispatchEvent(changeEvent());
         // And drawn by whatever stands in for it. See `chosenOf`.
         if (!standInTookIt(input, was)) {
           skipped.push(leftAt(input, { key, reason: PICK_BY_HAND, description: description.slice(0, 60) }));
@@ -6212,8 +6267,8 @@ function answerRadioGroups(fields, overwrite) {
     wanted.click();
     if (!wanted.checked) {
       nativeSet(wanted, 'checked', true);
-      wanted.dispatchEvent(ours(new Event('input', { bubbles: true })));
-      wanted.dispatchEvent(ours(new Event('change', { bubbles: true })));
+      wanted.dispatchEvent(inputEventFor(wanted));
+      wanted.dispatchEvent(changeEvent());
     }
     keepChosen(radios[0], optionLabelFor(wanted) || wanted.value);
     filled.push({ key, value: fields[key] });
@@ -6973,8 +7028,8 @@ function chooseInSelect(select, answer) {
   // Two options can share a value, so the write can land on the placeholder.
   // The same read-back `fillForm` does, and for the same reason.
   if (select.selectedOptions[0] !== option) return false;
-  select.dispatchEvent(ours(new Event('input', { bubbles: true })));
-  select.dispatchEvent(ours(new Event('change', { bubbles: true })));
+  select.dispatchEvent(inputEventFor(select));
+  select.dispatchEvent(changeEvent());
   return standInTookIt(select, was);
 }
 
@@ -6989,8 +7044,8 @@ function chooseInRadios(radios, answer) {
   wanted.click();
   if (!wanted.checked) {
     nativeSet(wanted, 'checked', true);
-    wanted.dispatchEvent(ours(new Event('input', { bubbles: true })));
-    wanted.dispatchEvent(ours(new Event('change', { bubbles: true })));
+    wanted.dispatchEvent(inputEventFor(wanted));
+    wanted.dispatchEvent(changeEvent());
   }
   return wanted.checked;
 }
@@ -8385,8 +8440,8 @@ async function fillEducationPart(control, key, value, f, patience) {
     const was = control.value;
     nativeSet(control, 'value', option.value);
     if (control.selectedOptions[0] !== option) return leftAt(control, { key, reason: 'the field would not take it', description: description.slice(0, 60) });
-    control.dispatchEvent(ours(new Event('input', { bubbles: true })));
-    control.dispatchEvent(ours(new Event('change', { bubbles: true })));
+    control.dispatchEvent(inputEventFor(control));
+    control.dispatchEvent(changeEvent());
     if (!standInTookIt(control, was)) return leftAt(control, { key, reason: PICK_BY_HAND, description: description.slice(0, 60) });
     return { key, value };
   }

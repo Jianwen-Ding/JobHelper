@@ -3463,6 +3463,129 @@ ${COMPONENT_DEFINITIONS}
 </body></html>`;
 
 /*
+ * A SuccessFactors-shaped form drawn in UI5-style web components, and the app
+ * that keeps its model from the events they send.
+ *
+ * Each `<u-input>` draws its box in its own root and, as UI5's `ui5-input`
+ * does, reads `e.inputType || e.detail.inputType` off the box's `input`, keeps
+ * the box's value only after that, stops the event and sends its own, and
+ * draws the box again from the value it kept. A bare `new Event('input')` has
+ * neither, the handler throws, and the box is drawn back empty. `<u-combobox>`
+ * types ahead as UI5's does — to the first item the box's text starts, unless
+ * the event says the text was deleted — and has no list for the answer.
+ * `<u-select>` draws a `role="combobox"` showing its first option, named
+ * only by the page's `<u-label for>` on the host. The app's model is what the
+ * hosts' events reaching the form said.
+ */
+const UI5_LIKE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="f" style="display:grid;gap:8px;max-width:400px">
+  <u-label for="u-fn">First Name</u-label><u-input id="u-fn" label="First Name" bind="firstName"></u-input>
+  <u-label for="u-ln">Last Name</u-label><u-input id="u-ln" label="Last Name" bind="lastName"></u-input>
+  <u-label for="u-em">Email Address</u-label><u-input id="u-em" label="Email Address" bind="email"></u-input>
+  <u-label for="u-ct">City</u-label><u-input id="u-ct" label="City" bind="city"></u-input>
+  <u-label for="u-co">Country</u-label><u-select id="u-co" bind="country"><u-option>Select One</u-option><u-option>Canada</u-option><u-option>United States</u-option></u-select>
+  <u-label for="u-st">State</u-label><u-combobox id="u-st" bind="state" items="Maine,Massachusetts,Michigan"></u-combobox>
+</form>
+<script>
+  customElements.define('u-label', class extends HTMLElement {
+    constructor() { super(); this.attachShadow({ mode: 'open' }).innerHTML = '<label class="root"><span><bdi><slot></slot></bdi></span></label>'; }
+  });
+  const DELETED = ['deleteContentBackward', 'deleteContentForward', 'deleteContent', 'deleteByCut'];
+  class UBox extends HTMLElement {
+    constructor() {
+      super();
+      this._value = '';
+      this.attachShadow({ mode: 'open' }).innerHTML = '<input>';
+      this.inner = this.shadowRoot.querySelector('input');
+      this.inner.addEventListener('input', (e) => {
+        queueMicrotask(() => { this.inner.value = this._value; });
+        this.read(e);
+        this._value = this.inner.value;
+        e.stopImmediatePropagation();
+        this.dispatchEvent(new CustomEvent('input', { bubbles: true }));
+      });
+      this.inner.addEventListener('change', () => this.dispatchEvent(new CustomEvent('change', { bubbles: true })));
+    }
+    get value() { return this._value; }
+  }
+  customElements.define('u-input', class extends UBox {
+    connectedCallback() { this.inner.setAttribute('aria-label', this.getAttribute('label')); }
+    read(e) { return e.inputType || e.detail.inputType || ''; }
+  });
+  customElements.define('u-combobox', class extends UBox {
+    connectedCallback() {
+      this.inner.setAttribute('role', 'combobox');
+      this.inner.setAttribute('aria-autocomplete', 'both');
+      this.inner.setAttribute('aria-expanded', 'false');
+      this.inner.placeholder = 'Select';
+    }
+    read(e) {
+      if (DELETED.includes(e.inputType)) return;
+      const typed = this.inner.value.toLowerCase();
+      const item = this.getAttribute('items').split(',').find((i) => i.toLowerCase().startsWith(typed));
+      if (item) this.inner.value = item;
+    }
+  });
+  customElements.define('u-select', class extends HTMLElement {
+    connectedCallback() {
+      const first = this.querySelector('u-option').textContent;
+      this.attachShadow({ mode: 'open' }).innerHTML = '<div class="root"><div class="u-select-label-root" role="combobox" aria-haspopup="listbox" aria-expanded="false" tabindex="0">' +
+        first + '</div><span class="icon"></span><slot name="formSupport"></slot></div>';
+    }
+    get value() { return this.shadowRoot.querySelector('div').textContent; }
+  });
+  const model = {};
+  for (const type of ['input', 'change']) {
+    document.getElementById('f').addEventListener(type, (e) => {
+      const bind = e.target.getAttribute?.('bind');
+      if (bind) model[bind] = e.target.value;
+    });
+  }
+  window.__readback = () => ({
+    model: { ...model },
+    shown: Object.fromEntries([...document.querySelectorAll('[bind]')].map((h) => [h.getAttribute('bind'), h.value])),
+    errors: window.__errors,
+  });
+  window.__errors = [];
+  window.addEventListener('error', (e) => window.__errors.push(String(e.message)));
+</script>
+</body></html>`;
+
+/*
+ * A SmartRecruiters-shaped form: each box drawn in its component's open root,
+ * and the app's model kept from the `input` and `change` that reach the form —
+ * as a host-level Angular value accessor or a form-level listener would. An
+ * event that is not `composed` stops at the root, and the form hears nothing.
+ */
+const SHADOW_FORM_MODEL = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="f">
+  <sr-input name="firstName" label="First name"></sr-input>
+  <sr-input name="lastName" label="Last name"></sr-input>
+  <sr-input name="email" label="Email" type="email"></sr-input>
+  <sr-input name="city" label="City"></sr-input>
+</form>
+<script>
+  customElements.define('sr-input', class extends HTMLElement {
+    connectedCallback() {
+      this.attachShadow({ mode: 'open' }).innerHTML = '<label for="i">' + this.getAttribute('label') + '</label><input id="i" type="' +
+        (this.getAttribute('type') ?? 'text') + '" name="' + this.getAttribute('name') + '">';
+    }
+    get value() { return this.shadowRoot.querySelector('input').value; }
+  });
+  const model = {};
+  const changed = {};
+  const form = document.getElementById('f');
+  form.addEventListener('input', (e) => { model[e.target.getAttribute('name')] = e.target.value; });
+  form.addEventListener('change', (e) => { changed[e.target.getAttribute('name')] = e.target.value; });
+  window.__readback = () => ({
+    model: { ...model },
+    changed: { ...changed },
+    shown: Object.fromEntries([...document.querySelectorAll('sr-input')].map((h) => [h.getAttribute('name'), h.value])),
+  });
+</script>
+</body></html>`;
+
+/*
  * Components the page labels with a `<label>` of its own that is not beside
  * them: a label wrapping the component, `<label>Last name <y-box>`, and a
  * label whose `for` names the component's host, here in a column of labels
@@ -6821,6 +6944,10 @@ const PHONE_PATTERNED = `<!doctype html><html><head><meta charset="utf-8"><title
 </body></html>`;
 
 const PAGES = { '/wd-names': WD_NAMES, '/edu-shown': EDU_SHOWN, '/spelled-otherwise': SPELLED_OTHERWISE, '/wd-add': WD_ADD, '/radio-option-labels': RADIO_OPTION_LABELS, '/label-noise': LABEL_NOISE, '/drawn-prompts': DRAWN_PROMPTS, '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/greenhouse-react-education': GREENHOUSE_REACT_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/hidden-asks': HIDDEN_ASKS, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE, '/acknowledgements': ACKNOWLEDGEMENTS, '/sponsorship-policies': SPONSORSHIP_POLICIES, '/sponsorship-policy-pressed': SPONSORSHIP_POLICY_PRESSED, '/sponsorship-policy-aria': SPONSORSHIP_POLICY_ARIA, '/bank-shapes': BANK_SHAPES, '/negated-questions': NEGATED_QUESTIONS, '/not-only-acknowledged': NOT_ONLY_ACKNOWLEDGED, '/signed-without-the-word': SIGNED_WITHOUT_THE_WORD, '/education-wording': EDUCATION_WORDING, '/day-shapes': DAY_SHAPES, '/newsletter-names': NEWSLETTER_NAMES, '/alerts-names': ALERTS_NAMES, '/survey-frame': SURVEY_FRAME, '/names-and-phone': NAMES_AND_PHONE, '/names-and-file': NAMES_AND_FILE, '/german-names': GERMAN_NAMES, '/french-names': FRENCH_NAMES, '/other-names': OTHER_NAMES, '/standard-hints': STANDARD_HINTS, '/localized-dates': LOCALIZED_DATES, '/names-alongside': NAMES_ALONGSIDE, '/handy': HANDY, '/typed-maxlength': TYPED_MAXLENGTH, '/phone-patterned': PHONE_PATTERNED };
+PAGES['/ui5-like'] = UI5_LIKE;
+// The same with the Country label beside its select and naming nothing.
+PAGES['/ui5-like-beside'] = UI5_LIKE.replace('<u-label for="u-co">', '<u-label>');
+PAGES['/shadow-form-model'] = SHADOW_FORM_MODEL;
 
 const PROFILE = {
   first_name: 'Morgan',
@@ -11186,6 +11313,61 @@ async function main() {
       'three outlined fields that all call their label id="label" each read the one in their own component',
       outside.q_3101 === 'Morgan' && outside.q_3102 === 'Boston' && outside.q_3103 === 'Testwell' && outside.filled.length === 11,
       JSON.stringify(outside),
+    );
+
+    /*
+     * What the app behind a web component was told, not only what its box
+     * shows. See UI5_LIKE and SHADOW_FORM_MODEL.
+     */
+    const appFill = (url, fields) => page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 600 });
+        await new Promise((r) => setTimeout(r, 50));
+        return {
+          ...window.__readback(),
+          filled: report.filled.map((f) => f.key),
+          skipped: report.skipped.map((s) => `${s.key}: ${s.reason} [${s.description}]`),
+        };
+      }, { b: base, fields }),
+    );
+    const ui5 = await appFill('/ui5-like', { ...PROFILE, address_state: 'MA' });
+    group('UI5-style web components, and the app model behind them');
+    check(
+      'a box whose component reads e.inputType keeps what was written, and its app is told it',
+      ui5.shown.firstName === 'Morgan' && ui5.shown.lastName === 'Testwell' && ui5.shown.city === 'Boston' &&
+        ui5.shown.email === 'morgan.testwell@example.com' && ui5.model.firstName === 'Morgan' && ui5.model.lastName === 'Testwell' &&
+        ui5.model.city === 'Boston' && ui5.model.email === 'morgan.testwell@example.com' && ui5.errors.length === 0,
+      JSON.stringify(ui5),
+    );
+    check(
+      'a combobox given up on is put back in the app as well as on screen: not left on what its typeahead made of "MA"',
+      ui5.shown.state === '' && (ui5.model.state ?? '') === '' && ui5.skipped.some((s) => s.startsWith('address_state:')),
+      JSON.stringify(ui5),
+    );
+    check(
+      'a select named only by <u-label for> on its host is reported as Country, not passed over as "Select One"',
+      ui5.skipped.some((s) => s.startsWith('address_country:') && s.endsWith('[Country]')) && !ui5.filled.includes('address_country'),
+      JSON.stringify(ui5),
+    );
+    const beside = await appFill('/ui5-like-beside', { ...PROFILE, address_state: 'MA' });
+    check(
+      'and so is one whose label is only beside it: the box drawn as "…-label-root" is not taken for its own label',
+      beside.skipped.some((s) => s.startsWith('address_country:') && s.endsWith('[Country]')),
+      JSON.stringify(beside),
+    );
+    const sr = await appFill('/shadow-form-model', PROFILE);
+    group('Boxes in open shadow roots, and a form that listens for them');
+    check(
+      'the form hears the input of every box filled in a component\'s root, and its model matches what is shown',
+      sr.shown.firstName === 'Morgan' && sr.model.firstName === 'Morgan' && sr.model.lastName === 'Testwell' &&
+        sr.model.email === 'morgan.testwell@example.com' && sr.model.city === 'Boston',
+      JSON.stringify(sr),
+    );
+    check(
+      'and the change',
+      sr.changed.firstName === 'Morgan' && sr.changed.city === 'Boston',
+      JSON.stringify(sr),
     );
 
     const alone = await componentFill('/unlabelled-components', SWEEP);
