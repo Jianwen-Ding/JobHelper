@@ -607,6 +607,16 @@ button.left-name.gone, button.left-name.gone:hover { color: var(--faint); text-d
 span.left-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .left-list button.link { padding: 1px 0; margin-top: 2px; }
 .left-list button.link:hover { background: none; text-decoration: underline; }
+/*
+ * Its ring is the card's own, with room around the words: the browser's was
+ * drawn tight against them. And only from the keyboard: pressed with the
+ * mouse, the redraw puts the focus back on it by hand (see \`focusKey\`), and
+ * Chrome showed the ring for that too, after a keyboard was used once.
+ */
+.left-list button.link { padding: 1px 4px; margin-left: -4px; border-radius: 4px; }
+.left-list button.link:focus { outline: none; }
+.left-list button.link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.card[data-pointer] .left-list button.link:focus-visible { outline: none; }
 
 .done-box {
   background: var(--good-bg); border: 1px solid var(--good-line); border-radius: 8px; padding: 11px;
@@ -8999,6 +9009,17 @@ export function createCard({
    * has it. (Not the page, though it has called `preventDefault`: see
    * `composing`.)
    */
+  /*
+   * Whether the card was last used with a pointer or the keyboard, for the
+   * rings that a redraw's `focus()` would otherwise show after a click (see
+   * `.card[data-pointer]`). Nothing else reads it.
+   */
+  card.addEventListener('pointerdown', () => {
+    card.dataset.pointer = '';
+  }, true);
+  card.addEventListener('keydown', () => {
+    delete card.dataset.pointer;
+  }, true);
   card.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || composing(event)) return;
     const menu = root.querySelector('.rename-menu:not(.hidden)');
@@ -9231,6 +9252,23 @@ export function createCard({
   let leftOpenFor = null;
 
   const WHY_LEFT = [
+    /*
+     * A block Autofill opened and typed into, and could not save itself
+     * (autofill.js): "Example Co. is typed in but not saved — press Save in
+     * Work Experience". Only the section is said, which is the form's own
+     * heading as autofill.js names it; the words before it are an answer, and
+     * are not passed through. First, so nothing in that answer is matched as
+     * a reason below. The section can be cut off by the reason's own length
+     * limit: then the row still says what to do.
+     */
+    [/is typed in but not saved\b(?:.*?\bpress Save in (Work Experience|Education)\b)?/, (m) =>
+      m[1] ? `typed in but not saved — press Save in ${m[1]}` : 'typed in but not saved — press its Save button'],
+    /*
+     * "the form's country code is +46 — check the phone": the dial code only,
+     * and only as digits, since it is what to check against.
+     */
+    [/\bcountry code is (\+\d{1,4})(?!\d)/, (m) => `the form's country code is ${m[1]} — check the phone number`],
+    [/\bcountry code is\b/, 'the form has another country code — check the phone number'],
     /*
      * The jobs Autofill could not add a block for (autofill.js, `addJobBlocks`):
      * "2 jobs not entered: Acme, Globex". The companies are the resume's own,

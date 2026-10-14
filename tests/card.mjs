@@ -8161,6 +8161,86 @@ async function main() {
   }
 
   /*
+   * The reasons Autofill gives for a block it typed into and could not save,
+   * and for a phone under another country's code, had no words of the
+   * card's own: each row was the field's name alone, under "Other". Said
+   * now — the section and the dial code, never the answer typed in.
+   */
+  console.log('\nThe fields Autofill left: typed in but not saved, and the country code');
+  for (const width of [1440, 360]) {
+    await page.setViewportSize({ width, height: 900 });
+    const run = (skipped) => inPage(async (createCard, skipped) => {
+      createCard({
+        analysis: { isJobPosting: true, job: { title: 'Data Engineer', company: 'Streamly' }, spec: { id: 'j', label: 'Streamly', tier: 'temporary' }, baseLabel: 'Base', tailor: 'match', diff: [], rationale: [] },
+        resumes: [{ id: 'b', label: 'Base', base: true }], settings: {}, questions: [], needsCoverLetter: false, isForm: true,
+        onAction: async (a) => (a === 'autofill' ? { filled: [{ key: 'email', value: 'x@example.com' }], skipped } : a === 'aiStatus' ? { state: 'off' } : {}),
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      await new Promise((r) => setTimeout(r, 100));
+      [...root.querySelectorAll('button')].find((b) => /^Autofill this form/.test(b.textContent))?.click();
+      for (let i = 0; i < 200 && !root.querySelector('.left-list'); i++) await new Promise((r) => setTimeout(r, 25));
+      return [...root.querySelectorAll('.left-list > *')].map((row) => row.textContent.replace(/\s+/g, ' ').trim());
+    }, skipped);
+    const saved = [
+      { key: 'work_history', description: 'Work Experience', fieldId: 'f-wh', reason: 'Example Co. is typed in but not saved — press Save in Work Experience' },
+      { key: 'school', description: 'Education', fieldId: 'f-ed', reason: 'Northeastern University is typed in but not saved — press Save in Education' },
+      { key: 'phone', label: 'Phone', fieldId: 'f-ph', reason: "the form's country code is +46 — check the phone" },
+    ];
+    const few = await run(saved);
+    check(`a block typed in and not saved says which Save to press (${width}px)`, /^Work Experience.*typed in but not saved.*press Save in Work Experience/.test(few[0] ?? '') && /^Education.*press Save in Education/.test(few[1] ?? ''), JSON.stringify(few));
+    check(`and the phone says the form's country code (${width}px)`, /^Phone.*country code is \+46.*check the phone/.test(few[2] ?? ''), few[2]);
+    check(`and what was typed in is not repeated (${width}px)`, !few.some((r) => /Example Co|Northeastern/.test(r)), JSON.stringify(few));
+    // Grouped (more than three): under headings of their own, not "Other".
+    const many = await run([
+      ...saved,
+      { key: 'work_history', description: 'Work Experience', fieldId: 'f-wh2', reason: `${'A very long company name '.repeat(5)}is typed in but not saved — press Save in Work Experience`.slice(0, 160) },
+      { key: 'q1', label: 'Gender', fieldId: 'q1', reason: 'not one of the options' },
+    ]);
+    check(`grouped, none of them is "Other" (${width}px)`, many.length > 0 && !many.includes('Other'), JSON.stringify(many));
+    check(`and the cut-off reason still says to press Save (${width}px)`, many.some((r) => /^Typed in but not saved — press/.test(r)) && !many.some((r) => /very long company/.test(r)), JSON.stringify(many));
+  }
+
+  /*
+   * "and N more" had the browser's own ring, tight against its words, and
+   * showed it after a mouse click too (the redraw puts focus back by hand).
+   */
+  console.log('\nThe ring on "and N more"');
+  {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await inPage(async (createCard) => {
+      const skipped = [1, 2, 3, 4, 5, 6].map((i) => ({ key: `k${i}`, label: `Question number ${i}`, fieldId: `f${i}`, reason: 'not one of the options' }));
+      createCard({
+        analysis: { isJobPosting: true, job: { title: 'Data Engineer', company: 'Streamly' }, spec: { id: 'j', label: 'Streamly', tier: 'temporary' }, baseLabel: 'Base', tailor: 'match', diff: [], rationale: [] },
+        resumes: [{ id: 'b', label: 'Base', base: true }], settings: {}, questions: [], needsCoverLetter: false, isForm: true,
+        onAction: async (a) => (a === 'autofill' ? { filled: [], skipped } : a === 'aiStatus' ? { state: 'off' } : a === 'showLeft' ? false : {}),
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      await new Promise((r) => setTimeout(r, 100));
+      [...root.querySelectorAll('button')].find((b) => /^Autofill this form/.test(b.textContent))?.click();
+      for (let i = 0; i < 200 && !root.querySelector('.left-list button.link'); i++) await new Promise((r) => setTimeout(r, 25));
+    });
+    const ring = () =>
+      page.evaluate(() => {
+        const a = document.querySelector('#jobhelper-card-host').shadowRoot.activeElement;
+        if (!a) return null;
+        const cs = getComputedStyle(a);
+        return { text: a.textContent.trim(), style: cs.outlineStyle, width: parseFloat(cs.outlineWidth), pad: parseFloat(cs.paddingLeft) };
+      });
+    const more = page.locator('#jobhelper-card-host .left-list button.link');
+    await more.focus();
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(200);
+    const keyboard = await ring();
+    await more.click();
+    await page.waitForTimeout(200);
+    const mouse = await ring();
+    check('from the keyboard it has the card\'s ring, with room around its words', keyboard?.style === 'solid' && keyboard.width >= 2 && keyboard.pad >= 2, JSON.stringify(keyboard));
+    check('and pressed with the mouse, no ring', mouse?.style === 'none', JSON.stringify(mouse));
+  }
+
+  /*
    * "and 3 more" becomes "Show fewer" when pressed, and the redraw matched
    * the focused button by its words — which had just changed — so Enter on
    * it left focus on the card itself, and Tab started over from the top.
