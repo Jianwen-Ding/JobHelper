@@ -139,7 +139,11 @@ const STYLE = `
   box-shadow: inset 0 0 0 2px rgba(255,255,255,.55);
 }
 .head .spacer { margin-left: auto; }
-.body { padding: 12px; overflow: auto; overscroll-behavior: contain; flex: 1 1 auto; }
+/*
+ * Room at the scroll area's edges for a focus ring: "and N more" brought
+ * into view by Tab sat flush with the bottom, its ring cut off.
+ */
+.body { padding: 12px; overflow: auto; overscroll-behavior: contain; flex: 1 1 auto; scroll-padding-block: 8px; }
 
 /*
  * Folded: the header, and what it is a header for.
@@ -8002,8 +8006,20 @@ export function createCard({
 
   /** True when the report names fields the form still needs from you. */
   function autofillLeftWork(r) {
-    return r.skipped.some((skip) => skip.reason !== 'already filled');
+    return r.skipped.some((skip) => skip.reason !== 'already filled' && !alreadyThere(skip));
   }
+
+  /*
+   * A job or a school Autofill did not add because the form already shows it
+   * saved (autofill.js, `addJobBlocks` and `fillEducation`): "Software
+   * Engineer at Acme Corp already in Work Experience". Not a field left for
+   * the person — listed as one, it read as work still to do, with nothing to
+   * do — but said quietly under the note, so a saved entry taken for the
+   * resume's own can be checked. The names are the resume's own jobs and
+   * schools, never an answer the form was given.
+   */
+  const ALREADY_THERE = /^(.+?) already in (Work Experience|Education)$/;
+  const alreadyThere = (skip) => ALREADY_THERE.test(String(skip?.reason ?? ''));
 
   /**
    * What went into the form's upload boxes, and what did not.
@@ -8125,7 +8141,7 @@ export function createCard({
      * which is why it records the reasons at all.
      */
     const done = r.skipped.filter((s) => s.reason === 'already filled').length;
-    const yours = r.skipped.length - done;
+    const yours = r.skipped.filter((s) => s.reason !== 'already filled' && !alreadyThere(s)).length;
     if (done) parts.push(`left ${plural(done, 'field')} that already had a value`);
     if (yours) parts.push(`${plural(yours, 'field')} still for you to answer`);
     const said = r.filled.length || r.skipped.length || !r.refilled?.length ? `${parts.join(', ')}.` : '';
@@ -9222,7 +9238,17 @@ export function createCard({
       textContent: describeAutofill(state.autofillReport),
     });
     const left = drawLeftList(state.autofillReport);
-    return left ? h('div', { className: 'autofill-note' }, [note, left]) : note;
+    const there = drawAlreadyThere(state.autofillReport);
+    return left || there ? h('div', { className: 'autofill-note' }, [note, left, there]) : note;
+  }
+
+  /** The jobs and schools the form already showed, so not added again. See `ALREADY_THERE`. */
+  function drawAlreadyThere(r) {
+    const names = (r.skipped ?? []).map((s) => String(s.reason ?? '').match(ALREADY_THERE)).filter(Boolean);
+    if (!names.length) return null;
+    const sections = [...new Set(names.map((m) => m[2]))].join(' and ');
+    const said = names.map((m) => m[1]).join('; ');
+    return h('div', { className: 'hint already-there', textContent: `Already in ${sections}, so not added again: ${said}. Check it is yours.` });
   }
 
   /*
@@ -9297,15 +9323,30 @@ export function createCard({
     return '';
   };
 
+  /*
+   * The heading a reason is grouped under, and what is left to say beside
+   * its row. A reason that names a section or a dial code was a heading of
+   * its own over one row — "Typed in but not saved — press Save in Work
+   * Experience" over "Work Experience" — once for each section. Grouped, the
+   * section is the row, under one heading for all of them; the dial code is
+   * said beside its row.
+   */
+  function groupOf(why) {
+    if (/^typed in but not saved/.test(why)) return { heading: "typed in but not saved — press each section's Save", detail: '' };
+    const code = why.match(/^the form's country code is (\+\d{1,4})/);
+    if (code) return { heading: 'the form has another country code — check the phone number', detail: `its code is ${code[1]}` };
+    return { heading: why, detail: '' };
+  }
+
   function drawLeftList(r) {
-    const left = (r.skipped ?? []).filter((s) => s.reason !== 'already filled');
+    const left = (r.skipped ?? []).filter((s) => s.reason !== 'already filled' && !alreadyThere(s));
     if (!left.length) return null;
     const open = leftOpenFor === r.skipped;
     const grouped = left.length > 3;
 
     // In the order the page asks them, a reason's rows together once grouped.
     const byWhy = new Map();
-    for (const s of left) byWhy.set(whyLeft(s.reason), [...(byWhy.get(whyLeft(s.reason)) ?? []), s]);
+    for (const s of left) byWhy.set(groupOf(whyLeft(s.reason)).heading, [...(byWhy.get(groupOf(whyLeft(s.reason)).heading) ?? []), s]);
     const ordered = grouped ? [...byWhy.values()].flat() : left;
     const shown = open ? ordered : ordered.slice(0, LEFT_SHOWN);
 
@@ -9338,14 +9379,16 @@ export function createCard({
     let heading = null;
     for (const s of shown) {
       const why = whyLeft(s.reason);
-      if (grouped && why !== heading) {
-        heading = why;
-        rows.push(h('div', { className: 'left-why', textContent: why ? `${why[0].toUpperCase()}${why.slice(1)}` : 'Other' }));
+      const { heading: under, detail } = groupOf(why);
+      if (grouped && under !== heading) {
+        heading = under;
+        rows.push(h('div', { className: 'left-why', textContent: under ? `${under[0].toUpperCase()}${under.slice(1)}` : 'Other' }));
       }
+      const beside = grouped ? detail : why;
       rows.push(
         h('div', { className: 'left-row' }, [
           nameOf(s),
-          !grouped && why ? h('span', { className: 'why', textContent: `— ${why}` }) : null,
+          beside ? h('span', { className: 'why', textContent: `— ${beside}` }) : null,
         ]),
       );
     }

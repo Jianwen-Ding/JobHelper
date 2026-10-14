@@ -8198,7 +8198,84 @@ async function main() {
     ]);
     check(`grouped, none of them is "Other" (${width}px)`, many.length > 0 && !many.includes('Other'), JSON.stringify(many));
     check(`and the cut-off reason still says to press Save (${width}px)`, many.some((r) => /^Typed in but not saved — press/.test(r)) && !many.some((r) => /very long company/.test(r)), JSON.stringify(many));
+    // Sections and dial codes are the rows under one heading each, not a heading over each row.
+    const r30many = await run([
+      ...saved,
+      { key: 'phone2', label: 'Other phone', fieldId: 'f-ph2', reason: "the form's country code is +44 — check the phone" },
+      { key: 'q1', label: 'Gender', fieldId: 'q1', reason: 'not one of the options' },
+    ]);
+    check(
+      `grouped, "typed in but not saved" is one heading over its sections (${width}px)`,
+      r30many.filter((r) => /^Typed in but not saved/.test(r)).length === 1 && r30many.includes('Work Experience') && r30many.includes('Education'),
+      JSON.stringify(r30many),
+    );
+    check(
+      `and the country code one heading, each code beside its phone (${width}px)`,
+      r30many.filter((r) => /country code/i.test(r) && !/its code is/.test(r)).length === 1 && r30many.some((r) => /^Phone.*its code is \+46/.test(r)) && r30many.some((r) => /^Other phone.*its code is \+44/.test(r)),
+      JSON.stringify(r30many),
+    );
   }
+
+  /*
+   * A job or a school Autofill did not add because the form already shows
+   * it saved was listed as a field left for you, with no reason of the
+   * card's own ("Other"), and turned the note amber over a form with nothing
+   * left to do. Said instead in a quiet line under the note, by the resume's
+   * own names, for the person to check.
+   */
+  console.log('\nJobs and schools already in the form, not fields left');
+  for (const width of [1440, 360]) {
+    await page.setViewportSize({ width, height: 900 });
+    const run = (skipped) => inPage(async (createCard, skipped) => {
+      createCard({
+        analysis: { isJobPosting: true, job: { title: 'Data Engineer', company: 'Streamly' }, spec: { id: 'j', label: 'Streamly', tier: 'temporary' }, baseLabel: 'Base', tailor: 'match', diff: [], rationale: [] },
+        resumes: [{ id: 'b', label: 'Base', base: true }], settings: {}, questions: [], needsCoverLetter: false, isForm: true,
+        onAction: async (a) => (a === 'autofill' ? { filled: [{ key: 'email', value: 'x@example.com' }], skipped } : a === 'aiStatus' ? { state: 'off' } : {}),
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      await new Promise((r) => setTimeout(r, 100));
+      [...root.querySelectorAll('button')].find((b) => /^Autofill this form/.test(b.textContent))?.click();
+      for (let i = 0; i < 200 && !root.querySelector('.ok-note'); i++) await new Promise((r) => setTimeout(r, 25));
+      await new Promise((r) => setTimeout(r, 50));
+      const card = root.querySelector('.card').getBoundingClientRect();
+      const there = root.querySelector('.already-there');
+      const box = there?.getBoundingClientRect();
+      return {
+        note: root.querySelector('.ok-note')?.textContent ?? '',
+        warn: Boolean(root.querySelector('.ok-note.warn')),
+        rows: [...root.querySelectorAll('.left-list .left-row')].map((row) => row.textContent.replace(/\s+/g, ' ').trim()),
+        there: there?.textContent ?? null,
+        inside: !box || (box.left >= card.left - 0.5 && box.right <= card.right + 0.5),
+      };
+    }, skipped);
+    const THERE = [
+      { key: 'work_history', description: 'Work Experience', fieldId: 'f-wh', reason: 'Software Engineer at Acme Corp already in Work Experience' },
+      { key: 'school', description: 'Education', fieldId: 'f-ed', reason: 'Northeastern University already in Education' },
+    ];
+    const only = await run(THERE);
+    check(
+      `only jobs and schools already there: no fields left, the note not amber, nothing "still for you" (${width}px)`,
+      only.rows.length === 0 && !only.warn && !/still for you/.test(only.note),
+      JSON.stringify(only),
+    );
+    check(
+      `and they are said in a line of their own, by name (${width}px)`,
+      /Already in Work Experience and Education, so not added again: Software Engineer at Acme Corp; Northeastern University/.test(only.there ?? '') && only.inside,
+      JSON.stringify(only),
+    );
+    const mixed = await run([...THERE, { key: 'q1', label: 'Gender', fieldId: 'q1', reason: 'not one of the options' }]);
+    check(
+      `beside a field really left, only that field is listed (${width}px)`,
+      mixed.rows.length === 1 && /^Gender/.test(mixed.rows[0]) && mixed.warn && /1 field still for you/.test(mixed.note) && /Software Engineer at Acme Corp/.test(mixed.there ?? ''),
+      JSON.stringify(mixed),
+    );
+  }
+  const r30pad = await inPage(async (createCard) => {
+    createCard({ analysis: null, resumes: [], settings: {}, questions: [], needsCoverLetter: false, onAction: async () => ({}) });
+    const body = document.querySelector('#jobhelper-card-host').shadowRoot.querySelector('.body');
+    return getComputedStyle(body).scrollPaddingBottom;
+  });
+  check('the card\'s scroll area keeps room for a focus ring brought into view by Tab', r30pad === '8px', r30pad);
 
   /*
    * "and N more" had the browser's own ring, tight against its words, and

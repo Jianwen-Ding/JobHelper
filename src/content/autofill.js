@@ -34,31 +34,54 @@ const {
 
 /** Map a stored profile key to the label/name patterns that mean it. */
 /*
- * The first or the last name as what a box is, not a hint about it: said in
- * the label's own words — before its first bracket, dash or semicolon — or
- * in the same part of it as the middle name or the suffix, and not after a
- * "not", "do not", "leave", "without" or "other than" in that part. See
+ * The first or the last name as what a box is, not a hint about it: named
+ * before the middle name or the suffix is, and not after a "not", "do not",
+ * "leave", "without" or "other than" in its part of the label. See
  * `middle_name` and `name_suffix` in `FIELD_PATTERNS`.
  *
- * The same part too, because a label can open with what the whole name is
- * before saying which half: "Legal Name - Last Name, including suffix (Jr.,
- * III)" and "Legal Name – Last Name Suffix" stopped at the dash, read as a
- * suffix, and the last-name box was left empty.
+ * Before, because a label can open with what the whole name is before
+ * saying which half: "Legal Name - Last Name, including suffix (Jr., III)"
+ * and "Legal Name – Last Name Suffix" stopped at the dash, read as a suffix,
+ * and the last-name box was left empty. And only before: a suffix or middle
+ * name that goes on to say what it is next to — "Suffix - last name suffix
+ * such as Jr. or III", "Name Suffix — suffix to your last name", "Middle
+ * Initial — the initial between your first name and last name" — was read
+ * as the last or the whole name, and given it.
  */
-const NAME_IN_A_LABEL = /\b(?:first|given|last|family)[\s_-]?name\b|\b(?:surname|forename)\b/i;
+const NAME_IN_A_LABEL = /\b(?:first|given|last|family)[\s_-]?name\b|\b(?:surname|forename)\b/gi;
 const NAME_SET_ASIDE = /\b(?:not?|don['’]?t|never|leave|exclud\w*|without|except|other\s+than|different|separate)\b/i;
-const LABEL_PARTS = /[()[\];]|\s[-–—]\s/;
-function namesTheName(part) {
-  const before = part.search(NAME_SET_ASIDE);
-  return NAME_IN_A_LABEL.test(before < 0 ? part : part.slice(0, before));
+const LABEL_PARTS = /[()[\];]|\s[-–—]\s/g;
+/** Where a label first names the first or the last name as what it is, or -1. */
+function whereTheNameIs(said) {
+  // The start of the part each place is in.
+  const starts = [0];
+  for (const m of said.matchAll(LABEL_PARTS)) starts.push(m.index + m[0].length);
+  for (const m of said.matchAll(NAME_IN_A_LABEL)) {
+    const from = starts.filter((s) => s <= m.index).pop();
+    if (!NAME_SET_ASIDE.test(said.slice(from, m.index))) return m.index;
+  }
+  return -1;
 }
 /** A middle-name or suffix pattern, matching only where the first or the last name is not the box's subject. */
 function unlessTheNameIsTheSubject(re) {
   const test = (label) => {
     const said = String(label ?? '');
-    if (!re.test(said)) return false;
-    const parts = said.split(LABEL_PARTS);
-    return !namesTheName(parts[0]) && !parts.some((part) => re.test(part) && namesTheName(part));
+    const at = said.search(re);
+    if (at < 0) return false;
+    const name = whereTheNameIs(said);
+    return name < 0 || name > at;
+  };
+  return { test, source: re.source, flags: re.flags };
+}
+
+/** A pattern matching only where `first` is not said before it. */
+function unlessNamedAfter(re, first) {
+  const test = (label) => {
+    const said = String(label ?? '');
+    const at = said.search(re);
+    if (at < 0) return false;
+    const before = said.search(first);
+    return before < 0 || before > at;
   };
   return { test, source: re.source, flags: re.flags };
 }
@@ -102,7 +125,12 @@ const FIELD_PATTERNS = [
    * was given the surname alone, and "First Name and Last Name" the first
    * name alone — half a name, in a box asking for all of it.
    */
-  ['full_name', /\bfirst[\s_-]*(name[\s_-]*)?(and|&|\+)[\s_-]*last[\s_-]*name\b/i],
+  /*
+   * Never where a middle name or a suffix is named first, and the halves only
+   * say where it goes: "Middle Initial — the initial between your first name
+   * and last name" was given the whole name.
+   */
+  ['full_name', unlessNamedAfter(/\bfirst[\s_-]*(name[\s_-]*)?(and|&|\+)[\s_-]*last[\s_-]*name\b/i, /\bmiddle[\s_-]?(?:name|initial)\b|\bsuffix\b/i)],
   /*
    * And one half of it, said in brackets after the name it is part of — above
    * `legal name`, which claimed the box whole. "Legal name (First)" and "Legal
@@ -2079,7 +2107,13 @@ function isTypedDate(element) {
       .replace(/[_-]+/g, ' '),
   );
 }
-const CALLED_A_DATE = /\b(?:date\w*|start(?:ed|ing|s)?|end(?:ed|ing|s)?|from|to|graduat\w*|birth\w*|dob|available|availability|months?|years?|when)\b/i;
+/*
+ * And the words a certificate or a degree still under way is dated by:
+ * "Expected Completion", "Expiration", "Completion date", "Issued", "Valid
+ * through". A date picker called only those was driven as a list.
+ */
+const CALLED_A_DATE =
+  /\b(?:date\w*|start(?:ed|ing|s)?|end(?:ed|ing|s)?|from|to|graduat\w*|birth\w*|dob|available|availability|months?|years?|when|complet\w*|expir\w*|expected|issue[ds]?|valid\w*|through|thru|until)\b/i;
 
 /** A choice dressed as something else: a button, or a text box that is a list. */
 function isWidgetChoice(element) {
@@ -5584,6 +5618,15 @@ async function addJobBlocks(history, report) {
     // Inside the section only once it is known to hold an editor. See `workBlocks`.
     const within = editing ? section.box : keeps;
     const before = new Set(workBlocks(within).flatMap((b) => [...b.values()]));
+    /*
+     * And every box on the page before the press, for an editor drawn under
+     * a saved entry this did not know for one: that entry's words stand over
+     * its boxes as a heading would, and they were never found — the editor
+     * was left open and empty, and the job said not entered. The boxes the
+     * press drew, in the section where it was made, are its block.
+     */
+    const boxesBefore = new Set(deepQueryAll('input, textarea, select'));
+    const region = regionOf(section);
     const dialogs = openDialogs();
     press(section.button);
     pressed++;
@@ -5594,7 +5637,10 @@ async function addJobBlocks(history, report) {
         return block ? { dialog, block } : null;
       }
       const now = workBlocks(within);
-      return now.length > had ? { grown: now.length, block: now.find((b) => [...b.values()].every((input) => !before.has(input))) } : null;
+      if (now.length > had) return { grown: now.length, block: now.find((b) => [...b.values()].every((input) => !before.has(input))) };
+      if (!region.isConnected) return null;
+      const drawn = workBlocks(region).find((b) => [...b.values()].every((input) => !boxesBefore.has(input)));
+      return drawn ? { block: drawn, drawn: true } : null;
     }, 3000);
     if (!opened) {
       // Something opened that holds no job: shut, so nothing empty is left open.
@@ -5611,7 +5657,7 @@ async function addJobBlocks(history, report) {
      */
     if (added && (editor.dialog || editor.save || addWentAway(section.button))) {
       editing = true;
-      const job = jobBlocks(history.filter((j) => !saved.has(j) && !shown.has(j)), [], opened.dialog ?? section.box).find((pair) => sameBlock(pair.block, added))?.job;
+      const job = jobBlocks(history.filter((j) => !saved.has(j) && !shown.has(j)), [], opened.dialog ?? (opened.drawn ? region : section.box)).find((pair) => sameBlock(pair.block, added))?.job;
       if (!job) {
         await dismissEditor(editor.scope ?? opened.dialog);
         break;
@@ -5630,6 +5676,8 @@ async function addJobBlocks(history, report) {
       unsaved = { job, at: added.get('company') ?? added.get('title') ?? [...added.values()][0] };
       break;
     }
+    // Boxes found only as new ones, and no editor: not a block this can count.
+    if (opened.drawn) break;
     had = opened.grown ?? had;
     section = workSection() ?? section;
   }
@@ -5782,64 +5830,159 @@ const addWentAway = (button) => !button?.isConnected || button.getClientRects().
  * Read as the section's words flattened to their letters, either was found
  * anywhere: "Software Engineer" in a saved "Senior Software Engineer", the
  * profile's "MIT" in the help text's "Transcripts can be submitted later" —
- * and the job or the school was never added, and never said. So a job is
- * shown only when one entry — the smallest part of the section holding both
- * — has its employer and its title each as a whole piece of its words (see
- * `shownPieces`), and holds no other job's; each entry answers for one job,
- * so a second stint at the same title and employer is not hidden by the
- * first. Whatever is unsure is added.
+ * and the job or the school was never added, and never said. Read as whole
+ * pieces split at every dash, bracket and "at", a saved entry was missed
+ * whenever its words held one ("Software Engineer (Backend)", "Amazon Web
+ * Services (AWS)", "Made at Home"), were in a heading or a button, shared a
+ * line with a comma ("Software Engineer, Acme Corp"), sat beside a tick box,
+ * or spelled the employer its own way ("Acme Inc." for "Acme", the
+ * typeahead's "Amazon Web Services" for "Amazon") — and the job was added
+ * again.
+ *
+ * So a job is shown when one entry — the smallest part of the section
+ * holding both, with no box to type in, not the section's Add and not its
+ * heading — shows its title and its employer each as a whole phrase:
+ *   - the title from the start of a piece (after a comma, a dash, a bracket
+ *     or the entry's edge) to its end, or to a qualifier after it in a
+ *     bracket or after a dash — "Software Engineer (Backend)" — but never
+ *     with a word before it: "Senior Software Engineer" is another title;
+ *   - the employer from the start of a piece or after "at", its "Inc",
+ *     "LLC", "Corp" and the like left off either side, and anything after
+ *     it, which is a typeahead's longer name for it ("Amazon Web Services"
+ *     for "Amazon").
+ * Each entry answers for one job, so a second stint at the same title and
+ * employer is not hidden by the first; the longest names are matched
+ * first, so "Software Engineer (Backend)" keeps its own entry. Whatever is
+ * shown is said, for the person to check.
  */
-const SHOWN_APART = /[—–|•·@\n\r\t()]|\s-\s|\s+at\s+/i;
-const AS_PIECE = (text) => String(text ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-const NOT_AN_ENTRY = 'select, option, datalist, textarea, script, style, template, [role="listbox"], [role="option"], button, [role="button"], label, h1, h2, h3, h4, h5, h6, legend, [role="heading"]';
-const IN_AN_ENTRY_NEVER = 'input:not([type="hidden"]), select, textarea, [contenteditable="true"], [role="combobox"], [role="textbox"], h1, h2, h3, h4, h5, h6, legend, [role="heading"]';
+const ENTRY_SKIPS = 'select, option, datalist, textarea, script, style, template, noscript, [role="listbox"], [role="option"]';
+const ENTRY_APART = /[,;:—–|•·@()[\]{}/\n\r\t]|\s-\s/;
+const ENTRY_HOLDS_NEVER =
+  'input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]), select, textarea, [contenteditable="true"], [contenteditable=""], [role="combobox"], [role="textbox"], [role="searchbox"]';
+const LEGAL_SUFFIX = new Set(['inc', 'incorporated', 'llc', 'llp', 'lp', 'ltd', 'limited', 'corp', 'corporation', 'gmbh', 'co', 'plc', 'ag', 'sa', 'bv', 'pty']);
+const APART = '|';
+const entryWords = (text) =>
+  String(text ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/['’`]/g, '')
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
 
-/** The pieces of words a region shows outside its controls, labels, buttons and headings, each with its text node. */
-function shownPieces(region) {
-  const pieces = [];
+/** A run of words and the breaks between them, as `shownWords` reads a page's. */
+function phraseOf(text, legal = false) {
+  const said = [];
+  for (const piece of String(text ?? '').split(ENTRY_APART)) {
+    if (said.length && said[said.length - 1] !== APART) said.push(APART);
+    said.push(...entryWords(piece));
+  }
+  const trim = () => {
+    while (said.length && said[said.length - 1] === APART) said.pop();
+  };
+  trim();
+  while (said[0] === APART) said.shift();
+  if (legal) {
+    while (said.length > 1 && LEGAL_SUFFIX.has(said[said.length - 1]) && said.slice(0, -1).some((w) => w !== APART)) {
+      said.pop();
+      trim();
+    }
+  }
+  return said;
+}
+
+/** The words a region shows outside its lists and text areas, each with its text node, a break between pieces and elements. */
+function shownWords(region) {
+  const words = [];
+  const apart = () => {
+    if (words.length && words[words.length - 1].word !== APART) words.push({ word: APART, node: null });
+  };
   const walk = (node) => {
     for (const child of node.childNodes) {
       if (child.nodeType === Node.TEXT_NODE) {
         if (!child.parentElement || child.parentElement.getClientRects().length === 0) continue;
-        for (const raw of child.textContent.split(SHOWN_APART)) {
-          const text = AS_PIECE(raw);
-          if (text) pieces.push({ node: child, raw: clean(raw), text });
-        }
-      } else if (child.nodeType === Node.ELEMENT_NODE && !child.matches(NOT_AN_ENTRY)) walk(child);
+        const pieces = child.textContent.split(ENTRY_APART);
+        pieces.forEach((piece, i) => {
+          if (i) apart();
+          for (const word of entryWords(piece)) words.push({ word, node: child });
+        });
+      } else if (child.nodeType === Node.ELEMENT_NODE && !child.matches(ENTRY_SKIPS)) {
+        apart();
+        walk(child.shadowRoot ?? child);
+        apart();
+      }
     }
   };
   walk(region);
-  return pieces;
+  return words;
 }
 
-/** Whether `el` can be one saved entry: in the region, and holding no box, heading or the section's Add. */
-const anEntry = (el, region, section) =>
-  Boolean(el) && region.contains(el) && !el.matches(IN_AN_ENTRY_NEVER) && !el.querySelector(IN_AN_ENTRY_NEVER) && !(section.button && el.contains(section.button));
+/** Where `phrase` is in `words`: the index of each place it starts. */
+function placesOf(words, phrase) {
+  const found = [];
+  if (!phrase.length) return found;
+  for (let i = 0; i + phrase.length <= words.length; i++) {
+    if (phrase.every((w, k) => words[i + k].word === w)) found.push(i);
+  }
+  return found;
+}
+
+/** The smallest element holding every one of `nodes`. */
+function holdingAll(nodes) {
+  let el = nodes[0]?.parentElement ?? null;
+  while (el && !nodes.every((n) => el.contains(n))) el = el.parentElement;
+  return el;
+}
+
+/*
+ * And never help text giving an example: "For example: Software Engineer,
+ * Acme Corp" says how to write one, and is no entry.
+ */
+const GIVES_AN_EXAMPLE = /\be\.\s?g\.|\bfor\s+(?:example|instance)\b|\bsuch\s+as\b/i;
+
+/** Whether `el` can be one saved entry: inside the region, and holding no box to type in, the section's Add, its heading, or an example. */
+function anEntry(el, region, section) {
+  if (!el || el === region || el === section.box || !region.contains(el)) return false;
+  if (GIVES_AN_EXAMPLE.test(el.textContent)) return false;
+  if (el.matches(ENTRY_HOLDS_NEVER) || el.querySelector(ENTRY_HOLDS_NEVER)) return false;
+  if (section.button && el.contains(section.button)) return false;
+  const named = (h) => WORK_SECTION.test(clean(h.textContent)) || EDUCATION_SECTION.test(clean(h.textContent));
+  return ![el, ...el.querySelectorAll(HEADING)].some((h) => h.matches(HEADING) && named(h));
+}
 
 function shownJobs(section, jobs) {
   const region = regionOf(section);
-  const pieces = shownPieces(region);
+  const words = shownWords(region);
+  const at = (i) => words[i]?.word;
+  const edge = (i) => i < 0 || i >= words.length || at(i) === APART;
+  const nodesOf = (from, length) => words.slice(from, from + length).map((w) => w.node).filter(Boolean);
   const taken = new Set();
   const shown = new Set();
-  for (const job of jobs) {
-    const company = AS_PIECE(job.company);
-    const title = AS_PIECE(job.title);
-    if (!company || !title) continue;
-    const companies = [...new Set(pieces.filter((p) => p.text === company).map((p) => p.node))];
-    const titles = [...new Set(pieces.filter((p) => p.text === title).map((p) => p.node))];
-    const holding = (entry, nodes) => nodes.filter((n) => entry.contains(n)).length;
+  const asked = jobs
+    .map((job) => ({ job, title: phraseOf(job.title), company: phraseOf(job.company, true) }))
+    .filter(({ title, company }) => title.length && company.length)
+    .sort((a, b) => b.title.length + b.company.length - (a.title.length + a.company.length));
+  for (const { job, title, company } of asked) {
+    const companies = placesOf(words, company).filter((c) => edge(c - 1) || at(c - 1) === 'at');
+    const besideCompany = (i) => companies.some((c) => i === c + company.length);
+    // The title whole: nothing said before it, and nothing after but a qualifier, "at" or the employer.
+    const titles = placesOf(words, title).filter((t) => {
+      const end = t + title.length;
+      return (edge(t - 1) || besideCompany(t)) && (edge(end) || at(end) === 'at' || companies.includes(end));
+    });
     let found = null;
     for (const t of titles) {
       for (const c of companies) {
-        let entry = t.parentElement;
-        while (entry && !entry.contains(c)) entry = entry.parentElement;
+        // Two phrases, not one read twice.
+        if (t < c + company.length && c < t + title.length) continue;
+        const entry = holdingAll([...nodesOf(t, title.length), ...nodesOf(c, company.length)]);
         if (!anEntry(entry, region, section) || taken.has(entry)) continue;
         // Another entry's employer or title in it is two entries, not one.
-        if (holding(entry, companies) !== 1 || holding(entry, titles) !== 1) continue;
-        found = entry;
-        break;
+        const inside = (places) => places.filter((p) => nodesOf(p, 1).every((n) => entry.contains(n))).length;
+        if (inside(companies) !== 1 || inside(titles) !== 1) continue;
+        if (!found || found.contains(entry)) found = entry;
       }
-      if (found) break;
     }
     if (!found) continue;
     taken.add(found);
@@ -5850,21 +5993,45 @@ function shownJobs(section, jobs) {
 
 /*
  * The schools the section already shows as kept, by their place in
- * `schools`: each by one saved entry whose words are the school's, as
- * `sameSchool` reads two names. Those already placed this time take theirs
- * first. See `shownJobs`.
+ * `schools`: each by one saved entry with a piece of its words — between
+ * commas, dashes or brackets, or a whole line — that is the school, as
+ * `sameSchool` reads two names, in a heading or a button as much as in
+ * plain text: "Northeastern University, Boston, MA", "Bachelor of Science,
+ * Northeastern University". Never one an example introduces ("e.g. MIT"),
+ * and never inside a box. Those already placed this time take theirs first.
+ * See `shownJobs`.
  */
+const AN_EXAMPLE_BEFORE = /(?:\be\.?\s?g\.?|\bi\.?\s?e\.?|\bsuch\s+as|\bfor\s+(?:example|instance)|\blike|\bincluding|\bexample)[\s,:]*$/i;
 function shownSchools(section, schools, placed = new Set()) {
   const region = regionOf(section);
-  const pieces = shownPieces(region);
+  const pieces = [];
+  const walk = (node) => {
+    for (const child of node.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        const el = child.parentElement;
+        if (!el || el.getClientRects().length === 0) continue;
+        const text = child.textContent;
+        const whole = clean(text);
+        if (whole) pieces.push({ el, raw: whole });
+        let from = 0;
+        for (const piece of text.split(ENTRY_APART)) {
+          const raw = clean(piece);
+          const start = text.indexOf(piece, from);
+          from = start + piece.length;
+          if (raw && raw !== whole && !AN_EXAMPLE_BEFORE.test(text.slice(0, start))) pieces.push({ el, raw });
+        }
+      } else if (child.nodeType === Node.ELEMENT_NODE && !child.matches(ENTRY_SKIPS)) walk(child.shadowRoot ?? child);
+    }
+  };
+  walk(region);
   const taken = new Set();
   const shown = new Set();
   const order = [...schools.keys()].sort((a, b) => Number(placed.has(b)) - Number(placed.has(a)));
   for (const i of order) {
     if (!clean(schools[i].school)) continue;
-    const piece = pieces.find((p) => !taken.has(p.node.parentElement) && anEntry(p.node.parentElement, region, section) && sameSchool(schools[i].school, p.raw));
+    const piece = pieces.find((p) => !taken.has(p.el) && anEntry(p.el, region, section) && sameSchool(schools[i].school, p.raw));
     if (!piece) continue;
-    taken.add(piece.node.parentElement);
+    taken.add(piece.el);
     shown.add(i);
   }
   return shown;
@@ -7911,7 +8078,7 @@ function widgetChoices(fields, filled) {
      * page had picked behind it dropped, after the whole patience spent
      * waiting. Named as already filled, and never driven.
      */
-    if (boxAlreadyHolds(widget)) {
+    if (boxAlreadyHolds(widget, fields[key])) {
       found.push({ key, description: description.slice(0, 60), el: widget, prefilled: true });
       if (EDUCATION_KEYS.test(key)) already.add(key);
       continue;
@@ -7932,52 +8099,25 @@ function widgetChoices(fields, filled) {
  * that is a search never chosen from (see `widgetShowsThisAnswer`), and still
  * the widget's to answer.
  *
- * And, with no hidden input to say, only text that is a choice: an option
- * the widget marks chosen, a chip drawn beside the box, the whole of an
- * option in a list already on the page, or a whole place, "Cambridge, MA",
- * as Indeed and LinkedIn arrive with. Text in the box alone is no answer.
- * Measured, a School box saying "Type to search" — or "Northea", half typed
- * by the person — and a City box saying "Bost" were all reported "already
- * filled", where before they were chosen in: Northeastern University and
- * Boston were never picked.
+ * And, with no hidden input to say, anything but a hint or the start of this
+ * very answer. "Type to search", "e.g. MIT", the label or the placeholder
+ * written in, or a half-typed "Northea" or "Bost" on the way to the
+ * profile's own answer, are chosen over; whatever else is there is the
+ * person's, and is left. Only a whole option or a whole place used to count,
+ * so a School holding "Harvard University", a City "Cambridge" and an
+ * employer "Globex" typed by the person — with lists that held something
+ * else — were each chosen over with the profile's answer.
  */
-function boxAlreadyHolds(widget) {
+function boxAlreadyHolds(widget, answer) {
   const box = typingBoxOf(widget);
   const typed = clean(box?.value);
   if (!typed || NOTHING_CHOSEN.test(typed)) return false;
   const hidden = hiddenPartner(widget);
   if (hidden) return Boolean(hidden.value);
-  if (typed.toLowerCase() === clean(labelFor(widget)).toLowerCase()) return false;
-  if (typed === clean(box.placeholder)) return false;
-  if (aChoiceIsMarked(widget, box)) return true;
-  const options = namedListsOf(widget).flatMap((l) => [...l.querySelectorAll('[role="option"], [role="menuitem"]')]);
-  if (options.some((o) => clean(o.textContent).toLowerCase() === typed.toLowerCase())) return true;
-  return A_WHOLE_PLACE.test(typed);
-}
-
-/*
- * A place written whole: a town and its state, region or country, each a
- * word of two letters or more. "Cambridge, MA"; "Cambridge, Massachusetts,
- * United States". Never "Bost".
- */
-const A_WHOLE_PLACE = /^\p{L}[\p{L}.'’ -]*\p{L},\s*\p{L}[\p{L}.'’ -]*\p{L}(?:,\s*\p{L}[\p{L}.'’ -]*\p{L})*$/u;
-
-/**
- * Whether a widget marks one of its options chosen without a list opened:
- * the option its `aria-activedescendant` names, marked selected, or a chip or
- * selected value drawn beside its typing box.
- */
-function aChoiceIsMarked(widget, box) {
-  const root = widget.getRootNode();
-  for (const el of new Set([widget, box])) {
-    const id = el?.getAttribute('aria-activedescendant');
-    const option = id ? (root.getElementById?.(id) ?? document.getElementById(id)) : null;
-    if (option && isMarkedChosen(option)) return true;
-  }
-  const control = controlOf(widget);
-  return [...(control.querySelectorAll?.('[class*="chip" i], [class*="selected-value" i], [class*="selectedValue"], [aria-selected="true"]') ?? [])].some(
-    (el) => !el.contains(box) && el !== box && Boolean(clean(el.textContent)),
-  );
+  const said = typed.toLowerCase();
+  if (said === clean(labelFor(widget)).toLowerCase() || said === clean(box.placeholder).toLowerCase()) return false;
+  const wanted = clean(answer).toLowerCase();
+  return !(wanted && said.length < wanted.length && wanted.startsWith(said));
 }
 
 /** Whether a listbox has one of its own options, as `choiceGroupOf` counts them, marked chosen. */
@@ -9126,47 +9266,93 @@ const SCHOOL_GENERIC_TAIL = /^(?:(?:university|college|institute|school|academy|
  * brackets' words were simply more words and neither matched.
  */
 /*
- * Only where the bracket is that: the initials of the name outside it, or a
- * short form made of its words. A bracket holding a degree, a campus or a
- * school within it is part of which school it is, and taken apart it made
- * "Stanford University (MS)" "Boston University (MS)", "University of
- * California (Berkeley)" the one in Los Angeles, Purdue's West Lafayette its
- * Fort Wayne, and "Harvard University (Extension School)" Harvard
- * University. Those are compared whole.
+ * Only where the bracket is that: a short name for the name outside it, or
+ * the name a short one outside it stands for. A bracket holding a campus or
+ * a school within it is part of which school it is, and taken apart it made
+ * "University of California (Berkeley)" the one in Los Angeles, Purdue's
+ * West Lafayette its Fort Wayne, and "Harvard University (Extension School)"
+ * Harvard University. Those are compared whole. A degree in it — "Stanford
+ * University (MS)" — says nothing about which school, and is left off: that
+ * is Stanford University, and never Boston University (MS).
  */
 function schoolNames(text) {
   const said = clean(text);
   const names = [said];
   const bracket = said.match(/^(.*?)\s*[(\[]([^()[\]]+)[)\]]\s*$/);
-  if (bracket && bracketIsAnAlias(bracket[1], bracket[2])) names.push(bracket[1], bracket[2]);
+  if (bracket && DEGREE_IN_A_BRACKET.test(clean(bracket[2]))) names.push(bracket[1]);
+  else if (bracket && bracketIsAnAlias(bracket[1], bracket[2])) names.push(bracket[1], bracket[2]);
   return names.filter(Boolean);
 }
 
-const DEGREE_IN_A_BRACKET = /^(?:[ab]\.?[as]\.?|m\.?[as]\.?|b\.?sc|m\.?sc|ph\.?d|mba|m\.?eng|b\.?eng|bfa|mfa|jd|md|llb|llm|ed\.?d|aa|as|bba|mph|mpp|ms|bs|online|hons?)\.?$/i;
+const DEGREE_IN_A_BRACKET = /^(?:[ab]\.?[as]\.?|m\.?[as]\.?|b\.?sc|m\.?sc|ph\.?d|mba|m\.?eng|b\.?eng|bfa|mfa|jd|md|llb|llm|ed\.?d|aa|as|bba|mph|mpp|ms|bs|hons?)\.?$/i;
 
-/** Whether a school's bracket is another name for what is outside it: "MIT", "Georgia Tech", "Virginia Tech". */
+/*
+ * The words a short name leaves out of the name it stands for: "The Ohio
+ * State University" is OSU, "University of Texas at Austin" UT Austin.
+ */
+const SCHOOL_SMALL_WORDS = new Set(['the', 'of', 'at', 'and', 'in', 'for', 'on', 'de', 'la', 'le', 'du', 'des', 'di', 'del', 'da', 'und', 'fur']);
+const asLetters = (text) => clean(text).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/&/g, ' ');
+
+/** Whether a school's bracket is another name for what is outside it, either way round: "MIT", "Georgia Tech", "Penn State". */
 function bracketIsAnAlias(outside, inside) {
-  const words = schoolKey(outside).split(' ').filter(Boolean);
-  const said = clean(inside);
-  if (!words.length || !said || DEGREE_IN_A_BRACKET.test(said)) return false;
-  const short = schoolKey(said).split(' ').filter(Boolean);
-  if (short.length === 1 && /^[a-z]{2,8}$/.test(short[0])) {
-    // Initials, in order, starting with the first word's: MIT, UCLA, RPI.
-    const initials = clean(outside).split(/[^\p{L}\p{N}]+/u).filter(Boolean).map((w) => w[0].toLowerCase()).join('');
+  if (!clean(outside) || !clean(inside) || DEGREE_IN_A_BRACKET.test(clean(inside))) return false;
+  return shortNameOf(inside, outside) || shortNameOf(outside, inside);
+}
+
+/*
+ * Whether `short` is a short name for `name`: its capitals the initials of
+ * the name's words or letters from inside them, in order, from the first
+ * word's — MIT, UCLA, NEU, OSU, TAMU, EPFL — or words that are the name's,
+ * the start of one or part of one, and capitals for a run of its words, in
+ * order and starting with its first: "Georgia Tech", "Penn State", "UC
+ * Berkeley", "UT Austin", "IIT Bombay". Never a place or a school within it
+ * the name does not say: "West Lafayette", "Extension School".
+ */
+function shortNameOf(short, name) {
+  const words = asLetters(name).split(/[^A-Za-z0-9]+/).filter((w) => w && !SCHOOL_SMALL_WORDS.has(w.toLowerCase()));
+  const parts = asLetters(short).split(/[^A-Za-z0-9]+/).filter(Boolean);
+  if (!words.length || !parts.length) return false;
+  const lower = words.map((w) => w.toLowerCase());
+  if (parts.join('').length >= lower.join('').length) return false;
+  const capitals = (part) => part.length >= 2 && /^[A-Z]+$/.test(part);
+  if (parts.length === 1) {
+    if (!capitals(parts[0])) return false;
+    const want = parts[0].toLowerCase();
+    if (want[0] !== lower[0][0]) return false;
+    const rest = lower.join('').slice(1);
     let at = 0;
-    for (const letter of short[0]) {
-      at = initials.indexOf(letter, at);
-      if (at < 0) break;
+    for (const letter of want.slice(1)) {
+      at = rest.indexOf(letter, at);
+      if (at < 0) return false;
       at++;
     }
-    if (at > 0 && short[0][0] === initials[0] && /^\p{Lu}+$/u.test(said.replace(/[.\s]/g, ''))) return true;
+    return true;
   }
-  // A short form: its first word the name's, and each word one of the name's or part of one ("Tech").
-  return (
-    short.length >= 2 &&
-    short[0] === words[0] &&
-    short.every((w) => words.includes(w) || (w.length >= 3 && words.some((x) => x.includes(w))))
-  );
+  let next = 0;
+  for (const [n, part] of parts.entries()) {
+    const said = part.toLowerCase();
+    if (capitals(part)) {
+      // Initials of the name's words from here on, in order: UC, UT, IIT.
+      let i = next;
+      let first = -1;
+      let matched = 0;
+      for (const letter of said) {
+        while (i < lower.length && lower[i][0] !== letter) i++;
+        if (i >= lower.length) break;
+        if (first < 0) first = i;
+        matched++;
+        i++;
+      }
+      if (matched === said.length && (n > 0 || first === 0)) {
+        next = i;
+        continue;
+      }
+    }
+    const found = lower.findIndex((w, i) => i >= next && (w === said || (said.length >= 3 && (n === 0 ? w.startsWith(said) : w.includes(said)))));
+    if (found < 0 || (n === 0 && found !== 0)) return false;
+    next = found + 1;
+  }
+  return true;
 }
 
 function sameSchool(a, b) {
