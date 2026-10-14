@@ -99,6 +99,40 @@ function fakeStore() {
       return;
     }
 
+    /*
+     * The store refusing this extension until it pairs, as ResumeM-M's guard
+     * does: every route but the pairing one, and /health saying so. See
+     * "Pairing from a card, one exchange for every tab".
+     */
+    if (state.pairing) {
+      const token = req.headers['x-rmm-pair'];
+      const paired = Boolean(state.pairing.token) && token === state.pairing.token;
+      if (url === '/api/extension/pair') {
+        state.pairing.exchanges += 1;
+        await new Promise((r) => setTimeout(r, state.pairing.delay ?? 0));
+        const code = String(JSON.parse(raw || '{}').code ?? '').toUpperCase().replace(/[\s-]/g, '');
+        res.writeHead(code === state.pairing.code ? 200 : 400, { 'content-type': 'application/json' });
+        if (code !== state.pairing.code) {
+          res.end(JSON.stringify({ kind: 'bad-code', triesLeft: 4, error: 'That is not the code ResumeM-M is showing. 4 tries left.' }));
+          return;
+        }
+        state.pairing.code = null;
+        state.pairing.token = `token-${'x'.repeat(40)}`;
+        res.end(JSON.stringify({ ok: true, token: state.pairing.token, origin: req.headers.origin ?? null }));
+        return;
+      }
+      if (!paired && url === '/health') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, service: 'resumem-m', projectOpen: true, paired: false }));
+        return;
+      }
+      if (!paired && url.startsWith('/api')) {
+        res.writeHead(403, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ kind: 'not-paired', error: 'This browser extension is not paired with ResumeM-M.' }));
+        return;
+      }
+    }
+
     // The store's own guard, as `src/server/index.ts` writes it.
     if (state.strict && url.startsWith('/api')) {
       const meant = req.headers['x-rmm-project'];
@@ -231,6 +265,10 @@ function fakeStore() {
     });
   });
 }
+
+/** The pairing token the extension keeps for a store, read from one of its pages. */
+const pairingTokenIn = (page, base) =>
+  page.evaluate(async (s) => (await chrome.storage.local.get('rmmPairing')).rmmPairing?.[new URL(s).origin] ?? null, base);
 
 /** One message to the worker, from a page inside the extension. */
 const ask = (page, type, payload = {}) =>
@@ -1011,7 +1049,8 @@ async function main() {
       const PAIRS = [
         ['the work mode on one side', 'CrowdStrike', 'Software Engineer – Sensor, Sensor Performance and Stability (Hybrid)', 'Software Engineer – Sensor, Sensor Performance and Stability'],
         ['the season and year in either order', 'Careers Americas', 'Software Engineer Intern, 2027 Summer U.S.', 'Software Engineer Intern, Summer 2027 U.S.'],
-        ['a bracketed season on one side', 'Figma', 'Software Engineer Intern', 'Software Engineer Intern (Summer 2027)'],
+        ['a gender tag on one side', 'Müller & Söhne GmbH', 'Werkstudent Softwareentwicklung (m/w/d)', 'Werkstudent Softwareentwicklung'],
+        ['a French gender tag written two ways', 'Société Générale', 'Stagiaire Ingénieur Logiciel F/H', 'Stagiaire Ingénieur Logiciel (H/F)'],
         ['the employer’s spelling of a dash and an apostrophe', 'Intel', 'Software Engineering - Intern, Bachelor’s', "Software Engineering Intern, Bachelor's"],
       ];
       const thisTab = await driver.evaluate(async () => (await chrome.tabs.getCurrent()).id);
@@ -1058,6 +1097,64 @@ async function main() {
             : got.reply?.data?.work?.letter !== 'OWN-LETTER',
           JSON.stringify(got.reply?.data ?? null),
         );
+      }
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+    }
+
+    /*
+     * Round 24: two live postings that differ in how the job is worked, and a
+     * season on one side only.
+     *
+     * The work mode came off both titles before they were compared, so
+     * "Software Engineer - Remote" and "Software Engineer - Hybrid" — two
+     * postings one employer runs side by side — were one job, and the remote
+     * one's letter was handed to the hybrid one's card. And "Software
+     * Engineer Intern" against "… (Summer 2027)" was the same job for any
+     * tab's park, where it is the next intake's as often as not: only this
+     * tab's own, which went from the board to the form and back, may read
+     * them as one. The suffixes come off in either order, so "(Remote)
+     * (Summer 2027)" and "(Summer 2027) (Remote)" behave alike.
+     */
+    group('Two work modes are two jobs, and a season on one side is the same job only for this tab');
+    {
+      const WHERE = 'https://www.linkedin.com/jobs/view/4888888888/';
+      const thisTab = await driver.evaluate(async () => (await chrome.tabs.getCurrent()).id);
+      const CASES = [
+        ['two work modes, from a closed tab', 'Software Engineer - Remote', 'Software Engineer - Hybrid', 987654, false],
+        // This tab's own still comes back, as `pickParked` gives a tab its own whatever the page is
+        // called — but named as the other job's, because to `sameJob` it is not this one.
+        ['two work modes, from this tab', 'Software Engineer (Remote)', 'Software Engineer - Hybrid', 'this', 'named'],
+        ['a work mode on one side only', 'Software Engineer - Remote', 'Software Engineer', 987654, true],
+        ['a bracketed season on one side, from a closed tab', 'Software Engineer Intern', 'Software Engineer Intern (Summer 2027)', 987654, false],
+        ['a bracketed season on one side, from this tab', 'Software Engineer Intern', 'Software Engineer Intern (Summer 2027)', 'this', true],
+        ['a mode and a season in one order', 'Software Engineer Intern (Remote) (Summer 2027)', 'Software Engineer Intern (Summer 2027)', 987654, true],
+        ['a mode and a season in the other order', 'Software Engineer Intern (Summer 2027) (Remote)', 'Software Engineer Intern (Summer 2027)', 987654, true],
+        ['a mode, a season and nothing, from a closed tab', 'Software Engineer Intern (Remote) (Summer 2027)', 'Software Engineer Intern', 987654, false],
+        ['a season and a mode and nothing, from a closed tab', 'Software Engineer Intern (Summer 2027) (Remote)', 'Software Engineer Intern', 987654, false],
+      ];
+      store.save = 'work';
+      for (const [what, parkedRole, role, tab, back] of CASES) {
+        await ask(driver, 'clearTrail', {});
+        await driver.evaluate(
+          ([key, job, tab]) =>
+            chrome.storage.session.set({ [key]: { parked: [{ work: { letter: 'MODE-LETTER' }, save: 'work', job, tab, at: Date.now() }], at: Date.now() } }),
+          [`jh-orphan:${WHERE}`, { company: 'Figma', role: parkedRole }, tab === 'this' ? thisTab : tab],
+        );
+        store.role = role;
+        store.company = 'Figma';
+        await ask(driver, 'analyze', { url: WHERE, title: role, html: '<p>posting</p>', company: 'Figma' });
+        const got = await ask(driver, 'takeWork', { page: { url: WHERE, title: role } });
+        const letter = got.reply?.data?.work?.letter;
+        if (back === 'named') {
+          check(
+            `${what}: the letter comes back named as the other job's`,
+            letter === 'MODE-LETTER' && got.reply?.data?.recoveredFor === `${parkedRole} at Figma`,
+            JSON.stringify(got.reply?.data ?? null),
+          );
+        } else {
+          check(`${what}: ${back ? 'the letter comes back' : 'the letter is left parked'}`, (letter === 'MODE-LETTER') === back, JSON.stringify(got.reply?.data ?? null));
+        }
       }
       store.role = 'Platform Engineer';
       store.company = undefined;
@@ -3189,6 +3286,85 @@ async function main() {
         `${toStore.length} requests, ${without.length} without: ${[...new Set(without.map((h) => h.url))].slice(0, 5).join(', ')}`,
       );
       check('empty, since nothing here was ever paired', toStore.every((h) => h.pair === ''), [...new Set(toStore.map((h) => h.pair))].join(','));
+    }
+
+    /*
+     * Pairing from a card, one exchange for every tab.
+     *
+     * A store that refuses this extension used to leave the card with a
+     * sentence pointing at the popup. The code box is on the card now, and
+     * on every card that was refused — so the same code can be pressed in
+     * two places at once, and each exchange the store sees is one of the
+     * extension's five tries. The worker holds one exchange: the second
+     * press joins the first, and every tab's card hears it paired and
+     * carries on, without asking again.
+     *
+     * Last, because it leaves the extension paired, and "The pairing header"
+     * above is about one that never was.
+     */
+    group('Pairing from a card, one exchange for every tab');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1><p>Helios is hiring a Platform Engineer. Responsibilities: build the
+          platform. Requirements: Kubernetes, Go. Apply now to join our team.</p>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = (n) => `http://127.0.0.1:${site.address().port}/jobs/platform-engineer-${n}`;
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+      store.pairing = { code: 'GOODCODE', token: null, exchanges: 0, delay: 1500 };
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      const box = (page) => page.locator('#jobhelper-card-host input.pair-code');
+      const build = (page) => page.locator('#jobhelper-card-host button', { hasText: /^Build resume$/ });
+      const seen = {};
+      const a = await context.newPage();
+      const b = await context.newPage();
+      try {
+        await a.goto(where('a'));
+        await b.goto(where('b'));
+        await box(a).waitFor({ timeout: 15_000 });
+        await box(b).waitFor({ timeout: 15_000 });
+        seen.boxes = true;
+        // A wrong code first, from tab A: the store's sentence, tries and all.
+        await a.bringToFront();
+        await box(a).fill('WRONG-ONE');
+        await a.locator('#jobhelper-card-host button', { hasText: /^Pair$/ }).click();
+        seen.wrong = await a
+          .locator('#jobhelper-card-host .pair-said')
+          .filter({ hasText: /tries left/ })
+          .textContent({ timeout: 10_000 })
+          .catch(() => null);
+        const before = store.pairing.exchanges;
+        // The right one, pressed on tab A's card and from the popup at once.
+        await box(a).fill('good-code');
+        await a.locator('#jobhelper-card-host button', { hasText: /^Pair$/ }).click();
+        const fromPopup = await ask(driver, 'pair', { code: 'GOODCODE' });
+        seen.popup = fromPopup.reply;
+        seen.exchanges = store.pairing.exchanges - before;
+        // Both cards carry on: the page read again, and the proposal up.
+        await build(a).waitFor({ timeout: 15_000 });
+        await build(b).waitFor({ timeout: 15_000 });
+        seen.carriedOn = true;
+        seen.boxesAfter = (await box(a).count()) + (await box(b).count());
+        seen.token = await pairingTokenIn(driver, store.base);
+      } catch (err) {
+        seen.error = String(err?.message ?? err);
+      } finally {
+        await a.close();
+        await b.close();
+        site.close();
+        store.pairing = null;
+        await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: false }));
+        await driver.evaluate(() => chrome.storage.local.remove('rmmPairing'));
+      }
+      check('both refused tabs put the code box on their cards', seen.boxes === true, JSON.stringify(seen));
+      check('a wrong code on a card says how many tries are left', /4 tries left/.test(seen.wrong ?? ''), String(seen.wrong));
+      check('the same code pressed on a card and in the popup at once is one exchange', seen.exchanges === 1, String(seen.exchanges));
+      check('and both are told it paired', seen.popup?.ok === true && seen.popup.data?.paired === true, JSON.stringify(seen.popup));
+      check('both tabs carry on to the proposal without asking again', seen.carriedOn === true && seen.boxesAfter === 0, JSON.stringify(seen));
+      check('and the token is kept for the store', typeof seen.token === 'string' && seen.token.startsWith('token-'), String(seen.token));
     }
   } finally {
     await context.close();

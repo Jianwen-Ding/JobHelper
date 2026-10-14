@@ -573,16 +573,59 @@ export function plainlyAnotherRole(a, b) {
  * stay two names, because those can be two companies; "Acme, Inc." and
  * "Acme" cannot. A name that is nothing but a legal form is left as it was.
  */
+/*
+ * With its dots, and in the forms companies take outside the Anglo list:
+ * "Société Générale S.A.", "Telefónica, S.L.", "Acme S.r.l.", "Acme S.p.A.",
+ * "Acme SARL", "Acme Ltda.", "Acme e.V.", "Acme GmbH & Co. KG", "Acme A/S",
+ * "Acme ApS", "Acme Oyj". Each was a different employer from the same name
+ * without it, so a posting's JSON-LD and the form it hands you to — which
+ * writes the name plain — came back `different`. "GmbH & Co. KG" is one
+ * form, taken off in one piece: "Co." on its own in front of a "KG" is not a
+ * company called Co.
+ *
+ * The same pattern, byte for byte, as ResumeM-M's `LEGAL_FORM` in
+ * src/jobs/names.ts, so the two sides agree on what one employer is.
+ */
 const LEGAL_FORM =
-  /[\s,]+(inc|incorporated|llc|l\.l\.c|ltd|limited|corp|corporation|co|plc|gmbh|ag|sa|nv|bv|pty|oy|ab|lp|llp)\.?$/;
+  /[\s,]+(?:personnel[\s,]+)?(?:inc|incorporated|llc|l\.l\.c|ltd|limited|corp|corporation|co|plc|gmbh(?:\s*&\s*co\.?\s*kg(?:aa)?)?|ag|s\.?a|n\.?v|b\.?v|pty|oy|oyj|ab|lp|llp|s\.?l|s\.?r\.?l|s\.?p\.?a|s\.?a\.?s|sarl|ltda|e\.?v|kg|a\/s|aps)\.?$/i;
+/*
+ * And the Japanese forms, which go in front as often as behind: 株式会社リクルート
+ * and リクルート株式会社 are one company, as are (株)リクルート and ㈱リクルート.
+ * Also ResumeM-M's, byte for byte.
+ */
+const JP_LEGAL_FORM =
+  /^(?:株式会社|有限会社|合同会社|合資会社|\(株\)|（株）|㈱|\(有\)|（有）|㈲)\s*|\s*(?:株式会社|有限会社|合同会社|合資会社|\(株\)|（株）|㈱|\(有\)|（有）|㈲)$/u;
 
 export function employerKey(name) {
   let n = String(name ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
   for (;;) {
-    const next = n.replace(LEGAL_FORM, '').trim();
+    const next = n.replace(LEGAL_FORM, '').replace(JP_LEGAL_FORM, '').trim();
     if (next === n || !next) return n;
     n = next;
   }
+}
+
+/*
+ * The gender tag a German or French posting puts after its title — "(m/w/d)",
+ * "(w/m/d)", "(m/f/d)", "(d/m/w)", "(H/F)", "F/H", "(all genders)", "(gn)" —
+ * which says who may apply and nothing about the job. The employer's own form
+ * writes the title without it, so "Werkstudent Softwareentwicklung (m/w/d)"
+ * and "Werkstudent Softwareentwicklung" were two jobs to `titleKey`. Anywhere
+ * in the title: "Softwareentwickler (m/w/d) - Remote" carries it before the
+ * work mode. Written bare only in the few shapes a posting uses, so "A/B" and
+ * "C/C++" are left alone; and only two to four single letters. The same
+ * pattern as ResumeM-M's `GENDER_TAG` in src/jobs/names.ts.
+ */
+const GENDER_TAG =
+  /\s*(?:\(\s*(?:[mwfdhx](?:\s*\/\s*[mwfdhx]){1,3}|all\s+genders|gn)\s*\)|(?<![\p{L}\p{N}])(?:[mwf]\/[mwf](?:\/[dx])?|[hf]\/[hf]|d\/m\/w)(?![\p{L}\p{N}]))/giu;
+
+/** The title without its gender tag, and with the spacing that leaves tidied. */
+export function withoutGenderTag(title) {
+  return String(title ?? '')
+    .replace(GENDER_TAG, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([,;:)\]])/g, '$1')
+    .trim();
 }
 
 /*
@@ -604,8 +647,12 @@ export function employerKey(name) {
  * together is not punctuation. `+` and `#` are kept too: they are the
  * difference between C++, C# and C, and a title is where that matters.
  */
+/*
+ * And without a gender tag, which is the one word a title adds that is never
+ * part of the job: see `withoutGenderTag`.
+ */
 export function titleKey(title) {
-  return String(title ?? '')
+  return withoutGenderTag(title)
     .normalize('NFKC')
     .toLowerCase()
     .replace(/[^\p{L}\p{N}+#]+/gu, ' ')
@@ -1263,8 +1310,16 @@ const OPTION_STATE_CLASS = /selected|highlighted|focused|focusvisible|^css-|^ant
  * the heavy posting in tests/fixtures.mjs (7,800 elements, 590kB) this pass
  * took the capture from about 10ms to about 14ms.
  */
+/*
+ * And the same labels as German, French, Spanish, Portuguese, Dutch and
+ * Japanese forms write them — Geburtsdatum, Geschlecht, Telefonnummer,
+ * Adresse; Date de naissance, Sexe; Fecha de nacimiento, Género;
+ * Geboortedatum; 生年月日, 性別, 電話番号, 住所 — each of which went to the
+ * AI with its answer. The Japanese ones sit outside the `\b` group: a word
+ * boundary wants a word character, and a kanji is not one.
+ */
 const STATED_PERSONAL =
-  /\b(ssn|social\s*security|national\s*insurance|tax\s*(id|identification)|(date|day|month|year|place|country|city|town)\s*of\s*birth|birth\s*(date|day|place|country|city|town)|medica(re|id)(\s*(\/|or|and|&)\s*medica(re|id))?\s*(number|no\.?|#|id|card)|dob|age|passport|driver'?s?\s*licen[cs]e|visa\s*number|(account|card|routing)\s*number|iban|sort\s*code|gender|sex|transgender|non-?binary|sexual\s*orientation|lgbt\w*|race|ethnicit(y|ies)|hispanic|latin[oaxe]s?|national\s*origin|indigenous|aboriginal|veteran|disab(led|ility|ilities)|criminal|convict\w*|felon(y|ies)|religion|marital|pregnan\w*|(e-?mail|phone|mobile|cell|telephone)\s*(address|number|no\.?)|(home|mailing|residential|street|permanent|current)\s*address|address\s*line|zip\s*code|postal\s*code|postcode)\b/i;
+  /\b(geburts(datum|tag|ort)|geschlecht|staatsangeh[öo]rigkeit|telefon(nummer)?|handynummer|adresse|anschrift|postleitzahl|date\s+de\s+naissance|lieu\s+de\s+naissance|sexe|nationalit[ée]|num[ée]ro\s+de\s+t[ée]l[ée]phone|adresse\s+postale|fecha\s+de\s+nacimiento|lugar\s+de\s+nacimiento|g[ée]nero|sexo|nacionalidad|tel[ée]fono|direcci[óo]n|data\s+de\s+nascimento|telefone|endere[çc]o|geboortedatum|geboorteplaats|geslacht|nationaliteit|telefoonnummer|adres|postcode|ssn|social\s*security|national\s*insurance|tax\s*(id|identification)|(date|day|month|year|place|country|city|town)\s*of\s*birth|birth\s*(date|day|place|country|city|town)|medica(re|id)(\s*(\/|or|and|&)\s*medica(re|id))?\s*(number|no\.?|#|id|card)|dob|age|passport|driver'?s?\s*licen[cs]e|visa\s*number|(account|card|routing)\s*number|iban|sort\s*code|gender|sex|transgender|non-?binary|sexual\s*orientation|lgbt\w*|race|ethnicit(y|ies)|hispanic|latin[oaxe]s?|national\s*origin|indigenous|aboriginal|veteran|disab(led|ility|ilities)|criminal|convict\w*|felon(y|ies)|religion|marital|pregnan\w*|(e-?mail|phone|mobile|cell|telephone)\s*(address|number|no\.?)|(home|mailing|residential|street|permanent|current)\s*address|address\s*line|zip\s*code|postal\s*code|postcode)\b|生年月日|性別|電話番号|住所|国籍|年齢/i;
 const CONTROL =
   'input, select, textarea, button, [contenteditable], [role="radio"], [role="checkbox"], [role="option"], [role="combobox"], [role="listbox"], [role="radiogroup"]';
 

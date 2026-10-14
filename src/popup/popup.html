@@ -149,6 +149,53 @@
   .pairing input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }
   .pairing .said { font-size: 11px; margin-top: 6px; color: var(--warn); }
   .pairing .said:empty { display: none; }
+
+  /*
+   * Logging an error to ResumeM-M's error log: what went wrong, screenshots
+   * pasted or captured, and how far back the automatic logs go. Hidden until
+   * asked for — the button below, or Alt+Shift+E. See error-log.js.
+   */
+  .error-log {
+    margin-top: 12px; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--panel-sunk);
+  }
+  .error-log textarea {
+    width: 100%; min-height: 54px; font: inherit; padding: 7px 10px; border: 1px solid var(--line);
+    border-radius: 4px; background: #fff; color: var(--ink); resize: vertical;
+  }
+  .error-log textarea:focus-visible { outline: 0; border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .error-log .paste {
+    margin-top: 8px; padding: 9px; border: 1px dashed var(--line); border-radius: 6px;
+    font-size: 11px; color: var(--muted); text-align: center; cursor: pointer; background: #fff;
+  }
+  .error-log .paste:focus-visible, .error-log .paste.over { border-color: var(--accent); background: var(--accent-soft); outline: 0; }
+  .error-log .shots { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .error-log .shots:empty { display: none; }
+  .error-log figure { margin: 0; display: grid; gap: 3px; justify-items: start; }
+  .error-log figure img { max-width: 88px; max-height: 60px; border: 1px solid var(--line); border-radius: 4px; object-fit: contain; background: #fff; }
+  .error-log figure button { padding: 1px 8px; font-size: 11px; }
+  .error-log .window { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+  .error-log .window select { width: auto; padding: 3px 6px; }
+  .error-log .said { font-size: 11px; margin-top: 8px; color: var(--muted); line-height: 1.5; }
+  .error-log .said.err { color: var(--bad); }
+  .error-log .said.ok { color: var(--good); }
+  .error-log .said:empty { display: none; }
+  .queued { font-size: 11px; color: var(--warn); margin-top: 8px; }
+  .queued:empty { display: none; }
+  /* Kept in the browser is not refused: amber, as the queue line is. */
+  .error-log .said.warn { color: var(--warn); }
+  /* Two labels side by side wrapped to two lines each in the popup's width: one above the other, full width. */
+  .error-log .row.actions { flex-direction: column; }
+  .error-log .row.actions button { width: 100%; white-space: nowrap; }
+  .error-log .contact { font-size: 11px; color: var(--warn); margin-top: 4px; line-height: 1.5; }
+  .error-log .contact[hidden] { display: none; }
+  .error-log .hint { font-size: 11px; color: var(--muted); margin: 8px 0 0; line-height: 1.5; }
+  /* Refused by ResumeM-M: said in red, with its words to copy before they go. */
+  .refused { font-size: 11px; color: var(--bad); margin-top: 8px; line-height: 1.5; overflow-wrap: anywhere; }
+  .refused:empty { display: none; }
+  .refused .row { margin-top: 6px; }
+  .refused textarea { margin-top: 6px; font-size: 11px; }
+  .refused .copied { color: var(--good); }
 </style>
 </head>
 <body>
@@ -168,11 +215,11 @@
 </div>
 
 <div class="pairing" id="pairing" hidden>
-  <div class="what" id="pairingWhat">JobHelper is not paired with ResumeM-M yet. Open ResumeM-M → Save &amp; Files → Pair JobHelper, and enter the code here.</div>
+  <div class="what" id="pairingWhat">JobHelper is not paired with ResumeM-M yet. Enter the code from ResumeM-M → Save &amp; Files → Pair JobHelper here — “Get a code” opens it with one ready.</div>
   <input type="text" id="pairCode" placeholder="ABCD-EFGH" autocomplete="off" spellcheck="false" maxlength="12" aria-label="Pairing code">
   <div class="row">
     <button id="pairButton" class="primary">Pair</button>
-    <button id="pairOpen">Open ResumeM-M</button>
+    <button id="pairOpen" title="Opens ResumeM-M in a new tab, with a code already made">Get a code</button>
   </div>
   <div class="said" id="pairSaid" role="status"></div>
 </div>
@@ -240,7 +287,34 @@
 <!-- A status: what it says changes as the server answers, and a screen
      reader was never told, so "Connected" or "not running" went unheard. -->
 <div class="status" id="status" role="status">Checking server…</div>
-<div class="row"><button id="reportBug">Report a bug</button></div>
+<div class="row"><button id="logError" title="Alt+Shift+E">Log an error</button><button id="reportBug">Report a bug</button></div>
+<div class="queued" id="errorLogQueued" role="status"></div>
+<div class="refused" id="errorLogRefused"></div>
+
+<!-- Logged to ResumeM-M's error log, with this extension's own record of the
+     minutes before. Kept in the browser, and sent later, when ResumeM-M cannot
+     be reached. See error-log.js. -->
+<section class="error-log" id="errorLogForm" aria-labelledby="errorLogTitle" hidden>
+  <div class="lbl" id="errorLogTitle">Log an error</div>
+  <textarea id="errorDescription" rows="2" placeholder="What went wrong, in a line or two" aria-label="What went wrong"></textarea>
+  <div class="contact" id="errorLogContact" aria-live="polite" hidden></div>
+  <div class="paste" id="errorPaste" tabindex="0" role="button" aria-label="Add screenshots: paste, drop, or choose a file">Paste a screenshot (Ctrl+V), drop one here, or click to choose</div>
+  <input type="file" id="errorFile" accept="image/png,image/jpeg,image/webp" multiple hidden>
+  <div class="shots" id="errorShots" aria-live="polite"></div>
+  <label class="window">Automatic logs from
+    <select id="errorMinutes">
+      <option value="2">the last 2 minutes</option>
+      <option value="10" selected>the last 10 minutes</option>
+      <option value="30">the last 30 minutes</option>
+    </select>
+  </label>
+  <div class="row actions">
+    <button id="captureTab" title="A screenshot of the page in front of you">Capture this tab</button>
+    <button id="saveErrorLog" class="primary">Save to error log</button>
+  </div>
+  <div class="said" id="errorLogSaid" role="status"></div>
+  <p class="hint" id="errorLogHint">Contact details and tokens are taken out of the automatic logs; tokens are also taken out of your description.</p>
+</section>
 
 <script src="popup.js" type="module"></script>
 </body>

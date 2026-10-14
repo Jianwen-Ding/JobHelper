@@ -182,6 +182,29 @@ To keep reports in this workspace, use the absolute path to
 after updating. This feature requires the updated server for the file copy;
 browser storage still works on its own.
 
+## Logging an error
+
+**Log an error** in the popup — or **Alt+Shift+E** on any page, which opens the
+popup on the form — writes an entry in ResumeM-M's error log: a git repository
+of its own, apart from your saves (see ResumeM-M's README). Say what went wrong
+in a line or two, paste a screenshot (Ctrl+V), drop one, choose one, or press
+**Capture this tab**, choose how far back the automatic logs go (2, 10 or 30
+minutes), and **Save to error log**.
+
+The entry carries JobHelper's own record of those minutes: calls to ResumeM-M
+that failed (route, status, what the server said), errors in the extension's
+code on the page, the red strips the card showed, and which actions ran —
+analyze, stage, fill, send — and how they ended. Never a field's value, an
+answer, a letter or a resume. ResumeM-M adds its own record and takes contact
+details and tokens out of every line before writing it.
+
+If ResumeM-M is not running, or JobHelper is not paired with it yet, the entry
+is kept in the browser (the five newest at most; without its screenshots if
+the browser has no room for them) and sent the next time ResumeM-M answers.
+The popup says how many are waiting. Logging needs pairing like everything
+else; the bug-report inbox below does not, and reports sent there are copied
+into the error log as well.
+
 ## Tests
 
 ```bash
@@ -205,6 +228,12 @@ RMM_SERVER=http://127.0.0.1:4788 npm test
 `RMM_SERVER` reaches the extension too, not only the harness's own requests, so
 the card under test talks to the scratch store rather than to whatever is on
 the default port.
+
+`tests/error-log.mjs` (in `npm test`) drives the error-log form against a fake
+store. `tests/error-log-e2e.mjs` is the same against a real ResumeM-M, and is
+left out of `npm test` because it writes an entry into that server's error
+log: run it against a server started with a throwaway `HOME` or
+`RMM_ERROR_LOG_DIR`, on the same machine.
 
 ### Several at a time
 
@@ -267,7 +296,7 @@ to build and never look at. Looking at that output is how several of the bugs th
 | `<all_urls>` content script | A posting can be on any domain |
 | `http://127.0.0.1/*` | Reaching your local ResumeM-M server |
 | `storage` | Settings |
-| `activeTab`, `tabs`, `scripting` | Acting on the page you are looking at |
+| `activeTab`, `tabs`, `scripting` | Acting on the page you are looking at, and **Capture this tab** for an error-log entry |
 
 Page content is sent to `127.0.0.1` only, and only after the local score says
 the page looks like a job posting. Nothing is sent anywhere else.

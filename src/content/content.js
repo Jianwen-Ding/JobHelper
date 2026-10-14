@@ -74,7 +74,42 @@
     if (err?.quiet || orphaned) return;
     if (/context invalidated/i.test(err?.message ?? '')) return orphan();
     console.debug('[JobHelper]', err?.message ?? err);
+    forwardError('content-error', 'warn', err?.message ?? String(err));
   };
+
+  /*
+   * Errors in this extension's own code on this page, told to the worker for
+   * ResumeM-M's error log (see shared/error-log.js). Only ours: the page's
+   * own scripts throw on every other site there is, and none of it is
+   * JobHelper's to keep. The same sentence once a minute at most, since a
+   * timer that fails fails every time it runs.
+   */
+  const forwarded = new Map();
+  function forwardError(kind, level, message) {
+    const said = String(message ?? '').slice(0, 1000);
+    if (!said || orphaned) return;
+    const last = forwarded.get(said) ?? 0;
+    if (Date.now() - last < 60_000) return;
+    forwarded.set(said, Date.now());
+    if (forwarded.size > 50) forwarded.delete(forwarded.keys().next().value);
+    send('logEvents', { events: [{ kind, level, message: said }] }).catch(() => undefined);
+  }
+  const ours = (text) => String(text ?? '').includes('chrome-extension://');
+  const onPageError = (event) => {
+    if (!ours(event.filename) && !ours(event.error?.stack)) return;
+    forwardError('content-error', 'error', `${event.message || 'An error with no message'} (${String(event.filename ?? '').split(/[?#]/)[0].split('/').pop()}:${event.lineno ?? 0})`);
+  };
+  const onPageRejection = (event) => {
+    const reason = event.reason;
+    if (reason?.quiet || !ours(reason?.stack)) return;
+    forwardError('content-error', 'error', `Nobody caught: ${reason?.message ?? String(reason)}`);
+  };
+  window.addEventListener('error', onPageError);
+  window.addEventListener('unhandledrejection', onPageRejection);
+  teardown.push(() => {
+    window.removeEventListener('error', onPageError);
+    window.removeEventListener('unhandledrejection', onPageRejection);
+  });
 
   const send = (type, payload) =>
     new Promise((resolve, reject) => {
@@ -375,8 +410,25 @@
    * is not a reason to read the page unasked. Jenkins serves every page under
    * `/job/`, build logs included. See `worthReading` in `show`.
    */
+  /*
+   * And the same segment in the languages a careers site is served in — the
+   * words ResumeM-M's `ELSEWHERE_CAREERS` already refuses as an employer's
+   * name. A German employer's own posting lives at `/karriere/…`, a French
+   * one at `/emplois/…` or `/offres/…`, a Dutch one at `/vacatures/…`, a
+   * Japanese one at `/採用/…` (percent-encoded in the address, so the address
+   * is decoded before it is read). Each scored two points under its English
+   * twin, and with no English words on the page either the chip never came.
+   * The server's `JOB_PATH` in extract.ts carries the same words.
+   */
   const IN_A_JOBS_AREA =
-    /\/(jobs?|careers?|opening|openings|position|positions|vacanc(y|ies)|apply|application|hiring|req|requisition)(\/|$|[?#])/i;
+    /\/(jobs?|careers?|opening|openings|position|positions|vacanc(y|ies)|apply|application|hiring|req|requisition|karriere|stellenangebote?|stellen|bewerben|bewerbung|emplois?|offres|carri[eè]res?|empleos?|vacantes|vagas|carreiras?|vacatures|werken-bij|採用|求人)(\/|$|[?#])/iu;
+  const decodedHref = (href) => {
+    try {
+      return decodeURIComponent(href);
+    } catch {
+      return href;
+    }
+  };
 
   function localScore() {
     let score = 0;
@@ -400,7 +452,7 @@
     if (ON_A_BOARD.test(location.hostname)) {
       score += 3;
     }
-    if (IN_A_JOBS_AREA.test(url)) {
+    if (IN_A_JOBS_AREA.test(decodedHref(url))) {
       score += 2;
     }
 
@@ -413,6 +465,27 @@
       'about the role', 'we are looking for', "we're looking for", 'join our team',
       'requirements', 'benefits', 'compensation', 'salary range',
       'full-time', 'part-time', 'internship', 'new grad', 'employment type', 'requisition',
+      /*
+       * And the same headings in the languages postings come in. A German
+       * posting with no JSON-LD — "Deine Aufgaben", "Dein Profil", "Wir
+       * bieten", "Jetzt bewerben" — had none of a posting's words by this
+       * list and scored two for its address alone, under `minScore`, so the
+       * chip never came up on it while it did on the same page in English.
+       * Lower-cased, as `readableText` is. The server's `DESCRIPTION_WORDS`
+       * in extract.ts carries the same words.
+       */
+      // German
+      'aufgaben', 'dein profil', 'ihr profil', 'wir bieten', 'jetzt bewerben', 'stellenbeschreibung', 'anforderungen', 'wir suchen', 'praktikum',
+      // French
+      'missions', 'profil recherché', 'postuler', 'vos missions', 'votre profil', 'nous recherchons',
+      // Spanish
+      'requisitos', 'ofrecemos', 'inscribirse', 'funciones', 'buscamos', 'prácticas',
+      // Portuguese
+      'benefícios', 'candidatar-se', 'responsabilidades', 'procuramos', 'estágio',
+      // Dutch
+      'functie-eisen', 'wij bieden', 'solliciteer', 'functieomschrijving', 'wij zoeken', 'stagiair',
+      // Japanese
+      '応募資格', '勤務地', '応募する', '仕事内容', '雇用形態', '募集',
     ].filter((w) => text.includes(w)).length;
     if (described) score += Math.min(described, 5);
 
@@ -1553,6 +1626,20 @@
        */
       case 'retry':
         return show({ force: true });
+
+      /*
+       * Pairing, from the code box the card puts up when ResumeM-M refuses
+       * this extension. The worker holds the exchange, so a code pressed on
+       * two cards at once is sent once; see `pairOnce`.
+       */
+      case 'pair':
+        return send('pairFromCard', { code: payload.code });
+      /** "Not now" on that box, for this tab; with no `later`, whether it was said. */
+      case 'pairLater':
+        return send('pairLater', payload.later === undefined ? {} : { later: Boolean(payload.later) });
+      /** "Get a code": the editor's pairing section, with a code made. */
+      case 'getPairCode':
+        return send('openPairCode', {});
 
       /** Send the user to ResumeM-M, when that is what the card is offering. */
       case 'openTab':
@@ -3295,6 +3382,15 @@
      * is already a card, it will pick the frame up on its own; if there is
      * not, this is the only notice there will ever be.
      */
+    /*
+     * Paired, from this tab's card or from anywhere else: a card waiting on
+     * a code carries on with what it was doing, without asking again.
+     */
+    if (message?.type === 'jh-paired') {
+      cardHandle?.paired?.();
+      sendResponse({ ok: true });
+      return false;
+    }
     if (message?.type === 'jh-application-frame') {
       if (!cardHandle && !dismissed) show({ viaFrame: true }).catch(() => undefined);
       sendResponse({ ok: true });

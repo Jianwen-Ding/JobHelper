@@ -2668,6 +2668,126 @@ async function main() {
   check('and the question goes, with nothing marked sent', maybeSent.afterSaid === null && !maybeSent.sentMark, JSON.stringify(maybeSent));
 
   /*
+   * Round 26: where it went, inside the card. The whole tracking address was
+   * one long word, and at wide widths (where `.body` does not wrap) it ran
+   * past the card's right edge. Now the host and a short path, linking to the
+   * whole address, and wrapped at any width.
+   */
+  const LONG_SENT = 'https://boards.greenhouse.io/streamlyinc/jobs/4462047454?gh_src=linkedin&utm_source=linkedin_jobs_board_very_long_tracking_parameter_value_that_goes_on';
+  for (const width of [1440, 1024, 360]) {
+    await page.setViewportSize({ width, height: 900 });
+    const placed = await inPage((createCard, url) => {
+      createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Software Engineer Intern, Data Platform', company: 'Streamly' },
+          spec: { id: 'job-streamly', label: 'Streamly', tier: 'temporary' },
+          rationale: [],
+          diff: [],
+          applied: { id: 'streamly-1', at: '2026-09-24T15:00:00.000Z', status: 'applied', maybe: true, url },
+        },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async () => ({}),
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      const said = root.querySelector('.maybe-sent');
+      const link = said?.querySelector('a.sent-at');
+      const card = said?.closest('.job')?.getBoundingClientRect();
+      const box = said?.getBoundingClientRect();
+      // Every line of it, the link's own boxes included, within the card's sides.
+      const rights = [...said.querySelectorAll('*'), said].flatMap((n) => [...n.getClientRects()].map((r) => r.right));
+      return {
+        text: said?.textContent ?? '',
+        shown: link?.textContent,
+        href: link?.getAttribute('href'),
+        title: link?.title,
+        overflow: Math.max(...rights) - (card?.right ?? 0),
+        scroll: said.scrollWidth - said.clientWidth,
+        boxRight: box.right - card.right,
+      };
+    }, LONG_SENT);
+    check(
+      `at ${width}px the maybe-sent address stays inside the card`,
+      placed.overflow <= 1 && placed.scroll <= 1 && placed.boxRight <= 1,
+      JSON.stringify({ overflow: placed.overflow, scroll: placed.scroll, boxRight: placed.boxRight }),
+    );
+    check(
+      `at ${width}px it shows the host and the path, and links to the whole address`,
+      placed.shown === 'boards.greenhouse.io/streamlyinc/jobs/4462047454' && placed.href === LONG_SENT && placed.title === LONG_SENT && !placed.text.includes('utm_source'),
+      JSON.stringify({ shown: placed.shown, text: placed.text }),
+    );
+  }
+  await page.setViewportSize({ width: 1280, height: 720 });
+
+  /*
+   * And the answer travels. Said on the posting, "It's a different job" was
+   * asked again on the form and on the confirmation page: the answer lived
+   * in the card, which is made anew on every page. Carried with the work,
+   * with the row it was given for, the next page's card stands down and
+   * stages with `evenIfSent`; a question there about another sent row is
+   * still asked.
+   */
+  const carriedAnswer = await inPage((createCard) => {
+    const asked = { id: 'stripe-1', at: '2026-09-24T15:00:00.000Z', status: 'applied', maybe: true, url: 'https://www.linkedin.com/jobs/view/4462047454/' };
+    const make = (applied) => {
+      const sent = [];
+      const handle = createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Software Engineer Intern', company: 'Stripe' },
+          spec: { id: 'job-stripe', label: 'Stripe', tier: 'temporary' },
+          rationale: [],
+          diff: [],
+          applied,
+        },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async (action, payload) => {
+          sent.push({ action, payload });
+          if (action === 'render') return { pages: 1, fits: true };
+          if (action === 'stage') {
+            if (!payload?.evenIfSent) return { alreadySent: true, maybe: true, application: { id: applied.id, url: applied.url, appliedAt: applied.at, status: 'applied' } };
+            return { currentDir: '/tmp/x', application: { id: 'stripe-2' } };
+          }
+          return {};
+        },
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      return {
+        handle,
+        sent,
+        said: () => root.querySelector('.maybe-sent')?.textContent ?? null,
+        build: () => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Build resume')?.click(),
+      };
+    };
+    // The form page of the job the person said is different: the posting's card carried its answer.
+    const form = make(asked);
+    const askedBefore = form.said();
+    form.handle.restoreWork({ letter: 'Dear Stripe,', maybeSent: { ...asked, held: true }, anotherJob: true }, false);
+    const askedAfter = form.said();
+    form.build();
+    return new Promise((resolve) =>
+      setTimeout(() => {
+        const stages = form.sent.filter((c) => c.action === 'stage').map((c) => Boolean(c.payload?.evenIfSent));
+        const carriedOn = form.handle.takeWork?.() ?? {};
+        // Another sent row named on the next page: a question of its own.
+        const other = make({ ...asked, id: 'stripe-7', url: 'https://www.linkedin.com/jobs/view/7777777777/' });
+        other.handle.restoreWork({ maybeSent: { ...asked, held: true }, anotherJob: true }, false);
+        resolve({ askedBefore, askedAfter, stages, carriedOn: { anotherJob: carriedOn.anotherJob, maybeSent: carriedOn.maybeSent?.id }, otherAsked: other.said() });
+      }, 2600),
+    );
+  });
+  check('the answer "another job" is carried to the next page, which does not ask again', carriedAnswer.askedBefore !== null && carriedAnswer.askedAfter === null, JSON.stringify(carriedAnswer));
+  check('and its stage goes with evenIfSent, without a refusal first', carriedAnswer.stages.length >= 1 && carriedAnswer.stages.every(Boolean), JSON.stringify(carriedAnswer.stages));
+  check('and travels on with the row it was given for', carriedAnswer.carriedOn.anotherJob === true && carriedAnswer.carriedOn.maybeSent === 'stripe-1', JSON.stringify(carriedAnswer.carriedOn));
+  check('a question about another sent row is still asked', carriedAnswer.otherAsked !== null && carriedAnswer.otherAsked.includes('7777777777'), JSON.stringify(carriedAnswer.otherAsked));
+
+  /*
    * "Saved" has to be about the text that was saved.
    *
    * The request carries a snapshot of the box, which is right. The callback
@@ -7706,6 +7826,533 @@ async function main() {
     const status = /<[^>]*id="status"[^>]*>/.exec(popupHtml)?.[0] ?? '';
     check('the popup’s status line is a status', /role="status"/.test(status), status);
     check('the popup and the panel use the darker faint grey', faintIn(popupHtml) === '#6b7075' && faintIn(panelCss) === '#6b7075', `${faintIn(popupHtml)} ${faintIn(panelCss)}`);
+  }
+
+  /*
+   * The fit line, with the count the PDF really has. It said "Fits on one
+   * page" of everything that fitted, a two-page resume allowed two included —
+   * the one case where the count is news to the person about to send it.
+   */
+  console.log('\nSaying how many pages it fits on');
+  const fitSaid = async (render) =>
+    inPage(async (createCard, given) => {
+      createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Platform Engineer', company: 'Acme' },
+          spec: { id: 'job-acme', label: 'Acme', choices: {} },
+          baseLabel: 'New grad resume',
+          tailor: 'match',
+          diff: [],
+          rationale: [],
+        },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async (action) => (action === 'render' ? given : action === 'stage' ? { currentDir: '/tmp/x' } : {}),
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      [...root.querySelectorAll('button')].find((b) => /Build resume/.test(b.textContent)).click();
+      await new Promise((r) => setTimeout(r, 200));
+      return root.querySelector('.fit')?.textContent ?? null;
+    }, render);
+  const onePage = await fitSaid({ pages: 1, fits: true, maxPages: 1 });
+  check('a one-page resume fits on one page', onePage === 'Fits on one page.', onePage);
+  const twoPages = await fitSaid({ pages: 2, fits: true, maxPages: 2 });
+  check('a two-page resume allowed two fits on two, and says they were allowed', twoPages === 'Fits on 2 pages (2 allowed).', twoPages);
+  const oneOfTwo = await fitSaid({ pages: 1, fits: true, maxPages: 2 });
+  check('and one page of the two allowed is said as one', oneOfTwo === 'Fits on one page (2 allowed).', oneOfTwo);
+  const older = await fitSaid({ pages: 1, fits: true });
+  check('a server that does not say how many were allowed is taken to allow one', older === 'Fits on one page.', older);
+
+  console.log('\nPairing, on the card');
+
+  /*
+   * ResumeM-M refusing this extension for not being paired used to end in a
+   * sentence pointing at four other places. The code box comes to the card
+   * now: put up by the refusal, it pairs, and does again what was refused.
+   * The harness's `onAction` stands in for the worker: `pair` takes one code,
+   * and says how many tries are left for any other, as ResumeM-M does.
+   */
+  const pairingRun = (body, given) =>
+    inPage(
+      new Function(
+        'createCard',
+        'given',
+        `return (async () => {
+          const calls = [];
+          const held = {};
+          const NOT_PAIRED = 'JobHelper is not paired with ResumeM-M yet.';
+          const pairFix = { fix: 'pair', serverUrl: 'http://127.0.0.1:4600/#pair', codeUrl: 'http://127.0.0.1:4600/#save/pair?make=1' };
+          const refused = () => Object.assign(new Error(NOT_PAIRED), { jobhelper: pairFix });
+          const state = { paired: false, later: Boolean(given && given.later), renderRefusals: 1 };
+          const handle = createCard({
+            analysis: given && given.analysed
+              ? { isJobPosting: true, job: { title: 'Platform Engineer', company: 'Acme' }, spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' }, rationale: [] }
+              : null,
+            resumes: [{ id: 'base', label: 'New grad', base: true }],
+            settings: {},
+            questions: [],
+            needsCoverLetter: false,
+            onAction: async (action, payload) => {
+              calls.push([action, payload ?? null]);
+              if (action === 'pairLater') {
+                if (payload && payload.later !== undefined) state.later = payload.later;
+                return { later: state.later };
+              }
+              if (action === 'pair') {
+                if (String(payload.code).toUpperCase().replace(/[\\s-]/g, '') !== 'GOODCODE') {
+                  throw new Error('That is not the code ResumeM-M is showing. 4 tries left.');
+                }
+                state.paired = true;
+                return { paired: true };
+              }
+              if (action === 'retry') return new Promise((r) => (held.retry = r));
+              if (action === 'render') {
+                if (state.renderRefusals-- > 0) throw refused();
+                return { pages: 1, fits: true, maxPages: 1, pdfUrl: '/x.pdf' };
+              }
+              if (action === 'aiStatus') return { active: false, state: 'off' };
+              return {};
+            },
+          });
+          const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+          const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+          const q = (sel) => root.querySelector(sel);
+          const button = (re) => [...root.querySelectorAll('button')].find((b) => re.test(b.textContent.trim()));
+          const type = (text) => {
+            const box = q('input.pair-code');
+            box.value = text;
+            box.dispatchEvent(new Event('input', { bubbles: true }));
+          };
+          return (${body})({ handle, root, calls, held, state, wait, q, button, type, NOT_PAIRED, pairFix });
+        })()`,
+      ),
+      given,
+    );
+
+  const unpairedRead = await pairingRun(async ({ handle, root, calls, held, wait, q, button, type, NOT_PAIRED, pairFix }) => {
+    const out = {};
+    handle.setStatus(NOT_PAIRED, pairFix);
+    await wait(50);
+    out.block = Boolean(q('.pair-block input.pair-code'));
+    out.focused = root.activeElement?.className ?? null;
+    out.redStrip = Boolean(q('.err'));
+    out.getCode = Boolean(button(/^Get a code$/));
+    out.label = q('.progress-label')?.textContent ?? null;
+    // A wrong code: the store's sentence, with the tries left, and the box stays.
+    type('wrongcod');
+    button(/^Pair$/).click();
+    await wait(50);
+    out.wrong = q('.pair-said')?.textContent ?? null;
+    out.stillUp = Boolean(q('.pair-block input.pair-code'));
+    out.retriedEarly = calls.some(([a]) => a === 'retry');
+    // The right one, as people type it, sent with Enter.
+    type('good-code');
+    q('input.pair-code').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await wait(50);
+    out.during = q('.pair-block')?.textContent ?? null;
+    out.sent = calls.filter(([a]) => a === 'pair').map(([, p]) => p.code);
+    out.retried = calls.filter(([a]) => a === 'retry').length;
+    held.retry?.({});
+    await wait(50);
+    out.after = Boolean(q('.pair-block'));
+    return out;
+  });
+  check('a read refused for not being paired puts the code box on the card', unpairedRead.block === true, JSON.stringify(unpairedRead));
+  check('with "Get a code" beside it', unpairedRead.getCode === true);
+  check('and the box has the caret', unpairedRead.focused === 'pair-code', String(unpairedRead.focused));
+  check('instead of the red strip saying the same', unpairedRead.redStrip === false);
+  check('and not "Reading the posting…" over a read that is waiting', !/Reading the posting/.test(unpairedRead.label ?? ''), unpairedRead.label);
+  check('a wrong code says how many tries are left', /4 tries left/.test(unpairedRead.wrong ?? ''), unpairedRead.wrong);
+  check('and keeps the box up, with nothing tried again', unpairedRead.stillUp === true && unpairedRead.retriedEarly === false);
+  check('the right code is sent as typed', JSON.stringify(unpairedRead.sent) === JSON.stringify(['wrongcod', 'good-code']), JSON.stringify(unpairedRead.sent));
+  check('says "Paired — retrying…" where the box was', /Paired — retrying…/.test(unpairedRead.during ?? ''), unpairedRead.during);
+  check('and reads the page again, once', unpairedRead.retried === 1, String(unpairedRead.retried));
+  check('and the box goes once it has', unpairedRead.after === false);
+
+  const refusedPress = await pairingRun(async ({ calls, wait, q, button, type }) => {
+    const out = {};
+    await wait(100);
+    button(/^Build resume$/).click();
+    await wait(100);
+    out.block = Boolean(q('.pair-block input.pair-code'));
+    type('GOODCODE');
+    button(/^Pair$/).click();
+    await wait(300);
+    out.renders = calls.filter(([a]) => a === 'render').length;
+    out.after = Boolean(q('.pair-block'));
+    out.error = q('.err')?.textContent ?? null;
+    return out;
+  }, { analysed: true });
+  check('a button refused for not being paired puts the box up too', refusedPress.block === true, JSON.stringify(refusedPress));
+  check('and is pressed again once paired, so the person carries on', refusedPress.renders === 2 && refusedPress.after === false && !refusedPress.error, JSON.stringify(refusedPress));
+
+  const notNow = await pairingRun(async ({ handle, calls, wait, q, button, NOT_PAIRED, pairFix }) => {
+    const out = {};
+    handle.setStatus(NOT_PAIRED, pairFix);
+    await wait(50);
+    button(/^Not now$/).click();
+    await wait(50);
+    out.block = Boolean(q('.pair-block'));
+    out.told = calls.filter(([a, p]) => a === 'pairLater' && p && p.later === true).length;
+    out.line = q('.err.pair-later')?.textContent ?? null;
+    button(/^Pair JobHelper$/).click();
+    await wait(50);
+    out.back = Boolean(q('.pair-block input.pair-code'));
+    out.untold = calls.filter(([a, p]) => a === 'pairLater' && p && p.later === false).length;
+    return out;
+  });
+  check('"Not now" takes the box away', notNow.block === false, JSON.stringify(notNow));
+  check('and tells the worker, for this tab', notNow.told === 1);
+  check('leaving a line with "Pair JobHelper" on it', /isn’t paired/.test(notNow.line ?? '') && /Pair JobHelper/.test(notNow.line ?? ''), notNow.line);
+  check('which brings the box back', notNow.back === true && notNow.untold === 1);
+
+  const laterTab = await pairingRun(async ({ handle, wait, q, NOT_PAIRED, pairFix }) => {
+    handle.setStatus(NOT_PAIRED, pairFix);
+    await wait(50);
+    return { block: Boolean(q('.pair-block')), line: Boolean(q('.err.pair-later')) };
+  }, { later: true });
+  check('on a tab where it was put away, the next refusal does not put it up again', laterTab.block === false && laterTab.line === true, JSON.stringify(laterTab));
+
+  const elsewhere = await pairingRun(async ({ handle, calls, held, wait, q, NOT_PAIRED, pairFix }) => {
+    handle.setStatus(NOT_PAIRED, pairFix);
+    await wait(50);
+    // Paired in another tab: the worker tells this one.
+    handle.paired();
+    await wait(20);
+    const out = { during: q('.pair-block')?.textContent ?? null };
+    held.retry?.({});
+    await wait(50);
+    out.after = Boolean(q('.pair-block'));
+    out.pairs = calls.filter(([a]) => a === 'pair').length;
+    out.retries = calls.filter(([a]) => a === 'retry').length;
+    return out;
+  });
+  check('paired from another tab, the card carries on without asking for a code', elsewhere.pairs === 0 && elsewhere.retries === 1 && elsewhere.after === false, JSON.stringify(elsewhere));
+  check('and says it is paired meanwhile', /Paired/.test(elsewhere.during ?? ''), elsewhere.during);
+
+  const down = await pairingRun(async ({ handle, calls, wait, q }) => {
+    handle.setStatus('ResumeM-M is not open. Start it, then try again.', { fix: 'start-server', serverUrl: 'http://127.0.0.1:4600' });
+    await wait(50);
+    return { block: Boolean(q('.pair-block')), error: q('.err')?.textContent ?? null, asked: calls.some(([a]) => a === 'pairLater') };
+  });
+  check('a store that is not running does not put the code box up', down.block === false && down.asked === false, JSON.stringify(down));
+  check('and keeps its own sentence and button', /not open/.test(down.error ?? '') && /Open ResumeM-M/.test(down.error ?? ''), down.error);
+
+  /*
+   * And not "Fits on one page." in green over a line that runs off the paper:
+   * the compile's own warning, in the warning colour.
+   */
+  const fitLooks = async (render) =>
+    inPage(async (createCard, given) => {
+      createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Platform Engineer', company: 'Acme' },
+          spec: { id: 'job-acme', label: 'Acme', choices: {} },
+          baseLabel: 'New grad resume',
+          tailor: 'match',
+          diff: [],
+          rationale: [],
+        },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async (action) => (action === 'render' ? given : action === 'stage' ? { currentDir: '/tmp/x' } : {}),
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      [...root.querySelectorAll('button')].find((b) => /Build resume/.test(b.textContent)).click();
+      await new Promise((r) => setTimeout(r, 200));
+      const fit = root.querySelector('.fit');
+      return fit ? { text: fit.textContent, cls: fit.className, bg: getComputedStyle(fit).backgroundColor } : null;
+    }, render);
+  const offEdge = await fitLooks({
+    pages: 1,
+    fits: true,
+    maxPages: 1,
+    warnings: [
+      'A line runs past the right-hand edge of the page — the widest by 40pt — and whatever is past the edge is not in the PDF at all. This is usually one long unbroken thing: a link, a file path, a token. Shorten it, or put it behind a few words of link text.',
+    ],
+  });
+  check(
+    'a line past the edge of the page is said, not "Fits on one page."',
+    /^On one page, but a line runs past the right-hand edge of the page/.test(offEdge?.text ?? '') && !/Fits on/.test(offEdge?.text ?? ''),
+    JSON.stringify(offEdge),
+  );
+  check('in the warning colour, not the green', /\bwarn\b/.test(offEdge?.cls ?? '') && offEdge?.bg === 'rgb(254, 247, 224)', JSON.stringify(offEdge));
+  const inMargin = await fitLooks({
+    pages: 1,
+    fits: true,
+    warnings: ['2 lines run into the right-hand margin — the widest by 30pt — still on the paper, so nothing is lost, but set past where the other lines end. This is usually one long unbroken thing.'],
+  });
+  check('and so is one that runs into the margin', /^On one page, but 2 lines run into the right-hand margin/.test(inMargin?.text ?? '') && /\bwarn\b/.test(inMargin?.cls ?? ''), JSON.stringify(inMargin));
+  const otherWarning = await fitLooks({ pages: 1, fits: true, warnings: ['Some font substitution happened.'] });
+  check('a warning about something else leaves the green line as it was', otherWarning?.text === 'Fits on one page.' && !/warn/.test(otherWarning?.cls ?? ''), JSON.stringify(otherWarning));
+
+  /*
+   * A read that failed is not still reading: no bar and no "Reading the
+   * posting…" above the error, and no hostname where the company goes.
+   */
+  console.log('\nA first read that failed');
+  const failedRead = await inPage(async (createCard) => {
+    const handle = createCard({ analysis: null, resumes: [], settings: {}, questions: [], needsCoverLetter: false, onAction: async () => ({}) });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const reading = {
+      bar: Boolean(root.querySelector('.progress')),
+      label: root.querySelector('.progress-label')?.textContent ?? null,
+      co: root.querySelector('.job .co')?.textContent ?? null,
+    };
+    handle.setStatus('ResumeM-M is not open. Start it, then try again.', 'start');
+    await new Promise((r) => setTimeout(r, 50));
+    return {
+      reading,
+      bar: Boolean(root.querySelector('.progress')),
+      label: root.querySelector('.progress-label')?.textContent ?? null,
+      co: root.querySelector('.job .co')?.textContent ?? null,
+      role: root.querySelector('.job .role')?.textContent ?? null,
+      error: root.querySelector('.body')?.textContent ?? '',
+    };
+  });
+  check('while reading, the bar and the label are there', failedRead.reading.bar && failedRead.reading.label === 'Reading the posting…', JSON.stringify(failedRead.reading));
+  check('once it failed, neither is', !failedRead.bar && failedRead.label === null, JSON.stringify(failedRead));
+  check('nor the hostname where the company goes', failedRead.co === null && Boolean(failedRead.role), JSON.stringify(failedRead));
+  check('and the error is what is said', /ResumeM-M is not open/.test(failedRead.error), failedRead.error.slice(0, 160));
+
+  /*
+   * A field Autofill left, with a reason a sentence long. Kept to one line
+   * beside the name, "your name could not be split safely — set …" ran off
+   * the card's side and squeezed "First Name" to 0px; and the jobs it could
+   * not add a block for were named only "Work Experience", the reason that
+   * said which jobs having no words of the card's own and so not drawn.
+   */
+  console.log('\nThe fields Autofill left, with a long reason');
+  for (const width of [1440, 360]) {
+    await page.setViewportSize({ width, height: 800 });
+    const left = await inPage(async (createCard) => {
+      const NS = 'your name could not be split safely — set autofill.first_name and autofill.last_name in your profile';
+      const skipped = [
+        { key: 'first_name', label: 'First Name', fieldId: 'f-fn', reason: NS },
+        { key: 'last_name', label: 'Last Name', fieldId: 'f-ln', reason: NS },
+        { key: 'work_history', description: 'Work Experience', fieldId: 'f-wh', reason: '2 jobs not entered: Acme, Globex' },
+      ];
+      createCard({
+        analysis: { isJobPosting: true, job: { title: 'Data Engineer', company: 'Streamly' }, spec: { id: 'j', label: 'Streamly', tier: 'temporary' }, baseLabel: 'Base', tailor: 'match', diff: [], rationale: [] },
+        resumes: [{ id: 'b', label: 'Base', base: true }], settings: {}, questions: [], needsCoverLetter: false, isForm: true,
+        onAction: async (a) => (a === 'autofill' ? { filled: [{ key: 'email', value: 'x@example.com' }], skipped } : a === 'aiStatus' ? { state: 'off' } : {}),
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      await new Promise((r) => setTimeout(r, 100));
+      [...root.querySelectorAll('button')].find((b) => /^Autofill this form/.test(b.textContent))?.click();
+      for (let i = 0; i < 200 && !root.querySelector('.left-list'); i++) await new Promise((r) => setTimeout(r, 25));
+      const card = root.querySelector('.card').getBoundingClientRect();
+      return [...root.querySelectorAll('.left-list .left-row')].map((row) => {
+        const name = row.querySelector('.left-name').getBoundingClientRect();
+        const out = [...row.querySelectorAll('*')].some((el) => { const b = el.getBoundingClientRect(); return b.width > 0 && (b.right > card.right + 0.5 || b.left < card.left - 0.5); });
+        return { text: row.textContent, name: Math.round(name.width), out };
+      });
+    });
+    check(`at ${width}px each name left keeps its width`, left.length === 3 && left.every((r) => r.name > 20), JSON.stringify(left.map((r) => r.name)));
+    check(`and no reason runs past the card's side (${width}px)`, left.length === 3 && left.every((r) => !r.out), JSON.stringify(left));
+    check(`and the name reason names both settings in full (${width}px)`, /set autofill\.first_name and autofill\.last_name in your profile/.test(left[0]?.text ?? ''), left[0]?.text);
+    check(`and the jobs not entered are named (${width}px)`, /^Work Experience.*2 jobs not entered.*Acme, Globex/.test(left[2]?.text ?? ''), left[2]?.text);
+  }
+
+  /*
+   * The reasons Autofill gives for a block it typed into and could not save,
+   * and for a phone under another country's code, had no words of the
+   * card's own: each row was the field's name alone, under "Other". Said
+   * now — the section and the dial code, never the answer typed in.
+   */
+  console.log('\nThe fields Autofill left: typed in but not saved, and the country code');
+  for (const width of [1440, 360]) {
+    await page.setViewportSize({ width, height: 900 });
+    const run = (skipped) => inPage(async (createCard, skipped) => {
+      createCard({
+        analysis: { isJobPosting: true, job: { title: 'Data Engineer', company: 'Streamly' }, spec: { id: 'j', label: 'Streamly', tier: 'temporary' }, baseLabel: 'Base', tailor: 'match', diff: [], rationale: [] },
+        resumes: [{ id: 'b', label: 'Base', base: true }], settings: {}, questions: [], needsCoverLetter: false, isForm: true,
+        onAction: async (a) => (a === 'autofill' ? { filled: [{ key: 'email', value: 'x@example.com' }], skipped } : a === 'aiStatus' ? { state: 'off' } : {}),
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      await new Promise((r) => setTimeout(r, 100));
+      [...root.querySelectorAll('button')].find((b) => /^Autofill this form/.test(b.textContent))?.click();
+      for (let i = 0; i < 200 && !root.querySelector('.left-list'); i++) await new Promise((r) => setTimeout(r, 25));
+      return [...root.querySelectorAll('.left-list > *')].map((row) => row.textContent.replace(/\s+/g, ' ').trim());
+    }, skipped);
+    const saved = [
+      { key: 'work_history', description: 'Work Experience', fieldId: 'f-wh', reason: 'Example Co. is typed in but not saved — press Save in Work Experience' },
+      { key: 'school', description: 'Education', fieldId: 'f-ed', reason: 'Northeastern University is typed in but not saved — press Save in Education' },
+      { key: 'phone', label: 'Phone', fieldId: 'f-ph', reason: "the form's country code is +46 — check the phone" },
+    ];
+    const few = await run(saved);
+    check(`a block typed in and not saved says which Save to press (${width}px)`, /^Work Experience.*typed in but not saved.*press Save in Work Experience/.test(few[0] ?? '') && /^Education.*press Save in Education/.test(few[1] ?? ''), JSON.stringify(few));
+    check(`and the phone says the form's country code (${width}px)`, /^Phone.*country code is \+46.*check the phone/.test(few[2] ?? ''), few[2]);
+    check(`and what was typed in is not repeated (${width}px)`, !few.some((r) => /Example Co|Northeastern/.test(r)), JSON.stringify(few));
+    // Grouped (more than three): under headings of their own, not "Other".
+    const many = await run([
+      ...saved,
+      { key: 'work_history', description: 'Work Experience', fieldId: 'f-wh2', reason: `${'A very long company name '.repeat(5)}is typed in but not saved — press Save in Work Experience`.slice(0, 160) },
+      { key: 'q1', label: 'Gender', fieldId: 'q1', reason: 'not one of the options' },
+    ]);
+    check(`grouped, none of them is "Other" (${width}px)`, many.length > 0 && !many.includes('Other'), JSON.stringify(many));
+    check(`and the cut-off reason still says to press Save (${width}px)`, many.some((r) => /^Typed in but not saved — press/.test(r)) && !many.some((r) => /very long company/.test(r)), JSON.stringify(many));
+    // Sections and dial codes are the rows under one heading each, not a heading over each row.
+    const r30many = await run([
+      ...saved,
+      { key: 'phone2', label: 'Other phone', fieldId: 'f-ph2', reason: "the form's country code is +44 — check the phone" },
+      { key: 'q1', label: 'Gender', fieldId: 'q1', reason: 'not one of the options' },
+    ]);
+    check(
+      `grouped, "typed in but not saved" is one heading over its sections (${width}px)`,
+      r30many.filter((r) => /^Typed in but not saved/.test(r)).length === 1 && r30many.includes('Work Experience') && r30many.includes('Education'),
+      JSON.stringify(r30many),
+    );
+    check(
+      `and the country code one heading, each code beside its phone (${width}px)`,
+      r30many.filter((r) => /country code/i.test(r) && !/its code is/.test(r)).length === 1 && r30many.some((r) => /^Phone.*its code is \+46/.test(r)) && r30many.some((r) => /^Other phone.*its code is \+44/.test(r)),
+      JSON.stringify(r30many),
+    );
+  }
+
+  /*
+   * A job or a school Autofill did not add because the form already shows
+   * it saved was listed as a field left for you, with no reason of the
+   * card's own ("Other"), and turned the note amber over a form with nothing
+   * left to do. Said instead in a quiet line under the note, by the resume's
+   * own names, for the person to check.
+   */
+  console.log('\nJobs and schools already in the form, not fields left');
+  for (const width of [1440, 360]) {
+    await page.setViewportSize({ width, height: 900 });
+    const run = (skipped) => inPage(async (createCard, skipped) => {
+      createCard({
+        analysis: { isJobPosting: true, job: { title: 'Data Engineer', company: 'Streamly' }, spec: { id: 'j', label: 'Streamly', tier: 'temporary' }, baseLabel: 'Base', tailor: 'match', diff: [], rationale: [] },
+        resumes: [{ id: 'b', label: 'Base', base: true }], settings: {}, questions: [], needsCoverLetter: false, isForm: true,
+        onAction: async (a) => (a === 'autofill' ? { filled: [{ key: 'email', value: 'x@example.com' }], skipped } : a === 'aiStatus' ? { state: 'off' } : {}),
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      await new Promise((r) => setTimeout(r, 100));
+      [...root.querySelectorAll('button')].find((b) => /^Autofill this form/.test(b.textContent))?.click();
+      for (let i = 0; i < 200 && !root.querySelector('.ok-note'); i++) await new Promise((r) => setTimeout(r, 25));
+      await new Promise((r) => setTimeout(r, 50));
+      const card = root.querySelector('.card').getBoundingClientRect();
+      const there = root.querySelector('.already-there');
+      const box = there?.getBoundingClientRect();
+      return {
+        note: root.querySelector('.ok-note')?.textContent ?? '',
+        warn: Boolean(root.querySelector('.ok-note.warn')),
+        rows: [...root.querySelectorAll('.left-list .left-row')].map((row) => row.textContent.replace(/\s+/g, ' ').trim()),
+        there: there?.textContent ?? null,
+        inside: !box || (box.left >= card.left - 0.5 && box.right <= card.right + 0.5),
+      };
+    }, skipped);
+    const THERE = [
+      { key: 'work_history', description: 'Work Experience', fieldId: 'f-wh', reason: 'Software Engineer at Acme Corp already in Work Experience' },
+      { key: 'school', description: 'Education', fieldId: 'f-ed', reason: 'Northeastern University already in Education' },
+    ];
+    const only = await run(THERE);
+    check(
+      `only jobs and schools already there: no fields left, the note not amber, nothing "still for you" (${width}px)`,
+      only.rows.length === 0 && !only.warn && !/still for you/.test(only.note),
+      JSON.stringify(only),
+    );
+    check(
+      `and they are said in a line of their own, by name (${width}px)`,
+      /Already in Work Experience and Education, so not added again: Software Engineer at Acme Corp; Northeastern University/.test(only.there ?? '') && only.inside,
+      JSON.stringify(only),
+    );
+    const mixed = await run([...THERE, { key: 'q1', label: 'Gender', fieldId: 'q1', reason: 'not one of the options' }]);
+    check(
+      `beside a field really left, only that field is listed (${width}px)`,
+      mixed.rows.length === 1 && /^Gender/.test(mixed.rows[0]) && mixed.warn && /1 field still for you/.test(mixed.note) && /Software Engineer at Acme Corp/.test(mixed.there ?? ''),
+      JSON.stringify(mixed),
+    );
+  }
+  const r30pad = await inPage(async (createCard) => {
+    createCard({ analysis: null, resumes: [], settings: {}, questions: [], needsCoverLetter: false, onAction: async () => ({}) });
+    const body = document.querySelector('#jobhelper-card-host').shadowRoot.querySelector('.body');
+    return getComputedStyle(body).scrollPaddingBottom;
+  });
+  check('the card\'s scroll area keeps room for a focus ring brought into view by Tab', r30pad === '8px', r30pad);
+
+  /*
+   * "and N more" had the browser's own ring, tight against its words, and
+   * showed it after a mouse click too (the redraw puts focus back by hand).
+   */
+  console.log('\nThe ring on "and N more"');
+  {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await inPage(async (createCard) => {
+      const skipped = [1, 2, 3, 4, 5, 6].map((i) => ({ key: `k${i}`, label: `Question number ${i}`, fieldId: `f${i}`, reason: 'not one of the options' }));
+      createCard({
+        analysis: { isJobPosting: true, job: { title: 'Data Engineer', company: 'Streamly' }, spec: { id: 'j', label: 'Streamly', tier: 'temporary' }, baseLabel: 'Base', tailor: 'match', diff: [], rationale: [] },
+        resumes: [{ id: 'b', label: 'Base', base: true }], settings: {}, questions: [], needsCoverLetter: false, isForm: true,
+        onAction: async (a) => (a === 'autofill' ? { filled: [], skipped } : a === 'aiStatus' ? { state: 'off' } : a === 'showLeft' ? false : {}),
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      await new Promise((r) => setTimeout(r, 100));
+      [...root.querySelectorAll('button')].find((b) => /^Autofill this form/.test(b.textContent))?.click();
+      for (let i = 0; i < 200 && !root.querySelector('.left-list button.link'); i++) await new Promise((r) => setTimeout(r, 25));
+    });
+    const ring = () =>
+      page.evaluate(() => {
+        const a = document.querySelector('#jobhelper-card-host').shadowRoot.activeElement;
+        if (!a) return null;
+        const cs = getComputedStyle(a);
+        return { text: a.textContent.trim(), style: cs.outlineStyle, width: parseFloat(cs.outlineWidth), pad: parseFloat(cs.paddingLeft) };
+      });
+    const more = page.locator('#jobhelper-card-host .left-list button.link');
+    await more.focus();
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(200);
+    const keyboard = await ring();
+    await more.click();
+    await page.waitForTimeout(200);
+    const mouse = await ring();
+    check('from the keyboard it has the card\'s ring, with room around its words', keyboard?.style === 'solid' && keyboard.width >= 2 && keyboard.pad >= 2, JSON.stringify(keyboard));
+    check('and pressed with the mouse, no ring', mouse?.style === 'none', JSON.stringify(mouse));
+  }
+
+  /*
+   * "and 3 more" becomes "Show fewer" when pressed, and the redraw matched
+   * the focused button by its words — which had just changed — so Enter on
+   * it left focus on the card itself, and Tab started over from the top.
+   */
+  console.log('\nThe left list’s "and N more" pressed from the keyboard');
+  {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await inPage(async (createCard) => {
+      const skipped = [1, 2, 3, 4, 5, 6].map((i) => ({ key: `k${i}`, label: `Question number ${i}`, fieldId: `f${i}`, reason: 'not one of the options' }));
+      createCard({
+        analysis: { isJobPosting: true, job: { title: 'Data Engineer', company: 'Streamly' }, spec: { id: 'j', label: 'Streamly', tier: 'temporary' }, baseLabel: 'Base', tailor: 'match', diff: [], rationale: [] },
+        resumes: [{ id: 'b', label: 'Base', base: true }], settings: {}, questions: [], needsCoverLetter: false, isForm: true,
+        onAction: async (a) => (a === 'autofill' ? { filled: [], skipped } : a === 'aiStatus' ? { state: 'off' } : a === 'showLeft' ? false : {}),
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      await new Promise((r) => setTimeout(r, 100));
+      [...root.querySelectorAll('button')].find((b) => /^Autofill this form/.test(b.textContent))?.click();
+      for (let i = 0; i < 200 && !root.querySelector('.left-list button.link'); i++) await new Promise((r) => setTimeout(r, 25));
+      root.querySelector('.left-list button.link').focus();
+    });
+    const focused = async () =>
+      page.evaluate(() => {
+        const a = document.querySelector('#jobhelper-card-host').shadowRoot.activeElement;
+        return a ? `${a.tagName}.${a.className} ${a.textContent.trim()}` : null;
+      });
+    const before = await focused();
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(200);
+    const opened = await focused();
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(200);
+    const closed = await focused();
+    check('focus is on "and N more" to begin with', /^BUTTON\.link and \d+ more$/.test(before ?? ''), before);
+    check('Enter on it leaves focus on it, now "Show fewer"', opened === 'BUTTON.link Show fewer', opened);
+    check('and Enter again leaves it on "and N more"', /^BUTTON\.link and \d+ more$/.test(closed ?? ''), closed);
   }
 
   await browser.close();

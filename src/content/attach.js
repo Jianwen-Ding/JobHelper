@@ -180,6 +180,8 @@ function namedBy(input) {
 
 /** Somewhere to type or choose, which a heading never holds. See `aroundIt`. */
 const FIELDS = 'input:not([type="hidden"]), select, textarea';
+/** And a choice drawn as a widget, which is a field all the same. */
+const WIDGET_FIELDS = '[role="combobox"], [role="listbox"], [aria-haspopup="listbox"]';
 
 /**
  * And the text around it, for the many controls that carry no label at all.
@@ -247,11 +249,23 @@ function aroundIt(input) {
          */
         if (before.matches?.('script, style, template, noscript')) continue;
         if (before.matches?.(FIELDS) || before.querySelector?.(FIELDS)) break;
+        /*
+         * Nor a field drawn without a native control: BambooHR's Country is
+         * a button opening a listbox, with only a hidden input behind it, so
+         * the Resume box above "said" Country and the resume had nowhere to
+         * go. See `WIDGET_FIELDS`.
+         */
+        if (before.matches?.(WIDGET_FIELDS) || before.querySelector?.(WIDGET_FIELDS)) break;
         const text = clean(textOf(before));
         if (!text) continue;
         said.unshift(text);
         room -= text.length;
       }
+      /*
+       * What this box's own holder said first, when it names a document: it
+       * is this box's alone, which a look back past it never is.
+       */
+      if (best && kindOf(best) !== 'other') return best;
       if (said.length > 0) return said.join(' ');
       break;
     }
@@ -267,14 +281,106 @@ function saysWhat(input) {
 }
 
 /**
+ * The part of the page that is this box's upload widget, as far as can be
+ * told from outside it.
+ *
+ * Workday's is the case this is for: a drop zone holding a hidden input, and
+ * the list of files it has taken drawn *beside* the zone, not in it — on
+ * `change` it keeps the file, clears the input and writes a
+ * `file-upload-successful` row a level up. Read off the input's parent, that
+ * was an empty box and no name: judged refused, so the same file went to the
+ * same box again through the several-files route and then the drop area,
+ * and the widget listed the resume twice under "the drop area, not sure".
+ *
+ * Bounded the way `aroundIt` bounds its walk — four levels, and never an
+ * ancestor holding another upload box — and tighter still, because what is
+ * read here is a claim about *this* box: not the form or the page, and not a
+ * region that has other fields in it. A name in the page's prose, or in the
+ * next widget along, is not this box saying it has the file. Null when even
+ * the parent is past those bounds, which means there is nothing to read.
+ */
+const OTHER_FIELDS = 'input:not([type="hidden"]):not([type="file"]), select, textarea';
+
+function sectionOf(box) {
+  let section = null;
+  for (let holder = box.parentElement, up = 0; holder && up < 4; holder = holder.parentElement, up++) {
+    if (holder.matches?.('form, body, html, dialog')) break;
+    if (holder.querySelectorAll('input[type="file"]').length > 1) break;
+    if (holder.querySelector(OTHER_FIELDS)) break;
+    section = holder;
+  }
+  return section;
+}
+
+/**
+ * Whether `text` names this file, as a whole name. "Resume.pdf" is inside
+ * "Old-Resume.pdf", and that is a different file — but the full stop that
+ * ends a sentence after the name is not part of it.
+ */
+function names(text, name) {
+  if (!name) return false;
+  for (let at = text.indexOf(name); at >= 0; at = text.indexOf(name, at + 1)) {
+    const before = at > 0 ? text[at - 1] : '';
+    const rest = text.slice(at + name.length, at + name.length + 2);
+    if (!/[\w.-]/.test(before) && !/^([\w-]|\.\w)/.test(rest)) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether this box's widget already shows this file as one it holds.
+ *
+ * Pressing Attach files twice on a widget that keeps files in its own list
+ * uploaded every one of them again, each time, and said "Attached" again:
+ * the input is empty after every placement, so there was never anything to
+ * replace. The list the widget draws is the only record there is. A name
+ * shown as a refusal is not one it holds — see `shownIn`.
+ */
+function alreadyShown(box, name) {
+  const section = sectionOf(box);
+  if (!section?.isConnected) return false;
+  return readShown(section, name) === 'kept';
+}
+
+/*
+ * And whether it is *this* file, where that can be told: a rebuilt resume
+ * keeps its name. A Greenhouse-style chip draws the name and leaves the file
+ * in the input, so a second press after rebuilding found the name shown,
+ * said "already attached" and left version one in the box. Where the input
+ * still holds a file of that name it is compared, size and then bytes, and
+ * replaced unless it is the same — and when it is the same, left alone even
+ * where no name is drawn: putting it in again re-fires the box's `change`,
+ * which on Jobvite uploads it again. Only a widget that cleared its input — the
+ * name drawn, nothing left to compare — is taken at its word, as `unchecked`.
+ *
+ * 'same', 'unchecked', or null for a box this file is not already in.
+ */
+async function alreadyHeld(box, file) {
+  const held = [...(box.files ?? [])].find((f) => f.name === file.name);
+  if (held) {
+    if (held.size !== file.size) return null;
+    try {
+      const [x, y] = await Promise.all([held.arrayBuffer(), file.arrayBuffer()]);
+      const a = new Uint8Array(x);
+      const b = new Uint8Array(y);
+      for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return null;
+      return 'same';
+    } catch {
+      return null;
+    }
+  }
+  return alreadyShown(box, file.name) ? 'unchecked' : null;
+}
+
+/**
  * What each kind of file answers to.
  *
  * Ordered, and read in order: a box labelled "Resume or Cover Letter" takes
  * the resume, because that is what somebody uploading one file to it means.
  */
 const WANTS = {
-  resume: /\b(resume|cv|curriculum vitae)\b/,
-  letter: /\b(cover letter|covering letter|motivation letter)\b/,
+  resume: /\b(resume|cv|curriculum vitae|lebenslauf)\b/,
+  letter: /\b(cover letter|covering letter|motivation letter|anschreiben|motivationsschreiben|bewerbungsschreiben|lettre de motivation)\b/,
   transcript: /\b(transcript|academic record|grade report|marksheet)\b/,
   portfolio: /\b(portfolio|work sample|writing sample|publication)\b/,
 };
@@ -482,9 +588,14 @@ async function putIn(box, file, { alongside = false, ours } = {}) {
   }
   if (box.files?.length !== had.length + 1) return false;
   // Where the widget would say it has the file, noted before it gets a vote.
-  const home =
+  //
+  // And the widget's whole section, for the ones that draw the list beside
+  // the drop zone rather than in it. See `sectionOf`.
+  const homes = [
     box.closest?.('label, [class*="upload" i], [class*="drop" i], [class*="file" i], [class*="attach" i]') ??
-    box.parentElement;
+      box.parentElement,
+    sectionOf(box),
+  ].filter(Boolean);
   box.dispatchEvent(new Event('input', { bubbles: true }));
   box.dispatchEvent(new Event('change', { bubbles: true }));
   /*
@@ -516,8 +627,7 @@ async function putIn(box, file, { alongside = false, ours } = {}) {
    * and a red message. A name inside something marked as an error or an
    * alert is a refusal.
    */
-  if (!home?.isConnected) return false;
-  return (await shownIn(home, file.name)) === 'kept';
+  return (await shownIn(homes, file.name)) === 'kept';
 }
 
 /**
@@ -539,13 +649,26 @@ const SHOWN_GRACE_MS = 1000;
 const UPLOAD_WAIT_MS = 20_000;
 const UPLOADING = '[role="progressbar"], progress, [aria-busy="true"], [class*="progress" i], [class*="uploading" i]';
 
-async function shownIn(home, name) {
+/** One look at one place: see `shownIn`. */
+function readShown(home, name) {
+  if (!home.isConnected) return 'gone';
+  const refusing = home.querySelectorAll('[role="alert"], [class*="error" i], [class*="invalid" i]');
+  // `textOf`, not `textContent`: "Resume" in a label and the name in the
+  // chip after it run together as "ResumeMorgan-…-Resume.pdf" otherwise.
+  if ([...refusing].some((el) => names(textOf(el), name))) return 'refused';
+  if (names(textOf(home), name)) return 'kept';
+  return home.querySelector(UPLOADING) ? 'uploading' : 'nothing';
+}
+
+/*
+ * Several places, read together: a refusal anywhere wins, then the name
+ * anywhere, then an upload still running anywhere.
+ */
+async function shownIn(homes, name) {
   const read = () => {
-    if (!home.isConnected) return 'gone';
-    const refusing = home.querySelectorAll('[role="alert"], [class*="error" i], [class*="invalid" i]');
-    if ([...refusing].some((el) => (el.textContent ?? '').includes(name))) return 'refused';
-    if ((home.textContent ?? '').includes(name)) return 'kept';
-    return home.querySelector(UPLOADING) ? 'uploading' : 'nothing';
+    const seen = homes.map((home) => readShown(home, name));
+    for (const answer of ['refused', 'kept', 'uploading', 'nothing']) if (seen.includes(answer)) return answer;
+    return 'gone';
   };
   const began = Date.now();
   for (;;) {
@@ -650,8 +773,17 @@ function dropZones(root = document) {
 function zoneSays(zone, zones) {
   const clean = (text) => wordsOf(text).replace(/\s+/g, ' ').trim();
   let said = clean(`${zone.getAttribute('aria-label') ?? ''} ${textOf(zone)}`);
+  /*
+   * Nor past a holder with other fields in it. Breezy's one "Upload Resume"
+   * zone sits in a form with a Cover Letter text box, and four levels up was
+   * that form: the zone "said" cover letter, and the letter was dropped on
+   * the resume's zone in place of the resume. As `sectionOf` bounds a box.
+   */
+  const outside = (el) => !zone.contains(el);
   for (let holder = zone.parentElement, up = 0; holder && up < 4; holder = holder.parentElement, up++) {
     if (zones.some((z) => z !== zone && holder.contains(z))) break;
+    if (holder.matches?.('form, body, html, dialog')) break;
+    if ([...holder.querySelectorAll(`${OTHER_FIELDS}, input[type="file"]`)].some(outside)) break;
     const text = clean(textOf(holder));
     if (text && text.length < 400) said = text;
   }
@@ -715,11 +847,29 @@ export async function attachFiles(files) {
    */
   const ours = new Set((files ?? []).map((f) => f?.name).filter(Boolean));
   const written = new Set();
+  /*
+   * And which boxes each file has been handed to, kept or not.
+   *
+   * A box that took the file and drew it somewhere this could not see was
+   * judged to have refused it, and every route below then tried again: the
+   * several-files box was the same box, and the drop area was the zone
+   * around it — so the widget listed the resume two or three times. A file
+   * goes to a box once per press; a box that had it and said nothing is
+   * answered for by the first try, not by a second.
+   */
+  let tried = new Set();
   const placeIn = async (box, file) => {
+    tried.add(box);
     const ok = await putIn(box, file, { alongside: written.has(box), ours });
     if (ok) written.add(box);
     return ok;
   };
+  /** Whether a drop area belongs to a box this file has already been handed to. */
+  const triedAround = (zone) =>
+    [...tried].some((box) => {
+      const section = sectionOf(box);
+      return zone.contains(box) || (section && (section.contains(zone) || zone.contains(section)));
+    });
 
   /*
    * The resume first, then the letter, and so on down `WANTS`.
@@ -743,6 +893,44 @@ export async function attachFiles(files) {
     }
 
     const kind = kindOf(spec.name);
+    tried = new Set();
+    /*
+     * Already there: a box that would take this file is showing it. Said so,
+     * and left alone — a second copy is not what a second press means. Only
+     * a box this kind could go in (one that names it, or names nothing), and
+     * only that box's own section, so a name in some other widget or in the
+     * page's own text says nothing here. Asked as `boxFor` asks but of every
+     * box, taken or not: one this file filled on an earlier press is exactly
+     * the one to look in.
+     */
+    const homeFor = boxFor(kind, boxes, new Set(), file);
+    const candidates = (
+      homeFor
+        ? [homeFor]
+        : boxes.filter(
+            (b) =>
+              !NOT_A_DOCUMENT.test(namedBy(b)) &&
+              willTake(b, file) &&
+              (kindOf(saysWhat(b)) === 'other' || (b.multiple && WANTS[kind]?.test(saysWhat(b)))),
+          )
+    );
+    let shownBy = null;
+    let held = null;
+    for (const b of candidates) {
+      held = await alreadyHeld(b, file);
+      if (held) {
+        shownBy = b;
+        break;
+      }
+    }
+    if (shownBy) {
+      // A one-file box with this in it has no room for anything else; a box
+      // that takes several is added to from here on, not cleared.
+      if (!shownBy.multiple) taken.add(shownBy);
+      written.add(shownBy);
+      placed.push({ name: spec.name, where: saysWhat(shownBy).slice(0, 60), already: true, ...(held === 'unchecked' ? { unchecked: true } : {}) });
+      continue;
+    }
     const box = boxFor(kind, boxes, taken, file);
     /*
      * A box was found for this file, which the reason at the bottom of this
@@ -799,6 +987,7 @@ export async function attachFiles(files) {
     const several = boxes.find(
       (b) =>
         b.multiple &&
+        !tried.has(b) &&
         WANTS[kind]?.test(saysWhat(b)) &&
         willTake(b, file) &&
         !NOT_A_DOCUMENT.test(namedBy(b)),
@@ -823,10 +1012,30 @@ export async function attachFiles(files) {
      */
     // Not the one around a box that has just refused this file: it has had
     // its say, and a drop there came back as "not sure" about a known no.
-    const zones = dropZones().filter((z) => !(rejectedBy && z.contains(rejectedBy)));
+    //
+    // Nor any drop area that is part of a box this file was already handed
+    // to: the zone around it, or the list it draws beside it.
+    //
+    // Nor one holding a box this run has already filled — with another file:
+    // that zone is the other file's, and a drop there replaces it.
+    const filled = [...taken, ...written];
+    const zones = dropZones().filter(
+      (z) => !(rejectedBy && z.contains(rejectedBy)) && !triedAround(z) && !filled.some((b) => z.contains(b)),
+    );
     const zone =
       zones.find((z) => WANTS[kind]?.test(zoneSays(z, zones))) ??
       (boxes.length === 0 ? zones.find((z) => kindOf(zoneSays(z, zones)) === 'other') : undefined);
+    /*
+     * Already there: a zone whose widget took the file on an earlier press
+     * and then took its input away too (Workable, Rippling) shows the name
+     * and nothing else — so a second press dropped it again. Only the name
+     * to go by, so said as `unchecked`: see `alreadyHeld`.
+     */
+    const zoneShows = zone && [zone, sectionOf(zone)].some((home) => home && readShown(home, spec.name) === 'kept');
+    if (zoneShows) {
+      placed.push({ name: spec.name, where: 'the drop area', already: true, unchecked: true });
+      continue;
+    }
     if (zone) {
       /*
        * Said as what it is. A drop cannot be read back the way `input.files`

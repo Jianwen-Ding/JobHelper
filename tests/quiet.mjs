@@ -34,6 +34,45 @@ const SERVER = process.env.RMM_SERVER ?? 'http://127.0.0.1:4600';
 /** Long enough for the analysis, and past the window in which a page is re-judged. */
 const WATCH_MS = 6000;
 
+/*
+ * Round 24: an employer's own posting in German, French or Spanish, with no
+ * JSON-LD — the common case on a company's own careers pages. The address
+ * (`/karriere/`, `/emplois/`, `/empleos/`) and the headings ("Deine
+ * Aufgaben", "Vos missions", "Requisitos") were in no list the chip reads,
+ * so it never came up on them while it did on the same page in English.
+ */
+const elsewhere = (name, where, title, company, body, apply) => ({
+  name,
+  path: where,
+  html: `<!doctype html><html><head><meta charset="utf-8"><title>${title} - ${company}</title></head><body><h1>${company}</h1><h2>${title}</h2><p>${body}</p><p>${body}</p><a href="${where}/apply">${apply}</a></body></html>`,
+});
+const ELSEWHERE = [
+  elsewhere(
+    'a German posting under /karriere/',
+    '/karriere/werkstudent-softwareentwicklung',
+    'Werkstudent Softwareentwicklung (m/w/d)',
+    'Müller & Söhne GmbH',
+    'Wir suchen einen Werkstudenten für die Softwareentwicklung. Deine Aufgaben: Entwicklung in Java und Python. Dein Profil: Studium der Informatik. Wir bieten flexible Arbeitszeiten.',
+    'Jetzt bewerben',
+  ),
+  elsewhere(
+    'a French posting under /emplois/',
+    '/emplois/stagiaire-ingenieur-logiciel',
+    'Stagiaire Ingénieur Logiciel (H/F)',
+    'Société Générale',
+    'Nous recherchons un stagiaire ingénieur logiciel. Vos missions : développement en Java. Profil recherché : étudiant en informatique.',
+    'Postuler',
+  ),
+  elsewhere(
+    'a Spanish posting under /empleos/',
+    '/empleos/practicas-backend',
+    'Prácticas Desarrollador Backend',
+    'Telefónica',
+    'Buscamos un desarrollador en prácticas. Requisitos: estudiante de ingeniería informática. Ofrecemos horario flexible.',
+    'Inscribirse',
+  ),
+];
+
 /**
  * How many pages to watch at once.
  *
@@ -92,7 +131,7 @@ function* sweep(context, fixtures, list, watchMs) {
 async function main() {
   await requireOpenSave(SERVER);
   // The control posting is served alongside, so it is reached the same way.
-  const fixtures = await serveFixtures([...QUIET, ...NOT_READ, HELIOS_ROLE]);
+  const fixtures = await serveFixtures([...QUIET, ...NOT_READ, HELIOS_ROLE, ...ELSEWHERE]);
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jh-quiet-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     executablePath: findChromium(),
@@ -133,6 +172,22 @@ async function main() {
         if (!appeared) await page.waitForTimeout(250);
       }
       check('a real posting still gets a card', appeared);
+      await page.close();
+    }
+
+    console.log('\nAnd a posting in another language, which the chip offers on');
+    for (const fixture of ELSEWHERE) {
+      const page = await context.newPage();
+      await page.goto(fixtures.urlFor(fixture), { waitUntil: 'domcontentloaded' });
+      let offered = false;
+      const until = Date.now() + 15_000;
+      while (Date.now() < until && !offered) {
+        offered =
+          (await page.locator('#jobhelper-ask-host').count()) > 0 ||
+          (await page.locator('#jobhelper-card-host .card .role').count()) > 0;
+        if (!offered) await page.waitForTimeout(250);
+      }
+      check(`the chip offers on ${fixture.name}`, offered);
       await page.close();
     }
 

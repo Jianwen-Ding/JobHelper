@@ -50,6 +50,12 @@ test('a drop is not claimed as an attachment', () => {
   assert.doesNotMatch(said, /Attached/);
   assert.match(said, /drop area/);
   assert.match(said, /check the form before sending/);
+  // One file is "it", not "them".
+  assert.match(said, /whether it took it —/);
+  assert.match(
+    describeAttach({ placed: [{ name: 'A-Resume.pdf', sure: false }, { name: 'A-Cover-Letter.pdf', sure: false }], unplaced: [] }),
+    /whether it took them —/,
+  );
 });
 
 /*
@@ -105,4 +111,30 @@ test('what went in and what did not are both said in one sentence', () => {
   });
   assert.match(said, /Attached Morgan-Testwell-Resume\.pdf/);
   assert.match(said, /Transcript\.pdf had nowhere to go/);
+});
+
+/*
+ * A file the form was already showing is left alone by `attachFiles` and
+ * reported `already`. Saying "Attached" again over it read as a second copy
+ * going in — which, before it was checked for, is what happened.
+ */
+test('a file the form already had is said to have been there already', () => {
+  const said = describeAttach({
+    placed: [
+      { name: 'Morgan-Testwell-Resume.pdf', already: true },
+      { name: 'Morgan-Testwell-Cover-Letter.pdf' },
+    ],
+    unplaced: [],
+  });
+  assert.match(said, /^Attached Morgan-Testwell-Cover-Letter\.pdf\. Morgan-Testwell-Resume\.pdf was already attached\.$/);
+  assert.equal(
+    describeAttach({ placed: [{ name: 'Morgan-Testwell-Resume.pdf', already: true }], unplaced: [] }),
+    'Morgan-Testwell-Resume.pdf was already attached.',
+  );
+  // Only a name to go by — a widget that cleared its input — so how to
+  // replace it, if it was rebuilt since.
+  assert.equal(
+    describeAttach({ placed: [{ name: 'Morgan-Testwell-Resume.pdf', already: true, unchecked: true }], unplaced: [] }),
+    'Morgan-Testwell-Resume.pdf was already attached; if it has changed since, remove it there first.',
+  );
 });

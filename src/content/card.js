@@ -139,7 +139,11 @@ const STYLE = `
   box-shadow: inset 0 0 0 2px rgba(255,255,255,.55);
 }
 .head .spacer { margin-left: auto; }
-.body { padding: 12px; overflow: auto; overscroll-behavior: contain; flex: 1 1 auto; }
+/*
+ * Room at the scroll area's edges for a focus ring: "and N more" brought
+ * into view by Tab sat flush with the bottom, its ring cut off.
+ */
+.body { padding: 12px; overflow: auto; overscroll-behavior: contain; flex: 1 1 auto; scroll-padding-block: 8px; }
 
 /*
  * Folded: the header, and what it is a header for.
@@ -303,6 +307,9 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
    than dressed as a warning — reapplying is allowed, and often right. */
 .job .before { margin-top: 6px; font-size: 12px; color: var(--muted); }
 .job .before b { font-weight: 500; color: var(--ink); }
+/* At any width: an address in it is one long word, and ran past the card's edge. */
+.job .before { overflow-wrap: anywhere; }
+.job .before a.sent-at { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 
 /* The pages one application is spread across. */
 /*
@@ -316,6 +323,32 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
   border-radius: 8px; color: var(--ink);
 }
 .branch .row { margin-top: 6px; }
+/*
+ * The code box, when ResumeM-M refuses this extension for not being paired.
+ * Above the body like the strip below it, so whichever view the card is on
+ * it is the first thing there. See \`drawPairing\`.
+ */
+.pair-block {
+  margin: 8px 12px 0; padding: 9px 10px; font-size: 12.5px; flex: 0 0 auto;
+  background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 8px; color: var(--ink);
+}
+.pair-block.done { background: var(--good-bg); border-color: var(--good-line); }
+.pair-block .pair-what { line-height: 1.45; }
+.pair-block .pair-row { margin-top: 7px; flex-wrap: nowrap; }
+.pair-block .pair-row button { flex: 0 0 auto; }
+input.pair-code {
+  flex: 1 1 96px; min-width: 0; width: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: #fff; color: var(--ink); font: 500 14px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+}
+input.pair-code::placeholder { color: var(--faint); letter-spacing: .08em; }
+input.pair-code:focus-visible, input.pair-code:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
+.pair-said { margin-top: 6px; font-size: 12px; line-height: 1.45; color: var(--ink-soft); }
+.pair-said:empty { display: none; }
+.pair-said.bad { color: var(--bad); }
+.pair-said.ok { color: #137333; margin-top: 0; font-weight: 500; }
+.pair-block .pair-foot { justify-content: flex-end; margin-top: 2px; }
+.err.pair-later { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px; }
+.err.pair-later button.link { color: var(--bad); text-decoration: underline; padding: 0 2px; }
 /* The same strip, asked from above the body: see \`drawSentQuestion\`. */
 .branch.sent-question { margin: 8px 12px 0; flex: 0 0 auto; }
 /*
@@ -359,6 +392,8 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
 .fit.bad button.link { color: #b31412; text-decoration: underline; padding: 0; margin-left: 6px; font-size: 12px; }
 .fit.bad button.link:hover { background: transparent; text-decoration-thickness: 2px; }
 .fit.idle { background: var(--line-soft); border-color: transparent; color: var(--muted); font-weight: 400; }
+/* It fits, and something on it runs past where it should; see \`drawFit\`. */
+.fit.warn { background: var(--warn-bg); border-color: var(--warn-line); color: var(--warn); }
 
 /* What the tailoring changed, in words. */
 .changes { display: grid; gap: 6px; margin: 8px 0 2px; }
@@ -553,10 +588,18 @@ select {
  */
 .left-list { margin-top: 4px; font-size: 12px; line-height: 1.5; color: var(--ink-soft); }
 .left-list .left-why { color: var(--muted); font-size: 11px; margin-top: 4px; }
-.left-list .left-row { display: flex; align-items: baseline; gap: 5px; min-width: 0; }
+/*
+ * A row wraps rather than run off the card: a reason can be a sentence ("your
+ * name could not be split safely — set …"), and kept to one line beside the
+ * name it ran past the card's edge and squeezed the name to nothing. The name
+ * keeps its own width (up to the row's, where its ellipsis takes over) and the
+ * reason takes what is left, going under the name when that is too little.
+ */
+.left-list .left-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 5px; min-width: 0; }
 /* Under a heading once grouped, so the names read as that heading's. */
 .left-list .left-why ~ .left-row { padding-left: 10px; }
-.left-list .left-row .why { color: var(--muted); white-space: nowrap; flex: none; }
+.left-list .left-row .why { color: var(--muted); flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
+.left-list .left-row .left-name { flex: none; max-width: 100%; }
 button.left-name {
   border: 0; border-radius: 0; background: none; padding: 1px 0; min-width: 0;
   font-size: 12px; font-weight: 400; color: var(--ink-soft); text-align: left;
@@ -568,6 +611,16 @@ button.left-name.gone, button.left-name.gone:hover { color: var(--faint); text-d
 span.left-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .left-list button.link { padding: 1px 0; margin-top: 2px; }
 .left-list button.link:hover { background: none; text-decoration: underline; }
+/*
+ * Its ring is the card's own, with room around the words: the browser's was
+ * drawn tight against them. And only from the keyboard: pressed with the
+ * mouse, the redraw puts the focus back on it by hand (see \`focusKey\`), and
+ * Chrome showed the ring for that too, after a keyboard was used once.
+ */
+.left-list button.link { padding: 1px 4px; margin-left: -4px; border-radius: 4px; }
+.left-list button.link:focus { outline: none; }
+.left-list button.link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.card[data-pointer] .left-list button.link:focus-visible { outline: none; }
 
 .done-box {
   background: var(--good-bg); border: 1px solid var(--good-line); border-radius: 8px; padding: 11px;
@@ -895,6 +948,45 @@ function refuseUntrusted(root) {
  * `getElementById`'s reach. See `reachable` in `createCard`.
  */
 let live = null;
+
+/**
+ * A red strip the card showed, for ResumeM-M's error log: the worker keeps
+ * it with the minutes before an entry (see shared/error-log.js). The card's
+ * own sentence, never anything typed into it. Nothing when the card is
+ * running anywhere but in the extension — a test page, a page without it.
+ */
+function noteForErrorLog(message) {
+  try {
+    const sent = globalThis.chrome?.runtime?.id
+      ? chrome.runtime.sendMessage({ type: 'logEvents', payload: { events: [{ kind: 'card-error', level: 'error', message: String(message).slice(0, 1000) }] } })
+      : null;
+    sent?.catch?.(() => undefined);
+  } catch {
+    // The extension was reloaded under the page; nothing to tell.
+  }
+}
+
+/**
+ * An address as a person reads it: the host without "www.", and the path —
+ * its first and last parts with "…" between when it is long. No query, no
+ * fragment: on a posting those are tracking, and they are what ran past the
+ * card's edge. Anything that is not an address comes back cut to length.
+ */
+export function shortAddress(url, max = 32) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    const text = String(url ?? '');
+    return text.length > 60 ? `${text.slice(0, 59)}…` : text;
+  }
+  const host = u.host.replace(/^www\./, '');
+  const parts = u.pathname.split('/').filter(Boolean);
+  let path = parts.length ? `/${parts.join('/')}` : '';
+  if (path.length > max && parts.length > 2) path = `/${parts[0]}/…/${parts[parts.length - 1]}`;
+  if (path.length > max) path = `${path.slice(0, max - 1)}…`;
+  return `${host}${path}`;
+}
 
 export function removeCard() {
   live?.stop();
@@ -1422,6 +1514,18 @@ export function createCard({
     render: null,
     busy: null,
     error: null,
+    /**
+     * The code box, while ResumeM-M refuses this extension for not being
+     * paired. See `drawPairing`: what was typed, what the last try was told,
+     * and what to do again once it pairs.
+     */
+    pairing: null,
+    /**
+     * "Not now" said to that box on this tab, as the worker keeps it.
+     * Unknown until asked, and the box waits for the answer rather than
+     * flashing up on a tab where it was put away.
+     */
+    pairLater: undefined,
     bundle: null,
     view: 'propose',
     /**
@@ -1765,6 +1869,17 @@ export function createCard({
        */
       answersByQuestion: Object.fromEntries(collectedAnswers().map(({ question, answer }) => [question, answer])),
       answerGaps: state.answerGaps,
+      /*
+       * And the store's question about an application that may be this one,
+       * with its answer. Answered on the posting — "It's a different job" —
+       * the question came back on the form and again on the confirmation
+       * page: the answer lived in this card, and the card is made anew on
+       * every page, while the store went on matching the sent row by name.
+       * Carried with the row it was asked about, so a question on the next
+       * page about another sent row is still asked. See `restoreWork`.
+       */
+      maybeSent: state.maybeSent,
+      anotherJob: state.anotherJob,
     };
   }
 
@@ -1921,6 +2036,19 @@ export function createCard({
     if (work.priorLetters?.length) state.priorLetters = work.priorLetters;
     state.carriedOver = work.answersByQuestion ?? {};
     if (work.answerGaps && typeof work.answerGaps === 'object') state.answerGaps = { ...work.answerGaps, ...state.answerGaps };
+    /*
+     * The question the store asked, and its answer, from the page before —
+     * see `takeWork`. Only when it is the same question: this page's own
+     * reading names the sent row it is asking about (`analysis.applied`),
+     * and an answer given about one row is not an answer about another. With
+     * no row named on either side, the answer stands.
+     */
+    const carriedAsk = work.maybeSent?.id ? work.maybeSent : null;
+    const askedHere = analysis?.applied?.maybe ? (analysis.applied.id ?? null) : null;
+    if (!askedHere || !carriedAsk || askedHere === carriedAsk.id) {
+      if (carriedAsk && !state.maybeSent) state.maybeSent = { ...carriedAsk };
+      if (work.anotherJob) state.anotherJob = true;
+    }
     applyCarriedAnswers();
     maybeAutoDraft();
     /*
@@ -3422,6 +3550,8 @@ export function createCard({
       state.errorFix = err.jobhelper ?? null;
       // This button's failure, not the page's. See `drawError`.
       state.passFailed = false;
+      // Refused for not being paired: the code box, and this press again once it is.
+      if (err.jobhelper?.fix === 'pair') needPairing({ action, payload, apply });
       return null;
     } finally {
       running.delete(action);
@@ -3707,6 +3837,206 @@ export function createCard({
     ]);
   }
 
+  /* ---------------------------------------------------------------- *
+   * Pairing, where the person is                                      *
+   * ---------------------------------------------------------------- */
+
+  /*
+   * ResumeM-M answers only the JobHelper it has been paired with, and a
+   * request refused for that used to end in a sentence: open ResumeM-M, find
+   * Save & Files → Pair JobHelper, make a code, then open this extension's
+   * toolbar popup and type it there. Four places, none of them this one.
+   *
+   * So the code box comes to the card, at the top, the moment a request is
+   * refused for not being paired — the page's own read, or any button. Typed
+   * in here, the worker pairs (one exchange for every tab; see `pairOnce`)
+   * and what was refused is done again, so the person carries on where they
+   * were. "Get a code" opens ResumeM-M on a code already made. "Not now" puts
+   * it away for this tab, leaving a line with the way back to it.
+   *
+   * Only for "not paired". A store that is not running keeps its own
+   * sentence and its own button: no code would help with that.
+   */
+  const pairingShown = () => Boolean(state.pairing) && state.pairLater === false;
+  /** Refused for not being paired, and not yet on the way past it. */
+  const waitingToPair = () => state.errorFix?.fix === 'pair' && !state.pairing?.done;
+
+  /** Refused for not being paired; `retry` is what to do again once it is. */
+  function needPairing(retry) {
+    const was = state.pairing;
+    if (!was || was.done) {
+      state.pairing = { code: '', busy: false, said: '', tone: '', retry, focus: true };
+    } else if (!(was.retry?.pass && !analysis)) {
+      // The newest refusal is the one to repeat — unless the page itself has
+      // not been read, which every other button needs first.
+      was.retry = retry;
+    }
+    if (state.pairLater === undefined) {
+      state.pairLater = null;
+      Promise.resolve(onAction('pairLater', {}))
+        .then((r) => { state.pairLater = Boolean(r?.later); })
+        .catch(() => { state.pairLater = false; })
+        .finally(() => draw());
+    }
+  }
+
+  /** Put focus in the code box, unless somebody is typing somewhere on the page. */
+  function focusPairBox(select) {
+    const box = card.querySelector('input.pair-code');
+    if (!box) return;
+    const elsewhere = document.activeElement;
+    const free = !elsewhere || elsewhere === document.body || elsewhere === document.documentElement || elsewhere === host;
+    if (!free) return;
+    box.focus({ preventScroll: true });
+    if (select) box.select();
+  }
+
+  async function pairNow() {
+    const p = state.pairing;
+    if (!p || p.busy || p.done) return;
+    const code = p.code.trim();
+    if (!code) {
+      p.said = 'Type the code ResumeM-M is showing, or press “Get a code”.';
+      p.tone = 'bad';
+      p.focus = true;
+      draw();
+      return;
+    }
+    p.busy = true;
+    p.said = '';
+    draw();
+    try {
+      await onAction('pair', { code });
+    } catch (err) {
+      p.busy = false;
+      // The store's own sentence: a wrong code says how many tries are left.
+      p.said = err.message;
+      p.tone = 'bad';
+      p.focus = true;
+      p.select = true;
+      if (state.pairing === p) draw();
+      return;
+    }
+    p.busy = false;
+    if (state.pairing === p) await carryOnPaired();
+  }
+
+  /** Paired: say so where the box was, and do again what was refused. */
+  async function carryOnPaired() {
+    const p = state.pairing;
+    if (!p || p.done) return;
+    const retry = p.retry;
+    p.done = true;
+    p.busy = false;
+    p.tone = 'ok';
+    p.said = retry ? 'Paired — retrying…' : 'Paired with ResumeM-M.';
+    state.pairLater = false;
+    draw();
+    announce('Paired with ResumeM-M.');
+    // Read once on open, while the store said nothing about its AI to an
+    // extension it had not paired with. See `drawAiChip`.
+    Promise.resolve(onAction('aiStatus', {}))
+      .then((status) => {
+        if (status) state.ai = status;
+        draw();
+      })
+      .catch(() => undefined);
+    try {
+      if (retry?.action) await act(retry.action, retry.payload, retry.apply);
+      else if (retry?.pass) await act('retry', {});
+      else await new Promise((r) => setTimeout(r, 1500));
+    } finally {
+      // Not if that was refused again: it put up a box of its own.
+      if (state.pairing === p) {
+        state.pairing = null;
+        draw();
+      }
+    }
+  }
+
+  function drawPairing() {
+    const p = state.pairing;
+    if (!p || !pairingShown()) return null;
+    if (p.focus) {
+      const select = Boolean(p.select);
+      p.focus = false;
+      p.select = false;
+      // After this draw has put the box on the page, and its own focus back.
+      queueMicrotask(() => focusPairBox(select));
+    }
+    const said = h('div', { className: `pair-said ${p.tone}`.trim(), role: 'status', textContent: p.said });
+    if (p.done) return h('div', { className: 'pair-block done' }, [said]);
+    return h('div', { className: 'pair-block', role: 'group', 'aria-label': 'Pair JobHelper with ResumeM-M' }, [
+      h('div', { className: 'pair-what', textContent: 'JobHelper isn’t paired with ResumeM-M yet. Enter the code ResumeM-M shows to carry on.' }),
+      h('div', { className: 'row pair-row' }, [
+        h('input', {
+          className: 'pair-code',
+          type: 'text',
+          value: p.code,
+          placeholder: 'ABCD-EFGH',
+          maxLength: 12,
+          autocomplete: 'off',
+          spellcheck: false,
+          disabled: p.busy,
+          'aria-label': 'Pairing code from ResumeM-M',
+          dataset: { field: 'pair-code' },
+          // Letters, digits, and the space or dash people put in the middle.
+          oninput: (event) => {
+            const box = event.target;
+            const kept = box.value.replace(/[^A-Za-z0-9\s-]/g, '');
+            if (kept !== box.value) {
+              const at = Math.max(0, (box.selectionStart ?? kept.length) - (box.value.length - kept.length));
+              box.value = kept;
+              box.setSelectionRange(at, at);
+            }
+            p.code = kept;
+          },
+          onkeydown: (event) => {
+            if (event.key === 'Enter' && !composing(event)) {
+              event.preventDefault();
+              void pairNow();
+            }
+          },
+        }),
+        h('button', {
+          className: 'primary',
+          dataset: { focus: 'pair' },
+          textContent: p.busy ? 'Pairing…' : 'Pair',
+          disabled: p.busy,
+          onclick: () => void pairNow(),
+        }),
+        h('button', {
+          dataset: { focus: 'pair-get' },
+          textContent: 'Get a code',
+          title: 'Opens ResumeM-M in a new tab, with a code already made',
+          onclick: () => {
+            p.said = 'ResumeM-M opened in a new tab with a code. Type or paste it here.';
+            p.tone = '';
+            draw();
+            Promise.resolve(onAction('getPairCode', {})).catch((err) => {
+              p.said = err.message;
+              p.tone = 'bad';
+              draw();
+            });
+          },
+        }),
+      ]),
+      said,
+      h('div', { className: 'row pair-foot' }, [
+        h('button', {
+          className: 'tiny',
+          textContent: 'Not now',
+          title: 'Put this away on this tab. The card keeps a link to it.',
+          onclick: () => {
+            state.pairLater = true;
+            draw();
+            Promise.resolve(onAction('pairLater', { later: true })).catch(() => undefined);
+          },
+        }),
+      ]),
+    ]);
+  }
+
   /**
    * A Submit pressed in a frame that may or may not have sent the
    * application, put to the person.
@@ -3880,6 +4210,14 @@ export function createCard({
     ]);
   }
 
+  /** A sent application's address, short, linking to the whole of it when it is a web page. */
+  function sentAddress(url) {
+    const shown = shortAddress(url);
+    return /^https?:\/\//i.test(url)
+      ? h('a', { className: 'sent-at', href: url, title: url, target: '_blank', rel: 'noopener noreferrer', textContent: shown })
+      : h('span', { className: 'sent-at', title: url, textContent: shown });
+  }
+
   /*
    * The question, and its answer. "It's another job" is the existing
    * `evenIfSent`, said on purpose: the stage goes again, and the store files
@@ -3899,7 +4237,13 @@ export function createCard({
     return h('div', { className: 'before maybe-sent' }, [
       document.createTextNode('You may have applied to this already'),
       ...(said ? [document.createTextNode(', on '), h('b', { textContent: said })] : []),
-      ...(past.url ? [document.createTextNode(` (${past.url})`)] : []),
+      /*
+       * Where it went, as a host and a short path: the whole tracking address
+       * ran past the card's right edge, and the part that says which job is
+       * the host and the posting's own path. The full address is the link and
+       * its title.
+       */
+      ...(past.url ? [document.createTextNode(' ('), sentAddress(past.url), document.createTextNode(')')] : []),
       document.createTextNode(
         past.held ? '. Nothing has been prepared for it yet, in case it is the same job. ' : '. ',
       ),
@@ -5795,7 +6139,34 @@ export function createCard({
       ]);
     }
     const adj = r.adjustments?.length ? ` Auto-fit: ${r.adjustments.join('; ')}.` : '';
-    return h('div', { className: 'fit ok', textContent: `Fits on one page.${adj}` });
+    /*
+     * With the count the PDF really has. "Fits on one page" was said of every
+     * resume that fitted, a two-page resume allowed two pages included.
+     * ResumeM-M says how many it allowed beside the count; an older one that
+     * does not is taken to allow the one the tool is named for.
+     */
+    const allowed = r.maxPages ?? 1;
+    const pages = r.pages > 1 ? plural(r.pages, 'page') : 'one page';
+    const counted = `${pages}${allowed > 1 ? ` (${allowed} allowed)` : ''}`;
+    /*
+     * And not in green over a line that runs off the paper. The page count
+     * was all this read, so a link too long to break sat past the right-hand
+     * edge — not in the PDF at all — under "Fits on one page." The compile
+     * says so in `warnings`, in words meant to be shown; they are shown.
+     * Still `ok` underneath: it does fit, and what waits for a finished
+     * compile waits for that.
+     */
+    const edge = (r.warnings ?? []).filter(
+      (w) => typeof w === 'string' && /past the right-hand edge|into the right-hand margin/i.test(w),
+    );
+    if (edge.length) {
+      const said = edge.join(' ');
+      return h('div', {
+        className: 'fit ok warn',
+        textContent: `On ${counted}, but ${said.charAt(0).toLowerCase()}${said.slice(1)}${adj}`,
+      });
+    }
+    return h('div', { className: 'fit ok', textContent: `Fits on ${counted}.${adj}` });
   }
 
   /* ---- Main view ---- */
@@ -7565,10 +7936,35 @@ export function createCard({
      * once no error is showing (see `draw`), so the same failure twice is
      * said twice; it is declared with `said`, above, since `draw` reads it.
      */
+    const fix = state.errorFix;
+    // The code box above says it, and is the way past it. See `drawPairing`.
+    if (fix?.fix === 'pair' && state.pairing && state.pairLater !== true) return null;
     const fresh = state.error !== alertedError;
     alertedError = state.error;
+    if (fresh) noteForErrorLog(state.error);
+    /*
+     * Put away with "Not now": one line, and the way back to the box. The
+     * worker's sentence names the popup, which is true and further away
+     * than the card the person is looking at.
+     */
+    if (fix?.fix === 'pair') {
+      return h('div', { className: 'err pair-later', role: fresh ? 'alert' : null }, [
+        h('span', { textContent: 'JobHelper isn’t paired with ResumeM-M. ' }),
+        h('button', {
+          className: 'link',
+          dataset: { focus: 'pair-again' },
+          textContent: 'Pair JobHelper',
+          onclick: () => {
+            state.pairLater = false;
+            if (state.pairing) state.pairing.focus = true;
+            else state.pairing = { code: '', busy: false, said: '', tone: '', retry: { pass: true }, focus: true };
+            draw();
+            Promise.resolve(onAction('pairLater', { later: false })).catch(() => undefined);
+          },
+        }),
+      ]);
+    }
     const box = h('div', { className: 'err', role: fresh ? 'alert' : null }, [h('div', { textContent: state.error })]);
-    const fix = state.errorFix;
     if (!fix) return box;
 
     box.append(
@@ -7610,8 +8006,20 @@ export function createCard({
 
   /** True when the report names fields the form still needs from you. */
   function autofillLeftWork(r) {
-    return r.skipped.some((skip) => skip.reason !== 'already filled');
+    return r.skipped.some((skip) => skip.reason !== 'already filled' && !alreadyThere(skip));
   }
+
+  /*
+   * A job or a school Autofill did not add because the form already shows it
+   * saved (autofill.js, `addJobBlocks` and `fillEducation`): "Software
+   * Engineer at Acme Corp already in Work Experience". Not a field left for
+   * the person — listed as one, it read as work still to do, with nothing to
+   * do — but said quietly under the note, so a saved entry taken for the
+   * resume's own can be checked. The names are the resume's own jobs and
+   * schools, never an answer the form was given.
+   */
+  const ALREADY_THERE = /^(.+?) already in (Work Experience|Education)$/;
+  const alreadyThere = (skip) => ALREADY_THERE.test(String(skip?.reason ?? ''));
 
   /**
    * What went into the form's upload boxes, and what did not.
@@ -7642,14 +8050,32 @@ export function createCard({
      * is how somebody submits a form with no resume in it, on the strength of
      * a sentence from here.
      */
-    const sure = placed.filter((p) => p.sure !== false);
+    const sure = placed.filter((p) => p.sure !== false && !p.already);
     const dropped = placed.filter((p) => p.sure === false);
+    /*
+     * And the ones the form was already showing, which were left alone
+     * rather than uploaded a second time. "Attached" again over them read as
+     * though a second copy had gone in — which, until it was checked for, it
+     * had.
+     */
+    const already = placed.filter((p) => p.already);
     if (sure.length > 0) parts.push(`Attached ${sure.map((p) => p.name).join(' and ')}`);
-    else if (dropped.length === 0) parts.push('Nothing was attached');
+    else if (dropped.length === 0 && already.length === 0) parts.push('Nothing was attached');
+    if (already.length > 0) {
+      /*
+       * A widget that cleared its input shows only a name, and a rebuilt file
+       * keeps it — so where nothing could be compared, how to replace it.
+       */
+      const unchecked = already.some((p) => p.unchecked);
+      parts.push(
+        `${already.map((p) => p.name).join(' and ')} ${already.length === 1 ? 'was' : 'were'} already attached` +
+          (unchecked ? `; if ${already.length === 1 ? 'it has' : 'they have'} changed since, remove ${already.length === 1 ? 'it' : 'them'} there first` : ''),
+      );
+    }
     if (dropped.length > 0) {
       parts.push(
         `${dropped.map((p) => p.name).join(' and ')} went to this form’s drop area, which does not say ` +
-          'whether it took them — check the form before sending',
+          `whether it took ${dropped.length === 1 ? 'it' : 'them'} — check the form before sending`,
       );
     }
     /*
@@ -7715,7 +8141,7 @@ export function createCard({
      * which is why it records the reasons at all.
      */
     const done = r.skipped.filter((s) => s.reason === 'already filled').length;
-    const yours = r.skipped.length - done;
+    const yours = r.skipped.filter((s) => s.reason !== 'already filled' && !alreadyThere(s)).length;
     if (done) parts.push(`left ${plural(done, 'field')} that already had a value`);
     if (yours) parts.push(`${plural(yours, 'field')} still for you to answer`);
     const said = r.filled.length || r.skipped.length || !r.refilled?.length ? `${parts.join(', ')}.` : '';
@@ -8599,6 +9025,17 @@ export function createCard({
    * has it. (Not the page, though it has called `preventDefault`: see
    * `composing`.)
    */
+  /*
+   * Whether the card was last used with a pointer or the keyboard, for the
+   * rings that a redraw's `focus()` would otherwise show after a click (see
+   * `.card[data-pointer]`). Nothing else reads it.
+   */
+  card.addEventListener('pointerdown', () => {
+    card.dataset.pointer = '';
+  }, true);
+  card.addEventListener('keydown', () => {
+    delete card.dataset.pointer;
+  }, true);
   card.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || composing(event)) return;
     const menu = root.querySelector('.rename-menu:not(.hidden)');
@@ -8680,7 +9117,7 @@ export function createCard({
     card.classList.toggle('reduced-card', small);
     if (!state.error) alertedError = null;
     card.replaceChildren(
-      ...[drawHead(), drawSentQuestion()].filter(Boolean),
+      ...[drawHead(), drawPairing(), drawSentQuestion()].filter(Boolean),
       /*
        * Folded, the card is its header and one line saying what it is the
        * header for. The line matters: a bar reading only "JobHelper" over
@@ -8801,7 +9238,17 @@ export function createCard({
       textContent: describeAutofill(state.autofillReport),
     });
     const left = drawLeftList(state.autofillReport);
-    return left ? h('div', { className: 'autofill-note' }, [note, left]) : note;
+    const there = drawAlreadyThere(state.autofillReport);
+    return left || there ? h('div', { className: 'autofill-note' }, [note, left, there]) : note;
+  }
+
+  /** The jobs and schools the form already showed, so not added again. See `ALREADY_THERE`. */
+  function drawAlreadyThere(r) {
+    const names = (r.skipped ?? []).map((s) => String(s.reason ?? '').match(ALREADY_THERE)).filter(Boolean);
+    if (!names.length) return null;
+    const sections = [...new Set(names.map((m) => m[2]))].join(' and ');
+    const said = names.map((m) => m[1]).join('; ');
+    return h('div', { className: 'hint already-there', textContent: `Already in ${sections}, so not added again: ${said}. Check it is yours.` });
   }
 
   /*
@@ -8831,25 +9278,75 @@ export function createCard({
   let leftOpenFor = null;
 
   const WHY_LEFT = [
+    /*
+     * A block Autofill opened and typed into, and could not save itself
+     * (autofill.js): "Example Co. is typed in but not saved — press Save in
+     * Work Experience". Only the section is said, which is the form's own
+     * heading as autofill.js names it; the words before it are an answer, and
+     * are not passed through. First, so nothing in that answer is matched as
+     * a reason below. The section can be cut off by the reason's own length
+     * limit: then the row still says what to do.
+     */
+    [/is typed in but not saved\b(?:.*?\bpress Save in (Work Experience|Education)\b)?/, (m) =>
+      m[1] ? `typed in but not saved — press Save in ${m[1]}` : 'typed in but not saved — press its Save button'],
+    /*
+     * "the form's country code is +46 — check the phone": the dial code only,
+     * and only as digits, since it is what to check against.
+     */
+    [/\bcountry code is (\+\d{1,4})(?!\d)/, (m) => `the form's country code is ${m[1]} — check the phone number`],
+    [/\bcountry code is\b/, 'the form has another country code — check the phone number'],
+    /*
+     * The jobs Autofill could not add a block for (autofill.js, `addJobBlocks`):
+     * "2 jobs not entered: Acme, Globex". The companies are the resume's own,
+     * not anything a question was answered with, and without them the row is
+     * just "Work Experience", with nothing saying which jobs to type in.
+     */
+    [/^(\d+) (?:job|jobs) not entered(?::\s*(.+))?$/, (m) => {
+      const jobs = m[1] === '1' ? 'a job' : `${m[1]} jobs`;
+      return m[2] ? `${jobs} not entered — add ${m[2].trim()} by hand` : `${jobs} not entered — add by hand`;
+    }],
     [/two things at once|acknowledge it yourself|in the negative/, 'yours to answer'],
     [/not one of the options|no matching option/, 'no matching option'],
     [/by hand/, 'pick by hand'],
     [/would not (?:take|accept)/, 'the field would not take it'],
     [/another country/, 'asks about another country'],
-    [/not on the resume|lists no schools|does not list|at the level/, 'not on the resume sent'],
+    [/not on the resume|lists no schools|lists no other school|does not list|at the level/, 'not on the resume sent'],
     [/would not add another/, 'the form would not add another'],
+    [/could not be split/, 'your name could not be split safely — set autofill.first_name and autofill.last_name in your profile'],
   ];
-  const whyLeft = (reason) => WHY_LEFT.find(([re]) => re.test(String(reason ?? '')))?.[1] ?? '';
+  const whyLeft = (reason) => {
+    const said = String(reason ?? '');
+    for (const [re, why] of WHY_LEFT) {
+      const m = said.match(re);
+      if (m) return typeof why === 'function' ? why(m) : why;
+    }
+    return '';
+  };
+
+  /*
+   * The heading a reason is grouped under, and what is left to say beside
+   * its row. A reason that names a section or a dial code was a heading of
+   * its own over one row — "Typed in but not saved — press Save in Work
+   * Experience" over "Work Experience" — once for each section. Grouped, the
+   * section is the row, under one heading for all of them; the dial code is
+   * said beside its row.
+   */
+  function groupOf(why) {
+    if (/^typed in but not saved/.test(why)) return { heading: "typed in but not saved — press each section's Save", detail: '' };
+    const code = why.match(/^the form's country code is (\+\d{1,4})/);
+    if (code) return { heading: 'the form has another country code — check the phone number', detail: `its code is ${code[1]}` };
+    return { heading: why, detail: '' };
+  }
 
   function drawLeftList(r) {
-    const left = (r.skipped ?? []).filter((s) => s.reason !== 'already filled');
+    const left = (r.skipped ?? []).filter((s) => s.reason !== 'already filled' && !alreadyThere(s));
     if (!left.length) return null;
     const open = leftOpenFor === r.skipped;
     const grouped = left.length > 3;
 
     // In the order the page asks them, a reason's rows together once grouped.
     const byWhy = new Map();
-    for (const s of left) byWhy.set(whyLeft(s.reason), [...(byWhy.get(whyLeft(s.reason)) ?? []), s]);
+    for (const s of left) byWhy.set(groupOf(whyLeft(s.reason)).heading, [...(byWhy.get(groupOf(whyLeft(s.reason)).heading) ?? []), s]);
     const ordered = grouped ? [...byWhy.values()].flat() : left;
     const shown = open ? ordered : ordered.slice(0, LEFT_SHOWN);
 
@@ -8882,14 +9379,16 @@ export function createCard({
     let heading = null;
     for (const s of shown) {
       const why = whyLeft(s.reason);
-      if (grouped && why !== heading) {
-        heading = why;
-        rows.push(h('div', { className: 'left-why', textContent: why ? `${why[0].toUpperCase()}${why.slice(1)}` : 'Other' }));
+      const { heading: under, detail } = groupOf(why);
+      if (grouped && under !== heading) {
+        heading = under;
+        rows.push(h('div', { className: 'left-why', textContent: under ? `${under[0].toUpperCase()}${under.slice(1)}` : 'Other' }));
       }
+      const beside = grouped ? detail : why;
       rows.push(
         h('div', { className: 'left-row' }, [
           nameOf(s),
-          !grouped && why ? h('span', { className: 'why', textContent: `— ${why}` }) : null,
+          beside ? h('span', { className: 'why', textContent: `— ${beside}` }) : null,
         ]),
       );
     }
@@ -8897,6 +9396,9 @@ export function createCard({
       rows.push(
         h('button', {
           className: 'link',
+          // One control whatever it says, so Enter on it keeps focus on it
+          // across the redraw: see `focusKey`.
+          dataset: { focus: 'left-more' },
           textContent: open ? 'Show fewer' : `and ${ordered.length - LEFT_SHOWN} more`,
           ariaExpanded: String(open),
           onclick: () => {
@@ -9090,14 +9592,28 @@ export function createCard({
    * ready — a card that shows up late looks like one that is broken.
    */
   function drawReadingView() {
+    /*
+     * A read that failed is not still reading. The bar went on moving and
+     * "Reading the posting…" stood above the error that said it had stopped,
+     * and the hostname stood where the company goes, as if it had been read
+     * as one. Over an error there is the page's title and the error.
+     */
+    const failed = Boolean(state.error);
     return h('div', { className: 'body' }, [
       h('div', { className: 'job' }, [
         h('div', { className: 'role provisional', textContent: provisionalRole(document.title) }),
-        h('div', { className: 'co', textContent: location.hostname }),
-      ]),
-      h('div', { className: 'progress' }),
-      h('div', { className: 'progress-label', textContent: 'Reading the posting…' }),
-      state.error ? drawError() : null,
+        failed ? null : h('div', { className: 'co', textContent: location.hostname }),
+      ].filter(Boolean)),
+      // Not "Reading…" over a read that is waiting for a code (see
+      // `drawPairing`), nor over one that has failed.
+      failed || waitingToPair() ? null : h('div', { className: 'progress' }),
+      failed
+        ? null
+        : h('div', {
+            className: 'progress-label',
+            textContent: waitingToPair() ? 'Read once JobHelper is paired.' : 'Reading the posting…',
+          }),
+      failed ? drawError() : null,
     ].filter(Boolean));
   }
 
@@ -9565,7 +10081,23 @@ export function createCard({
       // Only the page's pass says something with a way out through here, so
       // that is what "Try again" should run. See `drawError`.
       state.passFailed = Boolean(fix);
+      // The page's read refused for not being paired: the whole pass again, once it is.
+      if (fix?.fix === 'pair') needPairing({ pass: true });
       draw();
+    },
+
+    /*
+     * Paired, here or in another tab: the worker tells every tab. A card
+     * waiting on a code carries on with what was refused, and one whose box
+     * was put away with "Not now" does too — the reason for it has gone.
+     */
+    paired() {
+      state.pairLater = false;
+      if (state.pairing && !state.pairing.done) carryOnPaired();
+      else if (!state.pairing && state.errorFix?.fix === 'pair') {
+        state.pairing = { code: '', busy: false, said: '', tone: '', retry: state.passFailed ? { pass: true } : null };
+        carryOnPaired();
+      }
     },
 
     /*

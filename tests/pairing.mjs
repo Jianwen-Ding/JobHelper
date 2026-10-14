@@ -73,10 +73,30 @@ async function main() {
     await popup.goto(`chrome-extension://${id}/src/popup/popup.html`);
     const shown = await waitFor(() => popup.isVisible('#pairing'));
     check('the popup asks for the code', Boolean(shown));
+    /*
+     * Open, at the top, with the caret in it: the popup is where somebody
+     * goes because something said "not paired", and the code is in their
+     * clipboard by then.
+     */
+    const focused = await waitFor(() => popup.evaluate(() => document.activeElement?.id === 'pairCode' || undefined));
+    check('with the caret in the code box, so the code can be pasted at once', Boolean(focused), await popup.evaluate(() => document.activeElement?.id));
+    const getCode = await popup.textContent('#pairOpen');
+    check('and "Get a code" beside it', getCode?.trim() === 'Get a code', getCode);
+    const opened = context.waitForEvent('page', { timeout: 10_000 }).catch(() => null);
+    await popup.click('#pairOpen');
+    const codeTab = await opened;
+    check('which opens the editor at its pairing section, asking for a code', codeTab?.url() === `${SERVER}/#save/pair?make=1` || /#pair$/.test(codeTab?.url() ?? ''), codeTab?.url());
+    await codeTab?.waitForSelector('#pair-code', { timeout: 15_000 }).catch(() => null);
+    const madeThere = await codeTab?.textContent('#pair-code').catch(() => null);
+    check('and shows a code made for it', /^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(madeThere ?? ''), madeThere);
+    await codeTab?.close();
     const what = await popup.textContent('#pairingWhat');
     check('and says where the code is', /Save & Files → Pair JobHelper/.test(what ?? ''), what);
     const status = await popup.textContent('#status');
-    check('the status line says not paired, not "not running"', /not paired/.test(status ?? '') && !/not open|did not answer/.test(status ?? ''), status);
+    check('the status line was told not paired, not "not running"', /not paired/.test(status ?? '') && !/not open|did not answer/.test(status ?? ''), status);
+    // Said once, in the box: a red status line under it saying the same
+    // thing in nearly the same words was the second time.
+    check('and is not shown beside the box saying it again', !(await popup.isVisible('#status')), await popup.evaluate(() => document.querySelector('#status').hidden));
     const ai = await popup.textContent('#aiState');
     const aiHint = await popup.textContent('#aiHint');
     check('the AI panel does not claim no AI is set up', ai !== 'No AI set up' && /paired/.test(aiHint ?? ''), `${ai} / ${aiHint}`);
@@ -117,6 +137,7 @@ async function main() {
       return /not open|did not answer/.test(text ?? '') ? text : undefined;
     });
     check('the popup says it is not running', Boolean(down), await popup.textContent('#status'));
+    check('in the status line, shown again now the box is not saying anything', await popup.isVisible('#status'));
     check('the code box goes away', !(await popup.isVisible('#pairing')));
     check('and what the last code was told goes with it', (await popup.textContent('#pairSaid')) === '', await popup.textContent('#pairSaid'));
     await popup.fill('#serverUrl', SERVER);
@@ -149,9 +170,11 @@ async function main() {
     const used = await fetch(`${SERVER}/api/extension/pairings`).then((r) => r.json());
     check('the editor lists it', used.paired.some((p) => p.id === id) && used.code === null, JSON.stringify(used));
 
+    // By name, "JobHelper" and the start of its id; the whole origin is the row's title.
     const row = await waitFor(async () => {
-      const text = await editor.textContent('#pair-list').catch(() => null);
-      return text?.includes(id) ? text : undefined;
+      const named = editor.locator(`#pair-list [title="chrome-extension://${id}"]`);
+      const text = (await named.count()) ? await named.first().textContent() : null;
+      return text?.startsWith(`JobHelper ${id.slice(0, 6)}`) ? text : undefined;
     });
     check('the editor lists it under Paired extensions, and the code is gone', Boolean(row) && !(await editor.isVisible('#pair-code')), row);
 

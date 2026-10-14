@@ -1,6 +1,7 @@
 const PREFIX = 'bug-report:';
 let fingerprint;
-async function extensionBuild() {
+/** A fingerprint of the extension's own code, so a report or a log entry says which build it came from. */
+export async function extensionBuild() {
   fingerprint ??= Promise.all(['src/content/card.js', 'src/background/service-worker.js', 'src/reports/report.js']
     .map(async (file) => (await fetch(chrome.runtime.getURL(file))).text()))
     .then(async (files) => {

@@ -1743,6 +1743,74 @@
      "expect": false
     }
    ]
+  },
+  {
+   "id": "jobforms-r24-01",
+   "input": {
+    "name": "a German application asking for an Anschreiben",
+    "body": "\n    <h1>Bewerbung</h1>\n    <label for=\"fn\">Vorname</label><input id=\"fn\" name=\"vorname\">\n    <label for=\"ln\">Nachname</label><input id=\"ln\" name=\"nachname\">\n    <label for=\"em\">E-Mail</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Telefon</label><input id=\"ph\" name=\"telefon\">\n    <label for=\"an\">Anschreiben</label><textarea id=\"an\" name=\"anschreiben\"></textarea>\n    <button type=\"button\">Bewerbung absenden</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r24",
+     "basis": "review",
+     "where": "hunt24-i18n / fix24i brief",
+     "note": "round 24: forms in other languages",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-r24-02",
+   "input": {
+    "name": "a French application asking for a lettre de motivation",
+    "body": "\n    <h1>Candidature</h1>\n    <label for=\"fn\">Prénom</label><input id=\"fn\" name=\"prenom\">\n    <label for=\"ln\">Nom de famille</label><input id=\"ln\" name=\"nom\">\n    <label for=\"em\">E-mail</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Téléphone</label><input id=\"ph\" name=\"telephone\">\n    <label for=\"lm\">Lettre de motivation</label><textarea id=\"lm\" name=\"lettre\"></textarea>\n    <button type=\"button\">Envoyer ma candidature</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r24",
+     "basis": "review",
+     "where": "hunt24-i18n / fix24i brief",
+     "note": "round 24: forms in other languages",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-r24-03",
+   "input": {
+    "name": "a Spanish application asking for a carta de presentación",
+    "body": "\n    <h1>Solicitud</h1>\n    <label for=\"fn\">Nombre</label><input id=\"fn\" name=\"nombre\">\n    <label for=\"ln\">Apellidos</label><input id=\"ln\" name=\"apellidos\">\n    <label for=\"em\">Correo electrónico</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Teléfono</label><input id=\"ph\" name=\"telefono\">\n    <label for=\"cp\">Carta de presentación</label><textarea id=\"cp\" name=\"carta\"></textarea>\n    <button type=\"button\">Enviar solicitud</button>"
+   },
+   "expect": true,
+   "sources": [
+    {
+     "round": "r24",
+     "basis": "review",
+     "where": "hunt24-i18n / fix24i brief",
+     "note": "round 24: forms in other languages",
+     "expect": true
+    }
+   ]
+  },
+  {
+   "id": "jobforms-r24-04",
+   "input": {
+    "name": "a German loan form is still not a job",
+    "body": "\n    <h1>Privatkredit beantragen</h1>\n    <label for=\"fn\">Vorname</label><input id=\"fn\" name=\"vorname\">\n    <label for=\"ln\">Nachname</label><input id=\"ln\" name=\"nachname\">\n    <label for=\"em\">E-Mail</label><input id=\"em\" type=\"email\" name=\"email\">\n    <label for=\"ph\">Telefon</label><input id=\"ph\" name=\"telefon\">\n    <label for=\"ek\">Jahreseinkommen</label><input id=\"ek\" name=\"einkommen\">\n    <label for=\"c\">Anmerkungen</label><textarea id=\"c\" name=\"anmerkungen\"></textarea>\n    <button type=\"button\">Antrag absenden</button>"
+   },
+   "expect": false,
+   "sources": [
+    {
+     "round": "r24",
+     "basis": "review",
+     "where": "hunt24-i18n / fix24i brief",
+     "note": "round 24: forms in other languages",
+     "expect": false
+    }
+   ]
   }
  ]
 }

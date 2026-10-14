@@ -24,6 +24,8 @@ import {
   pressedOnAnotherJob,
   relatedPath,
   boardOf,
+  employerKey,
+  titleKey,
   sameApplication,
   summarise,
   trimForStorage,
@@ -2199,5 +2201,93 @@ describe('Apply pressed on another job than the one the tab is holding', () => {
     assert.equal(judgeApplication(strayed, page, now), 'different');
     // For as long as a click is believed, and no longer.
     assert.equal(judgeApplication({ ...trail, strayed: { from: next, at: now - EXPECTATION_MS - 1 } }, page, now), 'same');
+  });
+});
+
+/*
+ * Round 24: one employer and one job, as postings outside the English-speaking
+ * world write them.
+ *
+ * A legal form with dots or from another country's list — "Société Générale
+ * S.A.", "Acme GmbH & Co. KG", 株式会社リクルート — was a different employer
+ * from the plain name the form writes, and a gender tag — "(m/w/d)", "(H/F)"
+ * — a different title. ResumeM-M's tests/i18n.test.ts asks the same pairs of
+ * its `sameEmployer` and `identity`; the patterns are byte for byte the same.
+ */
+describe('one employer and one job, in the forms other countries write them', () => {
+  it('reads a legal form with dots, or from another list, as the same employer', () => {
+    for (const [a, b] of [
+      ['Société Générale S.A.', 'Société Générale'],
+      ['Telefónica, S.L.', 'Telefónica'],
+      ['Acme GmbH & Co. KG', 'Acme'],
+      ['Acme SARL', 'Acme'],
+      ['Acme S.r.l.', 'Acme'],
+      ['Acme S.p.A.', 'Acme'],
+      ['Acme S.A.S.', 'Acme'],
+      ['Acme B.V.', 'Acme'],
+      ['Acme e.V.', 'Acme'],
+      ['Acme Ltda.', 'Acme'],
+      ['Acme A/S', 'Acme'],
+      ['Acme ApS', 'Acme'],
+      ['Acme Oyj', 'Acme'],
+      ['株式会社リクルート', 'リクルート'],
+      ['リクルート株式会社', 'リクルート'],
+      ['(株)リクルート', 'リクルート'],
+    ]) {
+      assert.equal(employerKey(a), employerKey(b), `${a} ~ ${b}`);
+    }
+    // A name that is nothing but a legal form is left as it was, and two companies stay two.
+    assert.equal(employerKey('GmbH'), 'gmbh');
+    assert.notEqual(employerKey('Acme Labs GmbH'), employerKey('Acme'));
+  });
+
+  it('reads a title with a gender tag as the same title, and keeps a slash that is the job', () => {
+    for (const [a, b] of [
+      ['Werkstudent Softwareentwicklung (m/w/d)', 'Werkstudent Softwareentwicklung'],
+      ['Softwareentwickler (w/m/d)', 'Softwareentwickler'],
+      ['Praktikant Data Science (all genders)', 'Praktikant Data Science'],
+      ['Stagiaire Ingénieur Logiciel (H/F)', 'Stagiaire Ingénieur Logiciel'],
+      ['Stagiaire Ingénieur Logiciel F/H', 'Stagiaire Ingénieur Logiciel'],
+      ['Developer (gn)', 'Developer'],
+    ]) {
+      assert.equal(titleKey(a), titleKey(b), `${a} ~ ${b}`);
+    }
+    assert.notEqual(titleKey('C/C++ Developer'), titleKey('C Developer'));
+    assert.notEqual(titleKey('Software Engineer (Remote)'), titleKey('Software Engineer'));
+  });
+});
+
+/*
+ * And a review step written in German, French, Spanish, Dutch or Japanese.
+ * The labels were English only, so "Geburtsdatum", "Date de naissance",
+ * "Fecha de nacimiento", 生年月日 and the rest went to the AI with their
+ * answers beside them.
+ */
+describe('the page as sent does not carry answers a review step writes out in another language', () => {
+  it('empties the answer beside each personal label', async () => {
+    const { chromium } = await import('playwright-core');
+    const { findChromium } = await import('./fixtures.mjs');
+    const fsMod = await import('node:fs');
+    const source = fsMod.readFileSync(new URL('../src/shared/trail.js', import.meta.url), 'utf8');
+    const labels = [
+      'Geburtsdatum', 'Geschlecht', 'Telefonnummer', 'Adresse', 'Date de naissance', 'Sexe', 'Fecha de nacimiento',
+      'Género', 'Geboortedatum', '生年月日', '性別', '電話番号', '住所',
+    ];
+    const step = labels.map((l, i) => `<div><label>${l}</label><div>ANSWER-${i}</div></div>`).join('') +
+      '<div><label>Gewünschtes Gehalt</label><div>KEPT-SALARY</div></div>';
+    const browser = await chromium.launch({ executablePath: findChromium(), args: ['--no-sandbox'] });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><meta charset="utf-8"><title>Prüfen</title></head><body><h2>Überprüfen</h2>${step}</body></html>`);
+      const html = await page.evaluate(async (js) => {
+        const mod = await import(URL.createObjectURL(new Blob([js], { type: 'text/javascript' })));
+        return mod.trimForStorage(mod.pageHtml(document));
+      }, source);
+      const leaked = (html.match(/ANSWER-\d+/g) ?? []).map((a) => labels[Number(a.slice(7))]);
+      assert.deepEqual(leaked, [], `answers sent beside: ${leaked.join(', ')}`);
+      for (const kept of [...labels, 'KEPT-SALARY']) assert.ok(html.includes(kept), `"${kept}" was lost`);
+    } finally {
+      await browser.close();
+    }
   });
 });

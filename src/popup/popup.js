@@ -1,3 +1,5 @@
+import { setupErrorLogForm } from './error-log.js';
+
 const $ = (id) => document.getElementById(id);
 
 $('reportBug').onclick = () => {
@@ -31,6 +33,7 @@ function setStatus(text, kind = '', fix) {
   const s = $('status');
   s.textContent = text;
   s.className = `status ${kind}`;
+  s.hidden = false;
 
   /*
    * And the way out, when the failure came with one.
@@ -56,9 +59,17 @@ function setStatus(text, kind = '', fix) {
 
 /** Report a failure, carrying whatever it knows about how to get past it. */
 const failed = (err) => {
-  // Not paired: the code box is the way past it, so it goes up as well.
-  if (err.jobhelper?.fix === 'pair') showPairing(err.jobhelper.serverUrl);
   setStatus(err.message, 'err', err.jobhelper);
+  /*
+   * Not paired: the code box is the way past it, so it goes up as well — and
+   * the box says it, so the status line does not. Both did: a yellow box at
+   * the top and a red line at the bottom saying "not paired" twice, in
+   * almost the same words. The line comes back with the next thing said.
+   */
+  if (err.jobhelper?.fix === 'pair') {
+    showPairing(err.jobhelper.codeUrl ?? err.jobhelper.serverUrl);
+    $('status').hidden = true;
+  }
 };
 
 /**
@@ -72,7 +83,20 @@ const failed = (err) => {
 function showPairing(pairUrl) {
   const box = $('pairing');
   if (!box) return;
+  const opening = box.hidden;
   box.hidden = false;
+  /*
+   * And the caret in it. The box is the one thing in this window that works
+   * until it is used, so the person who opened the popup because something
+   * said "not paired" should be able to paste the code without finding the
+   * box first. Only as it opens: a later failure is not a reason to take the
+   * caret out of the server address being typed.
+   */
+  if (opening && !document.activeElement?.matches?.('input, select, textarea')) {
+    box.scrollIntoView({ block: 'nearest' });
+    $('pairCode').focus();
+  }
+  // "Get a code": ResumeM-M's pairing section, with a code already made.
   $('pairOpen').onclick = () => {
     chrome.tabs.create({ url: pairUrl });
   };
@@ -705,5 +729,12 @@ async function check() {
     if (current()) await showAiState();
   }
 }
+
+/*
+ * The error-log form first, and apart from `boot`: an error is worth logging
+ * most of all when the rest of this window cannot reach ResumeM-M.
+ */
+// An entry that could not be sent for want of an answer: the connection line looks again.
+setupErrorLogForm({ send, activeTab, onUnreachable: () => check() });
 
 boot().catch((err) => failed(err));

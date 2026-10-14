@@ -2254,6 +2254,7 @@ const GREENHOUSE_REACT_EDUCATION = `<!doctype html><html><head><meta charset="ut
   }
   const query = new URLSearchParams(location.search);
   const DELAY = Number(query.get('delay') || 450);
+  const COMMIT_LATER = query.has('commit-later');
   const components = [];
   window.__renders = 0;
   // The whole form rendering again from its state, as a Formik-style form does on every change.
@@ -2347,7 +2348,19 @@ const GREENHOUSE_REACT_EDUCATION = `<!doctype html><html><head><meta charset="ut
       else if (!onBox) { s.open = false; renderAll(); }
       if (!onBox) e.preventDefault();
     });
-    input.addEventListener('focus', () => { s.focused = true; if (s.afterFocus) openMenu(); s.afterFocus = false; renderAll(); });
+    /*
+     * \`?commit-later\`: React 18 under createRoot, which commits what a focus
+     * set on a later turn. The handler runs at once — a press that came first
+     * opens the menu — but \`isFocused\`, which the control's mousedown reads,
+     * is still false for whatever else happens in the same turn.
+     */
+    input.addEventListener('focus', () => {
+      if (s.afterFocus) openMenu();
+      s.afterFocus = false;
+      const commit = () => { s.focused = true; renderAll(); };
+      if (COMMIT_LATER) queueMicrotask(commit);
+      else commit();
+    });
     input.addEventListener('blur', () => { s.focused = false; s.inputValue = ''; s.open = false; s.asked++; s.loading = false; renderAll(); });
     input.addEventListener('input', () => {
       if (tracker.changed()) { s.inputValue = PROTO.get.call(input); s.open = true; fetchFor(s.inputValue); }
@@ -3447,6 +3460,129 @@ const LABELLED_FROM_OUTSIDE = `<!doctype html><html><head><meta charset="utf-8">
   </div>
 </form>
 ${COMPONENT_DEFINITIONS}
+</body></html>`;
+
+/*
+ * A SuccessFactors-shaped form drawn in UI5-style web components, and the app
+ * that keeps its model from the events they send.
+ *
+ * Each `<u-input>` draws its box in its own root and, as UI5's `ui5-input`
+ * does, reads `e.inputType || e.detail.inputType` off the box's `input`, keeps
+ * the box's value only after that, stops the event and sends its own, and
+ * draws the box again from the value it kept. A bare `new Event('input')` has
+ * neither, the handler throws, and the box is drawn back empty. `<u-combobox>`
+ * types ahead as UI5's does — to the first item the box's text starts, unless
+ * the event says the text was deleted — and has no list for the answer.
+ * `<u-select>` draws a `role="combobox"` showing its first option, named
+ * only by the page's `<u-label for>` on the host. The app's model is what the
+ * hosts' events reaching the form said.
+ */
+const UI5_LIKE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="f" style="display:grid;gap:8px;max-width:400px">
+  <u-label for="u-fn">First Name</u-label><u-input id="u-fn" label="First Name" bind="firstName"></u-input>
+  <u-label for="u-ln">Last Name</u-label><u-input id="u-ln" label="Last Name" bind="lastName"></u-input>
+  <u-label for="u-em">Email Address</u-label><u-input id="u-em" label="Email Address" bind="email"></u-input>
+  <u-label for="u-ct">City</u-label><u-input id="u-ct" label="City" bind="city"></u-input>
+  <u-label for="u-co">Country</u-label><u-select id="u-co" bind="country"><u-option>Select One</u-option><u-option>Canada</u-option><u-option>United States</u-option></u-select>
+  <u-label for="u-st">State</u-label><u-combobox id="u-st" bind="state" items="Maine,Massachusetts,Michigan"></u-combobox>
+</form>
+<script>
+  customElements.define('u-label', class extends HTMLElement {
+    constructor() { super(); this.attachShadow({ mode: 'open' }).innerHTML = '<label class="root"><span><bdi><slot></slot></bdi></span></label>'; }
+  });
+  const DELETED = ['deleteContentBackward', 'deleteContentForward', 'deleteContent', 'deleteByCut'];
+  class UBox extends HTMLElement {
+    constructor() {
+      super();
+      this._value = '';
+      this.attachShadow({ mode: 'open' }).innerHTML = '<input>';
+      this.inner = this.shadowRoot.querySelector('input');
+      this.inner.addEventListener('input', (e) => {
+        queueMicrotask(() => { this.inner.value = this._value; });
+        this.read(e);
+        this._value = this.inner.value;
+        e.stopImmediatePropagation();
+        this.dispatchEvent(new CustomEvent('input', { bubbles: true }));
+      });
+      this.inner.addEventListener('change', () => this.dispatchEvent(new CustomEvent('change', { bubbles: true })));
+    }
+    get value() { return this._value; }
+  }
+  customElements.define('u-input', class extends UBox {
+    connectedCallback() { this.inner.setAttribute('aria-label', this.getAttribute('label')); }
+    read(e) { return e.inputType || e.detail.inputType || ''; }
+  });
+  customElements.define('u-combobox', class extends UBox {
+    connectedCallback() {
+      this.inner.setAttribute('role', 'combobox');
+      this.inner.setAttribute('aria-autocomplete', 'both');
+      this.inner.setAttribute('aria-expanded', 'false');
+      this.inner.placeholder = 'Select';
+    }
+    read(e) {
+      if (DELETED.includes(e.inputType)) return;
+      const typed = this.inner.value.toLowerCase();
+      const item = this.getAttribute('items').split(',').find((i) => i.toLowerCase().startsWith(typed));
+      if (item) this.inner.value = item;
+    }
+  });
+  customElements.define('u-select', class extends HTMLElement {
+    connectedCallback() {
+      const first = this.querySelector('u-option').textContent;
+      this.attachShadow({ mode: 'open' }).innerHTML = '<div class="root"><div class="u-select-label-root" role="combobox" aria-haspopup="listbox" aria-expanded="false" tabindex="0">' +
+        first + '</div><span class="icon"></span><slot name="formSupport"></slot></div>';
+    }
+    get value() { return this.shadowRoot.querySelector('div').textContent; }
+  });
+  const model = {};
+  for (const type of ['input', 'change']) {
+    document.getElementById('f').addEventListener(type, (e) => {
+      const bind = e.target.getAttribute?.('bind');
+      if (bind) model[bind] = e.target.value;
+    });
+  }
+  window.__readback = () => ({
+    model: { ...model },
+    shown: Object.fromEntries([...document.querySelectorAll('[bind]')].map((h) => [h.getAttribute('bind'), h.value])),
+    errors: window.__errors,
+  });
+  window.__errors = [];
+  window.addEventListener('error', (e) => window.__errors.push(String(e.message)));
+</script>
+</body></html>`;
+
+/*
+ * A SmartRecruiters-shaped form: each box drawn in its component's open root,
+ * and the app's model kept from the `input` and `change` that reach the form —
+ * as a host-level Angular value accessor or a form-level listener would. An
+ * event that is not `composed` stops at the root, and the form hears nothing.
+ */
+const SHADOW_FORM_MODEL = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="f">
+  <sr-input name="firstName" label="First name"></sr-input>
+  <sr-input name="lastName" label="Last name"></sr-input>
+  <sr-input name="email" label="Email" type="email"></sr-input>
+  <sr-input name="city" label="City"></sr-input>
+</form>
+<script>
+  customElements.define('sr-input', class extends HTMLElement {
+    connectedCallback() {
+      this.attachShadow({ mode: 'open' }).innerHTML = '<label for="i">' + this.getAttribute('label') + '</label><input id="i" type="' +
+        (this.getAttribute('type') ?? 'text') + '" name="' + this.getAttribute('name') + '">';
+    }
+    get value() { return this.shadowRoot.querySelector('input').value; }
+  });
+  const model = {};
+  const changed = {};
+  const form = document.getElementById('f');
+  form.addEventListener('input', (e) => { model[e.target.getAttribute('name')] = e.target.value; });
+  form.addEventListener('change', (e) => { changed[e.target.getAttribute('name')] = e.target.value; });
+  window.__readback = () => ({
+    model: { ...model },
+    changed: { ...changed },
+    shown: Object.fromEntries([...document.querySelectorAll('sr-input')].map((h) => [h.getAttribute('name'), h.value])),
+  });
+</script>
 </body></html>`;
 
 /*
@@ -6575,7 +6711,776 @@ const LOCALIZED_DATES = `<!doctype html><html><head><meta charset="utf-8"><title
 <label for="ld-jj">Graduation date</label><input id="ld-jj" placeholder="JJ/MM/AAAA">
 </form></body></html>`;
 
-const PAGES = { '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/greenhouse-react-education': GREENHOUSE_REACT_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/hidden-asks': HIDDEN_ASKS, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE, '/acknowledgements': ACKNOWLEDGEMENTS, '/sponsorship-policies': SPONSORSHIP_POLICIES, '/sponsorship-policy-pressed': SPONSORSHIP_POLICY_PRESSED, '/sponsorship-policy-aria': SPONSORSHIP_POLICY_ARIA, '/bank-shapes': BANK_SHAPES, '/negated-questions': NEGATED_QUESTIONS, '/not-only-acknowledged': NOT_ONLY_ACKNOWLEDGED, '/signed-without-the-word': SIGNED_WITHOUT_THE_WORD, '/education-wording': EDUCATION_WORDING, '/day-shapes': DAY_SHAPES, '/newsletter-names': NEWSLETTER_NAMES, '/alerts-names': ALERTS_NAMES, '/survey-frame': SURVEY_FRAME, '/names-and-phone': NAMES_AND_PHONE, '/names-and-file': NAMES_AND_FILE, '/german-names': GERMAN_NAMES, '/french-names': FRENCH_NAMES, '/other-names': OTHER_NAMES, '/standard-hints': STANDARD_HINTS, '/localized-dates': LOCALIZED_DATES };
+/*
+ * Radio groups whose question is written above them, not as a label, and
+ * whose options are labels: `<label for>` beside each button, or a label
+ * after it. The first option label was taken for the question — "Yes", "No,
+ * I don't have an agreement", "Yes, and I would require relocation
+ * assistance" — and banked as one. Shapes from a form that did it.
+ */
+const RADIO_OPTION_LABELS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+<label for="ol-name">First Name</label><input id="ol-name" name="first_name">
+<div class="question">
+  <span class="q-title">Will you now or in the future require sponsorship?</span>
+  <div class="opts">
+    <input type="radio" id="ol-a1" name="ol-qa" value="1"><label for="ol-a1">Yes</label>
+    <input type="radio" id="ol-a2" name="ol-qa" value="0"><label for="ol-a2">No</label>
+  </div>
+  <span class="error">Required</span>
+</div>
+<div class="question">
+  <p>Would you need to relocate for this role?</p>
+  <div><input type="radio" id="ol-c1" name="ol-qc"><label class="option-label" for="ol-c1">Yes, and I would require relocation assistance</label></div>
+  <div><input type="radio" id="ol-c2" name="ol-qc"><label class="option-label" for="ol-c2">Yes, but I am planning to relocate on my own</label></div>
+  <div><input type="radio" id="ol-c3" name="ol-qc"><label class="option-label" for="ol-c3">No</label></div>
+</div>
+<div class="question">
+  <h3>Are you bound by any confidentiality or non-solicitation agreement with a current employer?</h3>
+  <input type="radio" id="ol-d1" name="ol-qd"><label for="ol-d1">No, I don't have an agreement</label>
+  <input type="radio" id="ol-d2" name="ol-qd"><label for="ol-d2">Yes, I have an agreement</label>
+</div>
+<div class="question">
+  <span>Do you have reliable transportation to the office?</span>
+  <div><input type="radio" id="ol-e1" name="ol-qe"><span class="radio-label">Yes, my own car</span></div>
+  <div><input type="radio" id="ol-e2" name="ol-qe"><span class="radio-label">No, I do not</span></div>
+</div>
+<div class="f"><p>Are you legally authorized to work in the US? <abbr title="required">*</abbr></p>
+<label><input type="radio" name="ol-r2" value="y">Yes</label><label><input type="radio" name="ol-r2" value="n">No</label></div>
+<div class="f">
+<input type="radio" id="ol-f1" name="ol-qf"><label for="ol-f1">Yes, I live in the U.S.</label>
+<input type="radio" id="ol-f2" name="ol-qf"><label for="ol-f2">No, I live elsewhere</label></div>
+<div class="field"><label class="question">Are you open to relocation?</label>
+ <div class="radio-group"><div><input type="radio" id="ol-g1" name="ol-qg" value="yes"><label for="ol-g1">Yes</label></div>
+ <div><input type="radio" id="ol-g2" name="ol-qg" value="no"><label for="ol-g2">No</label></div></div></div>
+</form></body></html>`;
+
+/*
+ * What a label carries beside its question: a tooltip's "(?)", a hint, text
+ * hidden or kept for a screen reader, the description `aria-describedby`
+ * names — and a box with no label but a placeholder that asks.
+ */
+const LABEL_NOISE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply - Acme</title>
+<style>.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}</style></head><body><form>
+<div class="f"><label for="ln-t1">Why do you want to work here?<span class="req" aria-hidden="true">*</span> <button type="button" class="tip" aria-label="More info">(?)</button></label><textarea id="ln-t1"></textarea></div>
+<div class="f"><label>Describe a project you are proud of <span class="help">Include your role and the outcome.</span><textarea id="ln-t2"></textarea></label></div>
+<div class="f"><textarea id="ln-t5" placeholder="What are you looking to learn this summer?"></textarea></div>
+<div class="f"><label for="ln-t8">Why this team? <span style="display:none">This field is required</span><span class="sr">Required</span></label><textarea id="ln-t8"></textarea></div>
+<div class="f"><div id="ln-d13" class="note">Optional. Max 1000 characters.</div><textarea id="ln-t13" aria-describedby="ln-d13"></textarea></div>
+<div class="f"><label for="ln-s1">How did you hear about us? <span class="tooltip" title="Pick one">(?)</span></label><select id="ln-s1"><option value="">Select...</option><option>LinkedIn</option><option>Other</option></select><small>We use this to improve outreach.</small></div>
+<div class="f"><label for="ln-i1">Earliest start date <span class="hint">(MM/YYYY)</span></label><input id="ln-i1"></div>
+<div class="f"><input id="ln-i4" placeholder="How did you hear about this job?"></div>
+<div class="f"><input id="ln-i6" placeholder="e.g. 2 weeks"></div>
+<div class="f"><label for="ln-i7"><span aria-hidden="true">School</span><span class="visually-hidden">School</span></label><input id="ln-i7"></div>
+</form></body></html>`;
+
+/*
+ * Dropdowns whose prompt is drawn round with dashes or brackets. Read as an
+ * answer, the select counted as answered and was never filled, and the
+ * prompt was kept as the answer chosen.
+ */
+const DRAWN_PROMPTS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply - Globex</title></head><body><form>
+<label for="dp-tr">Willingness to Travel</label>
+<select id="dp-tr" name="travel"><option value="0">— Please Specify —</option><option value="1">Up to 25%</option><option value="2">Up to 50%</option></select>
+<label for="dp-src">Candidate Source</label>
+<select id="dp-src" name="source"><option value="-">— Select —</option><option value="li">LinkedIn</option></select>
+<label for="dp-sh">Preferred shift</label>
+<select id="dp-sh" name="shift"><option value="x">[Select]</option><option>Days</option><option>Nights</option></select>
+<label for="dp-of">Preferred office</label>
+<select id="dp-of" name="office"><option value="x">&lt; Select &gt;</option><option>Austin</option></select>
+</form></body></html>`;
+
+/*
+ * Workday's Legal Name and Preferred Name as its markup names them:
+ * `name--legalName--middleName`, `name--preferredName--firstName`. The
+ * middle name was given the whole legal name, and each preferred box the
+ * whole preferred name. With a Suffix and a Middle initial beside them, as
+ * other systems ask.
+ */
+const WD_NAMES = `<!doctype html><html><head><meta charset="utf-8"><title>My Information</title></head><body>
+<div data-automation-id="applyFlowMyInfoPage"><h2>My Information</h2>
+<div role="group" aria-labelledby="wn-ln-h"><h3 id="wn-ln-h">Legal Name</h3>
+ <div><label for="name--legalName--firstName">First Name<abbr title="required">*</abbr></label><input type="text" id="name--legalName--firstName" name="legalName--firstName"></div>
+ <div><label for="name--legalName--middleName">Middle Name</label><input type="text" id="name--legalName--middleName" name="legalName--middleName"></div>
+ <div><label for="name--legalName--lastName">Last Name<abbr title="required">*</abbr></label><input type="text" id="name--legalName--lastName" name="legalName--lastName"></div>
+ <div><label for="name--legalName--social">Suffix</label><select id="name--legalName--social" name="legalName--social"><option value="">Select One</option><option>Jr.</option><option>Sr.</option></select></div>
+</div>
+<div role="group" aria-labelledby="wn-pn-h"><h3 id="wn-pn-h">Preferred Name</h3>
+ <div><label for="name--preferredName--firstName">First Name</label><input type="text" id="name--preferredName--firstName" name="preferredName--firstName"></div>
+ <div><label for="name--preferredName--lastName">Last Name</label><input type="text" id="name--preferredName--lastName" name="preferredName--lastName"></div>
+</div>
+<div><label for="wn-mi">Middle initial</label><input type="text" id="wn-mi" name="middle_initial"></div>
+<div><label for="wn-em">Email Address</label><input type="text" id="wn-em" name="emailAddress"></div>
+</div></body></html>`;
+
+/*
+ * An Education section already showing two blocks, with "Add another
+ * education" under them. The second was given a copy of the first.
+ */
+const EDU_SHOWN = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+<label for="es-fn">First name</label><input id="es-fn" name="firstName">
+<section id="edu"><h3>Education</h3>
+${[0, 1].map((n) => `<div class="edu-block" id="es-b${n}"><h4>Education ${n + 1}</h4>
+ <label for="es-s${n}">School name</label><input id="es-s${n}" name="education[${n}][school]">
+ <label for="es-d${n}">Degree</label><select id="es-d${n}" name="education[${n}][degree]"><option value="">Select</option><option>Associate's</option><option>Bachelor's</option><option>Master's</option></select>
+ <label for="es-m${n}">Major</label><input id="es-m${n}" name="education[${n}][major]">
+ <label for="es-g${n}">GPA</label><input id="es-g${n}" name="education[${n}][gpa]">
+ <label for="es-y${n}">Graduation year</label><input id="es-y${n}" name="education[${n}][grad_year]">
+</div>`).join('')}
+<button type="button" id="es-add">Add another education</button>
+</section>
+<button type="button">Submit application</button>
+</form></body></html>`;
+
+/*
+ * Lists that spell an answer their own way: a question in a table cell beside
+ * its buttons, whose answers are the words after each button; a degree by its
+ * letters and one "or equivalent"; and a telephone's country code.
+ */
+const SPELLED_OTHERWISE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+<label for="so-fn">First name</label><input id="so-fn" name="first_name">
+<table><tr><td class="qtext">Will you require visa sponsorship now or in the future?</td><td></td><td><input type="radio" name="so_q102" value="Y"> Yes <input type="radio" name="so_q102" value="N"> No</td></tr></table>
+<label for="so-deg2">Degree</label><select id="so-deg2" name="deg2"><option value="">Select</option><option>B.A.</option><option>B.S.</option><option>M.S.</option></select>
+<label for="so-deg3">Level of education</label><select id="so-deg3" name="deg3"><option value="">Select</option><option>Some college</option><option>Bachelor's degree or equivalent</option><option>Master's degree</option></select>
+<div class="phone-row"><label for="so-cc">Country code</label><select id="so-cc" name="phone_country_code"><option value="">Code</option><option value="+1c">Canada (+1)</option><option value="+44">United Kingdom (+44)</option><option value="+1">United States (+1)</option></select>
+<label for="so-ph">Phone number</label><input id="so-ph" type="tel" name="phone_number"></div>
+</form></body></html>`;
+
+/*
+ * Workday's My Experience as it opens: a Work Experience and an Education
+ * section with no block in either, each with an "Add" labelled "Add Work
+ * Experience" and "Add Education". `?max=N` lets the page add only N jobs;
+ * `?begun` opens with two blocks, the second already holding a company.
+ */
+const WD_ADD = `<!doctype html><html><head><meta charset="utf-8"><title>My Experience</title></head><body>
+<h2>My Experience</h2>
+<div role="group" aria-labelledby="wa-we-h"><h3 id="wa-we-h">Work Experience</h3><div id="wa-jobs"></div>
+  <button type="button" id="wa-add-job" aria-label="Add Work Experience">Add</button></div>
+<div role="group" aria-labelledby="wa-ed-h"><h3 id="wa-ed-h">Education</h3><div id="wa-schools"></div>
+  <button type="button" id="wa-add-school" aria-label="Add Education">Add</button></div>
+<script>
+  const JOB = ${JSON.stringify(workdayJob('NN'))};
+  const SCHOOL = '<div role="group" aria-labelledby="wa-ed-NN"><h4 id="wa-ed-NN">Education NN</h4>' +
+    '<label for="wa-school-NN">School or University</label><input type="text" id="wa-school-NN">' +
+    '<label for="wa-degree-NN">Degree</label><select id="wa-degree-NN"><option value="">Select One</option><option>Associate Degree</option><option>Bachelor\\'s Degree</option><option>Master\\'s Degree</option></select>' +
+    '<label for="wa-major-NN">Field of Study</label><input type="text" id="wa-major-NN"></div>';
+  const q = new URLSearchParams(location.search);
+  const MAX = Number(q.get('max') || 9);
+  const counts = { job: 0, school: 0 };
+  const add = (kind, box, html, again) => {
+    if (kind === 'job' && counts.job >= MAX) return;
+    counts[kind]++;
+    document.getElementById(box).insertAdjacentHTML('beforeend', html.replace(/NN/g, String(counts[kind])));
+    const button = document.getElementById('wa-add-' + kind);
+    button.textContent = 'Add Another';
+    button.setAttribute('aria-label', again);
+  };
+  document.getElementById('wa-add-job').addEventListener('click', () => setTimeout(() => add('job', 'wa-jobs', JOB, 'Add Another Work Experience'), 60));
+  document.getElementById('wa-add-school').addEventListener('click', () => setTimeout(() => add('school', 'wa-schools', SCHOOL, 'Add Another Education'), 60));
+  if (q.has('begun')) {
+    add('job', 'wa-jobs', JOB, 'Add Another Work Experience');
+    add('job', 'wa-jobs', JOB, 'Add Another Work Experience');
+    document.getElementById('workExperience-2--companyName').value = 'Acme Robotics';
+  }
+  window.__jobs = () => [...document.querySelectorAll('#wa-jobs [data-automation-id^="workExperience-"]')].map((b) => ({
+    title: b.querySelector('[id$="--jobTitle"]').value, company: b.querySelector('[id$="--companyName"]').value,
+  }));
+  window.__schools = () => [...document.querySelectorAll('#wa-schools [role="group"]')].map((b) => ({
+    school: b.querySelector('[id^="wa-school-"]').value, degree: b.querySelector('select').value, major: b.querySelector('[id^="wa-major-"]').value,
+  }));
+</script>
+</body></html>`;
+
+/*
+ * The first or the last name with something allowed alongside it: a middle
+ * initial, a middle name, a suffix. Each was read as the middle name or the
+ * suffix — neither of which a profile holds — and left empty, unreported.
+ */
+const NAMES_ALONGSIDE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+<label for="na-fmi">First name and middle initial</label><input id="na-fmi" name="q1">
+<label for="na-fmn">First Name (include middle name)</label><input id="na-fmn" name="q2">
+<label for="na-ls">Last name / Suffix</label><input id="na-ls" name="q3">
+<label for="na-lsa">Last Name (and suffix, if any)</label><input id="na-lsa" name="q4">
+<label for="na-legal">Legal last name, including suffix (Jr., III)</label><input id="na-legal" name="q5">
+<label for="na-mid">Middle name</label><input id="na-mid" name="q6">
+<label for="na-suf">Suffix</label><input id="na-suf" name="q7">
+<label for="na-mhint">Middle name (leave blank if none; do not repeat your last name)</label><input id="na-mhint" name="q8">
+<label for="na-shint">Suffix (Jr., Sr.) - not part of your last name</label><input id="na-shint" name="q9">
+<label for="na-nshint">Name suffix (do not include in Last Name field)</label><input id="na-nshint" name="q10">
+<label for="na-em">Email</label><input id="na-em" name="email">
+</form></body></html>`;
+
+/*
+ * "Handy" as German for a mobile, and as the English adjective, which is no
+ * telephone: "How handy are you with Excel?" was given the phone number.
+ */
+const HANDY = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+<label for="hd-tools">Are you handy with power tools?</label><input id="hd-tools" name="q1">
+<label for="hd-excel">How handy are you with Excel?</label><input id="hd-excel" name="q2">
+<label for="hd-skills">Handy skills</label><input id="hd-skills" name="q3">
+<label for="hd-nummer">Handynummer</label><input id="hd-nummer" name="q4">
+<label for="hd-bare">Handy:</label><input id="hd-bare" name="q5">
+<label for="hd-both">Telefon / Handy</label><input id="hd-both" name="q6">
+<label for="hd-em">Email</label><input id="hd-em" name="email">
+</form></body></html>`;
+
+/*
+ * Remembered answers longer than the box has room for. A value set from
+ * script is not cut to `maxlength`, so the box held what nobody could have
+ * typed there, and the form refused it on submit.
+ */
+const TYPED_MAXLENGTH = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form onsubmit="return false">
+<label for="tm-fn">First Name</label><input id="tm-fn" name="first_name">
+<label for="tm-hear">How did you hear about this position?</label><input id="tm-hear" name="hear" maxlength="20">
+<label for="tm-start">Earliest start date you could begin</label><input id="tm-start" name="start" maxlength="40">
+<button>Submit</button></form></body></html>`;
+
+/*
+ * A telephone box whose `pattern` wants the number dashed, as iCIMS's does.
+ * The profile's "(555) 555-5555" and its bare digits were both refused, and
+ * the box was left empty.
+ */
+const PHONE_PATTERNED = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+<label for="pp-dash">Phone Number</label><input type="tel" id="pp-dash" name="PhoneNumber" pattern="[0-9]{3}-[0-9]{3}-[0-9]{4}" placeholder="555-555-5555">
+</form>
+<form><label for="pp-paren">Phone</label><input type="tel" id="pp-paren" name="phone2" pattern="\\([0-9]{3}\\) [0-9]{3}-[0-9]{4}"></form>
+<form><label for="pp-dot">Phone</label><input type="tel" id="pp-dot" name="phone3" pattern="[0-9]{3}\\.[0-9]{3}\\.[0-9]{4}"></form>
+</body></html>`;
+
+/*
+ * Oracle Candidate Experience's "Add Experience", without Knockout: pressing
+ * Add draws an editor under the saved entries — its boxes, a Save and a
+ * Cancel — and hides Add until the editor is closed. Save keeps the job as
+ * a saved entry; the editor's boxes alone are nothing the application holds.
+ * `?save=submit` makes Save a plain `<button>` in the form, which would send
+ * it; `?nosave` draws an editor with only Cancel.
+ */
+const EDITOR_ADD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="ea-form">
+<h2>Contact Information</h2>
+<label for="ea-fn">First Name</label><input id="ea-fn">
+<section aria-labelledby="ea-h"><h2 id="ea-h">Experience</h2>
+  <div id="ea-saved"></div>
+  <div id="ea-editing"></div>
+  <button type="button" id="ea-add">Add Experience</button>
+</section>
+<button type="submit" id="ea-submit">Submit</button>
+</form>
+<script>
+  const q = new URLSearchParams(location.search);
+  const saved = [];
+  window.__submitted = 0;
+  window.__pressed = [];
+  const form = document.getElementById('ea-form');
+  form.addEventListener('submit', (e) => { e.preventDefault(); window.__submitted++; });
+  const add = document.getElementById('ea-add');
+  const editing = document.getElementById('ea-editing');
+  const drawSaved = () => {
+    document.getElementById('ea-saved').innerHTML = saved.map((j) => '<div class="tile"><b>' + j.employer + '</b> — <span>' + j.title + '</span></div>').join('');
+  };
+  const close = () => { editing.innerHTML = ''; add.style.display = ''; };
+  add.addEventListener('click', () => {
+    window.__pressed.push('add');
+    const save = q.get('save') === 'submit' ? '<button id="ea-save">Save</button>' : '<button type="button" id="ea-save">Save</button>';
+    editing.innerHTML = '<div class="profile-item-form">' +
+      '<label for="ea-emp">Employer Name</label><input id="ea-emp">' +
+      '<label for="ea-jt">Job Title</label><input id="ea-jt">' +
+      '<label for="ea-sd">Start Date</label><input id="ea-sd" placeholder="MM/YYYY">' +
+      '<label for="ea-ed">End Date</label><input id="ea-ed" placeholder="MM/YYYY">' +
+      (q.has('nosave') ? '' : save) + ' <button type="button" id="ea-cancel">Cancel</button></div>';
+    add.style.display = 'none';
+    const s = document.getElementById('ea-save');
+    s?.addEventListener('click', () => {
+      window.__pressed.push('save');
+      const v = (id) => document.getElementById(id).value;
+      saved.push({ employer: v('ea-emp'), title: v('ea-jt'), start: v('ea-sd'), end: v('ea-ed') });
+      drawSaved();
+      close();
+    });
+    document.getElementById('ea-cancel').addEventListener('click', () => { window.__pressed.push('cancel'); close(); });
+  });
+  window.__readback = () => {
+    const box = (id) => document.getElementById(id)?.value ?? null;
+    return { saved: saved.slice(), editing: editing.children.length ? { employer: box('ea-emp'), title: box('ea-jt') } : null,
+      submitted: window.__submitted, pressed: window.__pressed.slice() };
+  };
+</script></body></html>`;
+
+/*
+ * The same, two more ways. `?header`: Workable's — the heading and its
+ * "+ Add" in a header of their own, the Add taken off the page while the
+ * editor beside the header is open, for Experience and for Education.
+ * `?dialog`: Breezy's — "+ Add Position" and "+ Add Education" open a
+ * dialog after the form, its dates lists of months and years; `?dialog&odd`
+ * makes the Education dialog ask nothing a school answers.
+ */
+const EDITOR_KINDS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title>
+<style>.modal{position:fixed;inset:10% 20%;background:#fff;border:1px solid #333;padding:8px;overflow:auto}</style></head><body>
+<form id="ek-form">
+<h2>Personal information</h2>
+<label for="ek-fn">First name</label><input id="ek-fn">
+<div id="ek-sections"></div>
+<button type="submit" id="ek-submit">Submit application</button>
+</form>
+<div id="ek-modals"></div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const dialog = q.has('dialog');
+  const log = [];
+  const kept = { job: [], school: [] };
+  document.getElementById('ek-form').addEventListener('submit', (e) => { e.preventDefault(); log.push('SUBMIT'); });
+  const box = (id, label, extra = '') => '<div class="field"><label for="' + id + '">' + label + '</label><input id="' + id + '"' + extra + '></div>';
+  const list = (id, label, xs) => '<div class="field"><label for="' + id + '">' + label + '</label><select id="' + id + '"><option value="">Select</option>' + xs.map((x) => '<option>' + x + '</option>').join('') + '</select></div>';
+  const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const YEARS = Array.from({ length: 30 }, (_, i) => String(2030 - i));
+  const KINDS = {
+    job: { title: 'Experience', add: dialog ? '+ Add Position' : '+ Add', label: 'Add Experience',
+      boxes: (k) => box(k + 'title', 'Title') + box(k + 'company', 'Company') + box(k + 'industry', 'Industry') +
+        (dialog ? list(k + 'sm', 'Start Month', MONTHS) + list(k + 'sy', 'Start Year', YEARS) + list(k + 'em', 'End Month', MONTHS) + list(k + 'ey', 'End Year', YEARS)
+          : box(k + 'start', 'Start date', ' placeholder="MM/YYYY"') + box(k + 'end', 'End date', ' placeholder="MM/YYYY"')),
+      shown: (o) => o.title + ' — ' + o.company },
+    school: { title: 'Education', add: dialog ? '+ Add Education' : '+ Add', label: 'Add Education',
+      boxes: (k) => q.has('odd') ? box(k + 'ref', 'Reference phone number', ' type="tel"') : box(k + 'school', 'School') + box(k + 'field', 'Field of study') + box(k + 'degree', 'Degree'),
+      shown: (o) => o.school + ' — ' + o.degree },
+  };
+  for (const [kind, K] of Object.entries(KINDS)) {
+    const section = document.createElement('section');
+    section.setAttribute('aria-labelledby', 'ek-' + kind + '-h');
+    section.innerHTML = '<div class="section-header"><h3 id="ek-' + kind + '-h">' + K.title + '</h3></div><div class="kept"></div>';
+    document.getElementById('ek-sections').appendChild(section);
+    const header = section.querySelector('.section-header');
+    const drawKept = () => { section.querySelector('.kept').innerHTML = kept[kind].map((o) => '<div class="saved">' + K.shown(o) + '</div>').join(''); };
+    const drawAdd = () => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = K.add; b.setAttribute('aria-label', K.label);
+      b.addEventListener('click', open);
+      header.appendChild(b);
+    };
+    function open() {
+      log.push('add ' + kind);
+      const k = 'ek-' + kind + '-';
+      const editor = document.createElement('div');
+      editor.innerHTML = K.boxes(k) + '<div class="actions"><button type="button" class="cancel">Cancel</button><button type="button" class="save">Save</button></div>';
+      if (dialog) {
+        editor.className = 'modal'; editor.setAttribute('role', 'dialog'); editor.setAttribute('aria-modal', 'true');
+        editor.insertAdjacentHTML('afterbegin', '<h3>' + K.add.replace('+ ', '') + '</h3>');
+        document.getElementById('ek-modals').appendChild(editor);
+      } else {
+        editor.className = 'entry-form';
+        section.appendChild(editor);
+        header.querySelector('button').remove();
+      }
+      const shut = () => { editor.remove(); if (!dialog) drawAdd(); };
+      editor.querySelector('.cancel').addEventListener('click', () => { log.push('cancel ' + kind); shut(); });
+      editor.querySelector('.save').addEventListener('click', () => {
+        const o = {};
+        for (const el of editor.querySelectorAll('input, select')) o[el.id.slice(k.length)] = el.value;
+        kept[kind].push(o); log.push('save ' + kind); drawKept(); shut();
+      });
+    }
+    if (!dialog || kind === 'job' || kind === 'school') drawAdd();
+  }
+  window.__readback = () => ({ log: log.slice(), jobs: kept.job.slice(), schools: kept.school.slice(), open: document.querySelectorAll('.entry-form, .modal').length });
+</script></body></html>`;
+
+/*
+ * A long form, built the way a hiring system's long application is: one
+ * wrapper per field, a section heading every few, and every kind of control.
+ * The work per field was the whole form's — its headings walked, and each
+ * heading's section measured, for every field, several times — so 300
+ * fields took seconds to fill, 600 more than ten, the page frozen.
+ */
+const longForm = (n) => {
+  const options = Array.from({ length: 200 }, (_, i) => `<option value="c${i}">Country ${i}</option>`).join('') + '<option value="US">United States</option>';
+  const labels = ['First Name', 'Last Name', 'Email', 'Phone', 'City', 'LinkedIn', 'Website', 'How did you hear about us?', 'Employer name', 'Supervisor name', 'Reference name', 'Notes', 'Street address', 'Postal code', 'Middle name'];
+  const rows = Array.from({ length: n }, (_, i) => {
+    switch (i % 6) {
+      case 0: return `<div><label for="lf-t${i}">${labels[i % labels.length]} (${i})</label><input id="lf-t${i}" name="q${i}" type="text"></div>`;
+      case 1: return `<div><label for="lf-s${i}">Country of residence ${i}</label><select id="lf-s${i}" name="s${i}"><option value="">Select...</option>${options}</select></div>`;
+      case 2: return `<fieldset><legend>Are you willing to relocate? (${i})</legend><label><input type="radio" name="r${i}" value="y">Yes</label><label><input type="radio" name="r${i}" value="n">No</label></fieldset>`;
+      case 3: return `<div><label for="lf-a${i}">Describe a project you are proud of (${i})</label><textarea id="lf-a${i}" name="a${i}"></textarea></div>`;
+      case 4: return `<div><label><input type="checkbox" name="c${i}"> I agree to item ${i}</label></div>`;
+      default: return `<div class="section"><h3>Section ${i}</h3><label for="lf-d${i}">Start date ${i}</label><input id="lf-d${i}" type="date" name="d${i}"></div>`;
+    }
+  });
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><h1>Software Engineer</h1><form>${rows.join('\n')}<button>Submit</button></form></body></html>`;
+};
+const LONG_FORM = longForm(420);
+
+const PAGES = { '/editor-add': EDITOR_ADD, '/editor-kinds': EDITOR_KINDS, '/long-form': LONG_FORM, '/wd-names': WD_NAMES, '/edu-shown': EDU_SHOWN, '/spelled-otherwise': SPELLED_OTHERWISE, '/wd-add': WD_ADD, '/radio-option-labels': RADIO_OPTION_LABELS, '/label-noise': LABEL_NOISE, '/drawn-prompts': DRAWN_PROMPTS, '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/greenhouse-react-education': GREENHOUSE_REACT_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/hidden-asks': HIDDEN_ASKS, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE, '/acknowledgements': ACKNOWLEDGEMENTS, '/sponsorship-policies': SPONSORSHIP_POLICIES, '/sponsorship-policy-pressed': SPONSORSHIP_POLICY_PRESSED, '/sponsorship-policy-aria': SPONSORSHIP_POLICY_ARIA, '/bank-shapes': BANK_SHAPES, '/negated-questions': NEGATED_QUESTIONS, '/not-only-acknowledged': NOT_ONLY_ACKNOWLEDGED, '/signed-without-the-word': SIGNED_WITHOUT_THE_WORD, '/education-wording': EDUCATION_WORDING, '/day-shapes': DAY_SHAPES, '/newsletter-names': NEWSLETTER_NAMES, '/alerts-names': ALERTS_NAMES, '/survey-frame': SURVEY_FRAME, '/names-and-phone': NAMES_AND_PHONE, '/names-and-file': NAMES_AND_FILE, '/german-names': GERMAN_NAMES, '/french-names': FRENCH_NAMES, '/other-names': OTHER_NAMES, '/standard-hints': STANDARD_HINTS, '/localized-dates': LOCALIZED_DATES, '/names-alongside': NAMES_ALONGSIDE, '/handy': HANDY, '/typed-maxlength': TYPED_MAXLENGTH, '/phone-patterned': PHONE_PATTERNED };
+PAGES['/ui5-like'] = UI5_LIKE;
+// The same with the Country label beside its select and naming nothing.
+PAGES['/ui5-like-beside'] = UI5_LIKE.replace('<u-label for="u-co">', '<u-label>');
+PAGES['/shadow-form-model'] = SHADOW_FORM_MODEL;
+
+/*
+ * A typeahead the page arrived with an answer in: "City, State" holding
+ * "Cambridge, MA" and the place the page picked behind it, which any typing
+ * drops, as Indeed's does. With `?hidden`, a hidden input beside it that the
+ * pick fills.
+ */
+const PREFILLED_TYPEAHEAD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <label id="pt-l" for="pt">City</label>
+  <div class="pt-wrap"><input id="pt" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="pt-l" autocomplete="off" value="Cambridge, MA"></div>
+</form>
+<script>
+  window.picked = { id: 'cambridge', label: 'Cambridge, MA' };
+  window.log = [];
+  const box = document.getElementById('pt');
+  let list = null;
+  const open = () => {
+    if (list) return;
+    list = document.createElement('ul'); list.id = 'pt-list'; list.setAttribute('role', 'listbox');
+    for (const text of ['Boston, MA', 'Boston, NY']) {
+      const o = document.createElement('li'); o.setAttribute('role', 'option'); o.textContent = text;
+      o.addEventListener('mousedown', (e) => e.preventDefault());
+      o.addEventListener('click', () => { window.picked = { id: text, label: text }; box.value = text; window.log.push('picked ' + text); list.remove(); list = null; });
+      list.append(o);
+    }
+    document.body.append(list);
+    box.setAttribute('aria-controls', 'pt-list'); box.setAttribute('aria-expanded', 'true');
+  };
+  box.addEventListener('mousedown', open);
+  box.addEventListener('input', () => { window.picked = null; window.log.push('typed ' + box.value); open(); });
+</script>
+</body></html>`;
+PAGES['/prefilled-typeahead'] = PREFILLED_TYPEAHEAD;
+
+/*
+ * Date pickers that call themselves comboboxes: Kendo's, a whole date in
+ * MM/dd/yyyy that throws out anything else, and an ARIA one whose popup is a
+ * grid, asking MM/YYYY.
+ */
+const DATE_COMBOBOXES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <h2>Education</h2>
+  <label for="dc-school">School</label><input id="dc-school" name="school">
+  <label for="dc-kendo">Graduation Date</label>
+  <span class="k-datepicker"><input id="dc-kendo" data-role="datepicker" type="text" role="combobox" aria-expanded="false" placeholder="MM/dd/yyyy" autocomplete="off"></span>
+</form>
+<form>
+  <h2>Degree</h2>
+  <label for="dc-grid">Expected graduation date</label>
+  <input id="dc-grid" type="text" role="combobox" aria-haspopup="grid" aria-expanded="false" placeholder="MM/YYYY" autocomplete="off">
+</form>
+<script>
+  window.log = [];
+  const k = document.getElementById('dc-kendo');
+  k.addEventListener('change', () => { if (k.value && !/^\\d{1,2}\\/\\d{1,2}\\/\\d{4}$/.test(k.value)) { window.log.push('invalid ' + k.value); k.value = ''; } });
+</script>
+</body></html>`;
+PAGES['/date-comboboxes'] = DATE_COMBOBOXES;
+
+/*
+ * ARIA radios whose page draws a click's aria-checked a turn later, as React
+ * 18 under createRoot does.
+ */
+const LATE_ARIA_RADIOS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <fieldset><legend id="lr-q1">Are you legally authorized to work in the United States?</legend>
+    <div role="radiogroup" aria-labelledby="lr-q1"><div role="radio" aria-checked="false" tabindex="0">Yes</div><div role="radio" aria-checked="false" tabindex="-1">No</div></div></fieldset>
+  <fieldset><legend id="lr-q2">Will you now or in the future require sponsorship?</legend>
+    <div role="radiogroup" aria-labelledby="lr-q2"><div role="radio" aria-checked="false" tabindex="0">Yes</div><div role="radio" aria-checked="false" tabindex="-1">No</div></div></fieldset>
+</form>
+<script>
+  for (const r of document.querySelectorAll('[role=radio]')) r.addEventListener('click', () => setTimeout(() => {
+    for (const o of r.parentElement.children) o.setAttribute('aria-checked', String(o === r));
+  }, 20));
+  window.state = () => [...document.querySelectorAll('[role=radio][aria-checked=true]')].map((r) => r.closest('fieldset').querySelector('legend').textContent.slice(0, 12) + '=' + r.textContent);
+</script>
+</body></html>`;
+PAGES['/late-aria-radios'] = LATE_ARIA_RADIOS;
+
+/*
+ * Text boxes whose toolkit takes the value on leaving them: Oracle JET's
+ * oj-input-text on blur, classic UI5's sap.m.Input on focusout, and a JET
+ * select-single's filter box that is a list and must not be left by setValue.
+ */
+const COMMIT_ON_LEAVING = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <label for="cl-first">First Name</label><input id="cl-first" class="oj-inputtext-input oj-text-field-input" type="text">
+  <label for="cl-last">Last Name</label><input id="cl-last" class="sapMInputBaseInner" type="text">
+  <label for="cl-email">Email</label><input id="cl-email" type="email">
+</form>
+<script>
+  window.model = { first: '', last: '', email: '' };
+  window.focused = [];
+  const f = document.getElementById('cl-first'), l = document.getElementById('cl-last'), e = document.getElementById('cl-email');
+  f.addEventListener('blur', () => { window.model.first = f.value; });
+  l.addEventListener('focusout', () => { window.model.last = l.value; });
+  e.addEventListener('focus', () => window.focused.push('email'));
+  e.addEventListener('input', () => { window.model.email = e.value; });
+</script>
+</body></html>`;
+PAGES['/commit-on-leaving'] = COMMIT_ON_LEAVING;
+
+/*
+ * An intl-tel-input preset to Sweden, as a Teamtailor board for a Swedish
+ * employer opens. With `?follows`, it moves its flag to the code a number is
+ * typed with, as intl-tel-input does; without, it keeps +46 whatever is typed.
+ */
+const ITI_ABROAD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <label for="ia-first">First Name</label><input id="ia-first" name="first">
+  <label for="ia-phone">Phone</label>
+  <div class="iti iti--allow-dropdown"><div class="iti__flag-container"><div class="iti__selected-flag" role="combobox" aria-expanded="false" tabindex="0" title="Sweden (Sverige): +46"><div class="iti__flag iti__se"></div></div></div>
+    <input type="tel" id="ia-phone" name="phone" placeholder="070-123 45 67" autocomplete="off"></div>
+</form>
+<script>
+  const flag = document.querySelector('.iti__selected-flag'), tel = document.getElementById('ia-phone');
+  window.dial = '46';
+  if (location.search.includes('follows')) tel.addEventListener('input', () => {
+    if (/^\\+1\\b/.test(tel.value)) { window.dial = '1'; flag.title = 'United States: +1'; }
+  });
+  window.state = () => ({ dial: window.dial, value: tel.value, full: '+' + window.dial + ' ' + tel.value.replace(/^\\+\\d+\\s*/, '') });
+</script>
+</body></html>`;
+PAGES['/iti-abroad'] = ITI_ABROAD;
+
+/*
+ * Pills: pressed buttons each alone in an item of a list, as Oracle
+ * Recruiting draws them — the list a listbox, or, with `?plain`, not.
+ */
+const PILLS_IN_A_LIST = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form onsubmit="return false">
+  <label for="pl-first">First Name</label><input id="pl-first">
+  <fieldset><legend id="pl-q">Are you legally authorized to work in the United States?</legend>
+    <ul class="pills" role="listbox" aria-labelledby="pl-q"><li role="none"><button type="button" class="pill" aria-pressed="false">Yes</button></li><li role="none"><button type="button" class="pill" aria-pressed="false">No</button></li></ul></fieldset>
+</form>
+<script>
+  if (location.search.includes('plain')) document.querySelector('.pills').removeAttribute('role');
+  for (const b of document.querySelectorAll('.pill')) b.addEventListener('click', () => { for (const o of document.querySelectorAll('.pill')) o.setAttribute('aria-pressed', String(o === b)); });
+  window.state = () => [...document.querySelectorAll('[aria-pressed=true]')].map((b) => b.textContent);
+</script>
+</body></html>`;
+PAGES['/pills-in-a-list'] = PILLS_IN_A_LIST;
+
+/*
+ * A plain repeating form whose "Add another" is disabled at its limit — not
+ * an editor: no Save, no dialog, the Add still drawn. `?edu` asks schools,
+ * `?max=` sets the limit, `?help=` writes the section's help text.
+ */
+const ADD_AT_LIMIT = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="al-form">
+<label for="al-fn">First Name</label><input id="al-fn">
+<section><h2 id="al-h">Work Experience</h2>
+<p id="al-help">You may list up to 3 employers.</p>
+<div id="al-blocks"></div>
+<button type="button" id="al-add">Add another</button>
+</section>
+<button type="submit">Submit</button>
+</form>
+<script>
+  const q = new URLSearchParams(location.search);
+  const edu = q.has('edu');
+  const max = Number(q.get('max') || 3);
+  if (edu) document.getElementById('al-h').textContent = 'Education';
+  if (q.has('help')) document.getElementById('al-help').textContent = q.get('help');
+  const add = document.getElementById('al-add');
+  let n = 0; window.__pressed = 0;
+  const block = () => {
+    const i = n++;
+    document.getElementById('al-blocks').insertAdjacentHTML('beforeend', edu
+      ? '<div class="block"><label for="al-s' + i + '">School</label><input id="al-s' + i + '"><label for="al-d' + i + '">Degree</label><input id="al-d' + i + '"></div>'
+      : '<div class="block"><label for="al-c' + i + '">Company</label><input id="al-c' + i + '"><label for="al-t' + i + '">Job Title</label><input id="al-t' + i + '"></div>');
+    if (q.get('max') !== 'none' && n >= max) add.disabled = true;
+  };
+  block();
+  add.addEventListener('click', () => { window.__pressed++; block(); });
+  document.getElementById('al-form').addEventListener('submit', (e) => e.preventDefault());
+  window.__readback = () => ({ pressed: window.__pressed, blocks: [...document.querySelectorAll('.block')].map((b) => [...b.querySelectorAll('input')].map((i) => i.value).join(' / ')) });
+</script></body></html>`;
+PAGES['/add-at-limit'] = ADD_AT_LIMIT;
+
+/*
+ * Typeaheads with no hidden input behind them, holding what is no answer:
+ * City "Bost" and School "Type to search" by default, or what `?a=` and `?b=`
+ * say — "Northea" half typed, "Start typing...", or a whole "Cambridge, MA".
+ */
+const TYPED_NOT_CHOSEN = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="a-l">City</label><div class="pick"><input id="a" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="a-l" autocomplete="off"></div></div>
+  <div class="q"><label id="b-l">School</label><div class="pick"><input id="b" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="b-l" autocomplete="off"></div></div>
+</form>
+<script>
+  window.log = [];
+  function widget(id, options) {
+    const box = document.getElementById(id); let list = null;
+    const shut = () => { list?.remove(); list = null; box.setAttribute('aria-expanded', 'false'); };
+    const open = () => { if (list) list.remove();
+      list = document.createElement('ul'); list.id = id + '-list'; list.setAttribute('role', 'listbox');
+      for (const text of options.filter((t) => t.toLowerCase().includes(box.value.toLowerCase().slice(0, 3)) || !box.value)) {
+        const o = document.createElement('li'); o.setAttribute('role', 'option'); o.textContent = text;
+        o.addEventListener('mousedown', (e) => e.preventDefault());
+        o.addEventListener('click', () => { box.value = text; window.log.push(id + ' chose ' + text); shut(); });
+        list.append(o); }
+      document.body.append(list); box.setAttribute('aria-controls', list.id); box.setAttribute('aria-expanded', 'true'); };
+    box.addEventListener('mousedown', open); box.addEventListener('input', open);
+  }
+  widget('a', ['Boston, MA', 'Cambridge, MA']);
+  widget('b', ['Northeastern University', 'Tufts University']);
+  const q = new URLSearchParams(location.search);
+  document.getElementById('a').value = q.get('a') ?? 'Bost';
+  document.getElementById('b').value = q.get('b') ?? 'Type to search';
+  window.__readback = () => ({ city: document.getElementById('a').value, school: document.getElementById('b').value, log: window.log });
+</script></body></html>`;
+PAGES['/typed-not-chosen'] = TYPED_NOT_CHOSEN;
+
+/*
+ * Oracle JET boxes far down the page, and a textarea at the top the person
+ * is typing in.
+ */
+const JET_WHILE_TYPING = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+<div style="height:1500px"><label for="notes">Anything else?</label><textarea id="notes"></textarea></div>
+<div class="oj-inputtext oj-form-control"><label for="fn">First Name</label><input id="fn" class="oj-inputtext-input oj-component-initnode"></div>
+<div class="oj-inputtext oj-form-control"><label for="em">Email</label><input id="em" class="oj-inputtext-input"></div>
+</form>
+<script>
+window.__events = [];
+for (const id of ['fn', 'em', 'notes']) for (const t of ['focus', 'blur']) document.getElementById(id).addEventListener(t, () => window.__events.push(id + ':' + t));
+window.__readback = () => ({ active: document.activeElement?.id || document.activeElement?.localName, scrollY: Math.round(scrollY), events: window.__events.slice() });
+</script></body></html>`;
+PAGES['/jet-while-typing'] = JET_WHILE_TYPING;
+
+/* One box for each label in the JSON array in the address's #. */
+const NAMES_BY_HASH = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="f"></form>
+<script>
+const labels = JSON.parse(decodeURIComponent(location.hash.slice(1)));
+document.getElementById('f').innerHTML = labels.map((l, i) => '<div><label for="n' + i + '">' + l + '</label><input id="n' + i + '"></div>').join('');
+window.__readback = () => labels.map((l, i) => [l, document.getElementById('n' + i).value]);
+</script></body></html>`;
+PAGES['/names-by-hash'] = NAMES_BY_HASH;
+
+/*
+ * A ZIP+4 combobox with a pattern, and a School combobox whose popup is
+ * called a dialog: neither is a date.
+ */
+const POPUP_A_DIALOG = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <div class="q"><label id="a-l">Zip code</label><div class="pick"><input id="a" role="combobox" pattern="\\d{5}(-\\d{4})?" aria-autocomplete="list" aria-expanded="false" aria-labelledby="a-l" autocomplete="off"></div></div>
+  <div class="q"><label id="b-l">School</label><div class="pick"><input id="b" role="combobox" aria-haspopup="dialog" aria-autocomplete="list" aria-expanded="false" aria-labelledby="b-l" autocomplete="off"></div><input type="hidden" id="bh" name="school_id" value=""></div>
+</form>
+<script>
+  window.log = [];
+  function widget(id, options) {
+    const box = document.getElementById(id); let list = null;
+    const shut = () => { list?.remove(); list = null; box.setAttribute('aria-expanded', 'false'); };
+    const open = () => { if (list) list.remove();
+      list = document.createElement('ul'); list.id = id + '-list'; list.setAttribute('role', 'listbox');
+      for (const text of options.filter((t) => t.toLowerCase().includes(box.value.toLowerCase().slice(0, 3)) || !box.value)) {
+        const o = document.createElement('li'); o.setAttribute('role', 'option'); o.textContent = text;
+        o.addEventListener('mousedown', (e) => e.preventDefault());
+        o.addEventListener('click', () => { box.value = text; const h = box.parentElement.querySelector('input[type=hidden]'); if (h) h.value = 'id:' + text; window.log.push(id + ' chose ' + text); shut(); });
+        list.append(o); }
+      document.body.append(list); box.setAttribute('aria-controls', list.id); box.setAttribute('aria-expanded', 'true'); };
+    box.addEventListener('mousedown', open); box.addEventListener('input', open);
+  }
+  widget('a', ['02115', '02139']);
+  widget('b', ['Northeastern University', 'Tufts University']);
+  const q = new URLSearchParams(location.search);
+  document.getElementById('a').value = q.get('a') ?? '';
+  document.getElementById('b').value = q.get('b') ?? '';
+  window.__readback = () => ({ schoolHidden: document.getElementById('bh').value, city: document.getElementById('a').value, school: document.getElementById('b').value, log: window.log });
+</script></body></html>`;
+PAGES['/popup-a-dialog'] = POPUP_A_DIALOG;
+
+/*
+ * An intl-tel-input preset to Sweden that moves its flag to +1, +44 or +46
+ * when a number is typed with one.
+ */
+const ITI_FOLLOWS_CODES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+<label for="fn">First name</label><input id="fn">
+<label for="ph">Phone</label>
+<div class="iti iti--allow-dropdown"><div class="iti__flag-container"><div class="iti__selected-flag" role="combobox" aria-haspopup="listbox" title="Sweden (Sverige): +46"><div class="iti__flag iti__se"></div><div class="iti__arrow"></div></div></div>
+<input id="ph" type="tel" name="phone" autocomplete="off" placeholder="070-123 45 67"></div>
+</form>
+<script>
+const ph = document.getElementById('ph'); const flag = document.querySelector('.iti__selected-flag');
+const C = { '+1': 'United States: +1', '+46': 'Sweden (Sverige): +46', '+44': 'United Kingdom: +44' };
+// like intl-tel-input: a number typed with a leading +code moves the flag
+ph.addEventListener('input', () => { const m = /^\\+(1|44|46)\\b/.exec(ph.value.trim()); if (m) flag.title = C['+' + m[1]]; });
+window.__readback = () => ({ phone: ph.value, flag: flag.title });
+</script></body></html>`;
+PAGES['/iti-follows-codes'] = ITI_FOLLOWS_CODES;
+
+/*
+ * A Work Experience or an Education section drawing saved entries from the
+ * JSON array in `?tiles=` (`?help=` a line of help text under its heading),
+ * with an Add that opens an editor with its own Save and Cancel, and hides
+ * itself while it is open. Saving draws nothing: the presses are what is
+ * read back.
+ */
+const savedEntries = (section, first, second) => `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="se-form">
+<h2>Contact Information</h2>
+<label for="se-fn">First Name</label><input id="se-fn">
+<section aria-labelledby="se-h"><h2 id="se-h">${section}</h2>
+  <p id="se-help"></p>
+  <div id="se-saved"></div>
+  <div id="se-editing"></div>
+  <button type="button" id="se-add">Add ${section}</button>
+</section>
+<button type="submit">Submit</button>
+</form>
+<script>
+  const q = new URLSearchParams(location.search);
+  window.__pressed = [];
+  document.getElementById('se-form').addEventListener('submit', (e) => e.preventDefault());
+  document.getElementById('se-saved').innerHTML = JSON.parse(q.get('tiles') || '[]').join('');
+  document.getElementById('se-help').textContent = q.get('help') || '';
+  const add = document.getElementById('se-add');
+  const editing = document.getElementById('se-editing');
+  const close = () => { editing.innerHTML = ''; add.style.display = ''; };
+  add.addEventListener('click', () => {
+    window.__pressed.push('add');
+    editing.innerHTML = '<div class="item-form"><label for="se-a">${first}</label><input id="se-a"><label for="se-b">${second}</label><input id="se-b">' +
+      '<label for="se-sd">Start Date</label><input id="se-sd" placeholder="MM/YYYY">' +
+      '<button type="button" id="se-save">Save</button> <button type="button" id="se-cancel">Cancel</button></div>';
+    add.style.display = 'none';
+    document.getElementById('se-save').addEventListener('click', () => { window.__pressed.push('save:' + document.getElementById('se-a').value + '/' + document.getElementById('se-b').value); close(); });
+    document.getElementById('se-cancel').addEventListener('click', () => { window.__pressed.push('cancel'); close(); });
+  });
+  window.__readback = () => ({ pressed: window.__pressed.slice(), open: editing.children.length });
+</script></body></html>`;
+PAGES['/saved-jobs'] = savedEntries('Experience', 'Employer Name', 'Job Title');
+PAGES['/saved-schools'] = savedEntries('Education', 'School', 'Degree');
+
+/*
+ * Typeaheads with no hidden input behind them and closed lists, each holding
+ * what `?school=`, `?city=` and `?emp=` say — as a person typed it.
+ */
+const TYPED_BY_THE_PERSON = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+<label for="fn">First Name</label><input id="fn">
+${[['school', 'School'], ['city', 'City'], ['emp', 'Current Employer']].map(([k, l]) => `<div class="field"><label id="${k}-l" for="${k}">${l}</label>
+<input id="${k}" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${k}-list" aria-labelledby="${k}-l" autocomplete="off">
+<ul id="${k}-list" role="listbox" hidden></ul></div>`).join('')}
+</form>
+<script>
+const DATA = { school: ['Northeastern University', 'Harvard University', 'Boston University', 'MIT'], city: ['Boston, MA', 'Cambridge, MA', 'Boston'], emp: ['Acme Corp', 'Globex', 'Initech'] };
+for (const k of Object.keys(DATA)) {
+  const input = document.getElementById(k), list = document.getElementById(k + '-list');
+  const show = () => { const q = input.value.toLowerCase(); const hits = DATA[k].filter((s) => s.toLowerCase().includes(q)); list.innerHTML = hits.map((s, i) => '<li role="option" id="' + k + '-o' + i + '">' + s + '</li>').join(''); list.hidden = !hits.length || !q; input.setAttribute('aria-expanded', String(!list.hidden)); };
+  input.addEventListener('input', show); input.addEventListener('focus', show);
+  list.addEventListener('mousedown', (e) => { const li = e.target.closest('li'); if (!li) return; e.preventDefault(); input.value = li.textContent; list.hidden = true; input.setAttribute('aria-expanded', 'false'); });
+  list.addEventListener('click', (e) => { const li = e.target.closest('li'); if (!li) return; input.value = li.textContent; list.hidden = true; });
+  input.addEventListener('blur', () => setTimeout(() => { list.hidden = true; input.setAttribute('aria-expanded', 'false'); }, 150));
+}
+const q = new URLSearchParams(location.search);
+for (const k of Object.keys(DATA)) if (q.get(k)) document.getElementById(k).value = q.get(k);
+window.__readback = () => ({ school: document.getElementById('school').value, city: document.getElementById('city').value, emp: document.getElementById('emp').value });
+</script></body></html>`;
+PAGES['/typed-by-the-person'] = TYPED_BY_THE_PERSON;
+
+/* Date pickers drawn as comboboxes whose popup is a dialog, called by the words a certificate is dated with. */
+const DIALOG_DATES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form><h2>Certifications</h2>
+${['Expected Completion', 'Expiration', 'Valid through', 'School'].map((l, i) => `<div><label id="dd-l${i}" for="dd-${i}">${l}</label><input id="dd-${i}" role="combobox" aria-haspopup="dialog" aria-expanded="false" aria-labelledby="dd-l${i}" autocomplete="off"></div>`).join('')}
+</form></body></html>`;
+PAGES['/dialog-dates'] = DIALOG_DATES;
 
 const PROFILE = {
   first_name: 'Morgan',
@@ -9988,7 +10893,19 @@ async function main() {
       const onlyCampuses = await reactEducation(...at('University of Example'), '?delay=250');
       const lookalikes = await reactEducation(...at('Example State Polytechnic'), '?delay=250');
       const second = await reactEducation(ESU_FIELDS, [ESU, { school: 'Example University', degree: 'Associate of Arts', major: 'Mathematics', start: { year: 2019, month: 8 }, end: { year: 2021, month: 6 } }], '?delay=250');
+      const later = await reactEducation(ESU_FIELDS, [ESU], '?commit-later&delay=250');
       group('Greenhouse: the education block as React keeps it, with the school spelled the board\'s way');
+      /*
+       * React 18 commits what a focus set on a later turn, and react-select's
+       * mousedown, pressed in the same turn as the focus, found the menu not
+       * focused yet and opened nothing: the School, the Degree and the
+       * Discipline left on "Select..." as for the person to pick.
+       */
+      check(
+        'a react-select that commits its focus on a later turn is still opened and answered',
+        later.sent[0]?.school === 'Example State Univ.' && later.sent[0]?.degree === "Bachelor's Degree" && later.sent[0]?.discipline === 'Computer Science',
+        JSON.stringify({ sent: later.sent[0], left: later.left }),
+      );
       check(
         'the school is chosen under the board\'s spelling ("Example State Univ." for "Example State University"), found by searching as the list is searched, with either kind of date box',
         [boxes, lists].every((r) => r.sent[0]?.school === 'Example State Univ.' && r.shows[0]?.school === 'Example State Univ.' && r.filled.includes('school') &&
@@ -10929,6 +11846,61 @@ async function main() {
       'three outlined fields that all call their label id="label" each read the one in their own component',
       outside.q_3101 === 'Morgan' && outside.q_3102 === 'Boston' && outside.q_3103 === 'Testwell' && outside.filled.length === 11,
       JSON.stringify(outside),
+    );
+
+    /*
+     * What the app behind a web component was told, not only what its box
+     * shows. See UI5_LIKE and SHADOW_FORM_MODEL.
+     */
+    const appFill = (url, fields) => page.goto(`${base}${url}`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 600 });
+        await new Promise((r) => setTimeout(r, 50));
+        return {
+          ...window.__readback(),
+          filled: report.filled.map((f) => f.key),
+          skipped: report.skipped.map((s) => `${s.key}: ${s.reason} [${s.description}]`),
+        };
+      }, { b: base, fields }),
+    );
+    const ui5 = await appFill('/ui5-like', { ...PROFILE, address_state: 'MA' });
+    group('UI5-style web components, and the app model behind them');
+    check(
+      'a box whose component reads e.inputType keeps what was written, and its app is told it',
+      ui5.shown.firstName === 'Morgan' && ui5.shown.lastName === 'Testwell' && ui5.shown.city === 'Boston' &&
+        ui5.shown.email === 'morgan.testwell@example.com' && ui5.model.firstName === 'Morgan' && ui5.model.lastName === 'Testwell' &&
+        ui5.model.city === 'Boston' && ui5.model.email === 'morgan.testwell@example.com' && ui5.errors.length === 0,
+      JSON.stringify(ui5),
+    );
+    check(
+      'a combobox given up on is put back in the app as well as on screen: not left on what its typeahead made of "MA"',
+      ui5.shown.state === '' && (ui5.model.state ?? '') === '' && ui5.skipped.some((s) => s.startsWith('address_state:')),
+      JSON.stringify(ui5),
+    );
+    check(
+      'a select named only by <u-label for> on its host is reported as Country, not passed over as "Select One"',
+      ui5.skipped.some((s) => s.startsWith('address_country:') && s.endsWith('[Country]')) && !ui5.filled.includes('address_country'),
+      JSON.stringify(ui5),
+    );
+    const beside = await appFill('/ui5-like-beside', { ...PROFILE, address_state: 'MA' });
+    check(
+      'and so is one whose label is only beside it: the box drawn as "…-label-root" is not taken for its own label',
+      beside.skipped.some((s) => s.startsWith('address_country:') && s.endsWith('[Country]')),
+      JSON.stringify(beside),
+    );
+    const sr = await appFill('/shadow-form-model', PROFILE);
+    group('Boxes in open shadow roots, and a form that listens for them');
+    check(
+      'the form hears the input of every box filled in a component\'s root, and its model matches what is shown',
+      sr.shown.firstName === 'Morgan' && sr.model.firstName === 'Morgan' && sr.model.lastName === 'Testwell' &&
+        sr.model.email === 'morgan.testwell@example.com' && sr.model.city === 'Boston',
+      JSON.stringify(sr),
+    );
+    check(
+      'and the change',
+      sr.changed.firstName === 'Morgan' && sr.changed.city === 'Boston',
+      JSON.stringify(sr),
     );
 
     const alone = await componentFill('/unlabelled-components', SWEEP);
@@ -12757,6 +13729,485 @@ async function main() {
       JSON.stringify(recognised),
     );
 
+    /* ------- Names, schools, jobs and lists, as the hiring systems ask them ------- */
+    group('Workday’s Legal Name and Preferred Name, by their markup');
+    const RICH = {
+      first_name: 'José', last_name: 'García', full_name: 'José Antonio Núñez García', email: 'jose@example.com',
+      preferred_name: 'Pepe Núñez', preferred_first_name: 'Pepe', preferred_last_name: 'Núñez',
+    };
+    const wdNames = (profile) =>
+      page.goto(`${base}/wd-names`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, profile }) => {
+          const m = await import(`${b}/autofill.js`);
+          m.fillForm(profile);
+          return Object.fromEntries([...document.querySelectorAll('input, select')].map((el) => [el.id, el.value]));
+        }, { b: base, profile }),
+      );
+    const wdNamed = await wdNames(RICH);
+    check(
+      'the middle name and the suffix are left, never given the whole legal name',
+      wdNamed['name--legalName--middleName'] === '' && wdNamed['name--legalName--social'] === '' && wdNamed['wn-mi'] === '' &&
+        wdNamed['name--legalName--firstName'] === 'José' && wdNamed['name--legalName--lastName'] === 'García',
+      JSON.stringify(wdNamed),
+    );
+    check(
+      'and each preferred box gets its half of the preferred name',
+      wdNamed['name--preferredName--firstName'] === 'Pepe' && wdNamed['name--preferredName--lastName'] === 'Núñez',
+      JSON.stringify(wdNamed),
+    );
+    const wholeOnly = await wdNames({ ...RICH, preferred_first_name: undefined, preferred_last_name: undefined });
+    check(
+      'a preferred name held only whole is split for them when it is two words',
+      wholeOnly['name--preferredName--firstName'] === 'Pepe' && wholeOnly['name--preferredName--lastName'] === 'Núñez',
+      JSON.stringify(wholeOnly),
+    );
+
+    /*
+     * A name ResumeM-M would not split ("José Antonio Núñez García": which
+     * words are the surname is not plain) comes with no first or last name.
+     * Workday's required Legal Name boxes were left empty and nothing said.
+     */
+    const unsplit = await page.goto(`${base}/wd-names`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm({ full_name: 'José Antonio Núñez García', email: 'jose@example.com' });
+        return {
+          values: Object.fromEntries([...document.querySelectorAll('input, select')].map((el) => [el.id, el.value])),
+          skipped: report.skipped.map((s) => ({ key: s.key, reason: s.reason, description: s.description })),
+        };
+      }, { b: base }),
+    );
+    const notSplit = unsplit.skipped.filter((s) => /could not be split/.test(s.reason));
+    check(
+      'a name that could not be split leaves the required legal First and Last Name boxes empty, and says so for each',
+      unsplit.values['name--legalName--firstName'] === '' && unsplit.values['name--legalName--lastName'] === '' &&
+        notSplit.map((s) => s.key).sort().join() === 'first_name,last_name',
+      JSON.stringify(unsplit),
+    );
+    check(
+      'naming the way to fix it in the profile',
+      notSplit.every((s) => /autofill\.first_name and autofill\.last_name in your profile/.test(s.reason)),
+      JSON.stringify(notSplit),
+    );
+    check(
+      'and not for the preferred name, which is not required',
+      notSplit.length === 2 && !unsplit.skipped.some((s) => /preferred/.test(s.key ?? '')),
+      JSON.stringify(unsplit.skipped),
+    );
+    const withHalves = await page.goto(`${base}/wd-names`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        return m.fillForm({ full_name: 'José Antonio Núñez García', first_name: 'José Antonio', last_name: 'Núñez García' })
+          .skipped.filter((s) => /could not be split/.test(s.reason)).length;
+      }, { b: base }),
+    );
+    check('set in the profile, the halves fill the boxes and nothing is said', withHalves === 0, String(withHalves));
+
+    group('An Education section already showing two blocks');
+    const TWO_SCHOOLS = [
+      { school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science', gpa: '3.8', start: { year: 2022, month: 9 }, end: { year: 2026, month: 5 } },
+      { school: 'Bunker Hill Community College', degree: 'Associate of Science', major: 'Mathematics', start: { year: 2020, month: 9 }, end: { year: 2022, month: 5 } },
+    ];
+    const SCHOOL_FIELDS = { first_name: 'José', school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science', gpa: '3.8', graduation_year: '2026' };
+    const shownSchools = await page.goto(`${base}/edu-shown`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields, education }) => {
+        const m = await import(`${b}/autofill.js`);
+        const read = () => [0, 1].map((n) => Object.fromEntries(['s', 'd', 'm', 'g', 'y'].map((k) => [k, document.getElementById(`es-${k}${n}`).value])));
+        await m.fillEducation(education, fields, await m.fillComboboxes(fields, m.fillForm(fields)));
+        const once = read();
+        // Again, with the second block's GPA empty, as a second Autofill finds it.
+        await m.fillEducation(education, fields, await m.fillComboboxes(fields, m.fillForm(fields)));
+        return { once, twice: read() };
+      }, { b: base, fields: SCHOOL_FIELDS, education: TWO_SCHOOLS }),
+    );
+    check(
+      'the first block gets the profile’s school and the second the next school, not a copy of the first',
+      shownSchools.once[0].s === 'Northeastern University' && shownSchools.once[0].g === '3.8' &&
+        shownSchools.once[1].s === 'Bunker Hill Community College' && shownSchools.once[1].m === 'Mathematics' && shownSchools.once[1].y === '2022',
+      JSON.stringify(shownSchools.once),
+    );
+    check(
+      'and the newest school’s GPA is never put in the other school’s empty GPA box, on either pass',
+      shownSchools.once[1].g === '' && shownSchools.twice[1].g === '',
+      JSON.stringify(shownSchools.twice),
+    );
+    /*
+     * The resume sent lists one of them. A resume tailored for a posting
+     * often keeps only the school that matters to it, and the second block
+     * the form shows was left empty with nothing said: the extension's report
+     * had no row for it, though the same form filled from the whole store got
+     * both schools.
+     */
+    const oneSent = await page.goto(`${base}/edu-shown`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields, education }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillEducation(education, fields, await m.fillComboboxes(fields, m.fillForm(fields)));
+        return {
+          second: ['s', 'd', 'm', 'g', 'y'].map((k) => document.getElementById(`es-${k}1`).value).join(''),
+          skipped: report.skipped.map((x) => ({ key: x.key, reason: x.reason, description: x.description })),
+        };
+      }, { b: base, fields: SCHOOL_FIELDS, education: TWO_SCHOOLS.slice(0, 1) }),
+    );
+    const leftBlock = oneSent.skipped.filter((x) => /lists no other school/.test(x.reason));
+    check(
+      'with one school on the resume sent, the second block is left empty, and said to be',
+      oneSent.second === '' && leftBlock.length === 1 && leftBlock[0].key === 'school',
+      JSON.stringify(oneSent),
+    );
+
+    group('Lists that spell the answer their own way');
+    const spelled = await page.goto(`${base}/spelled-otherwise`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm(profile);
+        const value = (id) => document.getElementById(id).value;
+        return {
+          spon: document.querySelector('[name="so_q102"]:checked')?.value ?? '',
+          asked: m.choiceQuestions(),
+          deg2: value('so-deg2'), deg3: value('so-deg3'), cc: value('so-cc'), phone: value('so-ph'),
+          skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`),
+        };
+      }, { b: base, profile: { ...PROFILE, degree: 'Bachelor of Science' } }),
+    );
+    check('a question in the cell beside its buttons is read, and answered by the words after them', spelled.spon === 'N', JSON.stringify(spelled));
+    check('a Bachelor of Science is "B.S." — not "B.A." — and "Bachelor’s degree or equivalent"', spelled.deg2 === 'B.S.' && spelled.deg3 === "Bachelor's degree or equivalent", JSON.stringify(spelled));
+    check('a telephone’s country code is the country the person lives in, not another with the same code', spelled.cc === '+1' && spelled.phone === PROFILE.phone, JSON.stringify(spelled));
+
+    group('Workday’s My Experience, opened with only an "Add"');
+    const RICH_JOBS = [
+      { company: 'Acme Robotics', title: 'Backend Engineer Intern', location: 'Cambridge, MA', start: { year: 2025, month: 1 }, current: true, description: 'Built the fleet telemetry API.' },
+      { company: 'Example Co.', title: 'Software Engineer Co-op', location: 'Boston, MA', start: { year: 2024, month: 7 }, end: { year: 2024, month: 12 }, current: false, description: 'Built a pipeline.' },
+      { company: 'Globex', title: 'IT Assistant', location: 'Boston, MA', start: { year: 2023, month: 6 }, end: { year: 2023, month: 8 }, current: false, description: 'Supported laptops.' },
+    ];
+    const added = (query) =>
+      page.goto(`${base}/wd-add${query}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, fields, history, education }) => {
+          const m = await import(`${b}/autofill.js`);
+          const report = await m.fillEducation(education, fields, await m.fillComboboxes(fields, m.fillForm(fields, { history }), { history, patience: 1500 }), { patience: 1500 });
+          return { jobs: window.__jobs(), schools: window.__schools(), skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`) };
+        }, { b: base, fields: SCHOOL_FIELDS, history: RICH_JOBS, education: TWO_SCHOOLS }),
+      );
+    const opened = await added('');
+    check(
+      'a block is added for each job, and each job put in its own',
+      JSON.stringify(opened.jobs.map((j) => j.company)) === '["Acme Robotics","Example Co.","Globex"]' && opened.jobs[2]?.title === 'IT Assistant',
+      JSON.stringify(opened),
+    );
+    check(
+      'and one for each school, the first given the whole of its education',
+      opened.schools.length === 2 && opened.schools[0].school === 'Northeastern University' && opened.schools[0].degree === "Bachelor's Degree" &&
+        opened.schools[0].major === 'Computer Science' && opened.schools[1].school === 'Bunker Hill Community College',
+      JSON.stringify(opened),
+    );
+    const capped = await added('?max=2');
+    check(
+      'a job the page would not add a block for is said, by name',
+      capped.jobs.length === 2 && capped.skipped.some((x) => /^work_history: 1 job not entered: Globex/.test(x)),
+      JSON.stringify(capped),
+    );
+    const begunHere = await added('?begun');
+    check(
+      'a block somebody began keeps its job, and the empty block above it takes the next one rather than the same',
+      JSON.stringify(begunHere.jobs.map((j) => j.company)) === '["Example Co.","Acme Robotics","Globex"]' && begunHere.jobs[1]?.title === 'Backend Engineer Intern',
+      JSON.stringify(begunHere),
+    );
+
+
+    group('An "Add Experience" that opens an editor with its own Save');
+    const TWO_JOBS = [
+      { company: 'Example Co.', title: 'Software Engineer Co-op', location: 'Boston, MA', start: { year: 2024, month: 7 }, end: { year: 2024, month: 12 }, current: false, description: 'Built a pipeline.' },
+      { company: 'Northeastern University', title: 'Teaching Assistant', location: 'Boston, MA', start: { year: 2023, month: 9 }, end: { year: 2024, month: 4 }, current: false, description: 'Ran labs.' },
+    ];
+    const editorRun = (query, times = 1) =>
+      page.goto(`${base}/editor-add${query}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, history, times }) => {
+          const m = await import(`${b}/autofill.js`);
+          const fields = { first_name: 'Morgan' };
+          let report;
+          for (let i = 0; i < times; i++) report = await m.fillComboboxes(fields, m.fillForm(fields, { history }), { history, patience: 1500 });
+          await new Promise((r) => setTimeout(r, 100));
+          return { ...window.__readback(), filled: report.filled.map((f) => `${f.key}=${f.value}`), skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`) };
+        }, { b: base, history: TWO_JOBS, times }),
+      );
+    const savedEach = await editorRun('');
+    check(
+      'each job is typed into the editor and kept with its Save, then the next one added',
+      JSON.stringify(savedEach.saved.map((j) => [j.employer, j.title])) === '[["Example Co.","Software Engineer Co-op"],["Northeastern University","Teaching Assistant"]]' &&
+        savedEach.saved[0].start === '07/2024' && savedEach.editing === null,
+      JSON.stringify(savedEach),
+    );
+    check(
+      'and reported filled, with no job said to be missing — and nothing sent',
+      savedEach.filled.includes('job_company=Example Co.') && savedEach.filled.includes('job_company=Northeastern University') &&
+        !savedEach.skipped.some((x) => x.startsWith('work_history')) && savedEach.submitted === 0,
+      JSON.stringify(savedEach),
+    );
+    const editedTwice = await editorRun('', 2);
+    check(
+      'filling again adds no second copy of a job already saved',
+      editedTwice.saved.length === 2 && editedTwice.editing === null && editedTwice.submitted === 0,
+      JSON.stringify(editedTwice),
+    );
+    const submitting = await editorRun('?save=submit');
+    check(
+      'a Save that would send the form is never pressed: the job is said typed in and not saved',
+      submitting.submitted === 0 && !submitting.pressed.includes('save') && submitting.saved.length === 0 &&
+        submitting.editing?.employer === 'Example Co.' &&
+        submitting.skipped.some((x) => /^work_history: Example Co\. is typed in but not saved — press Save/.test(x)) &&
+        !submitting.filled.some((x) => x.startsWith('job_')),
+      JSON.stringify(submitting),
+    );
+    const unsaveable = await editorRun('?nosave');
+    check(
+      'an editor with no Save is not closed with its Cancel, and the job is said not saved, the next not entered',
+      unsaveable.submitted === 0 && !unsaveable.pressed.includes('cancel') && unsaveable.pressed.filter((x) => x === 'add').length === 1 &&
+        unsaveable.skipped.some((x) => /^work_history: Example Co\. is typed in but not saved/.test(x)) &&
+        unsaveable.skipped.some((x) => /^work_history: 1 job not entered: Northeastern University/.test(x)),
+      JSON.stringify(unsaveable),
+    );
+
+
+    group('Editors drawn beside a header, and in a dialog, for jobs and schools');
+    const ONE_SCHOOL = [{ school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science', start: { year: 2022, month: 9 }, end: { year: 2026, month: 5 }, gpa: '3.8' }];
+    const kindsRun = (query, times = 1) =>
+      page.goto(`${base}/editor-kinds${query}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, history, education, times }) => {
+          const m = await import(`${b}/autofill.js`);
+          const fields = { first_name: 'Morgan', school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science' };
+          let report;
+          for (let i = 0; i < times; i++) {
+            report = await m.fillEducation(education, fields, await m.fillComboboxes(fields, m.fillForm(fields, { history }), { history, patience: 1500 }), { patience: 1500 });
+          }
+          await new Promise((r) => setTimeout(r, 100));
+          return { ...window.__readback(), filled: report.filled.map((f) => `${f.key}=${f.value}`), skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`) };
+        }, { b: base, history: TWO_JOBS.slice(0, 1), education: ONE_SCHOOL, times }),
+      );
+    const header = await kindsRun('?header');
+    check(
+      'an editor beside its header, its Add taken away while open, is filled and saved — the job and the school',
+      header.jobs.length === 1 && header.jobs[0].company === 'Example Co.' && header.jobs[0].start === '07/2024' &&
+        header.schools.length === 1 && header.schools[0].school === 'Northeastern University' && header.open === 0 &&
+        !header.log.includes('SUBMIT') && !header.skipped.some((x) => /^(school|work_history):/.test(x)),
+      JSON.stringify(header),
+    );
+    const headerTwice = await kindsRun('?header', 2);
+    check('and filling again adds neither a second time', headerTwice.jobs.length === 1 && headerTwice.schools.length === 1 && headerTwice.open === 0, JSON.stringify(headerTwice));
+    const inDialog = await kindsRun('?dialog');
+    check(
+      'a dialog an Add opens is filled — its month and year lists too — and saved, and nothing is left open',
+      inDialog.jobs.length === 1 && inDialog.jobs[0].company === 'Example Co.' && inDialog.jobs[0].sm === 'July' && inDialog.jobs[0].ey === '2024' &&
+        inDialog.schools.length === 1 && inDialog.schools[0].school === 'Northeastern University' && inDialog.open === 0 && !inDialog.log.includes('SUBMIT') &&
+        inDialog.filled.includes('job_company=Example Co.') && !inDialog.skipped.some((x) => /^(school|work_history):/.test(x)),
+      JSON.stringify(inDialog),
+    );
+    const odd = await kindsRun('?dialog&odd');
+    check(
+      'a dialog that asks nothing a school answers is shut with its Cancel, not left open and empty',
+      odd.jobs.length === 1 && odd.schools.length === 0 && odd.open === 0 && odd.log.includes('cancel school') && !odd.log.includes('SUBMIT') &&
+        odd.skipped.some((x) => /^school: the form would not add another/.test(x)),
+      JSON.stringify(odd),
+    );
+
+    group('An "Add another" disabled at its limit is a plain form, not an editor');
+    const LIMIT_JOBS = [
+      { company: 'Alpha', title: 'Engineer III', start: { year: 2023, month: 1 }, current: true },
+      { company: 'Beta', title: 'Engineer II', start: { year: 2021, month: 1 }, end: { year: 2022, month: 12 } },
+      { company: 'Gamma', title: 'Engineer I', start: { year: 2019, month: 1 }, end: { year: 2020, month: 12 } },
+    ];
+    const LIMIT_SCHOOLS = [
+      { school: 'Northeastern University', degree: 'Bachelor of Science', major: 'CS', start: { year: 2018, month: 9 }, end: { year: 2022, month: 5 } },
+      { school: 'MIT', degree: 'Master of Science', major: 'EECS', start: { year: 2022, month: 9 }, end: { year: 2024, month: 5 } },
+    ];
+    const atLimit = (query) =>
+      page.goto(`${base}/add-at-limit${query}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, history, education, edu }) => {
+          const m = await import(`${b}/autofill.js`);
+          const fields = { first_name: 'Morgan' };
+          const first = edu ? m.fillForm(fields, { history: [] }) : m.fillForm(fields, { history });
+          const report = edu ? await m.fillEducation(education, fields, first, { patience: 1500 }) : await m.fillComboboxes(fields, first, { history, patience: 1500 });
+          return { ...window.__readback(), skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`) };
+        }, { b: base, history: LIMIT_JOBS, education: LIMIT_SCHOOLS, edu: query.includes('edu') }),
+      );
+    const threeOfThree = await atLimit('');
+    check(
+      'three jobs into a form that takes three, its Add disabled at the third: each in its own block, nothing said unsaved or missing',
+      JSON.stringify(threeOfThree.blocks) === '["Alpha / Engineer III","Beta / Engineer II","Gamma / Engineer I"]' && !threeOfThree.skipped.some((x) => x.startsWith('work_history')),
+      JSON.stringify(threeOfThree),
+    );
+    const twoOfTwo = await atLimit('?edu&max=2');
+    check(
+      'two schools into an Education that takes two: both in, and no "press Save" for a form with nothing to save',
+      JSON.stringify(twoOfTwo.blocks) === '["Northeastern University / Bachelor of Science","MIT / Master of Science"]' && !twoOfTwo.skipped.some((x) => /press Save/.test(x)),
+      JSON.stringify(twoOfTwo),
+    );
+
+    group('A job or school is "already there" only by a saved entry of its own, word for word');
+    const helped = await atLimit(`?edu&max=none&help=${encodeURIComponent('List every school you attended. Transcripts can be submitted later.')}`);
+    check(
+      'help text spelling "MIT" inside its words ("sub-mit-ted") hides no school: a block is added and MIT put in it',
+      helped.pressed === 1 && JSON.stringify(helped.blocks) === '["Northeastern University / Bachelor of Science","MIT / Master of Science"]',
+      JSON.stringify(helped),
+    );
+    const SENIOR = { company: 'Acme Corp', title: 'Senior Software Engineer', start: { year: 2023, month: 1 }, end: null, current: true, description: 'Lead.' };
+    const SWE = { company: 'Acme Corp', title: 'Software Engineer', start: { year: 2020, month: 6 }, end: { year: 2022, month: 12 }, current: false, description: 'Built.' };
+    const SWE_EARLIER = { ...SWE, start: { year: 2016, month: 1 }, end: { year: 2018, month: 6 } };
+    const editorRuns = (runs) =>
+      page.goto(`${base}/editor-add`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, runs }) => {
+          const m = await import(`${b}/autofill.js`);
+          const fields = { first_name: 'Morgan' };
+          let report;
+          for (const history of runs) report = await m.fillComboboxes(fields, m.fillForm(fields, { history }), { history, patience: 1500 });
+          await new Promise((r) => setTimeout(r, 100));
+          return { ...window.__readback(), skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`) };
+        }, { b: base, runs }),
+      );
+    const senior = await editorRuns([[SENIOR], [SENIOR, SWE]]);
+    check(
+      'a saved "Senior Software Engineer" at Acme Corp does not hide "Software Engineer" at Acme Corp: it is added, and the one there said so',
+      JSON.stringify(senior.saved.map((j) => j.title)) === '["Senior Software Engineer","Software Engineer"]' && senior.editing === null &&
+        senior.skipped.includes('work_history: Senior Software Engineer at Acme Corp already in Work Experience') && !senior.skipped.some((x) => /not entered|not saved/.test(x)),
+      JSON.stringify(senior),
+    );
+    const stints = await editorRuns([[SWE], [SWE, SWE_EARLIER]]);
+    check(
+      'two stints with the same title at the same employer: the one saved hides only itself, the other is added',
+      stints.saved.length === 2 && stints.saved[1].start === '01/2016' && stints.editing === null,
+      JSON.stringify(stints),
+    );
+    const again = await editorRuns([[SENIOR, SWE], [SENIOR, SWE]]);
+    check('and once both are saved, filling again adds neither', again.saved.length === 2 && again.editing === null && again.pressed.filter((x) => x === 'add').length === 2, JSON.stringify(again));
+
+    group('A long form fills in time that grows with the form, not its square');
+    const long = await page.goto(`${base}/long-form`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { first_name: 'Morgan', last_name: 'Testwell', email: 'morgan@example.com', phone: '555-0100', address_city: 'Boston', address_country: 'United States' };
+        let t = performance.now();
+        m.choiceQuestions();
+        m.typedQuestions(fields, 'Meridian');
+        const questions = performance.now() - t;
+        t = performance.now();
+        const report = m.fillForm(fields, { remembered: [], history: [], company: 'Meridian' });
+        const fill = performance.now() - t;
+        await new Promise((r) => setTimeout(r, 0));
+        t = performance.now();
+        const asked = m.findQuestions().map((q) => m.isRequired(q.fieldId));
+        const watch = performance.now() - t;
+        return { questions, fill, watch, filled: report.filled.length, asked: asked.length };
+      }, { b: base }),
+    );
+    // Measured before: 1.8s, 4.3s and 0.5s; after, a tenth of that. Bounds far above the after.
+    check(
+      'reading, filling and re-reading the questions of a 420-field form each take well under two seconds',
+      long.filled > 50 && long.asked > 50 && long.questions < 1500 && long.fill < 2000 && long.watch < 400,
+      JSON.stringify(long),
+    );
+
+    /* ------- A question read as what it asks, not as its answers or its hints ------- */
+    group('A radio group whose question is written above it');
+    const optionLabels = await page.goto(`${base}/radio-option-labels`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const asked = m.choiceQuestions();
+        const said = [];
+        const stop = m.watchChoices((x) => said.push(x));
+        for (const id of ['ol-a2', 'ol-c2', 'ol-d1', 'ol-f1']) document.getElementById(id).click();
+        await new Promise((r) => setTimeout(r, 50));
+        stop();
+        return { asked, said: said.map((x) => `${x.question} = ${x.answer}`) };
+      }, { b: base }),
+    );
+    check(
+      'each group is asked of the bank by the words above it, never by its first option',
+      JSON.stringify(optionLabels.asked) === JSON.stringify([
+        'Will you now or in the future require sponsorship?',
+        'Would you need to relocate for this role?',
+        'Are you bound by any confidentiality or non-solicitation agreement with a current employer?',
+        'Do you have reliable transportation to the office?',
+        'Are you legally authorized to work in the US? *',
+        'Are you open to relocation?',
+      ]),
+      JSON.stringify(optionLabels.asked),
+    );
+    check(
+      'and a group with nothing but its options has no question, so nothing is kept under one of them',
+      !optionLabels.said.some((x) => /^Yes, I live/.test(x)),
+      JSON.stringify(optionLabels.said),
+    );
+    check(
+      'a pick is kept under the question it answers',
+      optionLabels.said.includes('Will you now or in the future require sponsorship? = No') &&
+        optionLabels.said.includes('Would you need to relocate for this role? = Yes, but I am planning to relocate on my own') &&
+        optionLabels.said.includes("Are you bound by any confidentiality or non-solicitation agreement with a current employer? = No, I don't have an agreement"),
+      JSON.stringify(optionLabels.said),
+    );
+
+    group('A question without the words beside it');
+    const noise = await page.goto(`${base}/label-noise`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const ids = ['ln-t1', 'ln-t2', 'ln-t5', 'ln-t8', 'ln-t13', 'ln-s1', 'ln-i1', 'ln-i4', 'ln-i6', 'ln-i7'];
+        return {
+          asked: Object.fromEntries(ids.map((id) => [id, m.questionFor(document.getElementById(id))])),
+          found: m.findQuestions().map((q) => q.question),
+          typed: m.typedQuestions({}, 'Acme'),
+          choices: m.choiceQuestions(),
+        };
+      }, { b: base }),
+    );
+    check('a tooltip’s "(?)" is not part of the question', noise.asked['ln-t1'] === 'Why do you want to work here?' && noise.asked['ln-s1'] === 'How did you hear about us?', JSON.stringify(noise.asked));
+    check('nor is a hint inside the label', noise.asked['ln-t2'] === 'Describe a project you are proud of' && noise.asked['ln-i1'] === 'Earliest start date', JSON.stringify(noise.asked));
+    check('nor what is hidden, or kept for a screen reader', noise.asked['ln-t8'] === 'Why this team?', JSON.stringify(noise.asked));
+    check('nor the description the box points at', noise.asked['ln-t13'] === '', JSON.stringify(noise.asked));
+    check(
+      'a placeholder that asks is the question of a box with no label, and one that only shows an example is not',
+      noise.asked['ln-t5'] === 'What are you looking to learn this summer?' && noise.asked['ln-i4'] === 'How did you hear about this job?' && noise.asked['ln-i6'] === '',
+      JSON.stringify(noise.asked),
+    );
+    check('while a label that is only words for a screen reader keeps them', noise.asked['ln-i7'] === 'School', JSON.stringify(noise.asked));
+    check(
+      'and the questions offered and asked of the bank are the clean ones',
+      noise.found.includes('Why do you want to work here?') && noise.found.includes('Why this team?') &&
+        noise.typed.includes('How did you hear about this job?') && noise.typed.includes('Earliest start date') &&
+        noise.choices.includes('How did you hear about us?'),
+      JSON.stringify({ found: noise.found, typed: noise.typed, choices: noise.choices }),
+    );
+
+    group('A dropdown prompt drawn round with dashes or brackets');
+    const drawnPrompts = await page.goto(`${base}/drawn-prompts`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, profile }) => {
+        const m = await import(`${b}/autofill.js`);
+        const asked = m.choiceQuestions();
+        const said = [];
+        const stop = m.watchChoices((x) => said.push(x));
+        // The page's own script re-validating its form, as many do on load.
+        for (const sel of document.querySelectorAll('select')) sel.dispatchEvent(new Event('change', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 50));
+        stop();
+        const report = m.fillForm(profile, {
+          remembered: [
+            { question: 'Willingness to Travel', answer: 'Up to 25%' },
+            { question: 'Preferred office', answer: 'Austin' },
+          ],
+        });
+        return {
+          asked,
+          said: said.map((x) => `${x.question} = ${x.answer}`),
+          travel: document.getElementById('dp-tr').selectedOptions[0].textContent,
+          office: document.getElementById('dp-of').selectedOptions[0].textContent,
+          fromMemory: report.filled.filter((f) => f.remembered).map((f) => f.question),
+        };
+      }, { b: base, profile: PROFILE }),
+    );
+    check(
+      'each select still on its prompt is unanswered, and asked of the bank',
+      ['Willingness to Travel', 'Candidate Source', 'Preferred shift', 'Preferred office'].every((q) => drawnPrompts.asked.includes(q)),
+      JSON.stringify(drawnPrompts.asked),
+    );
+    check('a prompt is never kept as the answer chosen', drawnPrompts.said.length === 0, JSON.stringify(drawnPrompts.said));
+    check('and the answer given before is put in its place', drawnPrompts.travel === 'Up to 25%' && drawnPrompts.office === 'Austin', JSON.stringify(drawnPrompts));
+
     /* ------- Names, hints and date shapes in other languages ------- */
     const valuesAt = (where, ids, profile = PROFILE) =>
       page.goto(`${base}${where}`, { waitUntil: 'domcontentloaded' }).then(() =>
@@ -12815,6 +14266,608 @@ async function main() {
     check('the year first, either way', dates['ld-yfirst'] === '2026/05' && dates['ld-ydots'] === '2026.05', JSON.stringify(dates));
     check('MM.JJJJ and MM/AAAA are the same shape', dates['ld-german'] === '05.2026' && dates['ld-french'] === '05/2026', JSON.stringify(dates));
     check('TT.MM.JJJJ and JJ/MM/AAAA want a day, so they are left', dates['ld-tt'] === '' && dates['ld-jj'] === '', JSON.stringify(dates));
+    group('A first or last name with a middle name or suffix allowed alongside');
+    const alongside = await valuesAt('/names-alongside', ['na-fmi', 'na-fmn', 'na-ls', 'na-lsa', 'na-legal', 'na-mid', 'na-suf', 'na-mhint', 'na-shint', 'na-nshint']);
+    check(
+      '"First name and middle initial" and "First Name (include middle name)" get the first name',
+      alongside['na-fmi'] === 'Morgan' && alongside['na-fmn'] === 'Morgan',
+      JSON.stringify(alongside),
+    );
+    check(
+      '"Last name / Suffix", "Last Name (and suffix, if any)" and "Legal last name, including suffix" get the surname',
+      alongside['na-ls'] === 'Testwell' && alongside['na-lsa'] === 'Testwell' && alongside['na-legal'] === 'Testwell',
+      JSON.stringify(alongside),
+    );
+    check('a box that is only the middle name or the suffix is still left', alongside['na-mid'] === '' && alongside['na-suf'] === '', JSON.stringify(alongside));
+    check(
+      'a middle-name or suffix box whose hint only mentions the last name ("do not repeat your last name", "not part of your last name") is left too',
+      alongside['na-mhint'] === '' && alongside['na-shint'] === '' && alongside['na-nshint'] === '',
+      JSON.stringify(alongside),
+    );
+
+    group('"Handy" is a telephone only in German');
+    const handy = await valuesAt('/handy', ['hd-tools', 'hd-excel', 'hd-skills', 'hd-nummer', 'hd-bare', 'hd-both']);
+    check(
+      '"How handy are you with Excel?", "Handy skills" and "handy with power tools" are not given the phone number',
+      handy['hd-tools'] === '' && handy['hd-excel'] === '' && handy['hd-skills'] === '',
+      JSON.stringify(handy),
+    );
+    check(
+      '"Handynummer", "Handy:" and "Telefon / Handy" are',
+      handy['hd-nummer'] === PROFILE.phone && handy['hd-bare'] === PROFILE.phone && handy['hd-both'] === PROFILE.phone,
+      JSON.stringify(handy),
+    );
+
+    group('A school the first block shows is the profile’s only by whole words');
+    const shownAs = (profileSchool, typed) =>
+      page.goto(`${base}/edu-shown`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, profileSchool, typed }) => {
+          const m = await import(`${b}/autofill.js`);
+          document.getElementById('es-s0').value = typed;
+          m.fillForm({ first_name: 'Jo', school: profileSchool, major: 'Computer Science', gpa: '3.9' });
+          return { major: document.getElementById('es-m0').value, gpa: document.getElementById('es-g0').value };
+        }, { b: base, profileSchool, typed }),
+      );
+    const smith = await shownAs('MIT', 'Smith College');
+    check('"MIT" is not "Smith College", so its major and GPA are not put in that block', smith.major === '' && smith.gpa === '', JSON.stringify(smith));
+    const extension = await shownAs('UCLA', 'UCLA Extension');
+    check('nor is "UCLA" "UCLA Extension"', extension.major === '' && extension.gpa === '', JSON.stringify(extension));
+    const stanford = await shownAs('Stanford', 'Stanford University');
+    check('but "Stanford" is still "Stanford University"', stanford.major === 'Computer Science' && stanford.gpa === '3.9', JSON.stringify(stanford));
+    const harvard = await shownAs('Harvard', 'Harvard University');
+    check('and so is "Harvard" "Harvard University"', harvard.major === 'Computer Science' && harvard.gpa === '3.9', JSON.stringify(harvard));
+    for (const [profileSchool, typed] of [
+      ['Georgia Institute of Technology (Georgia Tech)', 'Georgia Tech'],
+      ['Massachusetts Institute of Technology (MIT)', 'MIT'],
+      ['Virginia Tech', 'Virginia Polytechnic Institute and State University (Virginia Tech)'],
+    ]) {
+      const got = await shownAs(profileSchool, typed);
+      check(`"${profileSchool}" is "${typed}" by the name in its brackets`, got.major === 'Computer Science' && got.gpa === '3.9', JSON.stringify(got));
+    }
+    for (const [profileSchool, typed] of [
+      ['Indiana University', 'Indiana University of Pennsylvania'],
+      ['Columbia College', 'Columbia College Chicago'],
+      ['Harvard', 'Harvard Extension School'],
+      ['Boston College', 'Boston University'],
+    ]) {
+      const got = await shownAs(profileSchool, typed);
+      check(`but "${profileSchool}" is not "${typed}", whose name only starts with it`, got.major === '' && got.gpa === '', JSON.stringify(got));
+    }
+
+    group('A typed employer is the job of that exact name before one whose name it holds');
+    const metabase = await page.goto(`${base}/workday-experience-begun`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const blocks = [...document.querySelectorAll('[id$="--companyName"]')];
+        for (const box of blocks) box.value = '';
+        blocks[0].value = 'Metabase';
+        m.fillForm({}, {
+          history: [
+            { company: 'Meta', title: 'Software Engineer', description: 'Built ads ranking.', start: { year: 2022, month: 6 }, end: { year: 2024, month: 5 } },
+            { company: 'Metabase', title: 'Data Engineer Intern', description: 'Wrote query planner tests.', start: { year: 2021, month: 6 }, end: { year: 2021, month: 9 } },
+          ],
+        });
+        return [...document.querySelectorAll('[id$="--jobTitle"]')].map((t) => t.value);
+      }, { b: base }),
+    );
+    check('a block showing "Metabase" gets Metabase’s title, not Meta’s', metabase[0] === 'Data Engineer Intern', JSON.stringify(metabase));
+    check('and Meta goes to the next block', metabase[1] === 'Software Engineer', JSON.stringify(metabase));
+    const metaInc = await page.goto(`${base}/workday-experience-begun`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const blocks = [...document.querySelectorAll('[id$="--companyName"]')];
+        for (const box of blocks) box.value = '';
+        blocks[0].value = 'Meta';
+        m.fillForm({}, {
+          history: [
+            { company: 'Meta Inc', title: 'Software Engineer', description: 'Built ads ranking.', start: { year: 2022, month: 6 }, end: { year: 2024, month: 5 } },
+            { company: 'Metabase', title: 'Data Engineer Intern', description: 'Wrote query planner tests.', start: { year: 2021, month: 6 }, end: { year: 2021, month: 9 } },
+          ],
+        });
+        return [...document.querySelectorAll('[id$="--jobTitle"]')].map((t) => t.value);
+      }, { b: base }),
+    );
+    check('a block showing "Meta" is "Meta Inc" by its whole first word, not the longer "Metabase"', metaInc[0] === 'Software Engineer', JSON.stringify(metaInc));
+
+    group('A remembered answer is never longer than the box has room for');
+    const tooLong = await page.goto(`${base}/typed-maxlength`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { first_name: 'Jianwen' };
+        const qs = m.typedQuestions(fields, 'Meridian');
+        const remembered = [
+          { question: qs.find((q) => /hear/i.test(q)), answer: 'A friend who works on the platform team referred me' },
+          { question: qs.find((q) => /start/i.test(q)), answer: 'Two weeks after my offer' },
+        ];
+        const r = m.fillForm(fields, { remembered, company: 'Meridian' });
+        return {
+          hear: document.getElementById('tm-hear').value,
+          start: document.getElementById('tm-start').value,
+          skipped: r.skipped.map((x) => x.reason),
+        };
+      }, { b: base }),
+    );
+    check('an answer longer than its maxlength is left out of the box', tooLong.hear === '', JSON.stringify(tooLong));
+    check(
+      'and the card says why',
+      tooLong.skipped.includes('the box would not take the answer you gave before'),
+      JSON.stringify(tooLong.skipped),
+    );
+    check('one that fits still goes in', tooLong.start === 'Two weeks after my offer', JSON.stringify(tooLong));
+
+    group('A telephone box whose pattern wants the number punctuated');
+    const patterned = await valuesAt('/phone-patterned', ['pp-dash', 'pp-paren', 'pp-dot'], { ...PROFILE, phone: '(555) 555-5555' });
+    check('ddd-ddd-dddd', patterned['pp-dash'] === '555-555-5555', JSON.stringify(patterned));
+    check('(ddd) ddd-dddd', patterned['pp-paren'] === '(555) 555-5555', JSON.stringify(patterned));
+    check('ddd.ddd.dddd', patterned['pp-dot'] === '555.555.5555', JSON.stringify(patterned));
+    const dashedFromPlus = await valuesAt('/phone-patterned', ['pp-dash', 'pp-dot'], { ...PROFILE, phone: '+1 555 555 5555' });
+    check('from a number stored with +1, the ten digits after it', dashedFromPlus['pp-dash'] === '555-555-5555' && dashedFromPlus['pp-dot'] === '555.555.5555', JSON.stringify(dashedFromPlus));
+
+    group('Widgets the page answered, dated, drew late or keeps elsewhere (28d)');
+    const WIDGETED = {
+      first_name: 'Jianwen', last_name: 'Ding', email: 'jd@example.com', phone: '(555) 555-5555',
+      address_city: 'Boston', address_state: 'MA', address_country: 'United States', school: 'Northeastern University',
+      graduation_date: 'May 2026', work_authorization: 'Authorized to work in the US', requires_sponsorship: 'No',
+    };
+    const widgeted = async (where, run) => {
+      await page.goto(`${base}${where}`, { waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b, fields, run }) => {
+        const m = await import(`${b}/autofill.js`);
+        const t = performance.now();
+        const first = m.fillForm(fields);
+        const report = run === 'form' ? first : await m.fillComboboxes(fields, first, { patience: 4000 });
+        await new Promise((r) => setTimeout(r, 100));
+        return {
+          ms: Math.round(performance.now() - t),
+          filled: report.filled.map((f) => `${f.key}=${f.value}`),
+          skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`),
+          state: window.state?.(),
+          picked: window.picked,
+          model: window.model,
+          focused: window.focused,
+          log: window.log,
+          values: Object.fromEntries([...document.querySelectorAll('input')].filter((i) => i.id).map((i) => [i.id, i.value])),
+        };
+      }, { b: base, fields: WIDGETED, run });
+    };
+
+    const prefilled = await widgeted('/prefilled-typeahead');
+    check(
+      'a typeahead the page arrived with "Cambridge, MA" in keeps it and the place picked behind it, and is reported already filled',
+      prefilled.values.pt === 'Cambridge, MA' && prefilled.picked?.id === 'cambridge' && prefilled.log.length === 0 &&
+        prefilled.skipped.includes('address_city: already filled') && !prefilled.filled.some((f) => f.startsWith('address_city')),
+      JSON.stringify(prefilled),
+    );
+    check('and costs no wait on a list', prefilled.ms < 1500, `${prefilled.ms}ms`);
+
+    const dated = await widgeted('/date-comboboxes');
+    check(
+      'a Kendo date picker (role=combobox, MM/dd/yyyy) is not driven as a list: never typed "May 2026", and said not to take a month in that form',
+      dated.values['dc-kendo'] === '' && dated.log.length === 0 && dated.skipped.includes('graduation_date: the field would not accept it in that form'),
+      JSON.stringify(dated),
+    );
+    check('one whose popup is a grid, asking MM/YYYY, is written that way', dated.values['dc-grid'] === '05/2026' && dated.filled.includes('graduation_date=05/2026'), JSON.stringify(dated));
+    check('and neither waits on a list', dated.ms < 1500, `${dated.ms}ms`);
+
+    const late = await widgeted('/late-aria-radios');
+    check(
+      'ARIA radios the page marks a turn after the click are read back once drawn, and reported filled, not "did not take it"',
+      late.state.join() === 'Are you lega=Yes,Will you now=No' && late.filled.includes('work_authorization=Authorized to work in the US') &&
+        late.filled.includes('requires_sponsorship=No') && !late.skipped.some((x) => /did not take/.test(x)),
+      JSON.stringify(late),
+    );
+
+    const leaving = await widgeted('/commit-on-leaving', 'form');
+    check(
+      'an Oracle JET box (taken on blur) and a UI5 sap.m box (taken on focusout) hold the value in their model',
+      leaving.model.first === 'Jianwen' && leaving.model.last === 'Ding',
+      JSON.stringify(leaving),
+    );
+    check('while a plain box is written without being focused', leaving.model.email === 'jd@example.com' && leaving.focused.length === 0, JSON.stringify(leaving));
+
+    const abroadStays = await widgeted('/iti-abroad', 'form');
+    check(
+      'an intl-tel-input left on +46 that will not move is not given a silent Swedish number: reported with its code',
+      abroadStays.skipped.includes("phone: the form's country code is +46 — check the phone") && !abroadStays.filled.some((f) => f.startsWith('phone')),
+      JSON.stringify(abroadStays),
+    );
+    const abroadFollows = await widgeted('/iti-abroad?follows', 'form');
+    check(
+      'one that follows the code a number is typed with is given the number with +1, and moves to it',
+      abroadFollows.state.dial === '1' && abroadFollows.values['ia-phone'] === '+1 (555) 555-5555' && abroadFollows.filled.includes('phone=+1 (555) 555-5555'),
+      JSON.stringify(abroadFollows),
+    );
+
+    const pills = await widgeted('/pills-in-a-list');
+    check(
+      'pills each alone in an item of a listbox are pressed as a group, not opened as a dropdown',
+      pills.state.join() === 'Yes' && pills.filled.includes('work_authorization=Authorized to work in the US') && pills.skipped.length === 0,
+      JSON.stringify(pills),
+    );
+    check('and cost no wait on a list', pills.ms < 1500, `${pills.ms}ms`);
+    const plainPills = await widgeted('/pills-in-a-list?plain');
+    check(
+      'and in a list that says nothing of itself, are not passed over',
+      plainPills.state.join() === 'Yes' && plainPills.filled.includes('work_authorization=Authorized to work in the US'),
+      JSON.stringify(plainPills),
+    );
+
+    group('A typeahead holding a hint or a half-typed search is not already filled');
+    const r29notChosen = async (q) => {
+      await page.goto(`${base}/typed-not-chosen${q}`, { waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { address_city: 'Boston', city: 'Boston', location: 'Boston, MA', school: 'Northeastern University' };
+        const rep = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 1500 });
+        return { ...window.__readback(), filled: rep.filled.map((f) => `${f.key}=${f.value}`), skipped: rep.skipped.map((x) => `${x.key}: ${x.reason}`) };
+      }, { b: base });
+    };
+    for (const [q, said] of [['', '"Type to search"'], ['?b=Northea', 'a half-typed "Northea"'], ['?b=Start%20typing...', '"Start typing..."'], ['?b=e.g.%20MIT', '"e.g. MIT"']]) {
+      const got = await r29notChosen(q);
+      check(
+        `a School box holding ${said} and no hidden input is chosen in, not reported already filled`,
+        got.school === 'Northeastern University' && got.filled.includes('school=Northeastern University') && !got.skipped.includes('school: already filled'),
+        JSON.stringify(got),
+      );
+    }
+    const r29bost = await r29notChosen('');
+    check('and a City box holding "Bost" is not reported already filled', !r29bost.skipped.includes('address_city: already filled'), JSON.stringify(r29bost));
+    const r29wholePlace = await r29notChosen('?a=Cambridge,%20MA');
+    check(
+      'but one holding a whole place, "Cambridge, MA", is left as it is',
+      r29wholePlace.city === 'Cambridge, MA' && r29wholePlace.skipped.includes('address_city: already filled') && !r29wholePlace.log.some((l) => l.startsWith('a ')),
+      JSON.stringify(r29wholePlace),
+    );
+
+    group('A box taken on leaving is written without moving the person');
+    await page.goto(`${base}/jet-while-typing`, { waitUntil: 'domcontentloaded' });
+    await page.click('#notes');
+    await page.keyboard.type('I am typing her');
+    const r29jetFill = await page.evaluate(async ({ b }) => {
+      const m = await import(`${b}/autofill.js`);
+      const r = m.fillForm({ first_name: 'Morgan', email: 'morgan@example.com' });
+      return { ...window.__readback(), filled: r.filled.map((f) => `${f.key}=${f.value}`), fn: document.getElementById('fn').value };
+    }, { b: base });
+    await page.keyboard.type('e');
+    const r29jetAfter = await page.evaluate(() => document.getElementById('notes').value);
+    check(
+      'an Oracle JET box filled while somebody types elsewhere is told it was entered and left, and their focus and scroll stay',
+      r29jetFill.active === 'notes' && r29jetFill.scrollY === 0 && r29jetFill.fn === 'Morgan' && r29jetFill.events.includes('fn:blur') && !r29jetFill.events.includes('notes:blur'),
+      JSON.stringify(r29jetFill),
+    );
+    check('and their next key lands where they were typing', r29jetAfter === 'I am typing here', r29jetAfter);
+    await page.goto(`${base}/jet-while-typing`, { waitUntil: 'domcontentloaded' });
+    await page.evaluate(async ({ b }) => {
+      const m = await import(`${b}/autofill.js`);
+      m.fillForm({ first_name: 'Morgan', email: 'morgan@example.com' });
+      m.watchForEmptied(() => {});
+      document.activeElement.blur?.();
+    }, { b: base });
+    await page.waitForTimeout(300);
+    await page.click('#notes');
+    await page.keyboard.type('Hello th');
+    await page.evaluate(() => { const fn = document.getElementById('fn'); fn.value = ''; fn.dispatchEvent(new Event('input', { bubbles: true })); });
+    await page.waitForTimeout(3000);
+    await page.keyboard.type('ere');
+    const r29jetRefill = await page.evaluate(() => ({ ...window.__readback(), notes: document.getElementById('notes').value, fn: document.getElementById('fn').value }));
+    check(
+      'and one the page empties is put back without taking the keys being typed elsewhere',
+      r29jetRefill.notes === 'Hello there' && r29jetRefill.active === 'notes' && r29jetRefill.scrollY === 0 && r29jetRefill.fn === 'Morgan',
+      JSON.stringify(r29jetRefill),
+    );
+
+    group('A last name with a suffix allowed, after a dash');
+    const r29byHash = async (labels) => {
+      await page.goto(`${base}/names-by-hash#${encodeURIComponent(JSON.stringify(labels))}`, { waitUntil: 'domcontentloaded' });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm({ first_name: 'Morgan', last_name: 'Lee', middle_name: 'Ann', name_suffix: '', preferred_name: 'Mo' });
+        return Object.fromEntries(window.__readback());
+      }, { b: base });
+    };
+    const r29dashed = await r29byHash(['First Name', 'Legal Name - Last Name, including suffix (Jr., III)', 'Legal Name – Last Name Suffix']);
+    check(
+      '"Legal Name - Last Name, including suffix (Jr., III)" and "Legal Name – Last Name Suffix" are given the last name',
+      r29dashed['Legal Name - Last Name, including suffix (Jr., III)'] === 'Lee' && r29dashed['Legal Name – Last Name Suffix'] === 'Lee',
+      JSON.stringify(r29dashed),
+    );
+    const r29hinted = await r29byHash(['First Name', 'Middle Name (do not repeat your last name)', 'Last Name', 'Suffix (Jr., Sr.) - not part of your last name', 'Name suffix (do not include in Last Name field)']);
+    check(
+      'but a middle name or a suffix that only mentions the last name in a hint is still a middle name or a suffix',
+      r29hinted['Middle Name (do not repeat your last name)'] === 'Ann' && r29hinted['Last Name'] === 'Lee' &&
+        r29hinted['Suffix (Jr., Sr.) - not part of your last name'] === '' && r29hinted['Name suffix (do not include in Last Name field)'] === '',
+      JSON.stringify(r29hinted),
+    );
+    const r29alongside = await r29byHash(['First name and middle initial', 'First Name (include middle name)', 'Last name / Suffix', 'Legal last name, including suffix (Jr., III)']);
+    check(
+      'and "First name and middle initial", "First Name (include middle name)", "Last name / Suffix" are still the first or the last name',
+      r29alongside['First name and middle initial'] === 'Morgan' && r29alongside['First Name (include middle name)'] === 'Morgan' &&
+        r29alongside['Last name / Suffix'] === 'Lee' && r29alongside['Legal last name, including suffix (Jr., III)'] === 'Lee',
+      JSON.stringify(r29alongside),
+    );
+
+    group('A number behind an intl-tel-input preset to another country gets its own code once');
+    const r29itiWith = async (fields) => {
+      await page.goto(`${base}/iti-follows-codes`, { waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b, fields }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm(fields);
+        return document.getElementById('ph').value;
+      }, { b: base, fields });
+    };
+    const r29withOne = await r29itiWith({ phone: '1-617-555-0134', address_country: 'United States' });
+    check('"1-617-555-0134" goes in as "+1 617-555-0134", not "+1 1-617-555-0134"', r29withOne === '+1 617-555-0134', r29withOne);
+    const r29ukTrunk = await r29itiWith({ phone: '07700 900123', address_country: 'United Kingdom' });
+    check('and a UK "07700 900123" as "+44 7700 900123", without its trunk 0', r29ukTrunk === '+44 7700 900123', r29ukTrunk);
+    const r29usPlain = await r29itiWith({ phone: '(617) 555-0134', address_country: 'United States' });
+    check('and "(617) 555-0134" still as "+1 (617) 555-0134"', r29usPlain === '+1 (617) 555-0134', r29usPlain);
+
+    group('A school is another by its bracket only when the bracket is its short name');
+    for (const [profileSchool, typed] of [
+      ['Boston University (MS)', 'Stanford University (MS)'],
+      ['University of California (Los Angeles)', 'University of California (Berkeley)'],
+      ['Purdue University (Fort Wayne)', 'Purdue University (West Lafayette)'],
+      ['Harvard University', 'Harvard University (Extension School)'],
+    ]) {
+      const got = await shownAs(profileSchool, typed);
+      check(`"${profileSchool}" is not "${typed}"`, got.major === '' && got.gpa === '', JSON.stringify(got));
+    }
+
+    group('A typed employer is the job sharing the most of its first words');
+    const r29leading = async (shown, history) => {
+      await page.goto(`${base}/workday-experience-begun`, { waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b, shown, history }) => {
+        const m = await import(`${b}/autofill.js`);
+        const blocks = [...document.querySelectorAll('[id$="--companyName"]')];
+        for (const box of blocks) box.value = '';
+        blocks[0].value = shown;
+        m.fillForm({}, { history });
+        return [...document.querySelectorAll('[id$="--jobTitle"]')].map((t) => t.value);
+      }, { b: base, shown, history });
+    };
+    const r29job = (company, title) => ({ company, title, description: `Work at ${company}.`, start: { year: 2021, month: 6 }, end: { year: 2022, month: 5 } });
+    const r29aws = await r29leading('Amazon Web Services Inc', [r29job('Amazon', 'Retail Engineer'), r29job('Amazon Web Services', 'Cloud Engineer')]);
+    check('a block showing "Amazon Web Services Inc" gets Amazon Web Services’ title, not Amazon’s', r29aws[0] === 'Cloud Engineer', JSON.stringify(r29aws));
+    const r29deepmind = await r29leading('Google DeepMind Ltd', [r29job('Google', 'Search Engineer'), r29job('Google DeepMind', 'Research Engineer')]);
+    check('and "Google DeepMind Ltd" Google DeepMind’s, not Google’s', r29deepmind[0] === 'Research Engineer', JSON.stringify(r29deepmind));
+
+    group('A combobox whose popup is a dialog is a date only when it is called one');
+    await page.goto(`${base}/popup-a-dialog`, { waitUntil: 'domcontentloaded' });
+    const r29dialogSchool = await page.evaluate(async ({ b }) => {
+      const m = await import(`${b}/autofill.js`);
+      const fields = { address_zip: '02115', postal_code: '02115', zip: '02115', school: 'Northeastern University' };
+      const rep = await m.fillComboboxes(fields, m.fillForm(fields), { patience: 1500 });
+      await m.fillEducation([{ school: 'Northeastern University', degree: 'BS' }], fields, rep, { patience: 1500 });
+      return window.__readback();
+    }, { b: base });
+    check(
+      'a School combobox with aria-haspopup="dialog" is chosen in, not typed into as a date',
+      r29dialogSchool.school === 'Northeastern University' && r29dialogSchool.log.includes('b chose Northeastern University'),
+      JSON.stringify(r29dialogSchool),
+    );
+
+    /*
+     * Round 30: every case the reviews of rounds 28, 29 and 30 raised about
+     * saved entries, typed comboboxes, middle names and suffixes, and school
+     * short names, in one table each, so that a change to one heuristic is
+     * checked against all of them.
+     */
+    group('A saved entry is the job however its title and employer are drawn (r30)');
+    const r30tile = (inner) => `<div class="tile">${inner}</div>`;
+    const r30job = (company, title, start = { year: 2020, month: 6 }) => ({ company, title, start, end: { year: 2022, month: 12 }, current: false, description: 'Built.' });
+    const r30jobs = async (history, tiles, help = '') => {
+      await page.goto(`${base}/saved-jobs?tiles=${encodeURIComponent(JSON.stringify(tiles))}&help=${encodeURIComponent(help)}`, { waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b, history }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { first_name: 'Morgan' };
+        const report = await m.fillComboboxes(fields, m.fillForm(fields, { history }), { history, patience: 1200 });
+        await new Promise((r) => setTimeout(r, 100));
+        return { ...window.__readback(), skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`) };
+      }, { b: base, history });
+    };
+    const ACME_SWE = r30job('Acme Corp', 'Software Engineer');
+    // [case, history, tiles, help, what must be saved (in order), the jobs said to be there already]
+    const R30_JOBS = [
+      ['no saved entry', [ACME_SWE], [], '', ['Acme Corp/Software Engineer'], []],
+      ['another job saved, in bold', [ACME_SWE], [r30tile('<b>Beta Labs</b> — <span>Data Analyst</span>')], '', ['Acme Corp/Software Engineer'], []],
+      ['another job saved, its title a heading', [ACME_SWE], [r30tile('<h3>Data Analyst</h3><p>Beta Labs</p>')], '', ['Acme Corp/Software Engineer'], []],
+      ['plain', [ACME_SWE], [r30tile('<b>Acme Corp</b> — <span>Software Engineer</span>')], '', [], ['Software Engineer at Acme Corp']],
+      ['title in an h3, with an Edit button', [ACME_SWE], [r30tile('<h3>Software Engineer</h3><p>Acme Corp</p><button type="button">Edit</button>')], '', [], ['Software Engineer at Acme Corp']],
+      ['title in a role=heading', [ACME_SWE], [r30tile('<div role="heading" aria-level="3">Software Engineer</div><div>Acme Corp</div>')], '', [], ['Software Engineer at Acme Corp']],
+      ['title as a button', [ACME_SWE], [r30tile('<button type="button" class="link">Software Engineer</button><div>Acme Corp</div>')], '', [], ['Software Engineer at Acme Corp']],
+      ['"Acme" saved as "Acme Inc."', [r30job('Acme', 'Software Engineer')], [r30tile('<b>Acme Inc.</b> — <span>Software Engineer</span>')], '', [], ['Software Engineer at Acme']],
+      ['"Acme, Inc." saved as "Acme Inc"', [r30job('Acme, Inc.', 'Software Engineer')], [r30tile('<b>Acme Inc</b> — <span>Software Engineer</span>')], '', [], ['Software Engineer at Acme, Inc.']],
+      ['"Software Engineer (Backend)"', [r30job('Acme Corp', 'Software Engineer (Backend)')], [r30tile('<b>Acme Corp</b> — <span>Software Engineer (Backend)</span>')], '', [], ['Software Engineer (Backend) at Acme Corp']],
+      ['"Software Engineer – Backend"', [r30job('Acme Corp', 'Software Engineer – Backend')], [r30tile('<b>Acme Corp</b> <span>Software Engineer – Backend</span>')], '', [], ['Software Engineer – Backend at Acme Corp']],
+      ['"Engineer - Platform"', [r30job('Acme Corp', 'Engineer - Platform')], [r30tile('<b>Acme Corp</b> <span>Engineer - Platform</span>')], '', [], ['Engineer - Platform at Acme Corp']],
+      ['an employer with " at " in it', [r30job('Made at Home', 'Engineer')], [r30tile('<b>Made at Home</b> <span>Engineer</span>')], '', [], ['Engineer at Made at Home']],
+      ['"Amazon Web Services (AWS)"', [r30job('Amazon Web Services (AWS)', 'SDE Intern')], [r30tile('<b>Amazon Web Services (AWS)</b> — <span>SDE Intern</span>')], '', [], ['SDE Intern at Amazon Web Services (AWS)']],
+      ['in capitals', [ACME_SWE], [r30tile('<b>ACME CORP</b> — <span>SOFTWARE ENGINEER</span>')], '', [], ['Software Engineer at Acme Corp']],
+      ['"Software Engineer, Acme Corp" in one line', [ACME_SWE], [r30tile('Software Engineer, Acme Corp')], '', [], ['Software Engineer at Acme Corp']],
+      ['beside a tick box', [ACME_SWE], [r30tile('<input type="checkbox" aria-label="select"> <b>Acme Corp</b> — <span>Software Engineer</span>')], '', [], ['Software Engineer at Acme Corp']],
+      ['a table row', [ACME_SWE], ['<table><tr><td>Acme Corp</td><td>Software Engineer</td><td>01/2020</td></tr></table>'], '', [], ['Software Engineer at Acme Corp']],
+      ['the typeahead\'s longer name, "Amazon Web Services" for "Amazon"', [r30job('Amazon', 'SDE Intern')], [r30tile('<b>Amazon Web Services</b> — <span>SDE Intern</span>')], '', [], ['SDE Intern at Amazon']],
+      ['a saved "Senior Software Engineer" is not "Software Engineer"', [ACME_SWE], [r30tile('<b>Acme Corp</b> — <span>Senior Software Engineer</span>')], '', ['Acme Corp/Software Engineer'], []],
+      ['nor in a heading', [ACME_SWE], [r30tile('<h3>Senior Software Engineer</h3><p>Acme Corp</p>')], '', ['Acme Corp/Software Engineer'], []],
+      ['nor is "Software Engineer II"', [ACME_SWE], [r30tile('<b>Acme Corp</b> — <span>Software Engineer II</span>')], '', ['Acme Corp/Software Engineer'], []],
+      ['nor another employer', [ACME_SWE], [r30tile('<b>Globex</b> — <span>Software Engineer</span>')], '', ['Acme Corp/Software Engineer'], []],
+      ['help text giving the job as an example', [ACME_SWE], [], 'For example: Software Engineer, Acme Corp', ['Acme Corp/Software Engineer'], []],
+      ['two stints, one saved: the other added', [ACME_SWE, r30job('Acme Corp', 'Software Engineer', { year: 2016, month: 1 })], [r30tile('<b>Acme Corp</b> — <span>Software Engineer</span>')], '', ['Acme Corp/Software Engineer'], ['Software Engineer at Acme Corp']],
+      ['Senior and plain both saved', [r30job('Acme Corp', 'Senior Software Engineer'), ACME_SWE], [r30tile('<b>Acme Corp</b> — <span>Senior Software Engineer</span>'), r30tile('<b>Acme Corp</b> — <span>Software Engineer</span>')], '', [], ['Senior Software Engineer at Acme Corp, Software Engineer at Acme Corp']],
+      ['"Software Engineer (Backend)" saved keeps its own entry from a plain "Software Engineer"', [ACME_SWE, r30job('Acme Corp', 'Software Engineer (Backend)')], [r30tile('<b>Acme Corp</b> — <span>Software Engineer (Backend)</span>')], '', ['Acme Corp/Software Engineer'], ['Software Engineer (Backend) at Acme Corp']],
+    ];
+    for (const [name, history, tiles, help, saves, there] of R30_JOBS) {
+      const got = await r30jobs(history, tiles, help);
+      const saved = got.pressed.filter((p) => p.startsWith('save:')).map((p) => p.slice(5));
+      const said = got.skipped.filter((x) => x.endsWith('already in Work Experience')).map((x) => x.replace(/^work_history: /, '').replace(/ already in Work Experience$/, ''));
+      check(
+        `${name}: ${saves.length ? `${saves.join(', ')} added` : 'nothing added'}${there.length ? `, ${there.join('; ')} said already there` : ''}, no editor left open`,
+        JSON.stringify(saved) === JSON.stringify(saves) && JSON.stringify(said) === JSON.stringify(there) && got.open === 0 &&
+          !got.skipped.some((x) => /not entered|not saved/.test(x)) && got.pressed.filter((p) => p === 'add').length === saves.length,
+        JSON.stringify(got),
+      );
+    }
+
+    group('A saved entry is the school however it is drawn (r30)');
+    const NEU = { school: 'Northeastern University', degree: 'Bachelor of Science', major: 'CS', start: { year: 2018, month: 9 }, end: { year: 2022, month: 5 } };
+    const r30schools = async (education, tiles, help = '') => {
+      await page.goto(`${base}/saved-schools?tiles=${encodeURIComponent(JSON.stringify(tiles))}&help=${encodeURIComponent(help)}`, { waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b, education }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { first_name: 'Morgan' };
+        const report = await m.fillEducation(education, fields, m.fillForm(fields, { history: [] }), { patience: 1200 });
+        await new Promise((r) => setTimeout(r, 100));
+        return { ...window.__readback(), skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`) };
+      }, { b: base, education });
+    };
+    const R30_SCHOOLS = [
+      ['no saved entry', [NEU], [], '', true],
+      ['plain', [NEU], [r30tile('<b>Northeastern University</b> — <span>Bachelor of Science</span>')], '', false],
+      ['in an h3', [NEU], [r30tile('<h3>Northeastern University</h3><p>Bachelor of Science</p>')], '', false],
+      ['with its city after a comma', [NEU], [r30tile('Northeastern University, Boston, MA')], '', false],
+      ['in a button', [NEU], [r30tile('<button type="button">Northeastern University</button><span>Bachelor of Science</span>')], '', false],
+      ['after its degree and a comma', [NEU], [r30tile('<span>Bachelor of Science, Northeastern University</span>')], '', false],
+      ['by its short name in brackets', [NEU], [r30tile('<b>Northeastern University (NEU)</b>')], '', false],
+      ['another school whose name starts the same', [NEU], [r30tile('<b>Northeastern Illinois University</b>')], '', true],
+      ['help text giving it as an example', [NEU], [], 'Your most recent school, e.g. Northeastern University', true],
+      ['help text spelling "MIT" inside a word', [{ ...NEU, school: 'MIT' }], [], 'Transcripts can be submitted later.', true],
+    ];
+    for (const [name, education, tiles, help, adds] of R30_SCHOOLS) {
+      const got = await r30schools(education, tiles, help);
+      const saved = got.pressed.filter((p) => p.startsWith('save:'));
+      const said = got.skipped.some((x) => / already in Education$/.test(x));
+      check(
+        `${name}: ${adds ? 'added' : 'not added again, and said already there'}`,
+        (adds ? saved.length === 1 && !said : got.pressed.length === 0 && said) && got.open === 0,
+        JSON.stringify(got),
+      );
+    }
+
+    group('A typeahead holding what the person typed is theirs; a hint or the start of the answer is not (r30)');
+    const r30typed = async (q) => {
+      await page.goto(`${base}/typed-by-the-person${q}`, { waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { first_name: 'Jianwen', school: 'Northeastern University', address_city: 'Boston', city: 'Boston', current_company: 'Acme Corp', current_employer: 'Acme Corp' };
+        const history = [{ company: 'Acme Corp', title: 'Software Engineer', start: { year: 2020, month: 6 }, current: true }];
+        const rep = await m.fillComboboxes(fields, m.fillForm(fields, { history }), { history, patience: 1500 });
+        await new Promise((r) => setTimeout(r, 200));
+        return { ...window.__readback(), skipped: rep.skipped.map((x) => `${x.key}: ${x.reason}`) };
+      }, { b: base });
+    };
+    // [case, query, school, city, employer, the keys said already filled]
+    const R30_TYPED = [
+      ['nothing typed', '', 'Northeastern University', 'Boston', 'Acme Corp', []],
+      ['"Harvard University" typed', '?school=Harvard%20University', 'Harvard University', 'Boston', 'Acme Corp', ['school']],
+      ['"Cambridge" typed', '?city=Cambridge', 'Northeastern University', 'Cambridge', 'Acme Corp', ['address_city']],
+      ['"Globex" typed', '?emp=Globex', 'Northeastern University', 'Boston', 'Globex', ['current_company']],
+      ['half of the answer, "Northea", typed', '?school=Northea', 'Northeastern University', 'Boston', 'Acme Corp', []],
+      ['"Bost" typed', '?city=Bost', 'Northeastern University', 'Boston', 'Acme Corp', []],
+      ['"Type to search" in the box', '?school=Type%20to%20search', 'Northeastern University', 'Boston', 'Acme Corp', []],
+      ['"e.g. MIT" in the box', '?school=e.g.%20MIT', 'Northeastern University', 'Boston', 'Acme Corp', []],
+      ['the label written in the box', '?school=School', 'Northeastern University', 'Boston', 'Acme Corp', []],
+    ];
+    for (const [name, q, school, city, emp, kept] of R30_TYPED) {
+      const got = await r30typed(q);
+      const already = got.skipped.filter((x) => x.endsWith(': already filled')).map((x) => x.split(':')[0]).filter((k) => k !== 'first_name');
+      check(
+        `${name}: School "${school}", City "${city}", Employer "${emp}"${kept.length ? `, ${kept.join(', ')} said already filled` : ''}`,
+        got.school === school && got.city === city && got.emp === emp && JSON.stringify(already) === JSON.stringify(kept),
+        JSON.stringify(got),
+      );
+    }
+
+    group('A middle name or a suffix is the box when it is named first (r30)');
+    // [label, what it is given] from Morgan Ann Lee, no suffix.
+    const R30_NAMES = [
+      ['Legal Name - Last Name, including suffix (Jr., III)', 'Lee'],
+      ['Legal Name – Last Name Suffix', 'Lee'],
+      ['Suffix - last name suffix such as Jr. or III', ''],
+      ['Name Suffix — suffix to your last name (Jr., Sr.)', ''],
+      ['Suffix (do not include in Last Name)', ''],
+      ['Suffix (Jr., Sr.) - not part of your last name', ''],
+      ['Name suffix (do not include in Last Name field)', ''],
+      ['Middle Initial — the initial between your first name and last name', 'Ann'],
+      // Left as before: an "if different" box is not written into.
+      ['Middle Name (if different from first name)', ''],
+      ['Middle Name (do not repeat your last name)', 'Ann'],
+      ['Middle Name or Initial (no last name)', 'Ann'],
+      ['Last Name / Suffix', 'Lee'],
+      ['Last name and suffix', 'Lee'],
+      ['Last Name (and suffix, if any)', 'Lee'],
+      ['Legal last name, including suffix (Jr., III)', 'Lee'],
+      ['Family name; include suffix', 'Lee'],
+      ['First name and middle initial', 'Morgan'],
+      ['First Name (include middle name)', 'Morgan'],
+      ['First Name', 'Morgan'],
+      ['Last Name', 'Lee'],
+    ];
+    const r30named = await (async () => {
+      await page.goto(`${base}/names-by-hash#${encodeURIComponent(JSON.stringify(R30_NAMES.map(([l]) => l)))}`, { waitUntil: 'domcontentloaded' });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        m.fillForm({ first_name: 'Morgan', last_name: 'Lee', full_name: 'Morgan Lee', middle_name: 'Ann', name_suffix: '', preferred_name: 'Mo' });
+        return Object.fromEntries(window.__readback());
+      }, { b: base });
+    })();
+    for (const [label, want] of R30_NAMES) check(`"${label}" is given ${want ? `"${want}"` : 'nothing'}`, r30named[label] === want, JSON.stringify(r30named[label]));
+
+    group('A school is its short name in brackets, either way round, and never its degree, campus or school within (r30)');
+    // [the profile's school, the block's, the same school?]
+    const R30_SAME = [
+      ['Massachusetts Institute of Technology (MIT)', 'MIT', true],
+      ['Massachusetts Institute of Technology (MIT)', 'Massachusetts Institute of Technology', true],
+      ['Georgia Institute of Technology (Georgia Tech)', 'Georgia Tech', true],
+      ['Georgia Institute of Technology (Georgia Tech)', 'Georgia Institute of Technology', true],
+      ['Virginia Polytechnic Institute and State University (Virginia Tech)', 'Virginia Tech', true],
+      ['University of California, Los Angeles (UCLA)', 'UCLA', true],
+      ['University of California, Berkeley (UC Berkeley)', 'UC Berkeley', true],
+      ['University of California, Berkeley (UC Berkeley)', 'University of California, Berkeley', true],
+      ['Rensselaer Polytechnic Institute (RPI)', 'RPI', true],
+      ['New York University (NYU)', 'NYU', true],
+      ['Northeastern University (NEU)', 'Northeastern University', true],
+      ['Northeastern University (NU)', 'Northeastern University', true],
+      ['The Ohio State University (OSU)', 'Ohio State University', true],
+      ['Carnegie Mellon University (CMU)', 'CMU', true],
+      ['University of Illinois at Urbana-Champaign (UIUC)', 'University of Illinois Urbana-Champaign', true],
+      ['Pennsylvania State University (Penn State)', 'Penn State', true],
+      ['Penn State (Pennsylvania State University)', 'Pennsylvania State University', true],
+      ['École Polytechnique Fédérale de Lausanne (EPFL)', 'EPFL', true],
+      ['Indian Institute of Technology Bombay (IIT Bombay)', 'IIT Bombay', true],
+      ['Texas A&M University (TAMU)', 'Texas A&M University', true],
+      ['University of Texas at Austin (UT Austin)', 'UT Austin', true],
+      ['Stanford University (MS)', 'Stanford University', true],
+      ['Stanford University (MS)', 'Boston University', false],
+      ['Boston University (MS)', 'Stanford University (MS)', false],
+      ['University of California (Los Angeles)', 'University of California (Berkeley)', false],
+      ['University of California, Los Angeles', 'University of California (Berkeley)', false],
+      ['Purdue University (Fort Wayne)', 'Purdue University (West Lafayette)', false],
+      ['Harvard University', 'Harvard University (Extension School)', false],
+      ['Columbia University', 'Columbia University (Teachers College)', false],
+      ['Northeastern University', 'Northeastern University (Online)', false],
+      ['University of Miami', 'Miami University (Ohio)', false],
+    ];
+    for (const [profileSchool, typed, same] of R30_SAME) {
+      const got = await shownAs(profileSchool, typed);
+      check(
+        `"${profileSchool}" ${same ? 'is' : 'is not'} "${typed}"`,
+        same ? got.major === 'Computer Science' && got.gpa === '3.9' : got.major === '' && got.gpa === '',
+        JSON.stringify(got),
+      );
+    }
+
+    group('A date picker called "Expected Completion", "Expiration" or "Valid through" is typed into (r30)');
+    await page.goto(`${base}/dialog-dates`, { waitUntil: 'domcontentloaded' });
+    const r30dates = await page.evaluate(async ({ b }) => {
+      const m = await import(`${b}/autofill.js`);
+      const remembered = ['Expected Completion', 'Expiration', 'Valid through', 'School'].map((question) => ({ question, answer: '05/2027' }));
+      await m.answerWidgetsFromMemory(remembered, m.fillForm({}, { remembered }), { patience: 600 });
+      return [0, 1, 2, 3].map((i) => document.getElementById(`dd-${i}`).value);
+    }, { b: base });
+    check('each is given the date remembered for it, as a box, not a list', JSON.stringify(r30dates.slice(0, 3)) === '["05/2027","05/2027","05/2027"]', JSON.stringify(r30dates));
+    check('while a School combobox whose popup is a dialog is still not a date', r30dates[3] === '', JSON.stringify(r30dates));
   } finally {
     await browser.close();
     server.close();

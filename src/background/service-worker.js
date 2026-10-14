@@ -6,7 +6,17 @@
  */
 
 import { getSettings, NOT_PAIRED_MESSAGE, pairingHeaders, rememberPairing } from '../shared/config.js';
-import { saveBugReport, listBugReports, syncBugReport, clearBugReport } from '../shared/bug-reports.js';
+import { saveBugReport, listBugReports, syncBugReport, clearBugReport, extensionBuild } from '../shared/bug-reports.js';
+import {
+  OPEN_FORM_KEY,
+  createLogBuffer,
+  dismissRefusedErrorLogs,
+  queuedErrorLogs,
+  refusedErrorLogs,
+  routeOf,
+  saveErrorLog,
+  sendQueuedErrorLogs,
+} from '../shared/error-log.js';
 import {
   EXPECTATION_MS,
   employerKey,
@@ -21,6 +31,7 @@ import {
   sameApplication,
   carriesOn,
   titleKey,
+  withoutGenderTag,
   summarise,
   trimForStorage,
   wasExpected,
@@ -41,6 +52,41 @@ import {
  */
 const REQUEST_TIMEOUT_MS = 20_000;
 const SLOW_TIMEOUT_MS = 10 * 60_000;
+
+/*
+ * What went wrong lately, for ResumeM-M's error log (see shared/error-log.js):
+ * this worker's own errors, every call to ResumeM-M that failed, errors the
+ * content scripts and the card forward, and which actions ran and how they
+ * ended. Never a field's value or anything written. In session storage as
+ * well as memory, because this worker is stopped after half a minute idle
+ * and the error is usually noticed a minute after it happened.
+ */
+const workerLog = createLogBuffer({ storage: chrome.storage?.session ?? null });
+const noteEvent = (kind, level, message, detail) => workerLog.push({ kind, level, message, detail });
+globalThis.addEventListener?.('error', (event) => {
+  noteEvent('worker-error', 'error', `${event.message || 'An error with no message'}${event.filename ? ` (${String(event.filename).split('/').pop()}:${event.lineno ?? 0})` : ''}`);
+});
+globalThis.addEventListener?.('unhandledrejection', (event) => {
+  noteEvent('worker-error', 'error', `Nobody caught: ${event.reason?.message ?? String(event.reason)}`);
+});
+
+/*
+ * Entries logged while ResumeM-M could not be reached go the next time it
+ * answers anything. Assumed waiting when the worker starts, since this copy
+ * does not know what the last one queued; looked at once, it knows.
+ */
+let errorLogsMaybeQueued = true;
+function sendQueuedSoon(path) {
+  if (!errorLogsMaybeQueued || path === '/api/error-log') return;
+  errorLogsMaybeQueued = false;
+  sendQueuedErrorLogs(serverFetch, chrome.storage.local)
+    .then((r) => {
+      if (r.queued > 0) errorLogsMaybeQueued = true;
+    })
+    .catch(() => {
+      errorLogsMaybeQueued = true;
+    });
+}
 
 /**
  * Which save the application in hand was built from.
@@ -271,8 +317,78 @@ function notPaired(serverUrl, cause) {
   const err = new Error(NOT_PAIRED_MESSAGE, cause ? { cause } : undefined);
   err.kind = 'not-paired';
   err.status = 403;
-  err.jobhelper = { fix: 'pair', serverUrl: `${serverUrl.replace(/\/$/, '')}/#pair` };
+  err.jobhelper = { fix: 'pair', serverUrl: `${serverUrl.replace(/\/$/, '')}/#pair`, codeUrl: pairCodeUrl(serverUrl) };
   return err;
+}
+
+/**
+ * The editor's pairing section, with a fresh code already made.
+ *
+ * What "Get a code" opens, beside the code box on the card, the popup and
+ * the side panel. The editor reads `make=1` and presses its own "Make a
+ * code" (see `arriveToPair` in ResumeM-M's web/app.js), so the person only
+ * reads the code off it. The code is still made by the editor's request,
+ * not by this link: ResumeM-M answers that route for its own page alone.
+ */
+function pairCodeUrl(serverUrl) {
+  return `${serverUrl.replace(/\/$/, '')}/#save/pair?make=1`;
+}
+
+/*
+ * One pairing exchange at a time, for every tab.
+ *
+ * The code box is wherever the request failed — a card on each job page
+ * that was open, the popup, the side panel — so the same code can be
+ * pressed in two of them at once, or pasted into one while another is
+ * still waiting. Each exchange the store sees is a try: two of the same
+ * right code would spend it on the first and call the second wrong, and two
+ * of the same wrong code would cost two of the extension's five tries. So
+ * the exchange is held here: the same code again joins the one in the air,
+ * and a different code waits for it — and is not sent at all if that one
+ * paired.
+ *
+ * When one pairs, every tab hears it (`jh-paired`), so a card waiting for a
+ * code on another job page carries on without being asked again.
+ */
+let pairingNow = null;
+const PAIR_LATER_PREFIX = 'jh-pair-later:';
+
+async function pairOnce(code) {
+  const said = String(code ?? '').trim();
+  if (!said) throw new Error('Enter the code ResumeM-M is showing under Save & Files → Pair JobHelper.');
+  const key = said.toUpperCase().replace(/[\s-]/g, '');
+  for (let now = pairingNow; now; now = pairingNow) {
+    if (now.key === key) return now.run;
+    if (await now.run.then(() => true, () => false)) return { paired: true, already: true };
+    // Its own `finally` may not have run yet; it is over either way.
+    if (pairingNow === now) pairingNow = null;
+  }
+  const run = (async () => {
+    const { serverUrl } = await getSettings();
+    const reply = await serverFetch('/api/extension/pair', { method: 'POST', body: JSON.stringify({ code: said }) });
+    if (typeof reply?.token !== 'string' || !reply.token) throw new Error('ResumeM-M did not hand back a pairing.');
+    await rememberPairing(serverUrl, reply.token);
+    await pairedEverywhere();
+    return { paired: true };
+  })();
+  const mine = { key, run };
+  pairingNow = mine;
+  try {
+    return await run;
+  } finally {
+    if (pairingNow === mine) pairingNow = null;
+  }
+}
+
+/** Every tab's card told it is paired now, and every "Not now" let go of. */
+async function pairedEverywhere() {
+  const all = await session().get(null).catch(() => ({}));
+  const later = Object.keys(all ?? {}).filter((k) => k.startsWith(PAIR_LATER_PREFIX));
+  if (later.length) await session().remove(later).catch(() => undefined);
+  const tabs = await chrome.tabs.query({}).catch(() => []);
+  await Promise.all(
+    tabs.map((t) => chrome.tabs.sendMessage(t.id, { type: 'jh-paired' }, { frameId: 0 }).catch(() => undefined)),
+  );
 }
 
 async function serverFetch(path, options = {}) {
@@ -327,6 +443,11 @@ async function serverFetch(path, options = {}) {
       { cause },
     );
     offline.jobhelper = { fix: 'start-server', serverUrl };
+    noteEvent('server', 'error', `${init.method ?? 'GET'} ${routeOf(path)} ${wedged ? 'got no answer' : 'did not reach ResumeM-M'}`, {
+      method: init.method ?? 'GET',
+      route: routeOf(path),
+      status: null,
+    });
     throw offline;
   }
 
@@ -370,6 +491,11 @@ async function serverFetch(path, options = {}) {
   }
 
   if (!res.ok) {
+    noteEvent('server', res.status >= 500 ? 'error' : 'warn', `${init.method ?? 'GET'} ${routeOf(path)} → ${res.status}: ${body.error ?? res.statusText}`, {
+      method: init.method ?? 'GET',
+      route: routeOf(path),
+      status: res.status,
+    });
     // Not paired, or no longer: said as what to do, with the way to do it.
     if (body.kind === 'not-paired') throw notPaired(serverUrl);
     const failed = new Error(body.error ?? `${res.status} ${res.statusText}`);
@@ -397,6 +523,7 @@ async function serverFetch(path, options = {}) {
     if (body.kind === 'other-save') failed.jobhelper = { fix: 'open-save', serverUrl };
     throw failed;
   }
+  sendQueuedSoon(routeOf(path));
   return body;
 }
 
@@ -529,27 +656,74 @@ function plainlyOtherJob(job, other) {
  * titles that each name a season and not the same one are still two jobs:
  * the Summer 2026 letter is not the Summer 2027 posting's.
  */
-const WORK_MODE_SUFFIX = /(?:\s*\(\s*(?:remote|hybrid|on-?site|in[- ]office)\s*\)|\s+[-–—|]\s+(?:remote|hybrid|on-?site|in[- ]office))\s*$/i;
+/*
+ * But not two live postings that differ in how the job is worked. The work
+ * mode came off both sides before they were compared, so "Software Engineer
+ * - Remote" and "Software Engineer - Hybrid" — two postings an employer runs
+ * side by side — were one job, and the remote one's letter was handed to the
+ * hybrid one's card. The suffix comes off when one side has it and the other
+ * does not, which is the one page writing it and the other not; when both
+ * name a mode and the modes differ, they are two jobs.
+ *
+ * And a season on one side only — "Software Engineer Intern" against
+ * "Software Engineer Intern (Summer 2027)" — is the same job only for this
+ * tab's own park, where the same tab went from the board to the form and
+ * back and the two pages wrote the title differently (`ownPark`). For
+ * another tab's park it is as likely the next intake's posting, and that
+ * letter is not this one's.
+ *
+ * The suffixes come off as often as they are there, in whatever order the
+ * title carries them, so "(Remote) (Summer 2027)" and "(Summer 2027)
+ * (Remote)" read alike — and a gender tag ("(m/w/d)", "(H/F)"), which says
+ * who may apply and nothing about the job, comes off wherever it is
+ * (`withoutGenderTag`).
+ */
+const WORK_MODE_SUFFIX = /(?:\s*\(\s*(remote|hybrid|on-?site|in[- ]office)\s*\)|\s+[-–—|]\s+(remote|hybrid|on-?site|in[- ]office))\s*$/i;
 const YEAR_THEN_SEASON = /\b((?:19|20)\d\d)\s+(summer|fall|autumn|winter|spring)\b/gi;
 const SEASON_SUFFIX =
-  /\s*\(\s*(?:(?:summer|fall|autumn|winter|spring)\s+(?:19|20)\d\d|(?:19|20)\d\d(?:\s+(?:summer|fall|autumn|winter|spring))?)\s*\)\s*$/i;
+  /\s*\(\s*((?:summer|fall|autumn|winter|spring)\s+(?:19|20)\d\d|(?:19|20)\d\d(?:\s+(?:summer|fall|autumn|winter|spring))?)\s*\)\s*$/i;
 
-function sameTitle(title, other) {
-  const plain = (t) => String(t ?? '').replace(WORK_MODE_SUFFIX, '').trim();
-  const key = (t) => titleKey(t.replace(YEAR_THEN_SEASON, '$2 $1'));
-  const one = plain(title);
-  const two = plain(other);
-  if (key(one) === key(two)) return true;
-  const withSeason = (longer, shorter) => SEASON_SUFFIX.test(longer) && key(longer.replace(SEASON_SUFFIX, '')) === key(shorter);
-  return withSeason(one, two) || withSeason(two, one);
+/** The title with every trailing suffix off, and which work mode and bracketed season it carried. */
+function peelTitle(title) {
+  let rest = withoutGenderTag(title);
+  let mode;
+  let season;
+  for (;;) {
+    let m = WORK_MODE_SUFFIX.exec(rest);
+    if (m) {
+      // "On-site" and "in office" are one way of working, written two ways.
+      mode ??= (m[1] ?? m[2]).toLowerCase().replace(/[-\s]/g, '').replace(/^inoffice$/, 'onsite');
+      rest = rest.slice(0, m.index).trim();
+      continue;
+    }
+    m = SEASON_SUFFIX.exec(rest);
+    if (m) {
+      season ??= titleKey(m[1].replace(YEAR_THEN_SEASON, '$2 $1'));
+      rest = rest.slice(0, m.index).trim();
+      continue;
+    }
+    break;
+  }
+  return { rest, mode, season };
 }
 
-const sameJob = (job, other) => {
+function sameTitle(title, other, { ownPark = false } = {}) {
+  const one = peelTitle(title);
+  const two = peelTitle(other);
+  if (one.mode && two.mode && one.mode !== two.mode) return false;
+  const key = (t) => titleKey(t.replace(YEAR_THEN_SEASON, '$2 $1'));
+  if (key(one.rest) !== key(two.rest)) return false;
+  if (one.season && two.season) return one.season === two.season;
+  if (one.season || two.season) return ownPark;
+  return true;
+}
+
+const sameJob = (job, other, { ownPark = false } = {}) => {
   if (!job || !other || companyOf(job) !== companyOf(other)) return false;
   const role = String(job.role ?? '').trim();
   const otherRole = String(other.role ?? '').trim();
   if (!role || !otherRole) return !plainlyAnotherRole(job.role, other.role);
-  if (!sameTitle(role, otherRole)) return false;
+  if (!sameTitle(role, otherRole, { ownPark })) return false;
   const req = String(job.requisition ?? '').trim().toLowerCase();
   const otherReq = String(other.requisition ?? '').trim().toLowerCase();
   return !(req && otherReq && req !== otherReq);
@@ -697,7 +871,7 @@ async function parkWork(url, entry) {
      * tab it is another application — two tabs open on one posting, both
      * writing — and replacing it handed the first tab the second one's letter.
      */
-    const kept = [...held.filter((p) => !(sameJob(p.job, entry.job) && p.tab === entry.tab)), entry].slice(-PARK_MAX);
+    const kept = [...held.filter((p) => !(p.tab === entry.tab && sameJob(p.job, entry.job, { ownPark: true }))), entry].slice(-PARK_MAX);
     return { parked: kept, at: Date.now() };
   });
 }
@@ -735,8 +909,9 @@ function pickParked(parked, job, tabId, openTabs = new Set()) {
    */
   const thisTabs = held.filter((p) => p.tab !== undefined && p.tab === tabId);
   if (!job) return thisTabs[thisTabs.length - 1] ?? held[held.length - 1];
-  const mine = held.filter((p) => sameJob(p.job, job));
-  const ownMine = mine.filter((p) => p.tab !== undefined && p.tab === tabId);
+  const own = (p) => p.tab !== undefined && p.tab === tabId;
+  const mine = held.filter((p) => sameJob(p.job, job, { ownPark: own(p) }));
+  const ownMine = mine.filter(own);
   if (mine.length > 0) return ownMine[ownMine.length - 1] ?? mine[mine.length - 1];
   /*
    * And this tab's own whatever its page is called, short of plainly another
@@ -2146,6 +2321,53 @@ async function keepWork({ work, page }, tab) {
 
 const handlers = {
   async saveBugReport(payload) { return saveBugReport(payload, serverFetch); },
+  /*
+   * The error log. `logEvents` is the content script and the card telling
+   * the buffer what went wrong on the page; the rest are the popup's form.
+   */
+  async logEvents({ events } = {}, tab) {
+    let kept = 0;
+    for (const e of (Array.isArray(events) ? events : []).slice(0, 20)) {
+      if (!e || typeof e.message !== 'string' || !e.message.trim()) continue;
+      const kind = ['content-error', 'card-error', 'card-status'].includes(e.kind) ? e.kind : 'content';
+      noteEvent(kind, ['error', 'warn', 'info'].includes(e.level) ? e.level : 'error', e.message.slice(0, 1000), {
+        host: (() => {
+          try {
+            return new URL(tab?.url ?? '').host || null;
+          } catch {
+            return null;
+          }
+        })(),
+      });
+      kept++;
+    }
+    return { kept };
+  },
+  async saveErrorLog(payload) {
+    const result = await saveErrorLog(payload ?? {}, {
+      serverFetch,
+      storage: chrome.storage.local,
+      events: (minutes) => workerLog.since(minutes),
+      versions: { extensionVersion: chrome.runtime.getManifest().version, extensionBuild: await extensionBuild() },
+    });
+    if (!result.sent) errorLogsMaybeQueued = true;
+    return result;
+  },
+  /** What is waiting to be sent, after trying to send it. */
+  async errorLogQueue() {
+    if ((await queuedErrorLogs(chrome.storage.local)) === 0) {
+      // Nothing to send; but one refused earlier — sent from the background — is still to be said.
+      return { queued: 0, sent: 0, refused: [], lastError: null, refusedEntries: await refusedErrorLogs(chrome.storage.local) };
+    }
+    return sendQueuedErrorLogs(serverFetch, chrome.storage.local);
+  },
+  /** The refused entries have been seen, or their text copied: let go of them. */
+  async dismissRefusedErrorLogs({ ids } = {}) {
+    return { left: await dismissRefusedErrorLogs(chrome.storage.local, Array.isArray(ids) ? ids.map(String) : null) };
+  },
+  async openErrorLog() {
+    return openErrorLogForm();
+  },
   async listBugReports() { return listBugReports(); },
   async syncBugReport({ id }) { return syncBugReport(id, serverFetch); },
   async clearBugReport({ id, discard }) { return clearBugReport(id, { discard: discard === true }); },
@@ -2464,7 +2686,7 @@ const handlers = {
          * Only a match on both roles, or this tab's own park with nothing to
          * check it against, goes unnamed.
          */
-        const sure = Boolean(looking?.role?.trim() && rescued.job?.role?.trim()) && sameJob(rescued.job, looking);
+        const sure = Boolean(looking?.role?.trim() && rescued.job?.role?.trim()) && sameJob(rescued.job, looking, { ownPark: mine });
         return {
           work: rescued.work,
           recovered: mine ? 'job' : true,
@@ -2744,7 +2966,7 @@ const handlers = {
      * the same address, are still somebody's only copy.
      */
     const leftJob = nameOfTrail(held.trail);
-    const ours = (p) => p.tab === id && (leftJob ? sameJob(p.job, leftJob) : !p.job);
+    const ours = (p) => p.tab === id && (leftJob ? sameJob(p.job, leftJob, { ownPark: true }) : !p.job);
     for (const url of new Set((held.trail.pages ?? []).map((p) => p?.url).filter(Boolean))) {
       await unpark(orphanKey(url), ours);
     }
@@ -2904,13 +3126,54 @@ const handlers = {
    * that has run out — are already sentences, and are passed on as they are.
    */
   async pair({ code } = {}) {
-    const said = String(code ?? '').trim();
-    if (!said) throw new Error('Enter the code ResumeM-M is showing under Save & Files → Pair JobHelper.');
+    return pairOnce(code);
+  },
+
+  /*
+   * The same, from the code box on a job page's card.
+   *
+   * `pair` is for the extension's own pages, and a card runs in whatever
+   * page it is on. What lets the card have this too is that the page cannot
+   * reach the box: the card's root is closed and refuses every event a
+   * person did not raise (see `refuseUntrusted` in card.js), so a page can
+   * neither read the code typed there nor press Pair to spend this
+   * extension's tries. A code is one use, made in the editor, and pairs
+   * this extension with the server it is already set to — there is nothing
+   * in it a page could point elsewhere. Only from a tab's top frame, which
+   * is where the card is.
+   */
+  async pairFromCard({ code } = {}, tab, sender) {
+    if (!tab || sender?.frameId !== 0) throw new Error('Pairing is done from the card on the page, or from the popup.');
+    return pairOnce(code);
+  },
+
+  /*
+   * "Not now" on the card's code box, for this tab: the box stays down on
+   * every page the tab goes to until it is asked for again, or something
+   * pairs. Read with no `later`, it only says which it is.
+   */
+  async pairLater({ later } = {}, tab) {
+    if (typeof tab?.id !== 'number') return { later: false };
+    const key = `${PAIR_LATER_PREFIX}${tab.id}`;
+    if (later === true) await session().set({ [key]: Date.now() }).catch(() => undefined);
+    else if (later === false) await session().remove(key).catch(() => undefined);
+    else return { later: Boolean((await session().get(key).catch(() => ({})))[key]) };
+    return { later: later === true };
+  },
+
+  /**
+   * "Get a code": the editor, in a new tab beside this one, at its pairing
+   * section with a code already made. The address is the worker's to build,
+   * from the server it is set to; the card names nothing.
+   */
+  async openPairCode(_payload, tab) {
     const { serverUrl } = await getSettings();
-    const reply = await serverFetch('/api/extension/pair', { method: 'POST', body: JSON.stringify({ code: said }) });
-    if (typeof reply?.token !== 'string' || !reply.token) throw new Error('ResumeM-M did not hand back a pairing.');
-    await rememberPairing(serverUrl, reply.token);
-    return { paired: true };
+    const opened = await chrome.tabs.create({
+      url: pairCodeUrl(serverUrl),
+      ...(typeof tab?.index === 'number' ? { index: tab.index + 1 } : {}),
+      ...(typeof tab?.id === 'number' ? { openerTabId: tab.id } : {}),
+    });
+    return { id: opened.id };
   },
 
   /**
@@ -4200,6 +4463,11 @@ const OWN_PAGES_ONLY = new Set([
   'pair',
   'saveBugReport',
   'clearBugReport',
+  // The error log's form: an entry may hold screenshots of whatever was on screen.
+  'saveErrorLog',
+  'errorLogQueue',
+  'dismissRefusedErrorLogs',
+  'openErrorLog',
   'syncBugReport',
   'listBugReports',
   'panelFor',
@@ -4225,6 +4493,43 @@ const fromOwnPage = (sender) => Boolean(sender?.url?.startsWith(chrome.runtime.g
  */
 const PRERENDER_ALLOWED = new Set(['frameReady']);
 
+/**
+ * The actions worth a line in the error log when they run, under the names a
+ * person would give them. Every other message is noted only when it fails.
+ */
+const ACTIONS = {
+  analyze: 'analyze',
+  stage: 'stage',
+  bundle: 'stage',
+  autofillData: 'fill',
+  fillFrames: 'fill',
+  attachInFrames: 'attach',
+  applicationSent: 'send',
+  applicationSentHere: 'send',
+  writeApplication: 'write',
+  coverLetter: 'cover letter',
+  answerQuestion: 'answer',
+  saveLetter: 'save letter',
+  saveAnswer: 'save answer',
+  render: 'render',
+  pair: 'pair',
+};
+/** Never noted: the error log's own messages, and a page announcing itself. */
+const NOT_NOTED = new Set(['logEvents', 'saveErrorLog', 'errorLogQueue', 'dismissRefusedErrorLogs', 'frameReady', 'ping', 'getSettings', 'getTrail']);
+function noteAction(type, ok, ms, err) {
+  if (NOT_NOTED.has(type) && ok) return;
+  if (!ok && type === 'logEvents') return;
+  const named = ACTIONS[type];
+  if (ok && !named) return;
+  const stopped = Boolean(err?.jobhelper?.stopped);
+  noteEvent(
+    'action',
+    ok || stopped ? 'info' : 'error',
+    ok ? `${named} (${type}) worked, in ${ms} ms` : `${named ?? type} (${type}) ${stopped ? 'was stopped' : `failed: ${err?.message ?? 'no reason given'}`}`,
+    { action: type, ok, ms },
+  );
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const type = message?.type;
   // Own properties only: `toString` or `constructor` is not a message.
@@ -4244,11 +4549,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Which tab asked. The trail is per tab, and this is the only place that
   // knows which one — it used to be thrown away. The frame matters too, now
   // that the form is often not in the page the card is sitting on.
+  const started = Date.now();
   handler(message.payload ?? {}, sender?.tab, sender)
-    .then((data) => sendResponse({ ok: true, data }))
+    .then((data) => {
+      // Which action ran, and that it worked — its name only. See `noteAction`.
+      noteAction(type, true, Date.now() - started);
+      sendResponse({ ok: true, data });
+    })
     // The marker travels with the message: a card on a job page cannot see an
     // Error object, only what crosses as JSON.
-    .catch((err) => sendResponse({ ok: false, error: err.message, fix: err.jobhelper }));
+    .catch((err) => {
+      noteAction(type, false, Date.now() - started, err);
+      sendResponse({ ok: false, error: err.message, fix: err.jobhelper });
+    });
   // Keeps the message channel open for the async response above.
   return true;
 });
@@ -4548,6 +4861,26 @@ chrome.tabs?.onRemoved?.addListener(async (tabId) => {
  * chosen is treated as chosen.
  */
 const NEVER_CHOSEN = ['minScore'];
+
+/**
+ * The keyboard command (Alt+Shift+E; see manifest.json) and its message: the
+ * popup, opened on the error-log form. `openPopup` needs a focused browser
+ * window and a recent Chrome; where it cannot, the same page opens in a small
+ * window of its own, already on the form.
+ */
+async function openErrorLogForm() {
+  await chrome.storage.session.set({ [OPEN_FORM_KEY]: Date.now() }).catch(() => undefined);
+  try {
+    await chrome.action.openPopup();
+    return { opened: 'popup' };
+  } catch {
+    await chrome.windows.create({ url: chrome.runtime.getURL('src/popup/popup.html#log-error'), type: 'popup', width: 380, height: 680 });
+    return { opened: 'window' };
+  }
+}
+chrome.commands?.onCommand.addListener((command) => {
+  if (command === 'log-error') openErrorLogForm().catch((err) => noteEvent('worker-error', 'error', `The error-log form would not open: ${err?.message ?? err}`));
+});
 
 chrome.runtime.onInstalled.addListener(async () => {
   const stored = await chrome.storage.sync.get(NEVER_CHOSEN);
