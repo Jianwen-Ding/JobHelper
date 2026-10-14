@@ -734,6 +734,7 @@ async function check() {
  * The error-log form first, and apart from `boot`: an error is worth logging
  * most of all when the rest of this window cannot reach ResumeM-M.
  */
-setupErrorLogForm({ send, activeTab });
+// An entry that could not be sent for want of an answer: the connection line looks again.
+setupErrorLogForm({ send, activeTab, onUnreachable: () => check() });
 
 boot().catch((err) => failed(err));

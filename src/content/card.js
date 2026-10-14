@@ -584,10 +584,18 @@ select {
  */
 .left-list { margin-top: 4px; font-size: 12px; line-height: 1.5; color: var(--ink-soft); }
 .left-list .left-why { color: var(--muted); font-size: 11px; margin-top: 4px; }
-.left-list .left-row { display: flex; align-items: baseline; gap: 5px; min-width: 0; }
+/*
+ * A row wraps rather than run off the card: a reason can be a sentence ("your
+ * name could not be split safely — set …"), and kept to one line beside the
+ * name it ran past the card's edge and squeezed the name to nothing. The name
+ * keeps its own width (up to the row's, where its ellipsis takes over) and the
+ * reason takes what is left, going under the name when that is too little.
+ */
+.left-list .left-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 5px; min-width: 0; }
 /* Under a heading once grouped, so the names read as that heading's. */
 .left-list .left-why ~ .left-row { padding-left: 10px; }
-.left-list .left-row .why { color: var(--muted); white-space: nowrap; flex: none; }
+.left-list .left-row .why { color: var(--muted); flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
+.left-list .left-row .left-name { flex: none; max-width: 100%; }
 button.left-name {
   border: 0; border-radius: 0; background: none; padding: 1px 0; min-width: 0;
   font-size: 12px; font-weight: 400; color: var(--ink-soft); text-align: left;
@@ -9215,6 +9223,16 @@ export function createCard({
   let leftOpenFor = null;
 
   const WHY_LEFT = [
+    /*
+     * The jobs Autofill could not add a block for (autofill.js, `addJobBlocks`):
+     * "2 jobs not entered: Acme, Globex". The companies are the resume's own,
+     * not anything a question was answered with, and without them the row is
+     * just "Work Experience", with nothing saying which jobs to type in.
+     */
+    [/^(\d+) (?:job|jobs) not entered(?::\s*(.+))?$/, (m) => {
+      const jobs = m[1] === '1' ? 'a job' : `${m[1]} jobs`;
+      return m[2] ? `${jobs} not entered — add ${m[2].trim()} by hand` : `${jobs} not entered — add by hand`;
+    }],
     [/two things at once|acknowledge it yourself|in the negative/, 'yours to answer'],
     [/not one of the options|no matching option/, 'no matching option'],
     [/by hand/, 'pick by hand'],
@@ -9222,9 +9240,16 @@ export function createCard({
     [/another country/, 'asks about another country'],
     [/not on the resume|lists no schools|lists no other school|does not list|at the level/, 'not on the resume sent'],
     [/would not add another/, 'the form would not add another'],
-    [/could not be split/, 'your name could not be split safely — set autofill.first_name and last_name in your profile'],
+    [/could not be split/, 'your name could not be split safely — set autofill.first_name and autofill.last_name in your profile'],
   ];
-  const whyLeft = (reason) => WHY_LEFT.find(([re]) => re.test(String(reason ?? '')))?.[1] ?? '';
+  const whyLeft = (reason) => {
+    const said = String(reason ?? '');
+    for (const [re, why] of WHY_LEFT) {
+      const m = said.match(re);
+      if (m) return typeof why === 'function' ? why(m) : why;
+    }
+    return '';
+  };
 
   function drawLeftList(r) {
     const left = (r.skipped ?? []).filter((s) => s.reason !== 'already filled');

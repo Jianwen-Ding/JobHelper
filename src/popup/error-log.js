@@ -48,7 +48,13 @@ function asDataUrl(file) {
   });
 }
 
-export function setupErrorLogForm({ send, activeTab }) {
+/**
+ * `onUnreachable` is told when an entry could not be sent because ResumeM-M did
+ * not answer, so the window's connection line can look again: it went on saying
+ * "Connected — 13 resumes" in green beside the amber "ResumeM-M could not take
+ * it just now", two answers about the same server at once.
+ */
+export function setupErrorLogForm({ send, activeTab, onUnreachable = () => {} }) {
   const $ = (id) => document.getElementById(id);
   const form = $('errorLogForm');
   if (!form) return null;
@@ -154,7 +160,18 @@ export function setupErrorLogForm({ send, activeTab }) {
               return;
             }
             await dismiss();
-            say('Copied the refused entry’s text.', 'ok');
+            /*
+             * Said where the button was. `say` writes under the form, and the
+             * form is shut when the popup opens on a refused entry — so the
+             * copy went through with nothing seen to say it had.
+             */
+            box.replaceChildren(
+              h('div', {
+                className: 'refused-said copied',
+                role: 'status',
+                textContent: `Copied the refused ${list.length === 1 ? 'entry’s' : 'entries’'} text — it is on the clipboard.`,
+              }),
+            );
           },
         }),
         h('button', { id: 'dismissRefused', textContent: 'Dismiss', onclick: () => dismiss() }),
@@ -202,6 +219,11 @@ export function setupErrorLogForm({ send, activeTab }) {
           // Kept, not refused: said in the queue's amber, red being for what will not go at all.
           'warn',
         );
+        try {
+          onUnreachable(result);
+        } catch {
+          // The connection line is the window's; the entry is kept either way.
+        }
       }
       $('errorDescription').value = '';
       if ($('errorLogContact')) $('errorLogContact').hidden = true;

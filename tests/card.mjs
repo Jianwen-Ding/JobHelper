@@ -8121,6 +8121,45 @@ async function main() {
   check('nor the hostname where the company goes', failedRead.co === null && Boolean(failedRead.role), JSON.stringify(failedRead));
   check('and the error is what is said', /ResumeM-M is not open/.test(failedRead.error), failedRead.error.slice(0, 160));
 
+  /*
+   * A field Autofill left, with a reason a sentence long. Kept to one line
+   * beside the name, "your name could not be split safely — set …" ran off
+   * the card's side and squeezed "First Name" to 0px; and the jobs it could
+   * not add a block for were named only "Work Experience", the reason that
+   * said which jobs having no words of the card's own and so not drawn.
+   */
+  console.log('\nThe fields Autofill left, with a long reason');
+  for (const width of [1440, 360]) {
+    await page.setViewportSize({ width, height: 800 });
+    const left = await inPage(async (createCard) => {
+      const NS = 'your name could not be split safely — set autofill.first_name and autofill.last_name in your profile';
+      const skipped = [
+        { key: 'first_name', label: 'First Name', fieldId: 'f-fn', reason: NS },
+        { key: 'last_name', label: 'Last Name', fieldId: 'f-ln', reason: NS },
+        { key: 'work_history', description: 'Work Experience', fieldId: 'f-wh', reason: '2 jobs not entered: Acme, Globex' },
+      ];
+      createCard({
+        analysis: { isJobPosting: true, job: { title: 'Data Engineer', company: 'Streamly' }, spec: { id: 'j', label: 'Streamly', tier: 'temporary' }, baseLabel: 'Base', tailor: 'match', diff: [], rationale: [] },
+        resumes: [{ id: 'b', label: 'Base', base: true }], settings: {}, questions: [], needsCoverLetter: false, isForm: true,
+        onAction: async (a) => (a === 'autofill' ? { filled: [{ key: 'email', value: 'x@example.com' }], skipped } : a === 'aiStatus' ? { state: 'off' } : {}),
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      await new Promise((r) => setTimeout(r, 100));
+      [...root.querySelectorAll('button')].find((b) => /^Autofill this form/.test(b.textContent))?.click();
+      for (let i = 0; i < 200 && !root.querySelector('.left-list'); i++) await new Promise((r) => setTimeout(r, 25));
+      const card = root.querySelector('.card').getBoundingClientRect();
+      return [...root.querySelectorAll('.left-list .left-row')].map((row) => {
+        const name = row.querySelector('.left-name').getBoundingClientRect();
+        const out = [...row.querySelectorAll('*')].some((el) => { const b = el.getBoundingClientRect(); return b.width > 0 && (b.right > card.right + 0.5 || b.left < card.left - 0.5); });
+        return { text: row.textContent, name: Math.round(name.width), out };
+      });
+    });
+    check(`at ${width}px each name left keeps its width`, left.length === 3 && left.every((r) => r.name > 20), JSON.stringify(left.map((r) => r.name)));
+    check(`and no reason runs past the card's side (${width}px)`, left.length === 3 && left.every((r) => !r.out), JSON.stringify(left));
+    check(`and the name reason names both settings in full (${width}px)`, /set autofill\.first_name and autofill\.last_name in your profile/.test(left[0]?.text ?? ''), left[0]?.text);
+    check(`and the jobs not entered are named (${width}px)`, /^Work Experience.*2 jobs not entered.*Acme, Globex/.test(left[2]?.text ?? ''), left[2]?.text);
+  }
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);

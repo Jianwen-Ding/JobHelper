@@ -219,6 +219,7 @@ async function main() {
 
     group('ResumeM-M out of reach');
     {
+      const connected = await popup.textContent('#status');
       store.down = true;
       await popup.fill('#errorDescription', 'Logged while the store was down');
       await pasteImage(popup, '#errorDescription');
@@ -237,6 +238,20 @@ async function main() {
       check('and says it in amber, as the queue line is, not in red', /\bwarn\b/.test(tone.className) && tone.color === tone.queued, JSON.stringify(tone));
       const queued = await popup.textContent('#errorLogQueued');
       check('and how many are waiting', /1 error-log entry is waiting/.test(queued ?? ''), queued);
+      /*
+       * Round 27: the connection line looks again. It went on saying
+       * "Connected — 1 resume" in green beside "ResumeM-M could not take it
+       * just now", two answers about the same server at once.
+       */
+      const status = await waitFor(async () => {
+        const text = await popup.textContent('#status');
+        return /not open|not running|could not|did not answer/i.test(text ?? '') && { text, className: await popup.getAttribute('#status', 'class') };
+      });
+      check(
+        'and the connection line no longer says connected',
+        /^Connected/.test(connected ?? '') && Boolean(status) && !/Connected/.test(status.text) && /\berr\b/.test(status.className ?? ''),
+        `${connected} → ${JSON.stringify(status) || (await popup.textContent('#status'))}`,
+      );
       const kept = await popup.evaluate(async () => (await chrome.storage.local.get('jh-error-log-queue'))['jh-error-log-queue']);
       check('in local storage, with its screenshot', kept?.length === 1 && kept[0].screenshots.length === 1);
 
@@ -280,6 +295,7 @@ async function main() {
         said,
       );
       check('and it is no longer waiting', !/waiting/.test((await popup.textContent('#errorLogQueued')) ?? ''));
+      check('with the form shut, as the popup opens', await popup.isHidden('#errorLogForm'));
       await popup.click('#copyRefused');
       const copied = await waitFor(async () => {
         const text = await popup.evaluate(() => navigator.clipboard.readText()).catch(() => '');
@@ -290,7 +306,15 @@ async function main() {
         const kept = await popup.evaluate(async () => (await chrome.storage.local.get('jh-error-log-refused'))['jh-error-log-refused']);
         return Array.isArray(kept) && kept.length === 0;
       });
-      check('and once copied it is let go of', Boolean(left) && (await popup.textContent('#errorLogRefused')) === '');
+      /*
+       * Round 27: and says so where it can be seen. It was said under the
+       * form, which is shut when the popup opens on a refused entry.
+       */
+      const confirmed = await waitFor(() =>
+        popup.evaluate(() => [...document.querySelectorAll('[role="status"]')].find((e) => e.offsetParent && e.getBoundingClientRect().height > 0 && /^Copied/.test(e.textContent))?.textContent),
+      );
+      check('the copy is confirmed where it can be seen', /^Copied the refused entry’s text/.test(confirmed ?? ''), confirmed);
+      check('and once copied it is let go of', Boolean(left) && !/refused by ResumeM-M|Copy text|Dismiss/.test((await popup.textContent('#errorLogRefused')) ?? ''), await popup.textContent('#errorLogRefused'));
       store.refuse = null;
     }
 
