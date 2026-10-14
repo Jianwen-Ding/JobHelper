@@ -1769,7 +1769,7 @@ function labelFor(input) {
    * cleans down to nothing.
    */
   if (input.id) {
-    const label = rootOf(input).querySelector(`label[for="${CSS.escape(input.id)}"]`);
+    const label = labelWithFor(rootOf(input), input.id);
     const said = labelWords(label);
     if (said) return said;
   }
@@ -2173,7 +2173,7 @@ function looksLikePlainDropdown(control, words) {
 function plainLabelOf(control) {
   const root = rootOf(control);
   for (const el of [control, ...control.querySelectorAll('[id]')]) {
-    const label = el.id && root.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+    const label = el.id && labelWithFor(root, el.id);
     if (label && clean(labelWords(label))) return label;
   }
   let at = control;
@@ -2507,7 +2507,7 @@ function isWidgetPartner(el) {
   // select2's select is the question, labelled or not. See `select2Of`.
   if (select2Of(el)) return false;
   const labelled =
-    (el.id && rootOf(el).querySelector(`label[for="${CSS.escape(el.id)}"]`)) ||
+    (el.id && labelWithFor(rootOf(el), el.id)) ||
     el.closest('label') ||
     el.hasAttribute('aria-labelledby') ||
     el.hasAttribute('aria-label');
@@ -3275,21 +3275,117 @@ function sectionBoxOf(heading) {
  * is the same walk, in the same order, as before.
  */
 function headingOver(input) {
+  const pass = drawnPass();
+  if (pass?.over.has(input)) return pass.over.get(input);
   const scope = closestAround(input, 'form');
   if (!scope) return null;
+  const { at, headings } = formLayout(scope, pass);
+  // Where the walk up to the field stops: the field's own place in the
+  // form, or nowhere — a field not drawn in the form passes every heading.
+  const stop = at.get(input) ?? Infinity;
   let found = null;
-  for (const heading of drawnWithin(scope)) {
-    if (heading === input) break;
-    if (!heading.matches(HEADING)) continue;
+  for (const { heading, index, box } of headings) {
+    if (index >= stop) break;
     if (heading.localName === 'legend') {
       if (heading.parentElement && drawnInside(heading.parentElement, input)) found = { heading, bounded: false };
       continue;
     }
-    const box = sectionBoxOf(heading);
     if (box && !drawnInside(box, input)) continue;
     found = { heading, bounded: Boolean(box) };
   }
+  pass?.over.set(input, found);
   return found;
+}
+
+/*
+ * The form's headings, read once a pass rather than once a field.
+ *
+ * `headingOver` walked the whole form up to the field, and measured each
+ * heading's section (`sectionBoxOf`) as it went — for every field, and
+ * several times a field (`sectionOf`, `boundedSection`, `educationDateKey`,
+ * `typedBox`…). The work grew with the square of the form: measured, 300
+ * fields took 2.4s to fill and 600 took 10s, the page frozen throughout.
+ *
+ * So a pass — what runs in one task, the fill or one tick of the watch —
+ * walks each form once: where each element is drawn, which are headings,
+ * and each heading's section. The answer per field is kept for the pass.
+ * Anything that changes what is drawn in between — a block added, a
+ * component's root filled, a role or a box's type changed — starts the
+ * pass again: an observer over the document and over each component root
+ * walked is read before every answer (`takeRecords`, which sees what the
+ * page did synchronously within the same task, as a framework re-rendering
+ * on an input event does). The pass ends with the task; nothing is watched
+ * between passes.
+ */
+const DRAWN_ATTRIBUTES = ['role', 'aria-level', 'type', 'slot', 'name', 'id', 'for', 'data-jobhelper-field'];
+const DRAWN_CHANGES = { childList: true, subtree: true, attributes: true, attributeFilter: DRAWN_ATTRIBUTES };
+let drawn = null;
+let drawnObserver = null;
+
+// A field marked for the card (`markField`) changes only where the marks are.
+const onlyMarked = (records) => records.every((r) => r.type === 'attributes' && r.attributeName === 'data-jobhelper-field');
+function changedSince(records) {
+  if (!drawn || !records.length) return;
+  if (onlyMarked(records)) drawn.marks = null;
+  else drawn = null;
+}
+
+function drawnPass() {
+  if (typeof MutationObserver === 'undefined' || typeof document === 'undefined') return null;
+  if (drawn) changedSince(drawnObserver.takeRecords());
+  if (drawn) return drawn;
+  if (!drawnObserver) drawnObserver = new MutationObserver(changedSince);
+  drawnObserver.disconnect();
+  drawnObserver.observe(document, DRAWN_CHANGES);
+  const pass = { forms: new Map(), over: new WeakMap(), labels: new Map(), marks: null };
+  drawn = pass;
+  setTimeout(() => {
+    if (drawn !== pass) return;
+    drawn = null;
+    drawnObserver.disconnect();
+  }, 0);
+  return pass;
+}
+
+/*
+ * The `<label for=…>` naming an id, as `querySelector` finds it: the first
+ * in `root`. Asked of every field, several times, and each ask read the
+ * whole page — so the labels of a root are read once a pass.
+ */
+function labelWithFor(root, id) {
+  if (!id) return null;
+  const pass = drawnPass();
+  if (!pass) return root.querySelector(`label[for="${CSS.escape(id)}"]`);
+  let byFor = pass.labels.get(root);
+  if (!byFor) {
+    byFor = new Map();
+    for (const label of root.querySelectorAll('label[for]')) {
+      const named = label.getAttribute('for');
+      if (!byFor.has(named)) byFor.set(named, label);
+    }
+    if (root instanceof ShadowRoot) drawnObserver.observe(root, DRAWN_CHANGES);
+    pass.labels.set(root, byFor);
+  }
+  return byFor.get(id) ?? null;
+}
+
+function formLayout(form, pass) {
+  const known = pass?.forms.get(form);
+  if (known) return known;
+  const at = new Map();
+  const headings = [];
+  let index = 0;
+  for (const el of drawnWithin(form)) {
+    // Its first place, where the walk up to it would have stopped.
+    if (!at.has(el)) at.set(el, index);
+    if (pass && el.shadowRoot && el.id !== OURS) drawnObserver.observe(el.shadowRoot, DRAWN_CHANGES);
+    if (el.matches(HEADING)) headings.push({ heading: el, index, box: null });
+    index++;
+  }
+  for (const entry of headings) if (entry.heading.localName !== 'legend') entry.box = sectionBoxOf(entry.heading);
+  const layout = { at, headings };
+  pass?.forms.set(form, layout);
+  return layout;
 }
 
 function sectionOf(input) {
@@ -5192,6 +5288,11 @@ function dateHalfOf(input) {
 
 function jobPartOf(input) {
   const label = withoutMarkers(labelFor(input));
+  // A list only for one half of a date — Breezy's "Start Month", "End Year".
+  if (input instanceof HTMLSelectElement) {
+    const listed = label.match(/^\s*(start|end)(?:\s+date)?\s+(month|year)\s*$/i);
+    return listed ? { part: listed[1].toLowerCase(), half: listed[2].toLowerCase() } : null;
+  }
   const kind = input instanceof HTMLTextAreaElement ? 'textarea' : input.type === 'checkbox' ? 'checkbox' : input.localName === 'input' ? 'text' : null;
   if (!kind) return null;
   for (const [part, re] of JOB_PARTS) {
@@ -5249,14 +5350,20 @@ const isMonthWidget = (input, found) => found.half === 'month' && isWidgetChoice
 
 /** Each work-history block on the page, and the job on the resume it is for. */
 /** The work-history blocks on the page, in the order it asks them. */
-function workBlocks() {
+/*
+ * Or inside `within`, a section already known to be the work history (see
+ * `workSection`) — an editor's boxes there are a job's, whatever stands
+ * before them: once an entry is saved its words sit above the next editor
+ * and read as a heading that is not one (see `underPlainHeading`).
+ */
+function workBlocks(within = null) {
   const blocks = [];
   let block = null;
-  for (const input of deepQueryAll('input, textarea')) {
+  for (const input of deepQueryAll('input, textarea, select')) {
     const found = jobPartOf(input);
     if (!found) continue;
     const usable = found.part === 'current' ? !isDisabled(input) && input.getClientRects().length > 0 : isFillable(input) || isMonthWidget(input, found);
-    if (!usable || !inWorkHistory(input)) continue;
+    if (!usable || !((within && drawnInside(within, input)) || inWorkHistory(input))) continue;
     const slot = found.half ? `${found.part}.${found.half}` : found.part;
     if (!block || block.has(slot)) blocks.push((block = new Map()));
     block.set(slot, input);
@@ -5297,11 +5404,11 @@ function jobTyped(history, used, typedCompany, flat, typedText = typedCompany) {
   return best;
 }
 
-function jobBlocks(history, skipped = []) {
+function jobBlocks(history, skipped = [], within = null) {
   const pairs = [];
   if (!Array.isArray(history) || history.length === 0) return pairs;
 
-  const blocks = workBlocks();
+  const blocks = workBlocks(within);
 
   const flat = (text) => String(text ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
   const used = new Set();
@@ -5361,20 +5468,81 @@ async function addJobBlocks(history, report) {
   if (!Array.isArray(history) || history.length === 0) return report;
   let section = workSection();
   if (!section) return report;
+  // Already kept on the page, as an editor's saved entries show them. See `shownInSection`.
+  const shown = new Set(history.filter((job) => shownInSection(section, job)));
+  if (shown.size === history.length) return report;
   let had = workBlocks().length;
   let pressed = 0;
-  while (had < history.length && pressed < history.length) {
+  // A block that is an editor: filled, saved and closed one job at a time. See `EDITOR`.
+  let editing = false;
+  const saved = new Set();
+  const edited = { filled: [], skipped: [] };
+  let unsaved = null;
+  while (pressed < history.length && (editing ? saved.size + shown.size < history.length : had < history.length)) {
+    // Never one hidden or disabled: an editor left open hides its Add.
+    if (pressed && !pressable(section.button)) break;
+    // Inside the section only once it is known to hold an editor. See `workBlocks`.
+    const within = editing ? section.box : null;
+    const before = new Set(workBlocks(within).flatMap((b) => [...b.values()]));
+    const dialogs = openDialogs();
     press(section.button);
     pressed++;
-    const grown = await waitFor(() => (workBlocks().length > had ? workBlocks().length : 0), 3000);
-    if (!grown) break;
-    had = grown;
+    const opened = await waitFor(() => {
+      const dialog = newDialog(dialogs, section);
+      if (dialog) {
+        const block = workBlocks(dialog).find((b) => [...b.values()].every((input) => !before.has(input)));
+        return block ? { dialog, block } : null;
+      }
+      const now = workBlocks(within);
+      return now.length > had ? { grown: now.length, block: now.find((b) => [...b.values()].every((input) => !before.has(input))) } : null;
+    }, 3000);
+    if (!opened) {
+      // Something opened that holds no job: shut, so nothing empty is left open.
+      const dialog = newDialog(dialogs, section);
+      if (dialog) await dismissEditor(dialog);
+      break;
+    }
+    const added = opened.block;
+    const editor = added && editorOf(added, section, opened.dialog);
+    if (added && (editor.dialog || editor.save || !pressable(section.button))) {
+      editing = true;
+      const job = jobBlocks(history.filter((j) => !saved.has(j) && !shown.has(j)), [], opened.dialog ?? section.box).find((pair) => sameBlock(pair.block, added))?.job;
+      if (!job) {
+        await dismissEditor(editor.scope ?? opened.dialog);
+        break;
+      }
+      const filled = [];
+      const skipped = [];
+      fillJob(added, job, false, filled, skipped);
+      edited.skipped.push(...skipped);
+      if (filled.length && (await keepEntry(editor, added))) {
+        saved.add(job);
+        edited.filled.push(...filled);
+        had = workBlocks(section.box).length;
+        section = workSection() ?? section;
+        continue;
+      }
+      unsaved = { job, at: added.get('company') ?? added.get('title') ?? [...added.values()][0] };
+      break;
+    }
+    had = opened.grown ?? had;
     section = workSection() ?? section;
   }
   const said = new Set(report.skipped.map((s) => `${s.key} ${s.description}`));
-  const work = pressed ? fillWorkHistory(history) : { filled: [], skipped: [] };
+  const work = editing ? edited : pressed ? fillWorkHistory(history) : { filled: [], skipped: [] };
   const skipped = [...report.skipped, ...work.skipped.filter((s) => !said.has(`${s.key} ${s.description}`))];
-  const placed = new Set(jobBlocks(history).map(({ job }) => job));
+  const placed = editing ? new Set([...saved, ...shown]) : new Set(jobBlocks(history).map(({ job }) => job));
+  if (unsaved) {
+    placed.add(unsaved.job);
+    const name = clean(unsaved.job.company || unsaved.job.title);
+    skipped.push(
+      leftAt(
+        unsaved.at,
+        { key: 'work_history', reason: `${name} is typed in but not saved — press Save in Work Experience`.slice(0, 160), description: 'Work Experience' },
+        'Work Experience',
+      ),
+    );
+  }
   const left = history.filter((job) => !placed.has(job));
   if (left.length) {
     const names = left.map((job) => clean(job.company || job.title)).filter(Boolean).join(', ');
@@ -5387,6 +5555,155 @@ async function addJobBlocks(history, report) {
     );
   }
   return { ...report, filled: [...report.filled, ...work.filled], skipped };
+}
+
+const sameBlock = (a, b) => a.size === b.size && [...a].every(([slot, input]) => b.get(slot) === input);
+
+/*
+ * An "Add" that opens an editor rather than a block.
+ *
+ * Oracle's Candidate Experience draws the job's boxes with a Save and a
+ * Cancel under them, hides its Add while they are open, and keeps the job
+ * only once Save is pressed: the boxes were filled and reported filled, the
+ * application's work history was still empty — the job held only in the
+ * open editor — and the next job could not be added at all. Workable draws
+ * the same editor and takes its "+ Add" away while it is open; Breezy opens
+ * a dialog, and its boxes, outside every section, were not seen at all — the
+ * dialog was left open and empty over the form, and the job said not
+ * entered. So an editor is filled, its own Save pressed, and the entry
+ * counted only once the editor has closed; one with no Save this can safely
+ * press, or that stays open, is said as typed in and not saved; and one
+ * opened that holds nothing to put in it is shut with its own Cancel.
+ *
+ * An editor is a dialog the press opened (`newDialog`), or the block it
+ * drew, when that block has its own Save or the Add went away. Its Save is
+ * looked for inside it only: the dialog, or the smallest wrapper round the
+ * block's boxes, or one a few levels out — never one holding the section's
+ * heading or its Add, or anything that would send the form. One button
+ * there and one only that says it keeps the entry — "Save", "Done", "OK",
+ * "Add", "Save experience" — and none that would send the form, go on to the
+ * next step or throw the entry away.
+ */
+const SAVES_ENTRY =
+  /^\s*(save|done|ok|okay|add|update|confirm)(\s+(entry|experience|work\s+experience|position|job|employment|education|school|degree|changes|details))?\s*$/i;
+const NEVER_PRESSED = /\b(submit|next|continue|apply|application|send|finish|review|cancel|delete|remove|discard|close|back|previous|later|draft)\b/i;
+const DISMISSES = /^\s*(cancel|close|discard|×|x)\s*$/i;
+const A_BUTTON = 'button, [role="button"], input[type="button"], input[type="submit"]';
+const A_DIALOG = '[role="dialog"], [role="alertdialog"], dialog[open], [aria-modal="true"]';
+
+/** The dialogs open on the page, as a person sees them. */
+function openDialogs() {
+  return new Set(deepQueryAll(A_DIALOG).filter((d) => d.getClientRects().length > 0));
+}
+
+/*
+ * The one dialog open now that was not in `before` — never one holding the
+ * section itself, which is the form drawn again, not an editor it opened.
+ */
+function newDialog(before, section) {
+  const opened = [...openDialogs()].filter((d) => !before.has(d) && !(section.box.isConnected && drawnInside(d, section.box)));
+  return opened.length === 1 ? opened[0] : null;
+}
+
+/** The one button in `scope` whose words say `wanted` and none of `never`. */
+function buttonSaying(scope, wanted, never, add = null) {
+  const found = [...drawnWithin(scope)].filter(
+    (el) =>
+      el.matches(A_BUTTON) &&
+      el !== add &&
+      pressable(el) &&
+      buttonWords(el).length > 0 &&
+      buttonWords(el).some((said) => wanted.test(said)) &&
+      !(never && buttonWords(el).some((said) => never.test(said))),
+  );
+  return found.length === 1 ? found[0] : null;
+}
+
+/** Whether `box` holds a button that would send the form it is in. */
+const holdsSubmit = (box) => [...drawnWithin(box)].some((el) => el.matches(A_BUTTON) && wouldSubmit(el));
+
+/*
+ * The editor a block is drawn in, and its Save: the dialog, or the smallest
+ * wrapper round the block's boxes and up to three out, holding neither the
+ * section's heading, its Add, nor a button that sends the form.
+ */
+function editorOf(block, section, dialog = null) {
+  if (dialog) return { dialog, scope: dialog, save: holdsSubmit(dialog) ? null : buttonSaying(dialog, SAVES_ENTRY, NEVER_PRESSED, section.button) };
+  const inputs = [...block.values()];
+  let box = inputs[0] && parentAround(inputs[0]);
+  while (box && !inputs.every((input) => drawnInside(box, input))) box = parentAround(box);
+  let scope = null;
+  for (let n = 0; box && n < 3; n++, box = parentAround(box)) {
+    if (['form', 'body', 'html'].includes(box.localName) || drawnInside(box, section.box)) break;
+    if (section.button.isConnected && drawnInside(box, section.button)) break;
+    if (holdsSubmit(box)) break;
+    scope ??= box;
+    const save = buttonSaying(box, SAVES_ENTRY, NEVER_PRESSED, section.button);
+    if (save) return { dialog: null, scope: box, save };
+  }
+  return { dialog: null, scope, save: null };
+}
+
+/** Press an editor's Save, and whether it closed with the entry kept. */
+async function keepEntry(editor, block) {
+  if (!editor?.save) return false;
+  press(editor.save);
+  const gone = (el) => !el.isConnected || el.getClientRects().length === 0;
+  return Boolean(await waitFor(() => [...block.values()].every(gone) && (!editor.dialog || gone(editor.dialog)), 3000));
+}
+
+/*
+ * Shut an editor this opened and has nothing to put in, so nothing empty is
+ * left open over the form: its own Cancel, or Escape for a dialog.
+ */
+async function dismissEditor(scope) {
+  if (!scope?.isConnected) return;
+  const cancel = buttonSaying(scope, DISMISSES, null) ?? [...drawnWithin(scope)].find((el) => el.matches(A_BUTTON) && pressable(el) && /^\s*close\s*$/i.test(el.getAttribute('aria-label') ?? ''));
+  if (cancel && !wouldSubmit(cancel)) press(cancel);
+  else if (scope.matches(A_DIALOG)) {
+    for (const type of ['keydown', 'keyup']) scope.dispatchEvent(ours(new KeyboardEvent(type, { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true })));
+  }
+  await waitFor(() => !scope.isConnected || scope.getClientRects().length === 0, 1000);
+}
+
+/*
+ * A job the section already shows as kept — its employer and its title both
+ * in the section's words, outside any box. An editor's saved entries are
+ * drawn so, and adding such a job again is a second copy of it.
+ */
+const flatWords = (text) => String(text ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+function shownInSection(section, job) {
+  const company = flatWords(job.company);
+  const title = flatWords(job.title);
+  if (!company || !title) return false;
+  const words = flatWords(wordsOutsideControls(regionOf(section)));
+  return words.includes(company) && words.includes(title);
+}
+
+/*
+ * Where a section draws what it keeps: its box, or the wrapper round it when
+ * that holds no other heading — Workable's heading and Add sit in a header
+ * of their own, and the saved entries and the editor beside it.
+ */
+function regionOf(section) {
+  const around = parentAround(section.box);
+  if (!around || ['form', 'body', 'html'].includes(around.localName)) return section.box;
+  const headings = [...drawnWithin(around)].filter((el) => el.matches(HEADING));
+  return headings.every((h) => drawnInside(section.box, h)) ? around : section.box;
+}
+
+/** The words a box shows outside its controls: never a list's options. */
+function wordsOutsideControls(box) {
+  let text = '';
+  const walk = (node) => {
+    for (const child of node.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) text += ` ${child.textContent}`;
+      else if (child.nodeType === Node.ELEMENT_NODE && !child.matches('select, option, datalist, textarea, script, style, template, [role="listbox"]')) walk(child);
+    }
+  };
+  walk(box);
+  return text;
 }
 
 /** The job months `fillJob` left to a widget, chosen the way every widget is. */
@@ -5411,6 +5728,14 @@ function fillJob(block, job, overwrite, filled, skipped) {
     if (!input || value === undefined || value === null || value === '') return;
     // A list is chosen from later, not typed into. See `fillJobMonths`.
     if (isWidgetChoice(input)) return;
+    // A plain list, chosen from now: the month by its name or its number.
+    if (input instanceof HTMLSelectElement) {
+      if (selectIsAnswered(input) && !overwrite) return;
+      const tries = /\.month$/.test(slot) ? [monthWord(Number(value)), String(Number(value)), String(value)] : [String(value)];
+      if (tries.some((tried) => chooseInSelect(input, tried))) filled.push({ key, value: String(value) });
+      else skipped.push(leftAt(input, { key, reason: 'no matching option', description: clean(labelFor(input)).slice(0, 60) }));
+      return;
+    }
     if (input.value && !overwrite) return;
     const written = slot === 'start' || slot === 'end' ? graduationFor(input, value) : String(value);
     // A shape with a day in it. See `graduationFor`.
@@ -6217,7 +6542,7 @@ function optionLabelFor(radio) {
   const wrapping = radio.closest('label');
   if (wrapping) return words(wrapping);
   if (radio.id) {
-    const label = rootOf(radio).querySelector(`label[for="${CSS.escape(radio.id)}"]`);
+    const label = labelWithFor(rootOf(radio), radio.id);
     if (label) return words(label);
   }
   /*
@@ -6720,13 +7045,28 @@ function answerAcknowledgements() {
       skipped.push(leftAt(choice.el, waiting, choice.question));
     }
   }
+  /*
+   * Every box on the page, read again only when the page has changed what
+   * it draws (see `drawnPass`) — read again for every box, it made this
+   * walk grow with the square of the form.
+   */
+  let boxes = null;
+  let readIn = null;
+  const everyBox = () => {
+    const pass = drawnPass();
+    if (!boxes || !pass || pass !== readIn) {
+      boxes = deepQueryAll('input[type=checkbox]').map((other) => ({ other, fieldset: closestAround(other, 'fieldset') }));
+      readIn = pass;
+    }
+    return boxes;
+  };
   for (const box of deepQueryAll('input[type=checkbox]')) {
     if (box.checked || isDisabled(box) || box.getClientRects().length === 0) continue;
     // One box on its own, not one of a list to pick from: no other under its name, or in its fieldset.
     const fieldset = closestAround(box, 'fieldset');
-    const alongside = (other) =>
-      other !== box && ((box.name && other.name === box.name && other.form === box.form) || (fieldset && closestAround(other, 'fieldset') === fieldset));
-    if (deepQueryAll('input[type=checkbox]').some(alongside)) continue;
+    const alongside = ({ other, fieldset: its }) =>
+      other !== box && ((box.name && other.name === box.name && other.form === box.form) || (fieldset && its === fieldset));
+    if (everyBox().some(alongside)) continue;
     const said = labelFor(box);
     const required = box.required || box.getAttribute('aria-required') === 'true' || /\*|\brequired\b/i.test(said);
     if (!required) continue;
@@ -8672,13 +9012,50 @@ async function fillEducationPart(control, key, value, f, patience) {
 }
 
 /** Press the section's "Add another" and wait for the block it adds. */
+/*
+ * Or an editor, as for a job (see `EDITOR`): a dialog the press opened, or a
+ * block drawn with its own Save or in place of the Add — which Workable
+ * takes away while its editor is open, so the section was not found again
+ * and the form was said to "not add another" over an empty, required School
+ * left open. The section the press was made in is kept, and read again
+ * round its heading, where the editor is drawn beside it.
+ */
 async function addAnother(section, had) {
+  const dialogs = openDialogs();
+  const blocksAround = () => {
+    let box = section.box;
+    for (let n = 0; box && n < 3 && !['form', 'body', 'html'].includes(box.localName); n++, box = parentAround(box)) {
+      const blocks = educationBlocks(box);
+      if (!blocks) return [];
+      if (blocks.length) return blocks;
+    }
+    return [];
+  };
+  const before = new Set(blocksAround().flatMap((b) => [...b.values()]));
+  const fresh = (b) => [...b.values()].every((control) => !before.has(control));
   press(section.button);
-  return waitFor(() => {
+  const found = await waitFor(() => {
+    const dialog = newDialog(dialogs, section);
+    if (dialog) {
+      const block = (educationBlocks(dialog) ?? []).find(fresh);
+      return block ? { editor: editorOf(block, section, dialog), block } : null;
+    }
     const now = educationSection();
     const blocks = now && educationBlocks(now.box);
-    return blocks && blocks.length > had ? { section: now, blocks } : null;
+    if (blocks && blocks.length > had) {
+      const block = blocks.find(fresh);
+      const editor = block && editorOf(block, section);
+      return editor?.save ? { editor, block } : { section: now, blocks };
+    }
+    if (pressable(section.button)) return null;
+    const block = blocksAround().find(fresh);
+    return block ? { editor: editorOf(block, section), block } : null;
   }, 3000);
+  if (!found) {
+    const dialog = newDialog(dialogs, section);
+    if (dialog) await dismissEditor(dialog);
+  }
+  return found;
 }
 
 /*
@@ -8752,9 +9129,45 @@ export async function fillEducation(education, fields, report, { patience = 4000
     let added = false;
     if (n >= blocks.length) {
       if (!waiting() || blocks.length >= schools.length) break;
+      // Every school still to place already kept, as an editor's saved entries show it: not added twice.
+      const kept = flatWords(wordsOutsideControls(regionOf(section)));
+      const shownSchool = (e) => flatWords(e.school).length > 0 && kept.includes(flatWords(e.school));
+      if (schools.every((e, i) => used.has(i) || shownSchool(e))) break;
       const grown = await addAnother(section, blocks.length);
       if (!grown) {
         skipped.push(leftAt(section.button, { key: 'school', reason: 'the form would not add another', description: 'Education' }, 'Education'));
+        break;
+      }
+      if (grown.editor) {
+        // Filled, saved and closed, one school at a time. See `addAnother`.
+        const { editor, block } = grown;
+        const index = schools.findIndex((e, i) => !used.has(i) && !shownSchool(e) && fits(block, educationFields(e)));
+        if (index < 0) {
+          await dismissEditor(editor.scope);
+          break;
+        }
+        used.add(index);
+        const f = educationFields(schools[index]);
+        const put = [];
+        for (const [key, control] of block) {
+          if (!f[key] || !control.isConnected || partAnswered(control) || anotherLevelOfStudy(control, key, f)) continue;
+          const got = await fillEducationPart(control, key, f[key], f, patience);
+          if (got.reason) skipped.push(got);
+          else put.push({ ...got, education: index + 1 });
+        }
+        if (put.length && (await keepEntry(editor, block))) {
+          filled.push(...put);
+          if (!section.button.isConnected || !pressable(section.button)) section = educationSection() ?? section;
+          continue;
+        }
+        const school = clean(schools[index].school);
+        skipped.push(
+          leftAt(
+            block.get('school') ?? [...block.values()][0],
+            { key: 'school', reason: `${school} is typed in but not saved — press Save in Education`.slice(0, 160), description: 'Education' },
+            'Education',
+          ),
+        );
         break;
       }
       ({ section, blocks } = grown);
@@ -9883,10 +10296,32 @@ let fieldCounter = 0;
 const markedAs = new Map();
 
 function markedField(fieldId) {
-  const onPage = deepQueryAll(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`)[0];
+  const onPage = markedOnPage(fieldId);
   if (onPage) return onPage;
   const kept = markedAs.get(fieldId)?.deref();
   return kept?.isConnected ? kept : undefined;
+}
+
+/*
+ * The first field on the page carrying a mark, as `deepQueryAll` finds it.
+ * The card asks for every question at once (`isRequired`, once each), and
+ * each ask read every element of every root — so the marks are read once a
+ * pass (see `drawnPass`), and again whenever a mark is put on or taken off.
+ */
+function markedOnPage(fieldId) {
+  const pass = drawnPass();
+  if (!pass) return deepQueryAll(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`)[0];
+  if (!pass.marks) {
+    pass.marks = new Map();
+    for (const root of allRoots()) {
+      if (root !== document) drawnObserver.observe(root, DRAWN_CHANGES);
+      for (const el of root.querySelectorAll(`[${FIELD_KEY}]`)) {
+        const id = el.getAttribute(FIELD_KEY);
+        if (!pass.marks.has(id)) pass.marks.set(id, el);
+      }
+    }
+  }
+  return pass.marks.get(fieldId);
 }
 
 /** The mark a field already has, or a new one. */
@@ -10137,7 +10572,7 @@ export function wantsCoverLetter() {
  * field and nothing else fillable, which is the rule `labelFor` already uses.
  */
 export function isRequired(fieldId) {
-  const found = deepQueryAll(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`)[0];
+  const found = markedOnPage(fieldId);
   return found ? isRequiredField(found) : false;
 }
 
@@ -10153,7 +10588,7 @@ function isRequiredField(found) {
   // The label actually associated with this field, or with the component it
   // is drawn in: see `componentLabel`.
   const own =
-    (field.id && rootOf(field).querySelector(`label[for="${CSS.escape(field.id)}"]`)) ||
+    (field.id && labelWithFor(rootOf(field), field.id)) ||
     field.closest('label') ||
     componentLabel(field);
   if (own) return marked(own.textContent);

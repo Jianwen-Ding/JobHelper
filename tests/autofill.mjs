@@ -6946,7 +6946,167 @@ const PHONE_PATTERNED = `<!doctype html><html><head><meta charset="utf-8"><title
 <form><label for="pp-dot">Phone</label><input type="tel" id="pp-dot" name="phone3" pattern="[0-9]{3}\\.[0-9]{3}\\.[0-9]{4}"></form>
 </body></html>`;
 
-const PAGES = { '/wd-names': WD_NAMES, '/edu-shown': EDU_SHOWN, '/spelled-otherwise': SPELLED_OTHERWISE, '/wd-add': WD_ADD, '/radio-option-labels': RADIO_OPTION_LABELS, '/label-noise': LABEL_NOISE, '/drawn-prompts': DRAWN_PROMPTS, '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/greenhouse-react-education': GREENHOUSE_REACT_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/hidden-asks': HIDDEN_ASKS, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE, '/acknowledgements': ACKNOWLEDGEMENTS, '/sponsorship-policies': SPONSORSHIP_POLICIES, '/sponsorship-policy-pressed': SPONSORSHIP_POLICY_PRESSED, '/sponsorship-policy-aria': SPONSORSHIP_POLICY_ARIA, '/bank-shapes': BANK_SHAPES, '/negated-questions': NEGATED_QUESTIONS, '/not-only-acknowledged': NOT_ONLY_ACKNOWLEDGED, '/signed-without-the-word': SIGNED_WITHOUT_THE_WORD, '/education-wording': EDUCATION_WORDING, '/day-shapes': DAY_SHAPES, '/newsletter-names': NEWSLETTER_NAMES, '/alerts-names': ALERTS_NAMES, '/survey-frame': SURVEY_FRAME, '/names-and-phone': NAMES_AND_PHONE, '/names-and-file': NAMES_AND_FILE, '/german-names': GERMAN_NAMES, '/french-names': FRENCH_NAMES, '/other-names': OTHER_NAMES, '/standard-hints': STANDARD_HINTS, '/localized-dates': LOCALIZED_DATES, '/names-alongside': NAMES_ALONGSIDE, '/handy': HANDY, '/typed-maxlength': TYPED_MAXLENGTH, '/phone-patterned': PHONE_PATTERNED };
+/*
+ * Oracle Candidate Experience's "Add Experience", without Knockout: pressing
+ * Add draws an editor under the saved entries — its boxes, a Save and a
+ * Cancel — and hides Add until the editor is closed. Save keeps the job as
+ * a saved entry; the editor's boxes alone are nothing the application holds.
+ * `?save=submit` makes Save a plain `<button>` in the form, which would send
+ * it; `?nosave` draws an editor with only Cancel.
+ */
+const EDITOR_ADD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="ea-form">
+<h2>Contact Information</h2>
+<label for="ea-fn">First Name</label><input id="ea-fn">
+<section aria-labelledby="ea-h"><h2 id="ea-h">Experience</h2>
+  <div id="ea-saved"></div>
+  <div id="ea-editing"></div>
+  <button type="button" id="ea-add">Add Experience</button>
+</section>
+<button type="submit" id="ea-submit">Submit</button>
+</form>
+<script>
+  const q = new URLSearchParams(location.search);
+  const saved = [];
+  window.__submitted = 0;
+  window.__pressed = [];
+  const form = document.getElementById('ea-form');
+  form.addEventListener('submit', (e) => { e.preventDefault(); window.__submitted++; });
+  const add = document.getElementById('ea-add');
+  const editing = document.getElementById('ea-editing');
+  const drawSaved = () => {
+    document.getElementById('ea-saved').innerHTML = saved.map((j) => '<div class="tile"><b>' + j.employer + '</b> — <span>' + j.title + '</span></div>').join('');
+  };
+  const close = () => { editing.innerHTML = ''; add.style.display = ''; };
+  add.addEventListener('click', () => {
+    window.__pressed.push('add');
+    const save = q.get('save') === 'submit' ? '<button id="ea-save">Save</button>' : '<button type="button" id="ea-save">Save</button>';
+    editing.innerHTML = '<div class="profile-item-form">' +
+      '<label for="ea-emp">Employer Name</label><input id="ea-emp">' +
+      '<label for="ea-jt">Job Title</label><input id="ea-jt">' +
+      '<label for="ea-sd">Start Date</label><input id="ea-sd" placeholder="MM/YYYY">' +
+      '<label for="ea-ed">End Date</label><input id="ea-ed" placeholder="MM/YYYY">' +
+      (q.has('nosave') ? '' : save) + ' <button type="button" id="ea-cancel">Cancel</button></div>';
+    add.style.display = 'none';
+    const s = document.getElementById('ea-save');
+    s?.addEventListener('click', () => {
+      window.__pressed.push('save');
+      const v = (id) => document.getElementById(id).value;
+      saved.push({ employer: v('ea-emp'), title: v('ea-jt'), start: v('ea-sd'), end: v('ea-ed') });
+      drawSaved();
+      close();
+    });
+    document.getElementById('ea-cancel').addEventListener('click', () => { window.__pressed.push('cancel'); close(); });
+  });
+  window.__readback = () => {
+    const box = (id) => document.getElementById(id)?.value ?? null;
+    return { saved: saved.slice(), editing: editing.children.length ? { employer: box('ea-emp'), title: box('ea-jt') } : null,
+      submitted: window.__submitted, pressed: window.__pressed.slice() };
+  };
+</script></body></html>`;
+
+/*
+ * The same, two more ways. `?header`: Workable's — the heading and its
+ * "+ Add" in a header of their own, the Add taken off the page while the
+ * editor beside the header is open, for Experience and for Education.
+ * `?dialog`: Breezy's — "+ Add Position" and "+ Add Education" open a
+ * dialog after the form, its dates lists of months and years; `?dialog&odd`
+ * makes the Education dialog ask nothing a school answers.
+ */
+const EDITOR_KINDS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title>
+<style>.modal{position:fixed;inset:10% 20%;background:#fff;border:1px solid #333;padding:8px;overflow:auto}</style></head><body>
+<form id="ek-form">
+<h2>Personal information</h2>
+<label for="ek-fn">First name</label><input id="ek-fn">
+<div id="ek-sections"></div>
+<button type="submit" id="ek-submit">Submit application</button>
+</form>
+<div id="ek-modals"></div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const dialog = q.has('dialog');
+  const log = [];
+  const kept = { job: [], school: [] };
+  document.getElementById('ek-form').addEventListener('submit', (e) => { e.preventDefault(); log.push('SUBMIT'); });
+  const box = (id, label, extra = '') => '<div class="field"><label for="' + id + '">' + label + '</label><input id="' + id + '"' + extra + '></div>';
+  const list = (id, label, xs) => '<div class="field"><label for="' + id + '">' + label + '</label><select id="' + id + '"><option value="">Select</option>' + xs.map((x) => '<option>' + x + '</option>').join('') + '</select></div>';
+  const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const YEARS = Array.from({ length: 30 }, (_, i) => String(2030 - i));
+  const KINDS = {
+    job: { title: 'Experience', add: dialog ? '+ Add Position' : '+ Add', label: 'Add Experience',
+      boxes: (k) => box(k + 'title', 'Title') + box(k + 'company', 'Company') + box(k + 'industry', 'Industry') +
+        (dialog ? list(k + 'sm', 'Start Month', MONTHS) + list(k + 'sy', 'Start Year', YEARS) + list(k + 'em', 'End Month', MONTHS) + list(k + 'ey', 'End Year', YEARS)
+          : box(k + 'start', 'Start date', ' placeholder="MM/YYYY"') + box(k + 'end', 'End date', ' placeholder="MM/YYYY"')),
+      shown: (o) => o.title + ' — ' + o.company },
+    school: { title: 'Education', add: dialog ? '+ Add Education' : '+ Add', label: 'Add Education',
+      boxes: (k) => q.has('odd') ? box(k + 'ref', 'Reference phone number', ' type="tel"') : box(k + 'school', 'School') + box(k + 'field', 'Field of study') + box(k + 'degree', 'Degree'),
+      shown: (o) => o.school + ' — ' + o.degree },
+  };
+  for (const [kind, K] of Object.entries(KINDS)) {
+    const section = document.createElement('section');
+    section.setAttribute('aria-labelledby', 'ek-' + kind + '-h');
+    section.innerHTML = '<div class="section-header"><h3 id="ek-' + kind + '-h">' + K.title + '</h3></div><div class="kept"></div>';
+    document.getElementById('ek-sections').appendChild(section);
+    const header = section.querySelector('.section-header');
+    const drawKept = () => { section.querySelector('.kept').innerHTML = kept[kind].map((o) => '<div class="saved">' + K.shown(o) + '</div>').join(''); };
+    const drawAdd = () => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = K.add; b.setAttribute('aria-label', K.label);
+      b.addEventListener('click', open);
+      header.appendChild(b);
+    };
+    function open() {
+      log.push('add ' + kind);
+      const k = 'ek-' + kind + '-';
+      const editor = document.createElement('div');
+      editor.innerHTML = K.boxes(k) + '<div class="actions"><button type="button" class="cancel">Cancel</button><button type="button" class="save">Save</button></div>';
+      if (dialog) {
+        editor.className = 'modal'; editor.setAttribute('role', 'dialog'); editor.setAttribute('aria-modal', 'true');
+        editor.insertAdjacentHTML('afterbegin', '<h3>' + K.add.replace('+ ', '') + '</h3>');
+        document.getElementById('ek-modals').appendChild(editor);
+      } else {
+        editor.className = 'entry-form';
+        section.appendChild(editor);
+        header.querySelector('button').remove();
+      }
+      const shut = () => { editor.remove(); if (!dialog) drawAdd(); };
+      editor.querySelector('.cancel').addEventListener('click', () => { log.push('cancel ' + kind); shut(); });
+      editor.querySelector('.save').addEventListener('click', () => {
+        const o = {};
+        for (const el of editor.querySelectorAll('input, select')) o[el.id.slice(k.length)] = el.value;
+        kept[kind].push(o); log.push('save ' + kind); drawKept(); shut();
+      });
+    }
+    if (!dialog || kind === 'job' || kind === 'school') drawAdd();
+  }
+  window.__readback = () => ({ log: log.slice(), jobs: kept.job.slice(), schools: kept.school.slice(), open: document.querySelectorAll('.entry-form, .modal').length });
+</script></body></html>`;
+
+/*
+ * A long form, built the way a hiring system's long application is: one
+ * wrapper per field, a section heading every few, and every kind of control.
+ * The work per field was the whole form's — its headings walked, and each
+ * heading's section measured, for every field, several times — so 300
+ * fields took seconds to fill, 600 more than ten, the page frozen.
+ */
+const longForm = (n) => {
+  const options = Array.from({ length: 200 }, (_, i) => `<option value="c${i}">Country ${i}</option>`).join('') + '<option value="US">United States</option>';
+  const labels = ['First Name', 'Last Name', 'Email', 'Phone', 'City', 'LinkedIn', 'Website', 'How did you hear about us?', 'Employer name', 'Supervisor name', 'Reference name', 'Notes', 'Street address', 'Postal code', 'Middle name'];
+  const rows = Array.from({ length: n }, (_, i) => {
+    switch (i % 6) {
+      case 0: return `<div><label for="lf-t${i}">${labels[i % labels.length]} (${i})</label><input id="lf-t${i}" name="q${i}" type="text"></div>`;
+      case 1: return `<div><label for="lf-s${i}">Country of residence ${i}</label><select id="lf-s${i}" name="s${i}"><option value="">Select...</option>${options}</select></div>`;
+      case 2: return `<fieldset><legend>Are you willing to relocate? (${i})</legend><label><input type="radio" name="r${i}" value="y">Yes</label><label><input type="radio" name="r${i}" value="n">No</label></fieldset>`;
+      case 3: return `<div><label for="lf-a${i}">Describe a project you are proud of (${i})</label><textarea id="lf-a${i}" name="a${i}"></textarea></div>`;
+      case 4: return `<div><label><input type="checkbox" name="c${i}"> I agree to item ${i}</label></div>`;
+      default: return `<div class="section"><h3>Section ${i}</h3><label for="lf-d${i}">Start date ${i}</label><input id="lf-d${i}" type="date" name="d${i}"></div>`;
+    }
+  });
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><h1>Software Engineer</h1><form>${rows.join('\n')}<button>Submit</button></form></body></html>`;
+};
+const LONG_FORM = longForm(420);
+
+const PAGES = { '/editor-add': EDITOR_ADD, '/editor-kinds': EDITOR_KINDS, '/long-form': LONG_FORM, '/wd-names': WD_NAMES, '/edu-shown': EDU_SHOWN, '/spelled-otherwise': SPELLED_OTHERWISE, '/wd-add': WD_ADD, '/radio-option-labels': RADIO_OPTION_LABELS, '/label-noise': LABEL_NOISE, '/drawn-prompts': DRAWN_PROMPTS, '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/greenhouse-react-education': GREENHOUSE_REACT_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/hidden-asks': HIDDEN_ASKS, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE, '/acknowledgements': ACKNOWLEDGEMENTS, '/sponsorship-policies': SPONSORSHIP_POLICIES, '/sponsorship-policy-pressed': SPONSORSHIP_POLICY_PRESSED, '/sponsorship-policy-aria': SPONSORSHIP_POLICY_ARIA, '/bank-shapes': BANK_SHAPES, '/negated-questions': NEGATED_QUESTIONS, '/not-only-acknowledged': NOT_ONLY_ACKNOWLEDGED, '/signed-without-the-word': SIGNED_WITHOUT_THE_WORD, '/education-wording': EDUCATION_WORDING, '/day-shapes': DAY_SHAPES, '/newsletter-names': NEWSLETTER_NAMES, '/alerts-names': ALERTS_NAMES, '/survey-frame': SURVEY_FRAME, '/names-and-phone': NAMES_AND_PHONE, '/names-and-file': NAMES_AND_FILE, '/german-names': GERMAN_NAMES, '/french-names': FRENCH_NAMES, '/other-names': OTHER_NAMES, '/standard-hints': STANDARD_HINTS, '/localized-dates': LOCALIZED_DATES, '/names-alongside': NAMES_ALONGSIDE, '/handy': HANDY, '/typed-maxlength': TYPED_MAXLENGTH, '/phone-patterned': PHONE_PATTERNED };
 PAGES['/ui5-like'] = UI5_LIKE;
 // The same with the Country label beside its select and naming nothing.
 PAGES['/ui5-like-beside'] = UI5_LIKE.replace('<u-label for="u-co">', '<u-label>');
@@ -13523,6 +13683,128 @@ async function main() {
       'a block somebody began keeps its job, and the empty block above it takes the next one rather than the same',
       JSON.stringify(begunHere.jobs.map((j) => j.company)) === '["Example Co.","Acme Robotics","Globex"]' && begunHere.jobs[1]?.title === 'Backend Engineer Intern',
       JSON.stringify(begunHere),
+    );
+
+
+    group('An "Add Experience" that opens an editor with its own Save');
+    const TWO_JOBS = [
+      { company: 'Example Co.', title: 'Software Engineer Co-op', location: 'Boston, MA', start: { year: 2024, month: 7 }, end: { year: 2024, month: 12 }, current: false, description: 'Built a pipeline.' },
+      { company: 'Northeastern University', title: 'Teaching Assistant', location: 'Boston, MA', start: { year: 2023, month: 9 }, end: { year: 2024, month: 4 }, current: false, description: 'Ran labs.' },
+    ];
+    const editorRun = (query, times = 1) =>
+      page.goto(`${base}/editor-add${query}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, history, times }) => {
+          const m = await import(`${b}/autofill.js`);
+          const fields = { first_name: 'Morgan' };
+          let report;
+          for (let i = 0; i < times; i++) report = await m.fillComboboxes(fields, m.fillForm(fields, { history }), { history, patience: 1500 });
+          await new Promise((r) => setTimeout(r, 100));
+          return { ...window.__readback(), filled: report.filled.map((f) => `${f.key}=${f.value}`), skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`) };
+        }, { b: base, history: TWO_JOBS, times }),
+      );
+    const savedEach = await editorRun('');
+    check(
+      'each job is typed into the editor and kept with its Save, then the next one added',
+      JSON.stringify(savedEach.saved.map((j) => [j.employer, j.title])) === '[["Example Co.","Software Engineer Co-op"],["Northeastern University","Teaching Assistant"]]' &&
+        savedEach.saved[0].start === '07/2024' && savedEach.editing === null,
+      JSON.stringify(savedEach),
+    );
+    check(
+      'and reported filled, with no job said to be missing — and nothing sent',
+      savedEach.filled.includes('job_company=Example Co.') && savedEach.filled.includes('job_company=Northeastern University') &&
+        !savedEach.skipped.some((x) => x.startsWith('work_history')) && savedEach.submitted === 0,
+      JSON.stringify(savedEach),
+    );
+    const editedTwice = await editorRun('', 2);
+    check(
+      'filling again adds no second copy of a job already saved',
+      editedTwice.saved.length === 2 && editedTwice.editing === null && editedTwice.submitted === 0,
+      JSON.stringify(editedTwice),
+    );
+    const submitting = await editorRun('?save=submit');
+    check(
+      'a Save that would send the form is never pressed: the job is said typed in and not saved',
+      submitting.submitted === 0 && !submitting.pressed.includes('save') && submitting.saved.length === 0 &&
+        submitting.editing?.employer === 'Example Co.' &&
+        submitting.skipped.some((x) => /^work_history: Example Co\. is typed in but not saved — press Save/.test(x)) &&
+        !submitting.filled.some((x) => x.startsWith('job_')),
+      JSON.stringify(submitting),
+    );
+    const unsaveable = await editorRun('?nosave');
+    check(
+      'an editor with no Save is not closed with its Cancel, and the job is said not saved, the next not entered',
+      unsaveable.submitted === 0 && !unsaveable.pressed.includes('cancel') && unsaveable.pressed.filter((x) => x === 'add').length === 1 &&
+        unsaveable.skipped.some((x) => /^work_history: Example Co\. is typed in but not saved/.test(x)) &&
+        unsaveable.skipped.some((x) => /^work_history: 1 job not entered: Northeastern University/.test(x)),
+      JSON.stringify(unsaveable),
+    );
+
+
+    group('Editors drawn beside a header, and in a dialog, for jobs and schools');
+    const ONE_SCHOOL = [{ school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science', start: { year: 2022, month: 9 }, end: { year: 2026, month: 5 }, gpa: '3.8' }];
+    const kindsRun = (query, times = 1) =>
+      page.goto(`${base}/editor-kinds${query}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, history, education, times }) => {
+          const m = await import(`${b}/autofill.js`);
+          const fields = { first_name: 'Morgan', school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science' };
+          let report;
+          for (let i = 0; i < times; i++) {
+            report = await m.fillEducation(education, fields, await m.fillComboboxes(fields, m.fillForm(fields, { history }), { history, patience: 1500 }), { patience: 1500 });
+          }
+          await new Promise((r) => setTimeout(r, 100));
+          return { ...window.__readback(), filled: report.filled.map((f) => `${f.key}=${f.value}`), skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`) };
+        }, { b: base, history: TWO_JOBS.slice(0, 1), education: ONE_SCHOOL, times }),
+      );
+    const header = await kindsRun('?header');
+    check(
+      'an editor beside its header, its Add taken away while open, is filled and saved — the job and the school',
+      header.jobs.length === 1 && header.jobs[0].company === 'Example Co.' && header.jobs[0].start === '07/2024' &&
+        header.schools.length === 1 && header.schools[0].school === 'Northeastern University' && header.open === 0 &&
+        !header.log.includes('SUBMIT') && !header.skipped.some((x) => /^(school|work_history):/.test(x)),
+      JSON.stringify(header),
+    );
+    const headerTwice = await kindsRun('?header', 2);
+    check('and filling again adds neither a second time', headerTwice.jobs.length === 1 && headerTwice.schools.length === 1 && headerTwice.open === 0, JSON.stringify(headerTwice));
+    const inDialog = await kindsRun('?dialog');
+    check(
+      'a dialog an Add opens is filled — its month and year lists too — and saved, and nothing is left open',
+      inDialog.jobs.length === 1 && inDialog.jobs[0].company === 'Example Co.' && inDialog.jobs[0].sm === 'July' && inDialog.jobs[0].ey === '2024' &&
+        inDialog.schools.length === 1 && inDialog.schools[0].school === 'Northeastern University' && inDialog.open === 0 && !inDialog.log.includes('SUBMIT') &&
+        inDialog.filled.includes('job_company=Example Co.') && !inDialog.skipped.some((x) => /^(school|work_history):/.test(x)),
+      JSON.stringify(inDialog),
+    );
+    const odd = await kindsRun('?dialog&odd');
+    check(
+      'a dialog that asks nothing a school answers is shut with its Cancel, not left open and empty',
+      odd.jobs.length === 1 && odd.schools.length === 0 && odd.open === 0 && odd.log.includes('cancel school') && !odd.log.includes('SUBMIT') &&
+        odd.skipped.some((x) => /^school: the form would not add another/.test(x)),
+      JSON.stringify(odd),
+    );
+
+    group('A long form fills in time that grows with the form, not its square');
+    const long = await page.goto(`${base}/long-form`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { first_name: 'Morgan', last_name: 'Testwell', email: 'morgan@example.com', phone: '555-0100', address_city: 'Boston', address_country: 'United States' };
+        let t = performance.now();
+        m.choiceQuestions();
+        m.typedQuestions(fields, 'Meridian');
+        const questions = performance.now() - t;
+        t = performance.now();
+        const report = m.fillForm(fields, { remembered: [], history: [], company: 'Meridian' });
+        const fill = performance.now() - t;
+        await new Promise((r) => setTimeout(r, 0));
+        t = performance.now();
+        const asked = m.findQuestions().map((q) => m.isRequired(q.fieldId));
+        const watch = performance.now() - t;
+        return { questions, fill, watch, filled: report.filled.length, asked: asked.length };
+      }, { b: base }),
+    );
+    // Measured before: 1.8s, 4.3s and 0.5s; after, a tenth of that. Bounds far above the after.
+    check(
+      'reading, filling and re-reading the questions of a 420-field form each take well under two seconds',
+      long.filled > 50 && long.asked > 50 && long.questions < 1500 && long.fill < 2000 && long.watch < 400,
+      JSON.stringify(long),
     );
 
     /* ------- A question read as what it asks, not as its answers or its hints ------- */
