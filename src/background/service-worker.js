@@ -272,8 +272,78 @@ function notPaired(serverUrl, cause) {
   const err = new Error(NOT_PAIRED_MESSAGE, cause ? { cause } : undefined);
   err.kind = 'not-paired';
   err.status = 403;
-  err.jobhelper = { fix: 'pair', serverUrl: `${serverUrl.replace(/\/$/, '')}/#pair` };
+  err.jobhelper = { fix: 'pair', serverUrl: `${serverUrl.replace(/\/$/, '')}/#pair`, codeUrl: pairCodeUrl(serverUrl) };
   return err;
+}
+
+/**
+ * The editor's pairing section, with a fresh code already made.
+ *
+ * What "Get a code" opens, beside the code box on the card, the popup and
+ * the side panel. The editor reads `make=1` and presses its own "Make a
+ * code" (see `arriveToPair` in ResumeM-M's web/app.js), so the person only
+ * reads the code off it. The code is still made by the editor's request,
+ * not by this link: ResumeM-M answers that route for its own page alone.
+ */
+function pairCodeUrl(serverUrl) {
+  return `${serverUrl.replace(/\/$/, '')}/#save/pair?make=1`;
+}
+
+/*
+ * One pairing exchange at a time, for every tab.
+ *
+ * The code box is wherever the request failed — a card on each job page
+ * that was open, the popup, the side panel — so the same code can be
+ * pressed in two of them at once, or pasted into one while another is
+ * still waiting. Each exchange the store sees is a try: two of the same
+ * right code would spend it on the first and call the second wrong, and two
+ * of the same wrong code would cost two of the extension's five tries. So
+ * the exchange is held here: the same code again joins the one in the air,
+ * and a different code waits for it — and is not sent at all if that one
+ * paired.
+ *
+ * When one pairs, every tab hears it (`jh-paired`), so a card waiting for a
+ * code on another job page carries on without being asked again.
+ */
+let pairingNow = null;
+const PAIR_LATER_PREFIX = 'jh-pair-later:';
+
+async function pairOnce(code) {
+  const said = String(code ?? '').trim();
+  if (!said) throw new Error('Enter the code ResumeM-M is showing under Save & Files → Pair JobHelper.');
+  const key = said.toUpperCase().replace(/[\s-]/g, '');
+  for (let now = pairingNow; now; now = pairingNow) {
+    if (now.key === key) return now.run;
+    if (await now.run.then(() => true, () => false)) return { paired: true, already: true };
+    // Its own `finally` may not have run yet; it is over either way.
+    if (pairingNow === now) pairingNow = null;
+  }
+  const run = (async () => {
+    const { serverUrl } = await getSettings();
+    const reply = await serverFetch('/api/extension/pair', { method: 'POST', body: JSON.stringify({ code: said }) });
+    if (typeof reply?.token !== 'string' || !reply.token) throw new Error('ResumeM-M did not hand back a pairing.');
+    await rememberPairing(serverUrl, reply.token);
+    await pairedEverywhere();
+    return { paired: true };
+  })();
+  const mine = { key, run };
+  pairingNow = mine;
+  try {
+    return await run;
+  } finally {
+    if (pairingNow === mine) pairingNow = null;
+  }
+}
+
+/** Every tab's card told it is paired now, and every "Not now" let go of. */
+async function pairedEverywhere() {
+  const all = await session().get(null).catch(() => ({}));
+  const later = Object.keys(all ?? {}).filter((k) => k.startsWith(PAIR_LATER_PREFIX));
+  if (later.length) await session().remove(later).catch(() => undefined);
+  const tabs = await chrome.tabs.query({}).catch(() => []);
+  await Promise.all(
+    tabs.map((t) => chrome.tabs.sendMessage(t.id, { type: 'jh-paired' }, { frameId: 0 }).catch(() => undefined)),
+  );
 }
 
 async function serverFetch(path, options = {}) {
@@ -2953,13 +3023,54 @@ const handlers = {
    * that has run out — are already sentences, and are passed on as they are.
    */
   async pair({ code } = {}) {
-    const said = String(code ?? '').trim();
-    if (!said) throw new Error('Enter the code ResumeM-M is showing under Save & Files → Pair JobHelper.');
+    return pairOnce(code);
+  },
+
+  /*
+   * The same, from the code box on a job page's card.
+   *
+   * `pair` is for the extension's own pages, and a card runs in whatever
+   * page it is on. What lets the card have this too is that the page cannot
+   * reach the box: the card's root is closed and refuses every event a
+   * person did not raise (see `refuseUntrusted` in card.js), so a page can
+   * neither read the code typed there nor press Pair to spend this
+   * extension's tries. A code is one use, made in the editor, and pairs
+   * this extension with the server it is already set to — there is nothing
+   * in it a page could point elsewhere. Only from a tab's top frame, which
+   * is where the card is.
+   */
+  async pairFromCard({ code } = {}, tab, sender) {
+    if (!tab || sender?.frameId !== 0) throw new Error('Pairing is done from the card on the page, or from the popup.');
+    return pairOnce(code);
+  },
+
+  /*
+   * "Not now" on the card's code box, for this tab: the box stays down on
+   * every page the tab goes to until it is asked for again, or something
+   * pairs. Read with no `later`, it only says which it is.
+   */
+  async pairLater({ later } = {}, tab) {
+    if (typeof tab?.id !== 'number') return { later: false };
+    const key = `${PAIR_LATER_PREFIX}${tab.id}`;
+    if (later === true) await session().set({ [key]: Date.now() }).catch(() => undefined);
+    else if (later === false) await session().remove(key).catch(() => undefined);
+    else return { later: Boolean((await session().get(key).catch(() => ({})))[key]) };
+    return { later: later === true };
+  },
+
+  /**
+   * "Get a code": the editor, in a new tab beside this one, at its pairing
+   * section with a code already made. The address is the worker's to build,
+   * from the server it is set to; the card names nothing.
+   */
+  async openPairCode(_payload, tab) {
     const { serverUrl } = await getSettings();
-    const reply = await serverFetch('/api/extension/pair', { method: 'POST', body: JSON.stringify({ code: said }) });
-    if (typeof reply?.token !== 'string' || !reply.token) throw new Error('ResumeM-M did not hand back a pairing.');
-    await rememberPairing(serverUrl, reply.token);
-    return { paired: true };
+    const opened = await chrome.tabs.create({
+      url: pairCodeUrl(serverUrl),
+      ...(typeof tab?.index === 'number' ? { index: tab.index + 1 } : {}),
+      ...(typeof tab?.id === 'number' ? { openerTabId: tab.id } : {}),
+    });
+    return { id: opened.id };
   },
 
   /**

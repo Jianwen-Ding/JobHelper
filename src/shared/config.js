@@ -129,8 +129,8 @@ export const PAIR_HEADER = 'X-RMM-Pair';
 
 /** Where somebody pairs, and what to tell them. */
 export const NOT_PAIRED_MESSAGE =
-  'JobHelper is not paired with ResumeM-M yet. Open ResumeM-M → Save & Files → Pair JobHelper, ' +
-  'and enter the code in JobHelper’s popup.';
+  'JobHelper is not paired with ResumeM-M yet. Get a code from ResumeM-M → Save & Files → Pair JobHelper, ' +
+  'and enter it in JobHelper: the code box on its card, or in its popup.';
 
 const serverKey = (serverUrl) => {
   try {

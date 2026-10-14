@@ -316,6 +316,32 @@ button:disabled:hover { background: #fff; border-color: var(--line); }
   border-radius: 8px; color: var(--ink);
 }
 .branch .row { margin-top: 6px; }
+/*
+ * The code box, when ResumeM-M refuses this extension for not being paired.
+ * Above the body like the strip below it, so whichever view the card is on
+ * it is the first thing there. See \`drawPairing\`.
+ */
+.pair-block {
+  margin: 8px 12px 0; padding: 9px 10px; font-size: 12.5px; flex: 0 0 auto;
+  background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 8px; color: var(--ink);
+}
+.pair-block.done { background: var(--good-bg); border-color: var(--good-line); }
+.pair-block .pair-what { line-height: 1.45; }
+.pair-block .pair-row { margin-top: 7px; flex-wrap: nowrap; }
+.pair-block .pair-row button { flex: 0 0 auto; }
+input.pair-code {
+  flex: 1 1 96px; min-width: 0; width: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: #fff; color: var(--ink); font: 500 14px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase;
+}
+input.pair-code::placeholder { color: var(--faint); letter-spacing: .08em; }
+input.pair-code:focus-visible, input.pair-code:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
+.pair-said { margin-top: 6px; font-size: 12px; line-height: 1.45; color: var(--ink-soft); }
+.pair-said:empty { display: none; }
+.pair-said.bad { color: var(--bad); }
+.pair-said.ok { color: #137333; margin-top: 0; font-weight: 500; }
+.pair-block .pair-foot { justify-content: flex-end; margin-top: 2px; }
+.err.pair-later { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px; }
+.err.pair-later button.link { color: var(--bad); text-decoration: underline; padding: 0 2px; }
 /* The same strip, asked from above the body: see \`drawSentQuestion\`. */
 .branch.sent-question { margin: 8px 12px 0; flex: 0 0 auto; }
 /*
@@ -1422,6 +1448,18 @@ export function createCard({
     render: null,
     busy: null,
     error: null,
+    /**
+     * The code box, while ResumeM-M refuses this extension for not being
+     * paired. See `drawPairing`: what was typed, what the last try was told,
+     * and what to do again once it pairs.
+     */
+    pairing: null,
+    /**
+     * "Not now" said to that box on this tab, as the worker keeps it.
+     * Unknown until asked, and the box waits for the answer rather than
+     * flashing up on a tab where it was put away.
+     */
+    pairLater: undefined,
     bundle: null,
     view: 'propose',
     /**
@@ -3446,6 +3484,8 @@ export function createCard({
       state.errorFix = err.jobhelper ?? null;
       // This button's failure, not the page's. See `drawError`.
       state.passFailed = false;
+      // Refused for not being paired: the code box, and this press again once it is.
+      if (err.jobhelper?.fix === 'pair') needPairing({ action, payload, apply });
       return null;
     } finally {
       running.delete(action);
@@ -3728,6 +3768,206 @@ export function createCard({
         textContent: '×',
         onclick: () => closeCard(),
       }),
+    ]);
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Pairing, where the person is                                      *
+   * ---------------------------------------------------------------- */
+
+  /*
+   * ResumeM-M answers only the JobHelper it has been paired with, and a
+   * request refused for that used to end in a sentence: open ResumeM-M, find
+   * Save & Files → Pair JobHelper, make a code, then open this extension's
+   * toolbar popup and type it there. Four places, none of them this one.
+   *
+   * So the code box comes to the card, at the top, the moment a request is
+   * refused for not being paired — the page's own read, or any button. Typed
+   * in here, the worker pairs (one exchange for every tab; see `pairOnce`)
+   * and what was refused is done again, so the person carries on where they
+   * were. "Get a code" opens ResumeM-M on a code already made. "Not now" puts
+   * it away for this tab, leaving a line with the way back to it.
+   *
+   * Only for "not paired". A store that is not running keeps its own
+   * sentence and its own button: no code would help with that.
+   */
+  const pairingShown = () => Boolean(state.pairing) && state.pairLater === false;
+  /** Refused for not being paired, and not yet on the way past it. */
+  const waitingToPair = () => state.errorFix?.fix === 'pair' && !state.pairing?.done;
+
+  /** Refused for not being paired; `retry` is what to do again once it is. */
+  function needPairing(retry) {
+    const was = state.pairing;
+    if (!was || was.done) {
+      state.pairing = { code: '', busy: false, said: '', tone: '', retry, focus: true };
+    } else if (!(was.retry?.pass && !analysis)) {
+      // The newest refusal is the one to repeat — unless the page itself has
+      // not been read, which every other button needs first.
+      was.retry = retry;
+    }
+    if (state.pairLater === undefined) {
+      state.pairLater = null;
+      Promise.resolve(onAction('pairLater', {}))
+        .then((r) => { state.pairLater = Boolean(r?.later); })
+        .catch(() => { state.pairLater = false; })
+        .finally(() => draw());
+    }
+  }
+
+  /** Put focus in the code box, unless somebody is typing somewhere on the page. */
+  function focusPairBox(select) {
+    const box = card.querySelector('input.pair-code');
+    if (!box) return;
+    const elsewhere = document.activeElement;
+    const free = !elsewhere || elsewhere === document.body || elsewhere === document.documentElement || elsewhere === host;
+    if (!free) return;
+    box.focus({ preventScroll: true });
+    if (select) box.select();
+  }
+
+  async function pairNow() {
+    const p = state.pairing;
+    if (!p || p.busy || p.done) return;
+    const code = p.code.trim();
+    if (!code) {
+      p.said = 'Type the code ResumeM-M is showing, or press “Get a code”.';
+      p.tone = 'bad';
+      p.focus = true;
+      draw();
+      return;
+    }
+    p.busy = true;
+    p.said = '';
+    draw();
+    try {
+      await onAction('pair', { code });
+    } catch (err) {
+      p.busy = false;
+      // The store's own sentence: a wrong code says how many tries are left.
+      p.said = err.message;
+      p.tone = 'bad';
+      p.focus = true;
+      p.select = true;
+      if (state.pairing === p) draw();
+      return;
+    }
+    p.busy = false;
+    if (state.pairing === p) await carryOnPaired();
+  }
+
+  /** Paired: say so where the box was, and do again what was refused. */
+  async function carryOnPaired() {
+    const p = state.pairing;
+    if (!p || p.done) return;
+    const retry = p.retry;
+    p.done = true;
+    p.busy = false;
+    p.tone = 'ok';
+    p.said = retry ? 'Paired — retrying…' : 'Paired with ResumeM-M.';
+    state.pairLater = false;
+    draw();
+    announce('Paired with ResumeM-M.');
+    // Read once on open, while the store said nothing about its AI to an
+    // extension it had not paired with. See `drawAiChip`.
+    Promise.resolve(onAction('aiStatus', {}))
+      .then((status) => {
+        if (status) state.ai = status;
+        draw();
+      })
+      .catch(() => undefined);
+    try {
+      if (retry?.action) await act(retry.action, retry.payload, retry.apply);
+      else if (retry?.pass) await act('retry', {});
+      else await new Promise((r) => setTimeout(r, 1500));
+    } finally {
+      // Not if that was refused again: it put up a box of its own.
+      if (state.pairing === p) {
+        state.pairing = null;
+        draw();
+      }
+    }
+  }
+
+  function drawPairing() {
+    const p = state.pairing;
+    if (!p || !pairingShown()) return null;
+    if (p.focus) {
+      const select = Boolean(p.select);
+      p.focus = false;
+      p.select = false;
+      // After this draw has put the box on the page, and its own focus back.
+      queueMicrotask(() => focusPairBox(select));
+    }
+    const said = h('div', { className: `pair-said ${p.tone}`.trim(), role: 'status', textContent: p.said });
+    if (p.done) return h('div', { className: 'pair-block done' }, [said]);
+    return h('div', { className: 'pair-block', role: 'group', 'aria-label': 'Pair JobHelper with ResumeM-M' }, [
+      h('div', { className: 'pair-what', textContent: 'JobHelper isn’t paired with ResumeM-M yet. Enter the code ResumeM-M shows to carry on.' }),
+      h('div', { className: 'row pair-row' }, [
+        h('input', {
+          className: 'pair-code',
+          type: 'text',
+          value: p.code,
+          placeholder: 'ABCD-EFGH',
+          maxLength: 12,
+          autocomplete: 'off',
+          spellcheck: false,
+          disabled: p.busy,
+          'aria-label': 'Pairing code from ResumeM-M',
+          dataset: { field: 'pair-code' },
+          // Letters, digits, and the space or dash people put in the middle.
+          oninput: (event) => {
+            const box = event.target;
+            const kept = box.value.replace(/[^A-Za-z0-9\s-]/g, '');
+            if (kept !== box.value) {
+              const at = Math.max(0, (box.selectionStart ?? kept.length) - (box.value.length - kept.length));
+              box.value = kept;
+              box.setSelectionRange(at, at);
+            }
+            p.code = kept;
+          },
+          onkeydown: (event) => {
+            if (event.key === 'Enter' && !composing(event)) {
+              event.preventDefault();
+              void pairNow();
+            }
+          },
+        }),
+        h('button', {
+          className: 'primary',
+          dataset: { focus: 'pair' },
+          textContent: p.busy ? 'Pairing…' : 'Pair',
+          disabled: p.busy,
+          onclick: () => void pairNow(),
+        }),
+        h('button', {
+          dataset: { focus: 'pair-get' },
+          textContent: 'Get a code',
+          title: 'Opens ResumeM-M in a new tab, with a code already made',
+          onclick: () => {
+            p.said = 'ResumeM-M opened in a new tab with a code. Type or paste it here.';
+            p.tone = '';
+            draw();
+            Promise.resolve(onAction('getPairCode', {})).catch((err) => {
+              p.said = err.message;
+              p.tone = 'bad';
+              draw();
+            });
+          },
+        }),
+      ]),
+      said,
+      h('div', { className: 'row pair-foot' }, [
+        h('button', {
+          className: 'tiny',
+          textContent: 'Not now',
+          title: 'Put this away on this tab. The card keeps a link to it.',
+          onclick: () => {
+            state.pairLater = true;
+            draw();
+            Promise.resolve(onAction('pairLater', { later: true })).catch(() => undefined);
+          },
+        }),
+      ]),
     ]);
   }
 
@@ -7597,10 +7837,34 @@ export function createCard({
      * once no error is showing (see `draw`), so the same failure twice is
      * said twice; it is declared with `said`, above, since `draw` reads it.
      */
+    const fix = state.errorFix;
+    // The code box above says it, and is the way past it. See `drawPairing`.
+    if (fix?.fix === 'pair' && state.pairing && state.pairLater !== true) return null;
     const fresh = state.error !== alertedError;
     alertedError = state.error;
+    /*
+     * Put away with "Not now": one line, and the way back to the box. The
+     * worker's sentence names the popup, which is true and further away
+     * than the card the person is looking at.
+     */
+    if (fix?.fix === 'pair') {
+      return h('div', { className: 'err pair-later', role: fresh ? 'alert' : null }, [
+        h('span', { textContent: 'JobHelper isn’t paired with ResumeM-M. ' }),
+        h('button', {
+          className: 'link',
+          dataset: { focus: 'pair-again' },
+          textContent: 'Pair JobHelper',
+          onclick: () => {
+            state.pairLater = false;
+            if (state.pairing) state.pairing.focus = true;
+            else state.pairing = { code: '', busy: false, said: '', tone: '', retry: { pass: true }, focus: true };
+            draw();
+            Promise.resolve(onAction('pairLater', { later: false })).catch(() => undefined);
+          },
+        }),
+      ]);
+    }
     const box = h('div', { className: 'err', role: fresh ? 'alert' : null }, [h('div', { textContent: state.error })]);
-    const fix = state.errorFix;
     if (!fix) return box;
 
     box.append(
@@ -8712,7 +8976,7 @@ export function createCard({
     card.classList.toggle('reduced-card', small);
     if (!state.error) alertedError = null;
     card.replaceChildren(
-      ...[drawHead(), drawSentQuestion()].filter(Boolean),
+      ...[drawHead(), drawPairing(), drawSentQuestion()].filter(Boolean),
       /*
        * Folded, the card is its header and one line saying what it is the
        * header for. The line matters: a bar reading only "JobHelper" over
@@ -9127,8 +9391,12 @@ export function createCard({
         h('div', { className: 'role provisional', textContent: provisionalRole(document.title) }),
         h('div', { className: 'co', textContent: location.hostname }),
       ]),
-      h('div', { className: 'progress' }),
-      h('div', { className: 'progress-label', textContent: 'Reading the posting…' }),
+      // Not "Reading…" over a read that is waiting for a code: see `drawPairing`.
+      waitingToPair() ? null : h('div', { className: 'progress' }),
+      h('div', {
+        className: 'progress-label',
+        textContent: waitingToPair() ? 'Read once JobHelper is paired.' : 'Reading the posting…',
+      }),
       state.error ? drawError() : null,
     ].filter(Boolean));
   }
@@ -9597,7 +9865,23 @@ export function createCard({
       // Only the page's pass says something with a way out through here, so
       // that is what "Try again" should run. See `drawError`.
       state.passFailed = Boolean(fix);
+      // The page's read refused for not being paired: the whole pass again, once it is.
+      if (fix?.fix === 'pair') needPairing({ pass: true });
       draw();
+    },
+
+    /*
+     * Paired, here or in another tab: the worker tells every tab. A card
+     * waiting on a code carries on with what was refused, and one whose box
+     * was put away with "Not now" does too — the reason for it has gone.
+     */
+    paired() {
+      state.pairLater = false;
+      if (state.pairing && !state.pairing.done) carryOnPaired();
+      else if (!state.pairing && state.errorFix?.fix === 'pair') {
+        state.pairing = { code: '', busy: false, said: '', tone: '', retry: state.passFailed ? { pass: true } : null };
+        carryOnPaired();
+      }
     },
 
     /*

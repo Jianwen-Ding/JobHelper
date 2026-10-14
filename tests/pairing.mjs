@@ -73,6 +73,23 @@ async function main() {
     await popup.goto(`chrome-extension://${id}/src/popup/popup.html`);
     const shown = await waitFor(() => popup.isVisible('#pairing'));
     check('the popup asks for the code', Boolean(shown));
+    /*
+     * Open, at the top, with the caret in it: the popup is where somebody
+     * goes because something said "not paired", and the code is in their
+     * clipboard by then.
+     */
+    const focused = await waitFor(() => popup.evaluate(() => document.activeElement?.id === 'pairCode' || undefined));
+    check('with the caret in the code box, so the code can be pasted at once', Boolean(focused), await popup.evaluate(() => document.activeElement?.id));
+    const getCode = await popup.textContent('#pairOpen');
+    check('and "Get a code" beside it', getCode?.trim() === 'Get a code', getCode);
+    const opened = context.waitForEvent('page', { timeout: 10_000 }).catch(() => null);
+    await popup.click('#pairOpen');
+    const codeTab = await opened;
+    check('which opens the editor at its pairing section, asking for a code', codeTab?.url() === `${SERVER}/#save/pair?make=1` || /#pair$/.test(codeTab?.url() ?? ''), codeTab?.url());
+    await codeTab?.waitForSelector('#pair-code', { timeout: 15_000 }).catch(() => null);
+    const madeThere = await codeTab?.textContent('#pair-code').catch(() => null);
+    check('and shows a code made for it', /^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(madeThere ?? ''), madeThere);
+    await codeTab?.close();
     const what = await popup.textContent('#pairingWhat');
     check('and says where the code is', /Save & Files → Pair JobHelper/.test(what ?? ''), what);
     const status = await popup.textContent('#status');

@@ -7811,6 +7811,181 @@ async function main() {
   const older = await fitSaid({ pages: 1, fits: true });
   check('a server that does not say how many were allowed is taken to allow one', older === 'Fits on one page.', older);
 
+  console.log('\nPairing, on the card');
+
+  /*
+   * ResumeM-M refusing this extension for not being paired used to end in a
+   * sentence pointing at four other places. The code box comes to the card
+   * now: put up by the refusal, it pairs, and does again what was refused.
+   * The harness's `onAction` stands in for the worker: `pair` takes one code,
+   * and says how many tries are left for any other, as ResumeM-M does.
+   */
+  const pairingRun = (body, given) =>
+    inPage(
+      new Function(
+        'createCard',
+        'given',
+        `return (async () => {
+          const calls = [];
+          const held = {};
+          const NOT_PAIRED = 'JobHelper is not paired with ResumeM-M yet.';
+          const pairFix = { fix: 'pair', serverUrl: 'http://127.0.0.1:4600/#pair', codeUrl: 'http://127.0.0.1:4600/#save/pair?make=1' };
+          const refused = () => Object.assign(new Error(NOT_PAIRED), { jobhelper: pairFix });
+          const state = { paired: false, later: Boolean(given && given.later), renderRefusals: 1 };
+          const handle = createCard({
+            analysis: given && given.analysed
+              ? { isJobPosting: true, job: { title: 'Platform Engineer', company: 'Acme' }, spec: { id: 'job-acme', label: 'Acme', tier: 'temporary' }, rationale: [] }
+              : null,
+            resumes: [{ id: 'base', label: 'New grad', base: true }],
+            settings: {},
+            questions: [],
+            needsCoverLetter: false,
+            onAction: async (action, payload) => {
+              calls.push([action, payload ?? null]);
+              if (action === 'pairLater') {
+                if (payload && payload.later !== undefined) state.later = payload.later;
+                return { later: state.later };
+              }
+              if (action === 'pair') {
+                if (String(payload.code).toUpperCase().replace(/[\\s-]/g, '') !== 'GOODCODE') {
+                  throw new Error('That is not the code ResumeM-M is showing. 4 tries left.');
+                }
+                state.paired = true;
+                return { paired: true };
+              }
+              if (action === 'retry') return new Promise((r) => (held.retry = r));
+              if (action === 'render') {
+                if (state.renderRefusals-- > 0) throw refused();
+                return { pages: 1, fits: true, maxPages: 1, pdfUrl: '/x.pdf' };
+              }
+              if (action === 'aiStatus') return { active: false, state: 'off' };
+              return {};
+            },
+          });
+          const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+          const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+          const q = (sel) => root.querySelector(sel);
+          const button = (re) => [...root.querySelectorAll('button')].find((b) => re.test(b.textContent.trim()));
+          const type = (text) => {
+            const box = q('input.pair-code');
+            box.value = text;
+            box.dispatchEvent(new Event('input', { bubbles: true }));
+          };
+          return (${body})({ handle, root, calls, held, state, wait, q, button, type, NOT_PAIRED, pairFix });
+        })()`,
+      ),
+      given,
+    );
+
+  const unpairedRead = await pairingRun(async ({ handle, root, calls, held, wait, q, button, type, NOT_PAIRED, pairFix }) => {
+    const out = {};
+    handle.setStatus(NOT_PAIRED, pairFix);
+    await wait(50);
+    out.block = Boolean(q('.pair-block input.pair-code'));
+    out.focused = root.activeElement?.className ?? null;
+    out.redStrip = Boolean(q('.err'));
+    out.getCode = Boolean(button(/^Get a code$/));
+    out.label = q('.progress-label')?.textContent ?? null;
+    // A wrong code: the store's sentence, with the tries left, and the box stays.
+    type('wrongcod');
+    button(/^Pair$/).click();
+    await wait(50);
+    out.wrong = q('.pair-said')?.textContent ?? null;
+    out.stillUp = Boolean(q('.pair-block input.pair-code'));
+    out.retriedEarly = calls.some(([a]) => a === 'retry');
+    // The right one, as people type it, sent with Enter.
+    type('good-code');
+    q('input.pair-code').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await wait(50);
+    out.during = q('.pair-block')?.textContent ?? null;
+    out.sent = calls.filter(([a]) => a === 'pair').map(([, p]) => p.code);
+    out.retried = calls.filter(([a]) => a === 'retry').length;
+    held.retry?.({});
+    await wait(50);
+    out.after = Boolean(q('.pair-block'));
+    return out;
+  });
+  check('a read refused for not being paired puts the code box on the card', unpairedRead.block === true, JSON.stringify(unpairedRead));
+  check('with "Get a code" beside it', unpairedRead.getCode === true);
+  check('and the box has the caret', unpairedRead.focused === 'pair-code', String(unpairedRead.focused));
+  check('instead of the red strip saying the same', unpairedRead.redStrip === false);
+  check('and not "Reading the posting…" over a read that is waiting', !/Reading the posting/.test(unpairedRead.label ?? ''), unpairedRead.label);
+  check('a wrong code says how many tries are left', /4 tries left/.test(unpairedRead.wrong ?? ''), unpairedRead.wrong);
+  check('and keeps the box up, with nothing tried again', unpairedRead.stillUp === true && unpairedRead.retriedEarly === false);
+  check('the right code is sent as typed', JSON.stringify(unpairedRead.sent) === JSON.stringify(['wrongcod', 'good-code']), JSON.stringify(unpairedRead.sent));
+  check('says "Paired — retrying…" where the box was', /Paired — retrying…/.test(unpairedRead.during ?? ''), unpairedRead.during);
+  check('and reads the page again, once', unpairedRead.retried === 1, String(unpairedRead.retried));
+  check('and the box goes once it has', unpairedRead.after === false);
+
+  const refusedPress = await pairingRun(async ({ calls, wait, q, button, type }) => {
+    const out = {};
+    await wait(100);
+    button(/^Build resume$/).click();
+    await wait(100);
+    out.block = Boolean(q('.pair-block input.pair-code'));
+    type('GOODCODE');
+    button(/^Pair$/).click();
+    await wait(300);
+    out.renders = calls.filter(([a]) => a === 'render').length;
+    out.after = Boolean(q('.pair-block'));
+    out.error = q('.err')?.textContent ?? null;
+    return out;
+  }, { analysed: true });
+  check('a button refused for not being paired puts the box up too', refusedPress.block === true, JSON.stringify(refusedPress));
+  check('and is pressed again once paired, so the person carries on', refusedPress.renders === 2 && refusedPress.after === false && !refusedPress.error, JSON.stringify(refusedPress));
+
+  const notNow = await pairingRun(async ({ handle, calls, wait, q, button, NOT_PAIRED, pairFix }) => {
+    const out = {};
+    handle.setStatus(NOT_PAIRED, pairFix);
+    await wait(50);
+    button(/^Not now$/).click();
+    await wait(50);
+    out.block = Boolean(q('.pair-block'));
+    out.told = calls.filter(([a, p]) => a === 'pairLater' && p && p.later === true).length;
+    out.line = q('.err.pair-later')?.textContent ?? null;
+    button(/^Pair JobHelper$/).click();
+    await wait(50);
+    out.back = Boolean(q('.pair-block input.pair-code'));
+    out.untold = calls.filter(([a, p]) => a === 'pairLater' && p && p.later === false).length;
+    return out;
+  });
+  check('"Not now" takes the box away', notNow.block === false, JSON.stringify(notNow));
+  check('and tells the worker, for this tab', notNow.told === 1);
+  check('leaving a line with "Pair JobHelper" on it', /isn’t paired/.test(notNow.line ?? '') && /Pair JobHelper/.test(notNow.line ?? ''), notNow.line);
+  check('which brings the box back', notNow.back === true && notNow.untold === 1);
+
+  const laterTab = await pairingRun(async ({ handle, wait, q, NOT_PAIRED, pairFix }) => {
+    handle.setStatus(NOT_PAIRED, pairFix);
+    await wait(50);
+    return { block: Boolean(q('.pair-block')), line: Boolean(q('.err.pair-later')) };
+  }, { later: true });
+  check('on a tab where it was put away, the next refusal does not put it up again', laterTab.block === false && laterTab.line === true, JSON.stringify(laterTab));
+
+  const elsewhere = await pairingRun(async ({ handle, calls, held, wait, q, NOT_PAIRED, pairFix }) => {
+    handle.setStatus(NOT_PAIRED, pairFix);
+    await wait(50);
+    // Paired in another tab: the worker tells this one.
+    handle.paired();
+    await wait(20);
+    const out = { during: q('.pair-block')?.textContent ?? null };
+    held.retry?.({});
+    await wait(50);
+    out.after = Boolean(q('.pair-block'));
+    out.pairs = calls.filter(([a]) => a === 'pair').length;
+    out.retries = calls.filter(([a]) => a === 'retry').length;
+    return out;
+  });
+  check('paired from another tab, the card carries on without asking for a code', elsewhere.pairs === 0 && elsewhere.retries === 1 && elsewhere.after === false, JSON.stringify(elsewhere));
+  check('and says it is paired meanwhile', /Paired/.test(elsewhere.during ?? ''), elsewhere.during);
+
+  const down = await pairingRun(async ({ handle, calls, wait, q }) => {
+    handle.setStatus('ResumeM-M is not open. Start it, then try again.', { fix: 'start-server', serverUrl: 'http://127.0.0.1:4600' });
+    await wait(50);
+    return { block: Boolean(q('.pair-block')), error: q('.err')?.textContent ?? null, asked: calls.some(([a]) => a === 'pairLater') };
+  });
+  check('a store that is not running does not put the code box up', down.block === false && down.asked === false, JSON.stringify(down));
+  check('and keeps its own sentence and button', /not open/.test(down.error ?? '') && /Open ResumeM-M/.test(down.error ?? ''), down.error);
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);

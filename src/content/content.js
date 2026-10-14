@@ -1592,6 +1592,20 @@
       case 'retry':
         return show({ force: true });
 
+      /*
+       * Pairing, from the code box the card puts up when ResumeM-M refuses
+       * this extension. The worker holds the exchange, so a code pressed on
+       * two cards at once is sent once; see `pairOnce`.
+       */
+      case 'pair':
+        return send('pairFromCard', { code: payload.code });
+      /** "Not now" on that box, for this tab; with no `later`, whether it was said. */
+      case 'pairLater':
+        return send('pairLater', payload.later === undefined ? {} : { later: Boolean(payload.later) });
+      /** "Get a code": the editor's pairing section, with a code made. */
+      case 'getPairCode':
+        return send('openPairCode', {});
+
       /** Send the user to ResumeM-M, when that is what the card is offering. */
       case 'openTab':
         return send('openTab', { url: payload.url });
@@ -3333,6 +3347,15 @@
      * is already a card, it will pick the frame up on its own; if there is
      * not, this is the only notice there will ever be.
      */
+    /*
+     * Paired, from this tab's card or from anywhere else: a card waiting on
+     * a code carries on with what it was doing, without asking again.
+     */
+    if (message?.type === 'jh-paired') {
+      cardHandle?.paired?.();
+      sendResponse({ ok: true });
+      return false;
+    }
     if (message?.type === 'jh-application-frame') {
       if (!cardHandle && !dismissed) show({ viaFrame: true }).catch(() => undefined);
       sendResponse({ ok: true });

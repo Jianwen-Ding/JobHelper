@@ -25,7 +25,7 @@
  * active tab of that window and `?tab=<id>` stays on one tab.
  */
 
-import { getSettings, NOT_PAIRED_MESSAGE, pairingHeaders } from '../shared/config.js';
+import { getSettings, pairingHeaders } from '../shared/config.js';
 
 const $ = (s) => document.querySelector(s);
 const params = new URLSearchParams(location.search);
@@ -334,7 +334,81 @@ frame.addEventListener('load', () => {
   }, 2500);
 });
 
-function message(title, text, { code = null, more = null, actions = [] } = {}) {
+/*
+ * The pairing code box, in the panel's "not paired" message.
+ *
+ * The panel says it is not paired in the place the editor would be, and that
+ * was a dead end: the code went in the toolbar popup, after a trip to the
+ * editor to make one. The box is here now, with "Get a code" beside it, and
+ * pairing reloads the panel onto the editor.
+ *
+ * Built once and kept: the panel repaints on every poll, and a box built
+ * anew each time would lose what was being typed into it.
+ */
+let pairBox = null;
+function pairForm() {
+  if (pairBox) return pairBox;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.id = 'pair-code';
+  input.placeholder = 'ABCD-EFGH';
+  input.maxLength = 12;
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  input.setAttribute('aria-label', 'Pairing code from ResumeM-M');
+  const said = document.createElement('p');
+  said.className = 'said';
+  said.setAttribute('role', 'status');
+  const pair = document.createElement('button');
+  pair.type = 'button';
+  pair.className = 'primary';
+  pair.textContent = 'Pair';
+  const get = document.createElement('button');
+  get.type = 'button';
+  get.textContent = 'Get a code';
+  get.title = 'Opens ResumeM-M in a new tab, with a code already made';
+  get.onclick = () => chrome.tabs.create({ url: `${model.serverUrl.replace(/\/$/, '')}/#save/pair?make=1` });
+  const go = async () => {
+    said.textContent = '';
+    pair.disabled = true;
+    pair.textContent = 'Pairing…';
+    let reply;
+    try {
+      reply = await chrome.runtime.sendMessage({ type: 'pair', payload: { code: input.value } });
+    } catch (err) {
+      reply = { ok: false, error: String(err?.message ?? err) };
+    }
+    pair.disabled = false;
+    pair.textContent = 'Pair';
+    if (!reply?.ok) {
+      // The store's own sentence: a wrong code says how many tries are left.
+      said.textContent = reply?.error ?? 'JobHelper did not answer.';
+      input.focus();
+      input.select();
+      return;
+    }
+    input.value = '';
+    await refresh();
+  };
+  pair.onclick = () => void go();
+  input.onkeydown = (event) => {
+    if (event.key === 'Enter' && !event.isComposing) void go();
+  };
+  const row = document.createElement('div');
+  row.className = 'pair-row';
+  row.append(input, pair, get);
+  pairBox = document.createElement('div');
+  pairBox.append(row, said);
+  return pairBox;
+}
+
+function message(title, text, { code = null, more = null, actions = [], form = null } = {}) {
+  const holder = $('#message-form');
+  holder.hidden = !form;
+  // Put up just now: the caret goes in the box, so the code can be pasted.
+  const arriving = Boolean(form) && form.parentNode !== holder;
+  if (!form) holder.replaceChildren();
+  else if (arriving) holder.replaceChildren(form);
   $('#message-title').textContent = title;
   $('#message-text').textContent = text;
   $('#message-code').hidden = !code;
@@ -352,6 +426,7 @@ function message(title, text, { code = null, more = null, actions = [] } = {}) {
     }),
   );
   $('#message').hidden = false;
+  if (arriving) form.querySelector('input')?.focus();
 }
 
 function note(text, tone = '', action = null) {
@@ -424,11 +499,9 @@ function paint() {
   } else if (model.health?.paired === false) {
     note('');
     cover = true;
-    message('JobHelper is not paired with ResumeM-M', NOT_PAIRED_MESSAGE, {
-      actions: [
-        ['Open ResumeM-M', () => chrome.tabs.create({ url: `${model.serverUrl.replace(/\/$/, '')}/#pair` }), true],
-        ['Try again', () => refresh()],
-      ],
+    message('JobHelper is not paired with ResumeM-M', 'Enter the code ResumeM-M shows under Save & Files → Pair JobHelper. “Get a code” opens it with one ready.', {
+      form: pairForm(),
+      actions: [['Try again', () => refresh()]],
     });
   } else if (model.health && !model.health.projectOpen) {
     note('');

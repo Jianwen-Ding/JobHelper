@@ -99,6 +99,40 @@ function fakeStore() {
       return;
     }
 
+    /*
+     * The store refusing this extension until it pairs, as ResumeM-M's guard
+     * does: every route but the pairing one, and /health saying so. See
+     * "Pairing from a card, one exchange for every tab".
+     */
+    if (state.pairing) {
+      const token = req.headers['x-rmm-pair'];
+      const paired = Boolean(state.pairing.token) && token === state.pairing.token;
+      if (url === '/api/extension/pair') {
+        state.pairing.exchanges += 1;
+        await new Promise((r) => setTimeout(r, state.pairing.delay ?? 0));
+        const code = String(JSON.parse(raw || '{}').code ?? '').toUpperCase().replace(/[\s-]/g, '');
+        res.writeHead(code === state.pairing.code ? 200 : 400, { 'content-type': 'application/json' });
+        if (code !== state.pairing.code) {
+          res.end(JSON.stringify({ kind: 'bad-code', triesLeft: 4, error: 'That is not the code ResumeM-M is showing. 4 tries left.' }));
+          return;
+        }
+        state.pairing.code = null;
+        state.pairing.token = `token-${'x'.repeat(40)}`;
+        res.end(JSON.stringify({ ok: true, token: state.pairing.token, origin: req.headers.origin ?? null }));
+        return;
+      }
+      if (!paired && url === '/health') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, service: 'resumem-m', projectOpen: true, paired: false }));
+        return;
+      }
+      if (!paired && url.startsWith('/api')) {
+        res.writeHead(403, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ kind: 'not-paired', error: 'This browser extension is not paired with ResumeM-M.' }));
+        return;
+      }
+    }
+
     // The store's own guard, as `src/server/index.ts` writes it.
     if (state.strict && url.startsWith('/api')) {
       const meant = req.headers['x-rmm-project'];
@@ -231,6 +265,10 @@ function fakeStore() {
     });
   });
 }
+
+/** The pairing token the extension keeps for a store, read from one of its pages. */
+const pairingTokenIn = (page, base) =>
+  page.evaluate(async (s) => (await chrome.storage.local.get('rmmPairing')).rmmPairing?.[new URL(s).origin] ?? null, base);
 
 /** One message to the worker, from a page inside the extension. */
 const ask = (page, type, payload = {}) =>
@@ -3248,6 +3286,85 @@ async function main() {
         `${toStore.length} requests, ${without.length} without: ${[...new Set(without.map((h) => h.url))].slice(0, 5).join(', ')}`,
       );
       check('empty, since nothing here was ever paired', toStore.every((h) => h.pair === ''), [...new Set(toStore.map((h) => h.pair))].join(','));
+    }
+
+    /*
+     * Pairing from a card, one exchange for every tab.
+     *
+     * A store that refuses this extension used to leave the card with a
+     * sentence pointing at the popup. The code box is on the card now, and
+     * on every card that was refused — so the same code can be pressed in
+     * two places at once, and each exchange the store sees is one of the
+     * extension's five tries. The worker holds one exchange: the second
+     * press joins the first, and every tab's card hears it paired and
+     * carries on, without asking again.
+     *
+     * Last, because it leaves the extension paired, and "The pairing header"
+     * above is about one that never was.
+     */
+    group('Pairing from a card, one exchange for every tab');
+    {
+      const site = http.createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(`<!doctype html><title>Platform Engineer at Helios</title>
+          <h1>Platform Engineer</h1><p>Helios is hiring a Platform Engineer. Responsibilities: build the
+          platform. Requirements: Kubernetes, Go. Apply now to join our team.</p>`);
+      });
+      await new Promise((r) => site.listen(0, '127.0.0.1', r));
+      const where = (n) => `http://127.0.0.1:${site.address().port}/jobs/platform-engineer-${n}`;
+      store.role = 'Platform Engineer';
+      store.company = undefined;
+      store.pairing = { code: 'GOODCODE', token: null, exchanges: 0, delay: 1500 };
+      await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: true }));
+      const box = (page) => page.locator('#jobhelper-card-host input.pair-code');
+      const build = (page) => page.locator('#jobhelper-card-host button', { hasText: /^Build resume$/ });
+      const seen = {};
+      const a = await context.newPage();
+      const b = await context.newPage();
+      try {
+        await a.goto(where('a'));
+        await b.goto(where('b'));
+        await box(a).waitFor({ timeout: 15_000 });
+        await box(b).waitFor({ timeout: 15_000 });
+        seen.boxes = true;
+        // A wrong code first, from tab A: the store's sentence, tries and all.
+        await a.bringToFront();
+        await box(a).fill('WRONG-ONE');
+        await a.locator('#jobhelper-card-host button', { hasText: /^Pair$/ }).click();
+        seen.wrong = await a
+          .locator('#jobhelper-card-host .pair-said')
+          .filter({ hasText: /tries left/ })
+          .textContent({ timeout: 10_000 })
+          .catch(() => null);
+        const before = store.pairing.exchanges;
+        // The right one, pressed on tab A's card and from the popup at once.
+        await box(a).fill('good-code');
+        await a.locator('#jobhelper-card-host button', { hasText: /^Pair$/ }).click();
+        const fromPopup = await ask(driver, 'pair', { code: 'GOODCODE' });
+        seen.popup = fromPopup.reply;
+        seen.exchanges = store.pairing.exchanges - before;
+        // Both cards carry on: the page read again, and the proposal up.
+        await build(a).waitFor({ timeout: 15_000 });
+        await build(b).waitFor({ timeout: 15_000 });
+        seen.carriedOn = true;
+        seen.boxesAfter = (await box(a).count()) + (await box(b).count());
+        seen.token = await pairingTokenIn(driver, store.base);
+      } catch (err) {
+        seen.error = String(err?.message ?? err);
+      } finally {
+        await a.close();
+        await b.close();
+        site.close();
+        store.pairing = null;
+        await driver.evaluate(() => chrome.storage.sync.set({ autoPrompt: false }));
+        await driver.evaluate(() => chrome.storage.local.remove('rmmPairing'));
+      }
+      check('both refused tabs put the code box on their cards', seen.boxes === true, JSON.stringify(seen));
+      check('a wrong code on a card says how many tries are left', /4 tries left/.test(seen.wrong ?? ''), String(seen.wrong));
+      check('the same code pressed on a card and in the popup at once is one exchange', seen.exchanges === 1, String(seen.exchanges));
+      check('and both are told it paired', seen.popup?.ok === true && seen.popup.data?.paired === true, JSON.stringify(seen.popup));
+      check('both tabs carry on to the proposal without asking again', seen.carriedOn === true && seen.boxesAfter === 0, JSON.stringify(seen));
+      check('and the token is kept for the store', typeof seen.token === 'string' && seen.token.startsWith('token-'), String(seen.token));
     }
   } finally {
     await context.close();
