@@ -7255,6 +7255,43 @@ const PILLS_IN_A_LIST = `<!doctype html><html><head><meta charset="utf-8"><title
 </body></html>`;
 PAGES['/pills-in-a-list'] = PILLS_IN_A_LIST;
 
+/*
+ * A plain repeating form whose "Add another" is disabled at its limit — not
+ * an editor: no Save, no dialog, the Add still drawn. `?edu` asks schools,
+ * `?max=` sets the limit, `?help=` writes the section's help text.
+ */
+const ADD_AT_LIMIT = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form id="al-form">
+<label for="al-fn">First Name</label><input id="al-fn">
+<section><h2 id="al-h">Work Experience</h2>
+<p id="al-help">You may list up to 3 employers.</p>
+<div id="al-blocks"></div>
+<button type="button" id="al-add">Add another</button>
+</section>
+<button type="submit">Submit</button>
+</form>
+<script>
+  const q = new URLSearchParams(location.search);
+  const edu = q.has('edu');
+  const max = Number(q.get('max') || 3);
+  if (edu) document.getElementById('al-h').textContent = 'Education';
+  if (q.has('help')) document.getElementById('al-help').textContent = q.get('help');
+  const add = document.getElementById('al-add');
+  let n = 0; window.__pressed = 0;
+  const block = () => {
+    const i = n++;
+    document.getElementById('al-blocks').insertAdjacentHTML('beforeend', edu
+      ? '<div class="block"><label for="al-s' + i + '">School</label><input id="al-s' + i + '"><label for="al-d' + i + '">Degree</label><input id="al-d' + i + '"></div>'
+      : '<div class="block"><label for="al-c' + i + '">Company</label><input id="al-c' + i + '"><label for="al-t' + i + '">Job Title</label><input id="al-t' + i + '"></div>');
+    if (q.get('max') !== 'none' && n >= max) add.disabled = true;
+  };
+  block();
+  add.addEventListener('click', () => { window.__pressed++; block(); });
+  document.getElementById('al-form').addEventListener('submit', (e) => e.preventDefault());
+  window.__readback = () => ({ pressed: window.__pressed, blocks: [...document.querySelectorAll('.block')].map((b) => [...b.querySelectorAll('input')].map((i) => i.value).join(' / ')) });
+</script></body></html>`;
+PAGES['/add-at-limit'] = ADD_AT_LIMIT;
+
 const PROFILE = {
   first_name: 'Morgan',
   last_name: 'Testwell',
@@ -13780,6 +13817,76 @@ async function main() {
         odd.skipped.some((x) => /^school: the form would not add another/.test(x)),
       JSON.stringify(odd),
     );
+
+    group('An "Add another" disabled at its limit is a plain form, not an editor');
+    const LIMIT_JOBS = [
+      { company: 'Alpha', title: 'Engineer III', start: { year: 2023, month: 1 }, current: true },
+      { company: 'Beta', title: 'Engineer II', start: { year: 2021, month: 1 }, end: { year: 2022, month: 12 } },
+      { company: 'Gamma', title: 'Engineer I', start: { year: 2019, month: 1 }, end: { year: 2020, month: 12 } },
+    ];
+    const LIMIT_SCHOOLS = [
+      { school: 'Northeastern University', degree: 'Bachelor of Science', major: 'CS', start: { year: 2018, month: 9 }, end: { year: 2022, month: 5 } },
+      { school: 'MIT', degree: 'Master of Science', major: 'EECS', start: { year: 2022, month: 9 }, end: { year: 2024, month: 5 } },
+    ];
+    const atLimit = (query) =>
+      page.goto(`${base}/add-at-limit${query}`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, history, education, edu }) => {
+          const m = await import(`${b}/autofill.js`);
+          const fields = { first_name: 'Morgan' };
+          const first = edu ? m.fillForm(fields, { history: [] }) : m.fillForm(fields, { history });
+          const report = edu ? await m.fillEducation(education, fields, first, { patience: 1500 }) : await m.fillComboboxes(fields, first, { history, patience: 1500 });
+          return { ...window.__readback(), skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`) };
+        }, { b: base, history: LIMIT_JOBS, education: LIMIT_SCHOOLS, edu: query.includes('edu') }),
+      );
+    const threeOfThree = await atLimit('');
+    check(
+      'three jobs into a form that takes three, its Add disabled at the third: each in its own block, nothing said unsaved or missing',
+      JSON.stringify(threeOfThree.blocks) === '["Alpha / Engineer III","Beta / Engineer II","Gamma / Engineer I"]' && !threeOfThree.skipped.some((x) => x.startsWith('work_history')),
+      JSON.stringify(threeOfThree),
+    );
+    const twoOfTwo = await atLimit('?edu&max=2');
+    check(
+      'two schools into an Education that takes two: both in, and no "press Save" for a form with nothing to save',
+      JSON.stringify(twoOfTwo.blocks) === '["Northeastern University / Bachelor of Science","MIT / Master of Science"]' && !twoOfTwo.skipped.some((x) => /press Save/.test(x)),
+      JSON.stringify(twoOfTwo),
+    );
+
+    group('A job or school is "already there" only by a saved entry of its own, word for word');
+    const helped = await atLimit(`?edu&max=none&help=${encodeURIComponent('List every school you attended. Transcripts can be submitted later.')}`);
+    check(
+      'help text spelling "MIT" inside its words ("sub-mit-ted") hides no school: a block is added and MIT put in it',
+      helped.pressed === 1 && JSON.stringify(helped.blocks) === '["Northeastern University / Bachelor of Science","MIT / Master of Science"]',
+      JSON.stringify(helped),
+    );
+    const SENIOR = { company: 'Acme Corp', title: 'Senior Software Engineer', start: { year: 2023, month: 1 }, end: null, current: true, description: 'Lead.' };
+    const SWE = { company: 'Acme Corp', title: 'Software Engineer', start: { year: 2020, month: 6 }, end: { year: 2022, month: 12 }, current: false, description: 'Built.' };
+    const SWE_EARLIER = { ...SWE, start: { year: 2016, month: 1 }, end: { year: 2018, month: 6 } };
+    const editorRuns = (runs) =>
+      page.goto(`${base}/editor-add`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, runs }) => {
+          const m = await import(`${b}/autofill.js`);
+          const fields = { first_name: 'Morgan' };
+          let report;
+          for (const history of runs) report = await m.fillComboboxes(fields, m.fillForm(fields, { history }), { history, patience: 1500 });
+          await new Promise((r) => setTimeout(r, 100));
+          return { ...window.__readback(), skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`) };
+        }, { b: base, runs }),
+      );
+    const senior = await editorRuns([[SENIOR], [SENIOR, SWE]]);
+    check(
+      'a saved "Senior Software Engineer" at Acme Corp does not hide "Software Engineer" at Acme Corp: it is added, and the one there said so',
+      JSON.stringify(senior.saved.map((j) => j.title)) === '["Senior Software Engineer","Software Engineer"]' && senior.editing === null &&
+        senior.skipped.includes('work_history: Senior Software Engineer at Acme Corp already in Work Experience') && !senior.skipped.some((x) => /not entered|not saved/.test(x)),
+      JSON.stringify(senior),
+    );
+    const stints = await editorRuns([[SWE], [SWE, SWE_EARLIER]]);
+    check(
+      'two stints with the same title at the same employer: the one saved hides only itself, the other is added',
+      stints.saved.length === 2 && stints.saved[1].start === '01/2016' && stints.editing === null,
+      JSON.stringify(stints),
+    );
+    const again = await editorRuns([[SENIOR, SWE], [SENIOR, SWE]]);
+    check('and once both are saved, filling again adds neither', again.saved.length === 2 && again.editing === null && again.pressed.filter((x) => x === 'add').length === 2, JSON.stringify(again));
 
     group('A long form fills in time that grows with the form, not its square');
     const long = await page.goto(`${base}/long-form`, { waitUntil: 'domcontentloaded' }).then(() =>

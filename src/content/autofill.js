@@ -3327,7 +3327,11 @@ const onlyMarked = (records) => records.every((r) => r.type === 'attributes' && 
 function changedSince(records) {
   if (!drawn || !records.length) return;
   if (onlyMarked(records)) drawn.marks = null;
-  else drawn = null;
+  else {
+    // The pass is over: nothing is watched until the next (see `drawnPass`).
+    drawn = null;
+    drawnObserver.disconnect();
+  }
 }
 
 function drawnPass() {
@@ -3375,6 +3379,14 @@ function formLayout(form, pass) {
   const at = new Map();
   const headings = [];
   let index = 0;
+  /*
+   * The form's own root, and each root it is drawn in: a form inside a
+   * component is changed where the document's observer never sees, and a
+   * layout kept for it through a block added there is the old one.
+   */
+  if (pass) {
+    for (let root = form.getRootNode?.(); root instanceof ShadowRoot; root = root.host.getRootNode()) drawnObserver.observe(root, DRAWN_CHANGES);
+  }
   for (const el of drawnWithin(form)) {
     // Its first place, where the walk up to it would have stopped.
     if (!at.has(el)) at.set(el, index);
@@ -5468,10 +5480,21 @@ async function addJobBlocks(history, report) {
   if (!Array.isArray(history) || history.length === 0) return report;
   let section = workSection();
   if (!section) return report;
-  // Already kept on the page, as an editor's saved entries show them. See `shownInSection`.
-  const shown = new Set(history.filter((job) => shownInSection(section, job)));
+  // Already kept on the page, as an editor's saved entries show them. See `shownJobs`.
+  const shown = shownJobs(section, history);
+  if (shown.size) {
+    const names = [...shown].map((job) => `${clean(job.title)} at ${clean(job.company)}`).join(', ');
+    const said = leftAt(section.button, { key: 'work_history', reason: `${names} already in Work Experience`.slice(0, 160), description: 'Work Experience' }, 'Work Experience');
+    report = { ...report, skipped: [...report.skipped, said] };
+  }
   if (shown.size === history.length) return report;
-  let had = workBlocks().length;
+  /*
+   * A section showing saved entries is an editor's: the words of those
+   * entries stand over the next editor's boxes as if a heading (see
+   * `workBlocks`), so its blocks are looked for inside it from the start.
+   */
+  const keeps = shown.size ? regionOf(section) : null;
+  let had = workBlocks(keeps).length;
   let pressed = 0;
   // A block that is an editor: filled, saved and closed one job at a time. See `EDITOR`.
   let editing = false;
@@ -5482,7 +5505,7 @@ async function addJobBlocks(history, report) {
     // Never one hidden or disabled: an editor left open hides its Add.
     if (pressed && !pressable(section.button)) break;
     // Inside the section only once it is known to hold an editor. See `workBlocks`.
-    const within = editing ? section.box : null;
+    const within = editing ? section.box : keeps;
     const before = new Set(workBlocks(within).flatMap((b) => [...b.values()]));
     const dialogs = openDialogs();
     press(section.button);
@@ -5504,7 +5527,12 @@ async function addJobBlocks(history, report) {
     }
     const added = opened.block;
     const editor = added && editorOf(added, section, opened.dialog);
-    if (added && (editor.dialog || editor.save || !pressable(section.button))) {
+    /*
+     * An editor only by a dialog, a Save of its own, or the Add taken away
+     * while it is open — never an Add merely disabled, which is a plain
+     * repeating form at its limit: its last block is filled as every block.
+     */
+    if (added && (editor.dialog || editor.save || addWentAway(section.button))) {
       editing = true;
       const job = jobBlocks(history.filter((j) => !saved.has(j) && !shown.has(j)), [], opened.dialog ?? section.box).find((pair) => sameBlock(pair.block, added))?.job;
       if (!job) {
@@ -5666,19 +5694,103 @@ async function dismissEditor(scope) {
   await waitFor(() => !scope.isConnected || scope.getClientRects().length === 0, 1000);
 }
 
-/*
- * A job the section already shows as kept — its employer and its title both
- * in the section's words, outside any box. An editor's saved entries are
- * drawn so, and adding such a job again is a second copy of it.
- */
-const flatWords = (text) => String(text ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+/** An Add gone from the page or hidden — not one only disabled. */
+const addWentAway = (button) => !button?.isConnected || button.getClientRects().length === 0;
 
-function shownInSection(section, job) {
-  const company = flatWords(job.company);
-  const title = flatWords(job.title);
-  if (!company || !title) return false;
-  const words = flatWords(wordsOutsideControls(regionOf(section)));
-  return words.includes(company) && words.includes(title);
+/*
+ * The jobs the section already shows as kept, each by one saved entry of
+ * its own. An editor's saved entries are drawn so, and adding such a job
+ * again is a second copy of it.
+ *
+ * Read as the section's words flattened to their letters, either was found
+ * anywhere: "Software Engineer" in a saved "Senior Software Engineer", the
+ * profile's "MIT" in the help text's "Transcripts can be submitted later" —
+ * and the job or the school was never added, and never said. So a job is
+ * shown only when one entry — the smallest part of the section holding both
+ * — has its employer and its title each as a whole piece of its words (see
+ * `shownPieces`), and holds no other job's; each entry answers for one job,
+ * so a second stint at the same title and employer is not hidden by the
+ * first. Whatever is unsure is added.
+ */
+const SHOWN_APART = /[—–|•·@\n\r\t()]|\s-\s|\s+at\s+/i;
+const AS_PIECE = (text) => String(text ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const NOT_AN_ENTRY = 'select, option, datalist, textarea, script, style, template, [role="listbox"], [role="option"], button, [role="button"], label, h1, h2, h3, h4, h5, h6, legend, [role="heading"]';
+const IN_AN_ENTRY_NEVER = 'input:not([type="hidden"]), select, textarea, [contenteditable="true"], [role="combobox"], [role="textbox"], h1, h2, h3, h4, h5, h6, legend, [role="heading"]';
+
+/** The pieces of words a region shows outside its controls, labels, buttons and headings, each with its text node. */
+function shownPieces(region) {
+  const pieces = [];
+  const walk = (node) => {
+    for (const child of node.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        if (!child.parentElement || child.parentElement.getClientRects().length === 0) continue;
+        for (const raw of child.textContent.split(SHOWN_APART)) {
+          const text = AS_PIECE(raw);
+          if (text) pieces.push({ node: child, raw: clean(raw), text });
+        }
+      } else if (child.nodeType === Node.ELEMENT_NODE && !child.matches(NOT_AN_ENTRY)) walk(child);
+    }
+  };
+  walk(region);
+  return pieces;
+}
+
+/** Whether `el` can be one saved entry: in the region, and holding no box, heading or the section's Add. */
+const anEntry = (el, region, section) =>
+  Boolean(el) && region.contains(el) && !el.matches(IN_AN_ENTRY_NEVER) && !el.querySelector(IN_AN_ENTRY_NEVER) && !(section.button && el.contains(section.button));
+
+function shownJobs(section, jobs) {
+  const region = regionOf(section);
+  const pieces = shownPieces(region);
+  const taken = new Set();
+  const shown = new Set();
+  for (const job of jobs) {
+    const company = AS_PIECE(job.company);
+    const title = AS_PIECE(job.title);
+    if (!company || !title) continue;
+    const companies = [...new Set(pieces.filter((p) => p.text === company).map((p) => p.node))];
+    const titles = [...new Set(pieces.filter((p) => p.text === title).map((p) => p.node))];
+    const holding = (entry, nodes) => nodes.filter((n) => entry.contains(n)).length;
+    let found = null;
+    for (const t of titles) {
+      for (const c of companies) {
+        let entry = t.parentElement;
+        while (entry && !entry.contains(c)) entry = entry.parentElement;
+        if (!anEntry(entry, region, section) || taken.has(entry)) continue;
+        // Another entry's employer or title in it is two entries, not one.
+        if (holding(entry, companies) !== 1 || holding(entry, titles) !== 1) continue;
+        found = entry;
+        break;
+      }
+      if (found) break;
+    }
+    if (!found) continue;
+    taken.add(found);
+    shown.add(job);
+  }
+  return shown;
+}
+
+/*
+ * The schools the section already shows as kept, by their place in
+ * `schools`: each by one saved entry whose words are the school's, as
+ * `sameSchool` reads two names. Those already placed this time take theirs
+ * first. See `shownJobs`.
+ */
+function shownSchools(section, schools, placed = new Set()) {
+  const region = regionOf(section);
+  const pieces = shownPieces(region);
+  const taken = new Set();
+  const shown = new Set();
+  const order = [...schools.keys()].sort((a, b) => Number(placed.has(b)) - Number(placed.has(a)));
+  for (const i of order) {
+    if (!clean(schools[i].school)) continue;
+    const piece = pieces.find((p) => !taken.has(p.node.parentElement) && anEntry(p.node.parentElement, region, section) && sameSchool(schools[i].school, p.raw));
+    if (!piece) continue;
+    taken.add(piece.node.parentElement);
+    shown.add(i);
+  }
+  return shown;
 }
 
 /*
@@ -5691,19 +5803,6 @@ function regionOf(section) {
   if (!around || ['form', 'body', 'html'].includes(around.localName)) return section.box;
   const headings = [...drawnWithin(around)].filter((el) => el.matches(HEADING));
   return headings.every((h) => drawnInside(section.box, h)) ? around : section.box;
-}
-
-/** The words a box shows outside its controls: never a list's options. */
-function wordsOutsideControls(box) {
-  let text = '';
-  const walk = (node) => {
-    for (const child of node.childNodes) {
-      if (child.nodeType === Node.TEXT_NODE) text += ` ${child.textContent}`;
-      else if (child.nodeType === Node.ELEMENT_NODE && !child.matches('select, option, datalist, textarea, script, style, template, [role="listbox"]')) walk(child);
-    }
-  };
-  walk(box);
-  return text;
 }
 
 /** The job months `fillJob` left to a widget, chosen the way every widget is. */
@@ -9040,7 +9139,8 @@ async function addAnother(section, had) {
       const block = (educationBlocks(dialog) ?? []).find(fresh);
       return block ? { editor: editorOf(block, section, dialog), block } : null;
     }
-    const now = educationSection();
+    // An Add disabled at the form's limit leaves the section where it was. See `addWentAway`.
+    const now = educationSection() ?? (section.box.isConnected && !addWentAway(section.button) ? section : null);
     const blocks = now && educationBlocks(now.box);
     if (blocks && blocks.length > had) {
       const block = blocks.find(fresh);
@@ -9049,7 +9149,10 @@ async function addAnother(section, had) {
     }
     if (pressable(section.button)) return null;
     const block = blocksAround().find(fresh);
-    return block ? { editor: editorOf(block, section), block } : null;
+    if (!block) return null;
+    const editor = editorOf(block, section);
+    // Only an editor by its own Save, or by the Add taken away while it is open.
+    return editor.save || addWentAway(section.button) ? { editor, block } : null;
   }, 3000);
   if (!found) {
     const dialog = newDialog(dialogs, section);
@@ -9119,6 +9222,8 @@ export async function fillEducation(education, fields, report, { patience = 4000
   const fits = (block, f) => ![...block].some(([key, control]) => anotherLevelOfStudy(control, key, f));
 
   const waiting = () => schools.some((_, i) => !used.has(i));
+  // The schools said already kept, said once.
+  const saidShown = new Set();
   for (let n = 0; ; n++) {
     // One education has the first block and no other. See `EDUCATION_DATE`.
     if (onlyOne && n > 0) break;
@@ -9130,9 +9235,20 @@ export async function fillEducation(education, fields, report, { patience = 4000
     if (n >= blocks.length) {
       if (!waiting() || blocks.length >= schools.length) break;
       // Every school still to place already kept, as an editor's saved entries show it: not added twice.
-      const kept = flatWords(wordsOutsideControls(regionOf(section)));
-      const shownSchool = (e) => flatWords(e.school).length > 0 && kept.includes(flatWords(e.school));
-      if (schools.every((e, i) => used.has(i) || shownSchool(e))) break;
+      const kept = shownSchools(section, schools, used);
+      const shownSchool = (i) => !used.has(i) && kept.has(i);
+      for (const i of kept) {
+        if (used.has(i) || saidShown.has(i)) continue;
+        saidShown.add(i);
+        const school = clean(schools[i].school);
+        skipped.push(leftAt(section.button, { key: 'school', reason: `${school} already in Education`.slice(0, 160), description: 'Education' }, 'Education'));
+      }
+      if (schools.every((e, i) => used.has(i) || shownSchool(i))) break;
+      // A form at its limit: its Add disabled, and no more to be had.
+      if (!pressable(section.button) && !addWentAway(section.button)) {
+        skipped.push(leftAt(section.button, { key: 'school', reason: 'the form would not add another', description: 'Education' }, 'Education'));
+        break;
+      }
       const grown = await addAnother(section, blocks.length);
       if (!grown) {
         skipped.push(leftAt(section.button, { key: 'school', reason: 'the form would not add another', description: 'Education' }, 'Education'));
@@ -9141,7 +9257,7 @@ export async function fillEducation(education, fields, report, { patience = 4000
       if (grown.editor) {
         // Filled, saved and closed, one school at a time. See `addAnother`.
         const { editor, block } = grown;
-        const index = schools.findIndex((e, i) => !used.has(i) && !shownSchool(e) && fits(block, educationFields(e)));
+        const index = schools.findIndex((e, i) => !used.has(i) && !shownSchool(i) && fits(block, educationFields(e)));
         if (index < 0) {
           await dismissEditor(editor.scope);
           break;
