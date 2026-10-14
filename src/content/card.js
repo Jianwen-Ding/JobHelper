@@ -8036,12 +8036,20 @@ export function createCard({
     if (sure.length > 0) parts.push(`Attached ${sure.map((p) => p.name).join(' and ')}`);
     else if (dropped.length === 0 && already.length === 0) parts.push('Nothing was attached');
     if (already.length > 0) {
-      parts.push(`${already.map((p) => p.name).join(' and ')} ${already.length === 1 ? 'was' : 'were'} already attached`);
+      /*
+       * A widget that cleared its input shows only a name, and a rebuilt file
+       * keeps it — so where nothing could be compared, how to replace it.
+       */
+      const unchecked = already.some((p) => p.unchecked);
+      parts.push(
+        `${already.map((p) => p.name).join(' and ')} ${already.length === 1 ? 'was' : 'were'} already attached` +
+          (unchecked ? `; if ${already.length === 1 ? 'it has' : 'they have'} changed since, remove ${already.length === 1 ? 'it' : 'them'} there first` : ''),
+      );
     }
     if (dropped.length > 0) {
       parts.push(
         `${dropped.map((p) => p.name).join(' and ')} went to this form’s drop area, which does not say ` +
-          'whether it took them — check the form before sending',
+          `whether it took ${dropped.length === 1 ? 'it' : 'them'} — check the form before sending`,
       );
     }
     /*
@@ -9307,6 +9315,9 @@ export function createCard({
       rows.push(
         h('button', {
           className: 'link',
+          // One control whatever it says, so Enter on it keeps focus on it
+          // across the redraw: see `focusKey`.
+          dataset: { focus: 'left-more' },
           textContent: open ? 'Show fewer' : `and ${ordered.length - LEFT_SHOWN} more`,
           ariaExpanded: String(open),
           onclick: () => {

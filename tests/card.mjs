@@ -8160,6 +8160,44 @@ async function main() {
     check(`and the jobs not entered are named (${width}px)`, /^Work Experience.*2 jobs not entered.*Acme, Globex/.test(left[2]?.text ?? ''), left[2]?.text);
   }
 
+  /*
+   * "and 3 more" becomes "Show fewer" when pressed, and the redraw matched
+   * the focused button by its words — which had just changed — so Enter on
+   * it left focus on the card itself, and Tab started over from the top.
+   */
+  console.log('\nThe left list’s "and N more" pressed from the keyboard');
+  {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await inPage(async (createCard) => {
+      const skipped = [1, 2, 3, 4, 5, 6].map((i) => ({ key: `k${i}`, label: `Question number ${i}`, fieldId: `f${i}`, reason: 'not one of the options' }));
+      createCard({
+        analysis: { isJobPosting: true, job: { title: 'Data Engineer', company: 'Streamly' }, spec: { id: 'j', label: 'Streamly', tier: 'temporary' }, baseLabel: 'Base', tailor: 'match', diff: [], rationale: [] },
+        resumes: [{ id: 'b', label: 'Base', base: true }], settings: {}, questions: [], needsCoverLetter: false, isForm: true,
+        onAction: async (a) => (a === 'autofill' ? { filled: [], skipped } : a === 'aiStatus' ? { state: 'off' } : a === 'showLeft' ? false : {}),
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      await new Promise((r) => setTimeout(r, 100));
+      [...root.querySelectorAll('button')].find((b) => /^Autofill this form/.test(b.textContent))?.click();
+      for (let i = 0; i < 200 && !root.querySelector('.left-list button.link'); i++) await new Promise((r) => setTimeout(r, 25));
+      root.querySelector('.left-list button.link').focus();
+    });
+    const focused = async () =>
+      page.evaluate(() => {
+        const a = document.querySelector('#jobhelper-card-host').shadowRoot.activeElement;
+        return a ? `${a.tagName}.${a.className} ${a.textContent.trim()}` : null;
+      });
+    const before = await focused();
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(200);
+    const opened = await focused();
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(200);
+    const closed = await focused();
+    check('focus is on "and N more" to begin with', /^BUTTON\.link and \d+ more$/.test(before ?? ''), before);
+    check('Enter on it leaves focus on it, now "Show fewer"', opened === 'BUTTON.link Show fewer', opened);
+    check('and Enter again leaves it on "and N more"', /^BUTTON\.link and \d+ more$/.test(closed ?? ''), closed);
+  }
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);

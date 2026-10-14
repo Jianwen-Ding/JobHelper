@@ -50,6 +50,12 @@ test('a drop is not claimed as an attachment', () => {
   assert.doesNotMatch(said, /Attached/);
   assert.match(said, /drop area/);
   assert.match(said, /check the form before sending/);
+  // One file is "it", not "them".
+  assert.match(said, /whether it took it —/);
+  assert.match(
+    describeAttach({ placed: [{ name: 'A-Resume.pdf', sure: false }, { name: 'A-Cover-Letter.pdf', sure: false }], unplaced: [] }),
+    /whether it took them —/,
+  );
 });
 
 /*
@@ -124,5 +130,11 @@ test('a file the form already had is said to have been there already', () => {
   assert.equal(
     describeAttach({ placed: [{ name: 'Morgan-Testwell-Resume.pdf', already: true }], unplaced: [] }),
     'Morgan-Testwell-Resume.pdf was already attached.',
+  );
+  // Only a name to go by — a widget that cleared its input — so how to
+  // replace it, if it was rebuilt since.
+  assert.equal(
+    describeAttach({ placed: [{ name: 'Morgan-Testwell-Resume.pdf', already: true, unchecked: true }], unplaced: [] }),
+    'Morgan-Testwell-Resume.pdf was already attached; if it has changed since, remove it there first.',
   );
 });

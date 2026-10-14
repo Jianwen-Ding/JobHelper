@@ -33,6 +33,14 @@ const {
 );
 
 /** Map a stored profile key to the label/name patterns that mean it. */
+/*
+ * The first or the last name as what a box is, not a hint about it: said in
+ * the label's own words — before its first bracket, dash or semicolon — and
+ * not after a "not", "do not", "leave", "without" or "other than". See
+ * `middle_name` and `name_suffix` in `FIELD_PATTERNS`.
+ */
+const NAME_IS_THE_SUBJECT = String.raw`(?:(?!\(|\[|;|\s[-–—]\s|\b(?:not?|don['’]?t|never|leave|exclud\w*|without|except|other\s+than|different|separate)\b)[^])*?(?:\b(?:first|given|last|family)[\s_-]?name\b|\b(?:surname|forename)\b)`;
+
 const FIELD_PATTERNS = [
   /*
    * The name somebody goes by, above every other name, because "Preferred
@@ -96,10 +104,16 @@ const FIELD_PATTERNS = [
    * "Legal last name, including suffix (Jr., III)" are each the first or the
    * last name with something allowed alongside, and were left blank as a
    * middle name or a suffix — with nothing said about them. Those fall
-   * through to `first_name` and `last_name` below.
+   * through to `first_name` and `last_name` below.   *
+   * Only when that name is what the box is: said before any bracket, dash or
+   * semicolon, and not after a "not", "do not", "leave" or "without". A hint
+   * that only mentions it — "Middle name (leave blank if none; do not repeat
+   * your last name)", "Suffix (Jr., Sr.) - not part of your last name", "Name
+   * suffix (do not include in Last Name field)" — fell through too, and the
+   * middle-name or the suffix box was given the surname. Left blank instead.
    */
-  ['middle_name', /^(?![^]*(?:\b(?:first|given|last|family)[\s_-]?name\b|\b(?:surname|forename)\b))[^]*\bmiddle[\s_-]?(name|initial)\b/i],
-  ['name_suffix', /^(?![^]*(?:\b(?:first|given|last|family)[\s_-]?name\b|\b(?:surname|forename)\b))[^]*(?:\bsuffix\b|\blegal[\s_-]*name[\s_-]*social\b)/i],
+  ['middle_name', new RegExp(`^(?!${NAME_IS_THE_SUBJECT})[^]*\\bmiddle[\\s_-]?(name|initial)\\b`, 'i')],
+  ['name_suffix', new RegExp(`^(?!${NAME_IS_THE_SUBJECT})[^]*(?:\\bsuffix\\b|\\blegal[\\s_-]*name[\\s_-]*social\\b)`, 'i')],
   ['first_name', /\b(first[\s_-]?name|given[\s_-]?name|forename|fname)\b/i],
   ['last_name', /\b(last[\s_-]?name|family[\s_-]?name|surname|lname)\b/i],
   /*
@@ -5156,15 +5170,30 @@ function workBlocks() {
  * failing that one either name holds, the longest. The first such job on the
  * resume used to win, so with Meta and Metabase on it a block showing
  * "Metabase" was given Meta's title and description.
+ *
+ * Not the longest: with "Meta Inc" and "Metabase" on the resume, a block
+ * showing "Meta" was given Metabase's, the longer name that happens to begin
+ * with its letters. So, after the exact spelling, a name that is the other's
+ * first whole words ("Meta" and "Meta Inc", "Amazon" and "Amazon.com"), and
+ * only then one that holds the other, the nearest in length.
  */
-function jobTyped(history, used, typedCompany, flat) {
+function jobTyped(history, used, typedCompany, flat, typedText = typedCompany) {
   const exact = history.findIndex((job, i) => !used.has(i) && flat(job.company) === typedCompany);
   if (exact >= 0) return exact;
+  const words = (text) => String(text ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const leads = (whole, part) => part.length > 0 && part.length < whole.length && part.every((word, i) => whole[i] === word);
+  const typedWords = words(typedText);
+  const whole = history.findIndex((job, i) => {
+    const companyWords = words(job.company);
+    return !used.has(i) && (leads(companyWords, typedWords) || leads(typedWords, companyWords));
+  });
+  if (whole >= 0) return whole;
   let best = -1;
+  const apart = (i) => Math.abs(flat(history[i].company).length - typedCompany.length);
   history.forEach((job, i) => {
     const company = flat(job.company);
     if (used.has(i) || !company || !(company.includes(typedCompany) || typedCompany.includes(company))) return;
-    if (best < 0 || company.length > flat(history[best].company).length) best = i;
+    if (best < 0 || apart(i) < apart(best)) best = i;
   });
   return best;
 }
@@ -5190,7 +5219,7 @@ function jobBlocks(history, skipped = []) {
     const typedCompany = flat(b.get('company')?.value);
     const typedTitle = flat(b.get('title')?.value);
     if (!typedCompany && !typedTitle) continue;
-    const index = typedCompany ? jobTyped(history, used, typedCompany, flat) : history.findIndex((job, i) => !used.has(i) && flat(job.title) === typedTitle);
+    const index = typedCompany ? jobTyped(history, used, typedCompany, flat, b.get('company')?.value) : history.findIndex((job, i) => !used.has(i) && flat(job.title) === typedTitle);
     if (index < 0) {
       // Named as the block, not by the employer typed in it. See `LEFT_AT`.
       skipped.push(
@@ -8367,6 +8396,31 @@ function workSection() {
  */
 const SCHOOL_PREFIX_LENGTH = 6;
 
+/*
+ * Nor may the rest of the longer name be anything but the word for what the
+ * school is. "Indiana University" is not "Indiana University of Pennsylvania",
+ * "Columbia College" is not "Columbia College Chicago" and "Harvard" is not
+ * "Harvard Extension School": the start of a name was another school's whole
+ * name, so a tail of a place, a campus, "Extension" or "Online" made it a
+ * different one. Only "University", "College", "Institute (of Technology)"
+ * and their like may be what one side leaves out.
+ */
+const SCHOOL_GENERIC_TAIL = /^(?:(?:university|college|institute|school|academy|polytechnic|conservatory|seminary|of|technology|community)\b ?)+$/;
+
+/*
+ * And a name with its abbreviation in brackets is either: "Massachusetts
+ * Institute of Technology (MIT)" is "MIT", "Georgia Institute of Technology
+ * (Georgia Tech)" is "Georgia Tech". Compared whole, by `schoolKey`, the
+ * brackets' words were simply more words and neither matched.
+ */
+function schoolNames(text) {
+  const said = clean(text);
+  const names = [said];
+  const bracket = said.match(/^(.*?)\s*[(\[]([^()[\]]+)[)\]]\s*$/);
+  if (bracket) names.push(bracket[1], bracket[2]);
+  return names.filter(Boolean);
+}
+
 function sameSchool(a, b) {
   const flat = (text) => String(text ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
   const x = flat(a);
@@ -8377,8 +8431,11 @@ function sameSchool(a, b) {
   const kb = schoolKey(b);
   if (!ka || !kb) return false;
   if (ka === kb) return true;
+  const as = schoolNames(a).map(schoolKey).filter(Boolean);
+  const bs = schoolNames(b).map(schoolKey).filter(Boolean);
+  if (as.some((k) => bs.includes(k))) return true;
   const [short, long] = ka.length <= kb.length ? [ka, kb] : [kb, ka];
-  return short.length >= SCHOOL_PREFIX_LENGTH && long.startsWith(`${short} `);
+  return short.length >= SCHOOL_PREFIX_LENGTH && long.startsWith(`${short} `) && SCHOOL_GENERIC_TAIL.test(long.slice(short.length + 1));
 }
 
 /** Whether a control already holds an answer, by what it shows. */

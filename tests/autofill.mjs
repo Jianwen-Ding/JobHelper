@@ -6903,6 +6903,9 @@ const NAMES_ALONGSIDE = `<!doctype html><html><head><meta charset="utf-8"><title
 <label for="na-legal">Legal last name, including suffix (Jr., III)</label><input id="na-legal" name="q5">
 <label for="na-mid">Middle name</label><input id="na-mid" name="q6">
 <label for="na-suf">Suffix</label><input id="na-suf" name="q7">
+<label for="na-mhint">Middle name (leave blank if none; do not repeat your last name)</label><input id="na-mhint" name="q8">
+<label for="na-shint">Suffix (Jr., Sr.) - not part of your last name</label><input id="na-shint" name="q9">
+<label for="na-nshint">Name suffix (do not include in Last Name field)</label><input id="na-nshint" name="q10">
 <label for="na-em">Email</label><input id="na-em" name="email">
 </form></body></html>`;
 
@@ -13542,7 +13545,7 @@ async function main() {
     check('MM.JJJJ and MM/AAAA are the same shape', dates['ld-german'] === '05.2026' && dates['ld-french'] === '05/2026', JSON.stringify(dates));
     check('TT.MM.JJJJ and JJ/MM/AAAA want a day, so they are left', dates['ld-tt'] === '' && dates['ld-jj'] === '', JSON.stringify(dates));
     group('A first or last name with a middle name or suffix allowed alongside');
-    const alongside = await valuesAt('/names-alongside', ['na-fmi', 'na-fmn', 'na-ls', 'na-lsa', 'na-legal', 'na-mid', 'na-suf']);
+    const alongside = await valuesAt('/names-alongside', ['na-fmi', 'na-fmn', 'na-ls', 'na-lsa', 'na-legal', 'na-mid', 'na-suf', 'na-mhint', 'na-shint', 'na-nshint']);
     check(
       '"First name and middle initial" and "First Name (include middle name)" get the first name',
       alongside['na-fmi'] === 'Morgan' && alongside['na-fmn'] === 'Morgan',
@@ -13554,6 +13557,11 @@ async function main() {
       JSON.stringify(alongside),
     );
     check('a box that is only the middle name or the suffix is still left', alongside['na-mid'] === '' && alongside['na-suf'] === '', JSON.stringify(alongside));
+    check(
+      'a middle-name or suffix box whose hint only mentions the last name ("do not repeat your last name", "not part of your last name") is left too',
+      alongside['na-mhint'] === '' && alongside['na-shint'] === '' && alongside['na-nshint'] === '',
+      JSON.stringify(alongside),
+    );
 
     group('"Handy" is a telephone only in German');
     const handy = await valuesAt('/handy', ['hd-tools', 'hd-excel', 'hd-skills', 'hd-nummer', 'hd-bare', 'hd-both']);
@@ -13586,6 +13594,23 @@ async function main() {
     check('but "Stanford" is still "Stanford University"', stanford.major === 'Computer Science' && stanford.gpa === '3.9', JSON.stringify(stanford));
     const harvard = await shownAs('Harvard', 'Harvard University');
     check('and so is "Harvard" "Harvard University"', harvard.major === 'Computer Science' && harvard.gpa === '3.9', JSON.stringify(harvard));
+    for (const [profileSchool, typed] of [
+      ['Georgia Institute of Technology (Georgia Tech)', 'Georgia Tech'],
+      ['Massachusetts Institute of Technology (MIT)', 'MIT'],
+      ['Virginia Tech', 'Virginia Polytechnic Institute and State University (Virginia Tech)'],
+    ]) {
+      const got = await shownAs(profileSchool, typed);
+      check(`"${profileSchool}" is "${typed}" by the name in its brackets`, got.major === 'Computer Science' && got.gpa === '3.9', JSON.stringify(got));
+    }
+    for (const [profileSchool, typed] of [
+      ['Indiana University', 'Indiana University of Pennsylvania'],
+      ['Columbia College', 'Columbia College Chicago'],
+      ['Harvard', 'Harvard Extension School'],
+      ['Boston College', 'Boston University'],
+    ]) {
+      const got = await shownAs(profileSchool, typed);
+      check(`but "${profileSchool}" is not "${typed}", whose name only starts with it`, got.major === '' && got.gpa === '', JSON.stringify(got));
+    }
 
     group('A typed employer is the job of that exact name before one whose name it holds');
     const metabase = await page.goto(`${base}/workday-experience-begun`, { waitUntil: 'domcontentloaded' }).then(() =>
@@ -13605,6 +13630,22 @@ async function main() {
     );
     check('a block showing "Metabase" gets Metabase’s title, not Meta’s', metabase[0] === 'Data Engineer Intern', JSON.stringify(metabase));
     check('and Meta goes to the next block', metabase[1] === 'Software Engineer', JSON.stringify(metabase));
+    const metaInc = await page.goto(`${base}/workday-experience-begun`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const blocks = [...document.querySelectorAll('[id$="--companyName"]')];
+        for (const box of blocks) box.value = '';
+        blocks[0].value = 'Meta';
+        m.fillForm({}, {
+          history: [
+            { company: 'Meta Inc', title: 'Software Engineer', description: 'Built ads ranking.', start: { year: 2022, month: 6 }, end: { year: 2024, month: 5 } },
+            { company: 'Metabase', title: 'Data Engineer Intern', description: 'Wrote query planner tests.', start: { year: 2021, month: 6 }, end: { year: 2021, month: 9 } },
+          ],
+        });
+        return [...document.querySelectorAll('[id$="--jobTitle"]')].map((t) => t.value);
+      }, { b: base }),
+    );
+    check('a block showing "Meta" is "Meta Inc" by its whole first word, not the longer "Metabase"', metaInc[0] === 'Software Engineer', JSON.stringify(metaInc));
 
     group('A remembered answer is never longer than the box has room for');
     const tooLong = await page.goto(`${base}/typed-maxlength`, { waitUntil: 'domcontentloaded' }).then(() =>

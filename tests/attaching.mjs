@@ -235,6 +235,84 @@ const KEEPS_AS_CHIP = page(`
 `);
 
 /**
+ * Breezy's one drop zone, "Upload Resume", in a form whose Cover Letter is a
+ * text box. Four levels up from the zone was the form, which says "Cover
+ * Letter", so the letter was dropped on the resume's zone and replaced it.
+ */
+const ONE_ZONE_AND_A_LETTER_BOX = page(`
+  <div class="form-group"><label>Full Name</label><input name="cName"></div>
+  <div class="form-group upload"><label>Resume</label><button type="button">Upload Resume</button><input type="file" id="rs" name="resume" style="display:none"><div class="resume-name"></div></div>
+  <div class="form-group"><label>Cover Letter</label><textarea name="cCoverLetter"></textarea></div>
+  <script>
+    window.held = { drops: [] };
+    const zone = document.querySelector('.form-group.upload');
+    zone.addEventListener('dragover', (e) => e.preventDefault());
+    zone.addEventListener('drop', (e) => { e.preventDefault(); window.held.drops.push([...e.dataTransfer.files].map((f) => f.name).join()); });
+  </script>
+`);
+
+/**
+ * Workable's and Rippling's: a drop zone with no input left once a file is
+ * in, the name drawn inside it. A second press dropped the file again.
+ */
+const ZONE_KEEPS_NAME = page(`
+  <div class="field"><label id="rl">Resume</label><div class="dropzone" aria-labelledby="rl">Drag and drop your file here</div></div>
+  <script>
+    window.held = { drops: 0 };
+    const zone = document.querySelector('.dropzone');
+    zone.addEventListener('dragover', (e) => e.preventDefault());
+    zone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      window.held.drops++;
+      zone.innerHTML = '<div class="file-chip">' + e.dataTransfer.files[0].name + '<button type="button">×</button></div>';
+    });
+  </script>
+`);
+
+/**
+ * BambooHR: a Country chosen through a button that opens a listbox, with
+ * only a hidden input behind it, sits right above the Resume box — which
+ * then "said" Country, and the resume had nowhere to go.
+ */
+const WIDGET_ABOVE_RESUME = page(`
+  <div class="fab-FormField"><label for="zip">ZIP</label><input id="zip" name="zip"></div>
+  <div class="fab-FormField"><label id="cl-l">Country</label><div class="fab-Select"><button type="button" aria-haspopup="listbox">–Select–</button><input type="hidden" name="countryId"></div></div>
+  <div class="fab-FormField"><label>Resume</label><button type="button">Upload File</button><input type="file" id="rs" name="resumeFileId" style="display:none"></div>
+  <div class="fab-FormField"><label>Cover Letter</label><button type="button">Upload File</button><input type="file" id="cl" name="coverLetterFileId" style="display:none"></div>
+`);
+
+/** Personio in German: "Lebenslauf" and "Anschreiben". */
+const GERMAN_UPLOADS = page(`
+  <div class="field"><label for="vn">Vorname</label><input id="vn" name="first_name"></div>
+  <div class="field upload"><span>Lebenslauf*</span><label>Datei hochladen<input type="file" name="file_a" id="fa" hidden></label></div>
+  <div class="field upload"><span>Anschreiben</span><label>Datei hochladen<input type="file" name="file_b" id="fb" hidden></label></div>
+  <div class="field upload"><span>Zeugnisse</span><label>Dateien hochladen<input type="file" name="file_c" id="fc" multiple hidden></label></div>
+`);
+
+/** Jobvite's: an ordinary box that uploads on every `change`. */
+const UPLOADS_ON_CHANGE = page(`
+  <label for="rs">Resume</label><input id="rs" name="resumeFile" type="file">
+  <script>
+    window.held = { changes: 0 };
+    document.getElementById('rs').addEventListener('change', () => window.held.changes++);
+  </script>
+`);
+
+/**
+ * Greenhouse's way: the file stays in the input and its name is drawn as a
+ * chip beside it. A rebuilt resume keeps its name, so the chip alone cannot
+ * say whether the box holds this version or the last.
+ */
+const CHIP_KEEPS_INPUT = page(`
+  <div class="field"><div class="upload-label">Resume/CV</div>
+    <div class="drop"><input type="file" id="rs" accept=".pdf"><span class="chip"></span></div></div>
+  <script>
+    const box = document.getElementById('rs');
+    box.addEventListener('change', () => { box.nextElementSibling.textContent = box.files[0] ? box.files[0].name + ' ×' : ''; });
+  </script>
+`);
+
+/**
  * A box that resets itself by becoming a different element, which is how a
  * widget built to show a removable chip instead of the native control
  * usually works. The old node — the one `putIn` is still holding — keeps
@@ -523,6 +601,12 @@ const PAGES = {
   '/all-in-one': ALL_IN_ONE,
   '/reclaims': RECLAIMS,
   '/keeps-as-chip': KEEPS_AS_CHIP,
+  '/chip-keeps-input': CHIP_KEEPS_INPUT,
+  '/one-zone-and-a-letter-box': ONE_ZONE_AND_A_LETTER_BOX,
+  '/zone-keeps-name': ZONE_KEEPS_NAME,
+  '/widget-above-resume': WIDGET_ABOVE_RESUME,
+  '/german-uploads': GERMAN_UPLOADS,
+  '/uploads-on-change': UPLOADS_ON_CHANGE,
   '/remounts': REMOUNTS,
   '/greenhouse-board': GREENHOUSE_BOARD,
   '/shadow': SHADOW,
@@ -1213,19 +1297,96 @@ async function main() {
       const { first, second, chips } = await pressTwice('/keeps-as-chip', [filed('Morgan-Testwell-Resume.pdf')]);
       check('the first press attaches it', first.placed.length === 1 && !first.placed[0].already, JSON.stringify(first));
       check('the second leaves one chip, not two', chips === 1, String(chips));
-      check('and says it was already attached', second.placed[0]?.already === true, JSON.stringify(second));
+      check('and says it was already attached, unchecked', second.placed[0]?.already === true && second.placed[0]?.unchecked === true, JSON.stringify(second));
+    }
+
+    /*
+     * A rebuilt resume under the same name, on a chip widget that keeps the
+     * file in its input. Measured before the fix: the second press said
+     * `already: true` and the box still held version one.
+     */
+    group('A rebuilt file with the same name, on a chip that keeps the input');
+    {
+      await p.goto(`${base}/chip-keeps-input`, { waitUntil: 'domcontentloaded' });
+      const out = await p.evaluate(async ({ b }) => {
+        const m = await import(`${b}/attach.js`);
+        const version = (v) => ({ name: 'Morgan-Testwell-Resume.pdf', type: 'application/pdf', base64: btoa(`%PDF-1.7\n${v}\n`) });
+        const box = document.getElementById('rs');
+        const r1 = await m.attachFiles([version('version-1')]);
+        const r2 = await m.attachFiles([version('version-2-edited')]);
+        const afterRebuild = await box.files[0]?.text();
+        const r3 = await m.attachFiles([version('version-2-edited')]);
+        const afterSame = await box.files[0]?.text();
+        return { r1: r1.placed, r2: r2.placed, r3: r3.placed, afterRebuild, afterSame, count: box.files.length };
+      }, { b: base });
+      check('the rebuilt file replaces the old one', out.afterRebuild === '%PDF-1.7\nversion-2-edited\n' && out.count === 1, JSON.stringify(out));
+      check('and is reported as attached, not "already"', out.r2.length === 1 && !out.r2[0].already, JSON.stringify(out));
+      check(
+        'the very same file again is left alone and called already attached, as checked',
+        out.r3[0]?.already === true && !out.r3[0].unchecked && out.afterSame === '%PDF-1.7\nversion-2-edited\n',
+        JSON.stringify(out),
+      );
     }
 
     /*
      * And the other side of that: a box that keeps the file in the input
-     * draws no name, so a second press goes on as it always did — the file
-     * replaced, not doubled, and reported as attached, not "already".
+     * draws no name, but holds the very file — compared byte for byte, it is
+     * left alone and said to be there already. Putting it in again re-fired
+     * the box's `change`, which on Jobvite uploads it again.
      */
     group('An ordinary box pressed twice');
     {
       const { second, inBoxes } = await pressTwice('/labelled', both);
       check('one resume in the resume box', JSON.stringify(inBoxes.rs) === '["Morgan-Testwell-Resume.pdf"]', JSON.stringify(inBoxes));
-      check('reported as attached as before', second.placed.length === 2 && second.placed.every((f) => !f.already), JSON.stringify(second));
+      check(
+        'reported as already attached, as checked',
+        second.placed.length === 2 && second.placed.every((f) => f.already === true && !f.unchecked),
+        JSON.stringify(second),
+      );
+    }
+    {
+      const { heldFirst, heldSecond, second } = await pressTwice('/uploads-on-change', [filed('Morgan-Testwell-Resume.pdf')]);
+      check('a box that uploads on change hears one change, not two', heldFirst.changes === 1 && heldSecond.changes === 1, JSON.stringify({ heldFirst, heldSecond, second }));
+    }
+
+    group('One drop zone for the resume, and the cover letter asked as text');
+    {
+      const { first, heldSecond, inBoxes } = await pressTwice('/one-zone-and-a-letter-box', both);
+      check('nothing is dropped on the resume’s zone', heldSecond.drops.length === 0, JSON.stringify({ heldSecond, first }));
+      check('the resume stays in its box', JSON.stringify(inBoxes.rs) === '["Morgan-Testwell-Resume.pdf"]', JSON.stringify(inBoxes));
+      check(
+        'and the letter is said to have nowhere to go',
+        first.unplaced.some((u) => u.name === 'Morgan-Testwell-Cover-Letter.pdf') && !first.placed.some((f) => f.name === 'Morgan-Testwell-Cover-Letter.pdf'),
+        JSON.stringify(first),
+      );
+    }
+
+    group('A drop zone that shows the file and keeps no input');
+    {
+      const { first, second, heldSecond } = await pressTwice('/zone-keeps-name', [filed('Morgan-Testwell-Resume.pdf')]);
+      check('the first press drops it', first.placed[0]?.where === 'the drop area' && !first.placed[0].already, JSON.stringify(first));
+      check('the second does not drop it again', heldSecond.drops === 1, JSON.stringify(heldSecond));
+      check('and says it was already attached, unchecked', second.placed[0]?.already === true && second.placed[0]?.unchecked === true, JSON.stringify(second));
+    }
+
+    group('A resume box under a field drawn as a listbox button');
+    {
+      const { report, inBoxes } = await run('/widget-above-resume', both);
+      check(
+        'the resume goes in the Resume box and the letter in its own',
+        JSON.stringify(inBoxes.rs) === '["Morgan-Testwell-Resume.pdf"]' && JSON.stringify(inBoxes.cl) === '["Morgan-Testwell-Cover-Letter.pdf"]',
+        JSON.stringify({ report, inBoxes }),
+      );
+    }
+
+    group('Upload boxes labelled in German');
+    {
+      const { report, inBoxes } = await run('/german-uploads', both);
+      check(
+        '"Lebenslauf" takes the resume and "Anschreiben" the letter',
+        JSON.stringify(inBoxes.fa) === '["Morgan-Testwell-Resume.pdf"]' && JSON.stringify(inBoxes.fb) === '["Morgan-Testwell-Cover-Letter.pdf"]',
+        JSON.stringify({ report, inBoxes }),
+      );
     }
 
     group('The name on the page, but not in this box');
