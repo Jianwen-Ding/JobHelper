@@ -90,9 +90,16 @@ const FIELD_PATTERNS = [
    * says "legal Name" whole, and was given the whole legal name — "José
    * Antonio Núñez García" as somebody's middle name. Neither is in a profile,
    * so both boxes are left as they are.
+   *
+   * Unless the box also names the first or the last name: "First name and
+   * middle initial", "First Name (include middle name)", "Last name / Suffix",
+   * "Legal last name, including suffix (Jr., III)" are each the first or the
+   * last name with something allowed alongside, and were left blank as a
+   * middle name or a suffix — with nothing said about them. Those fall
+   * through to `first_name` and `last_name` below.
    */
-  ['middle_name', /\bmiddle[\s_-]?(name|initial)\b/i],
-  ['name_suffix', /\bsuffix\b|\blegal[\s_-]*name[\s_-]*social\b/i],
+  ['middle_name', /^(?![^]*(?:\b(?:first|given|last|family)[\s_-]?name\b|\b(?:surname|forename)\b))[^]*\bmiddle[\s_-]?(name|initial)\b/i],
+  ['name_suffix', /^(?![^]*(?:\b(?:first|given|last|family)[\s_-]?name\b|\b(?:surname|forename)\b))[^]*(?:\bsuffix\b|\blegal[\s_-]*name[\s_-]*social\b)/i],
   ['first_name', /\b(first[\s_-]?name|given[\s_-]?name|forename|fname)\b/i],
   ['last_name', /\b(last[\s_-]?name|family[\s_-]?name|surname|lname)\b/i],
   /*
@@ -133,8 +140,13 @@ const FIELD_PATTERNS = [
    * "Telefonnummer", "Handy", "Teléfono", "Telefone", "Telefoon". A German or
    * Spanish form asked for one and was neither filled in nor, for want of
    * it, recognised as an application at all.
+   *
+   * "Handy" only as the German word: "Handynummer", "Handy-Nr.", or "Handy"
+   * as the label itself or one of its spellings ("Telefon / Handy"). Anywhere
+   * else it is the English adjective, and "How handy are you with Excel?" and
+   * "Handy skills" were each given the applicant's phone number.
    */
-  ['phone', /\b(phone|mobile|telephone|cell|telefon(?:nummer)?|handy(?:nummer)?|mobilnummer|tel[ée]fono|telefone|telefoon(?:nummer)?)\b|\b(primary|contact|day(?:time)?|home|work|alternate)[\s_-]*number\b/i],
+  ['phone', /\b(phone|mobile|telephone|cell|telefon(?:nummer)?|handy[\s_-]?(?:nummer|nr)|mobilnummer|tel[ée]fono|telefone|telefoon(?:nummer)?)\b|(?:^|[/|,(])[\s*]*handy\b(?![\s:]*(?:with|at|skills?|for|to|tools?|man|men|woman|person|people|work|jobs?|and|or|in|around|are|is|you)\b)|\b(primary|contact|day(?:time)?|home|work|alternate)[\s_-]*number\b/i],
   ['linkedin', /\b(linked-?in)\b/i],
   ['github', /\b(git-?hub)\b/i],
   ['website', /\b(website|portfolio|personal[\s_-]?site|homepage)\b/i],
@@ -2874,13 +2886,25 @@ function otherWaysToWrite(key, value) {
 
   if (key !== 'phone') return [];
   const digits = said.replace(/\D+/g, '');
-  if (!digits || digits === said) return [];
+  if (!digits) return [];
   const out = [digits];
   // A number stored with a country code keeps it where the form takes one.
   if (said.startsWith('+')) out.unshift(`+${digits}`);
   // And without it, for the forms that want exactly ten.
   if (digits.length === 11 && digits.startsWith('1')) out.push(digits.slice(1));
-  return out;
+  /*
+   * And the ten digits punctuated the ways a form's `pattern` asks for them.
+   * iCIMS's Phone Number is `pattern="[0-9]{3}-[0-9]{3}-[0-9]{4}"`, and a
+   * profile's "(555) 555-5555" was refused by it, its digits too, and the box
+   * was left empty. Only a number of ten digits once any leading 1 is off:
+   * there is no telling where to break any other.
+   */
+  const ten = digits.length === 10 ? digits : digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : null;
+  if (ten) {
+    const [area, exchange, line] = [ten.slice(0, 3), ten.slice(3, 6), ten.slice(6)];
+    out.push(`${area}-${exchange}-${line}`, `(${area}) ${exchange}-${line}`, `${area}.${exchange}.${line}`);
+  }
+  return [...new Set(out)].filter((spelling) => spelling !== said);
 }
 
 /*
@@ -5072,6 +5096,24 @@ function workBlocks() {
   return blocks;
 }
 
+/*
+ * The job a block's typed employer is: the one spelled exactly so, and only
+ * failing that one either name holds, the longest. The first such job on the
+ * resume used to win, so with Meta and Metabase on it a block showing
+ * "Metabase" was given Meta's title and description.
+ */
+function jobTyped(history, used, typedCompany, flat) {
+  const exact = history.findIndex((job, i) => !used.has(i) && flat(job.company) === typedCompany);
+  if (exact >= 0) return exact;
+  let best = -1;
+  history.forEach((job, i) => {
+    const company = flat(job.company);
+    if (used.has(i) || !company || !(company.includes(typedCompany) || typedCompany.includes(company))) return;
+    if (best < 0 || company.length > flat(history[best].company).length) best = i;
+  });
+  return best;
+}
+
 function jobBlocks(history, skipped = []) {
   const pairs = [];
   if (!Array.isArray(history) || history.length === 0) return pairs;
@@ -5093,13 +5135,7 @@ function jobBlocks(history, skipped = []) {
     const typedCompany = flat(b.get('company')?.value);
     const typedTitle = flat(b.get('title')?.value);
     if (!typedCompany && !typedTitle) continue;
-    const index = history.findIndex(
-      (job, i) =>
-        !used.has(i) &&
-        (typedCompany
-          ? flat(job.company) && (flat(job.company).includes(typedCompany) || typedCompany.includes(flat(job.company)))
-          : flat(job.title) === typedTitle),
-    );
+    const index = typedCompany ? jobTyped(history, used, typedCompany, flat) : history.findIndex((job, i) => !used.has(i) && flat(job.title) === typedTitle);
     if (index < 0) {
       // Named as the block, not by the employer typed in it. See `LEFT_AT`.
       skipped.push(
@@ -6645,6 +6681,12 @@ function answerTypedFromMemory(remembered, fields, company) {
     if (!worthRememberingTyped({ question: box.question, answer: kept.answer, company }).keep) continue;
 
     const row = { key: 'remembered', value: kept.answer, description: box.description.slice(0, 60) };
+    // Never more than the box has room for, as `fillForm`: a value set from
+    // script is not cut to `maxlength`, and the form refuses it on submit.
+    if (!fitsIn(box.el, kept.answer)) {
+      skipped.push(leftAt(box.el, { ...row, reason: 'the box would not take the answer you gave before' }, box.question));
+      continue;
+    }
     setValue(box.el, kept.answer);
     if (box.el.value !== kept.answer || browserWouldRefuse(box.el)) {
       setValue(box.el, '');
@@ -8260,11 +8302,28 @@ function workSection() {
  * "University of Texas - Austin" is the resume's "University of Texas at
  * Austin", and its dates are that education's. See `schoolKey`.
  */
+/*
+ * By whole words. The two names were flattened to their letters and either
+ * allowed to hold the other anywhere, so the profile's "MIT" was the block's
+ * "Smith College" ("s-mit-hcollege") and its major and GPA went into another
+ * school's block; and "UCLA" was "UCLA Extension". One may still be the start
+ * of the other, word for word ("Harvard" and "Harvard University"), when it
+ * is long enough to be a name and not an abbreviation of several.
+ */
+const SCHOOL_PREFIX_LENGTH = 6;
+
 function sameSchool(a, b) {
   const flat = (text) => String(text ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
   const x = flat(a);
   const y = flat(b);
-  return Boolean(x && y) && (x === y || x.includes(y) || y.includes(x) || schoolKey(a) === schoolKey(b));
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const ka = schoolKey(a);
+  const kb = schoolKey(b);
+  if (!ka || !kb) return false;
+  if (ka === kb) return true;
+  const [short, long] = ka.length <= kb.length ? [ka, kb] : [kb, ka];
+  return short.length >= SCHOOL_PREFIX_LENGTH && long.startsWith(`${short} `);
 }
 
 /** Whether a control already holds an answer, by what it shows. */

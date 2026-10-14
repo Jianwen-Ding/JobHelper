@@ -6767,7 +6767,60 @@ const WD_ADD = `<!doctype html><html><head><meta charset="utf-8"><title>My Exper
 </script>
 </body></html>`;
 
-const PAGES = { '/wd-names': WD_NAMES, '/edu-shown': EDU_SHOWN, '/spelled-otherwise': SPELLED_OTHERWISE, '/wd-add': WD_ADD, '/radio-option-labels': RADIO_OPTION_LABELS, '/label-noise': LABEL_NOISE, '/drawn-prompts': DRAWN_PROMPTS, '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/greenhouse-react-education': GREENHOUSE_REACT_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/hidden-asks': HIDDEN_ASKS, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE, '/acknowledgements': ACKNOWLEDGEMENTS, '/sponsorship-policies': SPONSORSHIP_POLICIES, '/sponsorship-policy-pressed': SPONSORSHIP_POLICY_PRESSED, '/sponsorship-policy-aria': SPONSORSHIP_POLICY_ARIA, '/bank-shapes': BANK_SHAPES, '/negated-questions': NEGATED_QUESTIONS, '/not-only-acknowledged': NOT_ONLY_ACKNOWLEDGED, '/signed-without-the-word': SIGNED_WITHOUT_THE_WORD, '/education-wording': EDUCATION_WORDING, '/day-shapes': DAY_SHAPES, '/newsletter-names': NEWSLETTER_NAMES, '/alerts-names': ALERTS_NAMES, '/survey-frame': SURVEY_FRAME, '/names-and-phone': NAMES_AND_PHONE, '/names-and-file': NAMES_AND_FILE, '/german-names': GERMAN_NAMES, '/french-names': FRENCH_NAMES, '/other-names': OTHER_NAMES, '/standard-hints': STANDARD_HINTS, '/localized-dates': LOCALIZED_DATES };
+/*
+ * The first or the last name with something allowed alongside it: a middle
+ * initial, a middle name, a suffix. Each was read as the middle name or the
+ * suffix — neither of which a profile holds — and left empty, unreported.
+ */
+const NAMES_ALONGSIDE = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+<label for="na-fmi">First name and middle initial</label><input id="na-fmi" name="q1">
+<label for="na-fmn">First Name (include middle name)</label><input id="na-fmn" name="q2">
+<label for="na-ls">Last name / Suffix</label><input id="na-ls" name="q3">
+<label for="na-lsa">Last Name (and suffix, if any)</label><input id="na-lsa" name="q4">
+<label for="na-legal">Legal last name, including suffix (Jr., III)</label><input id="na-legal" name="q5">
+<label for="na-mid">Middle name</label><input id="na-mid" name="q6">
+<label for="na-suf">Suffix</label><input id="na-suf" name="q7">
+<label for="na-em">Email</label><input id="na-em" name="email">
+</form></body></html>`;
+
+/*
+ * "Handy" as German for a mobile, and as the English adjective, which is no
+ * telephone: "How handy are you with Excel?" was given the phone number.
+ */
+const HANDY = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+<label for="hd-tools">Are you handy with power tools?</label><input id="hd-tools" name="q1">
+<label for="hd-excel">How handy are you with Excel?</label><input id="hd-excel" name="q2">
+<label for="hd-skills">Handy skills</label><input id="hd-skills" name="q3">
+<label for="hd-nummer">Handynummer</label><input id="hd-nummer" name="q4">
+<label for="hd-bare">Handy:</label><input id="hd-bare" name="q5">
+<label for="hd-both">Telefon / Handy</label><input id="hd-both" name="q6">
+<label for="hd-em">Email</label><input id="hd-em" name="email">
+</form></body></html>`;
+
+/*
+ * Remembered answers longer than the box has room for. A value set from
+ * script is not cut to `maxlength`, so the box held what nobody could have
+ * typed there, and the form refused it on submit.
+ */
+const TYPED_MAXLENGTH = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form onsubmit="return false">
+<label for="tm-fn">First Name</label><input id="tm-fn" name="first_name">
+<label for="tm-hear">How did you hear about this position?</label><input id="tm-hear" name="hear" maxlength="20">
+<label for="tm-start">Earliest start date you could begin</label><input id="tm-start" name="start" maxlength="40">
+<button>Submit</button></form></body></html>`;
+
+/*
+ * A telephone box whose `pattern` wants the number dashed, as iCIMS's does.
+ * The profile's "(555) 555-5555" and its bare digits were both refused, and
+ * the box was left empty.
+ */
+const PHONE_PATTERNED = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body><form>
+<label for="pp-dash">Phone Number</label><input type="tel" id="pp-dash" name="PhoneNumber" pattern="[0-9]{3}-[0-9]{3}-[0-9]{4}" placeholder="555-555-5555">
+</form>
+<form><label for="pp-paren">Phone</label><input type="tel" id="pp-paren" name="phone2" pattern="\\([0-9]{3}\\) [0-9]{3}-[0-9]{4}"></form>
+<form><label for="pp-dot">Phone</label><input type="tel" id="pp-dot" name="phone3" pattern="[0-9]{3}\\.[0-9]{3}\\.[0-9]{4}"></form>
+</body></html>`;
+
+const PAGES = { '/wd-names': WD_NAMES, '/edu-shown': EDU_SHOWN, '/spelled-otherwise': SPELLED_OTHERWISE, '/wd-add': WD_ADD, '/radio-option-labels': RADIO_OPTION_LABELS, '/label-noise': LABEL_NOISE, '/drawn-prompts': DRAWN_PROMPTS, '/plain-near-misses': PLAIN_NEAR_MISSES, '/epic-radix': EPIC_RADIX, '/epic-mui': EPIC_MUI, '/epic-headless': EPIC_HEADLESS, '/epic-plain': EPIC_PLAIN, '/chosen': CHOSEN, '/bootstrap-select': BOOTSTRAP_SELECT, '/select2': SELECT2, '/vuetify': VUETIFY, '/linkedin-easy-apply': LINKEDIN_EASY_APPLY, '/adds-its-code': ADDS_ITS_CODE, '/phone-in-parts': PHONE_IN_PARTS, '/phone-in-four': PHONE_IN_FOUR, '/always-masked': ALWAYS_MASKED, '/slotted-labels': SLOTTED_LABELS, '/labelled-from-outside': LABELLED_FROM_OUTSIDE, '/unlabelled-components': UNLABELLED_COMPONENTS, '/labelled-around': LABELLED_AROUND, '/components-in-context': COMPONENTS_IN_CONTEXT, '/component-history': COMPONENT_HISTORY, '/component-sections': COMPONENT_SECTIONS, '/component-employment': COMPONENT_EMPLOYMENT, '/slotted-fieldsets': SLOTTED_FIELDSETS, '/component-headings': COMPONENT_HEADINGS, '/component-phone-parts': COMPONENT_PHONE_PARTS, '/component-dialling-code': COMPONENT_DIALLING_CODE, '/component-dates': COMPONENT_DATES, '/component-editors': COMPONENT_EDITORS, '/component-radios': COMPONENT_RADIOS, '/component-aria-radios': COMPONENT_ARIA_RADIOS, '/component-nameless-radios': COMPONENT_NAMELESS_RADIOS, '/component-radios-one-name': COMPONENT_RADIOS_ONE_NAME, '/component-aria-options': COMPONENT_ARIA_OPTIONS, '/component-aria-hosts': COMPONENT_ARIA_HOSTS, '/component-aria-section': COMPONENT_ARIA_SECTION, '/page-aria-section': PAGE_ARIA_SECTION, '/page-aria-radiogroup-section': PAGE_ARIA_RADIOGROUP_SECTION, '/page-aria-one-group': PAGE_ARIA_ONE_GROUP, '/page-listbox-asked-again': PAGE_LISTBOX_ASKED_AGAIN, '/page-listbox-deaf': PAGE_LISTBOX_DEAF, '/page-portalled-combobox': PAGE_PORTALLED_COMBOBOX, '/page-combobox-unroled-list': PAGE_COMBOBOX_UNROLED_LIST, '/page-chosen-chips': PAGE_CHOSEN_CHIPS, '/page-typed-before': PAGE_TYPED_BEFORE, '/page-ng-select': PAGE_NG_SELECT, '/page-loading-elsewhere': PAGE_LOADING_ELSEWHERE, '/page-focus-opens-another': PAGE_FOCUS_OPENS_ANOTHER, '/page-answered-lookalikes': PAGE_ANSWERED_LOOKALIKES, '/page-already-answered': PAGE_ALREADY_ANSWERED, '/page-highlight-only': PAGE_HIGHLIGHT_ONLY, '/slotted-into-labels': SLOTTED_INTO_LABELS, '/slotted-into-labels-guards': SLOTTED_INTO_LABELS_GUARDS, '/page-radios-under-questions': PAGE_RADIOS_UNDER_QUESTIONS, '/slotted-radios': SLOTTED_RADIOS, '/slotted-aria-radios': SLOTTED_ARIA_RADIOS, '/slotted-radios-two': SLOTTED_RADIOS_TWO, '/slotted-aria-two': SLOTTED_ARIA_TWO, '/slotted-radios-explain': SLOTTED_RADIOS_EXPLAIN, '/slotted-aria-explain': SLOTTED_ARIA_EXPLAIN, '/date-in-parts': DATE_IN_PARTS, '/month-alone': MONTH_ALONE, '/lives-in': LIVES_IN, '/complete-your-degree': COMPLETE_YOUR_DEGREE, '/rippling-questions': RIPPLING_QUESTIONS, '/sponsorship-statements': SPONSORSHIP_STATEMENTS, '/greenhouse-employment': GREENHOUSE_EMPLOYMENT, '/most-recent-job': MOST_RECENT_JOB, '/asked-twice': ASKED_TWICE, '/employers-code': EMPLOYERS_CODE, '/country-named': COUNTRY_NAMED, '/name-of-a-thing': NAME_OF_A_THING, '/prefixed': PREFIXED, '/terms': TERMS, '/completion': COMPLETION, '/ckedited': CKEDITED, '/quill-one': QUILL_ONE, '/editors': EDITORS, '/elsewhere': ELSEWHERE, '/paired-widgets': PAIRED_WIDGETS, '/stepped': STEPPED, '/widget-keys': WIDGET_KEYS, '/more-misread': MORE_MISREAD, '/loose-widgets': LOOSE_WIDGETS, '/academics': ACADEMICS, '/sections': SECTIONS, '/places': PLACES, '/widgets': WIDGETS, '/current': CURRENT, '/graduation': GRADUATION, '/apply': FORM, '/not-yours': NOT_YOURS, '/react': REACT_FORM, '/awkward': AWKWARD, '/consent': CONSENT, '/labels': LABELS, '/legacy': LEGACY, '/hidden': HIDDEN, '/unhidden': UNHIDDEN, '/submits-nothing': SUBMITS_NOTHING, '/flat': FLAT_QUESTIONS, '/styled': STYLED_RADIOS, '/phrases': PHRASE_ANSWERS, '/remembered': REMEMBERED, '/remembered-private': REMEMBERED_PRIVATE, '/ashby-yes-no': ASHBY_YES_NO, '/misread': MISREAD, '/workday-info': WORKDAY_MY_INFO, '/greenhouse-education': GREENHOUSE_EDUCATION, '/greenhouse-stripe': GREENHOUSE_STRIPE, '/greenhouse-more-education': GREENHOUSE_MORE_EDUCATION, '/greenhouse-react-education': GREENHOUSE_REACT_EDUCATION, '/workday-experience': WORKDAY_EXPERIENCE, '/workday-experience-begun': WORKDAY_EXPERIENCE_BEGUN, '/typed': TYPED, '/workday-dates': WORKDAY_DATES, '/workday-questions': WORKDAY_QUESTIONS, '/workday-questions-intel': WORKDAY_QUESTIONS_INTEL, '/workday-prompts': WORKDAY_PROMPTS, '/workday-sign-in': WORKDAY_SIGN_IN, '/hidden-asks': HIDDEN_ASKS, '/workday-social': WORKDAY_SOCIAL, '/location-lists': LOCATION_LISTS, '/ashby-date': ASHBY_DATE, '/bamboo-fabric': BAMBOO_FABRIC, '/icims-login': ICIMS_LOGIN, '/icims-login-frame': ICIMS_LOGIN_FRAME, '/trunk-zero': TRUNK_ZERO, '/names-single': NAMES_SINGLE, '/names-with-legal': NAMES_WITH_LEGAL, '/names-with-preferred': NAMES_WITH_PREFERRED, '/names-workday': NAMES_WORKDAY, '/names-gitlab': NAMES_GITLAB, '/names-asana': NAMES_ASANA, '/names-zoox': NAMES_ZOOX, '/school-email': SCHOOL_EMAIL, '/ashby-resume-autofill': ASHBY_RESUME_AUTOFILL, '/reset-on-file': RESET_ON_FILE, '/ashby-degree': ASHBY_DEGREE, '/acknowledgements': ACKNOWLEDGEMENTS, '/sponsorship-policies': SPONSORSHIP_POLICIES, '/sponsorship-policy-pressed': SPONSORSHIP_POLICY_PRESSED, '/sponsorship-policy-aria': SPONSORSHIP_POLICY_ARIA, '/bank-shapes': BANK_SHAPES, '/negated-questions': NEGATED_QUESTIONS, '/not-only-acknowledged': NOT_ONLY_ACKNOWLEDGED, '/signed-without-the-word': SIGNED_WITHOUT_THE_WORD, '/education-wording': EDUCATION_WORDING, '/day-shapes': DAY_SHAPES, '/newsletter-names': NEWSLETTER_NAMES, '/alerts-names': ALERTS_NAMES, '/survey-frame': SURVEY_FRAME, '/names-and-phone': NAMES_AND_PHONE, '/names-and-file': NAMES_AND_FILE, '/german-names': GERMAN_NAMES, '/french-names': FRENCH_NAMES, '/other-names': OTHER_NAMES, '/standard-hints': STANDARD_HINTS, '/localized-dates': LOCALIZED_DATES, '/names-alongside': NAMES_ALONGSIDE, '/handy': HANDY, '/typed-maxlength': TYPED_MAXLENGTH, '/phone-patterned': PHONE_PATTERNED };
 
 const PROFILE = {
   first_name: 'Morgan',
@@ -13306,6 +13359,104 @@ async function main() {
     check('the year first, either way', dates['ld-yfirst'] === '2026/05' && dates['ld-ydots'] === '2026.05', JSON.stringify(dates));
     check('MM.JJJJ and MM/AAAA are the same shape', dates['ld-german'] === '05.2026' && dates['ld-french'] === '05/2026', JSON.stringify(dates));
     check('TT.MM.JJJJ and JJ/MM/AAAA want a day, so they are left', dates['ld-tt'] === '' && dates['ld-jj'] === '', JSON.stringify(dates));
+    group('A first or last name with a middle name or suffix allowed alongside');
+    const alongside = await valuesAt('/names-alongside', ['na-fmi', 'na-fmn', 'na-ls', 'na-lsa', 'na-legal', 'na-mid', 'na-suf']);
+    check(
+      '"First name and middle initial" and "First Name (include middle name)" get the first name',
+      alongside['na-fmi'] === 'Morgan' && alongside['na-fmn'] === 'Morgan',
+      JSON.stringify(alongside),
+    );
+    check(
+      '"Last name / Suffix", "Last Name (and suffix, if any)" and "Legal last name, including suffix" get the surname',
+      alongside['na-ls'] === 'Testwell' && alongside['na-lsa'] === 'Testwell' && alongside['na-legal'] === 'Testwell',
+      JSON.stringify(alongside),
+    );
+    check('a box that is only the middle name or the suffix is still left', alongside['na-mid'] === '' && alongside['na-suf'] === '', JSON.stringify(alongside));
+
+    group('"Handy" is a telephone only in German');
+    const handy = await valuesAt('/handy', ['hd-tools', 'hd-excel', 'hd-skills', 'hd-nummer', 'hd-bare', 'hd-both']);
+    check(
+      '"How handy are you with Excel?", "Handy skills" and "handy with power tools" are not given the phone number',
+      handy['hd-tools'] === '' && handy['hd-excel'] === '' && handy['hd-skills'] === '',
+      JSON.stringify(handy),
+    );
+    check(
+      '"Handynummer", "Handy:" and "Telefon / Handy" are',
+      handy['hd-nummer'] === PROFILE.phone && handy['hd-bare'] === PROFILE.phone && handy['hd-both'] === PROFILE.phone,
+      JSON.stringify(handy),
+    );
+
+    group('A school the first block shows is the profile’s only by whole words');
+    const shownAs = (profileSchool, typed) =>
+      page.goto(`${base}/edu-shown`, { waitUntil: 'domcontentloaded' }).then(() =>
+        page.evaluate(async ({ b, profileSchool, typed }) => {
+          const m = await import(`${b}/autofill.js`);
+          document.getElementById('es-s0').value = typed;
+          m.fillForm({ first_name: 'Jo', school: profileSchool, major: 'Computer Science', gpa: '3.9' });
+          return { major: document.getElementById('es-m0').value, gpa: document.getElementById('es-g0').value };
+        }, { b: base, profileSchool, typed }),
+      );
+    const smith = await shownAs('MIT', 'Smith College');
+    check('"MIT" is not "Smith College", so its major and GPA are not put in that block', smith.major === '' && smith.gpa === '', JSON.stringify(smith));
+    const extension = await shownAs('UCLA', 'UCLA Extension');
+    check('nor is "UCLA" "UCLA Extension"', extension.major === '' && extension.gpa === '', JSON.stringify(extension));
+    const stanford = await shownAs('Stanford', 'Stanford University');
+    check('but "Stanford" is still "Stanford University"', stanford.major === 'Computer Science' && stanford.gpa === '3.9', JSON.stringify(stanford));
+    const harvard = await shownAs('Harvard', 'Harvard University');
+    check('and so is "Harvard" "Harvard University"', harvard.major === 'Computer Science' && harvard.gpa === '3.9', JSON.stringify(harvard));
+
+    group('A typed employer is the job of that exact name before one whose name it holds');
+    const metabase = await page.goto(`${base}/workday-experience-begun`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const blocks = [...document.querySelectorAll('[id$="--companyName"]')];
+        for (const box of blocks) box.value = '';
+        blocks[0].value = 'Metabase';
+        m.fillForm({}, {
+          history: [
+            { company: 'Meta', title: 'Software Engineer', description: 'Built ads ranking.', start: { year: 2022, month: 6 }, end: { year: 2024, month: 5 } },
+            { company: 'Metabase', title: 'Data Engineer Intern', description: 'Wrote query planner tests.', start: { year: 2021, month: 6 }, end: { year: 2021, month: 9 } },
+          ],
+        });
+        return [...document.querySelectorAll('[id$="--jobTitle"]')].map((t) => t.value);
+      }, { b: base }),
+    );
+    check('a block showing "Metabase" gets Metabase’s title, not Meta’s', metabase[0] === 'Data Engineer Intern', JSON.stringify(metabase));
+    check('and Meta goes to the next block', metabase[1] === 'Software Engineer', JSON.stringify(metabase));
+
+    group('A remembered answer is never longer than the box has room for');
+    const tooLong = await page.goto(`${base}/typed-maxlength`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const fields = { first_name: 'Jianwen' };
+        const qs = m.typedQuestions(fields, 'Meridian');
+        const remembered = [
+          { question: qs.find((q) => /hear/i.test(q)), answer: 'A friend who works on the platform team referred me' },
+          { question: qs.find((q) => /start/i.test(q)), answer: 'Two weeks after my offer' },
+        ];
+        const r = m.fillForm(fields, { remembered, company: 'Meridian' });
+        return {
+          hear: document.getElementById('tm-hear').value,
+          start: document.getElementById('tm-start').value,
+          skipped: r.skipped.map((x) => x.reason),
+        };
+      }, { b: base }),
+    );
+    check('an answer longer than its maxlength is left out of the box', tooLong.hear === '', JSON.stringify(tooLong));
+    check(
+      'and the card says why',
+      tooLong.skipped.includes('the box would not take the answer you gave before'),
+      JSON.stringify(tooLong.skipped),
+    );
+    check('one that fits still goes in', tooLong.start === 'Two weeks after my offer', JSON.stringify(tooLong));
+
+    group('A telephone box whose pattern wants the number punctuated');
+    const patterned = await valuesAt('/phone-patterned', ['pp-dash', 'pp-paren', 'pp-dot'], { ...PROFILE, phone: '(555) 555-5555' });
+    check('ddd-ddd-dddd', patterned['pp-dash'] === '555-555-5555', JSON.stringify(patterned));
+    check('(ddd) ddd-dddd', patterned['pp-paren'] === '(555) 555-5555', JSON.stringify(patterned));
+    check('ddd.ddd.dddd', patterned['pp-dot'] === '555.555.5555', JSON.stringify(patterned));
+    const dashedFromPlus = await valuesAt('/phone-patterned', ['pp-dash', 'pp-dot'], { ...PROFILE, phone: '+1 555 555 5555' });
+    check('from a number stored with +1, the ten digits after it', dashedFromPlus['pp-dash'] === '555-555-5555' && dashedFromPlus['pp-dot'] === '555.555.5555', JSON.stringify(dashedFromPlus));
   } finally {
     await browser.close();
     server.close();
