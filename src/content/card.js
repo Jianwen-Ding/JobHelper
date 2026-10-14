@@ -385,6 +385,8 @@ input.pair-code:focus-visible, input.pair-code:focus { outline: 2px solid var(--
 .fit.bad button.link { color: #b31412; text-decoration: underline; padding: 0; margin-left: 6px; font-size: 12px; }
 .fit.bad button.link:hover { background: transparent; text-decoration-thickness: 2px; }
 .fit.idle { background: var(--line-soft); border-color: transparent; color: var(--muted); font-weight: 400; }
+/* It fits, and something on it runs past where it should; see \`drawFit\`. */
+.fit.warn { background: var(--warn-bg); border-color: var(--warn-line); color: var(--warn); }
 
 /* What the tailoring changed, in words. */
 .changes { display: grid; gap: 6px; margin: 8px 0 2px; }
@@ -6067,7 +6069,26 @@ export function createCard({
      */
     const allowed = r.maxPages ?? 1;
     const pages = r.pages > 1 ? plural(r.pages, 'page') : 'one page';
-    return h('div', { className: 'fit ok', textContent: `Fits on ${pages}${allowed > 1 ? ` (${allowed} allowed)` : ''}.${adj}` });
+    const counted = `${pages}${allowed > 1 ? ` (${allowed} allowed)` : ''}`;
+    /*
+     * And not in green over a line that runs off the paper. The page count
+     * was all this read, so a link too long to break sat past the right-hand
+     * edge — not in the PDF at all — under "Fits on one page." The compile
+     * says so in `warnings`, in words meant to be shown; they are shown.
+     * Still `ok` underneath: it does fit, and what waits for a finished
+     * compile waits for that.
+     */
+    const edge = (r.warnings ?? []).filter(
+      (w) => typeof w === 'string' && /past the right-hand edge|into the right-hand margin/i.test(w),
+    );
+    if (edge.length) {
+      const said = edge.join(' ');
+      return h('div', {
+        className: 'fit ok warn',
+        textContent: `On ${counted}, but ${said.charAt(0).toLowerCase()}${said.slice(1)}${adj}`,
+      });
+    }
+    return h('div', { className: 'fit ok', textContent: `Fits on ${counted}.${adj}` });
   }
 
   /* ---- Main view ---- */
@@ -9386,18 +9407,28 @@ export function createCard({
    * ready — a card that shows up late looks like one that is broken.
    */
   function drawReadingView() {
+    /*
+     * A read that failed is not still reading. The bar went on moving and
+     * "Reading the posting…" stood above the error that said it had stopped,
+     * and the hostname stood where the company goes, as if it had been read
+     * as one. Over an error there is the page's title and the error.
+     */
+    const failed = Boolean(state.error);
     return h('div', { className: 'body' }, [
       h('div', { className: 'job' }, [
         h('div', { className: 'role provisional', textContent: provisionalRole(document.title) }),
-        h('div', { className: 'co', textContent: location.hostname }),
-      ]),
-      // Not "Reading…" over a read that is waiting for a code: see `drawPairing`.
-      waitingToPair() ? null : h('div', { className: 'progress' }),
-      h('div', {
-        className: 'progress-label',
-        textContent: waitingToPair() ? 'Read once JobHelper is paired.' : 'Reading the posting…',
-      }),
-      state.error ? drawError() : null,
+        failed ? null : h('div', { className: 'co', textContent: location.hostname }),
+      ].filter(Boolean)),
+      // Not "Reading…" over a read that is waiting for a code (see
+      // `drawPairing`), nor over one that has failed.
+      failed || waitingToPair() ? null : h('div', { className: 'progress' }),
+      failed
+        ? null
+        : h('div', {
+            className: 'progress-label',
+            textContent: waitingToPair() ? 'Read once JobHelper is paired.' : 'Reading the posting…',
+          }),
+      failed ? drawError() : null,
     ].filter(Boolean));
   }
 

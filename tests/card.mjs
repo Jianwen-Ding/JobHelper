@@ -7986,6 +7986,86 @@ async function main() {
   check('a store that is not running does not put the code box up', down.block === false && down.asked === false, JSON.stringify(down));
   check('and keeps its own sentence and button', /not open/.test(down.error ?? '') && /Open ResumeM-M/.test(down.error ?? ''), down.error);
 
+  /*
+   * And not "Fits on one page." in green over a line that runs off the paper:
+   * the compile's own warning, in the warning colour.
+   */
+  const fitLooks = async (render) =>
+    inPage(async (createCard, given) => {
+      createCard({
+        analysis: {
+          isJobPosting: true,
+          job: { title: 'Platform Engineer', company: 'Acme' },
+          spec: { id: 'job-acme', label: 'Acme', choices: {} },
+          baseLabel: 'New grad resume',
+          tailor: 'match',
+          diff: [],
+          rationale: [],
+        },
+        resumes: [],
+        settings: {},
+        questions: [],
+        needsCoverLetter: false,
+        onAction: async (action) => (action === 'render' ? given : action === 'stage' ? { currentDir: '/tmp/x' } : {}),
+      });
+      const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+      [...root.querySelectorAll('button')].find((b) => /Build resume/.test(b.textContent)).click();
+      await new Promise((r) => setTimeout(r, 200));
+      const fit = root.querySelector('.fit');
+      return fit ? { text: fit.textContent, cls: fit.className, bg: getComputedStyle(fit).backgroundColor } : null;
+    }, render);
+  const offEdge = await fitLooks({
+    pages: 1,
+    fits: true,
+    maxPages: 1,
+    warnings: [
+      'A line runs past the right-hand edge of the page — the widest by 40pt — and whatever is past the edge is not in the PDF at all. This is usually one long unbroken thing: a link, a file path, a token. Shorten it, or put it behind a few words of link text.',
+    ],
+  });
+  check(
+    'a line past the edge of the page is said, not "Fits on one page."',
+    /^On one page, but a line runs past the right-hand edge of the page/.test(offEdge?.text ?? '') && !/Fits on/.test(offEdge?.text ?? ''),
+    JSON.stringify(offEdge),
+  );
+  check('in the warning colour, not the green', /\bwarn\b/.test(offEdge?.cls ?? '') && offEdge?.bg === 'rgb(254, 247, 224)', JSON.stringify(offEdge));
+  const inMargin = await fitLooks({
+    pages: 1,
+    fits: true,
+    warnings: ['2 lines run into the right-hand margin — the widest by 30pt — still on the paper, so nothing is lost, but set past where the other lines end. This is usually one long unbroken thing.'],
+  });
+  check('and so is one that runs into the margin', /^On one page, but 2 lines run into the right-hand margin/.test(inMargin?.text ?? '') && /\bwarn\b/.test(inMargin?.cls ?? ''), JSON.stringify(inMargin));
+  const otherWarning = await fitLooks({ pages: 1, fits: true, warnings: ['Some font substitution happened.'] });
+  check('a warning about something else leaves the green line as it was', otherWarning?.text === 'Fits on one page.' && !/warn/.test(otherWarning?.cls ?? ''), JSON.stringify(otherWarning));
+
+  /*
+   * A read that failed is not still reading: no bar and no "Reading the
+   * posting…" above the error, and no hostname where the company goes.
+   */
+  console.log('\nA first read that failed');
+  const failedRead = await inPage(async (createCard) => {
+    const handle = createCard({ analysis: null, resumes: [], settings: {}, questions: [], needsCoverLetter: false, onAction: async () => ({}) });
+    const root = document.querySelector('#jobhelper-card-host').shadowRoot;
+    const reading = {
+      bar: Boolean(root.querySelector('.progress')),
+      label: root.querySelector('.progress-label')?.textContent ?? null,
+      co: root.querySelector('.job .co')?.textContent ?? null,
+    };
+    handle.setStatus('ResumeM-M is not open. Start it, then try again.', 'start');
+    await new Promise((r) => setTimeout(r, 50));
+    return {
+      reading,
+      bar: Boolean(root.querySelector('.progress')),
+      label: root.querySelector('.progress-label')?.textContent ?? null,
+      co: root.querySelector('.job .co')?.textContent ?? null,
+      role: root.querySelector('.job .role')?.textContent ?? null,
+      error: root.querySelector('.body')?.textContent ?? '',
+    };
+  });
+  check('while reading, the bar and the label are there', failedRead.reading.bar && failedRead.reading.label === 'Reading the posting…', JSON.stringify(failedRead.reading));
+  check('once it failed, neither is', !failedRead.bar && failedRead.label === null, JSON.stringify(failedRead));
+  check('nor the hostname where the company goes', failedRead.co === null && Boolean(failedRead.role), JSON.stringify(failedRead));
+  check('and the error is what is said', /ResumeM-M is not open/.test(failedRead.error), failedRead.error.slice(0, 160));
+
   await browser.close();
   console.log(`\n${passed}/${passed + failed} checks passed`);
   if (failed) process.exit(1);
