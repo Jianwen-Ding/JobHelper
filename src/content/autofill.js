@@ -2022,12 +2022,38 @@ function questionFor(input) {
   return ASKED_AS_A_QUESTION.test(placeholder) ? placeholder : '';
 }
 
+/*
+ * A date box that calls itself a combobox.
+ *
+ * Kendo's DatePicker is an `<input role="combobox" data-role="datepicker"
+ * placeholder="MM/dd/yyyy">`, and the ARIA pattern for a date picker is a
+ * combobox whose popup is a dialog or a grid. Driven as a list, each was
+ * typed "September 2022" and waited on for an option that never came — on
+ * Dayforce, nine seconds a box — and then left for the person over a value
+ * the page had already thrown out. What it takes is typed, so it is a text
+ * box: written in the shape it asks for where the profile has one, and said
+ * plainly where it does not (see `graduationFor`).
+ */
+const DATE_SHAPE = /^\s*(?:(?:dd?|mm?|yy(?:yy)?|tt|jj(?:jj)?|aa(?:aa)?)\s*[./-]\s*){1,2}(?:dd?|mm?|yy(?:yy)?|tt|jj(?:jj)?|aa(?:aa)?)\s*$/i;
+function isTypedDate(element) {
+  if (!(element instanceof HTMLInputElement)) return false;
+  if (/^(?:date|datetime|month)(?:picker|timepicker|input)$/i.test(element.getAttribute('data-role') ?? '')) return true;
+  if (/^(?:dialog|grid)$/i.test(element.getAttribute('aria-haspopup') ?? '')) return true;
+  if (DATE_SHAPE.test(element.getAttribute('placeholder') ?? '')) return true;
+  const pattern = element.getAttribute('pattern') ?? '';
+  // A year's four digits and a separator, and not a telephone's three.
+  return /\\d\{4\}/.test(pattern) && !/\\d\{3\}/.test(pattern) && /[./-]/.test(pattern.replace(/\\[dDwWsS]/g, ''));
+}
+
 /** A choice dressed as something else: a button, or a text box that is a list. */
 function isWidgetChoice(element) {
   if (element instanceof HTMLSelectElement) return false;
   // What select2 draws is its select's, which is the question. See `select2Of`.
   if (isSelect2Part(element)) return false;
+  if (isTypedDate(element)) return false;
   const role = element.getAttribute?.('role');
+  // A list of pressed buttons calling itself a listbox is a group of them. See `toggleGroupOf`.
+  if (role === 'listbox' && element.querySelector('button[aria-pressed]') && !element.querySelector('[role="option"]')) return false;
   return (
     role === 'combobox' ||
     role === 'listbox' ||
@@ -2803,11 +2829,41 @@ const changeEvent = () => ours(new Event('change', { bubbles: true, composed: tr
  */
 function setValue(input, value) {
   const spin = input.getAttribute?.('role') === 'spinbutton';
-  if (spin) input.focus?.();
+  const onLeaving = takesItsValueOnLeaving(input);
+  if (spin || onLeaving) input.focus?.();
   nativeSet(input, 'value', value);
   input.dispatchEvent(inputEventFor(input, value));
   input.dispatchEvent(changeEvent());
   if (spin && lastBoxOfItsDate(input)) input.blur?.();
+  if (onLeaving) leave(input);
+}
+
+/*
+ * A text box whose toolkit reads it into its model when focus leaves it.
+ *
+ * Oracle JET's `oj-input-text` (Oracle Recruiting Cloud) and classic UI5's
+ * `sap.m.Input` (SuccessFactors) take what is in the box on its blur, or on
+ * Enter, and not on `input` or `change`. Written as every other box is, the
+ * box showed the name, the email and the phone and the model behind them
+ * stayed "" — measured on fixtures shaped as both draw them — so the form
+ * would have sent them empty. So these, and only these, by the toolkit's own
+ * class, are focused before they are written and left after, as a person
+ * tabbing through them does. Not a box that is a list: what leaving one does
+ * is the list's business (see `chooseInWidget`).
+ */
+const LEAVE_TO_COMMIT = '.oj-inputtext-input, .oj-text-field-input, .sapMInputBaseInner';
+function takesItsValueOnLeaving(input) {
+  return Boolean(input.matches?.(LEAVE_TO_COMMIT)) && !isWidgetChoice(input);
+}
+
+/** Take focus out of a box: really where it has it, and said where it does not. */
+function leave(input) {
+  if (deepActiveElement() === input) {
+    input.blur();
+    return;
+  }
+  input.dispatchEvent(ours(new FocusEvent('blur', { composed: true })));
+  input.dispatchEvent(ours(new FocusEvent('focusout', { bubbles: true, composed: true })));
 }
 
 /*
@@ -4232,6 +4288,28 @@ function codeControlsDrawnIn(scope, input) {
   return out;
 }
 
+/*
+ * The code an intl-tel-input around this box is set to: its separate dial
+ * code where it shows one, or what its flag button says — "Sweden (Sverige):
+ * +46" in its title, "Selected country Sweden (+46)" in its label. Only
+ * inside the widget's own `.iti` wrapper.
+ */
+function itiDiallingCode(input) {
+  const iti = input.closest?.('.iti');
+  if (!iti) return undefined;
+  const flag = iti.querySelector('.iti__selected-flag, .iti__selected-country, .iti__flag-container [role="combobox"], .iti__flag-container button');
+  const said = [
+    iti.querySelector('.iti__selected-dial-code')?.textContent,
+    flag?.getAttribute('title'),
+    flag?.getAttribute('aria-label'),
+  ];
+  for (const text of said) {
+    const code = /(?:^|[\s(:])(\+\d{1,4})(?=$|[\s)])/.exec(clean(text))?.[1];
+    if (code) return code;
+  }
+  return undefined;
+}
+
 function diallingCodeBeside(input) {
   let scope = containerOf(input);
   for (let i = 0; i < 3 && scope && scope.localName !== 'form' && scope !== document.body; ) {
@@ -4650,6 +4728,8 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
      */
     if (key === 'requires_sponsorship' && !(input instanceof HTMLSelectElement) && !/\bsponsor/i.test(description)) continue;
     let value = answers[key];
+    // A phone written with its own code over an intl-tel-input on another country's.
+    let abroad = null;
     // The legal name or the one the resume prints. See `NAME_FOR_THE_FORM`.
     if (NAME_FOR_THE_FORM[key] && !asksPreferred && !asksForLegalName(input)) value = answers[NAME_FOR_THE_FORM[key]] || value;
 
@@ -4686,8 +4766,21 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
       value = withoutTrunkZeroAfterCode(value);
     } else if (key === 'phone' && !(input instanceof HTMLSelectElement)) {
       // Behind a code the form adds itself, from a select or a widget beside the box.
-      const beside = diallingCodeBeside(input);
-      if (beside) value = withoutTrunkZero(beside, value);
+      const beside = itiDiallingCode(input) ?? diallingCodeBeside(input);
+      /*
+       * Unless the code is some other country's, as the Recruitee box above:
+       * an intl-tel-input preset to the employer's country. On a Teamtailor
+       * board preset to Sweden, a United States profile's "(555) 555-5555"
+       * went in behind the flag and the page held "+46 (555) 555-5555".
+       * Written with the profile's own code in front, which intl-tel-input
+       * reads as the country the number is from; and where the widget does
+       * not move to it, said, rather than left a Swedish number nobody rings.
+       */
+      const home = diallingCodeFor(fields.address_country);
+      if (beside && home && beside !== home && itiDiallingCode(input)) {
+        abroad = { national: value, code: beside, home };
+        value = `${home} ${String(value).trim()}`;
+      } else if (beside) value = withoutTrunkZero(beside, value);
     }
 
     /*
@@ -4900,6 +4993,12 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
     const sameDate = /^(graduation|education_start)_date$/.test(key) && sameMonthWritten(input.value, String(value));
     if (input.value !== String(value) && !sameNumber && !sameDate) {
       skipped.push(leftAt(input, { key, reason: 'the field would not take it', description: description.slice(0, 60) }));
+      continue;
+    }
+    // A number from abroad that its widget did not move to. See `itiDiallingCode`.
+    if (abroad && itiDiallingCode(input) !== abroad.home) {
+      setValue(input, abroad.national);
+      skipped.push(leftAt(input, { key, reason: `the form's country code is ${abroad.code} — check the phone`, description: description.slice(0, 60) }));
       continue;
     }
 
@@ -5531,18 +5630,38 @@ function ariaChoiceGroups() {
 const TOGGLE_BARS = '[role="toolbar"], [role="menubar"], [role="tablist"], [contenteditable=""], [contenteditable="true"]';
 const isPressed = (el) => el.getAttribute('aria-pressed') === 'true';
 
+/*
+ * The container a pressed button's group is drawn in: its parent, or — where
+ * each button sits alone in an item of a list, `<ul><li><button>` as Oracle
+ * Recruiting's pills are drawn — the list around the items. Measured on that
+ * shape, the parent held one button, was no group, and the question was
+ * either left silently or, the list being a `role="listbox"`, opened as a
+ * dropdown for four seconds and handed back.
+ */
+const aloneIn = (wrapper) => wrapper.children.length === 1 && wrapper.firstElementChild.matches('button[aria-pressed]');
+
+function toggleGroupOf(button) {
+  const parent = button.parentElement;
+  const list = parent?.parentElement;
+  if (!parent || !list || !aloneIn(parent)) return parent;
+  return [...list.children].filter(aloneIn).length >= 2 ? list : parent;
+}
+
+/** Whether a button is one of its group's own: in it, or alone in an item of it. See `toggleGroupOf`. */
+const inToggleGroup = (el, group) => el.parentElement === group || (el.parentElement?.parentElement === group && aloneIn(el.parentElement));
+
 function pressedButtonGroups() {
   const visible = (el) => el.getClientRects().length > 0;
   const found = [];
   const seen = new Set();
   for (const button of deepQueryAll('button[aria-pressed]')) {
-    const group = button.parentElement;
+    const group = toggleGroupOf(button);
     if (!group || seen.has(group)) continue;
     seen.add(group);
     if (isDisabled(group) || !visible(group) || group.closest(TOGGLE_BARS)) continue;
     const buttons = [...group.querySelectorAll('button, [role="button"]')].filter(visible);
     const options = buttons.filter(
-      (el) => el.localName === 'button' && el.parentElement === group && el.hasAttribute('aria-pressed') && !el.hasAttribute('role'),
+      (el) => el.localName === 'button' && inToggleGroup(el, group) && el.hasAttribute('aria-pressed') && !el.hasAttribute('role'),
     );
     if (options.length < 2 || options.length > 8 || options.length !== buttons.length) continue;
     if (options.some((el) => isDisabled(el) || wouldSubmit(el) || clean(el.getAttribute('aria-label') || el.textContent).length > 80)) continue;
@@ -5576,6 +5695,21 @@ let pressedNow = new WeakSet();
 /** Whether this button, and no other in its group, is the one pressed. */
 const pressedAlone = (wanted, options) => isPressed(wanted) && options.every((el) => el === wanted || !isPressed(el));
 
+/*
+ * And an ARIA option clicked: `role="radio"` and the rest are drawn by the
+ * page too, and React 18 under `createRoot` draws a click's `aria-checked` a
+ * turn after it, not during it. Read at once, Workable's Yes and No — which
+ * had taken — were each reported as "the page did not take it". So one not
+ * yet marked is read back by `seePresses`, as a pressed button is: by its
+ * own mark, and no other option's.
+ */
+function clickOption(group, options, wanted) {
+  if (isMarkedChosen(wanted)) return true;
+  pressedNow.add(group);
+  wanted.click();
+  return isMarkedChosen(wanted) || { wanted, options, chosen: isMarkedChosen };
+}
+
 /**
  * Press one button of a group and say what can be said now: `true` if the
  * page already shows it pressed, alone; `false` if it cannot be pressed;
@@ -5594,8 +5728,9 @@ async function seePresses(report, patience = 1000) {
   const waiting = report.skipped.filter((s) => UNSEEN.has(s));
   if (waiting.length === 0) return report;
   const took = (s) => {
-    const { wanted, options } = UNSEEN.get(s);
-    return wanted.isConnected && pressedAlone(wanted, options);
+    const { wanted, options, chosen } = UNSEEN.get(s);
+    if (!wanted.isConnected) return false;
+    return chosen ? chosen(wanted) : pressedAlone(wanted, options);
   };
   await waitFor(() => waiting.every(took) || null, patience);
   const seen = waiting.filter(took);
@@ -5684,24 +5819,15 @@ function answerChoiceButtons(fields, overwrite, already) {
       }
       continue;
     }
-    wanted.click();
-    if (chosen(wanted)) {
-      keepChosen(group, labelOf(wanted));
-      filled.push({ key, value });
-      taken.add(key);
-    } else {
-      skipped.push(
-        leftAt(
-          group,
-          {
-            key,
-            reason: 'the page did not take it — pick this one by hand',
-            description: description.slice(0, 60),
-          },
-          question,
-        ),
-      );
-      taken.add(key);
+    const got = clickOption(group, options, wanted);
+    keepChosen(group, labelOf(wanted));
+    taken.add(key);
+    if (got === true) filled.push({ key, value });
+    else {
+      // Read back by `seePresses` once the page has drawn it. See `clickOption`.
+      const row = { key, reason: 'the page did not take it — pick this one by hand', description: description.slice(0, 60) };
+      UNSEEN.set(row, { ...got, row: { key, value } });
+      skipped.push(leftAt(group, row, question));
     }
   }
   return { filled, skipped };
@@ -6365,8 +6491,8 @@ function rememberableChoices({ short = false } = {}) {
       description,
       group,
       // Pressed on this pass and not drawn yet is answered. See `pressedNow`.
-      () => options.some(chosen) || (toggles && pressedNow.has(group)),
-      (answer) => (toggles ? pressInGroup(group, options, answer) : chooseInAria(options, answer)),
+      () => options.some(chosen) || pressedNow.has(group),
+      (answer) => (toggles ? pressInGroup(group, options, answer) : chooseInAria(group, options, answer)),
       // What the page itself shows, pressed on this pass or not. See `watchForEmptied`.
       () => options.some(chosen),
     );
@@ -7080,14 +7206,13 @@ function chooseInRadios(radios, answer) {
 }
 
 /** Click an ARIA option by its label, and believe the page about the result. */
-function chooseInAria(options, answer) {
+function chooseInAria(group, options, answer) {
   const wanted = options.find((el) => sameOption(ariaOptionWords(el), answer));
   if (!wanted) return false;
-  wanted.click();
   // Never written here: `aria-checked` belongs to the page's own component,
   // and forging it puts a tick over a form that will submit blank. See
-  // `answerChoiceButtons`.
-  return isMarkedChosen(wanted);
+  // `answerChoiceButtons`, and `clickOption` for one drawn a turn late.
+  return clickOption(group, options, wanted);
 }
 
 /**
@@ -7261,6 +7386,20 @@ function widgetChoices(fields, filled) {
       if (EDUCATION_KEYS.test(key)) already.add(key);
       continue;
     }
+    /*
+     * And one whose own typing box already holds something else: answered,
+     * as a text box holding something is. `widgetShowsAnAnswer` reads no
+     * input as showing an answer, so a typeahead the page arrived with
+     * "Cambridge, MA" in was searched over with the profile's city — on one
+     * form the city replaced, on another the box put back but the place the
+     * page had picked behind it dropped, after the whole patience spent
+     * waiting. Named as already filled, and never driven.
+     */
+    if (boxAlreadyHolds(widget)) {
+      found.push({ key, description: description.slice(0, 60), el: widget, prefilled: true });
+      if (EDUCATION_KEYS.test(key)) already.add(key);
+      continue;
+    }
     if (anotherLevelOfStudy(widget, key, fields)) continue;
     // Named, so it is reported for what it is and never driven: Workday's
     // list picks "Yes" by its text too. See `aboutAnotherCountry`.
@@ -7269,6 +7408,19 @@ function widgetChoices(fields, filled) {
     if (EDUCATION_KEYS.test(key)) already.add(key);
   }
   return found;
+}
+
+/**
+ * Whether a widget's own typing box holds an answer of some kind: not empty,
+ * not a "Select…", and not text typed beside a hidden input left empty —
+ * that is a search never chosen from (see `widgetShowsThisAnswer`), and still
+ * the widget's to answer.
+ */
+function boxAlreadyHolds(widget) {
+  const typed = clean(typingBoxOf(widget)?.value);
+  if (!typed || NOTHING_CHOSEN.test(typed)) return false;
+  const hidden = hiddenPartner(widget);
+  return !hidden || Boolean(hidden.value);
 }
 
 /** Whether a listbox has one of its own options, as `choiceGroupOf` counts them, marked chosen. */
@@ -7302,10 +7454,10 @@ function widgetShowsThisAnswer(widget, key, value) {
 }
 
 function unfillableChoices(fields, filled) {
-  return widgetChoices(fields, filled).map(({ key, description, both, negative, elsewhere, policy, el }) =>
+  return widgetChoices(fields, filled).map(({ key, description, both, negative, elsewhere, policy, prefilled, el }) =>
     leftAt(el, {
       key,
-      reason: policy ? FOR_YOU_TO_ACKNOWLEDGE : both ? TWO_AT_ONCE : negative ? IN_THE_NEGATIVE : elsewhere ? ANOTHER_COUNTRY : PICK_BY_HAND,
+      reason: prefilled ? 'already filled' : policy ? FOR_YOU_TO_ACKNOWLEDGE : both ? TWO_AT_ONCE : negative ? IN_THE_NEGATIVE : elsewhere ? ANOTHER_COUNTRY : PICK_BY_HAND,
       description,
     }),
   );
@@ -7997,8 +8149,8 @@ export async function fillComboboxes(fields, report, { patience = 4000, history 
   const done = [];
   // Which question each choice answered: a key can now be asked twice.
   const chose = new Set();
-  for (const { key, el: widget, both, negative, elsewhere, policy, asked, description } of widgetChoices(fields, report.filled)) {
-    if (both || negative || elsewhere || policy || !pending.has(key)) continue;
+  for (const { key, el: widget, both, negative, elsewhere, policy, prefilled, asked, description } of widgetChoices(fields, report.filled)) {
+    if (both || negative || elsewhere || policy || prefilled || !pending.has(key)) continue;
     const value = String(fields[key]);
     const how = await chooseInWidget(widget, key, value, { patience, fields, asked });
     // Looked for in a list that opened, and not in it. See `NOT_LISTED`.

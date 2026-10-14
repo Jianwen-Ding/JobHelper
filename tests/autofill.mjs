@@ -6952,6 +6952,149 @@ PAGES['/ui5-like'] = UI5_LIKE;
 PAGES['/ui5-like-beside'] = UI5_LIKE.replace('<u-label for="u-co">', '<u-label>');
 PAGES['/shadow-form-model'] = SHADOW_FORM_MODEL;
 
+/*
+ * A typeahead the page arrived with an answer in: "City, State" holding
+ * "Cambridge, MA" and the place the page picked behind it, which any typing
+ * drops, as Indeed's does. With `?hidden`, a hidden input beside it that the
+ * pick fills.
+ */
+const PREFILLED_TYPEAHEAD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <label id="pt-l" for="pt">City</label>
+  <div class="pt-wrap"><input id="pt" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="pt-l" autocomplete="off" value="Cambridge, MA"></div>
+</form>
+<script>
+  window.picked = { id: 'cambridge', label: 'Cambridge, MA' };
+  window.log = [];
+  const box = document.getElementById('pt');
+  let list = null;
+  const open = () => {
+    if (list) return;
+    list = document.createElement('ul'); list.id = 'pt-list'; list.setAttribute('role', 'listbox');
+    for (const text of ['Boston, MA', 'Boston, NY']) {
+      const o = document.createElement('li'); o.setAttribute('role', 'option'); o.textContent = text;
+      o.addEventListener('mousedown', (e) => e.preventDefault());
+      o.addEventListener('click', () => { window.picked = { id: text, label: text }; box.value = text; window.log.push('picked ' + text); list.remove(); list = null; });
+      list.append(o);
+    }
+    document.body.append(list);
+    box.setAttribute('aria-controls', 'pt-list'); box.setAttribute('aria-expanded', 'true');
+  };
+  box.addEventListener('mousedown', open);
+  box.addEventListener('input', () => { window.picked = null; window.log.push('typed ' + box.value); open(); });
+</script>
+</body></html>`;
+PAGES['/prefilled-typeahead'] = PREFILLED_TYPEAHEAD;
+
+/*
+ * Date pickers that call themselves comboboxes: Kendo's, a whole date in
+ * MM/dd/yyyy that throws out anything else, and an ARIA one whose popup is a
+ * grid, asking MM/YYYY.
+ */
+const DATE_COMBOBOXES = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <h2>Education</h2>
+  <label for="dc-school">School</label><input id="dc-school" name="school">
+  <label for="dc-kendo">Graduation Date</label>
+  <span class="k-datepicker"><input id="dc-kendo" data-role="datepicker" type="text" role="combobox" aria-expanded="false" placeholder="MM/dd/yyyy" autocomplete="off"></span>
+</form>
+<form>
+  <h2>Degree</h2>
+  <label for="dc-grid">Expected graduation date</label>
+  <input id="dc-grid" type="text" role="combobox" aria-haspopup="grid" aria-expanded="false" placeholder="MM/YYYY" autocomplete="off">
+</form>
+<script>
+  window.log = [];
+  const k = document.getElementById('dc-kendo');
+  k.addEventListener('change', () => { if (k.value && !/^\\d{1,2}\\/\\d{1,2}\\/\\d{4}$/.test(k.value)) { window.log.push('invalid ' + k.value); k.value = ''; } });
+</script>
+</body></html>`;
+PAGES['/date-comboboxes'] = DATE_COMBOBOXES;
+
+/*
+ * ARIA radios whose page draws a click's aria-checked a turn later, as React
+ * 18 under createRoot does.
+ */
+const LATE_ARIA_RADIOS = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <fieldset><legend id="lr-q1">Are you legally authorized to work in the United States?</legend>
+    <div role="radiogroup" aria-labelledby="lr-q1"><div role="radio" aria-checked="false" tabindex="0">Yes</div><div role="radio" aria-checked="false" tabindex="-1">No</div></div></fieldset>
+  <fieldset><legend id="lr-q2">Will you now or in the future require sponsorship?</legend>
+    <div role="radiogroup" aria-labelledby="lr-q2"><div role="radio" aria-checked="false" tabindex="0">Yes</div><div role="radio" aria-checked="false" tabindex="-1">No</div></div></fieldset>
+</form>
+<script>
+  for (const r of document.querySelectorAll('[role=radio]')) r.addEventListener('click', () => setTimeout(() => {
+    for (const o of r.parentElement.children) o.setAttribute('aria-checked', String(o === r));
+  }, 20));
+  window.state = () => [...document.querySelectorAll('[role=radio][aria-checked=true]')].map((r) => r.closest('fieldset').querySelector('legend').textContent.slice(0, 12) + '=' + r.textContent);
+</script>
+</body></html>`;
+PAGES['/late-aria-radios'] = LATE_ARIA_RADIOS;
+
+/*
+ * Text boxes whose toolkit takes the value on leaving them: Oracle JET's
+ * oj-input-text on blur, classic UI5's sap.m.Input on focusout, and a JET
+ * select-single's filter box that is a list and must not be left by setValue.
+ */
+const COMMIT_ON_LEAVING = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <label for="cl-first">First Name</label><input id="cl-first" class="oj-inputtext-input oj-text-field-input" type="text">
+  <label for="cl-last">Last Name</label><input id="cl-last" class="sapMInputBaseInner" type="text">
+  <label for="cl-email">Email</label><input id="cl-email" type="email">
+</form>
+<script>
+  window.model = { first: '', last: '', email: '' };
+  window.focused = [];
+  const f = document.getElementById('cl-first'), l = document.getElementById('cl-last'), e = document.getElementById('cl-email');
+  f.addEventListener('blur', () => { window.model.first = f.value; });
+  l.addEventListener('focusout', () => { window.model.last = l.value; });
+  e.addEventListener('focus', () => window.focused.push('email'));
+  e.addEventListener('input', () => { window.model.email = e.value; });
+</script>
+</body></html>`;
+PAGES['/commit-on-leaving'] = COMMIT_ON_LEAVING;
+
+/*
+ * An intl-tel-input preset to Sweden, as a Teamtailor board for a Swedish
+ * employer opens. With `?follows`, it moves its flag to the code a number is
+ * typed with, as intl-tel-input does; without, it keeps +46 whatever is typed.
+ */
+const ITI_ABROAD = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form>
+  <label for="ia-first">First Name</label><input id="ia-first" name="first">
+  <label for="ia-phone">Phone</label>
+  <div class="iti iti--allow-dropdown"><div class="iti__flag-container"><div class="iti__selected-flag" role="combobox" aria-expanded="false" tabindex="0" title="Sweden (Sverige): +46"><div class="iti__flag iti__se"></div></div></div>
+    <input type="tel" id="ia-phone" name="phone" placeholder="070-123 45 67" autocomplete="off"></div>
+</form>
+<script>
+  const flag = document.querySelector('.iti__selected-flag'), tel = document.getElementById('ia-phone');
+  window.dial = '46';
+  if (location.search.includes('follows')) tel.addEventListener('input', () => {
+    if (/^\\+1\\b/.test(tel.value)) { window.dial = '1'; flag.title = 'United States: +1'; }
+  });
+  window.state = () => ({ dial: window.dial, value: tel.value, full: '+' + window.dial + ' ' + tel.value.replace(/^\\+\\d+\\s*/, '') });
+</script>
+</body></html>`;
+PAGES['/iti-abroad'] = ITI_ABROAD;
+
+/*
+ * Pills: pressed buttons each alone in an item of a list, as Oracle
+ * Recruiting draws them — the list a listbox, or, with `?plain`, not.
+ */
+const PILLS_IN_A_LIST = `<!doctype html><html><head><meta charset="utf-8"><title>Apply</title></head><body>
+<form onsubmit="return false">
+  <label for="pl-first">First Name</label><input id="pl-first">
+  <fieldset><legend id="pl-q">Are you legally authorized to work in the United States?</legend>
+    <ul class="pills" role="listbox" aria-labelledby="pl-q"><li role="none"><button type="button" class="pill" aria-pressed="false">Yes</button></li><li role="none"><button type="button" class="pill" aria-pressed="false">No</button></li></ul></fieldset>
+</form>
+<script>
+  if (location.search.includes('plain')) document.querySelector('.pills').removeAttribute('role');
+  for (const b of document.querySelectorAll('.pill')) b.addEventListener('click', () => { for (const o of document.querySelectorAll('.pill')) o.setAttribute('aria-pressed', String(o === b)); });
+  window.state = () => [...document.querySelectorAll('[aria-pressed=true]')].map((b) => b.textContent);
+</script>
+</body></html>`;
+PAGES['/pills-in-a-list'] = PILLS_IN_A_LIST;
+
 const PROFILE = {
   first_name: 'Morgan',
   last_name: 'Testwell',
@@ -13680,6 +13823,95 @@ async function main() {
     check('ddd.ddd.dddd', patterned['pp-dot'] === '555.555.5555', JSON.stringify(patterned));
     const dashedFromPlus = await valuesAt('/phone-patterned', ['pp-dash', 'pp-dot'], { ...PROFILE, phone: '+1 555 555 5555' });
     check('from a number stored with +1, the ten digits after it', dashedFromPlus['pp-dash'] === '555-555-5555' && dashedFromPlus['pp-dot'] === '555.555.5555', JSON.stringify(dashedFromPlus));
+
+    group('Widgets the page answered, dated, drew late or keeps elsewhere (28d)');
+    const WIDGETED = {
+      first_name: 'Jianwen', last_name: 'Ding', email: 'jd@example.com', phone: '(555) 555-5555',
+      address_city: 'Boston', address_state: 'MA', address_country: 'United States', school: 'Northeastern University',
+      graduation_date: 'May 2026', work_authorization: 'Authorized to work in the US', requires_sponsorship: 'No',
+    };
+    const widgeted = async (where, run) => {
+      await page.goto(`${base}${where}`, { waitUntil: 'domcontentloaded' });
+      return page.evaluate(async ({ b, fields, run }) => {
+        const m = await import(`${b}/autofill.js`);
+        const t = performance.now();
+        const first = m.fillForm(fields);
+        const report = run === 'form' ? first : await m.fillComboboxes(fields, first, { patience: 4000 });
+        await new Promise((r) => setTimeout(r, 100));
+        return {
+          ms: Math.round(performance.now() - t),
+          filled: report.filled.map((f) => `${f.key}=${f.value}`),
+          skipped: report.skipped.map((x) => `${x.key}: ${x.reason}`),
+          state: window.state?.(),
+          picked: window.picked,
+          model: window.model,
+          focused: window.focused,
+          log: window.log,
+          values: Object.fromEntries([...document.querySelectorAll('input')].filter((i) => i.id).map((i) => [i.id, i.value])),
+        };
+      }, { b: base, fields: WIDGETED, run });
+    };
+
+    const prefilled = await widgeted('/prefilled-typeahead');
+    check(
+      'a typeahead the page arrived with "Cambridge, MA" in keeps it and the place picked behind it, and is reported already filled',
+      prefilled.values.pt === 'Cambridge, MA' && prefilled.picked?.id === 'cambridge' && prefilled.log.length === 0 &&
+        prefilled.skipped.includes('address_city: already filled') && !prefilled.filled.some((f) => f.startsWith('address_city')),
+      JSON.stringify(prefilled),
+    );
+    check('and costs no wait on a list', prefilled.ms < 1500, `${prefilled.ms}ms`);
+
+    const dated = await widgeted('/date-comboboxes');
+    check(
+      'a Kendo date picker (role=combobox, MM/dd/yyyy) is not driven as a list: never typed "May 2026", and said not to take a month in that form',
+      dated.values['dc-kendo'] === '' && dated.log.length === 0 && dated.skipped.includes('graduation_date: the field would not accept it in that form'),
+      JSON.stringify(dated),
+    );
+    check('one whose popup is a grid, asking MM/YYYY, is written that way', dated.values['dc-grid'] === '05/2026' && dated.filled.includes('graduation_date=05/2026'), JSON.stringify(dated));
+    check('and neither waits on a list', dated.ms < 1500, `${dated.ms}ms`);
+
+    const late = await widgeted('/late-aria-radios');
+    check(
+      'ARIA radios the page marks a turn after the click are read back once drawn, and reported filled, not "did not take it"',
+      late.state.join() === 'Are you lega=Yes,Will you now=No' && late.filled.includes('work_authorization=Authorized to work in the US') &&
+        late.filled.includes('requires_sponsorship=No') && !late.skipped.some((x) => /did not take/.test(x)),
+      JSON.stringify(late),
+    );
+
+    const leaving = await widgeted('/commit-on-leaving', 'form');
+    check(
+      'an Oracle JET box (taken on blur) and a UI5 sap.m box (taken on focusout) hold the value in their model',
+      leaving.model.first === 'Jianwen' && leaving.model.last === 'Ding',
+      JSON.stringify(leaving),
+    );
+    check('while a plain box is written without being focused', leaving.model.email === 'jd@example.com' && leaving.focused.length === 0, JSON.stringify(leaving));
+
+    const abroadStays = await widgeted('/iti-abroad', 'form');
+    check(
+      'an intl-tel-input left on +46 that will not move is not given a silent Swedish number: reported with its code',
+      abroadStays.skipped.includes("phone: the form's country code is +46 — check the phone") && !abroadStays.filled.some((f) => f.startsWith('phone')),
+      JSON.stringify(abroadStays),
+    );
+    const abroadFollows = await widgeted('/iti-abroad?follows', 'form');
+    check(
+      'one that follows the code a number is typed with is given the number with +1, and moves to it',
+      abroadFollows.state.dial === '1' && abroadFollows.values['ia-phone'] === '+1 (555) 555-5555' && abroadFollows.filled.includes('phone=+1 (555) 555-5555'),
+      JSON.stringify(abroadFollows),
+    );
+
+    const pills = await widgeted('/pills-in-a-list');
+    check(
+      'pills each alone in an item of a listbox are pressed as a group, not opened as a dropdown',
+      pills.state.join() === 'Yes' && pills.filled.includes('work_authorization=Authorized to work in the US') && pills.skipped.length === 0,
+      JSON.stringify(pills),
+    );
+    check('and cost no wait on a list', pills.ms < 1500, `${pills.ms}ms`);
+    const plainPills = await widgeted('/pills-in-a-list?plain');
+    check(
+      'and in a list that says nothing of itself, are not passed over',
+      plainPills.state.join() === 'Yes' && plainPills.filled.includes('work_authorization=Authorized to work in the US'),
+      JSON.stringify(plainPills),
+    );
   } finally {
     await browser.close();
     server.close();
