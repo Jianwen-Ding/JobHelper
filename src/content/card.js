@@ -9171,8 +9171,9 @@ export function createCard({
     [/by hand/, 'pick by hand'],
     [/would not (?:take|accept)/, 'the field would not take it'],
     [/another country/, 'asks about another country'],
-    [/not on the resume|lists no schools|does not list|at the level/, 'not on the resume sent'],
+    [/not on the resume|lists no schools|lists no other school|does not list|at the level/, 'not on the resume sent'],
     [/would not add another/, 'the form would not add another'],
+    [/could not be split/, 'your name could not be split safely — set autofill.first_name and last_name in your profile'],
   ];
   const whyLeft = (reason) => WHY_LEFT.find(([re]) => re.test(String(reason ?? '')))?.[1] ?? '';
 

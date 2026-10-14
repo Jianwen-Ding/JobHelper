@@ -93,7 +93,10 @@ async function main() {
     const what = await popup.textContent('#pairingWhat');
     check('and says where the code is', /Save & Files → Pair JobHelper/.test(what ?? ''), what);
     const status = await popup.textContent('#status');
-    check('the status line says not paired, not "not running"', /not paired/.test(status ?? '') && !/not open|did not answer/.test(status ?? ''), status);
+    check('the status line was told not paired, not "not running"', /not paired/.test(status ?? '') && !/not open|did not answer/.test(status ?? ''), status);
+    // Said once, in the box: a red status line under it saying the same
+    // thing in nearly the same words was the second time.
+    check('and is not shown beside the box saying it again', !(await popup.isVisible('#status')), await popup.evaluate(() => document.querySelector('#status').hidden));
     const ai = await popup.textContent('#aiState');
     const aiHint = await popup.textContent('#aiHint');
     check('the AI panel does not claim no AI is set up', ai !== 'No AI set up' && /paired/.test(aiHint ?? ''), `${ai} / ${aiHint}`);
@@ -134,6 +137,7 @@ async function main() {
       return /not open|did not answer/.test(text ?? '') ? text : undefined;
     });
     check('the popup says it is not running', Boolean(down), await popup.textContent('#status'));
+    check('in the status line, shown again now the box is not saying anything', await popup.isVisible('#status'));
     check('the code box goes away', !(await popup.isVisible('#pairing')));
     check('and what the last code was told goes with it', (await popup.textContent('#pairSaid')) === '', await popup.textContent('#pairSaid'));
     await popup.fill('#serverUrl', SERVER);

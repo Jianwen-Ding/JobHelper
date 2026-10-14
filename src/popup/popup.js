@@ -33,6 +33,7 @@ function setStatus(text, kind = '', fix) {
   const s = $('status');
   s.textContent = text;
   s.className = `status ${kind}`;
+  s.hidden = false;
 
   /*
    * And the way out, when the failure came with one.
@@ -58,9 +59,17 @@ function setStatus(text, kind = '', fix) {
 
 /** Report a failure, carrying whatever it knows about how to get past it. */
 const failed = (err) => {
-  // Not paired: the code box is the way past it, so it goes up as well.
-  if (err.jobhelper?.fix === 'pair') showPairing(err.jobhelper.codeUrl ?? err.jobhelper.serverUrl);
   setStatus(err.message, 'err', err.jobhelper);
+  /*
+   * Not paired: the code box is the way past it, so it goes up as well — and
+   * the box says it, so the status line does not. Both did: a yellow box at
+   * the top and a red line at the bottom saying "not paired" twice, in
+   * almost the same words. The line comes back with the next thing said.
+   */
+  if (err.jobhelper?.fix === 'pair') {
+    showPairing(err.jobhelper.codeUrl ?? err.jobhelper.serverUrl);
+    $('status').hidden = true;
+  }
 };
 
 /**

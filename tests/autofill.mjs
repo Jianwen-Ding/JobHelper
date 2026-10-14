@@ -12994,6 +12994,47 @@ async function main() {
       JSON.stringify(wholeOnly),
     );
 
+    /*
+     * A name ResumeM-M would not split ("José Antonio Núñez García": which
+     * words are the surname is not plain) comes with no first or last name.
+     * Workday's required Legal Name boxes were left empty and nothing said.
+     */
+    const unsplit = await page.goto(`${base}/wd-names`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = m.fillForm({ full_name: 'José Antonio Núñez García', email: 'jose@example.com' });
+        return {
+          values: Object.fromEntries([...document.querySelectorAll('input, select')].map((el) => [el.id, el.value])),
+          skipped: report.skipped.map((s) => ({ key: s.key, reason: s.reason, description: s.description })),
+        };
+      }, { b: base }),
+    );
+    const notSplit = unsplit.skipped.filter((s) => /could not be split/.test(s.reason));
+    check(
+      'a name that could not be split leaves the required legal First and Last Name boxes empty, and says so for each',
+      unsplit.values['name--legalName--firstName'] === '' && unsplit.values['name--legalName--lastName'] === '' &&
+        notSplit.map((s) => s.key).sort().join() === 'first_name,last_name',
+      JSON.stringify(unsplit),
+    );
+    check(
+      'naming the way to fix it in the profile',
+      notSplit.every((s) => /autofill\.first_name and autofill\.last_name in your profile/.test(s.reason)),
+      JSON.stringify(notSplit),
+    );
+    check(
+      'and not for the preferred name, which is not required',
+      notSplit.length === 2 && !unsplit.skipped.some((s) => /preferred/.test(s.key ?? '')),
+      JSON.stringify(unsplit.skipped),
+    );
+    const withHalves = await page.goto(`${base}/wd-names`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b }) => {
+        const m = await import(`${b}/autofill.js`);
+        return m.fillForm({ full_name: 'José Antonio Núñez García', first_name: 'José Antonio', last_name: 'Núñez García' })
+          .skipped.filter((s) => /could not be split/.test(s.reason)).length;
+      }, { b: base }),
+    );
+    check('set in the profile, the halves fill the boxes and nothing is said', withHalves === 0, String(withHalves));
+
     group('An Education section already showing two blocks');
     const TWO_SCHOOLS = [
       { school: 'Northeastern University', degree: 'Bachelor of Science', major: 'Computer Science', gpa: '3.8', start: { year: 2022, month: 9 }, end: { year: 2026, month: 5 } },
@@ -13021,6 +13062,29 @@ async function main() {
       'and the newest school’s GPA is never put in the other school’s empty GPA box, on either pass',
       shownSchools.once[1].g === '' && shownSchools.twice[1].g === '',
       JSON.stringify(shownSchools.twice),
+    );
+    /*
+     * The resume sent lists one of them. A resume tailored for a posting
+     * often keeps only the school that matters to it, and the second block
+     * the form shows was left empty with nothing said: the extension's report
+     * had no row for it, though the same form filled from the whole store got
+     * both schools.
+     */
+    const oneSent = await page.goto(`${base}/edu-shown`, { waitUntil: 'domcontentloaded' }).then(() =>
+      page.evaluate(async ({ b, fields, education }) => {
+        const m = await import(`${b}/autofill.js`);
+        const report = await m.fillEducation(education, fields, await m.fillComboboxes(fields, m.fillForm(fields)));
+        return {
+          second: ['s', 'd', 'm', 'g', 'y'].map((k) => document.getElementById(`es-${k}1`).value).join(''),
+          skipped: report.skipped.map((x) => ({ key: x.key, reason: x.reason, description: x.description })),
+        };
+      }, { b: base, fields: SCHOOL_FIELDS, education: TWO_SCHOOLS.slice(0, 1) }),
+    );
+    const leftBlock = oneSent.skipped.filter((x) => /lists no other school/.test(x.reason));
+    check(
+      'with one school on the resume sent, the second block is left empty, and said to be',
+      oneSent.second === '' && leftBlock.length === 1 && leftBlock[0].key === 'school',
+      JSON.stringify(oneSent),
     );
 
     group('Lists that spell the answer their own way');

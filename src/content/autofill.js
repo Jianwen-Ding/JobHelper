@@ -4440,6 +4440,26 @@ function withPreferredHalves(fields) {
   return words.length === 2 ? { ...fields, preferred_first_name: words[0], preferred_last_name: words[1] } : fields;
 }
 
+/**
+ * A required First or Last name box left empty because the name would not
+ * split.
+ *
+ * ResumeM-M sends the halves of a name only where the split is plain (its
+ * `splitName`): "José Antonio Núñez García" could be José Antonio / Núñez
+ * García or José / Antonio Núñez García, and a guess puts half a surname in
+ * the wrong box of a legal form. So it sends neither — and Workday's
+ * required Legal Name First and Last boxes were left empty with nothing said
+ * about them, the whole name in hand. Said now, with the way to fix it: the
+ * two halves set in the profile fill these boxes from then on.
+ */
+const NAME_NOT_SPLIT = 'your name could not be split safely — set autofill.first_name and autofill.last_name in your profile';
+function nameLeftWhole(input, key, fields) {
+  if (key !== 'first_name' && key !== 'last_name') return null;
+  if (fields[key] || !fields.full_name) return null;
+  if (input instanceof HTMLSelectElement || input.value) return null;
+  return isRequiredField(input) ? key : null;
+}
+
 export function fillForm(fields, { overwrite = false, remembered = [], history = [], company = '' } = {}) {
   fields = withPhoneCode(withPreferredHalves(withResidence(withCityAndState(fields))));
   // For a question asking about the most recent job. See `mostRecentJob`.
@@ -4515,7 +4535,12 @@ export function fillForm(fields, { overwrite = false, remembered = [], history =
       const half = nameHalf(input);
       if (half && fields[half]) match = [half];
     }
-    if (!match) continue;
+    if (!match) {
+      // A required name box the name could not be split for. See `nameLeftWhole`.
+      const whole = nameLeftWhole(input, named?.[0] ?? nameHalf(input) ?? bareNameKey(input, inputs), fields);
+      if (whole) skipped.push(leftAt(input, { key: whole, reason: NAME_NOT_SPLIT, description: description.slice(0, 60) }));
+      continue;
+    }
 
     const key = wholeDateKey(input, match[0], description);
     if (!answers[key]) continue;
@@ -8389,6 +8414,8 @@ export async function fillEducation(education, fields, report, { patience = 4000
   const filled = [];
   const skipped = [];
   const used = new Set();
+  // The blocks a school was put in, by their place in the section.
+  const placed = new Set();
   const fits = (block, f) => ![...block].some(([key, control]) => anotherLevelOfStudy(control, key, f));
 
   const waiting = () => schools.some((_, i) => !used.has(i));
@@ -8460,6 +8487,7 @@ export async function fillEducation(education, fields, report, { patience = 4000
       }
     }
     used.add(index);
+    placed.add(n);
 
     const f = educationFields(schools[index]);
     /*
@@ -8477,8 +8505,39 @@ export async function fillEducation(education, fields, report, { patience = 4000
     }
   }
 
+  /*
+   * And a block the form already shows that no school went into, said.
+   *
+   * The schools are the resume being sent's, and a resume tailored for a
+   * posting often keeps only the one that matters to it: the store had two,
+   * the card's resume one, and a form showing two Education blocks came back
+   * with the second empty and nothing in the report about it — while the
+   * same form filled from the whole store got both. Not filled from the store
+   * behind the resume's back (the form has to agree with the document
+   * attached to it); left, and listed for the person, who may want to add the
+   * school or take the block out.
+   */
+  if (section?.box.isConnected) {
+    const named = new Set([...report.skipped, ...skipped].map((row) => LEFT_AT.get(row)?.el).filter(Boolean));
+    (educationBlocks(section.box) ?? []).forEach((block, n) => {
+      const controls = [...block.values()];
+      if (placed.has(n) || controls.length === 0 || controls.some((c) => partAnswered(c) || named.has(c))) return;
+      const first = block.get('school') ?? controls[0];
+      skipped.push(
+        leftAt(
+          first,
+          { key: 'school', reason: EDUCATION_BLOCK_LEFT, description: (clean(labelFor(first)) || 'Education').slice(0, 60) },
+          'Another school in the education section',
+        ),
+      );
+    });
+  }
+
   return { ...report, filled: [...report.filled, ...filled], skipped: [...report.skipped, ...skipped] };
 }
+
+/** Why an Education block the form shows was left empty. See `fillEducation`. */
+const EDUCATION_BLOCK_LEFT = 'the resume sent lists no other school, so this block was left empty';
 
 /**
  * Is this document an application form at all?
@@ -9756,7 +9815,11 @@ export function wantsCoverLetter() {
  */
 export function isRequired(fieldId) {
   const found = deepQueryAll(`[${FIELD_KEY}="${CSS.escape(fieldId)}"]`)[0];
-  if (!found) return false;
+  return found ? isRequiredField(found) : false;
+}
+
+/** `isRequired`, for the control itself. */
+function isRequiredField(found) {
   // Asked by the textarea an editor was put on, so required by its label too.
   // See `takenOver`.
   const field = takenOver(found) ?? found;
